@@ -9,7 +9,7 @@ private let shareLog = OSLog(subsystem: "com.dietrich.peek-mobile.share", catego
 /// Schema version for tracking compatibility between Rust main app and Swift Share Extension.
 /// Increment this when making schema changes that both codepaths must understand.
 /// Both Rust and Swift code should use the same version number.
-private let SCHEMA_VERSION = "1"
+private let SCHEMA_VERSION = "2"
 
 // MARK: - Item Types
 enum ItemType: String {
@@ -36,7 +36,7 @@ struct ItemRecord: Codable, FetchableRecord, PersistableRecord {
 struct TagRecord: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "tags"
 
-    var id: Int64?
+    var id: String?
     var name: String
     var frequency: Int
     var lastUsed: String
@@ -49,7 +49,7 @@ struct ItemTagRecord: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "item_tags"
 
     var item_id: String
-    var tag_id: Int64
+    var tag_id: String
     var created_at: String
 }
 
@@ -226,7 +226,7 @@ class DatabaseManager {
 
                     CREATE TABLE IF NOT EXISTS item_tags (
                         item_id TEXT NOT NULL,
-                        tag_id INTEGER NOT NULL,
+                        tag_id TEXT NOT NULL,
                         created_at TEXT NOT NULL,
                         PRIMARY KEY (item_id, tag_id),
                         FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
@@ -272,7 +272,7 @@ class DatabaseManager {
 
                     CREATE TABLE IF NOT EXISTS item_tags (
                         item_id TEXT NOT NULL,
-                        tag_id INTEGER NOT NULL,
+                        tag_id TEXT NOT NULL,
                         created_at TEXT NOT NULL,
                         PRIMARY KEY (item_id, tag_id),
                         FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
@@ -289,23 +289,123 @@ class DatabaseManager {
                 print("[DB] Metadata column added")
             }
 
-            // Create tags and settings tables (always needed)
+            // Create settings table first (needed for migration tracking)
             try db.execute(sql: """
-                CREATE TABLE IF NOT EXISTS tags (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    frequency INTEGER NOT NULL DEFAULT 0,
-                    lastUsed TEXT NOT NULL,
-                    frecencyScore REAL NOT NULL DEFAULT 0.0,
-                    createdAt TEXT NOT NULL,
-                    updatedAt TEXT NOT NULL
-                );
-
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+            """)
 
+            // Migrate tags.id from INTEGER to TEXT (for existing installs with old schema)
+            // Check if tags table exists and has INTEGER id column
+            if try db.tableExists("tags") {
+                let tagsHasIntegerId = try db.columns(in: "tags")
+                    .contains { $0.name == "id" && $0.type.uppercased() == "INTEGER" }
+
+                if tagsHasIntegerId {
+                    print("[DB] Migrating tags.id from INTEGER to TEXT...")
+
+                    try db.inSavepoint {
+                        // Step 1: Create temp mapping table
+                        try db.execute(sql: """
+                            CREATE TEMP TABLE tag_id_mapping (
+                                old_id INTEGER PRIMARY KEY,
+                                new_id TEXT NOT NULL
+                            );
+                        """)
+
+                        // Step 2: Populate mapping with generated TEXT IDs
+                        let oldIds = try Int64.fetchAll(db, sql: "SELECT id FROM tags")
+                        for oldId in oldIds {
+                            let newId = generateTagId()
+                            try db.execute(sql: "INSERT INTO tag_id_mapping (old_id, new_id) VALUES (?, ?)",
+                                          arguments: [oldId, newId])
+                        }
+
+                        // Step 3: Create new tables with TEXT schema
+                        try db.execute(sql: """
+                            CREATE TABLE tags_new (
+                                id TEXT PRIMARY KEY,
+                                name TEXT NOT NULL UNIQUE,
+                                frequency INTEGER NOT NULL DEFAULT 0,
+                                lastUsed TEXT NOT NULL,
+                                frecencyScore REAL NOT NULL DEFAULT 0.0,
+                                createdAt TEXT NOT NULL,
+                                updatedAt TEXT NOT NULL
+                            );
+
+                            CREATE TABLE item_tags_new (
+                                item_id TEXT NOT NULL,
+                                tag_id TEXT NOT NULL,
+                                created_at TEXT NOT NULL,
+                                PRIMARY KEY (item_id, tag_id),
+                                FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+                                FOREIGN KEY (tag_id) REFERENCES tags_new(id) ON DELETE CASCADE
+                            );
+                        """)
+
+                        // Step 4: Copy data using mapping
+                        try db.execute(sql: """
+                            INSERT INTO tags_new (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
+                            SELECT m.new_id, t.name, t.frequency, t.lastUsed, t.frecencyScore, t.createdAt, t.updatedAt
+                            FROM tags t
+                            JOIN tag_id_mapping m ON t.id = m.old_id;
+
+                            INSERT INTO item_tags_new (item_id, tag_id, created_at)
+                            SELECT it.item_id, m.new_id, it.created_at
+                            FROM item_tags it
+                            JOIN tag_id_mapping m ON it.tag_id = m.old_id;
+                        """)
+
+                        // Step 5: Swap tables
+                        try db.execute(sql: """
+                            DROP TABLE item_tags;
+                            DROP TABLE tags;
+                            ALTER TABLE tags_new RENAME TO tags;
+                            ALTER TABLE item_tags_new RENAME TO item_tags;
+
+                            CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+                            CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
+
+                            DROP TABLE IF EXISTS tag_id_mapping;
+                        """)
+
+                        print("[DB] Tags INTEGER→TEXT migration completed successfully")
+                        return .commit
+                    }
+                }
+            }
+
+            // Create tags table (for fresh install or if migration skipped)
+            if !(try db.tableExists("tags")) {
+                try db.execute(sql: """
+                    CREATE TABLE IF NOT EXISTS tags (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE,
+                        frequency INTEGER NOT NULL DEFAULT 0,
+                        lastUsed TEXT NOT NULL,
+                        frecencyScore REAL NOT NULL DEFAULT 0.0,
+                        createdAt TEXT NOT NULL,
+                        updatedAt TEXT NOT NULL
+                    );
+
+                    CREATE TABLE IF NOT EXISTS item_tags (
+                        item_id TEXT NOT NULL,
+                        tag_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (item_id, tag_id),
+                        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+                        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+                    CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
+                """)
+            }
+
+            // Create blobs table and indexes
+            try db.execute(sql: """
                 CREATE TABLE IF NOT EXISTS blobs (
                     id TEXT PRIMARY KEY,
                     item_id TEXT NOT NULL,
@@ -323,8 +423,6 @@ class DatabaseManager {
                 CREATE INDEX IF NOT EXISTS idx_items_url ON items(url);
                 CREATE INDEX IF NOT EXISTS idx_items_deleted ON items(deleted_at);
                 CREATE INDEX IF NOT EXISTS idx_items_sync_id ON items(sync_id);
-                CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-                CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
                 CREATE INDEX IF NOT EXISTS idx_blobs_item_id ON blobs(item_id);
             """)
         }
@@ -380,7 +478,7 @@ class DatabaseManager {
                 let wwwDomainPattern = "%://www.\(domain)/%"
                 let wwwDomainPatternRoot = "%://www.\(domain)"
 
-                let domainTagIds = try Int64.fetchSet(db, sql: """
+                let domainTagIds = try String.fetchSet(db, sql: """
                     SELECT DISTINCT it.tag_id
                     FROM item_tags it
                     JOIN items i ON it.item_id = i.id
@@ -391,7 +489,7 @@ class DatabaseManager {
 
                 // Apply 2x multiplier to tags used on same-domain URLs
                 let boostedTags = records.map { record -> TagStats in
-                    let boostedScore = domainTagIds.contains(record.id ?? -1)
+                    let boostedScore = domainTagIds.contains(record.id ?? "")
                         ? record.frecencyScore * 2.0
                         : record.frecencyScore
                     return TagStats(
@@ -497,7 +595,7 @@ class DatabaseManager {
                 // Add tags
                 for tagName in tags {
                     // Get or create tag
-                    var tagId: Int64
+                    var tagId: String
 
                     if let existingTag = try TagRecord.filter(Column("name") == tagName).fetchOne(db) {
                         tagId = existingTag.id!
@@ -512,10 +610,11 @@ class DatabaseManager {
                         """, arguments: [newFrequency, now, frecency, now, existingTag.id!])
                     } else {
                         // Create new tag
+                        let newTagId = generateTagId()
                         let frecency = calculateFrecency(frequency: 1, lastUsed: now)
-                        let newTag = TagRecord(id: nil, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
+                        let newTag = TagRecord(id: newTagId, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
                         try newTag.insert(db)
-                        tagId = db.lastInsertedRowID
+                        tagId = newTagId
                     }
 
                     // Create item-tag association
@@ -566,7 +665,7 @@ class DatabaseManager {
 
                 // Add tags
                 for tagName in tags {
-                    var tagId: Int64
+                    var tagId: String
                     let isNewToItem = !existingTagNames.contains(tagName)
 
                     if let existingTag = try TagRecord.filter(Column("name") == tagName).fetchOne(db) {
@@ -588,10 +687,11 @@ class DatabaseManager {
                             """, arguments: [now, frecency, now, existingTag.id!])
                         }
                     } else {
+                        let newTagId = generateTagId()
                         let frecency = calculateFrecency(frequency: 1, lastUsed: now)
-                        let newTag = TagRecord(id: nil, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
+                        let newTag = TagRecord(id: newTagId, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
                         try newTag.insert(db)
-                        tagId = db.lastInsertedRowID
+                        tagId = newTagId
                     }
 
                     let itemTag = ItemTagRecord(item_id: imageId, tag_id: tagId, created_at: now)
@@ -688,7 +788,7 @@ class DatabaseManager {
                 // Add tags
                 for tagName in tags {
                     // Get or create tag
-                    var tagId: Int64
+                    var tagId: String
                     // Only increment frequency if this tag is new to this item
                     let isNewToItem = !existingTagNames.contains(tagName)
 
@@ -714,10 +814,11 @@ class DatabaseManager {
                         }
                     } else {
                         // Create new tag
+                        let newTagId = generateTagId()
                         let frecency = calculateFrecency(frequency: 1, lastUsed: now)
-                        let newTag = TagRecord(id: nil, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
+                        let newTag = TagRecord(id: newTagId, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
                         try newTag.insert(db)
-                        tagId = db.lastInsertedRowID
+                        tagId = newTagId
                     }
 
                     // Create item-tag association
@@ -945,6 +1046,13 @@ class DatabaseManager {
         let decayFactor = 1.0 / (1.0 + daysSinceUse / 7.0)
 
         return Double(frequency) * 10.0 * decayFactor
+    }
+
+    /// Generate a unique tag ID in format: tag_{timestamp}_{random9}
+    private func generateTagId() -> String {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        let random = UUID().uuidString.prefix(9).lowercased()
+        return "tag_\(timestamp)_\(random)"
     }
 }
 

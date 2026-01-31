@@ -412,7 +412,7 @@ CREATE TABLE IF NOT EXISTS items (
 );
 
 CREATE TABLE IF NOT EXISTS tags (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     frequency INTEGER NOT NULL DEFAULT 0,
     lastUsed TEXT NOT NULL,
@@ -423,7 +423,7 @@ CREATE TABLE IF NOT EXISTS tags (
 
 CREATE TABLE IF NOT EXISTS item_tags (
     item_id TEXT NOT NULL,
-    tag_id INTEGER NOT NULL,
+    tag_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (item_id, tag_id),
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
@@ -462,18 +462,18 @@ VALUES
   ('ios-e2e-url-1', 'url', 'https://example.com/ios-origin-1', '', '', '', datetime('now'), datetime('now')),
   ('ios-e2e-note-1', 'text', '', 'Note created on iOS', '', '', datetime('now'), datetime('now'));
 
--- Tags
-INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
+-- Tags (TEXT IDs matching desktop/server format: tag_{timestamp}_{random9})
+INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
 VALUES
-  ('ios', 1, datetime('now'), 1.0, datetime('now'), datetime('now')),
-  ('e2e', 1, datetime('now'), 1.0, datetime('now'), datetime('now')),
-  ('note', 1, datetime('now'), 1.0, datetime('now'), datetime('now'));
+  ('tag_e2e_ios_001', 'ios', 1, datetime('now'), 1.0, datetime('now'), datetime('now')),
+  ('tag_e2e_ios_002', 'e2e', 1, datetime('now'), 1.0, datetime('now'), datetime('now')),
+  ('tag_e2e_ios_003', 'note', 1, datetime('now'), 1.0, datetime('now'), datetime('now'));
 
--- Tag associations
-INSERT INTO item_tags (item_id, tag_id, created_at) VALUES ('ios-e2e-url-1', 1, datetime('now'));
-INSERT INTO item_tags (item_id, tag_id, created_at) VALUES ('ios-e2e-url-1', 2, datetime('now'));
-INSERT INTO item_tags (item_id, tag_id, created_at) VALUES ('ios-e2e-note-1', 1, datetime('now'));
-INSERT INTO item_tags (item_id, tag_id, created_at) VALUES ('ios-e2e-note-1', 3, datetime('now'));
+-- Tag associations (using TEXT tag_id)
+INSERT INTO item_tags (item_id, tag_id, created_at) VALUES ('ios-e2e-url-1', 'tag_e2e_ios_001', datetime('now'));
+INSERT INTO item_tags (item_id, tag_id, created_at) VALUES ('ios-e2e-url-1', 'tag_e2e_ios_002', datetime('now'));
+INSERT INTO item_tags (item_id, tag_id, created_at) VALUES ('ios-e2e-note-1', 'tag_e2e_ios_001', datetime('now'));
+INSERT INTO item_tags (item_id, tag_id, created_at) VALUES ('ios-e2e-note-1', 'tag_e2e_ios_003', datetime('now'));
 SQLEOF
 
 IOS_COUNT=$(sqlite3 "$IOS_DB" "SELECT COUNT(*) FROM items WHERE deleted_at IS NULL;")
@@ -765,11 +765,11 @@ INSERT INTO items (id, type, url, content, metadata, sync_source, created_at, up
 VALUES
   ('ios-crossdev-1', 'url', '$CROSS_URL', '', '', '', datetime('now'), datetime('now'));
 
-INSERT OR IGNORE INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
-VALUES ('cross-device', 1, datetime('now'), 1.0, datetime('now'), datetime('now'));
+INSERT OR IGNORE INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
+VALUES ('tag_e2e_crossdev', 'cross-device', 1, datetime('now'), 1.0, datetime('now'), datetime('now'));
 
 INSERT INTO item_tags (item_id, tag_id, created_at)
-SELECT 'ios-crossdev-1', id, datetime('now') FROM tags WHERE name = 'cross-device';
+VALUES ('ios-crossdev-1', 'tag_e2e_crossdev', datetime('now'));
 SQLEOF
 
 echo "  Seeded cross-device URL into iOS"
@@ -808,15 +808,15 @@ sqlite3 "$IOS_DB" << 'SQLEOF'
 INSERT INTO items (id, type, url, content, metadata, sync_source, created_at, updated_at)
 VALUES ('ios-tagset-1', 'tagset', '', '', '', '', datetime('now'), datetime('now'));
 
-INSERT OR IGNORE INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
+INSERT OR IGNORE INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
 VALUES
-  ('shared', 1, datetime('now'), 1.0, datetime('now'), datetime('now')),
-  ('tagset', 1, datetime('now'), 1.0, datetime('now'), datetime('now'));
+  ('tag_e2e_shared', 'shared', 1, datetime('now'), 1.0, datetime('now'), datetime('now')),
+  ('tag_e2e_tagset', 'tagset', 1, datetime('now'), 1.0, datetime('now'), datetime('now'));
 
 INSERT INTO item_tags (item_id, tag_id, created_at)
-SELECT 'ios-tagset-1', id, datetime('now') FROM tags WHERE name = 'shared';
+VALUES ('ios-tagset-1', 'tag_e2e_shared', datetime('now'));
 INSERT INTO item_tags (item_id, tag_id, created_at)
-SELECT 'ios-tagset-1', id, datetime('now') FROM tags WHERE name = 'tagset';
+VALUES ('ios-tagset-1', 'tag_e2e_tagset', datetime('now'));
 SQLEOF
 
 echo "  Seeded cross-device tagset into iOS"
@@ -1100,7 +1100,9 @@ INSERT INTO items (id, type, url, content, metadata, sync_source, created_at, up
 VALUES ('dup-ios-tagset-1', 'tagset', '', '', '', '', datetime('now'), datetime('now', '-1 day'));
 
 INSERT INTO item_tags (item_id, tag_id, created_at)
-SELECT 'dup-ios-tagset-1', id, datetime('now') FROM tags WHERE name IN ('shared', 'tagset');
+VALUES ('dup-ios-tagset-1', 'tag_e2e_shared', datetime('now'));
+INSERT INTO item_tags (item_id, tag_id, created_at)
+VALUES ('dup-ios-tagset-1', 'tag_e2e_tagset', datetime('now'));
 SQLEOF
 echo "  Seeded 3 duplicates into iOS DB"
 

@@ -918,7 +918,7 @@ static DB_INIT: Once = Once::new();
 /// Schema version for tracking compatibility between Rust main app and Swift Share Extension.
 /// Increment this when making schema changes that both codepaths must understand.
 /// Both Rust and Swift code should use the same version number.
-const SCHEMA_VERSION: &str = "1";
+const SCHEMA_VERSION: &str = "2";
 
 fn ensure_database_initialized() -> Result<(), String> {
     let mut init_result: Result<(), String> = Ok(());
@@ -1037,7 +1037,7 @@ fn ensure_database_initialized() -> Result<(), String> {
                 );
 
                 CREATE TABLE IF NOT EXISTS tags (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id TEXT PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     frequency INTEGER NOT NULL DEFAULT 0,
                     lastUsed TEXT NOT NULL,
@@ -1048,7 +1048,7 @@ fn ensure_database_initialized() -> Result<(), String> {
 
                 CREATE TABLE IF NOT EXISTS item_tags (
                     item_id TEXT NOT NULL,
-                    tag_id INTEGER NOT NULL,
+                    tag_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (item_id, tag_id),
                     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
@@ -1203,30 +1203,168 @@ fn ensure_database_initialized() -> Result<(), String> {
             }
         }
 
-        // Ensure tags and settings tables exist (for migration case)
+        // Ensure settings table exists (for migration case)
         if let Err(e) = conn.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                frequency INTEGER NOT NULL DEFAULT 0,
-                lastUsed TEXT NOT NULL,
-                frecencyScore REAL NOT NULL DEFAULT 0.0,
-                createdAt TEXT NOT NULL,
-                updatedAt TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
-
-            CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-            CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
             ",
         ) {
-            init_result = Err(format!("Failed to ensure auxiliary tables: {}", e));
+            init_result = Err(format!("Failed to ensure settings table: {}", e));
             return;
+        }
+
+        // Migrate tags.id from INTEGER to TEXT (for existing installs with old schema)
+        // Check if tags table exists and has INTEGER id column
+        let tags_has_integer_id: bool = conn
+            .query_row(
+                "SELECT type FROM pragma_table_info('tags') WHERE name='id'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map(|t| t.to_uppercase() == "INTEGER")
+            .unwrap_or(false);
+
+        if tags_has_integer_id {
+            ios_log("Migrating tags.id from INTEGER to TEXT...");
+
+            // Use savepoint for atomic rollback on error
+            if let Err(e) = conn.execute("SAVEPOINT before_tag_migration", []) {
+                ios_log(&format!("Failed to create savepoint: {}", e));
+            } else {
+                let migration_result: Result<(), String> = (|| {
+                    // Step 1: Create temp mapping table
+                    conn.execute_batch(
+                        "CREATE TEMP TABLE tag_id_mapping (
+                            old_id INTEGER PRIMARY KEY,
+                            new_id TEXT NOT NULL
+                        );"
+                    ).map_err(|e| format!("Failed to create mapping table: {}", e))?;
+
+                    // Step 2: Populate mapping with generated TEXT IDs
+                    let mut stmt = conn.prepare("SELECT id FROM tags")
+                        .map_err(|e| format!("Failed to prepare tag select: {}", e))?;
+                    let old_ids: Vec<i64> = stmt
+                        .query_map([], |row| row.get::<_, i64>(0))
+                        .map_err(|e| format!("Failed to query tags: {}", e))?
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    drop(stmt);
+
+                    for old_id in old_ids {
+                        let new_id = generate_tag_id();
+                        conn.execute(
+                            "INSERT INTO tag_id_mapping (old_id, new_id) VALUES (?, ?)",
+                            params![old_id, new_id],
+                        ).map_err(|e| format!("Failed to insert mapping: {}", e))?;
+                    }
+
+                    // Step 3: Create new tables with TEXT schema
+                    conn.execute_batch(
+                        "CREATE TABLE tags_new (
+                            id TEXT PRIMARY KEY,
+                            name TEXT NOT NULL UNIQUE,
+                            frequency INTEGER NOT NULL DEFAULT 0,
+                            lastUsed TEXT NOT NULL,
+                            frecencyScore REAL NOT NULL DEFAULT 0.0,
+                            createdAt TEXT NOT NULL,
+                            updatedAt TEXT NOT NULL
+                        );
+
+                        CREATE TABLE item_tags_new (
+                            item_id TEXT NOT NULL,
+                            tag_id TEXT NOT NULL,
+                            created_at TEXT NOT NULL,
+                            PRIMARY KEY (item_id, tag_id),
+                            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+                            FOREIGN KEY (tag_id) REFERENCES tags_new(id) ON DELETE CASCADE
+                        );"
+                    ).map_err(|e| format!("Failed to create new tables: {}", e))?;
+
+                    // Step 4: Copy data using mapping
+                    conn.execute_batch(
+                        "INSERT INTO tags_new (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
+                        SELECT m.new_id, t.name, t.frequency, t.lastUsed, t.frecencyScore, t.createdAt, t.updatedAt
+                        FROM tags t
+                        JOIN tag_id_mapping m ON t.id = m.old_id;
+
+                        INSERT INTO item_tags_new (item_id, tag_id, created_at)
+                        SELECT it.item_id, m.new_id, it.created_at
+                        FROM item_tags it
+                        JOIN tag_id_mapping m ON it.tag_id = m.old_id;"
+                    ).map_err(|e| format!("Failed to copy data: {}", e))?;
+
+                    // Step 5: Swap tables
+                    conn.execute_batch(
+                        "DROP TABLE item_tags;
+                        DROP TABLE tags;
+                        ALTER TABLE tags_new RENAME TO tags;
+                        ALTER TABLE item_tags_new RENAME TO item_tags;
+
+                        CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+                        CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);"
+                    ).map_err(|e| format!("Failed to swap tables: {}", e))?;
+
+                    // Cleanup temp table
+                    let _ = conn.execute("DROP TABLE IF EXISTS tag_id_mapping", []);
+
+                    Ok(())
+                })();
+
+                match migration_result {
+                    Ok(()) => {
+                        let _ = conn.execute("RELEASE SAVEPOINT before_tag_migration", []);
+                        ios_log("Tags INTEGER→TEXT migration completed successfully");
+                    }
+                    Err(e) => {
+                        ios_log(&format!("Tags migration failed, rolling back: {}", e));
+                        let _ = conn.execute("ROLLBACK TO SAVEPOINT before_tag_migration", []);
+                        let _ = conn.execute("RELEASE SAVEPOINT before_tag_migration", []);
+                    }
+                }
+            }
+        }
+
+        // Ensure tags table exists (for fresh install or if migration skipped)
+        let has_tags_table: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tags'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0) > 0;
+
+        if !has_tags_table {
+            if let Err(e) = conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS tags (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    frequency INTEGER NOT NULL DEFAULT 0,
+                    lastUsed TEXT NOT NULL,
+                    frecencyScore REAL NOT NULL DEFAULT 0.0,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS item_tags (
+                    item_id TEXT NOT NULL,
+                    tag_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (item_id, tag_id),
+                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+                CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
+                ",
+            ) {
+                init_result = Err(format!("Failed to create tags tables: {}", e));
+                return;
+            }
         }
 
         // One-time dedup migration: remove duplicate items
@@ -1465,6 +1603,18 @@ fn calculate_frecency(frequency: u32, last_used: &str) -> f64 {
     let decay_factor = 1.0 / (1.0 + days_since_use / 7.0);
 
     frequency as f64 * 10.0 * decay_factor
+}
+
+// Generate a unique tag ID in format: tag_{timestamp}_{random9}
+fn generate_tag_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let random = &uuid[0..9]; // First 9 chars of UUID
+    format!("tag_{}_{}", timestamp, random)
 }
 
 // Helper to get webhook config
@@ -1915,7 +2065,7 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
     // Add tags
     for tag_name in &tags {
         // Get or create tag
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -1925,7 +2075,7 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![id],
+                        params![&id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -1935,7 +2085,7 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, id],
+                    params![new_frequency, &now, frecency, &now, &id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
@@ -1943,14 +2093,15 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
             }
             Err(_) => {
                 // Create new tag
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -2025,7 +2176,7 @@ async fn get_tags_by_frecency_for_url(url: String) -> Result<Vec<TagStats>, Stri
         .prepare("SELECT id, name, frequency, lastUsed, frecencyScore FROM tags")
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-    let tags_with_ids: Vec<(i64, TagStats)> = stmt
+    let tags_with_ids: Vec<(String, TagStats)> = stmt
         .query_map([], |row| {
             Ok((
                 row.get(0)?,
@@ -2057,7 +2208,7 @@ async fn get_tags_by_frecency_for_url(url: String) -> Result<Vec<TagStats>, Stri
         )
         .map_err(|e| format!("Failed to prepare domain query: {}", e))?;
 
-    let domain_tag_ids: std::collections::HashSet<i64> = domain_stmt
+    let domain_tag_ids: std::collections::HashSet<String> = domain_stmt
         .query_map(
             params![&domain_pattern, &domain_pattern_root, &www_domain_pattern, &www_domain_pattern_root],
             |row| row.get(0),
@@ -2213,7 +2364,7 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
     // Add only the tags that are new to this item
     for tag_name in &tags_to_add {
         // Get or create tag
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -2223,7 +2374,7 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![existing_id],
+                        params![&existing_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -2233,7 +2384,7 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, existing_id],
+                    params![new_frequency, &now, frecency, &now, &existing_id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
@@ -2241,14 +2392,15 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
             }
             Err(_) => {
                 // Create new tag
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -2339,7 +2491,7 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
     // Add only the tags that are new to this item
     for tag_name in &tags_to_add {
         // Get or create tag
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -2349,7 +2501,7 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![existing_id],
+                        params![&existing_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -2359,7 +2511,7 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, existing_id],
+                    params![new_frequency, &now, frecency, &now, &existing_id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
@@ -2367,14 +2519,15 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
             }
             Err(_) => {
                 // Create new tag
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -2439,7 +2592,7 @@ async fn save_text(content: String, tags: Option<Vec<String>>, metadata: Option<
 
     // Add tags
     for tag_name in &all_tags {
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -2448,7 +2601,7 @@ async fn save_text(content: String, tags: Option<Vec<String>>, metadata: Option<
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![existing_id],
+                        params![&existing_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -2458,21 +2611,22 @@ async fn save_text(content: String, tags: Option<Vec<String>>, metadata: Option<
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, existing_id],
+                    params![new_frequency, &now, frecency, &now, &existing_id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
                 existing_id
             }
             Err(_) => {
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -2516,7 +2670,7 @@ async fn save_tagset(tags: Vec<String>, metadata: Option<serde_json::Value>) -> 
 
     // Add tags
     for tag_name in &tags {
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -2525,7 +2679,7 @@ async fn save_tagset(tags: Vec<String>, metadata: Option<serde_json::Value>) -> 
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![existing_id],
+                        params![&existing_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -2535,21 +2689,22 @@ async fn save_tagset(tags: Vec<String>, metadata: Option<serde_json::Value>) -> 
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, existing_id],
+                    params![new_frequency, &now, frecency, &now, &existing_id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
                 existing_id
             }
             Err(_) => {
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -2727,7 +2882,7 @@ async fn update_text(id: String, content: String, tags: Vec<String>) -> Result<(
 
     // Add new tags
     for tag_name in &tags_to_add {
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -2736,7 +2891,7 @@ async fn update_text(id: String, content: String, tags: Vec<String>) -> Result<(
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![existing_id],
+                        params![&existing_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -2746,21 +2901,22 @@ async fn update_text(id: String, content: String, tags: Vec<String>) -> Result<(
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, existing_id],
+                    params![new_frequency, &now, frecency, &now, &existing_id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
                 existing_id
             }
             Err(_) => {
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -2851,7 +3007,7 @@ async fn update_tagset(id: String, tags: Vec<String>) -> Result<(), String> {
 
     // Add new tags
     for tag_name in &tags_to_add {
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -2860,7 +3016,7 @@ async fn update_tagset(id: String, tags: Vec<String>) -> Result<(), String> {
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![existing_id],
+                        params![&existing_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -2870,21 +3026,22 @@ async fn update_tagset(id: String, tags: Vec<String>) -> Result<(), String> {
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, existing_id],
+                    params![new_frequency, &now, frecency, &now, &existing_id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
                 existing_id
             }
             Err(_) => {
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -2959,7 +3116,7 @@ async fn save_image(
 
     // Add tags
     for tag_name in &tags {
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -2968,7 +3125,7 @@ async fn save_image(
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![existing_id],
+                        params![&existing_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -2978,21 +3135,22 @@ async fn save_image(
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, existing_id],
+                    params![new_frequency, &now, frecency, &now, &existing_id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
                 existing_id
             }
             Err(_) => {
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -3169,7 +3327,7 @@ async fn update_image_tags(id: String, tags: Vec<String>) -> Result<(), String> 
 
     // Add new tags
     for tag_name in &tags_to_add {
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -3178,7 +3336,7 @@ async fn update_image_tags(id: String, tags: Vec<String>) -> Result<(), String> 
                 let frequency: u32 = conn
                     .query_row(
                         "SELECT frequency FROM tags WHERE id = ?",
-                        params![existing_id],
+                        params![&existing_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -3188,21 +3346,22 @@ async fn update_image_tags(id: String, tags: Vec<String>) -> Result<(), String> 
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, existing_id],
+                    params![new_frequency, &now, frecency, &now, &existing_id],
                 )
                 .map_err(|e| format!("Failed to update tag: {}", e))?;
 
                 existing_id
             }
             Err(_) => {
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -3930,7 +4089,7 @@ fn update_item_tags_from_server(conn: &Connection, item_id: &str, tag_names: &[S
     // Add new tags
     for tag_name in tag_names {
         // Get or create tag
-        let tag_id: i64 = match conn.query_row(
+        let tag_id: String = match conn.query_row(
             "SELECT id FROM tags WHERE name = ?",
             params![tag_name],
             |row| row.get(0),
@@ -3938,7 +4097,7 @@ fn update_item_tags_from_server(conn: &Connection, item_id: &str, tag_names: &[S
             Ok(id) => {
                 // Update existing tag stats
                 let frequency: u32 = conn
-                    .query_row("SELECT frequency FROM tags WHERE id = ?", params![id], |row| row.get(0))
+                    .query_row("SELECT frequency FROM tags WHERE id = ?", params![&id], |row| row.get(0))
                     .unwrap_or(0);
 
                 let new_frequency = frequency + 1;
@@ -3946,21 +4105,22 @@ fn update_item_tags_from_server(conn: &Connection, item_id: &str, tag_names: &[S
 
                 conn.execute(
                     "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, id],
+                    params![new_frequency, &now, frecency, &now, &id],
                 ).ok();
 
                 id
             }
             Err(_) => {
                 // Create new tag
+                let new_tag_id = generate_tag_id();
                 let frecency = calculate_frecency(1, &now);
                 conn.execute(
-                    "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, ?, ?, ?)",
-                    params![tag_name, &now, frecency, &now, &now],
+                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
                 )
                 .map_err(|e| format!("Failed to insert tag: {}", e))?;
 
-                conn.last_insert_rowid()
+                new_tag_id
             }
         };
 
@@ -4429,7 +4589,7 @@ mod tests {
             CREATE INDEX IF NOT EXISTS idx_items_sync_id ON items(sync_id);
 
             CREATE TABLE IF NOT EXISTS tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 frequency INTEGER NOT NULL DEFAULT 0,
                 lastUsed TEXT NOT NULL,
@@ -4440,7 +4600,7 @@ mod tests {
 
             CREATE TABLE IF NOT EXISTS item_tags (
                 item_id TEXT NOT NULL,
-                tag_id INTEGER NOT NULL,
+                tag_id TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (item_id, tag_id),
                 FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
@@ -4470,19 +4630,20 @@ mod tests {
                 continue;
             }
 
-            let tag_id: i64 = match conn.query_row(
+            let tag_id: String = match conn.query_row(
                 "SELECT id FROM tags WHERE name = ?",
                 params![&normalized],
                 |row| row.get(0),
             ) {
                 Ok(existing_id) => existing_id,
                 Err(_) => {
+                    let new_tag_id = generate_tag_id();
                     conn.execute(
-                        "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, 10.0, ?, ?)",
-                        params![&normalized, &now, &now, &now],
+                        "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, 10.0, ?, ?)",
+                        params![&new_tag_id, &normalized, &now, &now, &now],
                     )
                     .expect("Failed to insert tag");
-                    conn.last_insert_rowid()
+                    new_tag_id
                 }
             };
 
@@ -4619,19 +4780,20 @@ mod tests {
                 continue;
             }
 
-            let tag_id: i64 = match conn.query_row(
+            let tag_id: String = match conn.query_row(
                 "SELECT id FROM tags WHERE name = ?",
                 params![&normalized],
                 |row| row.get(0),
             ) {
                 Ok(existing_id) => existing_id,
                 Err(_) => {
+                    let new_tag_id = generate_tag_id();
                     conn.execute(
-                        "INSERT INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 1, ?, 10.0, ?, ?)",
-                        params![&normalized, &now, &now, &now],
+                        "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, 10.0, ?, ?)",
+                        params![&new_tag_id, &normalized, &now, &now, &now],
                     )
                     .expect("Failed to insert tag");
-                    conn.last_insert_rowid()
+                    new_tag_id
                 }
             };
 
