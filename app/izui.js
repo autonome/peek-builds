@@ -81,13 +81,17 @@ export async function openChildWindow(address, params = {}) {
 /**
  * Handle ESC key for IZUI navigation.
  * If the window has internal navigation, handle that first.
- * Otherwise, close and notify parent.
+ * Otherwise, notify parent and close this window.
  *
  * @param {Function} [internalHandler] - Optional handler for internal navigation
  *   Should return { handled: true } if it handled the ESC internally
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.closeOnEscape=true] - Whether to close when no internal navigation
  * @returns {Function} Cleanup function
  */
-export function setupEscapeHandler(internalHandler) {
+export function setupEscapeHandler(internalHandler, options = {}) {
+  const { closeOnEscape = true } = options;
+
   const handler = async () => {
     // First, try internal navigation
     if (internalHandler) {
@@ -98,13 +102,18 @@ export function setupEscapeHandler(internalHandler) {
       }
     }
 
-    // No internal navigation, notify parent before closing
-    // The parent address is passed via window params, but we need to get it
-    // For now, we just publish globally - the parent will pick it up
+    // No internal navigation - notify parent, then optionally close
     notifyParentFocus(null); // Global publish
 
-    DEBUG && console.log('[IZUI] ESC at root, closing');
-    return { handled: false };
+    if (closeOnEscape) {
+      DEBUG && console.log('[IZUI] ESC at root, closing window');
+      // Close this window - parent was already notified
+      window.close();
+    } else {
+      DEBUG && console.log('[IZUI] ESC at root, not closing (closeOnEscape=false)');
+    }
+
+    return { handled: true }; // We handled it (by closing or not)
   };
 
   // Register with the escape API
@@ -125,9 +134,10 @@ export function setupEscapeHandler(internalHandler) {
  * @param {Function} [options.onEscape] - Internal escape handler (returns { handled: true } to prevent close)
  * @param {boolean} [options.canHaveChildren=true] - Whether this window may open children
  * @param {boolean} [options.setupEscape=true] - Whether to set up escape handling (notifies parent on close)
+ * @param {boolean} [options.closeOnEscape=true] - Whether ESC closes this window (when no internal nav)
  */
 export function init(options = {}) {
-  const { onEscape, canHaveChildren = true, setupEscape = true } = options;
+  const { onEscape, canHaveChildren = true, setupEscape = true, closeOnEscape = true } = options;
 
   if (canHaveChildren) {
     setupFocusListener();
@@ -136,7 +146,7 @@ export function init(options = {}) {
   // Always set up escape handler so parent is notified before close
   // Pass onEscape if provided for internal navigation handling
   if (setupEscape) {
-    setupEscapeHandler(onEscape);
+    setupEscapeHandler(onEscape, { closeOnEscape });
   }
 
   DEBUG && console.log('[IZUI] Initialized for:', window.location.toString());

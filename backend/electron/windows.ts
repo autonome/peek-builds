@@ -89,6 +89,12 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
 /**
  * Add escape key handler to a window
  * Supports escapeMode: 'close' (default), 'navigate', 'auto'
+ *
+ * - 'close': ESC always closes the window (legacy behavior)
+ * - 'navigate': ESC only triggers internal navigation, never closes
+ *   (renderer handles ESC via IZUI - parent focus, internal nav, etc.)
+ * - 'auto': Transient windows (opened without focus) close on ESC;
+ *   active windows behave like 'navigate'
  */
 export function addEscHandler(bw: BrowserWindow): void {
   DEBUG && console.log('adding esc handler to window:', bw.id);
@@ -101,36 +107,31 @@ export function addEscHandler(bw: BrowserWindow): void {
 
       DEBUG && console.log(`ESC pressed - window ${bw.id}, escapeMode: ${escapeMode}`);
 
-      // For 'navigate' mode, ask renderer first
+      // For 'navigate' mode, ask renderer to handle ESC
+      // Never close the window - renderer handles all navigation via IZUI
       if (escapeMode === 'navigate') {
         const response = await askRendererToHandleEscape(bw);
         DEBUG && console.log(`Renderer escape response:`, response);
-
-        if (response.handled) {
-          // Renderer handled the escape (internal navigation)
-          DEBUG && console.log('Renderer handled escape, not closing');
-          return;
-        }
+        // Always return - window closing is handled by renderer/IZUI
+        // (e.g., renderer may close itself after notifying parent)
+        return;
       }
 
       // For 'auto' mode, check if transient (no focused window when opened)
       if (escapeMode === 'auto') {
         if (params.transient) {
-          // Transient mode - close immediately
+          // Transient mode - close immediately (user invoked via global hotkey)
           DEBUG && console.log('Auto mode (transient) - closing');
         } else {
-          // Active mode - ask renderer first
+          // Active mode - behave like 'navigate', never close
           const response = await askRendererToHandleEscape(bw);
           DEBUG && console.log(`Renderer escape response (auto/active):`, response);
-
-          if (response.handled) {
-            DEBUG && console.log('Renderer handled escape, not closing');
-            return;
-          }
+          // Always return for active windows
+          return;
         }
       }
 
-      // Close or hide the window
+      // Only 'close' mode and transient 'auto' mode reach here
       DEBUG && console.log('Closing/hiding window');
       closeOrHideWindow(bw.id);
     }

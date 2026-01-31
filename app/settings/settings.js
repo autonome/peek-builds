@@ -2575,7 +2575,8 @@ const init = async () => {
 window.addEventListener('load', init);
 
 // Initialize IZUI for focus restoration when child windows close
-izui.init({ canHaveChildren: true });
+// Settings is a parent window, so ESC should not close it
+izui.init({ canHaveChildren: true, closeOnEscape: false });
 
 window.addEventListener('blur', () => {
   console.log('core settings blur');
