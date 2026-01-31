@@ -45,9 +45,7 @@ const openSettingsWindow = async (prefs) => {
     key: settingsAddress,
     transparent: true,
     height,
-    width,
-    // ESC should not close settings - it's a parent window
-    escapeMode: 'navigate'
+    width
   };
 
   log('core', 'Opening settings window with params:', params);

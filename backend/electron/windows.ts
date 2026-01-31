@@ -88,13 +88,13 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
 
 /**
  * Add escape key handler to a window
- * Supports escapeMode: 'close' (default), 'navigate', 'auto', 'ignore'
+ * Supports escapeMode: 'auto' (default), 'close', 'navigate', 'ignore'
  *
- * - 'close': ESC always closes the window (legacy behavior)
+ * - 'auto' (default): Transient windows (opened without app focus) close on ESC;
+ *   active windows (opened while app focused) behave like 'navigate'
+ * - 'close': ESC always closes the window
  * - 'navigate': ESC only triggers internal navigation, never closes
  *   (renderer handles ESC via IZUI - parent focus, internal nav, etc.)
- * - 'auto': Transient windows (opened without focus) close on ESC;
- *   active windows behave like 'navigate'
  * - 'ignore': ESC is completely ignored (for overlays that shouldn't respond)
  */
 export function addEscHandler(bw: BrowserWindow): void {
@@ -104,7 +104,7 @@ export function addEscHandler(bw: BrowserWindow): void {
       // Get window info
       const entry = getWindowInfo(bw.id);
       const params = entry?.params || {};
-      const escapeMode = (params.escapeMode as string) || 'close';
+      const escapeMode = (params.escapeMode as string) || 'auto';
 
       DEBUG && console.log(`ESC pressed - window ${bw.id}, escapeMode: ${escapeMode}`);
 
