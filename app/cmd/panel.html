@@ -111,10 +111,67 @@
       .command-item.selected {
         background-color: rgba(255, 255, 255, 0.2);
       }
+
+      /* Mode indicator - tag button style */
+      .mode-indicator {
+        display: flex;
+        align-items: center;
+        padding: 4px 10px;
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.9);
+        cursor: pointer;
+        transition: all 0.15s ease;
+        margin-right: 10px;
+        flex-shrink: 0;
+        -webkit-app-region: no-drag;
+        user-select: none;
+      }
+
+      .mode-indicator:hover {
+        background: rgba(255, 255, 255, 0.25);
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+
+      .mode-indicator:active {
+        background: rgba(255, 255, 255, 0.3);
+        transform: scale(0.98);
+      }
+
+      .mode-indicator .mode-label {
+        text-transform: capitalize;
+      }
+
+      /* Mode-specific colors */
+      .mode-indicator[data-mode="page"] {
+        background: rgba(102, 153, 204, 0.3);
+        border-color: rgba(102, 153, 204, 0.5);
+      }
+
+      .mode-indicator[data-mode="group"] {
+        background: rgba(153, 102, 204, 0.3);
+        border-color: rgba(153, 102, 204, 0.5);
+      }
+
+      .mode-indicator[data-mode="settings"] {
+        background: rgba(204, 153, 102, 0.3);
+        border-color: rgba(204, 153, 102, 0.5);
+      }
+
+      .mode-indicator[data-mode="default"] {
+        background: rgba(255, 255, 255, 0.15);
+        border-color: rgba(255, 255, 255, 0.2);
+      }
     </style>
   </head>
   <body>
     <div class="center-wrapper">
+      <div id="mode-indicator" class="mode-indicator" title="Click to cycle modes">
+        <span class="mode-label">default</span>
+      </div>
       <div class="command-display">
         <input id="command-input" type="text" autofocus spellcheck="false" />
         <div id="command-text"></div>

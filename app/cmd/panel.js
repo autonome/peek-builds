@@ -39,13 +39,81 @@ let state = {
   matchCounts: persistedData.counts, // match counts - selectedcommand:numberofselections
   adaptiveFeedback: persistedData.feedback, // adaptive matching - typed -> { command: count, ... }
   typed: '', // text typed by user so far, if any
-  lastExecuted: '' // text last typed by user when last they hit return
+  lastExecuted: '', // text last typed by user when last they hit return
+  currentMode: 'default' // current major mode
 };
+
+// Major modes for cycling
+const MAJOR_MODES = ['default', 'page', 'group', 'settings'];
 
 window.addEventListener('cmd-update-commands', function(e) {
   debug && console.log('ui received updated commands');
   state.commands = e.detail;
 });
+
+// ===== Mode Indicator Functions =====
+
+/**
+ * Update the mode indicator UI
+ */
+function updateModeIndicator() {
+  const indicator = document.getElementById('mode-indicator');
+  const label = indicator.querySelector('.mode-label');
+
+  indicator.setAttribute('data-mode', state.currentMode);
+  label.textContent = state.currentMode;
+
+  debug && console.log('Mode indicator updated:', state.currentMode);
+}
+
+/**
+ * Cycle to the next major mode
+ */
+async function cycleMode() {
+  const currentIndex = MAJOR_MODES.indexOf(state.currentMode);
+  const nextIndex = (currentIndex + 1) % MAJOR_MODES.length;
+  const nextMode = MAJOR_MODES[nextIndex];
+
+  debug && console.log('Cycling mode from', state.currentMode, 'to', nextMode);
+
+  // Set the mode via the API
+  const result = await api.modes.setMajorMode(nextMode);
+  if (result.success) {
+    state.currentMode = nextMode;
+    updateModeIndicator();
+  } else {
+    console.error('Failed to set mode:', result.error);
+  }
+}
+
+/**
+ * Initialize the mode indicator
+ */
+async function initModeIndicator() {
+  // Get initial mode state
+  const result = await api.modes.getWindowMode();
+  if (result.success && result.data) {
+    state.currentMode = result.data.major || 'default';
+  }
+  updateModeIndicator();
+
+  // Set up click handler for cycling
+  const indicator = document.getElementById('mode-indicator');
+  indicator.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    cycleMode();
+  });
+
+  // Subscribe to mode changes
+  api.modes.onModeChange((modeState, windowId) => {
+    debug && console.log('Mode changed:', modeState, 'for window:', windowId);
+    state.currentMode = modeState.major || 'default';
+    updateModeIndicator();
+  });
+
+  debug && console.log('Mode indicator initialized with mode:', state.currentMode);
+}
 
 async function render() {
   // Get elements
@@ -99,6 +167,9 @@ async function render() {
   setTimeout(() => {
     commandInput.focus();
   }, 50);
+
+  // Initialize mode indicator
+  await initModeIndicator();
 }
 
 render();
