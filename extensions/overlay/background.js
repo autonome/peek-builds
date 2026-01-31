@@ -33,6 +33,7 @@ function init() {
         resizable: false,
         movable: false,
         skipTaskbar: true,
+        focusable: false,  // Don't steal focus from parent page
         show: false,
         width: 800,
         height: BAR_HEIGHT,
