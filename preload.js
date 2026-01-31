@@ -1516,7 +1516,7 @@ api.escape = {
 
 // Default escape handler - runs for ALL windows
 // If app registers a handler via onEscape(), that runs first
-// Otherwise, publishes izui:child-escape so parent can handle navigation
+// Otherwise, publishes izui:child-escape so parent can handle navigation, then closes
 ipcRenderer.on('escape-pressed', async (event, data) => {
   try {
     // If app registered a handler, use it
@@ -1540,8 +1540,14 @@ ipcRenderer.on('escape-pressed', async (event, data) => {
       }
     });
 
-    // Tell backend we handled it (parent will close us if needed)
+    // Tell backend we handled it
     ipcRenderer.send(data.responseChannel, { handled: true });
+
+    // Close this window - parent received the event and can update its nav state
+    // Small delay to ensure pubsub message is sent before window closes
+    setTimeout(() => {
+      window.close();
+    }, 50);
   } catch (err) {
     console.error('Error in escape handler:', err);
     ipcRenderer.send(data.responseChannel, { handled: false });

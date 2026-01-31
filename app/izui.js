@@ -63,7 +63,8 @@ export function setupFocusListener() {
 
 /**
  * Set up listener for child window escape events.
- * When a child we opened presses ESC, we close it and focus ourselves.
+ * When a child we opened presses ESC, update nav stack and focus ourselves.
+ * Child window closes itself via preload default handler.
  * This enables navigation stack behavior even for web pages without IZUI.
  */
 export function setupChildEscapeListener() {
@@ -83,15 +84,7 @@ export function setupChildEscapeListener() {
     const removed = navigationStack.splice(stackIndex);
     DEBUG && console.log('[IZUI] Popped from stack:', removed.length, 'remaining:', navigationStack.length);
 
-    // Close the child window
-    try {
-      await api.window.close(windowId);
-      DEBUG && console.log('[IZUI] Closed child window:', windowId);
-    } catch (err) {
-      DEBUG && console.log('[IZUI] Error closing child:', err);
-    }
-
-    // Focus ourselves
+    // Child closes itself via preload - just focus ourselves
     const myWindowId = await api.window.getWindowId();
     if (myWindowId) {
       await api.window.focus(myWindowId);
