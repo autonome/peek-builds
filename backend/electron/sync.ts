@@ -525,6 +525,9 @@ export async function pushToServer(
     `).all() as Item[];
   }
 
+  // Filter out peek:// URLs - they should never be synced to the server
+  items = items.filter(item => !item.content?.startsWith('peek://'));
+
   DEBUG && console.log(`[sync] Found ${items.length} items to push`);
 
   let pushed = 0;
