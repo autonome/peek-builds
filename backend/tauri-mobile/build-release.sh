@@ -42,6 +42,8 @@ cd "$TAURI_DIR"
 if [ "$FORCE_REBUILD" = false ] && [ "$NO_CACHE" = false ]; then
     if check_cache "release" "$TAURI_DIR"; then
         mkdir -p "$DEST_DIR"
+        # Remove any existing symlink (macOS case-insensitive: release vs Release conflict)
+        rm -f "$DEST_PATH"
         use_cache "release" "$DEST_PATH"
         echo "Done! Now rebuild in Xcode with Release scheme on your device."
         exit 0
@@ -59,6 +61,8 @@ cargo tauri build --target aarch64-apple-ios
 
 echo "Copying library to Xcode location..."
 mkdir -p "$DEST_DIR"
+# Remove any existing symlink (macOS case-insensitive: release vs Release conflict)
+rm -f "$DEST_PATH"
 cp target/aarch64-apple-ios/release/deps/libpeek_save_lib.a "$DEST_PATH"
 
 # Update cache

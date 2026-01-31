@@ -72,6 +72,12 @@
     "mobile:ios:sim:open": "open -a Simulator",
     "mobile:ios:sim:launch": "xcrun simctl launch booted com.dietrich.peek-mobile",
     "mobile:ios:sim:run": "yarn mobile:ios:sim:boot && yarn mobile:ios:sim:open && yarn mobile:ios:xcodebuild:release:full && yarn mobile:ios:sim:launch",
+    "mobile:ios:sim:db:path": "find ~/Library/Developer/CoreSimulator/Devices -name 'com.dietrich.peek-mobile' -path '*/AppGroup/*' 2>/dev/null | head -1 | xargs dirname | xargs ls -la",
+    "mobile:ios:sim:db:info": "DB=$(find ~/Library/Developer/CoreSimulator/Devices -name 'peek*.db' -path '*/AppGroup/*' 2>/dev/null | head -1) && echo \"Database: $DB\" && sqlite3 \"$DB\" 'SELECT * FROM settings; SELECT COUNT(*) as items FROM items WHERE deleted_at IS NULL; SELECT COUNT(*) as tags FROM tags; SELECT COUNT(*) as item_tags FROM item_tags;'",
+    "mobile:ios:sim:db:schema": "DB=$(find ~/Library/Developer/CoreSimulator/Devices -name 'peek*.db' -path '*/AppGroup/*' 2>/dev/null | head -1) && sqlite3 \"$DB\" '.schema tags' '.schema item_tags'",
+    "mobile:ios:sim:db:items": "DB=$(find ~/Library/Developer/CoreSimulator/Devices -name 'peek*.db' -path '*/AppGroup/*' 2>/dev/null | head -1) && sqlite3 \"$DB\" 'SELECT id, type, substr(url,1,50) as url, deleted_at FROM items LIMIT 20;'",
+    "mobile:ios:sim:db:tags": "DB=$(find ~/Library/Developer/CoreSimulator/Devices -name 'peek*.db' -path '*/AppGroup/*' 2>/dev/null | head -1) && sqlite3 \"$DB\" 'SELECT * FROM tags LIMIT 20;'",
+    "mobile:ios:sim:db:backup": "DST=/tmp/peek-sim-backup-$(date +%Y%m%d-%H%M%S) && mkdir -p $DST && APP_GROUP=$(find ~/Library/Developer/CoreSimulator/Devices -path '*/Booted/*/AppGroup/*' -name 'com.dietrich.peek-mobile' 2>/dev/null | head -1 | xargs dirname) && cp -r \"$APP_GROUP\"/* $DST/ && echo \"Backed up to: $DST\" && ls -la $DST/",
     "mobile:ios:test": "cd backend/tauri-mobile && ./dev-setup.sh",
     "mobile:android:init": "cd backend/tauri-mobile/src-tauri && cargo tauri android init",
     "mobile:android:dev": "cd backend/tauri-mobile/src-tauri && cargo tauri android dev",
@@ -165,7 +171,7 @@
     "lint": "echo \"No linting configured\""
   },
   "dependencies": {
-    "@cliqz/adblocker-electron": "^1.27.6",
+    "@cliqz/adblocker-electron": "^1.34.0",
     "@codemirror/commands": "^6.10.1",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language": "^6.12.1",
@@ -176,7 +182,7 @@
     "@replit/codemirror-vim": "^6.3.0",
     "archiver": "^7.0.0",
     "better-sqlite3": "^12.5.0",
-    "cross-fetch": "^4.0.0",
+    "cross-fetch": "^4.1.0",
     "electron-unhandled": "^5.0.0",
     "lit": "^3.3.2"
   },

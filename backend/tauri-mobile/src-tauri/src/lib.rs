@@ -884,6 +884,25 @@ fn append_profile_to_url(url: &str) -> Result<String, String> {
     Ok(format!("{}{}profile={}", url, separator, profile_id))
 }
 
+/// Check if a string looks like a valid UUID (basic validation)
+fn is_valid_uuid(s: &str) -> bool {
+    // UUID format: 8-4-4-4-12 hex digits with hyphens
+    if s.len() != 36 {
+        return false;
+    }
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let expected_lens = [8, 4, 4, 4, 12];
+    for (part, expected_len) in parts.iter().zip(expected_lens.iter()) {
+        if part.len() != *expected_len || !part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    true
+}
+
 fn get_db_path() -> Option<PathBuf> {
     let container_path = get_container_path()?;
 
@@ -891,12 +910,63 @@ fn get_db_path() -> Option<PathBuf> {
     // This allows user to switch profiles and see different data
     let config = load_profile_config();
     let profile_id = &config.current_profile_id;
+
+    // Validate profile ID is a proper UUID to prevent accidental data migration
+    // Invalid IDs like "default" would create peek-default.db and move data there
+    if !is_valid_uuid(profile_id) {
+        ios_log(&format!(
+            "WARNING: Invalid profile ID '{}' is not a UUID. Using first profile or creating default.",
+            profile_id
+        ));
+
+        // Try to use the first profile in the list, or create a new default
+        let valid_profile_id = if let Some(first_profile) = config.profiles.first() {
+            ios_log(&format!("Falling back to first profile: {}", first_profile.id));
+            first_profile.id.clone()
+        } else {
+            // No profiles exist, create a new UUID
+            let new_id = uuid::Uuid::new_v4().to_string();
+            ios_log(&format!("No profiles found, creating new profile ID: {}", new_id));
+            new_id
+        };
+
+        let db_name = format!("peek-{}.db", valid_profile_id);
+        let db_path = container_path.join(&db_name);
+
+        // Check if we need to migrate from old peek.db (only for valid UUIDs)
+        let old_db_path = container_path.join("peek.db");
+        if old_db_path.exists() && !db_path.exists() {
+            println!("[Rust] Migrating {} to {}", old_db_path.display(), db_path.display());
+            if let Err(e) = fs::rename(&old_db_path, &db_path) {
+                println!("[Rust] Migration failed: {}. Will use new empty database.", e);
+            } else {
+                println!("[Rust] Migration successful");
+            }
+        }
+
+        println!("[Rust] Using database: {} (corrected profile id: {})", db_name, valid_profile_id);
+        return Some(db_path);
+    }
+
+    // Also validate that the profile ID exists in the profiles array
+    let profile_exists = config.profiles.iter().any(|p| p.id == *profile_id);
+    if !profile_exists && !config.profiles.is_empty() {
+        ios_log(&format!(
+            "WARNING: Profile ID '{}' not found in profiles list. Using first profile.",
+            profile_id
+        ));
+        let first_profile = &config.profiles[0];
+        let db_name = format!("peek-{}.db", first_profile.id);
+        println!("[Rust] Using database: {} (fallback to first profile)", db_name);
+        return Some(container_path.join(&db_name));
+    }
+
     let db_name = format!("peek-{}.db", profile_id);
     let new_db_path = container_path.join(&db_name);
 
     // Migration: rename old peek.db to the first profile's database
     // This runs once when upgrading from old single-database version
-    // TODO: Remove this transitional code after all users have migrated
+    // Only run if the profile ID is a valid UUID (prevents accidental data moves)
     let old_db_path = container_path.join("peek.db");
     if old_db_path.exists() && !new_db_path.exists() {
         println!("[Rust] Migrating {} to {}", old_db_path.display(), new_db_path.display());
@@ -4566,6 +4636,7 @@ pub fn run() {
 mod tests {
     use rusqlite::{params, Connection};
     use chrono::Utc;
+    use super::{is_valid_uuid, generate_tag_id, ProfileConfig, ProfileEntry, SyncSettings};
 
     /// Create the database schema for testing (unified model with sync columns)
     fn create_test_schema(conn: &Connection) {
@@ -4907,5 +4978,242 @@ mod tests {
         assert_eq!(url_count, 2, "Should have 2 url items");
         assert_eq!(text_count, 1, "Should have 1 text item");
         assert_eq!(tagset_count, 1, "Should have 1 tagset item");
+    }
+
+    // ========================================================================
+    // Profile Management Tests
+    // ========================================================================
+
+    #[test]
+    fn test_is_valid_uuid_accepts_valid_uuids() {
+        // Standard UUID v4 format
+        assert!(is_valid_uuid("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(is_valid_uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8"));
+        assert!(is_valid_uuid("f47ac10b-58cc-4372-a567-0e02b2c3d479"));
+
+        // All lowercase hex
+        assert!(is_valid_uuid("abcdef01-2345-6789-abcd-ef0123456789"));
+
+        // All uppercase hex (should also be valid)
+        assert!(is_valid_uuid("ABCDEF01-2345-6789-ABCD-EF0123456789"));
+
+        // Mixed case
+        assert!(is_valid_uuid("AbCdEf01-2345-6789-aBcD-eF0123456789"));
+    }
+
+    #[test]
+    fn test_is_valid_uuid_rejects_invalid_strings() {
+        // Literal string "default" - the main case we're protecting against
+        assert!(!is_valid_uuid("default"));
+
+        // Empty string
+        assert!(!is_valid_uuid(""));
+
+        // Too short
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716"));
+
+        // Too long
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716-446655440000-extra"));
+
+        // Wrong segment lengths (should be 8-4-4-4-12)
+        assert!(!is_valid_uuid("550e840-e29b-41d4-a716-446655440000"));  // first segment too short
+        assert!(!is_valid_uuid("550e8400-e29-41d4-a716-446655440000")); // second segment too short
+        assert!(!is_valid_uuid("550e8400-e29b-41d-a716-446655440000")); // third segment too short
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a71-446655440000")); // fourth segment too short
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716-44665544000"));  // fifth segment too short
+
+        // Wrong number of segments
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-446655440000"));     // only 4 segments
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716-4466-440000")); // 6 segments
+
+        // Non-hex characters
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716-44665544000g")); // 'g' is not hex
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716-44665544000!")); // special char
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716-4466554 0000")); // space
+
+        // No hyphens
+        assert!(!is_valid_uuid("550e8400e29b41d4a716446655440000"));
+
+        // Wrong delimiters
+        assert!(!is_valid_uuid("550e8400_e29b_41d4_a716_446655440000"));
+        assert!(!is_valid_uuid("550e8400:e29b:41d4:a716:446655440000"));
+
+        // Profile slug names (what we're protecting against)
+        assert!(!is_valid_uuid("personal"));
+        assert!(!is_valid_uuid("work"));
+        assert!(!is_valid_uuid("test-profile"));
+    }
+
+    #[test]
+    fn test_profile_config_serialization() {
+        let config = ProfileConfig {
+            current_profile_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            profiles: vec![
+                ProfileEntry {
+                    id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+                    name: "Personal".to_string(),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                    last_used_at: "2024-01-01T00:00:00Z".to_string(),
+                    server_profile_id: None,
+                },
+            ],
+            sync: SyncSettings::default(),
+            archive_tag: "archive".to_string(),
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&config).expect("Failed to serialize config");
+
+        // Verify key fields are present
+        assert!(json.contains("currentProfileId"), "JSON should use camelCase for currentProfileId");
+        assert!(json.contains("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(json.contains("Personal"));
+
+        // Deserialize back
+        let parsed: ProfileConfig = serde_json::from_str(&json).expect("Failed to deserialize config");
+        assert_eq!(parsed.current_profile_id, config.current_profile_id);
+        assert_eq!(parsed.profiles.len(), 1);
+        assert_eq!(parsed.profiles[0].name, "Personal");
+    }
+
+    #[test]
+    fn test_profile_config_with_empty_profiles() {
+        let json = r#"{
+            "currentProfileId": "some-invalid-id",
+            "profiles": [],
+            "sync": {}
+        }"#;
+
+        let config: ProfileConfig = serde_json::from_str(json).expect("Failed to parse config");
+
+        // Should parse, but currentProfileId is invalid and profiles is empty
+        assert_eq!(config.current_profile_id, "some-invalid-id");
+        assert!(config.profiles.is_empty());
+
+        // Validation should fail for this profile ID
+        assert!(!is_valid_uuid(&config.current_profile_id));
+    }
+
+    #[test]
+    fn test_profile_config_missing_current_profile_in_list() {
+        // Config where currentProfileId doesn't match any profile in the list
+        let json = r#"{
+            "currentProfileId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "profiles": [
+                {
+                    "id": "11111111-2222-3333-4444-555555555555",
+                    "name": "Profile A",
+                    "createdAt": "2024-01-01T00:00:00Z",
+                    "lastUsedAt": "2024-01-01T00:00:00Z"
+                }
+            ],
+            "sync": {}
+        }"#;
+
+        let config: ProfileConfig = serde_json::from_str(json).expect("Failed to parse config");
+
+        // currentProfileId is a valid UUID but doesn't exist in profiles
+        assert!(is_valid_uuid(&config.current_profile_id));
+        assert!(!config.profiles.iter().any(|p| p.id == config.current_profile_id));
+
+        // In get_db_path(), this should fall back to the first profile
+        assert_eq!(config.profiles[0].id, "11111111-2222-3333-4444-555555555555");
+    }
+
+    #[test]
+    fn test_generate_tag_id_format() {
+        // Generate several IDs and verify format
+        for _ in 0..10 {
+            let tag_id = generate_tag_id();
+
+            // Should start with "tag_"
+            assert!(tag_id.starts_with("tag_"), "Tag ID should start with 'tag_': {}", tag_id);
+
+            // Should have format: tag_{timestamp}_{random9}
+            let parts: Vec<&str> = tag_id.split('_').collect();
+            assert_eq!(parts.len(), 3, "Tag ID should have 3 parts: {}", tag_id);
+            assert_eq!(parts[0], "tag");
+
+            // Timestamp part should be numeric
+            assert!(parts[1].chars().all(|c: char| c.is_ascii_digit()),
+                "Timestamp should be numeric: {}", parts[1]);
+
+            // Random part should be 9 chars
+            assert_eq!(parts[2].len(), 9, "Random part should be 9 chars: {}", parts[2]);
+        }
+    }
+
+    #[test]
+    fn test_generate_tag_id_uniqueness() {
+        use std::collections::HashSet;
+
+        // Generate 100 IDs and verify they're all unique
+        let mut ids: HashSet<String> = HashSet::new();
+        for _ in 0..100 {
+            let id = generate_tag_id();
+            assert!(ids.insert(id.clone()), "Duplicate tag ID generated: {}", id);
+        }
+
+        assert_eq!(ids.len(), 100, "Should have 100 unique IDs");
+    }
+
+    #[test]
+    fn test_sync_settings_default() {
+        let settings = SyncSettings::default();
+
+        assert!(settings.server_url.is_empty());
+        assert!(settings.api_key.is_empty());
+        assert!(!settings.auto_sync);
+    }
+
+    #[test]
+    fn test_profile_entry_optional_fields() {
+        // Profile with only required fields
+        let json = r#"{
+            "id": "11111111-2222-3333-4444-555555555555",
+            "name": "Minimal Profile",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "lastUsedAt": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let profile: ProfileEntry = serde_json::from_str(json).expect("Failed to parse profile");
+
+        assert_eq!(profile.id, "11111111-2222-3333-4444-555555555555");
+        assert_eq!(profile.name, "Minimal Profile");
+        assert!(profile.server_profile_id.is_none());
+    }
+
+    #[test]
+    fn test_profile_entry_with_server_profile() {
+        // Profile with server profile ID configured
+        let json = r#"{
+            "id": "11111111-2222-3333-4444-555555555555",
+            "name": "Synced Profile",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "lastUsedAt": "2024-01-01T00:00:00Z",
+            "server_profile_id": "remote-profile-uuid"
+        }"#;
+
+        let profile: ProfileEntry = serde_json::from_str(json).expect("Failed to parse profile");
+
+        assert_eq!(profile.id, "11111111-2222-3333-4444-555555555555");
+        assert_eq!(profile.name, "Synced Profile");
+        assert_eq!(profile.server_profile_id, Some("remote-profile-uuid".to_string()));
+    }
+
+    #[test]
+    fn test_sync_settings_with_values() {
+        // Full sync settings
+        let json = r#"{
+            "server_url": "https://sync.example.com",
+            "api_key": "secret-key-123",
+            "auto_sync": true
+        }"#;
+
+        let settings: SyncSettings = serde_json::from_str(json).expect("Failed to parse settings");
+
+        assert_eq!(settings.server_url, "https://sync.example.com");
+        assert_eq!(settings.api_key, "secret-key-123");
+        assert!(settings.auto_sync);
     }
 }

@@ -115,6 +115,22 @@ class DatabaseManager {
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.dietrich.peek-mobile")
     }
 
+    /// Check if a string is a valid UUID format
+    private func isValidUUID(_ string: String) -> Bool {
+        // UUID format: 8-4-4-4-12 hex digits with hyphens (36 chars total)
+        guard string.count == 36 else { return false }
+        let parts = string.split(separator: "-")
+        guard parts.count == 5 else { return false }
+        let expectedLengths = [8, 4, 4, 4, 12]
+        for (part, expectedLen) in zip(parts, expectedLengths) {
+            guard part.count == expectedLen,
+                  part.allSatisfy({ $0.isHexDigit }) else {
+                return false
+            }
+        }
+        return true
+    }
+
     /// Load profile configuration from profiles.json
     /// Returns the current profile ID and sync settings (if configured)
     private func loadProfileConfig() -> (profileId: String, syncSettings: (serverUrl: String, apiKey: String)?) {
@@ -145,6 +161,38 @@ class DatabaseManager {
 
         print("[DB] Found profile ID: \(profileId)")
 
+        // Validate that profileId is a proper UUID to prevent data corruption
+        // Invalid IDs like "default" string would create wrong database paths
+        var validatedProfileId = profileId
+        if !isValidUUID(profileId) {
+            print("[DB] WARNING: Profile ID '\(profileId)' is not a valid UUID")
+
+            // Try to get the first valid profile from the profiles array
+            if let profiles = json["profiles"] as? [[String: Any]],
+               let firstProfile = profiles.first,
+               let firstId = firstProfile["id"] as? String,
+               isValidUUID(firstId) {
+                print("[DB] Falling back to first profile: \(firstId)")
+                validatedProfileId = firstId
+            } else {
+                print("[DB] No valid profiles found, using 'default' to fall back to peek.db")
+                validatedProfileId = "default"
+            }
+        } else {
+            // Also check that the UUID exists in the profiles array
+            if let profiles = json["profiles"] as? [[String: Any]] {
+                let profileExists = profiles.contains { ($0["id"] as? String) == profileId }
+                if !profileExists && !profiles.isEmpty {
+                    print("[DB] WARNING: Profile ID '\(profileId)' not found in profiles list")
+                    if let firstProfile = profiles.first,
+                       let firstId = firstProfile["id"] as? String {
+                        print("[DB] Falling back to first profile: \(firstId)")
+                        validatedProfileId = firstId
+                    }
+                }
+            }
+        }
+
         // Extract sync settings from profiles.json
         var syncSettings: (serverUrl: String, apiKey: String)? = nil
         if let sync = json["sync"] as? [String: Any],
@@ -155,7 +203,7 @@ class DatabaseManager {
             print("[DB] Found sync settings - serverUrl: \(serverUrl), apiKey: \(apiKey.isEmpty ? "(empty)" : "(set)")")
         }
 
-        return (profileId, syncSettings)
+        return (validatedProfileId, syncSettings)
     }
 
     private func setupDatabase() {
