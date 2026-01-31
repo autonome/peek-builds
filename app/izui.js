@@ -4,12 +4,20 @@
  * Simple parent-child window tracking for focus restoration.
  * When a child window closes, focus returns to its parent.
  *
+ * Navigation stack: Parent windows track children they've opened.
+ * When a child presses ESC, parent closes it and pops the stack.
+ * This works even for web pages that don't have IZUI code.
+ *
  * See notes/izui-model.md for the full design and future plans.
  */
 
 import api from './api.js';
 
 const DEBUG = false;
+
+// Navigation stack - tracks child windows opened by this window
+// Each entry: { windowId, url }
+const navigationStack = [];
 
 /**
  * Notify parent window to take focus.
@@ -54,12 +62,54 @@ export function setupFocusListener() {
 }
 
 /**
+ * Set up listener for child window escape events.
+ * When a child we opened presses ESC, we close it and focus ourselves.
+ * This enables navigation stack behavior even for web pages without IZUI.
+ */
+export function setupChildEscapeListener() {
+  api.subscribe('izui:child-escape', async (msg) => {
+    const { windowId } = msg || {};
+
+    DEBUG && console.log('[IZUI] Received child-escape from window:', windowId, 'stack:', navigationStack.map(e => e.windowId));
+
+    // Check if this child is in our navigation stack
+    const stackIndex = navigationStack.findIndex(entry => entry.windowId === windowId);
+    if (stackIndex === -1) {
+      DEBUG && console.log('[IZUI] Child not in our stack, ignoring');
+      return;
+    }
+
+    // Remove this child and all children opened after it (if any)
+    const removed = navigationStack.splice(stackIndex);
+    DEBUG && console.log('[IZUI] Popped from stack:', removed.length, 'remaining:', navigationStack.length);
+
+    // Close the child window
+    try {
+      await api.window.close(windowId);
+      DEBUG && console.log('[IZUI] Closed child window:', windowId);
+    } catch (err) {
+      DEBUG && console.log('[IZUI] Error closing child:', err);
+    }
+
+    // Focus ourselves
+    const myWindowId = await api.window.getWindowId();
+    if (myWindowId) {
+      await api.window.focus(myWindowId);
+      DEBUG && console.log('[IZUI] Focused self:', myWindowId);
+    }
+  }, api.scopes.GLOBAL);
+
+  DEBUG && console.log('[IZUI] Child escape listener set up');
+}
+
+/**
  * Open a child window with IZUI tracking.
  * The child will notify this window to focus when it closes.
+ * Child is added to navigation stack - ESC in child will close it and return here.
  *
  * @param {string} address - URL to open
  * @param {Object} params - Window parameters
- * @returns {Promise<Object>} Window controller
+ * @returns {Promise<Object>} Window controller with { id, ... }
  */
 export async function openChildWindow(address, params = {}) {
   const myAddress = window.location.toString();
@@ -75,6 +125,16 @@ export async function openChildWindow(address, params = {}) {
   DEBUG && console.log('[IZUI] Opening child window:', address, 'parent:', myAddress);
 
   const result = await api.window.open(address, childParams);
+
+  // Track child in navigation stack
+  if (result && result.id) {
+    navigationStack.push({
+      windowId: result.id,
+      url: address
+    });
+    DEBUG && console.log('[IZUI] Added to nav stack:', result.id, 'stack size:', navigationStack.length);
+  }
+
   return result;
 }
 
@@ -141,6 +201,7 @@ export function init(options = {}) {
 
   if (canHaveChildren) {
     setupFocusListener();
+    setupChildEscapeListener();
   }
 
   // Always set up escape handler so parent is notified before close
@@ -155,6 +216,7 @@ export function init(options = {}) {
 export default {
   init,
   setupFocusListener,
+  setupChildEscapeListener,
   setupEscapeHandler,
   openChildWindow,
   notifyParentFocus

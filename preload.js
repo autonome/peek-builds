@@ -1502,19 +1502,51 @@ api.settings = {
 // For windows with escapeMode: 'navigate' or 'auto'
 // Callback should return { handled: true } if escape was handled internally
 // or { handled: false } to let the window close
+let _escapeCallback = null;
+
 api.escape = {
+  /**
+   * Register an escape handler for this window
+   * @param {function} callback - Returns { handled: true } if escape was handled
+   */
   onEscape: (callback) => {
-    ipcRenderer.on('escape-pressed', async (event, data) => {
-      try {
-        const result = await callback();
-        ipcRenderer.send(data.responseChannel, result || { handled: false });
-      } catch (err) {
-        console.error('Error in escape handler:', err);
-        ipcRenderer.send(data.responseChannel, { handled: false });
-      }
-    });
+    _escapeCallback = callback;
   }
 };
+
+// Default escape handler - runs for ALL windows
+// If app registers a handler via onEscape(), that runs first
+// Otherwise, publishes izui:child-escape so parent can handle navigation
+ipcRenderer.on('escape-pressed', async (event, data) => {
+  try {
+    // If app registered a handler, use it
+    if (_escapeCallback) {
+      const result = await _escapeCallback();
+      ipcRenderer.send(data.responseChannel, result || { handled: false });
+      return;
+    }
+
+    // No app handler - publish escape event for parent windows to catch
+    // This allows parent windows to handle ESC for children (like web pages)
+    // that don't have their own IZUI/escape handling
+    const windowId = await ipcRenderer.invoke('get-window-id');
+    ipcRenderer.send('publish', {
+      source: sourceAddress,
+      scope: 3, // GLOBAL
+      topic: 'izui:child-escape',
+      data: {
+        windowId,
+        url: sourceAddress
+      }
+    });
+
+    // Tell backend we handled it (parent will close us if needed)
+    ipcRenderer.send(data.responseChannel, { handled: true });
+  } catch (err) {
+    console.error('Error in escape handler:', err);
+    ipcRenderer.send(data.responseChannel, { handled: false });
+  }
+});
 
 // ==================== Modes API ====================
 // Context-aware command system with major/minor modes
