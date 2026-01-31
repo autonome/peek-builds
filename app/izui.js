@@ -14,17 +14,17 @@ const DEBUG = false;
 /**
  * Notify parent window to take focus.
  * Called when this window is about to close/hide.
+ * Publishes globally so any listening parent will receive.
  *
- * @param {string} parentAddress - The parent window's address (source)
+ * @param {string} [parentAddress] - The parent window's address (optional, for logging)
  */
 export function notifyParentFocus(parentAddress) {
-  if (!parentAddress) return;
+  DEBUG && console.log('[IZUI] Notifying parent to focus:', parentAddress || '(global)');
 
-  DEBUG && console.log('[IZUI] Notifying parent to focus:', parentAddress);
-
-  // Publish to the parent's address so it receives the message
+  // Publish globally so listening parent windows will receive
   api.publish('izui:focus-request', {
-    from: window.location.toString()
+    from: window.location.toString(),
+    parentAddress: parentAddress || null
   }, api.scopes.GLOBAL);
 }
 
@@ -37,12 +37,16 @@ export function notifyParentFocus(parentAddress) {
 export function setupFocusListener() {
   const myAddress = window.location.toString();
 
-  api.subscribe('izui:focus-request', (msg) => {
+  api.subscribe('izui:focus-request', async (msg) => {
     DEBUG && console.log('[IZUI] Received focus request from:', msg?.from);
 
     // Focus this window
     if (api.window && api.window.focus) {
-      api.window.focus({});
+      // Get our own window ID and focus it
+      const windowId = await api.window.getWindowId();
+      if (windowId) {
+        api.window.focus(windowId);
+      }
     }
   }, api.scopes.GLOBAL);
 
@@ -61,9 +65,11 @@ export async function openChildWindow(address, params = {}) {
   const myAddress = window.location.toString();
 
   // Track this window as the parent
+  // Set escapeMode: 'navigate' so backend asks renderer before closing
   const childParams = {
     ...params,
-    izuiParent: myAddress
+    izuiParent: myAddress,
+    escapeMode: params.escapeMode || 'navigate'
   };
 
   DEBUG && console.log('[IZUI] Opening child window:', address, 'parent:', myAddress);
@@ -116,17 +122,20 @@ export function setupEscapeHandler(internalHandler) {
  * Sets up focus listening and escape handling.
  *
  * @param {Object} options
- * @param {Function} [options.onEscape] - Internal escape handler
+ * @param {Function} [options.onEscape] - Internal escape handler (returns { handled: true } to prevent close)
  * @param {boolean} [options.canHaveChildren=true] - Whether this window may open children
+ * @param {boolean} [options.setupEscape=true] - Whether to set up escape handling (notifies parent on close)
  */
 export function init(options = {}) {
-  const { onEscape, canHaveChildren = true } = options;
+  const { onEscape, canHaveChildren = true, setupEscape = true } = options;
 
   if (canHaveChildren) {
     setupFocusListener();
   }
 
-  if (onEscape) {
+  // Always set up escape handler so parent is notified before close
+  // Pass onEscape if provided for internal navigation handling
+  if (setupEscape) {
     setupEscapeHandler(onEscape);
   }
 

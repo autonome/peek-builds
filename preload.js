@@ -344,6 +344,13 @@ api.window = {
       ignore,
       forward
     });
+  },
+  /**
+   * Get the current window's ID
+   * @returns {Promise<number|null>} Window ID or null if not available
+   */
+  getWindowId: () => {
+    return ipcRenderer.invoke('get-window-id');
   }
 };
 
