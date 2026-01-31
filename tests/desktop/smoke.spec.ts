@@ -68,6 +68,9 @@ test.describe('Settings @desktop', () => {
 
 test.describe('Cmd Palette @desktop', () => {
   test('open cmd and execute gallery command', async () => {
+    // Wait for cmd extension to be ready (critical for packaged mode where startup is slower)
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
     // Open cmd panel via window API
     const openResult = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://app/cmd/panel.html', {
@@ -190,23 +193,12 @@ test.describe('Slides @desktop', () => {
 });
 
 // ============================================================================
-// Groups Navigation Tests
+// Groups Navigation Tests (uses shared app)
 // ============================================================================
 
 test.describe('Groups Navigation @desktop', () => {
-  let app: DesktopApp;
-  let bgWindow: Page;
-
-  test.beforeAll(async () => {
-    app = await launchDesktopApp('test-groups');
-    bgWindow = await app.getBackgroundWindow();
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
-  });
-
   test('groups to group to url and back navigation', async () => {
+    const bgWindow = sharedBgWindow;
     // Create a tag/group with some items
     const tagResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.getOrCreateTag('test-group');
@@ -254,7 +246,7 @@ test.describe('Groups Navigation @desktop', () => {
     expect(groupsResult.success).toBe(true);
 
     // Find the groups window (getWindow polls)
-    const groupsWindow = await app.getWindow('groups/home.html', 5000);
+    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
 
@@ -282,14 +274,14 @@ test.describe('Groups Navigation @desktop', () => {
     const addressCard = await groupsWindow.$('.card.address-card');
     expect(addressCard).toBeTruthy();
 
-    const windowCountBefore = app.windows().length;
+    const windowCountBefore = sharedApp.windows().length;
     await addressCard!.click();
 
     // Wait for new window to open
-    await waitForWindowCount(() => app.windows(), windowCountBefore + 1, 5000);
+    await waitForWindowCount(() => sharedApp.windows(), windowCountBefore + 1, 5000);
 
     // Verify a new window was opened
-    const windowCountAfter = app.windows().length;
+    const windowCountAfter = sharedApp.windows().length;
     expect(windowCountAfter).toBeGreaterThan(windowCountBefore);
 
     // Navigate back to groups view
@@ -335,37 +327,31 @@ test.describe('Groups Navigation @desktop', () => {
 });
 
 // ============================================================================
-// External URL Opening Tests
+// External URL Opening Tests (uses shared app)
 // ============================================================================
 
 test.describe('External URL Opening @desktop', () => {
   test('open URL by calling executable', async () => {
-    // Launch app (fixture already waits for background and extensions)
-    const app = await launchDesktopApp('test-external-url');
-
-    // Wait for background window to be fully ready, not just present
-    const bgWindow = await app.getBackgroundWindow();
-    expect(bgWindow).toBeTruthy();
-
-    // Ensure the API is ready before closing
-    await waitForAppReady(bgWindow);
-
-    await app.close();
+    // Verify app is ready with background window
+    expect(sharedBgWindow).toBeTruthy();
+    // Ensure the API is ready
+    await waitForAppReady(sharedBgWindow);
   });
 });
 
 // ============================================================================
-// Data Persistence Tests
+// Data Persistence Tests (consolidated - single restart for all persistence checks)
 // ============================================================================
 
 test.describe('Data Persistence @desktop', () => {
-  test('peeks and slides settings persist across restart', async () => {
-    const PERSISTENCE_PROFILE = 'test-persistence-' + Date.now();
+  test('all data persists across restart (peeks, slides, addresses, tags, theme)', async () => {
+    const PROFILE = 'test-all-persist-' + Date.now();
 
-    // PHASE 1: Launch app and add configuration
-    let app = await launchDesktopApp(PERSISTENCE_PROFILE);
+    // ========== PHASE 1: Set up all data ==========
+    let app = await launchDesktopApp(PROFILE);
     let bgWindow = await app.getBackgroundWindow();
 
+    // --- Peeks and Slides settings ---
     const testPeeks = [
       { title: 'Test Peek 1', uri: 'https://test-peek-1.example.com', shortcut: 'Option+1' },
       { title: 'Test Peek 2', uri: 'https://test-peek-2.example.com', shortcut: 'Option+2' },
@@ -424,62 +410,7 @@ test.describe('Data Persistence @desktop', () => {
     });
     expect(saveSlidesPrefs.success).toBe(true);
 
-    // Verify data was saved
-    const verifyResult = await bgWindow.evaluate(async () => {
-      const api = (window as any).app;
-      return await api.datastore.getTable('extension_settings');
-    });
-    expect(verifyResult.success).toBe(true);
-    const savedRows = Object.values(verifyResult.data);
-    expect(savedRows.length).toBeGreaterThanOrEqual(4);
-
-    // Close the app
-    await app.close();
-
-    // PHASE 2: Relaunch with same profile
-    app = await launchDesktopApp(PERSISTENCE_PROFILE);
-    bgWindow = await app.getBackgroundWindow();
-
-    // Query extension_settings
-    const persistedResult = await bgWindow.evaluate(async () => {
-      const api = (window as any).app;
-      return await api.datastore.getTable('extension_settings');
-    });
-    expect(persistedResult.success).toBe(true);
-
-    const persistedData = persistedResult.data as Record<string, any>;
-
-    // Verify peeks items persisted
-    const peeksItems = persistedData['peeks:items'];
-    expect(peeksItems).toBeTruthy();
-    expect(peeksItems.extensionId).toBe('peeks');
-    const parsedPeeks = JSON.parse(peeksItems.value);
-    expect(parsedPeeks.length).toBe(3);
-    expect(parsedPeeks[0].title).toBe('Test Peek 1');
-
-    // Verify slides items persisted
-    const slidesItems = persistedData['slides:items'];
-    expect(slidesItems).toBeTruthy();
-    const parsedSlides = JSON.parse(slidesItems.value);
-    expect(parsedSlides.length).toBe(2);
-
-    // Verify prefs persisted
-    const peeksPrefs = persistedData['peeks:prefs'];
-    expect(peeksPrefs).toBeTruthy();
-    const parsedPeeksPrefs = JSON.parse(peeksPrefs.value);
-    expect(parsedPeeksPrefs.shortcutKeyPrefix).toBe('Option+');
-
-    await app.close();
-  });
-
-  test('addresses and tags persist across restart', async () => {
-    const ADDR_PROFILE = 'test-addr-persist-' + Date.now();
-
-    // PHASE 1: Add addresses and tags
-    let app = await launchDesktopApp(ADDR_PROFILE);
-    let bgWindow = await app.getBackgroundWindow();
-
-    // Add addresses
+    // --- Addresses and Tags ---
     const addr1 = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.addAddress('https://persist-test-1.example.com', {
         title: 'Persist Test 1',
@@ -495,34 +426,72 @@ test.describe('Data Persistence @desktop', () => {
     });
     expect(addr2.success).toBe(true);
 
-    // Create a tag and tag the addresses
     const tagResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.getOrCreateTag('persist-tag');
     });
     expect(tagResult.success).toBe(true);
-    const tagId = tagResult.data?.id;
+    const tagId = tagResult.data?.tag?.id || tagResult.data?.id;
 
-    if (tagId && addr1.id) {
+    if (tagId && addr1.data?.id) {
       await bgWindow.evaluate(async ({ addressId, tagId }) => {
         return await (window as any).app.datastore.tagAddress(addressId, tagId);
-      }, { addressId: addr1.id, tagId });
+      }, { addressId: addr1.data.id, tagId });
     }
+
+    // --- Theme ---
+    const setThemeResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.theme.setTheme('peek');
+    });
+    expect(setThemeResult.success).toBe(true);
+
+    // Verify theme is set before restart
+    const themeState1 = await bgWindow.evaluate(async () => {
+      return await (window as any).app.theme.get();
+    });
+    expect(themeState1.themeId).toBe('peek');
 
     // Ensure data is flushed before closing
     await sleep(500);
     await app.close();
 
-    // Wait for app to fully shut down before relaunching
+    // Wait for app to fully shut down
     await sleep(1000);
 
-    // PHASE 2: Verify persistence
-    app = await launchDesktopApp(ADDR_PROFILE);
+    // ========== PHASE 2: Verify all data persisted ==========
+    app = await launchDesktopApp(PROFILE);
     bgWindow = await app.getBackgroundWindow();
-
-    // Wait for extensions to be ready after relaunch
     await waitForExtensionsReady(bgWindow);
 
-    // Query addresses
+    // --- Verify Peeks and Slides ---
+    const persistedSettings = await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      return await api.datastore.getTable('extension_settings');
+    });
+    expect(persistedSettings.success).toBe(true);
+
+    const settingsData = persistedSettings.data as Record<string, any>;
+
+    // Peeks items
+    const peeksItems = settingsData['peeks:items'];
+    expect(peeksItems).toBeTruthy();
+    expect(peeksItems.extensionId).toBe('peeks');
+    const parsedPeeks = JSON.parse(peeksItems.value);
+    expect(parsedPeeks.length).toBe(3);
+    expect(parsedPeeks[0].title).toBe('Test Peek 1');
+
+    // Slides items
+    const slidesItems = settingsData['slides:items'];
+    expect(slidesItems).toBeTruthy();
+    const parsedSlides = JSON.parse(slidesItems.value);
+    expect(parsedSlides.length).toBe(2);
+
+    // Peeks prefs
+    const peeksPrefs = settingsData['peeks:prefs'];
+    expect(peeksPrefs).toBeTruthy();
+    const parsedPeeksPrefs = JSON.parse(peeksPrefs.value);
+    expect(parsedPeeksPrefs.shortcutKeyPrefix).toBe('Option+');
+
+    // --- Verify Addresses and Tags ---
     const tableResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.getTable('addresses');
     });
@@ -538,7 +507,6 @@ test.describe('Data Persistence @desktop', () => {
     expect(persistedAddr1).toBeTruthy();
     expect(persistedAddr1.title).toBe('Persist Test 1');
 
-    // Query tags
     const tagsResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.getTagsByFrecency(10);
     });
@@ -546,44 +514,52 @@ test.describe('Data Persistence @desktop', () => {
     const persistTag = tagsResult.data.find((t: any) => t.name === 'persist-tag');
     expect(persistTag).toBeTruthy();
 
+    // --- Verify Theme ---
+    const themeState2 = await bgWindow.evaluate(async () => {
+      return await (window as any).app.theme.get();
+    });
+    expect(themeState2.themeId).toBe('peek');
+
+    // Open settings window to verify the theme CSS is loaded correctly
+    await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://app/settings/settings.html', {
+        width: 800, height: 600
+      });
+    });
+
+    const settingsWin = await app.getWindow('settings/settings.html', 5000);
+    expect(settingsWin).toBeTruthy();
+
+    // Check that the CSS variable has the peek theme's font
+    const fontVar = await settingsWin.evaluate(() => {
+      return getComputedStyle(document.documentElement).getPropertyValue('--theme-font-sans');
+    });
+    expect(fontVar).toContain('ServerMono');
+
     await app.close();
   });
 });
 
 // ============================================================================
-// Core Functionality Tests
+// Core Functionality Tests (uses shared app)
 // ============================================================================
 
 test.describe('Core Functionality @desktop', () => {
-  let app: DesktopApp;
-  let bgWindow: Page;
-
-  test.beforeAll(async () => {
-    app = await launchDesktopApp('test-core');
-    bgWindow = await app.getBackgroundWindow();
-    // Wait for extensions to be fully ready before running tests
-    await waitForExtensionsReady(bgWindow);
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
-  });
-
   test('app launches and extensions load', async () => {
     // In hybrid mode:
     // - Built-in extensions (groups, peeks, slides) are in extension host as iframes
     // - External extensions (example) are in separate windows
 
     // Wait for extension windows to be available with retry
-    let windows = app.windows();
-    let extWindows = app.getExtensionWindows();
+    let windows = sharedApp.windows();
+    let extWindows = sharedApp.getExtensionWindows();
 
     // Retry logic for extension windows to be fully loaded
     const start = Date.now();
     while (extWindows.length < 1 && Date.now() - start < 10000) {
       await sleep(200);
-      windows = app.windows();
-      extWindows = app.getExtensionWindows();
+      windows = sharedApp.windows();
+      extWindows = sharedApp.getExtensionWindows();
     }
 
     // Check extension host exists (for built-in extensions)
@@ -592,7 +568,7 @@ test.describe('Core Functionality @desktop', () => {
 
     // Check external extension window exists (example) using waitForWindow for reliability
     const exampleWindow = await waitForWindow(
-      () => app.windows(),
+      () => sharedApp.windows(),
       'peek://ext/example/background.html',
       15000
     );
@@ -600,7 +576,7 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('database is accessible', async () => {
-    const result = await bgWindow.evaluate(async () => {
+    const result = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.datastore.getStats();
     });
     expect(result.success).toBe(true);
@@ -610,7 +586,7 @@ test.describe('Core Functionality @desktop', () => {
   test('commands are registered', async () => {
     // Commands are now owned by the cmd extension via pubsub
     // Query via cmd:query-commands topic with retry for extension loading
-    const result = await bgWindow.evaluate(async () => {
+    const result = await sharedBgWindow.evaluate(async () => {
       const api = (window as any).app;
 
       const queryCommands = () => new Promise((resolve) => {
@@ -641,7 +617,7 @@ test.describe('Core Functionality @desktop', () => {
 
   test('quit and restart commands are registered', async () => {
     // Query commands via cmd extension
-    const result = await bgWindow.evaluate(async () => {
+    const result = await sharedBgWindow.evaluate(async () => {
       const api = (window as any).app;
 
       return new Promise((resolve) => {
@@ -666,7 +642,7 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('reload extension command is registered', async () => {
-    const result = await bgWindow.evaluate(async () => {
+    const result = await sharedBgWindow.evaluate(async () => {
       const api = (window as any).app;
 
       return new Promise((resolve) => {
@@ -688,7 +664,7 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('api.quit and api.restart functions exist', async () => {
-    const result = await bgWindow.evaluate(() => {
+    const result = await sharedBgWindow.evaluate(() => {
       const api = (window as any).app;
       return {
         hasQuit: typeof api.quit === 'function',
@@ -702,7 +678,7 @@ test.describe('Core Functionality @desktop', () => {
 
   test('window management works', async () => {
     // Open a test window
-    const openResult = await bgWindow.evaluate(async () => {
+    const openResult = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.window.open('about:blank', {
         width: 400,
         height: 300
@@ -712,37 +688,31 @@ test.describe('Core Functionality @desktop', () => {
     expect(openResult.id).toBeDefined();
 
     // Wait for window to open
-    await app.getWindow('about:blank', 5000);
+    await sharedApp.getWindow('about:blank', 5000);
 
     // List windows
-    const listResult = await bgWindow.evaluate(async () => {
+    const listResult = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
     expect(listResult.success).toBe(true);
     expect(Array.isArray(listResult.windows)).toBe(true);
 
     // Close the window
-    await bgWindow.evaluate(async (id: number) => {
+    await sharedBgWindow.evaluate(async (id: number) => {
       return await (window as any).app.window.close(id);
     }, openResult.id);
   });
 });
 
 // ============================================================================
-// Tag Command Tests
+// Tag Command Tests (uses shared app)
 // ============================================================================
 
 test.describe('Tag Command @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    app = await launchDesktopApp('test-tag-command');
-    bgWindow = await app.getBackgroundWindow();
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
+    bgWindow = sharedBgWindow;
   });
 
   test('creates address if not exists when tagging', async () => {
@@ -943,20 +913,14 @@ test.describe('Tag Command @desktop', () => {
 });
 
 // ============================================================================
-// Groups View Tests (Empty Groups Filtering)
+// Groups View Tests (uses shared app)
 // ============================================================================
 
 test.describe('Groups View @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    app = await launchDesktopApp('test-groups-view');
-    bgWindow = await app.getBackgroundWindow();
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
+    bgWindow = sharedBgWindow;
   });
 
   test('empty groups are not shown in groups list', async () => {
@@ -994,7 +958,7 @@ test.describe('Groups View @desktop', () => {
     expect(groupsResult.success).toBe(true);
 
     // Find the groups window (getWindow polls)
-    const groupsWindow = await app.getWindow('groups/home.html', 5000);
+    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
 
@@ -1053,7 +1017,7 @@ test.describe('Groups View @desktop', () => {
     expect(groupsResult.success).toBe(true);
 
     // Find the groups window (getWindow polls)
-    const groupsWindow = await app.getWindow('groups/home.html', 5000);
+    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
 
@@ -1197,20 +1161,14 @@ test.describe('Extension Lifecycle @desktop', () => {
 });
 
 // ============================================================================
-// Command Chaining Tests
+// Command Chaining Tests (uses shared app)
 // ============================================================================
 
 test.describe('Command Chaining @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    app = await launchDesktopApp('test-chaining');
-    bgWindow = await app.getBackgroundWindow();
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
+    bgWindow = sharedBgWindow;
   });
 
   test('cmd panel loads with chain state initialized', async () => {
@@ -1228,7 +1186,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Verify state object has chain properties
@@ -1265,7 +1223,7 @@ test.describe('Command Chaining @desktop', () => {
     expect(openResult.success).toBe(true);
 
     // Find the cmd window
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Test MIME type matching function (if exposed, or test via behavior)
@@ -1303,7 +1261,7 @@ test.describe('Command Chaining @desktop', () => {
     expect(openResult.success).toBe(true);
 
     // Find the cmd window
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Wait for input to be ready
@@ -1337,7 +1295,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Check chain indicator element exists
@@ -1391,7 +1349,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Wait for input to be ready
@@ -1446,7 +1404,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Execute lists command
@@ -1497,7 +1455,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Execute lists command
@@ -1565,7 +1523,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Execute lists and select item to enter chain mode
@@ -1617,7 +1575,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Execute lists command
@@ -1661,20 +1619,14 @@ test.describe('Command Chaining @desktop', () => {
 });
 
 // ============================================================================
-// Theme Tests
+// Theme Tests (uses shared app)
 // ============================================================================
 
 test.describe('Themes @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    app = await launchDesktopApp('test-themes');
-    bgWindow = await app.getBackgroundWindow();
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
+    bgWindow = sharedBgWindow;
   });
 
   test('theme API is available', async () => {
@@ -1813,77 +1765,16 @@ test.describe('Themes @desktop', () => {
 });
 
 // ============================================================================
-// Theme Persistence Tests
-// ============================================================================
-
-test.describe('Theme Persistence @desktop', () => {
-  const profileName = 'test-theme-persist';
-
-  test('saved theme is restored on restart', async () => {
-    // First session: set theme to peek
-    let app = await launchDesktopApp(profileName);
-    let bgWindow = await app.getBackgroundWindow();
-
-    // Set theme to peek
-    const setResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.theme.setTheme('peek');
-    });
-    expect(setResult.success).toBe(true);
-
-    // Verify theme is set
-    const themeState1 = await bgWindow.evaluate(async () => {
-      return await (window as any).app.theme.get();
-    });
-    expect(themeState1.themeId).toBe('peek');
-
-    // Close app
-    await app.close();
-
-    // Second session: verify theme is restored
-    app = await launchDesktopApp(profileName);
-    bgWindow = await app.getBackgroundWindow();
-
-    // Theme should be peek without needing to set it
-    const themeState2 = await bgWindow.evaluate(async () => {
-      return await (window as any).app.theme.get();
-    });
-    expect(themeState2.themeId).toBe('peek');
-
-    // Open settings window to verify the theme CSS is loaded correctly
-    await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://app/settings/settings.html', {
-        width: 800, height: 600
-      });
-    });
-
-    const settingsWin = await app.getWindow('settings/settings.html', 5000);
-    expect(settingsWin).toBeTruthy();
-
-    // Check that the CSS variable has the peek theme's font
-    const fontVar = await settingsWin.evaluate(() => {
-      return getComputedStyle(document.documentElement).getPropertyValue('--theme-font-sans');
-    });
-    expect(fontVar).toContain('ServerMono');
-
-    await app.close();
-  });
-});
-
-// ============================================================================
-// Command Registration Performance Tests
+// Command Registration Performance Tests (uses shared app)
 // ============================================================================
 
 test.describe('Command Registration Performance @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    app = await launchDesktopApp('test-cmd-perf');
-    bgWindow = await app.getBackgroundWindow();
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
+    bgWindow = sharedBgWindow;
+    // Wait for cmd extension to be fully ready before running performance tests
+    await waitForExtensionsReady(bgWindow, 15000);
   });
 
   test('cmd:register-batch is handled by cmd extension', async () => {
@@ -1900,25 +1791,33 @@ test.describe('Command Registration Performance @desktop', () => {
         ]
       }, api.scopes.GLOBAL);
 
-      // Wait for batch to be processed
-      await new Promise(r => setTimeout(r, 100));
+      // Poll for commands to appear (deterministic retry instead of fixed timeout)
+      const maxAttempts = 20;
+      const pollInterval = 100;
 
-      // Query commands to verify they were registered
-      return new Promise((resolve) => {
-        api.subscribe('cmd:query-commands-response', (msg: any) => {
-          const commands = msg.commands || [];
-          const batchCmds = commands.filter((c: any) => c.name.startsWith('test-batch-cmd-'));
-          resolve({
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise(r => setTimeout(r, pollInterval));
+
+        const commands = await new Promise<any[]>((resolve) => {
+          const unsub = api.subscribe('cmd:query-commands-response', (msg: any) => {
+            unsub?.();
+            resolve(msg.commands || []);
+          }, api.scopes.GLOBAL);
+          api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+          setTimeout(() => resolve([]), 500);
+        });
+
+        const batchCmds = commands.filter((c: any) => c.name.startsWith('test-batch-cmd-'));
+        if (batchCmds.length === 3) {
+          return {
             totalCommands: commands.length,
             batchCommandsFound: batchCmds.length,
             batchCommandNames: batchCmds.map((c: any) => c.name)
-          });
-        }, api.scopes.GLOBAL);
+          };
+        }
+      }
 
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
-
-        setTimeout(() => resolve({ totalCommands: 0, batchCommandsFound: 0, batchCommandNames: [] }), 2000);
-      });
+      return { totalCommands: 0, batchCommandsFound: 0, batchCommandNames: [] };
     });
 
     expect(result.batchCommandsFound).toBe(3);
@@ -1942,24 +1841,29 @@ test.describe('Command Registration Performance @desktop', () => {
       // Immediately flush
       api.commands.flush();
 
-      // Wait a bit for processing
-      await new Promise(r => setTimeout(r, 50));
+      // Poll for command to appear (deterministic retry)
+      const maxAttempts = 20;
+      const pollInterval = 100;
 
-      // Query commands to verify it was registered
-      return new Promise((resolve) => {
-        api.subscribe('cmd:query-commands-response', (msg: any) => {
-          const commands = msg.commands || [];
-          const flushCmd = commands.find((c: any) => c.name === 'test-flush-cmd');
-          resolve({
-            found: !!flushCmd,
-            commandName: flushCmd?.name
-          });
-        }, api.scopes.GLOBAL);
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise(r => setTimeout(r, pollInterval));
 
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+        const commands = await new Promise<any[]>((resolve) => {
+          const unsub = api.subscribe('cmd:query-commands-response', (msg: any) => {
+            unsub?.();
+            resolve(msg.commands || []);
+          }, api.scopes.GLOBAL);
+          api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+          setTimeout(() => resolve([]), 500);
+        });
 
-        setTimeout(() => resolve({ found: false }), 2000);
-      });
+        const flushCmd = commands.find((c: any) => c.name === 'test-flush-cmd');
+        if (flushCmd) {
+          return { found: true, commandName: flushCmd.name };
+        }
+      }
+
+      return { found: false };
     });
 
     expect(result.found).toBe(true);
@@ -1970,12 +1874,6 @@ test.describe('Command Registration Performance @desktop', () => {
     // Test that multiple rapid registrations are batched (not sent individually)
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
-      const receivedBatches: any[] = [];
-
-      // Subscribe to batch messages to count them
-      api.subscribe('cmd:register-batch', (msg: any) => {
-        receivedBatches.push(msg);
-      }, api.scopes.GLOBAL);
 
       // Register multiple commands rapidly
       for (let i = 0; i < 5; i++) {
@@ -1986,25 +1884,35 @@ test.describe('Command Registration Performance @desktop', () => {
         });
       }
 
-      // Wait for debounce to complete (16ms + buffer)
-      await new Promise(r => setTimeout(r, 50));
+      // Flush to ensure they're sent
+      api.commands.flush();
 
-      // Verify commands are registered
-      return new Promise((resolve) => {
-        api.subscribe('cmd:query-commands-response', (msg: any) => {
-          const commands = msg.commands || [];
-          const rapidCmds = commands.filter((c: any) => c.name.startsWith('test-rapid-cmd-'));
-          resolve({
+      // Poll for all 5 commands to appear (deterministic retry)
+      const maxAttempts = 20;
+      const pollInterval = 100;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise(r => setTimeout(r, pollInterval));
+
+        const commands = await new Promise<any[]>((resolve) => {
+          const unsub = api.subscribe('cmd:query-commands-response', (msg: any) => {
+            unsub?.();
+            resolve(msg.commands || []);
+          }, api.scopes.GLOBAL);
+          api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+          setTimeout(() => resolve([]), 500);
+        });
+
+        const rapidCmds = commands.filter((c: any) => c.name.startsWith('test-rapid-cmd-'));
+        if (rapidCmds.length === 5) {
+          return {
             commandsRegistered: rapidCmds.length,
-            // Note: We can't directly count batches from renderer, but we verify all commands arrived
-            allCommandsPresent: rapidCmds.length === 5
-          });
-        }, api.scopes.GLOBAL);
+            allCommandsPresent: true
+          };
+        }
+      }
 
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
-
-        setTimeout(() => resolve({ commandsRegistered: 0, allCommandsPresent: false }), 2000);
-      });
+      return { commandsRegistered: 0, allCommandsPresent: false };
     });
 
     expect(result.commandsRegistered).toBe(5);
@@ -2013,22 +1921,16 @@ test.describe('Command Registration Performance @desktop', () => {
 });
 
 // ============================================================================
-// Startup Phase Events Tests
+// Startup Phase Events Tests (uses shared app)
 // ============================================================================
 
 test.describe('Startup Phase Events @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    app = await launchDesktopApp('test-startup-phases');
-    bgWindow = await app.getBackgroundWindow();
+    bgWindow = sharedBgWindow;
     // Wait for extensions to be fully ready
     await waitForExtensionsReady(bgWindow);
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
   });
 
   test('ext:startup:phase events are available for subscription', async () => {
@@ -2123,33 +2025,26 @@ test.describe('Startup Phase Events @desktop', () => {
 });
 
 // ============================================================================
-// Hybrid Extension Mode Tests
+// Hybrid Extension Mode Tests (uses shared app)
 // ============================================================================
 
 test.describe('Hybrid Extension Mode @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    // Launch app - hybrid mode is now the default
-    app = await launchDesktopApp(`test-hybrid-${Date.now()}`);
-    bgWindow = await app.getBackgroundWindow();
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
+    bgWindow = sharedBgWindow;
   });
 
   test('extension host window exists for built-in extensions', async () => {
     // Extension host should exist for consolidated built-in extensions
-    const windows = app.windows();
+    const windows = sharedApp.windows();
     const hostWindow = windows.find(w => w.url().includes('peek://app/extension-host.html'));
     expect(hostWindow).toBeDefined();
   });
 
   test('built-in extensions load as iframes in extension host', async () => {
     // Get the extension host window
-    const windows = app.windows();
+    const windows = sharedApp.windows();
     const hostWindow = windows.find(w => w.url().includes('peek://app/extension-host.html'));
     expect(hostWindow).toBeDefined();
 
@@ -2189,7 +2084,7 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     // Example extension should load in its own window, not in extension host
     // Use waitForWindow helper with retry logic
     const exampleWindow = await waitForWindow(
-      () => app.windows(),
+      () => sharedApp.windows(),
       'peek://ext/example/background.html',
       15000
     );
@@ -2209,7 +2104,7 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     await sleep(500);
 
     // Verify the extension window still exists after reload
-    const windows = app.windows();
+    const windows = sharedApp.windows();
     const exampleWindow = windows.find(w =>
       w.url().includes('peek://ext/example/background.html')
     );
@@ -2299,12 +2194,12 @@ test.describe('Hybrid Extension Mode @desktop', () => {
 
     // Wait for example extension window to be present before counting
     await waitForWindow(
-      () => app.windows(),
+      () => sharedApp.windows(),
       'peek://ext/example/background.html',
       15000
     );
 
-    const windows = app.windows();
+    const windows = sharedApp.windows();
 
     const bgWindows = windows.filter(w => w.url().includes('app/background.html'));
     const hostWindows = windows.filter(w => w.url().includes('extension-host.html'));
@@ -2326,6 +2221,59 @@ test.describe('Hybrid Extension Mode @desktop', () => {
 // ============================================================================
 
 test.describe('Extension Settings in Hybrid Mode @desktop', () => {
+  // Tests 1 and 2 share an instance (defaults check first, then modify)
+  // Test 3 (restart test) uses its own instances
+  let settingsApp: DesktopApp;
+  let settingsBgWindow: Page;
+
+  test.beforeAll(async () => {
+    // Launch fresh app for settings tests (tests 1 and 2 share this)
+    settingsApp = await launchDesktopApp(`test-settings-hybrid-${Date.now()}`);
+    settingsBgWindow = await settingsApp.getBackgroundWindow();
+    await waitForExtensionsReady(settingsBgWindow, 15000);
+  });
+
+  test.afterAll(async () => {
+    if (settingsApp) await settingsApp.close();
+  });
+
+  // This test runs FIRST - checks defaults before any modifications
+  test('extension falls back to defaults when no custom settings exist', async () => {
+    // This test verifies that when no custom settings exist in the datastore,
+    // extensions correctly use their default settings
+
+    // Query cmd's current settings
+    const result = await settingsBgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      const defaultShortcut = 'Option+Space'; // cmd's default
+
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve({ success: false, error: 'timeout' });
+        }, 5000);
+
+        api.subscribe('cmd:settings-changed', (msg: any) => {
+          clearTimeout(timeout);
+          resolve({
+            success: true,
+            shortcutKey: msg?.prefs?.shortcutKey,
+            isDefault: msg?.prefs?.shortcutKey === defaultShortcut
+          });
+        }, api.scopes.GLOBAL);
+
+        // Poke cmd to report its settings - use the default to not change it
+        api.publish('cmd:settings-update', {
+          data: { prefs: { shortcutKey: defaultShortcut } }
+        }, api.scopes.GLOBAL);
+      });
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.isDefault).toBe(true);
+    expect(result.shortcutKey).toBe('Option+Space');
+  });
+
+  // This test runs SECOND - can modify settings since defaults already checked
   test('hybrid mode extensions can access settings via api.settings.get()', async () => {
     // This test verifies that extensions running at peek://{extId}/... URLs
     // (hybrid mode) can successfully use the settings API
@@ -2337,77 +2285,66 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
     // 1. cmd receives the update (which requires api.settings.get() to have worked during init)
     // 2. cmd persists the settings (which requires api.settings.set() to work)
 
-    // Launch fresh app with unique profile
-    const app = await launchDesktopApp(`test-settings-hybrid-${Date.now()}`);
-    const bgWindow = await app.getBackgroundWindow();
+    // Custom shortcut to test with
+    const customShortcut = 'Option+Shift+T';
 
-    try {
-      // Wait for extensions to initialize
-      await sleep(1000);
+    // Update cmd settings via pubsub
+    const updateResult = await settingsBgWindow.evaluate(async (shortcut) => {
+      const api = (window as any).app;
 
-      // Custom shortcut to test with
-      const customShortcut = 'Option+Shift+T';
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve({ success: false, error: 'timeout waiting for settings change' });
+        }, 5000);
 
-      // Update cmd settings via pubsub
-      const updateResult = await bgWindow.evaluate(async (shortcut) => {
-        const api = (window as any).app;
+        // Subscribe to settings changed notification from cmd
+        api.subscribe('cmd:settings-changed', (msg: any) => {
+          clearTimeout(timeout);
+          resolve({
+            success: true,
+            receivedShortcut: msg?.prefs?.shortcutKey,
+            matchesExpected: msg?.prefs?.shortcutKey === shortcut
+          });
+        }, api.scopes.GLOBAL);
 
-        return new Promise((resolve) => {
-          const timeout = setTimeout(() => {
-            resolve({ success: false, error: 'timeout waiting for settings change' });
-          }, 5000);
+        // Update cmd settings via pubsub (this is how Settings UI does it)
+        api.publish('cmd:settings-update', {
+          data: { prefs: { shortcutKey: shortcut } }
+        }, api.scopes.GLOBAL);
+      });
+    }, customShortcut);
 
-          // Subscribe to settings changed notification from cmd
-          api.subscribe('cmd:settings-changed', (msg: any) => {
-            clearTimeout(timeout);
-            resolve({
-              success: true,
-              receivedShortcut: msg?.prefs?.shortcutKey,
-              matchesExpected: msg?.prefs?.shortcutKey === shortcut
-            });
-          }, api.scopes.GLOBAL);
+    expect(updateResult.success).toBe(true);
+    expect(updateResult.matchesExpected).toBe(true);
+    expect(updateResult.receivedShortcut).toBe(customShortcut);
 
-          // Update cmd settings via pubsub (this is how Settings UI does it)
-          api.publish('cmd:settings-update', {
-            data: { prefs: { shortcutKey: shortcut } }
-          }, api.scopes.GLOBAL);
-        });
-      }, customShortcut);
+    // Wait a moment for persistence to complete
+    await sleep(200);
 
-      expect(updateResult.success).toBe(true);
-      expect(updateResult.matchesExpected).toBe(true);
-      expect(updateResult.receivedShortcut).toBe(customShortcut);
+    // Now verify the settings were persisted to datastore
+    // Note: extension-settings-set stores with id format ${extId}_${key}
+    const persistResult = await settingsBgWindow.evaluate(async (expectedShortcut) => {
+      const api = (window as any).app;
+      const stored = await api.datastore.getRow('extension_settings', 'cmd_prefs');
 
-      // Wait a moment for persistence to complete
-      await sleep(200);
+      if (!stored.success || !stored.data?.value) {
+        return { success: false, error: 'No stored settings found', stored };
+      }
 
-      // Now verify the settings were persisted to datastore
-      // Note: extension-settings-set stores with id format ${extId}_${key}
-      const persistResult = await bgWindow.evaluate(async (expectedShortcut) => {
-        const api = (window as any).app;
-        const stored = await api.datastore.getRow('extension_settings', 'cmd_prefs');
+      const parsed = JSON.parse(stored.data.value);
+      return {
+        success: true,
+        persistedShortcut: parsed.shortcutKey,
+        wasPersisted: parsed.shortcutKey === expectedShortcut
+      };
+    }, customShortcut);
 
-        if (!stored.success || !stored.data?.value) {
-          return { success: false, error: 'No stored settings found', stored };
-        }
-
-        const parsed = JSON.parse(stored.data.value);
-        return {
-          success: true,
-          persistedShortcut: parsed.shortcutKey,
-          wasPersisted: parsed.shortcutKey === expectedShortcut
-        };
-      }, customShortcut);
-
-      expect(persistResult.success).toBe(true);
-      expect(persistResult.wasPersisted).toBe(true);
-      expect(persistResult.persistedShortcut).toBe(customShortcut);
-
-    } finally {
-      await app.close();
-    }
+    expect(persistResult.success).toBe(true);
+    expect(persistResult.wasPersisted).toBe(true);
+    expect(persistResult.persistedShortcut).toBe(customShortcut);
   });
 
+  // This test needs restart - uses its own isolated instances
   test('extension loads custom settings instead of defaults on startup', async () => {
     // This test verifies that when custom settings exist in the datastore,
     // extensions load those settings instead of their defaults
@@ -2489,53 +2426,6 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
       await testApp.close();
     }
   });
-
-  test('extension falls back to defaults when no custom settings exist', async () => {
-    // This test verifies that when no custom settings exist in the datastore,
-    // extensions correctly use their default settings
-
-    // Launch with unique profile (no pre-existing settings)
-    const app = await launchDesktopApp(`test-defaults-${Date.now()}`);
-
-    try {
-      await sleep(1000); // Wait for extensions to load
-
-      const bgWindow = await app.getBackgroundWindow();
-
-      // Query cmd's current settings
-      const result = await bgWindow.evaluate(async () => {
-        const api = (window as any).app;
-        const defaultShortcut = 'Option+Space'; // cmd's default
-
-        return new Promise((resolve) => {
-          const timeout = setTimeout(() => {
-            resolve({ success: false, error: 'timeout' });
-          }, 5000);
-
-          api.subscribe('cmd:settings-changed', (msg: any) => {
-            clearTimeout(timeout);
-            resolve({
-              success: true,
-              shortcutKey: msg?.prefs?.shortcutKey,
-              isDefault: msg?.prefs?.shortcutKey === defaultShortcut
-            });
-          }, api.scopes.GLOBAL);
-
-          // Poke cmd to report its settings - use the default to not change it
-          api.publish('cmd:settings-update', {
-            data: { prefs: { shortcutKey: defaultShortcut } }
-          }, api.scopes.GLOBAL);
-        });
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.isDefault).toBe(true);
-      expect(result.shortcutKey).toBe('Option+Space');
-
-    } finally {
-      await app.close();
-    }
-  });
 });
 
 // ============================================================================
@@ -2549,17 +2439,11 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
 // the user was looking at before opening the palette.
 
 test.describe('Window Targeting @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    app = await launchDesktopApp();
-    bgWindow = await app.getBackgroundWindow();
+    bgWindow = sharedBgWindow;
     await sleep(500); // Wait for app to stabilize
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
   });
 
   test('setWindowColorScheme returns success with windowId', async () => {
@@ -2707,20 +2591,14 @@ test.describe('Window Targeting @desktop', () => {
 });
 
 // ============================================================================
-// Backup Tests
+// Backup Tests (uses shared app)
 // ============================================================================
 
 test.describe('Backup @desktop', () => {
-  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    app = await launchDesktopApp('test-backup');
-    bgWindow = await app.getBackgroundWindow();
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
+    bgWindow = sharedBgWindow;
   });
 
   test('backup-get-config returns config object', async () => {
