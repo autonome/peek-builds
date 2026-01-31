@@ -1,7 +1,7 @@
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::fs;
@@ -397,7 +397,7 @@ fn backup_app_group_to_documents() {
     }
 
     // Cleanup old backups - keep only last 5
-    if let Ok(mut entries) = fs::read_dir(docs.join("Backups")) {
+    if let Ok(entries) = fs::read_dir(docs.join("Backups")) {
         let mut dirs: Vec<_> = entries
             .flatten()
             .filter(|e| e.path().is_dir() && e.file_name() != "latest")
@@ -424,21 +424,30 @@ fn get_profiles_config_path() -> Option<PathBuf> {
 
 /// Load profile config from file, creating default if needed
 fn load_profile_config() -> ProfileConfig {
-    // Check cache first
+    // Check cache first (fast path with read lock)
     if let Ok(guard) = PROFILE_CONFIG.read() {
         if let Some(ref config) = *guard {
             return config.clone();
         }
     }
 
-    let config = load_profile_config_from_file();
-
-    // Cache the loaded config
+    // Cache miss - need to load from file
+    // Use write lock for entire operation to prevent race condition where
+    // multiple threads could create different default configs simultaneously
     if let Ok(mut guard) = PROFILE_CONFIG.write() {
+        // Double-check: another thread might have populated cache while we waited for lock
+        if let Some(ref config) = *guard {
+            return config.clone();
+        }
+
+        // Actually load from file (or create default)
+        let config = load_profile_config_from_file();
         *guard = Some(config.clone());
+        return config;
     }
 
-    config
+    // Fallback if lock fails (shouldn't happen)
+    load_profile_config_from_file()
 }
 
 /// Old format profile entry (for migration)
@@ -632,10 +641,12 @@ fn load_profile_config_from_file() -> ProfileConfig {
             Ok(contents) => {
                 // First try to parse as new format
                 match serde_json::from_str::<ProfileConfig>(&contents) {
-                    Ok(config) => {
+                    Ok(mut config) => {
                         println!("[Rust] Loaded profile config: current={}", config.current_profile_id);
                         // Check if we need to migrate old slug-based databases
                         migrate_slug_databases_to_uuid(&config);
+                        // Ensure Development profile exists in dev builds
+                        ensure_dev_profile_in_dev_build(&mut config);
                         return config;
                     }
                     Err(e) => {
@@ -645,7 +656,9 @@ fn load_profile_config_from_file() -> ProfileConfig {
                         match serde_json::from_str::<OldProfileConfig>(&contents) {
                             Ok(old_config) => {
                                 println!("[Rust] Found old format profiles.json, migrating...");
-                                let new_config = migrate_old_profile_config(old_config);
+                                let mut new_config = migrate_old_profile_config(old_config);
+                                // Ensure Development profile exists in dev builds
+                                ensure_dev_profile_in_dev_build(&mut new_config);
                                 save_profile_config(&new_config);
                                 return new_config;
                             }
@@ -801,6 +814,48 @@ fn migrate_slug_databases_to_uuid(config: &ProfileConfig) {
     }
 }
 
+/// Ensure Development profile exists in dev builds
+/// This handles the case where a production profiles.json was left behind (e.g., from TestFlight)
+/// and we're now running a development build that should have the Development profile
+fn ensure_dev_profile_in_dev_build(config: &mut ProfileConfig) {
+    // Only applies to development builds
+    if is_production_build() {
+        return;
+    }
+
+    // Check if Development profile already exists
+    let has_dev = config.profiles.iter().any(|p| p.name == "Development");
+    if has_dev {
+        // Development profile exists - make sure we're using it in dev builds
+        if let Some(dev_profile) = config.profiles.iter().find(|p| p.name == "Development") {
+            if config.current_profile_id != dev_profile.id {
+                println!("[Rust] Dev build: switching to Development profile");
+                config.current_profile_id = dev_profile.id.clone();
+                save_profile_config(config);
+            }
+        }
+        return;
+    }
+
+    // Need to add Development profile
+    println!("[Rust] Dev build: adding missing Development profile");
+    let now = Utc::now().to_rfc3339();
+    let dev_id = uuid::Uuid::new_v4().to_string();
+
+    config.profiles.push(ProfileEntry {
+        id: dev_id.clone(),
+        name: "Development".to_string(),
+        created_at: now.clone(),
+        last_used_at: now,
+        server_profile_id: None,
+    });
+
+    // Switch to the new Development profile
+    config.current_profile_id = dev_id;
+    save_profile_config(config);
+    println!("[Rust] Dev build: now using Development profile");
+}
+
 /// Create default profile config based on build type
 fn create_default_profile_config() -> ProfileConfig {
     let now = Utc::now().to_rfc3339();
@@ -919,15 +974,23 @@ fn get_db_path() -> Option<PathBuf> {
             profile_id
         ));
 
-        // Try to use the first profile in the list, or create a new default
+        // Try to use the first profile in the list, or create and save a new default config
         let valid_profile_id = if let Some(first_profile) = config.profiles.first() {
             ios_log(&format!("Falling back to first profile: {}", first_profile.id));
             first_profile.id.clone()
         } else {
-            // No profiles exist, create a new UUID
-            let new_id = uuid::Uuid::new_v4().to_string();
-            ios_log(&format!("No profiles found, creating new profile ID: {}", new_id));
-            new_id
+            // No profiles exist - create a full default config and save it
+            // This ensures the database UUID is saved to profiles.json (no orphaned DBs)
+            ios_log("No profiles found, creating and saving default profile config");
+            let mut new_config = create_default_profile_config();
+            ensure_dev_profile_in_dev_build(&mut new_config);
+            save_profile_config(&new_config);
+            // Update cache
+            if let Ok(mut guard) = PROFILE_CONFIG.write() {
+                *guard = Some(new_config.clone());
+            }
+            ios_log(&format!("Created new profile config with current ID: {}", new_config.current_profile_id));
+            new_config.current_profile_id
         };
 
         let db_name = format!("peek-{}.db", valid_profile_id);
