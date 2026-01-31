@@ -1514,14 +1514,18 @@ api.escape = {
   }
 };
 
-// Default escape handler - runs for ALL windows
+// Default escape handler - runs for ALL windows with escapeMode: 'navigate' or 'auto'
 // If app registers a handler via onEscape(), that runs first
 // Otherwise, publishes izui:child-escape so parent can handle navigation, then closes
 ipcRenderer.on('escape-pressed', async (event, data) => {
+  DEBUG && console.log('[preload] escape-pressed received, hasCallback:', !!_escapeCallback, 'source:', sourceAddress);
+
   try {
     // If app registered a handler, use it
     if (_escapeCallback) {
+      DEBUG && console.log('[preload] Calling app escape handler');
       const result = await _escapeCallback();
+      DEBUG && console.log('[preload] App handler returned:', result);
       ipcRenderer.send(data.responseChannel, result || { handled: false });
       return;
     }
@@ -1530,6 +1534,8 @@ ipcRenderer.on('escape-pressed', async (event, data) => {
     // This allows parent windows to handle ESC for children (like web pages)
     // that don't have their own IZUI/escape handling
     const windowId = await ipcRenderer.invoke('get-window-id');
+    DEBUG && console.log('[preload] No app handler, publishing izui:child-escape for window:', windowId);
+
     ipcRenderer.send('publish', {
       source: sourceAddress,
       scope: 3, // GLOBAL
@@ -1543,13 +1549,15 @@ ipcRenderer.on('escape-pressed', async (event, data) => {
     // Tell backend we handled it
     ipcRenderer.send(data.responseChannel, { handled: true });
 
-    // Close this window - parent received the event and can update its nav state
-    // Small delay to ensure pubsub message is sent before window closes
-    setTimeout(() => {
-      window.close();
-    }, 50);
+    // Close this window via IPC (more reliable than window.close())
+    DEBUG && console.log('[preload] Closing window:', windowId);
+    if (windowId) {
+      ipcRenderer.invoke('window-close', { source: sourceAddress, id: windowId }).catch(err => {
+        console.error('[preload] Error closing window via IPC:', err);
+      });
+    }
   } catch (err) {
-    console.error('Error in escape handler:', err);
+    console.error('[preload] Error in escape handler:', err);
     ipcRenderer.send(data.responseChannel, { handled: false });
   }
 });
