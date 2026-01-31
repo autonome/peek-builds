@@ -36,6 +36,7 @@ function init() {
         show: false,
         width: 800,
         height: BAR_HEIGHT,
+        escapeMode: 'ignore',  // Don't respond to ESC - let parent page handle it
       }
     );
 
