@@ -431,23 +431,21 @@ fn load_profile_config() -> ProfileConfig {
         }
     }
 
-    // Cache miss - need to load from file
-    // Use write lock for entire operation to prevent race condition where
-    // multiple threads could create different default configs simultaneously
-    if let Ok(mut guard) = PROFILE_CONFIG.write() {
-        // Double-check: another thread might have populated cache while we waited for lock
-        if let Some(ref config) = *guard {
-            return config.clone();
-        }
+    // Cache miss - load from file OUTSIDE the lock to avoid deadlock
+    // (load_profile_config_from_file may call save_profile_config which also needs the lock)
+    let config = load_profile_config_from_file();
 
-        // Actually load from file (or create default)
-        let config = load_profile_config_from_file();
+    // Now acquire write lock just to update cache
+    if let Ok(mut guard) = PROFILE_CONFIG.write() {
+        // Double-check: another thread might have populated cache while we loaded
+        // If so, use their version for consistency
+        if let Some(ref cached) = *guard {
+            return cached.clone();
+        }
         *guard = Some(config.clone());
-        return config;
     }
 
-    // Fallback if lock fails (shouldn't happen)
-    load_profile_config_from_file()
+    config
 }
 
 /// Old format profile entry (for migration)
@@ -816,7 +814,7 @@ fn migrate_slug_databases_to_uuid(config: &ProfileConfig) {
 
 /// Ensure Development profile exists in dev builds
 /// This handles the case where a production profiles.json was left behind (e.g., from TestFlight)
-/// and we're now running a development build that should have the Development profile
+/// and we're now running a development build that should have the Development profile available
 fn ensure_dev_profile_in_dev_build(config: &mut ProfileConfig) {
     // Only applies to development builds
     if is_production_build() {
@@ -826,14 +824,8 @@ fn ensure_dev_profile_in_dev_build(config: &mut ProfileConfig) {
     // Check if Development profile already exists
     let has_dev = config.profiles.iter().any(|p| p.name == "Development");
     if has_dev {
-        // Development profile exists - make sure we're using it in dev builds
-        if let Some(dev_profile) = config.profiles.iter().find(|p| p.name == "Development") {
-            if config.current_profile_id != dev_profile.id {
-                println!("[Rust] Dev build: switching to Development profile");
-                config.current_profile_id = dev_profile.id.clone();
-                save_profile_config(config);
-            }
-        }
+        // Development profile exists - respect user's current profile choice
+        // (don't force switch, just ensure it's available)
         return;
     }
 
@@ -850,7 +842,7 @@ fn ensure_dev_profile_in_dev_build(config: &mut ProfileConfig) {
         server_profile_id: None,
     });
 
-    // Switch to the new Development profile
+    // Switch to the new Development profile (only on first add)
     config.current_profile_id = dev_id;
     save_profile_config(config);
     println!("[Rust] Dev build: now using Development profile");
