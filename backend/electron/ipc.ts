@@ -1475,45 +1475,6 @@ export function registerDarkModeHandlers(): void {
 /**
  * Register window management IPC handlers
  */
-/**
- * Add keyboard shortcuts for web page navigation.
- * Only called for http/https windows.
- * Cmd+[ = back, Cmd+] = forward, Cmd+R = reload, Cmd+L = show navbar overlay
- */
-function addWebNavShortcuts(bw: BrowserWindow): void {
-  bw.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown' || !input.meta) return;
-
-    const nav = bw.webContents.navigationHistory;
-    switch (input.key) {
-      case '[':
-        if (nav.canGoBack()) {
-          nav.goBack();
-        }
-        publish('peek://system/', PubSubScopes.GLOBAL, 'window:navigated', { id: bw.id });
-        event.preventDefault();
-        break;
-      case ']':
-        if (nav.canGoForward()) {
-          nav.goForward();
-        }
-        publish('peek://system/', PubSubScopes.GLOBAL, 'window:navigated', { id: bw.id });
-        event.preventDefault();
-        break;
-      case 'r':
-        bw.webContents.reload();
-        publish('peek://system/', PubSubScopes.GLOBAL, 'window:navigated', { id: bw.id });
-        event.preventDefault();
-        break;
-      case 'l':
-        publish('peek://system/', PubSubScopes.GLOBAL, 'overlay:show', { windowId: bw.id });
-        event.preventDefault();
-        break;
-    }
-  });
-  DEBUG && console.log('Added web nav shortcuts to window:', bw.id);
-}
-
 export function registerWindowHandlers(): void {
   ipcMain.handle('window-open', async (ev, msg) => {
     DEBUG && console.log('window-open', msg);
@@ -1542,18 +1503,23 @@ export function registerWindowHandlers(): void {
       frameDefault = prefs.hideTitleBar === false;
     }
 
+    // Check if this is a web page that will use the transparent canvas
+    const isWebPage = url.startsWith('http://') || url.startsWith('https://');
+
     // Prepare browser window options
     const winOptions: Electron.BrowserWindowConstructorOptions = {
-      frame: frameDefault, // Default based on hideTitleBar pref
+      frame: isWebPage ? false : frameDefault, // Web pages use transparent canvas, no frame
       ...options,
       width: parseInt(options.width) || APP_DEF_WIDTH,
       height: parseInt(options.height) || APP_DEF_HEIGHT,
       show: isHeadless() ? false : options.show !== false,
-      // Don't set backgroundColor for transparent windows - it would show through
-      backgroundColor: options.transparent ? undefined : getSystemThemeBackgroundColor(),
+      // Web pages use transparent fullscreen canvas
+      transparent: isWebPage ? true : (options.transparent || false),
+      backgroundColor: (isWebPage || options.transparent) ? undefined : getSystemThemeBackgroundColor(),
       webPreferences: {
         ...options.webPreferences,
-        preload: getPreloadPath()
+        preload: getPreloadPath(),
+        webviewTag: true // Enable webview for peek://page container
       }
     };
 
@@ -1616,7 +1582,31 @@ export function registerWindowHandlers(): void {
     });
 
     try {
-      await win.loadURL(url);
+      // Route http/https URLs through peek://page container
+      // This allows IZUI to manage web pages uniformly
+      let loadUrl = url;
+      if (isWebPage) {
+        // Pass position/size to the page container so it can position the webview
+        const pageParams = new URLSearchParams({
+          url: url,
+          x: String(winOptions.x ?? 100),
+          y: String(winOptions.y ?? 100),
+          width: String(winOptions.width ?? APP_DEF_WIDTH),
+          height: String(winOptions.height ?? APP_DEF_HEIGHT),
+        });
+        loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
+        DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
+
+        // Make the container window fullscreen and transparent
+        const { screen } = require('electron');
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+        win.setSize(screenWidth, screenHeight);
+        win.setPosition(0, 0);
+        win.setBackgroundColor('#00000000'); // Fully transparent
+      }
+
+      await win.loadURL(loadUrl);
 
       // Determine if this is a transient window (opened while no Peek window was focused)
       // Used for escapeMode: 'auto' to decide between navigate and close behavior
@@ -1632,22 +1622,28 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log('Adding window to manager:', win.id, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive);
       registerWindow(win.id, msg.source, windowParams);
 
-      // Track this load in history
-      try {
-        trackWindowLoad(url, {
-          source: options.trackingSource || options.feature || 'window',
-          sourceId: options.trackingSourceId || '',
-          windowType: options.modal ? 'modal' : 'main',
-          title: options.title || win.getTitle() || '',
-        });
-      } catch (e) {
-        DEBUG && console.log('Failed to track window load:', e);
+      // Track this load in history (skip internal peek:// URLs)
+      if (!url.startsWith('peek://')) {
+        try {
+          trackWindowLoad(url, {
+            source: options.trackingSource || options.feature || 'window',
+            sourceId: options.trackingSourceId || '',
+            windowType: options.modal ? 'modal' : 'main',
+            title: options.title || win.getTitle() || '',
+          });
+        } catch (e) {
+          DEBUG && console.log('Failed to track window load:', e);
+        }
       }
 
       // Track in-page navigation (link clicks within the window)
+      // Skip tracking for peek:// URLs - these are internal (container pages, etc.)
+      // Web pages inside peek://app/page container handle their own tracking via webview events
       win.webContents.on('did-navigate', (_event: Electron.Event, navUrl: string) => {
         // Skip if it's the same URL we just loaded
         if (navUrl === url) return;
+        // Skip internal peek:// URLs
+        if (navUrl.startsWith('peek://')) return;
         try {
           trackWindowLoad(navUrl, {
             source: 'navigation',
@@ -1680,31 +1676,17 @@ export function registerWindowHandlers(): void {
       // Add escape key handler to all windows
       addEscHandler(win);
 
-      // Add web navigation shortcuts for http/https windows
+      // Add Cmd+L shortcut for web pages to show nav bar
+      // Web pages are now loaded inside peek://page container which handles nav
       if (url.startsWith('http://') || url.startsWith('https://')) {
-        addWebNavShortcuts(win);
-
-        // Publish window:web-opened so the overlay extension can create an overlay
-        publish('peek://system/', PubSubScopes.GLOBAL, 'window:web-opened', { id: win.id, url });
-
-        // Publish window:navigated on in-page navigation
-        win.webContents.on('did-navigate', (_ev2: Electron.Event, navUrl: string) => {
-          publish('peek://system/', PubSubScopes.GLOBAL, 'window:navigated', { id: win.id, url: navUrl });
+        win.webContents.on('before-input-event', (event, input) => {
+          if (input.type !== 'keyDown' || !input.meta) return;
+          if (input.key === 'l') {
+            // Show the page container's nav bar
+            publish('peek://system/', PubSubScopes.GLOBAL, 'overlay:show', { windowId: win.id });
+            event.preventDefault();
+          }
         });
-
-        // Debounced bounds-change events for overlay repositioning
-        let boundsTimer: ReturnType<typeof setTimeout> | null = null;
-        const publishBounds = () => {
-          if (boundsTimer) clearTimeout(boundsTimer);
-          boundsTimer = setTimeout(() => {
-            if (!win.isDestroyed()) {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'window:bounds-changed',
-                { id: win.id, ...win.getBounds() });
-            }
-          }, 50);
-        };
-        win.on('move', publishBounds);
-        win.on('resize', publishBounds);
       }
 
       // Track content window focus for devtools command

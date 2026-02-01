@@ -154,6 +154,8 @@
     "test:visible": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=0 BACKEND=electron npx playwright test tests/desktop/ --headed'",
     "test:debug": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=0 npx playwright test --debug'",
     "test:grep": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=1 npx playwright test tests/desktop/ --grep'",
+    "test:electron:bg": "nohup yarn test:electron > /tmp/test-electron.log 2>&1 & disown; echo 'Tests running in background, see: /tmp/test-electron.log'",
+    "test:log": "tail -f /tmp/test-electron.log",
     "//-- Misc (BACKEND=electron|tauri, defaults to electron) --//": "",
     "kill": "[ \"${BACKEND:-}\" = \"tauri\" ] && yarn kill:tauri || yarn kill:electron",
     "kill:electron": "pkill -f '/Users/dietrich/misc/peek/node_modules/.bin/electron' || true",

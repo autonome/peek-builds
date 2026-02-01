@@ -1514,42 +1514,27 @@ api.escape = {
   }
 };
 
-// Default escape handler - runs for ALL windows with escapeMode: 'navigate' or 'auto'
-// If app registers a handler via onEscape(), that runs first
-// Otherwise, publishes izui:child-escape so parent can handle navigation, then closes
+// Escape handler - responds to backend's escape query
+// If app registers a handler via onEscape(), that runs first (e.g., IZUI internal navigation)
+// Otherwise, returns { handled: false } so backend closes the window
+//
+// Note: Web pages are now wrapped in peek://page containers which have IZUI handlers.
+// This fallback is for any peek:// window that doesn't register a handler.
 ipcRenderer.on('escape-pressed', async (event, data) => {
-  // Always log escape handling for debugging (remove DEBUG check temporarily)
-  console.log('[preload:esc] escape-pressed received, hasCallback:', !!_escapeCallback, 'source:', sourceAddress);
+  DEBUG && console.log('[preload:esc] escape-pressed received, hasCallback:', !!_escapeCallback);
 
   try {
-    // If app registered a handler, use it
+    // If app registered a handler (IZUI), use it
     if (_escapeCallback) {
-      console.log('[preload:esc] Calling app escape handler');
+      DEBUG && console.log('[preload:esc] Calling app escape handler');
       const result = await _escapeCallback();
-      console.log('[preload:esc] App handler returned:', result);
+      DEBUG && console.log('[preload:esc] App handler returned:', result);
       ipcRenderer.send(data.responseChannel, result || { handled: false });
       return;
     }
 
-    // No app handler - publish escape event for parent windows to catch
-    // This allows parent windows to handle ESC for children (like web pages)
-    // that don't have their own IZUI/escape handling
-    const windowId = await ipcRenderer.invoke('get-window-id');
-    console.log('[preload:esc] No app handler, publishing izui:child-escape for window:', windowId);
-
-    ipcRenderer.send('publish', {
-      source: sourceAddress,
-      scope: 3, // GLOBAL
-      topic: 'izui:child-escape',
-      data: {
-        windowId,
-        url: sourceAddress
-      }
-    });
-
-    // Tell backend we did NOT handle it - backend will close the window
-    // This ensures the window closes even if IPC has issues
-    console.log('[preload:esc] Sending { handled: false } so backend closes window');
+    // No handler registered - let backend close the window
+    DEBUG && console.log('[preload:esc] No handler, returning { handled: false }');
     ipcRenderer.send(data.responseChannel, { handled: false });
   } catch (err) {
     console.error('[preload] Error in escape handler:', err);
@@ -1721,35 +1706,6 @@ if (isCore) {
 
 contextBridge.exposeInMainWorld('app', api);
 DEBUG && console.log(src, 'api exposed in', Date.now() - preloadStart, 'ms');
-
-// Overlay mouse event publishing
-// Detects overlay windows and publishes cursor enter/leave events
-// so the overlay extension can orchestrate show/hide
-if (sourceAddress.includes('/overlay/')) {
-  window.addEventListener('DOMContentLoaded', () => {
-    ipcRenderer.invoke('get-window-id').then(windowId => {
-      if (!windowId) return;
-
-      document.addEventListener('mouseenter', () => {
-        ipcRenderer.send('publish', {
-          source: sourceAddress,
-          scope: 3, // GLOBAL
-          topic: 'overlay:cursor-enter',
-          data: { windowId }
-        });
-      });
-
-      document.addEventListener('mouseleave', () => {
-        ipcRenderer.send('publish', {
-          source: sourceAddress,
-          scope: 3, // GLOBAL
-          topic: 'overlay:cursor-leave',
-          data: { windowId }
-        });
-      });
-    });
-  });
-}
 
 window.addEventListener('load', () => {
   DEBUG && console.log(src, 'window.load in', Date.now() - preloadStart, 'ms');

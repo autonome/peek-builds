@@ -53,6 +53,7 @@ import {
   setPreloadPath,
   setProfile,
   isTestProfile,
+  isHeadless,
   // Window helpers
   setPrefsGetter,
   updateDockVisibility,
@@ -469,6 +470,11 @@ configure({
 
 // Register window-all-closed handler
 registerWindowAllClosedHandler(quitApp);
+
+// Hide dock icon in headless mode to prevent focus stealing (macOS)
+if (isHeadless() && process.platform === 'darwin' && app.dock) {
+  app.dock.hide();
+}
 
 // Start the app
 app.whenReady().then(onReady);

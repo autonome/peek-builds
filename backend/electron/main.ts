@@ -48,7 +48,7 @@ let extensionHostWindow: BrowserWindow | null = null;
 
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
-const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'peeks', 'slides', 'windows', 'overlay'];
+const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'peeks', 'slides', 'windows'];
 
 // Dev extensions loaded via --load-extension CLI flag
 // These are transient (not persisted) and always have devtools open
@@ -771,6 +771,67 @@ export async function shutdown(): Promise<void> {
 let backgroundWindow: BrowserWindow | null = null;
 
 /**
+ * Helper to create a window for a URL (used when routing web pages through peek://page)
+ */
+async function createWindowForUrl(url: string, features: string, source: string): Promise<void> {
+  const preloadPath = getPreloadPath();
+
+  // Parse features string
+  const featuresMap: Record<string, unknown> = {};
+  if (features) {
+    features.split(',')
+      .map(entry => entry.split('='))
+      .forEach(([key, value]) => {
+        let parsedValue: unknown = value;
+        if (value === 'true') parsedValue = true;
+        else if (value === 'false') parsedValue = false;
+        else if (!isNaN(Number(value)) && value?.trim() !== '') {
+          parsedValue = parseInt(value, 10);
+        }
+        featuresMap[key] = parsedValue;
+      });
+  }
+
+  // Determine frame setting
+  let frameDefault = false;
+  if (featuresMap.frame === undefined) {
+    const prefs = getPrefs();
+    frameDefault = prefs.hideTitleBar === false;
+  }
+
+  const winOptions: Electron.BrowserWindowConstructorOptions = {
+    frame: frameDefault,
+    ...(featuresMap as Electron.BrowserWindowConstructorOptions),
+    width: parseInt(String(featuresMap.width)) || APP_DEF_WIDTH,
+    height: parseInt(String(featuresMap.height)) || APP_DEF_HEIGHT,
+    show: isHeadless() ? false : featuresMap.show !== false,
+    backgroundColor: featuresMap.transparent ? undefined : getSystemThemeBackgroundColor(),
+    webPreferences: {
+      preload: preloadPath,
+      webviewTag: true
+    }
+  };
+
+  const win = new BrowserWindow(winOptions);
+
+  try {
+    await win.loadURL(url);
+    registerWindow(win.id, source, { ...featuresMap, address: url });
+    addEscHandler(win);
+    winDevtoolsConfig(win);
+
+    if (!isHeadless()) {
+      win.show();
+    }
+  } catch (err) {
+    console.error('Failed to create window for URL:', url, err);
+    if (!win.isDestroyed()) {
+      win.close();
+    }
+  }
+}
+
+/**
  * Create the core background window
  */
 export function createBackgroundWindow(): BrowserWindow {
@@ -808,6 +869,17 @@ export function createBackgroundWindow(): BrowserWindow {
   // Set up handlers for windows opened from the background window
   win.webContents.setWindowOpenHandler((details) => {
     DEBUG && console.log('Background window opening child window:', details.url);
+
+    // Route http/https URLs through peek://page container
+    // We need to deny and manually create the window since we can't change the URL here
+    const isWebPage = details.url.startsWith('http://') || details.url.startsWith('https://');
+    if (isWebPage) {
+      DEBUG && console.log('Routing web URL through peek://app/page');
+      // Create window asynchronously with routed URL
+      const routedUrl = `peek://app/page/index.html?url=${encodeURIComponent(details.url)}`;
+      createWindowForUrl(routedUrl, details.features, WEB_CORE_ADDRESS);
+      return { action: 'deny' as const };
+    }
 
     // Parse window features into options
     const featuresMap: Record<string, unknown> = {};
@@ -860,7 +932,8 @@ export function createBackgroundWindow(): BrowserWindow {
       // Don't set backgroundColor for transparent windows - it would show through
       backgroundColor: featuresMap.transparent ? undefined : getSystemThemeBackgroundColor(),
       webPreferences: {
-        preload: preloadPath
+        preload: preloadPath,
+        webviewTag: true // Enable webview for peek://page container
       }
     };
 
@@ -890,21 +963,24 @@ export function createBackgroundWindow(): BrowserWindow {
             modal: featuresMap.modal
           });
 
-          // Track this load in history
-          try {
-            trackWindowLoad(details.url, {
-              source: (featuresMap.trackingSource as string) || 'background',
-              sourceId: (featuresMap.trackingSourceId as string) || '',
-              windowType: featuresMap.modal ? 'modal' : 'main',
-              title: newWin.getTitle() || '',
-            });
-          } catch (e) {
-            DEBUG && console.log('Failed to track background child window load:', e);
+          // Track this load in history (skip internal peek:// URLs)
+          if (!details.url.startsWith('peek://')) {
+            try {
+              trackWindowLoad(details.url, {
+                source: (featuresMap.trackingSource as string) || 'background',
+                sourceId: (featuresMap.trackingSourceId as string) || '',
+                windowType: featuresMap.modal ? 'modal' : 'main',
+                title: newWin.getTitle() || '',
+              });
+            } catch (e) {
+              DEBUG && console.log('Failed to track background child window load:', e);
+            }
           }
 
-          // Track in-page navigation within this window
+          // Track in-page navigation within this window (skip peek:// URLs)
           newWin.webContents.on('did-navigate', (_event: Electron.Event, navUrl: string) => {
             if (navUrl === details.url) return;
+            if (navUrl.startsWith('peek://')) return;
             try {
               trackWindowLoad(navUrl, {
                 source: 'navigation',
