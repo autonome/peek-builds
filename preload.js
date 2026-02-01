@@ -1518,14 +1518,15 @@ api.escape = {
 // If app registers a handler via onEscape(), that runs first
 // Otherwise, publishes izui:child-escape so parent can handle navigation, then closes
 ipcRenderer.on('escape-pressed', async (event, data) => {
-  DEBUG && console.log('[preload] escape-pressed received, hasCallback:', !!_escapeCallback, 'source:', sourceAddress);
+  // Always log escape handling for debugging (remove DEBUG check temporarily)
+  console.log('[preload:esc] escape-pressed received, hasCallback:', !!_escapeCallback, 'source:', sourceAddress);
 
   try {
     // If app registered a handler, use it
     if (_escapeCallback) {
-      DEBUG && console.log('[preload] Calling app escape handler');
+      console.log('[preload:esc] Calling app escape handler');
       const result = await _escapeCallback();
-      DEBUG && console.log('[preload] App handler returned:', result);
+      console.log('[preload:esc] App handler returned:', result);
       ipcRenderer.send(data.responseChannel, result || { handled: false });
       return;
     }
@@ -1534,7 +1535,7 @@ ipcRenderer.on('escape-pressed', async (event, data) => {
     // This allows parent windows to handle ESC for children (like web pages)
     // that don't have their own IZUI/escape handling
     const windowId = await ipcRenderer.invoke('get-window-id');
-    DEBUG && console.log('[preload] No app handler, publishing izui:child-escape for window:', windowId);
+    console.log('[preload:esc] No app handler, publishing izui:child-escape for window:', windowId);
 
     ipcRenderer.send('publish', {
       source: sourceAddress,
@@ -1546,16 +1547,10 @@ ipcRenderer.on('escape-pressed', async (event, data) => {
       }
     });
 
-    // Tell backend we handled it
-    ipcRenderer.send(data.responseChannel, { handled: true });
-
-    // Close this window via IPC (more reliable than window.close())
-    DEBUG && console.log('[preload] Closing window:', windowId);
-    if (windowId) {
-      ipcRenderer.invoke('window-close', { source: sourceAddress, id: windowId }).catch(err => {
-        console.error('[preload] Error closing window via IPC:', err);
-      });
-    }
+    // Tell backend we did NOT handle it - backend will close the window
+    // This ensures the window closes even if IPC has issues
+    console.log('[preload:esc] Sending { handled: false } so backend closes window');
+    ipcRenderer.send(data.responseChannel, { handled: false });
   } catch (err) {
     console.error('[preload] Error in escape handler:', err);
     ipcRenderer.send(data.responseChannel, { handled: false });

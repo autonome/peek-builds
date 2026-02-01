@@ -13,7 +13,7 @@
 
 import api from './api.js';
 
-const DEBUG = false;
+const DEBUG = true;
 
 // Navigation stack - tracks child windows opened by this window
 // Each entry: { windowId, url }

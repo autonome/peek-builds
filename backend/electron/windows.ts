@@ -70,14 +70,17 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
 export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled: boolean }> {
   return new Promise((resolve) => {
     const responseChannel = `escape-response-${bw.id}-${Date.now()}`;
+    console.log(`[esc] Asking renderer to handle escape, channel: ${responseChannel}`);
 
     // Timeout after 100ms - if renderer doesn't respond, assume not handled
     const timeout = setTimeout(() => {
+      console.log(`[esc] Renderer timeout (100ms) - no response on ${responseChannel}`);
       ipcMain.removeAllListeners(responseChannel);
       resolve({ handled: false });
     }, 100);
 
     ipcMain.once(responseChannel, (_event, response) => {
+      console.log(`[esc] Renderer responded on ${responseChannel}:`, response);
       clearTimeout(timeout);
       resolve(response || { handled: false });
     });
@@ -106,7 +109,8 @@ export function addEscHandler(bw: BrowserWindow): void {
       const params = entry?.params || {};
       const escapeMode = (params.escapeMode as string) || 'auto';
 
-      DEBUG && console.log(`ESC pressed - window ${bw.id}, escapeMode: ${escapeMode}`);
+      // Always log ESC handling for debugging
+      console.log(`[esc] ESC keyUp - window ${bw.id}, escapeMode: ${escapeMode}, transient: ${params.transient}, url: ${params.address}`);
 
       // For 'ignore' mode, do nothing - let ESC pass through
       if (escapeMode === 'ignore') {
@@ -114,13 +118,20 @@ export function addEscHandler(bw: BrowserWindow): void {
         return;
       }
 
-      // For 'navigate' mode, ask renderer to handle ESC
-      // Never close the window - renderer handles all navigation via IZUI
+      // For 'navigate' mode, ask renderer to handle ESC first
+      // If renderer handles it (internal navigation), do nothing
+      // If renderer doesn't handle it, close the window
       if (escapeMode === 'navigate') {
+        console.log(`[esc] navigate mode - asking renderer to handle`);
         const response = await askRendererToHandleEscape(bw);
-        DEBUG && console.log(`Renderer escape response:`, response);
-        // Always return - window closing is handled by renderer/IZUI
-        // (e.g., renderer may close itself after notifying parent)
+        console.log(`[esc] Renderer escape response:`, response);
+        if (response.handled) {
+          // Renderer handled it (internal navigation or closed itself)
+          return;
+        }
+        // Renderer didn't handle it, close the window
+        console.log('[esc] Renderer did not handle, closing window');
+        closeOrHideWindow(bw.id);
         return;
       }
 
@@ -128,18 +139,25 @@ export function addEscHandler(bw: BrowserWindow): void {
       if (escapeMode === 'auto') {
         if (params.transient) {
           // Transient mode - close immediately (user invoked via global hotkey)
-          DEBUG && console.log('Auto mode (transient) - closing');
+          console.log('[esc] Auto mode (transient) - closing directly');
         } else {
-          // Active mode - behave like 'navigate', never close
+          // Active mode - ask renderer first, then close if not handled
+          console.log(`[esc] auto mode (non-transient) - asking renderer to handle`);
           const response = await askRendererToHandleEscape(bw);
-          DEBUG && console.log(`Renderer escape response (auto/active):`, response);
-          // Always return for active windows
+          console.log(`[esc] Renderer escape response (auto/active):`, response);
+          if (response.handled) {
+            // Renderer handled it (internal navigation or closed itself)
+            return;
+          }
+          // Renderer didn't handle it (e.g., web page without IZUI), close the window
+          console.log('[esc] Renderer did not handle, closing window');
+          closeOrHideWindow(bw.id);
           return;
         }
       }
 
       // Only 'close' mode and transient 'auto' mode reach here
-      DEBUG && console.log('Closing/hiding window');
+      console.log('[esc] Closing/hiding window via closeOrHideWindow');
       closeOrHideWindow(bw.id);
     }
   });
