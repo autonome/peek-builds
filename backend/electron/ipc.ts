@@ -1598,7 +1598,6 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
 
         // Make the container window fullscreen and transparent
-        const { screen } = require('electron');
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
         win.setSize(screenWidth, screenHeight);
