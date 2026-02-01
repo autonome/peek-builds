@@ -137,15 +137,22 @@ function show(opts) {
   }
 }
 
-function hide() {
+function hide(e) {
   if (isDragging) return; // Don't hide while dragging
+  // Check if we're actually leaving the navbar area (not moving to children or trigger zone)
+  if (e && e.relatedTarget) {
+    if (navbar.contains(e.relatedTarget)) return;
+    if (e.relatedTarget === triggerZone) return;
+  }
   navbar.classList.remove('visible');
   window.getSelection().removeAllRanges();
 }
 
-// Trigger zone hover
+// Trigger zone hover - show navbar when entering trigger zone or navbar itself
 triggerZone.addEventListener('mouseenter', () => show({}));
+navbar.addEventListener('mouseenter', () => show({}));
 navbar.addEventListener('mouseleave', hide);
+triggerZone.addEventListener('mouseleave', hide);
 
 // Cmd+L: show with URL focus
 api.subscribe('overlay:show', () => show({ focusUrl: true }), api.scopes.WINDOW);
