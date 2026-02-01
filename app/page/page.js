@@ -137,18 +137,21 @@ function show(opts) {
   }
 }
 
+function isPointInElement(x, y, el) {
+  const rect = el.getBoundingClientRect();
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
 function hide(e) {
   if (isDragging) return; // Don't hide while dragging
-  // Check if we're actually leaving the navbar area (not moving to children or trigger zone)
-  if (e && e.relatedTarget) {
-    if (navbar.contains(e.relatedTarget)) return;
-    if (e.relatedTarget === triggerZone) return;
-  }
+  // Check if cursor is still within navbar or trigger zone bounds
+  if (isPointInElement(e.clientX, e.clientY, navbar)) return;
+  if (isPointInElement(e.clientX, e.clientY, triggerZone)) return;
   navbar.classList.remove('visible');
   window.getSelection().removeAllRanges();
 }
 
-// Trigger zone hover - show navbar when entering trigger zone or navbar itself
+// Show navbar when entering trigger zone or navbar itself
 triggerZone.addEventListener('mouseenter', () => show({}));
 navbar.addEventListener('mouseenter', () => show({}));
 navbar.addEventListener('mouseleave', hide);
