@@ -12,6 +12,14 @@
     "default_title": "Peek",
     "default_popup": "popup.html"
   },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+P"
+      },
+      "description": "Open Peek command bar"
+    }
+  },
   "permissions": ["storage", "alarms", "bookmarks", "tabs", "tabGroups", "history"],
   "options_page": "options.html",
   "browser_specific_settings": {
