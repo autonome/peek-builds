@@ -9,7 +9,8 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Peek"
+    "default_title": "Peek",
+    "default_popup": "popup.html"
   },
   "permissions": ["storage", "alarms", "bookmarks", "tabs", "tabGroups", "history"],
   "options_page": "options.html",

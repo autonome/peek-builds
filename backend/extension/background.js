@@ -109,6 +109,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'save-tags') {
+    handleSaveTags(message.data).then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'save-note') {
+    handleSaveNote(message.data).then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'search-items') {
+    handleSearchItems(message.data).then(sendResponse);
+    return true;
+  }
+
   if (message.type === 'bookmark-sync-toggle') {
     handleBookmarkSyncToggle(message.enabled).then(sendResponse);
     return true;
@@ -219,6 +234,127 @@ async function handleGetHistoryStats() {
     return await getHistoryStats();
   } catch (error) {
     return { historyItems: 0, imported: 0, synced: 0 };
+  }
+}
+
+// ==================== Command Bar Handlers ====================
+
+async function handleSaveTags(data) {
+  const { url, title, tags } = data;
+
+  if (!url || !tags || tags.length === 0) {
+    return { success: false, error: 'URL and tags are required' };
+  }
+
+  try {
+    await openDatabase();
+
+    // Import from datastore
+    const { addItem, getOrCreateTag, tagItem, queryItems } = await import('./datastore.js');
+
+    // Check if this URL already exists
+    const existing = await queryItems({ type: 'url', url });
+    let itemId;
+
+    if (existing.success && existing.data && existing.data.length > 0) {
+      itemId = existing.data[0].id;
+    } else {
+      // Create new URL item
+      const result = await addItem('url', { url, title });
+      if (!result.success) {
+        return { success: false, error: result.error || 'Failed to create item' };
+      }
+      itemId = result.data.id;
+    }
+
+    // Add each tag
+    for (const tagName of tags) {
+      const tagResult = await getOrCreateTag(tagName);
+      if (tagResult.success && tagResult.data) {
+        await tagItem(itemId, tagResult.data.tag.id);
+      }
+    }
+
+    return { success: true, data: { itemId, tags } };
+  } catch (error) {
+    console.error('[peek:bg] Save tags error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleSaveNote(data) {
+  const { url, title, note } = data;
+
+  if (!note) {
+    return { success: false, error: 'Note content is required' };
+  }
+
+  try {
+    await openDatabase();
+
+    const { addItem } = await import('./datastore.js');
+
+    // Create a text item for the note
+    // Include URL as metadata if provided
+    const metadata = url ? { sourceUrl: url, sourceTitle: title } : {};
+
+    const result = await addItem('text', {
+      content: note,
+      title: title ? `Note: ${title}` : 'Note',
+      metadata
+    });
+
+    if (!result.success) {
+      return { success: false, error: result.error || 'Failed to save note' };
+    }
+
+    return { success: true, data: { id: result.data.id } };
+  } catch (error) {
+    console.error('[peek:bg] Save note error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleSearchItems(data) {
+  const { query } = data;
+
+  if (!query) {
+    return { success: false, error: 'Search query is required' };
+  }
+
+  try {
+    await openDatabase();
+
+    const { queryItems } = await import('./datastore.js');
+
+    // Search items - the queryItems function should support text search
+    // For now, we'll do a simple filter on title/content
+    const allItems = await queryItems({});
+
+    if (!allItems.success) {
+      return { success: false, error: allItems.error };
+    }
+
+    const lowerQuery = query.toLowerCase();
+    const results = (allItems.data || []).filter(item => {
+      const title = (item.title || '').toLowerCase();
+      const content = (item.content || '').toLowerCase();
+      const url = (item.url || '').toLowerCase();
+      return title.includes(lowerQuery) ||
+             content.includes(lowerQuery) ||
+             url.includes(lowerQuery);
+    }).slice(0, 20).map(item => ({
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      url: item.url,
+      snippet: item.content ? item.content.substring(0, 100) : null
+    }));
+
+    return { success: true, data: results };
+  } catch (error) {
+    console.error('[peek:bg] Search error:', error);
+    return { success: false, error: error.message };
   }
 }
 

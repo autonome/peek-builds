@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Peek</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="command-bar">
+    <input
+      type="text"
+      id="command-input"
+      placeholder="Type a command..."
+      autofocus
+      spellcheck="false"
+    >
+    <div id="command-hint" class="command-hint"></div>
+  </div>
+
+  <div id="results" class="results"></div>
+
+  <div id="input-area" class="input-area" hidden>
+    <div id="input-label" class="input-label"></div>
+    <textarea id="input-text" rows="3" placeholder=""></textarea>
+    <div class="input-actions">
+      <button id="input-cancel" class="btn">Cancel</button>
+      <button id="input-submit" class="btn primary">Save</button>
+    </div>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <div class="help-text">
+    <span class="shortcut">tag</span> Tag this page
+    <span class="shortcut">note</span> Save a note
+    <span class="shortcut">search</span> Search items
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
