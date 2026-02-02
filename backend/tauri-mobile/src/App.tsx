@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -140,17 +140,79 @@ interface EditorOverlayProps {
   className?: string;
 }
 
-const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyboardHeight, className = '' }) => {
-  const keyboardAppearedRef = useRef(false);
-  if (keyboardHeight > 0) keyboardAppearedRef.current = true;
+const SWIPE_THRESHOLD = 80;
+
+const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyboardHeight: _keyboardHeight, className = '' }) => {
+  // Use fixed keyboard padding to avoid any dynamic changes
+  // Standard iOS keyboard is ~300px, we use 350 to be safe
+  const FIXED_KEYBOARD_PADDING = 350;
+
+  // Swipe-down-to-close state
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const swipeStartYRef = useRef<number | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Counter iOS visual viewport scrolling when switching focus between inputs
+  // iOS automatically scrolls the viewport to bring focused inputs into view,
+  // but our fixed layout already handles positioning - so we reset the scroll
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+
+    const handleScroll = () => {
+      // If viewport scrolled, reset it - our layout handles input visibility
+      if (viewport.offsetTop !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+
+    viewport.addEventListener('scroll', handleScroll);
+    return () => viewport.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    swipeStartYRef.current = e.touches[0].clientY;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (swipeStartYRef.current === null) return;
+    const delta = e.touches[0].clientY - swipeStartYRef.current;
+    // Only allow downward swipe
+    if (delta > 0) {
+      setSwipeOffset(Math.min(delta, SWIPE_THRESHOLD + 40));
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (swipeStartYRef.current === null) return;
+    const wasSwiped = swipeOffset > SWIPE_THRESHOLD;
+    swipeStartYRef.current = null;
+    setSwipeOffset(0);
+    if (wasSwiped) {
+      onDismiss();
+    }
+  };
 
   return (
     <div
-      className={`edit-overlay ${keyboardAppearedRef.current ? 'transition-padding' : ''} ${className}`}
-      style={{ paddingBottom: keyboardHeight > 0 ? `${keyboardHeight}px` : undefined }}
+      className={`edit-overlay ${className}`}
+      style={{ paddingBottom: `${FIXED_KEYBOARD_PADDING}px` }}
       onClick={(e) => e.target === e.currentTarget && onDismiss()}
     >
-      <div className="expandable-card expanded editor-card">
+      <div
+        ref={cardRef}
+        className="expandable-card expanded editor-card"
+        style={{ transform: swipeOffset > 0 ? `translateY(${swipeOffset}px)` : undefined }}
+      >
+        {/* Dedicated drag handle - only this area triggers swipe */}
+        <div
+          className="editor-drag-handle"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          <div className="drag-handle-bar" />
+        </div>
         {children}
       </div>
     </div>
@@ -182,8 +244,11 @@ const TagsSection: React.FC<TagsSectionProps> = ({
     (!tagInput.trim() || tag.name.toLowerCase().includes(tagInput.toLowerCase().trim()))
   );
 
+  // Add collapsed class when no available tags to show
+  const isCollapsed = unusedTags.length === 0 && availableTags.length === 0;
+
   return (
-    <div className="editor-tags-section">
+    <div className={`editor-tags-section ${isCollapsed ? 'collapsed' : ''}`}>
       {selectedTags.size > 0 && (
         <div className="expandable-card-section">
           <div className="editing-tags">
@@ -210,6 +275,10 @@ const TagsSection: React.FC<TagsSectionProps> = ({
                   onAddTag();
                 }
               }}
+              onFocus={() => {
+                // Counter iOS viewport scroll on focus
+                requestAnimationFrame(() => window.scrollTo(0, 0));
+              }}
               placeholder={placeholder}
               autoCapitalize="none"
               autoCorrect="off"
@@ -224,7 +293,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
         </div>
       </div>
 
-      {unusedTags.length > 0 && (
+      {unusedTags.length > 0 ? (
         <div className="expandable-card-section">
           <div className="all-tags-list">
             {unusedTags.map((tag) => (
@@ -237,6 +306,14 @@ const TagsSection: React.FC<TagsSectionProps> = ({
               </span>
             ))}
           </div>
+        </div>
+      ) : (
+        <div className="expandable-card-section">
+          {availableTags.length === 0 ? (
+            <div className="tags-empty-message">Add some tags!</div>
+          ) : tagInput.trim() ? (
+            <div className="tags-empty-message">No matching tags</div>
+          ) : null}
         </div>
       )}
     </div>
@@ -282,6 +359,8 @@ interface ResizableInputProps {
   minHeightPercent?: number;
   keyboardHeight: number;
   autoFocus?: boolean;
+  showClearButton?: boolean;
+  onAutoSave?: (value: string) => void;
 }
 
 const ResizableInput: React.FC<ResizableInputProps> = ({
@@ -289,8 +368,10 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   onChange,
   placeholder = "Enter text...",
   minHeightPercent = 0.5,
-  keyboardHeight,
-  autoFocus = false
+  keyboardHeight: _keyboardHeight,
+  autoFocus = false,
+  showClearButton = true,
+  onAutoSave
 }) => {
   const [height, setHeight] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -299,10 +380,14 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   const dragStartYRef = useRef(0);
   const dragStartHeightRef = useRef(0);
 
+  // Use fixed keyboard height for sizing to avoid layout jumps when QuickType changes
+  // Standard iOS keyboard is ~300px, we use 350 to match EditorOverlay
+  const FIXED_KEYBOARD_HEIGHT = 350;
+
   // Calculate default height (initial size) and min height (resize floor)
   const headerHeight = 56;
   const buttonsHeight = 70;
-  const availableHeight = window.innerHeight - headerHeight - keyboardHeight - buttonsHeight - 32;
+  const availableHeight = window.innerHeight - headerHeight - FIXED_KEYBOARD_HEIGHT - buttonsHeight - 32;
   const defaultHeight = Math.max(80, availableHeight * minHeightPercent);
   const minHeight = 60;
   const currentHeight = height ?? defaultHeight;
@@ -437,6 +522,14 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
           // Normalize: collapse multiple spaces after list markers (iOS swipe/autosuggestion adds extra space)
           const normalized = e.target.value.replace(/^(\s*(?:[-*+]|\d+\.))\s{2,}/gm, '$1 ');
           onChange(normalized);
+          // Trigger auto-save if provided
+          if (onAutoSave) {
+            onAutoSave(normalized);
+          }
+        }}
+        onFocus={() => {
+          // Counter iOS viewport scroll on focus
+          requestAnimationFrame(() => window.scrollTo(0, 0));
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
@@ -445,7 +538,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
         autoComplete="off"
         spellCheck={false}
       />
-      <ClearButton show={value.length > 0} onClear={() => onChange('')} className="textarea-clear" />
+      {showClearButton && <ClearButton show={value.length > 0} onClear={() => onChange('')} className="textarea-clear" />}
       <div
         className="drag-handle"
         onMouseDown={(e) => { e.preventDefault(); handleDragStart(e.clientY); }}
@@ -1363,8 +1456,49 @@ function App() {
     }
   };
 
+  // Auto-save timer ref
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounced auto-save for text editing (saves silently without closing)
+  const scheduleAutoSave = useCallback((content: string) => {
+    if (!editingTextId || !originalEditValues) return;
+
+    // Clear any pending auto-save
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    // Only auto-save if content changed from original
+    if (content.trim() === originalEditValues.content) return;
+
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        await invoke("update_text", { id: editingTextId, content: content.trim(), tags: Array.from(editingTextTags) });
+        // Update original values so we know what's saved
+        setOriginalEditValues(prev => prev ? { ...prev, content: content.trim() } : null);
+        await loadSavedTexts();
+      } catch (error) {
+        console.error("Auto-save failed:", error);
+      }
+    }, 500);
+  }, [editingTextId, originalEditValues, editingTextTags]);
+
+  // Clear auto-save timer on unmount or when editing ends
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [editingTextId]);
+
   const saveTextChanges = async () => {
     if (!editingTextId) return;
+
+    // Clear any pending auto-save
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
 
     const finalTags = new Set(editingTextTags);
     if (editingTextTagInput.trim()) {
@@ -1732,6 +1866,18 @@ function App() {
   // Check if any edit mode is active
   const isEditing = editingUrlId || editingTextId || editingTagsetId || editingImageId;
 
+  // Prevent iOS viewport scrolling when editor is open
+  useEffect(() => {
+    if (isEditing || addInputExpanded) {
+      document.body.classList.add('editor-open');
+    } else {
+      document.body.classList.remove('editor-open');
+    }
+    return () => {
+      document.body.classList.remove('editor-open');
+    };
+  }, [isEditing, addInputExpanded]);
+
   // Render edit modal content
   const renderEditModal = () => {
     if (!isEditing) return null;
@@ -1749,6 +1895,10 @@ function App() {
               className="editor-url-input"
               value={editingUrlValue}
               onChange={(e) => setEditingUrlValue(e.target.value)}
+              onFocus={() => {
+                // Counter iOS viewport scroll on focus
+                requestAnimationFrame(() => window.scrollTo(0, 0));
+              }}
               placeholder="URL"
               autoCapitalize="none"
               autoCorrect="off"
@@ -1782,6 +1932,8 @@ function App() {
             placeholder="Note text..."
             keyboardHeight={keyboardHeight}
             autoFocus
+            showClearButton={false}
+            onAutoSave={scheduleAutoSave}
           />
           <TagsSection
             selectedTags={editingTextTags}
@@ -1795,6 +1947,7 @@ function App() {
             onSave={saveTextChanges}
             onCancel={requestCancelEditingText}
             onDelete={() => requestDelete(editingTextId, "text")}
+            saveLabel="Done"
           />
         </EditorOverlay>
       );
@@ -2123,7 +2276,7 @@ function App() {
     setPendingDiscard(null);
   };
 
-  const confirmDiscard = () => {
+  const confirmDiscard = async () => {
     if (!pendingDiscard) return;
     const { type } = pendingDiscard;
     setPendingDiscard(null);
@@ -2132,6 +2285,15 @@ function App() {
         cancelEditing();
         break;
       case "text":
+        // Restore original content if auto-save changed it
+        if (editingTextId && originalEditValues?.content !== undefined) {
+          try {
+            await invoke("update_text", { id: editingTextId, content: originalEditValues.content, tags: originalEditValues.tags || [] });
+            await loadSavedTexts();
+          } catch (error) {
+            console.error("Failed to restore original content:", error);
+          }
+        }
         cancelEditingText();
         break;
       case "tagset":
@@ -2800,7 +2962,7 @@ function App() {
           }}
           style={{ cursor: "pointer" }}
         >
-          Peek
+          Peek <span style={{ fontSize: '0.5em', opacity: 0.5 }}>v458</span>
         </h1>
         <div className="filter-icons">
           <button
