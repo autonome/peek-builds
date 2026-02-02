@@ -7,12 +7,18 @@
  *
  * Test organization:
  *   tests/desktop/     - Cross-backend desktop tests
+ *   tests/extension/   - Browser extension e2e tests
  *   backend/{name}/tests/ - Backend-specific tests
+ *
+ * Extension tests:
+ *   BROWSER=chrome yarn test:extension:browser
+ *   BROWSER=firefox yarn test:extension:browser:firefox
  */
 
 import { defineConfig } from '@playwright/test';
 
 const backend = process.env.BACKEND || 'electron';
+const browser = process.env.BROWSER || 'chrome';
 
 export default defineConfig({
   testDir: './tests',
@@ -39,9 +45,18 @@ export default defineConfig({
         browserName: 'chromium',
       },
     },
-    // Future projects:
-    // { name: 'mobile', testMatch: /mobile\/.*\.spec\.ts/ },
-    // { name: 'extension', testMatch: /extension\/.*\.spec\.ts/ },
+    {
+      name: 'extension-chrome',
+      testMatch: /extension\/.*\.spec\.ts/,
+      // Extension tests use custom fixture that launches Chrome with extension
+      // No browser setting here - fixture handles browser launch
+    },
+    {
+      name: 'extension-firefox',
+      testMatch: /extension\/.*\.spec\.ts/,
+      // Extension tests use custom fixture that launches Firefox with extension
+      // No browser setting here - fixture handles browser launch
+    },
   ],
 
   // Test execution settings
@@ -73,5 +88,6 @@ export default defineConfig({
   // Metadata
   metadata: {
     backend,
+    browser,
   },
 });
