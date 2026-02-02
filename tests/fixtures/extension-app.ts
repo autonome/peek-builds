@@ -85,18 +85,30 @@ async function launchChrome(profile: string): Promise<ExtensionApp> {
     ],
   });
 
-  // Wait for the service worker to be registered and get the extension ID
+  // Wait for the service worker to be registered
   let extensionId = '';
-  const maxWait = 10000;
-  const start = Date.now();
 
-  while (Date.now() - start < maxWait) {
-    // Check service workers for the extension
+  // Method 1: Wait for service worker event with timeout
+  try {
+    const workerPromise = context.waitForEvent('serviceworker', { timeout: 10000 });
+    const worker = await workerPromise;
+    const url = worker.url();
+    if (url.startsWith('chrome-extension://')) {
+      const match = url.match(/chrome-extension:\/\/([^/]+)/);
+      if (match) {
+        extensionId = match[1];
+      }
+    }
+  } catch {
+    // Timeout - try alternative methods
+  }
+
+  // Method 2: Check existing service workers
+  if (!extensionId) {
     const workers = context.serviceWorkers();
     for (const worker of workers) {
       const url = worker.url();
-      if (url.startsWith('chrome-extension://') && url.includes('background.js')) {
-        // Extract extension ID from URL: chrome-extension://{id}/background.js
+      if (url.startsWith('chrome-extension://')) {
         const match = url.match(/chrome-extension:\/\/([^/]+)/);
         if (match) {
           extensionId = match[1];
@@ -104,8 +116,32 @@ async function launchChrome(profile: string): Promise<ExtensionApp> {
         }
       }
     }
-    if (extensionId) break;
-    await sleep(100);
+  }
+
+  // Method 3: Open a blank page and use chrome.runtime to get extension ID
+  if (!extensionId) {
+    // Open default page (about:blank) and list all service workers via devtools
+    const page = context.pages()[0] || await context.newPage();
+
+    // Poll for service workers
+    const maxWait = 10000;
+    const start = Date.now();
+    while (Date.now() - start < maxWait && !extensionId) {
+      const workers = context.serviceWorkers();
+      for (const worker of workers) {
+        const url = worker.url();
+        if (url.startsWith('chrome-extension://')) {
+          const match = url.match(/chrome-extension:\/\/([^/]+)/);
+          if (match) {
+            extensionId = match[1];
+            break;
+          }
+        }
+      }
+      if (!extensionId) {
+        await sleep(200);
+      }
+    }
   }
 
   if (!extensionId) {

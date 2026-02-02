@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { getSharedExtension, closeSharedExtension, ExtensionApp } from '../fixtures/extension-app';
+import { getSharedExtension, ExtensionApp } from '../fixtures/extension-app';
 import {
   waitForCommandInput,
   typeCommand,
@@ -26,9 +26,8 @@ test.beforeAll(async () => {
   ext = await getSharedExtension();
 });
 
-test.afterAll(async () => {
-  await closeSharedExtension();
-});
+// Don't close shared extension - let Playwright handle cleanup
+// This allows multiple test files to share the same browser instance
 
 test.beforeEach(async () => {
   // Open a fresh popup for each test
