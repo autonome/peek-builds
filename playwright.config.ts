@@ -11,11 +11,11 @@
  *   backend/{name}/tests/ - Backend-specific tests
  *
  * Extension tests:
- *   yarn test:extension:browser   - Run in Chrome (Playwright)
- *   yarn extension:firefox        - Run in Firefox (web-ext, manual)
+ *   yarn test:extension:browser  - Run in Chrome (automated)
+ *   yarn extension:firefox       - Run in Firefox (manual, web-ext)
  *
- * Note: Firefox extension testing via Playwright is not supported.
- * Playwright's Firefox doesn't load extensions from profiles.
+ * Note: Firefox Playwright extension testing is not supported due to
+ * limitations in how Playwright's Firefox handles extension installation.
  */
 
 import { defineConfig } from '@playwright/test';
@@ -51,10 +51,8 @@ export default defineConfig({
       name: 'extension-chrome',
       testMatch: /extension\/.*\.spec\.ts/,
       // Extension tests use custom fixture that launches Chrome with extension
-      // No browser setting here - fixture handles browser launch
+      // Firefox not supported - use yarn extension:firefox for manual testing
     },
-    // Note: extension-firefox project removed - Playwright Firefox doesn't support extensions
-    // Use `yarn extension:firefox` (web-ext) for Firefox testing
   ],
 
   // Test execution settings

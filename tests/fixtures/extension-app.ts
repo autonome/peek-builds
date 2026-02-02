@@ -155,29 +155,20 @@ async function launchChrome(profile: string): Promise<ExtensionApp> {
 /**
  * Launch Firefox with extension loaded
  *
- * NOTE: Firefox extension testing via Playwright is LIMITED.
- * Playwright's Firefox doesn't support extension loading the same way Chrome does.
- * For Firefox extension testing, consider using web-ext directly:
- *   yarn extension:firefox
+ * NOTE: Firefox extension testing via Playwright is not currently working.
+ * The playwright-webextext library does not reliably install MV3 extensions.
  *
- * This implementation attempts to load the extension but may not work reliably.
+ * For Firefox testing, use: yarn extension:firefox (web-ext)
  */
 async function launchFirefox(_profile: string): Promise<ExtensionApp> {
-  // Firefox extension testing via Playwright is not fully supported.
-  // Playwright's Firefox uses a patched version that doesn't load extensions
-  // from the profile directory the same way regular Firefox does.
-  //
-  // Workarounds attempted:
-  // 1. Pointer file in extensions/ directory - doesn't work with Playwright Firefox
-  // 2. Copying extension to profile - doesn't work with Playwright Firefox
-  // 3. firefoxUserPrefs for signing - doesn't help with loading
-  //
-  // For Firefox testing, use: yarn extension:firefox (uses web-ext)
   throw new Error(
-    'Firefox extension testing via Playwright is not supported.\n' +
-    'Playwright\'s Firefox does not load extensions from profiles.\n' +
-    'For Firefox testing, use: yarn extension:firefox (web-ext)\n' +
-    'Or run Chrome tests: yarn test:extension:browser'
+    'Firefox extension testing via Playwright is not currently supported.\n\n' +
+    'The playwright-webextext library does not reliably install MV3 extensions.\n' +
+    'Playwright\'s Firefox also has limited extension support compared to Chrome.\n\n' +
+    'For Firefox extension testing, use:\n' +
+    '  yarn extension:firefox\n\n' +
+    'This launches Firefox with web-ext for manual testing.\n' +
+    'Chrome automated tests: yarn test:extension:browser'
   );
 }
 

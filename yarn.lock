@@ -1191,6 +1191,8 @@ __metadata:
     fake-indexeddb: "npm:^6.2.5"
     lit: "npm:^3.3.2"
     playwright: "npm:^1.57.0"
+    playwright-webextext: "npm:^0.0.4"
+    tslib: "npm:^2.8.1"
     typescript: "npm:^5.9.3"
     web-ext: "npm:^9.2.0"
   languageName: unknown
@@ -5227,6 +5229,21 @@ __metadata:
   languageName: node
   linkType: hard
 
+"playwright-webextext@npm:^0.0.4":
+  version: 0.0.4
+  resolution: "playwright-webextext@npm:0.0.4"
+  peerDependencies:
+    "@playwright/test": ">=1.0.0"
+    playwright: ">=1.0.0"
+  peerDependenciesMeta:
+    "@playwright/test":
+      optional: true
+    playwright:
+      optional: true
+  checksum: 10c0/7a9f9390174ff0439fff6e5a27ada9652a9f184ceef210c883af87d63da767740fa40ced5227577d5800d3928293cf238a4f9a6f01140ed0f2bef31893944e5a
+  languageName: node
+  linkType: hard
+
 "playwright@npm:1.57.0, playwright@npm:^1.57.0":
   version: 1.57.0
   resolution: "playwright@npm:1.57.0"
@@ -6251,6 +6268,13 @@ __metadata:
   dependencies:
     utf8-byte-length: "npm:^1.0.1"
   checksum: 10c0/af2b431fc4314f119b551e5fccfad49d4c0ef82e13ba9ca61be6567801195b08e732ce9643542e8ad1b3df44f3df2d7345b3dd34f723954b6bb43a14584d6b3c
+  languageName: node
+  linkType: hard
+
+"tslib@npm:^2.8.1":
+  version: 2.8.1
+  resolution: "tslib@npm:2.8.1"
+  checksum: 10c0/9c4759110a19c53f992d9aae23aac5ced636e99887b51b9e61def52611732872ff7668757d4e4c61f19691e36f4da981cd9485e869b4a7408d689f6bf1f14e62
   languageName: node
   linkType: hard
 
