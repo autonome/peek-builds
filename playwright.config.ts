@@ -7,18 +7,20 @@
  *
  * Test organization:
  *   tests/desktop/     - Cross-backend desktop tests
- *   tests/extension/   - Browser extension e2e tests
+ *   tests/extension/   - Browser extension e2e tests (Chrome only)
  *   backend/{name}/tests/ - Backend-specific tests
  *
  * Extension tests:
- *   BROWSER=chrome yarn test:extension:browser
- *   BROWSER=firefox yarn test:extension:browser:firefox
+ *   yarn test:extension:browser   - Run in Chrome (Playwright)
+ *   yarn extension:firefox        - Run in Firefox (web-ext, manual)
+ *
+ * Note: Firefox extension testing via Playwright is not supported.
+ * Playwright's Firefox doesn't load extensions from profiles.
  */
 
 import { defineConfig } from '@playwright/test';
 
 const backend = process.env.BACKEND || 'electron';
-const browser = process.env.BROWSER || 'chrome';
 
 export default defineConfig({
   testDir: './tests',
@@ -51,12 +53,8 @@ export default defineConfig({
       // Extension tests use custom fixture that launches Chrome with extension
       // No browser setting here - fixture handles browser launch
     },
-    {
-      name: 'extension-firefox',
-      testMatch: /extension\/.*\.spec\.ts/,
-      // Extension tests use custom fixture that launches Firefox with extension
-      // No browser setting here - fixture handles browser launch
-    },
+    // Note: extension-firefox project removed - Playwright Firefox doesn't support extensions
+    // Use `yarn extension:firefox` (web-ext) for Firefox testing
   ],
 
   // Test execution settings
@@ -88,6 +86,5 @@ export default defineConfig({
   // Metadata
   metadata: {
     backend,
-    browser,
   },
 });

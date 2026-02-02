@@ -155,98 +155,30 @@ async function launchChrome(profile: string): Promise<ExtensionApp> {
 /**
  * Launch Firefox with extension loaded
  *
- * Firefox requires special handling:
- * - Uses web-ext prefs to allow unsigned extensions
- * - Extension ID comes from manifest gecko.id
+ * NOTE: Firefox extension testing via Playwright is LIMITED.
+ * Playwright's Firefox doesn't support extension loading the same way Chrome does.
+ * For Firefox extension testing, consider using web-ext directly:
+ *   yarn extension:firefox
+ *
+ * This implementation attempts to load the extension but may not work reliably.
  */
-async function launchFirefox(profile: string): Promise<ExtensionApp> {
-  const userDataDir = createTempProfileDir('firefox', profile);
-
-  // Read manifest to get gecko ID
-  const manifestPath = path.join(EXTENSION_PATH, 'manifest.json');
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-  const geckoId = manifest.browser_specific_settings?.gecko?.id;
-
-  if (!geckoId) {
-    throw new Error('Extension manifest missing browser_specific_settings.gecko.id');
-  }
-
-  // Create Firefox preferences for extension loading
-  const prefsContent = `
-user_pref("xpinstall.signatures.required", false);
-user_pref("extensions.autoDisableScopes", 0);
-user_pref("extensions.enabledScopes", 15);
-user_pref("devtools.console.stdout.content", true);
-user_pref("browser.shell.checkDefaultBrowser", false);
-user_pref("browser.startup.homepage_override.mstone", "ignore");
-user_pref("browser.tabs.warnOnClose", false);
-`;
-  const prefsPath = path.join(userDataDir, 'prefs.js');
-  fs.writeFileSync(prefsPath, prefsContent);
-
-  // Copy extension to Firefox extensions folder
-  const extensionsDir = path.join(userDataDir, 'extensions');
-  fs.mkdirSync(extensionsDir, { recursive: true });
-
-  // Create XPI by copying extension directory with .xpi extension
-  // For development, we can use the directory directly with a special naming convention
-  const extTargetDir = path.join(extensionsDir, geckoId);
-  fs.cpSync(EXTENSION_PATH, extTargetDir, { recursive: true });
-
-  // Launch Firefox with the profile
-  const context = await firefox.launchPersistentContext(userDataDir, {
-    headless: false, // Extensions require headed mode
-    args: [
-      '-no-remote',
-    ],
-  });
-
-  // Wait for extension to load
-  await sleep(2000);
-
-  // Firefox extension ID uses the gecko.id from manifest
-  // The URL format is moz-extension://{uuid}/ where uuid is generated per-install
-  // We need to find the actual UUID by looking at pages
-  let extensionUUID = '';
-  const maxWait = 10000;
-  const start = Date.now();
-
-  while (Date.now() - start < maxWait) {
-    const pages = context.pages();
-    for (const page of pages) {
-      const url = page.url();
-      if (url.startsWith('moz-extension://')) {
-        const match = url.match(/moz-extension:\/\/([^/]+)/);
-        if (match) {
-          extensionUUID = match[1];
-          break;
-        }
-      }
-    }
-    // Also check background pages
-    const bgPages = context.backgroundPages();
-    for (const page of bgPages) {
-      const url = page.url();
-      if (url.startsWith('moz-extension://')) {
-        const match = url.match(/moz-extension:\/\/([^/]+)/);
-        if (match) {
-          extensionUUID = match[1];
-          break;
-        }
-      }
-    }
-    if (extensionUUID) break;
-    await sleep(100);
-  }
-
-  // If we couldn't find the UUID, try opening the popup to trigger extension load
-  if (!extensionUUID) {
-    // For Firefox, we'll use a fallback approach - the geckoId is stable
-    // and we can compute a predictable UUID based on the profile
-    extensionUUID = geckoId;
-  }
-
-  return createExtensionApp('firefox', context, extensionUUID, userDataDir);
+async function launchFirefox(_profile: string): Promise<ExtensionApp> {
+  // Firefox extension testing via Playwright is not fully supported.
+  // Playwright's Firefox uses a patched version that doesn't load extensions
+  // from the profile directory the same way regular Firefox does.
+  //
+  // Workarounds attempted:
+  // 1. Pointer file in extensions/ directory - doesn't work with Playwright Firefox
+  // 2. Copying extension to profile - doesn't work with Playwright Firefox
+  // 3. firefoxUserPrefs for signing - doesn't help with loading
+  //
+  // For Firefox testing, use: yarn extension:firefox (uses web-ext)
+  throw new Error(
+    'Firefox extension testing via Playwright is not supported.\n' +
+    'Playwright\'s Firefox does not load extensions from profiles.\n' +
+    'For Firefox testing, use: yarn extension:firefox (web-ext)\n' +
+    'Or run Chrome tests: yarn test:extension:browser'
+  );
 }
 
 /**

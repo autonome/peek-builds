@@ -126,7 +126,6 @@
     "test:extension:e2e": "node --test backend/extension/tests/sync-e2e.test.js",
     "test:extension:e2e:verbose": "VERBOSE=1 node --test backend/extension/tests/sync-e2e.test.js",
     "test:extension:browser": "BROWSER=chrome npx playwright test tests/extension/ --project=extension-chrome",
-    "test:extension:browser:firefox": "BROWSER=firefox npx playwright test tests/extension/ --project=extension-firefox",
     "test:extension:browser:visible": "HEADLESS=0 BROWSER=chrome npx playwright test tests/extension/ --project=extension-chrome --headed",
     "extension:chrome": "backend/extension/scripts/launch-chrome.sh",
     "extension:firefox": "web-ext run --source-dir backend/extension --firefox-profile /tmp/peek-firefox-profile --keep-profile-changes --no-reload",
