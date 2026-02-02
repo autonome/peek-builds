@@ -1895,14 +1895,32 @@ export function getRow(tableName: TableName, rowId: string): Record<string, unkn
 
 export function getStats(): DatastoreStats {
   const d = getDb();
+
+  // Helper to safely count rows (returns 0 if table doesn't exist or query fails)
+  const safeCount = (sql: string): number => {
+    try {
+      return (d.prepare(sql).get() as { count: number }).count;
+    } catch {
+      return 0;
+    }
+  };
+
+  const safeAvg = (sql: string): number => {
+    try {
+      return (d.prepare(sql).get() as { avg: number | null }).avg || 0;
+    } catch {
+      return 0;
+    }
+  };
+
   return {
-    totalAddresses: (d.prepare('SELECT COUNT(*) as count FROM addresses').get() as { count: number }).count,
-    totalVisits: (d.prepare('SELECT COUNT(*) as count FROM visits').get() as { count: number }).count,
-    avgVisitDuration: (d.prepare('SELECT AVG(duration) as avg FROM visits').get() as { avg: number | null }).avg || 0,
-    totalContent: (d.prepare('SELECT COUNT(*) as count FROM content').get() as { count: number }).count,
-    syncedContent: (d.prepare('SELECT COUNT(*) as count FROM content WHERE synced = 1').get() as { count: number }).count,
-    totalItems: (d.prepare('SELECT COUNT(*) as count FROM items').get() as { count: number }).count,
-    totalTags: (d.prepare('SELECT COUNT(*) as count FROM tags').get() as { count: number }).count,
+    totalAddresses: safeCount('SELECT COUNT(*) as count FROM addresses'),
+    totalVisits: safeCount('SELECT COUNT(*) as count FROM visits'),
+    avgVisitDuration: safeAvg('SELECT AVG(duration) as avg FROM visits'),
+    totalContent: safeCount('SELECT COUNT(*) as count FROM content'),
+    syncedContent: safeCount('SELECT COUNT(*) as count FROM content WHERE synced = 1'),
+    totalItems: safeCount('SELECT COUNT(*) as count FROM items'),
+    totalTags: safeCount('SELECT COUNT(*) as count FROM tags'),
   };
 }
 
