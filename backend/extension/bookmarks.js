@@ -26,12 +26,17 @@ export async function setBookmarkSyncEnabled(enabled) {
 
 /**
  * Walk the bookmark tree and collect all bookmark URLs (skip folders).
+ * Captures dateAdded for preserving original creation time.
  */
 function collectBookmarks(nodes) {
   const urls = [];
   for (const node of nodes) {
     if (node.url) {
-      urls.push({ url: node.url, title: node.title || '', id: node.id });
+      urls.push({
+        url: node.url,
+        title: node.title || '',
+        dateAdded: node.dateAdded || 0,
+      });
     }
     if (node.children) {
       urls.push(...collectBookmarks(node.children));
@@ -58,9 +63,10 @@ async function getExistingUrlMap() {
 /**
  * Add a single bookmark as a Peek URL item with tag.
  * If the URL already exists, tags the existing item with from:bookmark.
+ * Uses dateAdded as createdAt to preserve original bookmark creation time.
  * Returns true if a new item was imported, false if already existed.
  */
-async function addBookmarkItem(url, title, bookmarkId, existingUrlMap) {
+async function addBookmarkItem(url, title, dateAdded, existingUrlMap) {
   const existing = existingUrlMap.get(url);
 
   if (existing) {
@@ -74,8 +80,9 @@ async function addBookmarkItem(url, title, bookmarkId, existingUrlMap) {
 
   const result = await addItem('url', {
     content: url,
-    metadata: { title, bookmarkId },
+    metadata: { title, dateAdded },
     syncSource: 'bookmark',
+    createdAt: dateAdded || undefined,
   });
 
   if (result.success) {
@@ -102,7 +109,7 @@ export async function importAllBookmarks() {
   let skipped = 0;
 
   for (const bm of bookmarks) {
-    const added = await addBookmarkItem(bm.url, bm.title, bm.id, existingUrlMap);
+    const added = await addBookmarkItem(bm.url, bm.title, bm.dateAdded, existingUrlMap);
     if (added) imported++;
     else skipped++;
   }
@@ -147,7 +154,7 @@ export function activateListener() {
     if (!bookmark.url) return; // folder, ignore
 
     const existingUrlMap = await getExistingUrlMap();
-    await addBookmarkItem(bookmark.url, bookmark.title || '', id, existingUrlMap);
+    await addBookmarkItem(bookmark.url, bookmark.title || '', bookmark.dateAdded || Date.now(), existingUrlMap);
   };
 
   chrome.bookmarks.onCreated.addListener(onCreatedCallback);

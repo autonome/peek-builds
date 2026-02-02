@@ -83,6 +83,7 @@ function buildHistoryMetadata(historyItem, visits) {
 /**
  * Add a new history item or update an existing one with fresh visit data.
  * Also records item visits for frecency calculation.
+ * Uses earliest visit time as createdAt to preserve original history date.
  * Returns 'imported' | 'updated' | 'skipped'.
  */
 async function addOrUpdateHistoryItem(url, historyItem, visits, existingUrlMap) {
@@ -91,6 +92,15 @@ async function addOrUpdateHistoryItem(url, historyItem, visits, existingUrlMap) 
   const metadata = buildHistoryMetadata(historyItem, visits);
   const existing = existingUrlMap.get(url);
   let itemId;
+
+  // Find earliest visit time for createdAt
+  let earliestVisitTime = historyItem.lastVisitTime || 0;
+  if (visits && visits.length > 0) {
+    const visitTimes = visits.map(v => v.visitTime).filter(t => t > 0);
+    if (visitTimes.length > 0) {
+      earliestVisitTime = Math.min(...visitTimes);
+    }
+  }
 
   if (existing) {
     itemId = existing.id;
@@ -102,11 +112,12 @@ async function addOrUpdateHistoryItem(url, historyItem, visits, existingUrlMap) 
       await tagItem(existing.id, tagResult.data.tag.id);
     }
   } else {
-    // Add new item
+    // Add new item with earliest visit as createdAt
     const result = await addItem('url', {
       content: url,
       metadata,
       syncSource: 'history',
+      createdAt: earliestVisitTime || undefined,
     });
 
     if (result.success) {

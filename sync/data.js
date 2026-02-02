@@ -39,11 +39,13 @@ export class DataEngine {
    * @param {string|null} [options.metadata] - JSON string
    * @param {string} [options.syncId]
    * @param {string} [options.syncSource]
+   * @param {number} [options.createdAt] - Override creation timestamp (for imports)
    * @returns {Promise<{id: string}>}
    */
   async addItem(type, options = {}) {
     const id = generateId();
-    const timestamp = Date.now();
+    const now = Date.now();
+    const createdAt = options.createdAt || now;
 
     let metadata = null;
     if (options.metadata !== undefined && options.metadata !== null) {
@@ -61,8 +63,8 @@ export class DataEngine {
       syncId: options.syncId || '',
       syncSource: options.syncSource || '',
       syncedAt: 0,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt,
+      updatedAt: now,
       deletedAt: 0,
     });
 
