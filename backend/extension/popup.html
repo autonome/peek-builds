@@ -4,39 +4,90 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Peek</title>
-  <link rel="stylesheet" href="popup.css">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 320px;
+      height: 48px;
+      background-color: rgba(40, 44, 52, 0.95);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", sans-serif;
+      color: white;
+      overflow: hidden;
+    }
+
+    .center-wrapper {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+    }
+
+    .command-display {
+      flex: 1;
+      min-width: 0;
+      height: 40px;
+      position: relative;
+    }
+
+    #command-input {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 40px;
+      line-height: 40px;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: transparent;
+      caret-color: white;
+      font-family: inherit;
+      font-size: 18px;
+      font-weight: 500;
+      padding: 0;
+      z-index: 2;
+    }
+
+    #command-text {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 40px;
+      line-height: 40px;
+      font-family: inherit;
+      font-size: 18px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.4);
+      white-space: pre;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    #command-text .typed {
+      color: white;
+    }
+
+    #command-text.placeholder {
+      color: rgba(255, 255, 255, 0.3);
+    }
+  </style>
 </head>
 <body>
-  <div class="command-bar">
-    <input
-      type="text"
-      id="command-input"
-      placeholder="Type a command..."
-      autofocus
-      spellcheck="false"
-    >
-    <div id="command-hint" class="command-hint"></div>
-  </div>
-
-  <div id="results" class="results"></div>
-
-  <div id="input-area" class="input-area" hidden>
-    <div id="input-label" class="input-label"></div>
-    <textarea id="input-text" rows="3" placeholder=""></textarea>
-    <div class="input-actions">
-      <button id="input-cancel" class="btn">Cancel</button>
-      <button id="input-submit" class="btn primary">Save</button>
+  <div class="center-wrapper">
+    <div class="command-display">
+      <input id="command-input" type="text" autofocus spellcheck="false" />
+      <div id="command-text" class="placeholder">tag, note, or search...</div>
     </div>
   </div>
 
-  <div id="status" class="status"></div>
-
-  <div class="help-text">
-    <span class="shortcut">tag</span> Tag this page
-    <span class="shortcut">note</span> Save a note
-    <span class="shortcut">search</span> Search items
-  </div>
-
-  <script type="module" src="popup.js"></script>
+  <script src="popup.js"></script>
 </body>
 </html>
