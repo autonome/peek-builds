@@ -116,9 +116,9 @@ const renderOverview = async () => {
   statsArea.innerHTML = '';
 
   const statItems = [
-    { label: 'Addresses', value: stats.totalAddresses || 0 },
+    { label: 'Items', value: stats.totalItems || stats.totalAddresses || 0 },
+    { label: 'Tags', value: stats.totalTags || 0 },
     { label: 'Visits', value: stats.totalVisits || 0 },
-    { label: 'Content', value: stats.totalContent || 0 },
   ];
 
   statItems.forEach(({ label, value }) => {

@@ -292,6 +292,8 @@ export interface DatastoreStats {
   avgVisitDuration: number;
   totalContent: number;
   syncedContent: number;
+  totalItems: number;
+  totalTags: number;
 }
 
 export interface IDatastoreApi {

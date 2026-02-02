@@ -157,65 +157,6 @@ const renderCoreSettings = async () => {
     container.appendChild(prefsSection);
   }
 
-  // Features (core only - extensions are managed in Extensions section)
-  const extensionNames = ['groups', 'peeks', 'slides'];
-  const coreFeatures = features ? features.filter(f => !extensionNames.includes(f.name.toLowerCase())) : [];
-  if (coreFeatures.length > 0) {
-    const featuresSection = document.createElement('div');
-    featuresSection.className = 'form-section';
-
-    const title = document.createElement('h3');
-    title.className = 'form-section-title';
-    title.textContent = 'Features';
-    featuresSection.appendChild(title);
-
-    coreFeatures.forEach((feature) => {
-      // Find original index for saving
-      const i = features.findIndex(f => f.id === feature.id);
-
-      const item = document.createElement('div');
-      item.className = 'feature-item';
-
-      const header = document.createElement('div');
-      header.className = 'feature-header';
-
-      const name = document.createElement('div');
-      name.className = 'feature-name';
-      name.textContent = feature.name;
-      header.appendChild(name);
-
-      const wrapper = document.createElement('div');
-      wrapper.className = 'checkbox-wrapper';
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = feature.enabled;
-      checkbox.addEventListener('change', (e) => {
-        features[i].enabled = e.target.checked;
-        save();
-        api.publish('core:feature:toggle', {
-          featureId: feature.id,
-          enabled: e.target.checked
-        });
-      });
-
-      wrapper.appendChild(checkbox);
-      header.appendChild(wrapper);
-      item.appendChild(header);
-
-      if (feature.description) {
-        const desc = document.createElement('div');
-        desc.className = 'feature-description';
-        desc.textContent = feature.description;
-        item.appendChild(desc);
-      }
-
-      featuresSection.appendChild(item);
-    });
-
-    container.appendChild(featuresSection);
-  }
-
   return container;
 };
 

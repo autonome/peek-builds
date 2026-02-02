@@ -1900,7 +1900,9 @@ export function getStats(): DatastoreStats {
     totalVisits: (d.prepare('SELECT COUNT(*) as count FROM visits').get() as { count: number }).count,
     avgVisitDuration: (d.prepare('SELECT AVG(duration) as avg FROM visits').get() as { avg: number | null }).avg || 0,
     totalContent: (d.prepare('SELECT COUNT(*) as count FROM content').get() as { count: number }).count,
-    syncedContent: (d.prepare('SELECT COUNT(*) as count FROM content WHERE synced = 1').get() as { count: number }).count
+    syncedContent: (d.prepare('SELECT COUNT(*) as count FROM content WHERE synced = 1').get() as { count: number }).count,
+    totalItems: (d.prepare('SELECT COUNT(*) as count FROM items').get() as { count: number }).count,
+    totalTags: (d.prepare('SELECT COUNT(*) as count FROM tags').get() as { count: number }).count,
   };
 }
 
