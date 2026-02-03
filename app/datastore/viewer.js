@@ -107,7 +107,10 @@ const renderOverview = async () => {
   let stats = {};
   if (datastoreApi) {
     try {
-      stats = await datastoreApi.getStats();
+      const result = await datastoreApi.getStats();
+      if (result && result.success && result.data) {
+        stats = result.data;
+      }
     } catch (e) {
       console.error('Error getting stats:', e);
     }
