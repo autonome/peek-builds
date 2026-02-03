@@ -69,9 +69,12 @@ function getValidURL(str) {
   const hasValidProtocol = /^(https?|ftp|file|peek):\/\//.test(str);
 
   if (!hasValidProtocol) {
-    // If no protocol, check if it's a domain name pattern
-    const isDomainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(str);
-    if (isDomainPattern) {
+    // Check if it looks like a domain (e.g., "example.com", "example.com/path", "localhost")
+    // Pattern: domain.tld or domain.tld/path (with optional port for localhost)
+    const isDomainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/.*)?$/.test(str);
+    const isLocalhost = /^localhost(:\d+)?(\/.*)?$/.test(str);
+
+    if (isDomainPattern || isLocalhost) {
       // It's a domain without protocol, add https://
       const urlWithProtocol = 'https://' + str;
       try {
