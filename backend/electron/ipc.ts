@@ -185,7 +185,6 @@ import {
 // IPC handlers:
 //   - get-window-id: Returns the calling window's ID
 //   - get-focused-visible-window-id: Returns lastFocusedVisibleWindowId
-//   - get-target-window-info: Returns {id, title, url} for UX display
 // ============================================================================
 
 // Track the last focused content window (for devtools command)
@@ -1198,22 +1197,6 @@ export function registerThemeHandlers(): void {
     return { themes };
   });
 
-  // Legacy dark-mode handlers for backwards compatibility
-  ipcMain.handle('dark-mode:toggle', () => {
-    const newScheme = nativeTheme.shouldUseDarkColors ? 'light' : 'dark';
-    setThemeSetting(THEME_COLOR_SCHEME_KEY, newScheme);
-    nativeTheme.themeSource = newScheme;
-    broadcastThemeChange(newScheme);
-    return nativeTheme.shouldUseDarkColors;
-  });
-
-  ipcMain.handle('dark-mode:system', () => {
-    setThemeSetting(THEME_COLOR_SCHEME_KEY, 'system');
-    nativeTheme.themeSource = 'system';
-    broadcastThemeChange('system');
-    return nativeTheme.shouldUseDarkColors;
-  });
-
   // Listen for system theme changes
   nativeTheme.on('updated', () => {
     const colorScheme = getThemeSetting(THEME_COLOR_SCHEME_KEY) || 'system';
@@ -2035,68 +2018,6 @@ export function registerWindowHandlers(): void {
     }
   });
 
-  // Set window always-on-top with level support
-  // Levels (macOS): 'normal', 'floating', 'torn-off-menu', 'modal-panel', 'main-menu', 'status', 'pop-up-menu', 'screen-saver'
-  // For cross-platform, use 'floating' for app-level and 'screen-saver' for OS-level
-  ipcMain.handle('window-set-always-on-top', async (ev, msg) => {
-    DEBUG && console.log('window-set-always-on-top', msg);
-
-    try {
-      // If no ID provided, use the sender's window
-      let win: BrowserWindow | null = null;
-      if (msg?.id) {
-        win = BrowserWindow.fromId(msg.id);
-      } else {
-        win = BrowserWindow.fromWebContents(ev.sender);
-      }
-
-      if (!win) {
-        return { success: false, error: 'Window not found' };
-      }
-
-      const value = msg.value !== false; // Default to true
-      const level = msg.level || 'normal'; // 'normal', 'floating', 'screen-saver', etc.
-
-      // setAlwaysOnTop(flag, level, relativeLevel)
-      // relativeLevel is only used on macOS
-      if (process.platform === 'darwin') {
-        win.setAlwaysOnTop(value, level as any);
-      } else {
-        // On Windows/Linux, level is ignored but always-on-top still works
-        win.setAlwaysOnTop(value);
-      }
-
-      return { success: true, alwaysOnTop: value, level };
-    } catch (error) {
-      console.error('Failed to set always-on-top:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Get window always-on-top state
-  ipcMain.handle('window-is-always-on-top', async (ev, msg) => {
-    DEBUG && console.log('window-is-always-on-top', msg);
-
-    try {
-      let win: BrowserWindow | null = null;
-      if (msg?.id) {
-        win = BrowserWindow.fromId(msg.id);
-      } else {
-        win = BrowserWindow.fromWebContents(ev.sender);
-      }
-
-      if (!win) {
-        return { success: false, error: 'Window not found' };
-      }
-
-      return { success: true, alwaysOnTop: win.isAlwaysOnTop() };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
   // Animate window bounds (position and/or size)
   // Animates from current bounds (or specified 'from') to target bounds over duration
   ipcMain.handle('window-animate', async (ev, msg) => {
@@ -2294,70 +2215,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
     }
   });
 
-  // Save window state (position and size) for persistence
-  // Stored in extension_settings table with namespace 'window_state'
-  ipcMain.handle('window-state-save', async (_ev, msg) => {
-    DEBUG && console.log('window-state-save', msg);
-
-    try {
-      const { key, x, y, width, height } = msg;
-      if (!key) {
-        return { success: false, error: 'Window key is required' };
-      }
-
-      // Check if persistence is enabled
-      const prefs = getPrefs();
-      if (!prefs.persistWindowState) {
-        return { success: false, error: 'Window state persistence is disabled' };
-      }
-
-      const rowId = `window_state:${key}`;
-      const data = {
-        extensionId: 'window_state',
-        key,
-        value: JSON.stringify({ x, y, width, height }),
-        updatedAt: Date.now()
-      };
-
-      setRow('extension_settings', rowId, data);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Load window state for a given key
-  ipcMain.handle('window-state-load', async (_ev, msg) => {
-    DEBUG && console.log('window-state-load', msg);
-
-    try {
-      const { key } = msg;
-      if (!key) {
-        return { success: false, error: 'Window key is required' };
-      }
-
-      // Check if persistence is enabled
-      const prefs = getPrefs();
-      if (!prefs.persistWindowState) {
-        return { success: false, data: null };
-      }
-
-      const rowId = `window_state:${key}`;
-      const row = getRow('extension_settings', rowId);
-
-      if (!row || !row.value) {
-        return { success: true, data: null };
-      }
-
-      const state = JSON.parse(row.value as string);
-      return { success: true, data: state };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
   // Web navigation handlers - operate on the target http/https window
   const resolveWebWindow = (windowId?: number): BrowserWindow | null => {
     const id = windowId || lastFocusedVisibleWindowId;
@@ -2417,18 +2274,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
   // Returns the most recently focused window that isn't a background/internal window
   ipcMain.handle('get-focused-visible-window-id', () => {
     return lastFocusedVisibleWindowId;
-  });
-
-  // Get info about the target window for window-scoped commands (for future UX)
-  ipcMain.handle('get-target-window-info', () => {
-    if (!lastFocusedVisibleWindowId) return null;
-    const win = BrowserWindow.fromId(lastFocusedVisibleWindowId);
-    if (!win || win.isDestroyed()) return null;
-    return {
-      id: lastFocusedVisibleWindowId,
-      title: win.getTitle(),
-      url: win.webContents.getURL()
-    };
   });
 
   // Register shortcut
