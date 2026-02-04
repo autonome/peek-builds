@@ -24,6 +24,8 @@ files:
   # Exclude agent workflow (symlink to external directory)
   - "!.agent-workflow"
   - "!.agent-task.md"
+  # Exclude agent workspaces
+  - "!tmp/**/*"
   # Exclude backend directories not needed for Electron
   - "!backend/tauri/**/*"
   - "!backend/server/**/*"
