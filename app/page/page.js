@@ -247,6 +247,63 @@ webview.addEventListener('did-fail-load', (e) => {
   console.error('[page] Load failed:', e.errorCode, e.errorDescription);
 });
 
+// Set default background color on webview content if the page doesn't set one
+// This prevents white-text-on-transparent issues for pages that assume a background
+webview.addEventListener('dom-ready', async () => {
+  try {
+    // Get the current theme to determine light/dark mode
+    const theme = await api.theme.get();
+    const isDark = theme?.isDark || theme?.effectiveScheme === 'dark';
+    const defaultBg = isDark ? '#1a1a1a' : '#ffffff';
+
+    // Inject CSS that sets a default background only if the page doesn't have one
+    // Uses :where() for zero specificity so any page CSS will override it
+    const css = `
+      :where(html:not([style*="background"]):not([class])),
+      :where(body:not([style*="background"])) {
+        background-color: ${defaultBg};
+      }
+      /* Fallback: if html/body have no explicit background, set on html */
+      html {
+        background-color: ${defaultBg};
+      }
+    `;
+
+    // Also run JS to check computed styles and set background only if truly transparent
+    const js = `
+      (function() {
+        const defaultBg = '${defaultBg}';
+
+        // Check if body has a background set (either directly or via CSS)
+        const bodyStyle = window.getComputedStyle(document.body);
+        const htmlStyle = window.getComputedStyle(document.documentElement);
+
+        // rgba(0, 0, 0, 0) is the default "transparent" value
+        const isTransparent = (color) => {
+          if (!color) return true;
+          if (color === 'transparent') return true;
+          if (color === 'rgba(0, 0, 0, 0)') return true;
+          return false;
+        };
+
+        const bodyBgTransparent = isTransparent(bodyStyle.backgroundColor);
+        const htmlBgTransparent = isTransparent(htmlStyle.backgroundColor);
+
+        // Only set background if both html and body are transparent
+        if (bodyBgTransparent && htmlBgTransparent) {
+          document.documentElement.style.backgroundColor = defaultBg;
+        }
+      })();
+    `;
+
+    await webview.insertCSS(css);
+    await webview.executeJavaScript(js);
+    DEBUG && console.log('[page] Injected default background color:', defaultBg);
+  } catch (err) {
+    console.error('[page] Failed to inject default background:', err);
+  }
+});
+
 // --- Commands ---
 
 api.commands.register({
