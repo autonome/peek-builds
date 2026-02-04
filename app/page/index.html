@@ -23,6 +23,10 @@
     webview {
       position: absolute;
       border: none;
+      border-radius: 10px;
+      overflow: hidden;
+      /* Use clip-path as fallback if border-radius doesn't clip webview content */
+      -webkit-mask-image: -webkit-radial-gradient(white, white);
     }
 
     /* Navbar floats above the webview */
@@ -39,9 +43,8 @@
       color: var(--theme-text, #e0e0e0);
       font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
       font-size: 15px;
-      border: 1px solid var(--theme-border, rgba(255, 255, 255, 0.12));
+      border: none;
       border-radius: 10px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
       -webkit-app-region: drag;
       user-select: none;
       -webkit-user-select: none;
