@@ -251,56 +251,63 @@ webview.addEventListener('did-fail-load', (e) => {
 // This prevents white-text-on-transparent issues for pages that assume a background
 webview.addEventListener('dom-ready', async () => {
   try {
-    // Get the current theme to determine light/dark mode
-    const theme = await api.theme.get();
-    const isDark = theme?.isDark || theme?.effectiveScheme === 'dark';
-    const defaultBg = isDark ? '#1a1a1a' : '#ffffff';
-
-    // Inject CSS that sets a default background only if the page doesn't have one
-    // Uses :where() for zero specificity so any page CSS will override it
-    const css = `
-      :where(html:not([style*="background"]):not([class])),
-      :where(body:not([style*="background"])) {
-        background-color: ${defaultBg};
-      }
-      /* Fallback: if html/body have no explicit background, set on html */
-      html {
-        background-color: ${defaultBg};
-      }
-    `;
-
-    // Also run JS to check computed styles and set background only if truly transparent
-    const js = `
+    // Detection script that thoroughly checks for any background
+    const detectionJs = `
       (function() {
-        const defaultBg = '${defaultBg}';
-
-        // Check if body has a background set (either directly or via CSS)
-        const bodyStyle = window.getComputedStyle(document.body);
-        const htmlStyle = window.getComputedStyle(document.documentElement);
-
-        // rgba(0, 0, 0, 0) is the default "transparent" value
-        const isTransparent = (color) => {
+        // Check if a color value represents "no background"
+        function isTransparentColor(color) {
           if (!color) return true;
           if (color === 'transparent') return true;
           if (color === 'rgba(0, 0, 0, 0)') return true;
+          // Handle any rgba with alpha = 0
+          const rgbaMatch = color.match(/rgba\\s*\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*([\\d.]+)\\s*\\)/);
+          if (rgbaMatch && parseFloat(rgbaMatch[1]) === 0) return true;
           return false;
-        };
-
-        const bodyBgTransparent = isTransparent(bodyStyle.backgroundColor);
-        const htmlBgTransparent = isTransparent(htmlStyle.backgroundColor);
-
-        // Only set background if both html and body are transparent
-        if (bodyBgTransparent && htmlBgTransparent) {
-          document.documentElement.style.backgroundColor = defaultBg;
         }
+
+        // Check if an element has a background set (color or image)
+        function hasBackground(el) {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+
+          // Check background-color
+          const bgColor = style.backgroundColor;
+          const hasColor = !isTransparentColor(bgColor);
+
+          // Check background-image (includes gradients)
+          const bgImage = style.backgroundImage;
+          const hasImage = bgImage && bgImage !== 'none';
+
+          return hasColor || hasImage;
+        }
+
+        // Check both html and body elements
+        const html = document.documentElement;
+        const body = document.body;
+
+        const htmlHasBg = hasBackground(html);
+        const bodyHasBg = hasBackground(body);
+
+        // If either has a background, we don't need to set one
+        return !(htmlHasBg || bodyHasBg);
       })();
     `;
 
-    await webview.insertCSS(css);
-    await webview.executeJavaScript(js);
-    DEBUG && console.log('[page] Injected default background color:', defaultBg);
+    // Run detection in page context
+    const needsBackground = await webview.executeJavaScript(detectionJs);
+
+    if (needsBackground) {
+      // Simple fix: set white background
+      const defaultBg = '#ffffff';
+      await webview.executeJavaScript(`
+        document.documentElement.style.backgroundColor = '${defaultBg}';
+      `);
+      DEBUG && console.log('[page] No background detected, set default:', defaultBg);
+    } else {
+      DEBUG && console.log('[page] Page has background, skipping default');
+    }
   } catch (err) {
-    console.error('[page] Failed to inject default background:', err);
+    console.error('[page] Failed to check/set background:', err);
   }
 });
 
