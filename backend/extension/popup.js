@@ -18,6 +18,10 @@ const commandDisplay = document.getElementById('command-display');
 const feedbackEl = document.getElementById('feedback');
 const feedbackIcon = document.getElementById('feedback-icon');
 const feedbackText = document.getElementById('feedback-text');
+const syncStatusEl = document.getElementById('sync-status');
+const syncTextEl = document.getElementById('sync-text');
+const pendingBadge = document.getElementById('pending-badge');
+const syncBtn = document.getElementById('sync-btn');
 
 async function init() {
   try {
@@ -30,6 +34,12 @@ async function init() {
   commandInput.addEventListener('input', onInput);
   commandInput.addEventListener('keydown', onKeyDown);
   commandInput.focus();
+
+  // Load sync status
+  loadSyncStatus();
+
+  // Sync button handler
+  syncBtn.addEventListener('click', triggerSync);
 }
 
 function onInput(e) {
@@ -167,6 +177,79 @@ function performSearch(query) {
   }).then(response => {
     console.log('Search results:', response);
   }).catch(err => console.error('Search failed:', err));
+}
+
+// ==================== Sync Status ====================
+
+async function loadSyncStatus() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'get-diagnostics' });
+
+    if (!response?.success) {
+      updateSyncDisplay('warning', 'Error loading status');
+      return;
+    }
+
+    const { syncStatus } = response.data;
+
+    if (!syncStatus?.configured) {
+      updateSyncDisplay('warning', 'Not configured');
+      syncBtn.style.display = 'none';
+      return;
+    }
+
+    // Show pending count if any
+    if (syncStatus.pendingCount > 0) {
+      pendingBadge.textContent = syncStatus.pendingCount;
+      pendingBadge.style.display = 'inline';
+    }
+
+    // Format last sync time
+    if (syncStatus.lastSyncTime) {
+      const ago = formatTimeAgo(new Date(syncStatus.lastSyncTime));
+      updateSyncDisplay('', `Synced ${ago}`);
+    } else {
+      updateSyncDisplay('warning', 'Never synced');
+    }
+  } catch (err) {
+    console.error('Failed to load sync status:', err);
+    updateSyncDisplay('warning', 'Error');
+  }
+}
+
+function updateSyncDisplay(statusClass, text) {
+  syncStatusEl.className = 'sync-status' + (statusClass ? ` ${statusClass}` : '');
+  syncTextEl.textContent = text;
+}
+
+function formatTimeAgo(date) {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+async function triggerSync() {
+  syncBtn.disabled = true;
+  updateSyncDisplay('syncing', 'Syncing...');
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'sync-now' });
+
+    if (response?.success) {
+      pendingBadge.style.display = 'none';
+      updateSyncDisplay('', 'Synced just now');
+    } else {
+      updateSyncDisplay('warning', response?.error || 'Sync failed');
+    }
+  } catch (err) {
+    console.error('Sync failed:', err);
+    updateSyncDisplay('warning', 'Sync failed');
+  } finally {
+    syncBtn.disabled = false;
+  }
 }
 
 init();

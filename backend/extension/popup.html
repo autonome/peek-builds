@@ -13,7 +13,7 @@
 
     html, body {
       width: 320px;
-      height: 48px;
+      height: 72px;
       background-color: rgba(40, 44, 52, 0.95);
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", sans-serif;
       color: white;
@@ -24,8 +24,15 @@
       width: 100%;
       height: 100%;
       display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .command-row {
+      display: flex;
       align-items: center;
       padding: 0 12px;
+      height: 40px;
     }
 
     .command-display {
@@ -118,17 +125,97 @@
     .command-display.hidden {
       display: none;
     }
+
+    /* Status bar */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px 8px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    .sync-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sync-status.warning {
+      color: #fbbf24;
+    }
+
+    .sync-status.syncing {
+      color: #60a5fa;
+    }
+
+    .sync-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .sync-status.syncing .sync-dot {
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .sync-btn {
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+      padding: 2px 6px;
+      font-size: 11px;
+      border-radius: 3px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .sync-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.8);
+    }
+
+    .sync-btn:disabled {
+      cursor: default;
+      opacity: 0.5;
+    }
+
+    .pending-badge {
+      background: rgba(251, 191, 36, 0.2);
+      color: #fbbf24;
+      padding: 1px 5px;
+      border-radius: 8px;
+      font-size: 10px;
+      margin-left: 4px;
+    }
   </style>
 </head>
 <body>
   <div class="center-wrapper">
-    <div class="command-display" id="command-display">
-      <input id="command-input" type="text" autofocus spellcheck="false" />
-      <div id="command-text" class="placeholder">tag, note, or search...</div>
+    <div class="command-row">
+      <div class="command-display" id="command-display">
+        <input id="command-input" type="text" autofocus spellcheck="false" />
+        <div id="command-text" class="placeholder">tag, note, or search...</div>
+      </div>
+      <div class="feedback" id="feedback">
+        <span class="feedback-icon" id="feedback-icon"></span>
+        <span class="feedback-text" id="feedback-text"></span>
+      </div>
     </div>
-    <div class="feedback" id="feedback">
-      <span class="feedback-icon" id="feedback-icon"></span>
-      <span class="feedback-text" id="feedback-text"></span>
+    <div class="status-bar">
+      <div class="sync-status" id="sync-status">
+        <span class="sync-dot"></span>
+        <span id="sync-text">Loading...</span>
+        <span class="pending-badge" id="pending-badge" style="display: none;"></span>
+      </div>
+      <button class="sync-btn" id="sync-btn" title="Sync now">Sync</button>
     </div>
   </div>
 
