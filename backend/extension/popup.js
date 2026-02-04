@@ -1,7 +1,7 @@
 /**
  * Peek Browser Extension - Command Bar Popup
  * Simple command bar: tag, note, search
- * UI closes immediately - backend saves async
+ * Shows success/error feedback before closing
  */
 
 const COMMANDS = ['tag', 'note', 'search'];
@@ -14,6 +14,10 @@ let state = {
 
 const commandInput = document.getElementById('command-input');
 const commandText = document.getElementById('command-text');
+const commandDisplay = document.getElementById('command-display');
+const feedbackEl = document.getElementById('feedback');
+const feedbackIcon = document.getElementById('feedback-icon');
+const feedbackText = document.getElementById('feedback-text');
 
 async function init() {
   try {
@@ -80,6 +84,14 @@ function updateDisplay() {
   }
 }
 
+function showFeedback(type, message) {
+  commandDisplay.classList.add('hidden');
+  feedbackEl.classList.remove('success', 'error');
+  feedbackEl.classList.add('visible', type);
+  feedbackIcon.textContent = type === 'success' ? '✓' : '✗';
+  feedbackText.textContent = message;
+}
+
 function executeCommand() {
   const parts = state.typed.trim().split(/\s+/);
   const cmd = parts[0]?.toLowerCase();
@@ -87,10 +99,8 @@ function executeCommand() {
 
   if (cmd === 'tag' && args) {
     saveTag(args);
-    window.close();
   } else if (cmd === 'note' && args) {
     saveNote(args);
-    window.close();
   } else if (cmd === 'search' && args) {
     performSearch(args);
   } else if (state.match && !args) {
@@ -100,29 +110,54 @@ function executeCommand() {
   }
 }
 
-function saveTag(tagString) {
+async function saveTag(tagString) {
   const tags = tagString.split(',').map(t => t.trim()).filter(t => t);
   if (tags.length === 0) return;
 
-  chrome.runtime.sendMessage({
-    type: 'save-tags',
-    data: {
-      url: state.currentTab?.url,
-      title: state.currentTab?.title,
-      tags: tags
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'save-tags',
+      data: {
+        url: state.currentTab?.url,
+        title: state.currentTab?.title,
+        tags: tags
+      }
+    });
+
+    if (response?.success) {
+      const tagList = tags.length === 1 ? tags[0] : `${tags.length} tags`;
+      showFeedback('success', `Tagged: ${tagList}`);
+      setTimeout(() => window.close(), 600);
+    } else {
+      showFeedback('error', response?.error || 'Failed to save tags');
     }
-  }).catch(err => console.error('Failed to save tags:', err));
+  } catch (err) {
+    console.error('Failed to save tags:', err);
+    showFeedback('error', 'Failed to save tags');
+  }
 }
 
-function saveNote(noteText) {
-  chrome.runtime.sendMessage({
-    type: 'save-note',
-    data: {
-      url: state.currentTab?.url,
-      title: state.currentTab?.title,
-      note: noteText
+async function saveNote(noteText) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'save-note',
+      data: {
+        url: state.currentTab?.url,
+        title: state.currentTab?.title,
+        note: noteText
+      }
+    });
+
+    if (response?.success) {
+      showFeedback('success', 'Note saved');
+      setTimeout(() => window.close(), 600);
+    } else {
+      showFeedback('error', response?.error || 'Failed to save note');
     }
-  }).catch(err => console.error('Failed to save note:', err));
+  } catch (err) {
+    console.error('Failed to save note:', err);
+    showFeedback('error', 'Failed to save note');
+  }
 }
 
 function performSearch(query) {
