@@ -21,6 +21,14 @@ Desktop
 - [x] fix: mode detection from URL in window creation
 - [x] fix: add native module check script (prevents NODE_MODULE_VERSION mismatch)
 - [x] fix(cmd): support scheme-less URLs with paths in open command
+- [x] feat(cmd): restore mode indicator to command bar (from orphaned commits)
+  - Shows current mode (page/group/settings)
+  - Click to cycle through modes
+  - Auto-hides when in default mode
+- [x] fix(page): set default background on webview content when page has none
+  - Respects system theme (dark/light)
+  - Only applies when page doesn't set its own background
+- [x] fix(build): exclude tmp/ agent workspaces from electron-builder
 
 Testing
 - [x] feat(tests): add Playwright browser extension e2e tests
