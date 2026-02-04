@@ -99,6 +99,12 @@ loadAdaptiveData().then(data => {
 // Loaded asynchronously when panel opens
 let commandContext = null;
 
+// Major modes for cycling
+const MAJOR_MODES = ['default', 'page', 'group', 'settings'];
+
+// Current mode for UI display
+let currentMode = 'default';
+
 /**
  * Load the current command context (target window, mode state)
  * Called when panel becomes visible
@@ -109,12 +115,86 @@ const loadCommandContext = async () => {
     if (result.success) {
       commandContext = result.data;
       log('cmd:panel', 'Loaded command context:', commandContext);
+      // Update mode from context
+      if (commandContext?.mode?.major) {
+        currentMode = commandContext.mode.major;
+        updateModeIndicator();
+      }
     }
   } catch (err) {
     log.error('cmd:panel', 'Failed to load command context:', err);
     commandContext = null;
   }
 };
+
+// ===== Mode Indicator Functions =====
+
+/**
+ * Update the mode indicator UI
+ */
+function updateModeIndicator() {
+  const indicator = document.getElementById('mode-indicator');
+  if (!indicator) return;
+
+  const label = indicator.querySelector('.mode-label');
+  indicator.setAttribute('data-mode', currentMode);
+  label.textContent = currentMode;
+
+  log('cmd:panel', 'Mode indicator updated:', currentMode);
+}
+
+/**
+ * Cycle to the next major mode
+ */
+async function cycleMode() {
+  const currentIndex = MAJOR_MODES.indexOf(currentMode);
+  const nextIndex = (currentIndex + 1) % MAJOR_MODES.length;
+  const nextMode = MAJOR_MODES[nextIndex];
+
+  log('cmd:panel', 'Cycling mode from', currentMode, 'to', nextMode);
+
+  // Set the mode via the API
+  const result = await api.modes.setMajorMode(nextMode);
+  if (result.success) {
+    currentMode = nextMode;
+    updateModeIndicator();
+    // Reload command context with new mode
+    await loadCommandContext();
+  } else {
+    log.error('cmd:panel', 'Failed to set mode:', result.error);
+  }
+}
+
+/**
+ * Initialize the mode indicator
+ */
+async function initModeIndicator() {
+  // Use commandContext which has the target window's mode (not the cmd panel's mode)
+  // commandContext is loaded by loadCommandContext() before this is called
+  if (commandContext?.mode?.major) {
+    currentMode = commandContext.mode.major;
+  }
+  updateModeIndicator();
+
+  // Set up click handler for cycling
+  const indicator = document.getElementById('mode-indicator');
+  if (indicator) {
+    indicator.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cycleMode();
+    });
+  }
+
+  // Subscribe to mode changes
+  api.modes.onModeChange((modeState, windowId) => {
+    log('cmd:panel', 'Mode changed:', modeState, 'for window:', windowId);
+    currentMode = modeState.major || 'default';
+    updateModeIndicator();
+  });
+
+  log('cmd:panel', 'Mode indicator initialized with mode:', currentMode);
+}
 
 /**
  * Check if a command is available in the current context
@@ -242,8 +322,11 @@ async function render() {
     }
   });
 
-  // Load command context on initial render
-  loadCommandContext();
+  // Load command context on initial render (must complete before mode indicator init)
+  await loadCommandContext();
+
+  // Initialize mode indicator (uses commandContext loaded above)
+  initModeIndicator();
 
   // Chain cancel button handler
   const chainCancelBtn = document.getElementById('chain-cancel');
