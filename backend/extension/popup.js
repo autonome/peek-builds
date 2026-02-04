@@ -4,7 +4,7 @@
  * Shows success/error feedback before closing
  */
 
-const COMMANDS = ['tag', 'note', 'search'];
+const COMMANDS = ['tag', 'note', 'search', 'server', 'key'];
 
 let state = {
   typed: '',
@@ -75,7 +75,7 @@ function updateDisplay() {
 
   if (!state.typed) {
     commandText.classList.add('placeholder');
-    commandText.textContent = 'tag, note, or search...';
+    commandText.textContent = 'tag, note, search, server, key...';
     return;
   }
 
@@ -113,6 +113,10 @@ function executeCommand() {
     saveNote(args);
   } else if (cmd === 'search' && args) {
     performSearch(args);
+  } else if (cmd === 'server' && args) {
+    setServer(args);
+  } else if (cmd === 'key' && args) {
+    setApiKey(args);
   } else if (state.match && !args) {
     commandInput.value = state.match + ' ';
     state.typed = commandInput.value;
@@ -177,6 +181,56 @@ function performSearch(query) {
   }).then(response => {
     console.log('Search results:', response);
   }).catch(err => console.error('Search failed:', err));
+}
+
+async function setServer(url) {
+  // Normalize URL
+  let serverUrl = url.trim();
+  if (serverUrl && !serverUrl.startsWith('http')) {
+    serverUrl = 'https://' + serverUrl;
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'set-server',
+      data: { serverUrl }
+    });
+
+    if (response?.success) {
+      showFeedback('success', 'Server set');
+      setTimeout(() => {
+        loadSyncStatus();
+        window.close();
+      }, 600);
+    } else {
+      showFeedback('error', response?.error || 'Failed to set server');
+    }
+  } catch (err) {
+    console.error('Failed to set server:', err);
+    showFeedback('error', 'Failed to set server');
+  }
+}
+
+async function setApiKey(apiKey) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'set-api-key',
+      data: { apiKey: apiKey.trim() }
+    });
+
+    if (response?.success) {
+      showFeedback('success', 'API key set');
+      setTimeout(() => {
+        loadSyncStatus();
+        window.close();
+      }, 600);
+    } else {
+      showFeedback('error', response?.error || 'Failed to set API key');
+    }
+  } catch (err) {
+    console.error('Failed to set API key:', err);
+    showFeedback('error', 'Failed to set API key');
+  }
 }
 
 // ==================== Sync Status ====================

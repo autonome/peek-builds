@@ -5,7 +5,8 @@
  */
 
 import { openDatabase } from './datastore.js';
-import { ensureDefaultProfile, getCurrentProfile, getSyncConfig, updateProfileEnvironment } from './profiles.js';
+import { ensureDefaultProfile, getCurrentProfile, getSyncConfig, updateProfileEnvironment, enableSync } from './profiles.js';
+import { setConfig as setEngineConfig } from './engine.js';
 import { syncAll, getSyncConfig as getFullSyncConfig, getSyncStatus } from './sync.js';
 import { DATASTORE_VERSION, PROTOCOL_VERSION } from './version.js';
 import { getEnvironment } from './environment.js';
@@ -151,6 +152,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'get-history-stats') {
     handleGetHistoryStats().then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'set-server') {
+    handleSetServer(message.data).then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'set-api-key') {
+    handleSetApiKey(message.data).then(sendResponse);
     return true;
   }
 });
@@ -378,6 +389,42 @@ async function handleGetDiagnostics() {
       },
     };
   } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleSetServer(data) {
+  const { serverUrl } = data;
+
+  try {
+    await setEngineConfig({ serverUrl });
+    return { success: true };
+  } catch (error) {
+    console.error('[peek:bg] Set server error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleSetApiKey(data) {
+  const { apiKey } = data;
+
+  if (!apiKey) {
+    return { success: false, error: 'API key is required' };
+  }
+
+  try {
+    const profileResult = await getCurrentProfile();
+    if (!profileResult.success || !profileResult.data) {
+      return { success: false, error: 'No active profile' };
+    }
+
+    const profile = profileResult.data;
+    // Enable sync with the API key (serverProfileId defaults to 'default')
+    await enableSync(profile.id, apiKey, 'default');
+
+    return { success: true };
+  } catch (error) {
+    console.error('[peek:bg] Set API key error:', error);
     return { success: false, error: error.message };
   }
 }
