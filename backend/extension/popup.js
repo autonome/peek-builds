@@ -4,7 +4,7 @@
  * Shows success/error feedback before closing
  */
 
-const COMMANDS = ['tag', 'note', 'search', 'server', 'key'];
+const COMMANDS = ['tag', 'note', 'search', 'server', 'key', 'sync'];
 
 let state = {
   typed: '',
@@ -75,7 +75,7 @@ function updateDisplay() {
 
   if (!state.typed) {
     commandText.classList.add('placeholder');
-    commandText.textContent = 'tag, note, search, server, key...';
+    commandText.textContent = 'tag, note, server, key, sync...';
     return;
   }
 
@@ -113,10 +113,20 @@ function executeCommand() {
     saveNote(args);
   } else if (cmd === 'search' && args) {
     performSearch(args);
-  } else if (cmd === 'server' && args) {
-    setServer(args);
-  } else if (cmd === 'key' && args) {
-    setApiKey(args);
+  } else if (cmd === 'server') {
+    if (args) {
+      setServer(args);
+    } else {
+      showServer();
+    }
+  } else if (cmd === 'key') {
+    if (args) {
+      setApiKey(args);
+    } else {
+      showApiKey();
+    }
+  } else if (cmd === 'sync') {
+    runSync();
   } else if (state.match && !args) {
     commandInput.value = state.match + ' ';
     state.typed = commandInput.value;
@@ -230,6 +240,58 @@ async function setApiKey(apiKey) {
   } catch (err) {
     console.error('Failed to set API key:', err);
     showFeedback('error', 'Failed to set API key');
+  }
+}
+
+async function showServer() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'get-sync-config' });
+    if (response?.success && response.data?.serverUrl) {
+      showFeedback('success', response.data.serverUrl);
+    } else {
+      showFeedback('error', 'Not set');
+    }
+  } catch (err) {
+    showFeedback('error', 'Failed to get server');
+  }
+}
+
+async function showApiKey() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'get-sync-config' });
+    if (response?.success && response.data?.apiKey) {
+      // Mask the key, showing only last 4 chars
+      const key = response.data.apiKey;
+      const masked = key.length > 4
+        ? '•'.repeat(key.length - 4) + key.slice(-4)
+        : '•'.repeat(key.length);
+      showFeedback('success', masked);
+    } else {
+      showFeedback('error', 'Not set');
+    }
+  } catch (err) {
+    showFeedback('error', 'Failed to get key');
+  }
+}
+
+async function runSync() {
+  showFeedback('success', 'Syncing...');
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'sync-now' });
+
+    if (response?.success) {
+      const data = response.data || {};
+      const pulled = data.pulled || 0;
+      const pushed = data.pushed || 0;
+      showFeedback('success', `Synced: ↓${pulled} ↑${pushed}`);
+      setTimeout(() => window.close(), 1200);
+    } else {
+      showFeedback('error', response?.error || 'Sync failed');
+    }
+  } catch (err) {
+    console.error('Sync failed:', err);
+    showFeedback('error', 'Sync failed');
   }
 }
 

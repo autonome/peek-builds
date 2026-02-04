@@ -6,7 +6,7 @@
 
 import { openDatabase } from './datastore.js';
 import { ensureDefaultProfile, getCurrentProfile, getSyncConfig, updateProfileEnvironment, enableSync } from './profiles.js';
-import { setConfig as setEngineConfig } from './engine.js';
+import { getConfig as getEngineConfig, setConfig as setEngineConfig } from './engine.js';
 import { syncAll, getSyncConfig as getFullSyncConfig, getSyncStatus } from './sync.js';
 import { DATASTORE_VERSION, PROTOCOL_VERSION } from './version.js';
 import { getEnvironment } from './environment.js';
@@ -162,6 +162,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'set-api-key') {
     handleSetApiKey(message.data).then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'get-sync-config') {
+    handleGetSyncConfig().then(sendResponse);
     return true;
   }
 });
@@ -425,6 +430,22 @@ async function handleSetApiKey(data) {
     return { success: true };
   } catch (error) {
     console.error('[peek:bg] Set API key error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleGetSyncConfig() {
+  try {
+    const config = await getEngineConfig();
+    return {
+      success: true,
+      data: {
+        serverUrl: config.serverUrl || null,
+        apiKey: config.apiKey || null,
+      }
+    };
+  } catch (error) {
+    console.error('[peek:bg] Get sync config error:', error);
     return { success: false, error: error.message };
   }
 }
