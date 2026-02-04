@@ -200,33 +200,39 @@ Titlebar
 We need a generalized system for feeds and time-series data.
 It might be two different systems, based on analysis of the use-cases.
 It might be a new system + the items system we already have, and using metadata.
+The use-cases below cover a variety of feed-like needs.
 
 Use-case: Querying web pages for time-series data
+- Pattern: checking urls, collecting web data over time
 - Eg a bank account balance, stock price, weather report
 - Periodically load a web page in background hiddent window, and run a content script against it, returning a value and writing it to datastore (and metadata like page url, created/updated, custom metadata)
 - Have a widget that shows latest value and its age
 - Have a widget that shows graph of values over time
 
 Use-case: Checking web page for ticket availability
+- Pattern: checking urls for a one-time trigger
 - Want to know when tickets go on sale for an event
 - Periodically load a page in background, and run a content script against it
 - Notify user when page change matched some criteria
 
 Use-case: Pull data from external systems
+- Pattern: harvesting 3rd party content feeds
 - Eg RSS feeds or importing my posts/etc from other accounts - plays on Soundcloud, or thumbs-ups on Youtube, etc
 - Imagine an extension which walks you through Oauth login for various systems, and then pulls their data into Peek via the system's API. Could be URLs with custom metadata (like Soundcloud plays) or non-URL data (like sports scores)
 - Or someone could implement a feed reader extension focused on RSS reading
 
 Use-case: System metrics
+- Pattern: aggregating system metadata
 - We need to be able to log and reflect all kinds of system information
 - See the "Metadata, QS and reflection" section in this document for examples
 - Other examples: datastore size-on-disk, ongoing performance and resource usage data
 - Surface these in diagnostic panels, widgets, HUDs, etc
 
-- [ ] API for logging outputs to datastore (time series data, feeds)
-
-uses
-- [ ] tag streaks -> atproto streaks (feeds + daytum)
+Use-case: Tag streaks, group change feeds
+- Pattern: aggregating sysetm user data
+- tag streaks - eg one day you add tags "pushups, 10", next day "pushups, 20", then be able to query feed data for number of days in a row, max pushups, graph of pushups over time, longest streak, etc
+- show in widgets
+- push individual records or any rollup as an atproto record to get social streaking
 
 ## Entity centrism (NER streams)
 
