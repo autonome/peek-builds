@@ -1,7 +1,7 @@
 import UIKit
 import WebKit
 
-// Standalone WKWebView controller - no Tauri dependency
+// WKWebView controller for embedded browser
 class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
     private var webView: WKWebView!
     private var itemId: String = ""
@@ -9,7 +9,6 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
     func configure(url: URL, itemId: String) {
         self.itemId = itemId
 
-        // Configure WKWebView
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
 
@@ -26,7 +25,6 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
 
-        // Load the URL
         let request = URLRequest(url: url)
         webView.load(request)
     }
@@ -35,14 +33,12 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
 
-        // Add Done button
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .done,
             target: self,
             action: #selector(dismissWebview)
         )
 
-        // Add navigation buttons
         let backButton = UIBarButtonItem(
             image: UIImage(systemName: "chevron.left"),
             style: .plain,
@@ -69,15 +65,11 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
     }
 
     @objc private func goBack() {
-        if webView.canGoBack {
-            webView.goBack()
-        }
+        if webView.canGoBack { webView.goBack() }
     }
 
     @objc private func goForward() {
-        if webView.canGoForward {
-            webView.goForward()
-        }
+        if webView.canGoForward { webView.goForward() }
     }
 
     @objc private func shareURL() {
@@ -89,10 +81,7 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Update title
         navigationItem.title = webView.title ?? webView.url?.host
-
-        // Log navigation for debugging
         if let url = webView.url?.absoluteString {
             print("[WebviewPlugin] Navigated to: \(url) for item: \(itemId)")
         }
@@ -103,20 +92,20 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        // Allow all navigation
         decisionHandler(.allow)
     }
 }
 
-// Global state for the webview
+// Global state
 private var currentWebViewController: EmbeddedWebViewController?
 
-// C-compatible function to open webview
-// Called from Rust FFI
+// C-compatible function to open webview - called from Rust FFI
 @_cdecl("webview_plugin_open")
 public func webviewPluginOpen(urlPtr: UnsafePointer<CChar>, itemIdPtr: UnsafePointer<CChar>) -> Bool {
     let urlString = String(cString: urlPtr)
     let itemId = String(cString: itemIdPtr)
+
+    print("[WebviewPlugin] open called with URL: \(urlString), itemId: \(itemId)")
 
     guard let url = URL(string: urlString) else {
         print("[WebviewPlugin] Invalid URL: \(urlString)")
@@ -124,22 +113,30 @@ public func webviewPluginOpen(urlPtr: UnsafePointer<CChar>, itemIdPtr: UnsafePoi
     }
 
     DispatchQueue.main.async {
+        print("[WebviewPlugin] Creating webview on main thread...")
         let webVC = EmbeddedWebViewController()
         webVC.configure(url: url, itemId: itemId)
 
         let navController = UINavigationController(rootViewController: webVC)
         navController.modalPresentationStyle = .fullScreen
 
-        // Find the top-most view controller to present from
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootVC = windowScene.windows.first?.rootViewController {
-            var topVC = rootVC
-            while let presented = topVC.presentedViewController {
-                topVC = presented
-            }
-            topVC.present(navController, animated: true)
-            currentWebViewController = webVC
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = windowScene.windows.first,
+              let rootVC = window.rootViewController else {
+            print("[WebviewPlugin] ERROR: Could not find root view controller")
+            return
         }
+
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController {
+            topVC = presented
+        }
+
+        print("[WebviewPlugin] Presenting webview from: \(type(of: topVC))")
+        topVC.present(navController, animated: true) {
+            print("[WebviewPlugin] Webview presented successfully")
+        }
+        currentWebViewController = webVC
     }
 
     return true
@@ -152,12 +149,4 @@ public func webviewPluginClose() {
         currentWebViewController?.dismiss(animated: true)
         currentWebViewController = nil
     }
-}
-
-// Dummy init function that Rust expects
-// This is just a placeholder - the actual functionality uses the C functions above
-@_cdecl("init_plugin_webview")
-public func initPluginWebview() -> UnsafeMutableRawPointer? {
-    print("[WebviewPlugin] Plugin initialized")
-    return nil
 }

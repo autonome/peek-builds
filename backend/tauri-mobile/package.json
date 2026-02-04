@@ -20,12 +20,18 @@
     "seed": "./seed-test-data.sh",
     "reset:server": "rm -rf ../server/data && echo 'Server data reset'",
     "clean:rust": "cd src-tauri && rm -rf target/aarch64-apple-ios-sim/debug/build/peek-save-* target/aarch64-apple-ios/release/build/peek-save-* 2>/dev/null; touch build.rs; echo 'Rust bridge cache cleaned'",
+    "clean:rust:full": "cd src-tauri && rm -rf target/aarch64-apple-ios-sim/debug/deps target/aarch64-apple-ios-sim/debug/build target/aarch64-apple-ios-sim/debug/.fingerprint target/aarch64-apple-ios/release/deps target/aarch64-apple-ios/release/build target/aarch64-apple-ios/release/.fingerprint 2>/dev/null; echo 'Full Rust cache cleaned'",
     "clean:ios:sim": "cd src-tauri && rm -rf target/aarch64-apple-ios-sim/debug/build/peek-save-* 2>/dev/null; touch build.rs; echo 'iOS simulator cache cleaned'",
     "clean:ios:device": "cd src-tauri && rm -rf target/aarch64-apple-ios/release/build/peek-save-* 2>/dev/null; touch build.rs; echo 'iOS device cache cleaned'",
     "rebuild:ios:sim": "npm run clean:ios:sim && npm run build:ios:sim",
     "rebuild:ios:device": "npm run clean:ios:device && npm run build:ios:device",
     "test": "node tests/integration.test.js",
-    "test:verbose": "VERBOSE=1 node tests/integration.test.js"
+    "test:verbose": "VERBOSE=1 node tests/integration.test.js",
+    "sim:launch": "xcrun simctl terminate booted com.dietrich.peek-mobile 2>/dev/null; xcrun simctl launch booted com.dietrich.peek-mobile",
+    "sim:log": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\"' --level debug",
+    "sim:log:webview": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\" AND eventMessage CONTAINS \"webview\"' --style compact",
+    "sim:install": "xcrun simctl install booted ~/Library/Developer/Xcode/DerivedData/peek-save-ehfugnwyfhzyqlghrdloqqajrbnd/Build/Products/debug-iphonesimulator/Peek\\ Save.app",
+    "xcode:build": "cd src-tauri/gen/apple && xcodebuild -project peek-save.xcodeproj -scheme Peek -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -configuration Debug build"
   },
   "dependencies": {
     "@tauri-apps/api": "2.9.1",

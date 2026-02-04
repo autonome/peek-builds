@@ -1059,10 +1059,17 @@ body.dark .header-btn {
 
 /* Settings view */
 .settings-view {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
   padding: 1rem;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
   max-width: 600px;
   width: 100%;
   margin: 0 auto;
+  box-sizing: border-box;
 }
 
 .settings-section {

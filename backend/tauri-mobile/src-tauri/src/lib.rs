@@ -15,6 +15,13 @@ fn ios_log(msg: &str) {
     println!("[Peek] {}", msg);
 }
 
+// FFI declarations for native webview on iOS
+#[cfg(target_os = "ios")]
+extern "C" {
+    fn webview_plugin_open(url: *const std::ffi::c_char, item_id: *const std::ffi::c_char) -> bool;
+    fn webview_plugin_close();
+}
+
 // Sync version constants — must match backend/version.ts and backend/server/version.js
 // Bump DATASTORE_VERSION when schema changes break sync.
 // Bump PROTOCOL_VERSION when request/response shape changes.
@@ -1193,6 +1200,17 @@ fn ensure_database_initialized() -> Result<(), String> {
                     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS item_visits (
+                    id TEXT PRIMARY KEY,
+                    item_id TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    duration INTEGER DEFAULT 0,
+                    source TEXT DEFAULT 'direct',
+                    window_type TEXT DEFAULT 'main',
+                    metadata TEXT DEFAULT '{}',
+                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
                 CREATE INDEX IF NOT EXISTS idx_items_url ON items(url);
                 CREATE INDEX IF NOT EXISTS idx_items_deleted ON items(deleted_at);
@@ -1200,6 +1218,8 @@ fn ensure_database_initialized() -> Result<(), String> {
                 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
                 CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
                 CREATE INDEX IF NOT EXISTS idx_blobs_item ON blobs(item_id);
+                CREATE INDEX IF NOT EXISTS idx_item_visits_item ON item_visits(item_id);
+                CREATE INDEX IF NOT EXISTS idx_item_visits_timestamp ON item_visits(timestamp);
 
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
@@ -1339,6 +1359,37 @@ fn ensure_database_initialized() -> Result<(), String> {
         ) {
             init_result = Err(format!("Failed to ensure settings table: {}", e));
             return;
+        }
+
+        // Ensure item_visits table exists (for existing installs)
+        let has_item_visits_table: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='item_visits'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0) > 0;
+
+        if !has_item_visits_table {
+            println!("[Rust] Creating item_visits table for visit tracking...");
+            if let Err(e) = conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS item_visits (
+                    id TEXT PRIMARY KEY,
+                    item_id TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    duration INTEGER DEFAULT 0,
+                    source TEXT DEFAULT 'direct',
+                    window_type TEXT DEFAULT 'main',
+                    metadata TEXT DEFAULT '{}',
+                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_item_visits_item ON item_visits(item_id);
+                CREATE INDEX IF NOT EXISTS idx_item_visits_timestamp ON item_visits(timestamp);
+                ",
+            ) {
+                println!("[Rust] Warning: Failed to create item_visits table: {}", e);
+            }
         }
 
         // Migrate tags.id from INTEGER to TEXT (for existing installs with old schema)
@@ -2425,6 +2476,69 @@ async fn delete_url(id: String) -> Result<(), String> {
     .map_err(|e| format!("Failed to delete item: {}", e))?;
 
     println!("[Rust] Item soft-deleted successfully");
+    Ok(())
+}
+
+/// Record a visit to an item (URL opened in browser or webview)
+#[tauri::command]
+async fn record_visit(item_id: String, source: String, window_type: String) -> Result<String, String> {
+    println!("[Rust] record_visit called for item_id: {}, source: {}, window_type: {}", item_id, source, window_type);
+
+    let conn = get_connection()?;
+    let visit_id = uuid::Uuid::new_v4().to_string();
+    let timestamp = Utc::now().timestamp_millis();
+
+    conn.execute(
+        "INSERT INTO item_visits (id, item_id, timestamp, source, window_type) VALUES (?, ?, ?, ?, ?)",
+        params![&visit_id, &item_id, timestamp, &source, &window_type],
+    )
+    .map_err(|e| format!("Failed to record visit: {}", e))?;
+
+    println!("[Rust] Visit recorded successfully: {}", visit_id);
+    Ok(visit_id)
+}
+
+/// Open a URL in the native webview (iOS only)
+#[tauri::command]
+async fn open_native_webview(url: String, item_id: String) -> Result<(), String> {
+    println!("[Rust] open_native_webview called for url: {}, item_id: {}", url, item_id);
+
+    #[cfg(target_os = "ios")]
+    {
+        use std::ffi::CString;
+        let url_cstr = CString::new(url.as_str()).map_err(|e| format!("Invalid URL string: {}", e))?;
+        let item_id_cstr = CString::new(item_id.as_str()).map_err(|e| format!("Invalid item_id string: {}", e))?;
+
+        println!("[Rust] Calling Swift webview_plugin_open...");
+        let result = unsafe { webview_plugin_open(url_cstr.as_ptr(), item_id_cstr.as_ptr()) };
+        println!("[Rust] Swift returned: {}", result);
+
+        if result {
+            Ok(())
+        } else {
+            Err("Failed to open native webview".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    {
+        println!("[Rust] Not iOS - webview not supported");
+        let _ = (url, item_id);
+        Ok(())
+    }
+}
+
+/// Close the native webview (iOS only)
+#[tauri::command]
+async fn close_native_webview() -> Result<(), String> {
+    println!("[Rust] close_native_webview called");
+
+    #[cfg(target_os = "ios")]
+    {
+        unsafe { webview_plugin_close() };
+        println!("[Rust] Swift webview_plugin_close called");
+    }
+
     Ok(())
 }
 
@@ -4595,6 +4709,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_webview::init())
         .setup(move |_app| {
             if auto_sync_on_launch {
                 println!("[Rust] PEEK_AUTO_SYNC enabled - triggering sync on launch");
@@ -4631,6 +4746,9 @@ pub fn run() {
             update_url,
             update_url_tags,
             delete_url,
+            record_visit,
+            open_native_webview,
+            close_native_webview,
             // Text commands
             save_text,
             get_saved_texts,
@@ -4732,6 +4850,19 @@ mod tests {
                 FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
                 FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS item_visits (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                duration INTEGER DEFAULT 0,
+                source TEXT DEFAULT 'direct',
+                window_type TEXT DEFAULT 'main',
+                metadata TEXT DEFAULT '{}',
+                FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_item_visits_item ON item_visits(item_id);
+            CREATE INDEX IF NOT EXISTS idx_item_visits_timestamp ON item_visits(timestamp);
             ",
         )
         .expect("Failed to create test schema");

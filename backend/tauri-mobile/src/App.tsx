@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 type ItemType = "page" | "text" | "tagset" | "image";
@@ -827,6 +829,29 @@ function App() {
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  // Listen for webview navigation events to record visits
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupListener = async () => {
+      unlisten = await listen<{ itemId: string; url: string }>("webview:navigated", async (event) => {
+        const { itemId } = event.payload;
+        try {
+          // Record subsequent navigation as a visit
+          await invoke("record_visit", { itemId, source: "webview", windowType: "embedded" });
+        } catch (error) {
+          console.error("Failed to record webview visit:", error);
+        }
+      });
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlisten) unlisten();
     };
   }, []);
 
@@ -2077,18 +2102,41 @@ function App() {
             </svg>
           </div>
           <span className="card-title">{title || item.url}</span>
-          <button
-            className="card-delete-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              requestDelete(item.id, "page");
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-          </button>
+          <div className="card-actions">
+            <button
+              className="card-action-btn"
+              onClick={(e) => openInBrowser(item.url, item.id, e)}
+              title="Open in Safari"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </button>
+            <button
+              className="card-action-btn"
+              onClick={(e) => openInWebview(item.url, item.id, e)}
+              title="Open in app"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="3" y1="9" x2="21" y2="9"></line>
+              </svg>
+            </button>
+            <button
+              className="card-delete-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                requestDelete(item.id, "page");
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </div>
         </div>
         <div className="card-footer">
           {(item.tags.includes("todo") || item.tags.includes("done")) && (
@@ -2342,6 +2390,35 @@ function App() {
       await loadAllTags();
     } catch (error) {
       console.error("Failed to toggle todo/done:", error);
+    }
+  };
+
+  // Open URL in system browser (Safari)
+  const openInBrowser = async (url: string, itemId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      // Record visit before opening
+      await invoke("record_visit", { itemId, source: "browser", windowType: "external" });
+      await openUrl(url);
+    } catch (error) {
+      console.error("Failed to open in browser:", error);
+    }
+  };
+
+  // Open URL in embedded webview
+  const openInWebview = async (url: string, itemId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log("[App] openInWebview called:", url, itemId);
+    try {
+      // Record initial visit
+      console.log("[App] Recording visit...");
+      await invoke("record_visit", { itemId, source: "webview", windowType: "embedded" });
+      console.log("[App] Visit recorded, opening webview...");
+      // Use direct Tauri command instead of plugin to bypass iOS plugin routing issues
+      await invoke("open_native_webview", { url, itemId });
+      console.log("[App] Webview invoke completed");
+    } catch (error) {
+      console.error("[App] Failed to open in webview:", error);
     }
   };
 
