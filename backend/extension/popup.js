@@ -1,7 +1,24 @@
 /**
  * Peek Browser Extension - Command Bar Popup
- * Simple command bar: tag, note, search
- * Shows success/error feedback before closing
+ *
+ * A minimal command bar for quick actions. Shows success/error feedback
+ * before auto-closing. Includes sync status bar at bottom.
+ *
+ * Commands:
+ *   tag <tags>      - Tag current URL with comma-separated tags
+ *   note <text>     - Save a text note (attached to current page as metadata)
+ *   search <query>  - Search saved items (results logged to console)
+ *   server          - Show current sync server URL
+ *   server <url>    - Set sync server URL (auto-adds https://)
+ *   key             - Show masked API key (last 4 chars visible)
+ *   key <apikey>    - Set API key for sync
+ *   sync            - Trigger sync, shows pull/push counts (e.g., "↓3 ↑2")
+ *
+ * UI:
+ *   - Command input with tab-completion for command names
+ *   - Feedback area replaces input on success/error
+ *   - Status bar shows sync state, pending count, manual sync button
+ *   - Escape closes popup, Enter executes command
  */
 
 const COMMANDS = ['tag', 'note', 'search', 'server', 'key', 'sync'];

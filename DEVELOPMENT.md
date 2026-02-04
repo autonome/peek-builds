@@ -504,6 +504,25 @@ yarn extension:firefox     # Launch Firefox with extension (web-ext)
 yarn test:extension        # Run unit tests (node --test)
 ```
 
+### Popup Commands
+
+The popup (Alt+P) provides a command bar for quick actions. Commands show feedback before auto-closing.
+
+| Command | With args | Without args |
+|---------|-----------|--------------|
+| `tag <tags>` | Tags current URL with comma-separated tags | — |
+| `note <text>` | Saves text note attached to current page | — |
+| `search <query>` | Searches saved items (results in console) | — |
+| `server <url>` | Sets sync server URL (auto-adds https://) | Shows current server |
+| `key <apikey>` | Sets API key for sync | Shows masked key (••••ab12) |
+| `sync` | Triggers sync, shows "↓3 ↑2" (pulled/pushed) | — |
+
+**UI features:**
+- Tab-completion for command names
+- Status bar shows sync state, pending item count, manual sync button
+- Success: green checkmark + message, auto-closes after 600ms
+- Error: red X + message, stays open
+
 ### Browser Data Import
 
 Three sync modules import browser data as Peek URL items. All are one-way (browser → Peek), behind toggles in the options page Test Features section, and tag items with their source.
