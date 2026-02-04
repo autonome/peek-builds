@@ -57,13 +57,21 @@ if [ "$FORCE_REBUILD" = true ]; then
 fi
 
 echo "Building Rust for iOS device (release)..."
-cargo tauri build --target aarch64-apple-ios
+# Build only the lib target - the bin target would fail to link because
+# Swift FFI symbols (webview_plugin_*) are provided by Xcode at final link time
+# Use custom-protocol feature for bundled assets (not dev server)
+cargo build --lib --release --features custom-protocol --target aarch64-apple-ios
 
 echo "Copying library to Xcode location..."
 mkdir -p "$DEST_DIR"
 # Remove any existing symlink (macOS case-insensitive: release vs Release conflict)
 rm -f "$DEST_PATH"
-cp target/aarch64-apple-ios/release/deps/libpeek_save_lib.a "$DEST_PATH"
+cp target/aarch64-apple-ios/release/libpeek_save_lib.a "$DEST_PATH"
+
+# Copy frontend assets to Xcode location (normally done by cargo tauri build)
+echo "Copying frontend assets..."
+rm -rf "$TAURI_DIR/gen/apple/assets"
+cp -R "$SCRIPT_DIR/dist" "$TAURI_DIR/gen/apple/assets"
 
 # Update cache
 if [ "$NO_CACHE" = false ]; then

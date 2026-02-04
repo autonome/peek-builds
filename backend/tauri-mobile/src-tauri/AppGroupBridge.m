@@ -82,3 +82,31 @@ const char* get_documents_path() {
     NSLog(@"[AppGroupBridge] Documents path: %@", documentsPath);
     return strdup([documentsPath UTF8String]);
 }
+
+// Returns the path to iCloud Documents directory, or NULL if iCloud is not available
+// Requires iCloud capability enabled in Xcode with proper container identifier
+const char* get_icloud_documents_path() {
+    // Use nil to get the default ubiquity container (first one in entitlements)
+    NSURL *containerURL = [[NSFileManager defaultManager] URLForUbiquityContainerIdentifier:nil];
+
+    if (containerURL == nil) {
+        NSLog(@"[AppGroupBridge] iCloud not available - user may not be signed in or capability not enabled");
+        return NULL;
+    }
+
+    // iCloud Documents folder is inside the container
+    NSURL *documentsURL = [containerURL URLByAppendingPathComponent:@"Documents"];
+
+    // Create the Documents directory if it doesn't exist
+    NSError *error = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtURL:documentsURL
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:&error]) {
+        NSLog(@"[AppGroupBridge] Failed to create iCloud Documents directory: %@", error);
+        return NULL;
+    }
+
+    NSLog(@"[AppGroupBridge] iCloud Documents path: %@", documentsURL.path);
+    return strdup([documentsURL.path UTF8String]);
+}

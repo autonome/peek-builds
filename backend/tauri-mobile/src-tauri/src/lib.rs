@@ -16,6 +16,7 @@ fn ios_log(msg: &str) {
 }
 
 // FFI declarations for native webview on iOS
+// These symbols are provided by Swift code (WebviewPlugin.swift) at Xcode link time.
 #[cfg(target_os = "ios")]
 extern "C" {
     fn webview_plugin_open(url: *const std::ffi::c_char, item_id: *const std::ffi::c_char) -> bool;
@@ -193,6 +194,7 @@ struct SyncStatus {
 extern "C" {
     fn get_app_group_container_path() -> *const c_char;
     fn get_documents_path() -> *const c_char;
+    fn get_icloud_documents_path() -> *const c_char;
     fn get_system_is_dark_mode() -> i32;
     fn is_app_store_build() -> i32;
 }
@@ -274,6 +276,22 @@ fn get_docs_path() -> Option<PathBuf> {
         }
         let path_str = CStr::from_ptr(c_str).to_string_lossy().to_string();
         libc::free(c_str as *mut libc::c_void);
+        Some(PathBuf::from(path_str))
+    }
+}
+
+/// Get the iCloud Documents directory path (synced across devices)
+/// Returns None if iCloud is not available (user not signed in or capability not enabled)
+fn get_icloud_path() -> Option<PathBuf> {
+    unsafe {
+        let c_str = get_icloud_documents_path();
+        if c_str.is_null() {
+            ios_log("iCloud not available");
+            return None;
+        }
+        let path_str = CStr::from_ptr(c_str).to_string_lossy().to_string();
+        libc::free(c_str as *mut libc::c_void);
+        ios_log(&format!("iCloud path: {}", path_str));
         Some(PathBuf::from(path_str))
     }
 }
@@ -2166,25 +2184,43 @@ fn debug_export_database(app: tauri::AppHandle) -> Result<String, String> {
     let db_path = get_db_path().ok_or("Failed to get database path")?;
     let data = std::fs::read(&db_path).map_err(|e| format!("Failed to read database: {}", e))?;
 
-    // Get app's data directory (accessible via Download Container)
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let encoded = STANDARD.encode(&data);
+
+    let mut export_locations = Vec::new();
+
+    // Try iCloud first (syncs across devices automatically)
+    if let Some(icloud_path) = get_icloud_path() {
+        let icloud_db = icloud_path.join("peek-export.db");
+        let icloud_b64 = icloud_path.join("peek-export.b64");
+
+        if let Err(e) = std::fs::write(&icloud_db, &data) {
+            ios_log(&format!("Failed to write to iCloud: {}", e));
+        } else {
+            let _ = std::fs::write(&icloud_b64, &encoded);
+            export_locations.push("iCloud".to_string());
+            ios_log(&format!("Exported to iCloud: {}", icloud_db.display()));
+        }
+    }
+
+    // Always export to app data as backup (accessible via Finder File Sharing)
     let app_data = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     std::fs::create_dir_all(&app_data)
         .map_err(|e| format!("Failed to create app data dir: {}", e))?;
 
-    // Copy raw database
     let export_db = app_data.join("peek-export.db");
     std::fs::write(&export_db, &data)
         .map_err(|e| format!("Failed to write database: {}", e))?;
 
-    // Also create base64 version
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    let encoded = STANDARD.encode(&data);
     let export_b64 = app_data.join("peek-export.b64");
     std::fs::write(&export_b64, &encoded)
         .map_err(|e| format!("Failed to write base64: {}", e))?;
 
-    Ok(format!("Exported {} bytes to app data dir", data.len()))
+    export_locations.push("app data".to_string());
+
+    let locations = export_locations.join(" + ");
+    Ok(format!("Exported {} bytes to {}", data.len(), locations))
 }
 
 #[tauri::command]
@@ -4709,7 +4745,6 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_webview::init())
         .setup(move |_app| {
             if auto_sync_on_launch {
                 println!("[Rust] PEEK_AUTO_SYNC enabled - triggering sync on launch");

@@ -426,6 +426,26 @@ a.card-title {
   color: #ff3b30;
 }
 
+.card-action-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  padding: 0.25rem;
+  color: #999;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+
+.card-action-btn:active {
+  background: rgba(0, 122, 255, 0.1);
+  color: #007aff;
+}
+
 .card-actions {
   display: flex;
   gap: 0.15rem;
@@ -927,6 +947,15 @@ body.dark .card-delete-btn {
 body.dark .card-delete-btn:active {
   background: rgba(255, 69, 58, 0.2);
   color: #ff453a;
+}
+
+body.dark .card-action-btn {
+  color: #666;
+}
+
+body.dark .card-action-btn:active {
+  background: rgba(10, 132, 255, 0.2);
+  color: #0a84ff;
 }
 
 body.dark .saved-url-tag {

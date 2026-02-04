@@ -395,6 +395,109 @@ After running `npm run dev:ios`, test data is automatically seeded:
 - **Multiple xcodeproj files exist** - With agent workspaces, there may be many copies at `~/misc/mpeek/*/backend/tauri-mobile/src-tauri/gen/apple/peek-save.xcodeproj`. Verify you're opening the correct one (check Xcode window title or File → Project Settings).
 - **disableInputAccessoryView not in Tauri 2.9.x** - The config option to hide iOS keyboard accessory bar is documented in the schema but not implemented in stable Tauri 2.9. Requires newer version or native Swift workaround.
 
+### iOS Build System Architecture
+
+**⚠️ CRITICAL: The `custom-protocol` Cargo feature is REQUIRED for production builds.**
+
+Without this feature, the app tries to connect to `localhost` instead of using bundled assets, causing a "failed to request tauri://localhost" error and iOS local network permission prompts.
+
+```toml
+# backend/tauri-mobile/src-tauri/Cargo.toml
+tauri = { version = "2", features = ["custom-protocol"] }
+```
+
+**Why this happens:** Tauri's build system sets `cargo:dev=true` or `cargo:dev=false` based on the `custom-protocol` feature:
+- **With** `custom-protocol` → `dev=false` → uses bundled assets (production)
+- **Without** `custom-protocol` → `dev=true` → tries to connect to localhost (dev mode)
+
+When using `cargo build` directly (instead of `cargo tauri build`), you MUST have this feature enabled, otherwise the app defaults to dev mode.
+
+### Debug vs Release Build Separation
+
+The build system maintains strict separation between debug (simulator) and release (device) builds:
+
+| Aspect | Debug (Simulator) | Release (Device) |
+|--------|-------------------|------------------|
+| Target | `aarch64-apple-ios-sim` | `aarch64-apple-ios` |
+| Profile | `dev` (unoptimized) | `release` (optimized) |
+| Cache | `ios-cache/debug/` | `ios-cache/release/` |
+| Xcode Externals | `Externals/arm64/Debug/` | `Externals/arm64/Release/` |
+| Build script | `build-ios.sh` | `build-release.sh` |
+| yarn command | `yarn mobile:ios:build` | `yarn mobile:ios:build:release` |
+
+**Cache location:** Caches are stored at the git repo root level (`~/misc/mpeek/tmp/ios-cache/`) and shared across agent workspaces. Each cache contains:
+- `libapp.a` - The compiled Rust library
+- `checksum.txt` - Hash of source files for cache invalidation
+
+**Cache invalidation:** The cache hash includes:
+- `Cargo.toml`, `Cargo.lock` - Dependencies
+- `tauri.conf.json` - Tauri configuration
+- `build.rs` - Build script
+- `src/*.rs` - All Rust source files
+
+### Build Commands (from repo root)
+
+```bash
+# Debug for simulator
+yarn mobile:ios:build              # Build Rust library
+yarn mobile:ios:xcodebuild         # Build Xcode project
+yarn mobile:ios:xcodebuild:install # Install on simulator
+yarn mobile:ios:sim:launch         # Launch app
+
+# Release for device
+yarn mobile:ios:build:release      # Build Rust library
+yarn mobile:ios:xcodebuild:device  # Build Xcode project
+yarn mobile:ios:device:run         # Install and launch on device
+
+# Full flows
+yarn mobile:ios:xcodebuild:full           # Debug: build + xcode + install
+yarn mobile:ios:xcodebuild:device:full    # Release: build + xcode + install
+```
+
+### Troubleshooting: "localhost" Error on Device
+
+If the app shows "failed to request tauri://localhost" or asks for local network permissions:
+
+1. **Verify `custom-protocol` feature** is in `Cargo.toml`:
+   ```bash
+   grep custom-protocol backend/tauri-mobile/src-tauri/Cargo.toml
+   ```
+
+2. **Clear ALL caches** (shared cache is at repo root, not workspace):
+   ```bash
+   rm -rf ~/misc/mpeek/tmp/ios-cache/release
+   rm -rf backend/tauri-mobile/src-tauri/target/aarch64-apple-ios/release
+   ```
+
+3. **Rebuild from scratch:**
+   ```bash
+   yarn mobile:ios:build:release
+   ```
+
+4. **Copy to Debug location** (Xcode looks in Debug/ even for release builds):
+   ```bash
+   cp backend/tauri-mobile/src-tauri/gen/apple/Externals/arm64/Release/libapp.a \
+      backend/tauri-mobile/src-tauri/gen/apple/Externals/arm64/Debug/libapp.a
+   ```
+
+5. **Rebuild Xcode and install:**
+   ```bash
+   yarn mobile:ios:xcodebuild:device
+   yarn mobile:ios:device:run
+   ```
+
+### Why We Use `cargo build --lib` Instead of `cargo tauri build`
+
+The standard `cargo tauri build` command fails on iOS because of Swift FFI symbols (`webview_plugin_open`, `webview_plugin_close`) that are defined in Swift code and only available at Xcode's final link stage.
+
+Our workaround:
+1. Build only the lib target: `cargo build --lib --target aarch64-apple-ios`
+2. Copy the library to Xcode's expected location
+3. Copy frontend assets manually (normally done by `cargo tauri build`)
+4. Let Xcode do the final linking with Swift code
+
+This requires the `custom-protocol` feature since we're bypassing Tauri's build orchestration.
+
 ## Server Backend (Webhook API)
 
 The server backend (`backend/server/`) is a remote HTTP API for syncing data from the mobile app. It's separate from the desktop backends - it doesn't implement the Peek API, it's a standalone Node.js server.

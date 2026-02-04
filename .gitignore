@@ -47,6 +47,9 @@ TODO-mine.md
 # Xcode app container exports
 *.xcappdata/
 
+# Device backups (use ~/sync/peek-backups/ instead)
+device-backup-*/
+
 # Experimental/unused files
 babel.config.json
 webpack.config.js

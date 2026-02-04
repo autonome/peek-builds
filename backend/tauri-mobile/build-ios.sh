@@ -51,12 +51,25 @@ if [ "$FORCE_REBUILD" = true ]; then
     touch src/lib.rs
 fi
 
+# Build frontend first (normally done by cargo tauri build's beforeBuildCommand)
+echo "Building frontend..."
+cd "$SCRIPT_DIR"
+npm run build
+cd "$TAURI_DIR"
+
 echo "Building Rust for iOS simulator (debug)..."
-cargo tauri build --target aarch64-apple-ios-sim --debug
+# Build only the lib target - the bin target would fail to link because
+# Swift FFI symbols (webview_plugin_*) are provided by Xcode at final link time
+cargo build --lib --target aarch64-apple-ios-sim
 
 # Copy to Xcode location
 mkdir -p "$DEST_DIR"
-cp target/aarch64-apple-ios-sim/debug/deps/libpeek_save_lib.a "$DEST_PATH"
+cp target/aarch64-apple-ios-sim/debug/libpeek_save_lib.a "$DEST_PATH"
+
+# Copy frontend assets to Xcode location (normally done by cargo tauri build)
+echo "Copying frontend assets..."
+rm -rf "$TAURI_DIR/gen/apple/assets"
+cp -R "$SCRIPT_DIR/dist" "$TAURI_DIR/gen/apple/assets"
 
 # Update cache
 if [ "$NO_CACHE" = false ]; then

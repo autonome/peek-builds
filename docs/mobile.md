@@ -54,6 +54,33 @@ The app uses an iOS Share Extension with a full UI that allows:
 - Status display showing existing tags for already-saved items
 - Support for both URLs and plain text content
 
+### Native WKWebView (In-App Browser)
+
+Each URL card has a "webview" button that opens the URL in a native WKWebView overlay, allowing users to view content without leaving the app.
+
+**Implementation:**
+- **Swift plugin:** `src-tauri/gen/apple/tauri-app_iOS/tauri-app_iOS/WebViewPlugin.swift`
+- **FFI bridge:** `src-tauri/webview-plugin/` - Rust crate exposing C functions
+- **React integration:** `App.tsx` calls `window.__TAURI_INVOKE__("plugin:webview|open", { url })`
+
+**Features:**
+- Full-screen overlay with navigation bar
+- Native "Done" button to close
+- Tracks visited URLs (stores visit timestamp)
+- Reader mode available (future)
+
+### Pull-to-Refresh
+
+The main list supports pull-to-refresh with a **hold gesture** to prevent accidental triggers during scroll.
+
+**Behavior:**
+1. Pull down to reveal refresh indicator
+2. **Hold** for 300ms to trigger refresh
+3. Release before 300ms → cancels (bounce back)
+4. Visual feedback shows progress ring filling
+
+**Implementation:** `src/App.tsx` - search for `pullToRefresh` state
+
 ### Frecency Algorithm
 
 Tags are scored using frecency (frequency + recency):
@@ -110,9 +137,27 @@ The app supports syncing all item types to an external webhook endpoint:
 }
 ```
 
+### Profiles
+
+Mobile profiles provide dev/production data isolation. See `docs/profiles.md` for full details.
+
+**Quick summary:**
+- **Auto-detection:** Xcode builds use `dev` profile, TestFlight/App Store use `default`
+- **Separate databases:** Each profile has its own SQLite file (`peek-{profile-uuid}.db`)
+- **Sync isolation:** All sync requests include `?profile={slug}`
+
 ### Data Storage
 
-Data is stored in a SQLite database (`peek.db`) within the iOS App Groups container (`group.com.dietrich.peek-mobile`). This enables sharing between the main app and share extension with proper concurrent access via WAL mode.
+Data is stored in SQLite databases within the iOS App Groups container (`group.com.dietrich.peek-mobile`). This enables sharing between the main app and share extension with proper concurrent access via WAL mode.
+
+**Per-profile database files:**
+```
+App Group Container/
+├── profiles.json           # Profile metadata and sync config
+├── peek-{uuid1}.db         # Default profile database
+├── peek-{uuid2}.db         # Development profile database
+└── peek-{uuid3}.db         # Additional profiles...
+```
 
 **Database Location:**
 ```
@@ -316,6 +361,25 @@ The app uses `Peek.icon` bundle (Xcode 15+ unified icon format):
 - Xcode generates all required icon sizes during build
 - Do NOT recreate `Assets.xcassets/AppIcon.appiconset/` - that's Tauri's default icons
 
+### In-App Icons (URL Action Buttons)
+
+The URL cards have action buttons (Safari, WKWebView, copy, edit, delete) that use inline SVG icons.
+
+**Location:** `backend/tauri-mobile/src/App.tsx` - search for `SvgIcon` components
+
+**Styling:** The `.card-action-btn` class in `App.css` controls button appearance:
+```css
+.card-action-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: none;
+  /* ... */
+}
+```
+
+**Important:** iOS Safari/WebKit requires explicit `-webkit-appearance: none` and `background: transparent` to prevent default button styling that shows as gray backgrounds.
+
 ### Building
 
 **Build Rust library for iOS:**
@@ -397,7 +461,259 @@ The share extension must be configured in Xcode:
 4. Copy `ShareViewController-full-ui.swift.example` to `src-tauri/gen/apple/Peek/ShareViewController.swift`
 5. Ensure entitlements include App Groups
 
+## iOS Build System Architecture
+
+This section documents the critical details of building Tauri iOS apps. **Read this before doing any iOS builds.**
+
+### The `custom-protocol` Feature (CRITICAL)
+
+**⚠️ The `custom-protocol` Cargo feature is REQUIRED for production builds.**
+
+Without this feature, the app tries to connect to `localhost:1420` instead of using bundled assets, causing:
+- "failed to request tauri://localhost" error
+- iOS local network permission prompt
+- Blank white screen
+
+```toml
+# backend/tauri-mobile/src-tauri/Cargo.toml
+[dependencies]
+tauri = { version = "2", features = ["custom-protocol"] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+```
+
+**How it works:** Tauri's build system sets `cargo:dev=true` or `cargo:dev=false` based on this feature:
+- **With** `custom-protocol` → `dev=false` → uses bundled assets (production)
+- **Without** `custom-protocol` → `dev=true` → tries to connect to localhost (dev mode)
+
+**For hot reload development**, the feature is still present but we use `cargo tauri dev` which starts a dev server and connects to it.
+
+### Debug vs Release Build Separation
+
+Debug and release builds are completely separated to prevent cross-contamination:
+
+| Aspect | Debug (Simulator) | Release (Device) |
+|--------|-------------------|------------------|
+| Target | `aarch64-apple-ios-sim` | `aarch64-apple-ios` |
+| Library path | `Externals/arm64/Debug/libapp.a` | `Externals/arm64/Release/libapp.a` |
+| Xcode scheme | Debug | Release |
+| Cache directory | `tmp/ios-cache/debug/` | `tmp/ios-cache/release/` |
+| Cargo flags | (none) | `--release --features custom-protocol` |
+| Asset source | Bundled or localhost:1420 | Bundled (custom-protocol) |
+
+**The iOS cache system** is at the repo root (`~/misc/mpeek/tmp/ios-cache/`) so it's shared across workspaces. This prevents duplicate Rust compilations.
+
+### Why `cargo build --lib` Instead of `cargo tauri build`
+
+The standard `cargo tauri build` fails on iOS due to Swift FFI symbols (`webview_plugin_open`, `webview_plugin_close`) that are defined in Swift code and only available at Xcode's final link stage.
+
+**Workaround:**
+1. Build only the lib target: `cargo build --lib --target aarch64-apple-ios --release --features custom-protocol`
+2. Copy the library to Xcode's expected location
+3. Let Xcode handle the final linking with Swift code
+
+This is why the build scripts use `cargo build --lib` and why the `custom-protocol` feature must be explicitly specified.
+
+### Build Scripts Reference
+
+**From repo root (package.json):**
+
+| Script | Description |
+|--------|-------------|
+| `yarn mobile:ios:cargo:debug` | Build Rust lib for simulator |
+| `yarn mobile:ios:cargo:release` | Build Rust lib for device (with custom-protocol) |
+| `yarn mobile:ios:xcodebuild` | Build app with xcodebuild for simulator |
+| `yarn mobile:ios:xcodebuild:device` | Build app with xcodebuild for device |
+| `yarn mobile:ios:xcodebuild:install` | Install built app on simulator |
+| `yarn mobile:ios:xcodebuild:install:device` | Install built app on device |
+| `yarn mobile:ios:xcodebuild:full` | Full pipeline: cargo + xcodebuild + install (simulator) |
+| `yarn mobile:ios:xcodebuild:device:full` | Full pipeline: cargo + xcodebuild + install (device) |
+| `yarn mobile:ios:assets` | Rebuild frontend assets only |
+
+**From backend/tauri-mobile (package.json):**
+
+| Script | Description |
+|--------|-------------|
+| `yarn build:ios` | Build for simulator with bundled assets |
+| `yarn build:ios:release` | Build for device |
+| `yarn dev:ios:sim` | Hot reload development |
+| `yarn xcode` | Open Xcode project |
+
+### Build Workflow: Simulator Debug
+
+```bash
+# Full rebuild from scratch
+yarn mobile:ios:xcodebuild:full
+
+# Or step by step:
+yarn mobile:ios:cargo:debug           # 1. Build Rust library
+yarn mobile:ios:xcodebuild            # 2. Build with xcodebuild (clean build)
+yarn mobile:ios:xcodebuild:install    # 3. Install on simulator
+yarn mobile:ios:sim:launch            # 4. Launch app
+```
+
+### Build Workflow: Device Release
+
+```bash
+# Full rebuild from scratch
+yarn mobile:ios:xcodebuild:device:full
+
+# Or step by step:
+yarn mobile:ios:cargo:release            # 1. Build Rust library with custom-protocol
+yarn mobile:ios:xcodebuild:device        # 2. Build with xcodebuild
+yarn mobile:ios:xcodebuild:install:device # 3. Install on device
+yarn mobile:ios:device:launch            # 4. Launch app
+```
+
+### Frontend-Only Changes
+
+If you only changed CSS/JS/HTML and Rust is unchanged:
+
+```bash
+yarn mobile:ios:assets                # Rebuild frontend, copy to Xcode
+yarn mobile:ios:xcodebuild            # Rebuild app (clean build required!)
+yarn mobile:ios:xcodebuild:install    # Install
+```
+
+**Warning:** Xcode aggressively caches assets. Always use `clean build` (the scripts do this automatically) or changes won't appear.
+
+---
+
+## iOS App Group Containers & Data Persistence
+
+Understanding iOS container lifecycle is critical to avoid data loss.
+
+### What Is an App Group Container?
+
+iOS apps store data in sandboxed containers. An **App Group container** is a shared container that multiple apps can access (main app + share extension). Our app uses:
+- **App Group ID:** `group.com.dietrich.peek-mobile`
+- **Container path:** `~/Library/Developer/CoreSimulator/Devices/<DEVICE_ID>/data/Containers/Shared/AppGroup/<UUID>/`
+
+The `<UUID>` is assigned by iOS when the app is first installed.
+
+### When Container UUIDs Change (Data Loss Scenarios)
+
+| Action | Container UUID | Data |
+|--------|---------------|------|
+| `xcrun simctl install` (app update) | **Preserved** | **Preserved** ✓ |
+| `xcrun simctl uninstall` then reinstall | **New UUID** | **LOST** ✗ |
+| Manual delete from Home screen | **New UUID** | **LOST** ✗ |
+| Simulator "Erase All Content and Settings" | **New UUID** | **LOST** ✗ |
+| Code changes (any) | **Preserved** | **Preserved** ✓ |
+| Xcode clean build | **Preserved** | **Preserved** ✓ |
+| Bundle ID change | **New UUID** | Old data orphaned |
+| App Group ID change | **New UUID** | Old data orphaned |
+
+**Key insight:** Normal app updates preserve data. Only **uninstalling** the app deletes the container.
+
+### Finding Your Container
+
+**Simulator:**
+```bash
+# Find the peek database
+find ~/Library/Developer/CoreSimulator/Devices/*/data/Containers/Shared/AppGroup -name "peek-*.db" 2>/dev/null
+
+# Or find profiles.json
+find ~/Library/Developer/CoreSimulator/Devices/*/data/Containers/Shared/AppGroup -name "profiles.json" 2>/dev/null
+```
+
+**Device:** Use the backup scripts (see below).
+
+### Backing Up Data
+
+**Device backup (recommended before any device work):**
+```bash
+yarn mobile:device:backup
+# Creates timestamped backup in ~/sync/peek-backups/
+```
+
+**What gets backed up:**
+- `appGroupContainer/` - All databases and profiles.json
+- `appDataContainer/Documents/Backups/` - In-app backups
+
+### Container Locations
+
+**Simulator (per profile):**
+```
+~/Library/Developer/CoreSimulator/Devices/<DEVICE_ID>/data/Containers/Shared/AppGroup/<UUID>/
+├── profiles.json
+├── peek-<profile-uuid>.db
+├── peek-<profile-uuid>.db-wal
+└── peek-<profile-uuid>.db-shm
+```
+
+**Device:**
+- Accessed via `ios-deploy` or Xcode's device file browser
+- Same structure as simulator
+
+---
+
 ## Troubleshooting
+
+### localhost Error (Most Common)
+
+**Symptom:** App shows "failed to request tauri://localhost", asks for local network permission, shows blank white screen.
+
+**Cause:** Missing `custom-protocol` Cargo feature.
+
+**Fix:**
+```bash
+# 1. Verify feature is in Cargo.toml
+grep -A5 "\[features\]" backend/tauri-mobile/src-tauri/Cargo.toml
+# Should show: custom-protocol = ["tauri/custom-protocol"]
+
+# 2. Clean and rebuild with feature
+rm -rf backend/tauri-mobile/src-tauri/target/aarch64-apple-ios*/release
+yarn mobile:ios:cargo:release  # For device
+# or
+yarn mobile:ios:cargo:debug    # For simulator (if you want bundled assets)
+
+# 3. Clean xcodebuild and reinstall
+yarn mobile:ios:xcodebuild:device:full  # For device
+```
+
+### Builds Not Updating (Version Stuck)
+
+**Symptom:** You changed code but the app still shows old version.
+
+**Cause:** Xcode caches assets aggressively. A `build` without `clean` reuses cached assets.
+
+**Fix:** The yarn scripts use `clean build`. If using Xcode GUI:
+1. Product → Clean Build Folder (Cmd+Shift+K)
+2. Delete DerivedData: `rm -rf /tmp/peek-xcodebuild`
+3. Rebuild
+
+### Wrong Library Architecture
+
+**Symptom:** Build fails with architecture mismatch errors.
+
+**Cause:** Debug library in Release folder or vice versa.
+
+**Fix:**
+```bash
+# Clear both caches
+rm -rf ~/misc/mpeek/tmp/ios-cache/debug
+rm -rf ~/misc/mpeek/tmp/ios-cache/release
+
+# Rebuild the correct one
+yarn mobile:ios:cargo:debug    # For simulator
+yarn mobile:ios:cargo:release  # For device
+```
+
+### Share Extension Not Saving
+
+**Symptom:** Share extension appears but items don't save.
+
+**Cause:** App Group mismatch or database path issue.
+
+**Fix:**
+1. Verify all three IDs match:
+   - Main app: `com.dietrich.peek-mobile`
+   - Extension: `com.dietrich.peek-mobile.share`
+   - App Group: `group.com.dietrich.peek-mobile`
+2. Check entitlements files in Xcode
+3. Rebuild both targets
 
 ### Stale Build Cache
 

@@ -20,9 +20,11 @@ get_source_hash() {
         return 1
     fi
 
-    # Hash Cargo files and all Rust source files
+    # Hash Cargo files, Tauri config, build script, and all Rust source files
     cat "$tauri_dir/Cargo.toml" \
         "$tauri_dir/Cargo.lock" \
+        "$tauri_dir/tauri.conf.json" \
+        "$tauri_dir/build.rs" \
         "$tauri_dir/src"/*.rs 2>/dev/null | shasum -a 256 | cut -d' ' -f1
 }
 
