@@ -480,6 +480,11 @@ api.datastore = {
   },
   recordItemVisit: (itemId, options = {}) => {
     return ipcRenderer.invoke('datastore-record-item-visit', { itemId, options });
+  },
+
+  // Navigation tracking (unified entry point for page loads)
+  trackNavigation: (uri, options = {}) => {
+    return ipcRenderer.invoke('datastore-track-navigation', { uri, options });
   }
 };
 

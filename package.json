@@ -5,6 +5,9 @@
   "main": "dist/backend/electron/entry.js",
   "author": "dietrich ayala",
   "license": "MIT",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "type": "module",
   "repository": {
     "type": "git",
@@ -37,8 +40,9 @@
     "dev:tauri": "./scripts/timed.sh sh -c 'cd backend/tauri/src-tauri && cargo run'",
     "dev:hot": "yarn build && nodemon --exec 'yarn build && DEBUG=1 electron .'",
     "//-- Production --//": "",
+    "check:native": "node scripts/check-native-modules.js",
     "start": "[ \"${BACKEND:-}\" = \"tauri\" ] && yarn start:tauri || yarn start:electron",
-    "start:electron": "./scripts/timed.sh sh -c 'yarn build && electron .'",
+    "start:electron": "./scripts/timed.sh sh -c 'yarn check:native && yarn build && electron .'",
     "start:tauri": "./scripts/timed.sh sh -c 'cd backend/tauri/src-tauri && cargo run --release'",
     "start:tauri:log": "cd backend/tauri/src-tauri && ./target/release/peek-tauri 2>&1",
     "start:tauri:test": "pkill -INT -f peek-tauri 2>/dev/null; sleep 1; cd backend/tauri/src-tauri && ./target/release/peek-tauri &> /tmp/tauri.log & sleep 5 && tail -50 /tmp/tauri.log && pkill -INT -f peek-tauri",
@@ -150,7 +154,7 @@
     "test:unit:shortcuts": "./scripts/timed.sh sh -c 'yarn build && node --test dist/backend/electron/shortcuts.test.js'",
     "test:unit:datastore": "./scripts/timed.sh sh -c 'yarn build && node --test dist/backend/electron/datastore.test.js'",
     "test": "./scripts/timed.sh sh -c 'yarn build && yarn test:electron && yarn test:tauri'",
-    "test:electron": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=1 BACKEND=electron npx playwright test tests/desktop/'",
+    "test:electron": "./scripts/timed.sh sh -c 'yarn check:native && yarn build && HEADLESS=1 BACKEND=electron npx playwright test tests/desktop/'",
     "test:electron:x": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=1 BACKEND=electron npx playwright test tests/desktop/ -x'",
     "test:tauri": "./scripts/timed.sh sh -c 'yarn test:tauri:frontend; yarn test:tauri:rust'",
     "test:tauri:frontend": "./scripts/timed.sh sh -c 'HEADLESS=1 BACKEND=tauri npx playwright test tests/desktop/'",

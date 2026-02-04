@@ -154,6 +154,7 @@ import {
   getAllModes,
   buildCommandContext,
   cleanupWindowMode,
+  detectModeFromUrl,
   type MajorModeId,
   type MinorModeId,
 } from './modes.js';
@@ -1604,6 +1605,24 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log('Adding window to manager:', win.id, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive);
       registerWindow(win.id, msg.source, windowParams);
 
+      // Set window mode based on URL
+      // For page containers (peek://app/page), extract the actual URL
+      let modeUrl = url;
+      if (url.startsWith('peek://app/page')) {
+        try {
+          const parsed = new URL(url);
+          const actualUrl = parsed.searchParams.get('url');
+          if (actualUrl) {
+            modeUrl = actualUrl;
+          }
+        } catch {
+          // Keep original URL
+        }
+      }
+      const detectedMode = detectModeFromUrl(modeUrl);
+      setMajorMode(win.id, detectedMode);
+      DEBUG && console.log('Set window mode:', win.id, 'url:', modeUrl, 'mode:', detectedMode);
+
       // Track this load in history (skip internal peek:// URLs)
       if (!url.startsWith('peek://')) {
         try {
@@ -2136,9 +2155,24 @@ export function registerWindowHandlers(): void {
       for (const [id, winData] of getAllWindows()) {
         const win = BrowserWindow.fromId(id);
         if (win && !win.isDestroyed()) {
-          const url = win.webContents.getURL();
+          let url = win.webContents.getURL();
+
+          // Check if this is a web page container (peek://app/page)
+          // These wrap actual web pages - extract the real URL
+          if (url.startsWith('peek://app/page')) {
+            try {
+              const parsed = new URL(url);
+              const actualUrl = parsed.searchParams.get('url');
+              if (actualUrl) {
+                url = actualUrl;
+              }
+            } catch {
+              // If URL parsing fails, keep the original
+            }
+          }
 
           // Skip internal peek:// URLs unless requested
+          // (Page containers have had their actual URL extracted above, so web pages pass through)
           if (!msg?.includeInternal && url.startsWith('peek://')) {
             continue;
           }
