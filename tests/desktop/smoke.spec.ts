@@ -73,7 +73,7 @@ test.describe('Cmd Palette @desktop', () => {
 
     // Open cmd panel via window API
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://app/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -92,9 +92,17 @@ test.describe('Cmd Palette @desktop', () => {
     // Wait for input to be ready
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
-    // Type 'example:gallery' command and wait for results to filter
+    // Wait for commands to be loaded - type a built-in command first to verify
+    // Built-in commands (like 'settings') load faster than extension commands
+    await cmdWindow.fill('input', 'settings');
+    // Press ArrowDown to show results (panel requires this to display dropdown)
+    await cmdWindow.keyboard.press('ArrowDown');
+    await waitForCommandResults(cmdWindow, 1, 10000); // Longer timeout for initial load
+
+    // Now search for the extension command
     await cmdWindow.fill('input', 'example:gallery');
-    await waitForCommandResults(cmdWindow, 1);
+    await cmdWindow.keyboard.press('ArrowDown');
+    await waitForCommandResults(cmdWindow, 1, 10000);
 
     // Press Enter to execute
     await cmdWindow.keyboard.press('Enter');

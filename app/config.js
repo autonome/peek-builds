@@ -138,43 +138,29 @@ const defaults = {
     persistWindowState: false
   },
   items: [
-    { id: 'cee1225d-40ac-41e5-a34c-e2edba69d599',
-      name: 'Cmd',
-      description: 'Command entry',
-      start_url: 'peek://app/cmd/background.html',
-      enabled: true,
-      settings_url: 'peek://app/cmd/settings.html',
-    },
     { id: '82de735f-a4b7-4fe6-a458-ec29939ae00d',
       name: 'Groups',
       description: 'View your web in groups',
-      start_url: 'peek://ext/groups/background.js',  // Extension
+      start_url: 'peek://ext/groups/background.js',
       enabled: false,
       settings_url: 'peek://ext/groups/settings.html',
-      extension: true,  // Mark as extension-based feature
+      extension: true,
     },
     { id: 'ef3bd271-d408-421f-9338-47b615571e43',
       name: 'Peeks',
       description: 'Peek at pages in a transient popup using keyboard shortcuts',
-      start_url: 'peek://ext/peeks/background.js',  // Extension
+      start_url: 'peek://ext/peeks/background.js',
       enabled: false,
-      settings_url: 'peek://app/peeks/settings.html',
-      extension: true,  // Mark as extension-based feature
-    },
-    { id: '30c25027-d367-4595-b37f-9db3de853c37',
-      name: 'Scripts',
-      description: 'Create, manage and run content scripts',
-      start_url: 'peek://app/scripts/background.html',
-      enabled: false,
-      settings_url: 'peek://app/scripts/settings.html',
+      settings_url: 'peek://ext/peeks/settings.html',
+      extension: true,
     },
     { id: '434108f3-18a6-437a-b507-2f998f693bb2',
       name: 'Slides',
       description: 'Open web pages as side/top/bottom bars',
-      start_url: 'peek://ext/slides/background.js',  // Extension
+      start_url: 'peek://ext/slides/background.js',
       enabled: false,
-      settings_url: 'peek://app/slides/settings.html',
-      extension: true,  // Mark as extension-based feature
+      settings_url: 'peek://ext/slides/settings.html',
+      extension: true,
     }
   ]
 };

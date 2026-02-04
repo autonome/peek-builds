@@ -346,6 +346,14 @@ api.window = {
     });
   },
   /**
+   * Get the last focused visible (non-modal) window's ID
+   * Use this to get the target window when operating from modal windows like cmd bar
+   * @returns {Promise<number|null>} Window ID or null if not available
+   */
+  getFocusedVisibleWindowId: () => {
+    return ipcRenderer.invoke('get-focused-visible-window-id');
+  },
+  /**
    * Get the current window's ID
    * @returns {Promise<number|null>} Window ID or null if not available
    */
@@ -1621,37 +1629,6 @@ api.modes = {
     }, api.scopes.GLOBAL);
   }
 };
-
-// unused
-/*
-api.sendToWindow = (windowId, msg) => {
-  ipcRenderer.send('sendToWindow', {
-    source: sourceAddress,
-    id,
-    msg
-  });
-};
-
-api.onMessage = callback => {
-  // TODO: c'mon
-  if (!topic || !callback) {
-    return new Error('wtf');
-  }
-
-  const replyTopic = `${topic}:${rndm()}`;
-
-  ipcRenderer.send('subscribe', {
-    source: sourceAddress,
-    topic,
-    replyTopic
-  });
-
-  ipcRenderer.on(replyTopic, (ev, msg) => {
-    msg.source = sourceAddress;
-    callback(msg);
-  });
-};
-*/
 
 /**
  * File operations

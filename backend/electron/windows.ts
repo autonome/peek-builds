@@ -141,17 +141,19 @@ export function addEscHandler(bw: BrowserWindow): void {
           // Transient mode - close immediately (user invoked via global hotkey)
           console.log('[esc] Auto mode (transient) - closing directly');
         } else {
-          // Active mode - ask renderer first, then close if not handled
-          console.log(`[esc] auto mode (non-transient) - asking renderer to handle`);
+          // Active mode (Peek was focused when window opened)
+          // IZUI Policy: ESC only navigates internal state, does NOT close
+          // Ask renderer to handle (e.g., go back in webview history)
+          console.log(`[esc] auto mode (non-transient/active) - asking renderer to handle`);
           const response = await askRendererToHandleEscape(bw);
           console.log(`[esc] Renderer escape response (auto/active):`, response);
           if (response.handled) {
-            // Renderer handled it (internal navigation or closed itself)
+            // Renderer handled it (internal navigation)
             return;
           }
-          // Renderer didn't handle it (e.g., web page without IZUI), close the window
-          console.log('[esc] Renderer did not handle, closing window');
-          closeOrHideWindow(bw.id);
+          // Active mode: renderer didn't handle but we do NOT close
+          // Per IZUI policy, active mode windows stay open on ESC
+          console.log('[esc] Active mode - renderer did not handle, but NOT closing (IZUI policy)');
           return;
         }
       }

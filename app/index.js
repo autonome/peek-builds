@@ -94,27 +94,6 @@ const initFeature = f => {
   fc[f.id].init();
 };
 
-const uninitFeature = f => {
-  log('core', 'TODO: uninitFeature', f);
-
-  // TODO uninitialize each active feature and close its window
-};
-
-// unused, worth testing more tho
-const initIframeFeature = file => {
-  const pathPrefix = 'file:///Users/dietrich/misc/peek/';
-  log('core', 'initiframe');
-  const i = document.createElement('iframe');
-  const src = pathPrefix + file;
-  log('core', 'iframe src', src);
-  document.body.appendChild(i);
-  i.src = src;
-  log('core', 'iframe inited');
-  i.addEventListener('load', () => {
-    log('core', 'iframe loaded');
-  });
-};
-
 const prefs = () => store ? store.get(storageKeys.PREFS) : defaults.prefs;
 const features = () => store ? store.get(storageKeys.ITEMS) : defaults.items;
 
@@ -560,7 +539,7 @@ const init = async () => {
           // Use main process IPC to unload extension
           await api.extensions.unload(extId);
         } else {
-          uninitFeature(f);
+          log('core', 'uninit non-extension feature not implemented:', f.name);
         }
       }
       else if (msg.enabled == true) {
