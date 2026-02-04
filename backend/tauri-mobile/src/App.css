@@ -87,6 +87,38 @@ main.saved-view {
   background-color: var(--dev-bg-light, #f6f6f6);
 }
 
+/* Pull-to-refresh indicator */
+.pull-indicator {
+  text-align: center;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  color: #666;
+  background: rgba(0, 122, 255, 0.1);
+  border-radius: 8px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.pull-indicator.pulling {
+  color: #666;
+}
+
+.pull-indicator.ready {
+  background: rgba(0, 122, 255, 0.25);
+  color: #007aff;
+  font-weight: 500;
+}
+
+body.dark .pull-indicator {
+  color: #999;
+  background: rgba(10, 132, 255, 0.15);
+}
+
+body.dark .pull-indicator.ready {
+  background: rgba(10, 132, 255, 0.3);
+  color: #0a84ff;
+}
+
 header {
   background: #ffffff;
   padding: 0.25rem 1rem;

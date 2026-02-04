@@ -697,7 +697,10 @@ function App() {
 
   // Pull-to-refresh state
   const pullStartY = useRef<number | null>(null);
+  const pullThresholdCrossedAt = useRef<number | null>(null);
+  const [pullState, setPullState] = useState<'idle' | 'pulling' | 'ready'>('idle');
   const PULL_THRESHOLD = 80;
+  const PULL_HOLD_TIME = 300; // ms to hold past threshold before ready
 
   // Filter tags drag-to-resize handlers
   const handleFilterTagsDragStart = (clientY: number) => {
@@ -1740,6 +1743,8 @@ function App() {
     // Only track if at scroll top
     if (main.scrollTop <= 0) {
       pullStartY.current = e.touches[0].clientY;
+      pullThresholdCrossedAt.current = null;
+      setPullState('idle');
     }
   };
 
@@ -1748,9 +1753,25 @@ function App() {
 
     const pullDistance = e.touches[0].clientY - pullStartY.current;
 
-    // If pulling down past threshold, prevent default scroll
+    // If pulling down past threshold, prevent default scroll and track hold time
     if (pullDistance > PULL_THRESHOLD) {
       e.preventDefault();
+
+      // Track when we first crossed the threshold
+      if (pullThresholdCrossedAt.current === null) {
+        pullThresholdCrossedAt.current = Date.now();
+        setPullState('pulling');
+      } else {
+        // Check if held long enough
+        const heldFor = Date.now() - pullThresholdCrossedAt.current;
+        if (heldFor >= PULL_HOLD_TIME) {
+          setPullState('ready');
+        }
+      }
+    } else {
+      // Moved back above threshold, reset
+      pullThresholdCrossedAt.current = null;
+      setPullState('idle');
     }
   };
 
@@ -1758,10 +1779,15 @@ function App() {
     if (pullStartY.current === null) return;
 
     const pullDistance = e.changedTouches[0].clientY - pullStartY.current;
-    pullStartY.current = null;
+    const wasReady = pullState === 'ready';
 
-    // Trigger sync if pulled past threshold
-    if (pullDistance > PULL_THRESHOLD) {
+    // Reset state
+    pullStartY.current = null;
+    pullThresholdCrossedAt.current = null;
+    setPullState('idle');
+
+    // Only trigger sync if was in 'ready' state (held long enough)
+    if (pullDistance > PULL_THRESHOLD && wasReady) {
       syncAll();
     }
   };
@@ -3112,6 +3138,13 @@ function App() {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
+        {/* Pull-to-refresh indicator */}
+        {pullState !== 'idle' && (
+          <div className={`pull-indicator ${pullState}`}>
+            {pullState === 'pulling' ? 'Hold to refresh...' : 'Release to refresh!'}
+          </div>
+        )}
+
         {/* Input row: search + add side by side */}
         <div className="input-row">
           <div className="input-row-card">
