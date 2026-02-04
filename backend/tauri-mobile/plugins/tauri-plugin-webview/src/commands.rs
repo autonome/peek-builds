@@ -2,26 +2,33 @@ use tauri::{command, AppHandle, Runtime};
 
 use crate::Result;
 
-// Note: The actual webview opening is handled by Swift code in Xcode builds.
-// These commands are stubs that will be overridden by the native implementation
-// when the app is built through Xcode with the Swift plugin.
-
 #[command]
 pub async fn open_webview<R: Runtime>(
     _app: AppHandle<R>,
     url: String,
     item_id: String,
 ) -> Result<()> {
-    // This is a stub - the actual implementation is in Swift (WebviewPlugin.swift)
-    // and is registered when building through Xcode.
-    println!("[webview plugin] open_webview called: url={}, item_id={}", url, item_id);
-    println!("[webview plugin] Note: Native webview requires Xcode build with Swift plugin");
-    Ok(())
+    #[cfg(target_os = "ios")]
+    {
+        if crate::open_webview_native(&url, &item_id) {
+            Ok(())
+        } else {
+            Err(crate::Error::Webview("Failed to open webview".to_string()))
+        }
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (url, item_id);
+        println!("[webview plugin] open_webview not supported on this platform");
+        Ok(())
+    }
 }
 
 #[command]
 pub async fn close_webview<R: Runtime>(_app: AppHandle<R>) -> Result<()> {
-    // This is a stub - the actual implementation is in Swift
-    println!("[webview plugin] close_webview called");
+    #[cfg(target_os = "ios")]
+    {
+        crate::close_webview_native();
+    }
     Ok(())
 }
