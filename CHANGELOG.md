@@ -5,6 +5,27 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under third-level headings by week of year.
 
+### 2026-W06
+
+Code Cleanup
+- [x] chore: remove vestigial app/cmd/ directory (24 files, replaced by extensions/cmd/)
+- [x] chore: remove app/scripts/ (disabled feature with missing HTML files)
+- [x] chore: remove dead functions from app/index.js (uninitFeature, initIframeFeature)
+- [x] chore: remove Cmd and Scripts entries from app/config.js (non-existent URLs)
+- [x] chore: simplify app/features.js (all features are now extensions)
+- [x] chore: remove commented-out sendToWindow/onMessage APIs from preload.js
+- [x] chore: remove 7 unused IPC handlers from ipc.ts (~155 lines)
+  - dark-mode:toggle, dark-mode:system (legacy)
+  - window-set-always-on-top, window-is-always-on-top
+  - window-state-save, window-state-load
+  - get-target-window-info
+
+Fixes
+- [x] fix: ESC handling for Active mode windows (IZUI policy compliance)
+- [x] fix: add getFocusedVisibleWindowId API for modal window targeting
+- [x] fix: add trackNavigation API for unified page load tracking
+- [x] fix: update test to use peek://ext/cmd/panel.html (correct URL after cleanup)
+
 ### 2026-W05
 
 Schema & Data Layer
