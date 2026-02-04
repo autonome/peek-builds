@@ -7,6 +7,31 @@ Newly done items go here, grouped under third-level headings by week of year.
 
 ### 2026-W06
 
+Mobile / iOS
+- [x] feat(mobile): add URL action icons with native WKWebView + visit tracking
+  - Open in Browser: opens URL in Safari
+  - Open in Webview: opens URL in embedded native WKWebView
+  - Track visits when URLs are loaded/navigated in webview
+- [x] fix(webview-plugin): simplify Swift integration with direct FFI
+- [x] feat(mobile): fix native webview and restore icon system
+- [x] fix(ios): require hold gesture for pull-to-refresh (prevents accidental triggers)
+
+Desktop
+- [x] fix: window-list returns actual URLs from peek://app/page containers
+- [x] fix: mode detection from URL in window creation
+- [x] fix: add native module check script (prevents NODE_MODULE_VERSION mismatch)
+- [x] fix(cmd): support scheme-less URLs with paths in open command
+
+Testing
+- [x] feat(tests): add Playwright browser extension e2e tests
+- [x] fix(tests): improve extension ID detection and shared instance handling
+- [x] fix(tests): remove Firefox Playwright support (not supported by Playwright)
+
+Datastore & UI
+- [x] fix(datastore): show addresses/visits/tags stats with safe error handling
+- [x] fix(datastore): extract stats from result.data wrapper
+- [x] chore: clean up settings and diagnostic UI
+
 Code Cleanup
 - [x] chore: remove vestigial app/cmd/ directory (24 files, replaced by extensions/cmd/)
 - [x] chore: remove app/scripts/ (disabled feature with missing HTML files)
@@ -15,10 +40,6 @@ Code Cleanup
 - [x] chore: simplify app/features.js (all features are now extensions)
 - [x] chore: remove commented-out sendToWindow/onMessage APIs from preload.js
 - [x] chore: remove 7 unused IPC handlers from ipc.ts (~155 lines)
-  - dark-mode:toggle, dark-mode:system (legacy)
-  - window-set-always-on-top, window-is-always-on-top
-  - window-state-save, window-state-load
-  - get-target-window-info
 
 Fixes
 - [x] fix: ESC handling for Active mode windows (IZUI policy compliance)
@@ -27,6 +48,39 @@ Fixes
 - [x] fix: update test to use peek://ext/cmd/panel.html (correct URL after cleanup)
 
 ### 2026-W05
+
+Server
+- [x] feat(server): add single-user mode support (no auth required for solo use)
+- [x] feat(server): add storage abstraction layer for image handling
+- [x] feat(server): add SQL abstraction layer for database portability
+
+Extension
+- [x] feat(extension): add command bar popup with tag, note, search
+- [x] feat(extension): add Alt+P hotkey for command bar popup
+- [x] feat(extension): simplify command bar popup UI
+- [x] feat(extension): add e2e sync tests and preserve original timestamps
+
+Desktop - Fullscreen Canvas
+- [x] feat(page): implement fullscreen transparent canvas architecture
+- [x] feat(page): fullscreen transparent canvas with floating navbar
+- [x] fix(navbar): prevent hiding when hovering over gaps between child elements
+
+Desktop - IZUI / ESC Handling
+- [x] feat(izui): add minimal IZUI window navigation system
+- [x] feat(izui): complete ESC key handling with IZUI integration
+- [x] feat(izui): navigation stack for ESC in child windows
+- [x] feat(izui): complete preload API wiring for ESC key handling
+- [x] feat(esc): change default escapeMode from 'close' to 'auto'
+- [x] fix(izui): overlay no longer steals ESC from web pages
+- [x] fix(esc): web pages now close on first ESC key press
+- [x] feat(cmd): add mode indicator to command bar
+
+Mobile
+- [x] feat(mobile): improve item card UI and keyboard stability
+- [x] feat(mobile): migrate tags.id from INTEGER to TEXT for sync compatibility
+- [x] fix(mobile): prevent orphaned databases and ensure dev profile in dev builds
+- [x] fix(mobile): resolve deadlock and respect profile choice in dev builds
+- [x] fix(sync): filter out peek:// URLs from server sync
 
 Schema & Data Layer
 - [x] feat(schema): add schema codegen system with single source of truth
@@ -38,6 +92,7 @@ Testing Infrastructure
 - [x] test(components): add component test infrastructure
 - [x] test(components): expand coverage to 56 tests with deterministic waits
 - [x] docs(components): add Testing section to README
+- [x] fix(tests): consolidate packaged tests to single Electron instance
 
 Editor
 - [x] feat(editor): integrate CodeMirror markdown editor with three-panel layout
@@ -46,6 +101,7 @@ Editor
   - Vim mode toggle (persisted in settings)
   - Resizable panels, focus mode
   - Full syntax highlighting
+- [x] feat(editor): add vim fold commands, status line, and comprehensive tests
 
 Web Extensions
 - [x] feat(web-ext): add bundled web extensions infrastructure
