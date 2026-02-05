@@ -240,23 +240,25 @@ const createWindowCard = (win) => {
   card.className = 'card';
   card.dataset.windowId = win.id;
 
-  // Try to get favicon from URL
-  let faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🪟</text></svg>';
+  // Try to get favicon from URL (only for external URLs)
+  let faviconUrl = null;
   if (win.url && !win.url.startsWith('peek://')) {
     try {
       const url = new URL(win.url);
       faviconUrl = `${url.origin}/favicon.ico`;
     } catch (e) {
-      // Keep default favicon
+      // No favicon
     }
   }
 
-  const favicon = document.createElement('img');
-  favicon.className = 'card-favicon';
-  favicon.src = faviconUrl;
-  favicon.onerror = () => {
-    favicon.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🪟</text></svg>';
-  };
+  // Only add favicon if we have one
+  if (faviconUrl) {
+    const favicon = document.createElement('img');
+    favicon.className = 'card-favicon';
+    favicon.src = faviconUrl;
+    favicon.onerror = () => favicon.remove();
+    card.appendChild(favicon);
+  }
 
   const content = document.createElement('div');
   content.className = 'card-content';
@@ -272,7 +274,6 @@ const createWindowCard = (win) => {
   content.appendChild(title);
   content.appendChild(url);
 
-  card.appendChild(favicon);
   card.appendChild(content);
 
   // Click to focus window and close windows view

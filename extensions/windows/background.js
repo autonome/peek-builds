@@ -86,6 +86,8 @@ const openWindowsView = async () => {
     maximize: true,
     // Don't use modal - we want windows view to stay open until ESC or selection
     type: 'panel',
+    // Always close on ESC (window switcher should dismiss easily)
+    escapeMode: 'close',
     trackingSource: 'windows',
     trackingSourceId: 'main'
   };
