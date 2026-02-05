@@ -244,10 +244,10 @@ webview.addEventListener('did-navigate', async (e) => {
   updateState();
 
   try {
-    const addressResult = await api.datastore.addAddress(e.url, {});
-    if (addressResult.success && addressResult.data?.id) {
-      await api.datastore.addVisit(addressResult.data.id, {});
-    }
+    await api.datastore.trackNavigation(e.url, {
+      source: 'page',
+      windowType: 'main'
+    });
   } catch (err) {
     console.error('[page] Failed to record visit:', err);
   }
