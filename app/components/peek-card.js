@@ -10,6 +10,7 @@
  * @prop {boolean} selected - Visual selected state
  * @prop {boolean} elevated - Add elevation shadow
  * @prop {boolean} bordered - Show border (default true)
+ * @prop {boolean} glass - Apply glass-morphism effect (transparent blur)
  *
  * @slot - Default slot for card body content
  * @slot header - Card header content
@@ -53,7 +54,8 @@ export class PeekCard extends PeekElement {
     interactive: { type: Boolean, reflect: true },
     selected: { type: Boolean, reflect: true },
     elevated: { type: Boolean, reflect: true },
-    bordered: { type: Boolean, reflect: true }
+    bordered: { type: Boolean, reflect: true },
+    glass: { type: Boolean, reflect: true }
   };
 
   static styles = [
@@ -117,6 +119,49 @@ export class PeekCard extends PeekElement {
       :host([interactive]) .card:focus-visible {
         outline: none;
         box-shadow: var(--peek-focus-ring);
+      }
+
+      /* Glass-morphism */
+      :host([glass]) .card {
+        background: var(--peek-glass-bg);
+        backdrop-filter: blur(var(--peek-glass-blur));
+        -webkit-backdrop-filter: blur(var(--peek-glass-blur));
+        border-color: var(--peek-glass-border);
+        color: var(--peek-glass-text);
+      }
+
+      :host([glass]) .header {
+        color: var(--peek-glass-text);
+      }
+
+      :host([glass]) .body {
+        color: var(--peek-glass-text-secondary);
+      }
+
+      :host([glass]) .footer {
+        color: var(--peek-glass-text-muted);
+        border-top-color: var(--peek-glass-border);
+      }
+
+      :host([glass][interactive]) .card:hover {
+        background: var(--peek-glass-bg-hover);
+        border-color: var(--peek-glass-border-hover);
+        transform: translateY(-2px);
+        box-shadow: var(--peek-glass-shadow);
+      }
+
+      :host([glass][selected]) .card {
+        background: var(--peek-glass-bg-active);
+        border-color: var(--theme-accent, #007aff);
+        box-shadow: 0 0 0 2px var(--theme-accent, #007aff);
+      }
+
+      :host([glass][selected]) .card:hover {
+        background: rgba(255, 255, 255, 0.25);
+      }
+
+      :host([glass][interactive]) .card:active {
+        transform: scale(0.99);
       }
 
       /* Sections */
@@ -198,6 +243,7 @@ export class PeekCard extends PeekElement {
     this.selected = false;
     this.elevated = false;
     this.bordered = true;
+    this.glass = false;
   }
 
   render() {

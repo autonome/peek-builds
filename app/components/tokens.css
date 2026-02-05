@@ -78,4 +78,21 @@
   --peek-list-item-padding-x: var(--peek-space-md);
   --peek-list-item-padding-y: var(--peek-space-sm);
   --peek-list-item-gap: var(--peek-space-xs);
+
+  /* Glass-morphism tokens (dark overlay) */
+  --peek-glass-blur: 10px;
+  --peek-glass-blur-heavy: 20px;
+  --peek-glass-bg: rgba(255, 255, 255, 0.1);
+  --peek-glass-bg-hover: rgba(255, 255, 255, 0.15);
+  --peek-glass-bg-active: rgba(255, 255, 255, 0.2);
+  --peek-glass-border: rgba(255, 255, 255, 0.1);
+  --peek-glass-border-hover: rgba(255, 255, 255, 0.2);
+  --peek-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --peek-glass-text: white;
+  --peek-glass-text-secondary: rgba(255, 255, 255, 0.6);
+  --peek-glass-text-muted: rgba(255, 255, 255, 0.4);
+
+  /* Overlay backgrounds */
+  --peek-overlay-bg: rgba(0, 0, 0, 0.85);
+  --peek-overlay-bg-light: rgba(255, 255, 255, 0.85);
 }

@@ -11,6 +11,7 @@
  * @prop {number} columns - Fixed column count (overrides auto-fit if set)
  * @prop {string} align - Item alignment: 'start' | 'center' | 'end' | 'stretch'
  * @prop {boolean} dense - Enable dense packing algorithm
+ * @prop {boolean} overlay - Optimize spacing for overlay contexts
  *
  * @slot - Default slot for grid items
  *
@@ -37,7 +38,8 @@ export class PeekGrid extends PeekElement {
     gap: { type: Number },
     columns: { type: Number },
     align: { type: String, reflect: true },
-    dense: { type: Boolean }
+    dense: { type: Boolean },
+    overlay: { type: Boolean, reflect: true }
   };
 
   static styles = [
@@ -58,6 +60,16 @@ export class PeekGrid extends PeekElement {
         grid-auto-flow: dense;
       }
 
+      /* Overlay mode - optimized for transparent overlays */
+      :host([overlay]) {
+        padding: var(--peek-space-2xl, 32px);
+      }
+
+      :host([overlay]) .grid {
+        max-width: 1800px;
+        margin: 0 auto;
+      }
+
       /* Slot styling for items */
       ::slotted(*) {
         min-width: 0; /* Prevent overflow */
@@ -72,6 +84,7 @@ export class PeekGrid extends PeekElement {
     this.columns = null;
     this.align = 'stretch';
     this.dense = false;
+    this.overlay = false;
   }
 
   _getGridColumns() {

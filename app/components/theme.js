@@ -73,7 +73,22 @@ const DEFAULT_TOKENS = {
   'peek-btn-height-lg': '44px',
 
   // Focus ring
-  'peek-focus-ring': '0 0 0 2px rgba(0, 122, 255, 0.3)'
+  'peek-focus-ring': '0 0 0 2px rgba(0, 122, 255, 0.3)',
+
+  // Glass-morphism tokens (light mode)
+  'peek-glass-blur': '10px',
+  'peek-glass-blur-heavy': '20px',
+  'peek-glass-bg': 'rgba(255, 255, 255, 0.7)',
+  'peek-glass-bg-hover': 'rgba(255, 255, 255, 0.8)',
+  'peek-glass-bg-active': 'rgba(255, 255, 255, 0.9)',
+  'peek-glass-border': 'rgba(0, 0, 0, 0.1)',
+  'peek-glass-border-hover': 'rgba(0, 0, 0, 0.15)',
+  'peek-glass-shadow': '0 8px 24px rgba(0, 0, 0, 0.15)',
+  'peek-glass-text': '#333333',
+  'peek-glass-text-secondary': 'rgba(0, 0, 0, 0.6)',
+  'peek-glass-text-muted': 'rgba(0, 0, 0, 0.4)',
+  'peek-overlay-bg': 'rgba(255, 255, 255, 0.85)',
+  'peek-overlay-bg-light': 'rgba(255, 255, 255, 0.85)'
 };
 
 // Built-in dark theme
@@ -87,7 +102,20 @@ const DARK_TOKENS = {
   'theme-border': '#3a3a3a',
   'peek-shadow-sm': '0 1px 2px rgba(0, 0, 0, 0.3)',
   'peek-shadow-md': '0 2px 4px rgba(0, 0, 0, 0.4)',
-  'peek-shadow-lg': '0 4px 12px rgba(0, 0, 0, 0.5)'
+  'peek-shadow-lg': '0 4px 12px rgba(0, 0, 0, 0.5)',
+
+  // Glass-morphism tokens (dark mode)
+  'peek-glass-bg': 'rgba(255, 255, 255, 0.1)',
+  'peek-glass-bg-hover': 'rgba(255, 255, 255, 0.15)',
+  'peek-glass-bg-active': 'rgba(255, 255, 255, 0.2)',
+  'peek-glass-border': 'rgba(255, 255, 255, 0.1)',
+  'peek-glass-border-hover': 'rgba(255, 255, 255, 0.2)',
+  'peek-glass-shadow': '0 8px 24px rgba(0, 0, 0, 0.3)',
+  'peek-glass-text': 'white',
+  'peek-glass-text-secondary': 'rgba(255, 255, 255, 0.6)',
+  'peek-glass-text-muted': 'rgba(255, 255, 255, 0.4)',
+  'peek-overlay-bg': 'rgba(0, 0, 0, 0.85)',
+  'peek-overlay-bg-light': 'rgba(255, 255, 255, 0.85)'
 };
 
 // Theme registry
