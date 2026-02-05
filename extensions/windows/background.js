@@ -34,43 +34,8 @@ const loadSettings = async () => {
   return { prefs: defaults.prefs };
 };
 
-// Track windows we've hidden so we can restore them
-let hiddenWindowIds = [];
-
 /**
- * Hide all other app windows before showing windows view
- */
-const hideOtherWindows = async () => {
-  const result = await api.window.list({ includeInternal: true });
-  if (!result.success) return;
-
-  hiddenWindowIds = [];
-  for (const win of result.windows) {
-    // Skip background pages and extension host
-    if (win.url.includes('background.html')) continue;
-    if (win.url.includes('extension-host.html')) continue;
-    if (win.url.includes('windows.html')) continue;
-
-    // Hide this window
-    await api.window.hide(win.id);
-    hiddenWindowIds.push(win.id);
-  }
-  debug && console.log('[ext:windows] Hidden windows:', hiddenWindowIds.length);
-};
-
-/**
- * Restore windows that were hidden
- */
-const restoreHiddenWindows = async () => {
-  for (const id of hiddenWindowIds) {
-    await api.window.show(id);
-  }
-  debug && console.log('[ext:windows] Restored windows:', hiddenWindowIds.length);
-  hiddenWindowIds = [];
-};
-
-/**
- * Open the Windows view (maximized, transparent)
+ * Open the Windows view (maximized, transparent overlay)
  */
 const openWindowsView = async () => {
   const params = {
@@ -79,22 +44,18 @@ const openWindowsView = async () => {
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
-    // Maximize to fill screen without OS fullscreen
     maximize: true,
-    // Don't use modal - we want windows view to stay open until ESC or selection
     type: 'panel',
-    // Use default 'auto' escapeMode - IZUI will handle transient detection
-    // (window switcher invoked via global hotkey will be transient, closing on ESC)
+    // Overlay mode: backend hides other windows when this opens,
+    // and restores them when this closes
+    overlay: true,
     trackingSource: 'windows',
     trackingSourceId: 'main'
   };
 
   api.window.open(address, params)
-    .then(async (window) => {
+    .then(window => {
       debug && console.log('[ext:windows] Windows view opened:', window);
-      // Hide other windows AFTER the windows view is open and focused
-      // This prevents macOS from switching focus to another app
-      await hideOtherWindows();
     })
     .catch(error => {
       console.error('[ext:windows] Failed to open windows view:', error);
@@ -157,12 +118,6 @@ const init = async () => {
 
   // Query in case cmd is already ready
   api.publish('cmd:query', {}, api.scopes.GLOBAL);
-
-  // Listen for windows view closing to restore hidden windows
-  api.subscribe('windows:closing', () => {
-    console.log('[ext:windows] Received closing signal, restoring windows');
-    restoreHiddenWindows();
-  }, api.scopes.GLOBAL);
 };
 
 const uninit = () => {

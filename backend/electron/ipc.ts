@@ -1906,6 +1906,31 @@ export function registerWindowHandlers(): void {
         win.setBounds({ x: 0, y: 0, width, height });
       }
 
+      // Handle overlay mode: hide other windows after this one is ready
+      // When overlay window closes, the hidden windows will be restored (see main.ts)
+      if (options.overlay === true) {
+        const hiddenWindowIds: number[] = [];
+        const allWindows = BrowserWindow.getAllWindows();
+        for (const otherWin of allWindows) {
+          if (otherWin.id === win.id) continue;
+          if (otherWin.isDestroyed()) continue;
+          if (!otherWin.isVisible()) continue;
+          // Don't hide background windows (check by URL or params)
+          const otherInfo = getWindowInfo(otherWin.id);
+          if (otherInfo?.params?.address?.includes('background.html')) continue;
+          if (otherInfo?.params?.address?.includes('extension-host.html')) continue;
+          // Hide and track
+          otherWin.hide();
+          hiddenWindowIds.push(otherWin.id);
+        }
+        DEBUG && console.log('Overlay mode: hidden', hiddenWindowIds.length, 'windows');
+        // Store hidden window IDs in the window's params for restore on close
+        const winInfo = getWindowInfo(win.id);
+        if (winInfo) {
+          winInfo.params.overlayHiddenWindows = hiddenWindowIds;
+        }
+      }
+
       // Show dock when window opens
       updateDockVisibility();
 

@@ -24,9 +24,7 @@ api.escape.onEscape(() => {
     renderWindows();
     return { handled: true };
   }
-  // Notify background to restore windows, then close
-  api.publish('windows:closing', {}, api.scopes.GLOBAL);
-  // Let window close
+  // Let window close - backend handles restoring hidden windows (overlay mode)
   return { handled: false };
 });
 
@@ -54,11 +52,9 @@ const updateSelection = () => {
 };
 
 /**
- * Close windows view and restore hidden windows
+ * Close windows view (backend handles restoring hidden windows via overlay mode)
  */
 const closeWindowsView = () => {
-  // Notify background to restore hidden windows
-  api.publish('windows:closing', {}, api.scopes.GLOBAL);
   window.close();
 };
 

@@ -137,6 +137,18 @@ export async function initialize(): Promise<void> {
       const windowData = windowRegistry.get(windowId);
 
       if (windowData) {
+        // If this was an overlay window, restore the windows that were hidden
+        const hiddenWindowIds = windowData.params.overlayHiddenWindows as number[] | undefined;
+        if (hiddenWindowIds && hiddenWindowIds.length > 0) {
+          DEBUG && console.log('Overlay closed, restoring', hiddenWindowIds.length, 'windows');
+          for (const hiddenId of hiddenWindowIds) {
+            const hiddenWin = BrowserWindow.fromId(hiddenId);
+            if (hiddenWin && !hiddenWin.isDestroyed()) {
+              hiddenWin.show();
+            }
+          }
+        }
+
         publish(windowData.source, scopes.GLOBAL, 'window:closed', {
           id: windowId,
           source: windowData.source
