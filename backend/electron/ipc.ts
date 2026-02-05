@@ -2310,12 +2310,28 @@ export function registerWindowHandlers(): void {
             continue;
           }
 
+          // Sanitize params to only include serializable values
+          // (avoid functions, native objects, circular refs that crash IPC)
+          const safeParams: Record<string, unknown> = {};
+          for (const [key, value] of Object.entries(winData.params)) {
+            const type = typeof value;
+            if (type === 'string' || type === 'number' || type === 'boolean' || value === null) {
+              safeParams[key] = value;
+            } else if (Array.isArray(value)) {
+              // Only include arrays of primitives
+              if (value.every(v => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null)) {
+                safeParams[key] = value;
+              }
+            }
+            // Skip functions, objects, etc. that may not serialize safely
+          }
+
           windows.push({
             id,
             url,
             title: win.getTitle(),
             source: winData.source,
-            params: winData.params
+            params: safeParams
           });
         }
       }
