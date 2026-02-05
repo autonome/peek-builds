@@ -1,6 +1,7 @@
 /**
  * Commands module - exports all available commands
  * Note: groups commands are now provided by the groups extension
+ * Note: sync command is now provided by the sync extension
  */
 import openCommand from './open.js';
 import debugCommand from './debug.js';
@@ -10,12 +11,10 @@ import tagsetModule from './tagset.js';
 import urlModule from './url.js';
 import historyModule from './history.js';
 import tagModule from './tag.js';
-import syncCommand from './sync.js';
 
 // Chaining commands - for command composition pipelines
 import listsCommand from './lists.js';
-import csvCommand from './csv.js';
-import saveCommand from './save.js';
+// csv and save commands moved to files extension
 
 console.log('[cmd:commands/index] tagModule.commands:', tagModule.commands?.map(c => c.name));
 
@@ -33,11 +32,11 @@ import emailCommand from './email.js';
 
 // Active commands - only these will be loaded
 // Note: groups commands are dynamically registered by the groups extension
+// Note: sync command is dynamically registered by the sync extension
 const activeCommands = [
   openCommand,
   debugCommand,
   modalCommand,
-  syncCommand,
   ...noteModule.commands,
   ...tagsetModule.commands,
   ...urlModule.commands,
@@ -45,9 +44,8 @@ const activeCommands = [
   ...tagModule.commands,
 
   // Chaining commands
-  listsCommand,
-  csvCommand,
-  saveCommand
+  listsCommand
+  // csv and save commands moved to files extension
 ];
 
 console.log('[cmd:commands/index] activeCommands:', activeCommands.map(c => c.name));

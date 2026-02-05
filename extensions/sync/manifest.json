@@ -1,0 +1,8 @@
+{
+  "id": "sync",
+  "name": "Sync",
+  "version": "1.0.0",
+  "description": "Sync commands and functionality",
+  "background": "background.html",
+  "builtin": true
+}
