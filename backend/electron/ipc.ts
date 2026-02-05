@@ -1548,6 +1548,13 @@ export function registerWindowHandlers(): void {
 
     const { url, options } = msg;
 
+    // IMPORTANT: Determine transient state BEFORE creating the window
+    // A window is transient if opened when no Peek window was focused (e.g., via global hotkey)
+    // This must be checked before window creation because the new window will become focused
+    const focusedWindowBeforeCreate = BrowserWindow.getFocusedWindow();
+    const isTransient = !focusedWindowBeforeCreate || focusedWindowBeforeCreate.isDestroyed();
+    DEBUG && console.log('Transient detection:', { isTransient, focusedWindowId: focusedWindowBeforeCreate?.id });
+
     // Check if window with this key already exists
     if (options.key) {
       const existingWindow = findWindowByKey(msg.source, options.key);
@@ -1678,18 +1685,15 @@ export function registerWindowHandlers(): void {
 
       await win.loadURL(loadUrl);
 
-      // Determine if this is a transient window (opened while no Peek window was focused)
-      // Used for escapeMode: 'auto' to decide between navigate and close behavior
-      const focusedWindow = BrowserWindow.getFocusedWindow();
-      const isTransient = !focusedWindow || focusedWindow.isDestroyed();
-
       // Add to window manager with modal parameter
+      // Note: isTransient was determined BEFORE window creation (at top of handler)
+      // to avoid the race condition where the new window becomes focused before we check
       const windowParams = {
         ...options,
         address: url,
         transient: isTransient
       };
-      DEBUG && console.log('Adding window to manager:', win.id, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive);
+      DEBUG && console.log('Adding window to manager:', win.id, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient);
       registerWindow(win.id, msg.source, windowParams);
 
       // Set window mode based on URL

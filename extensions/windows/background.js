@@ -86,8 +86,8 @@ const openWindowsView = async () => {
     maximize: true,
     // Don't use modal - we want windows view to stay open until ESC or selection
     type: 'panel',
-    // Always close on ESC (window switcher should dismiss easily)
-    escapeMode: 'close',
+    // Use default 'auto' escapeMode - IZUI will handle transient detection
+    // (window switcher invoked via global hotkey will be transient, closing on ESC)
     trackingSource: 'windows',
     trackingSourceId: 'main'
   };
