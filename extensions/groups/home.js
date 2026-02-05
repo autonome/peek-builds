@@ -8,8 +8,19 @@
  * - Viewing a group shows all addresses with that tag
  */
 
+import izui from 'peek://app/izui.js';
+
 const api = window.app;
 const debug = api.debug;
+
+/**
+ * Check if a URL is a navigable web URL (http/https only)
+ * Excludes peek:// and other internal URLs
+ */
+const isWebUrl = (url) => {
+  if (!url) return false;
+  return url.startsWith('http://') || url.startsWith('https://');
+};
 
 // View states
 const VIEW_GROUPS = 'groups';
@@ -37,10 +48,12 @@ let state = {
 // Expose state for debugging in tests
 window._groupsState = state;
 
-// Handle ESC - cooperative escape handling with window manager
-// Returns { handled: true } if we navigated internally
-// Returns { handled: false } if at root (groups list) and window should close
-api.escape.onEscape(() => {
+/**
+ * Internal ESC handler for groups navigation
+ * Returns { handled: true } if we navigated internally
+ * Returns { handled: false } if at root (groups list) and window should close
+ */
+const handleEscape = () => {
   // If search has content, clear it first
   const searchInput = document.querySelector('.search-input');
   if (state.searchQuery) {
@@ -62,7 +75,7 @@ api.escape.onEscape(() => {
   }
   // At root (groups list) - let window close
   return { handled: false };
-});
+};
 
 /**
  * Get all cards in the current view
@@ -181,6 +194,13 @@ const handleKeydown = (e) => {
 const init = async () => {
   debug && console.log('Groups init');
 
+  // Initialize IZUI for proper escape handling and child window tracking
+  await izui.init({
+    onEscape: handleEscape,
+    canHaveChildren: true,
+    closeOnEscape: true
+  });
+
   // Load tags from datastore
   await loadTags();
 
@@ -218,11 +238,13 @@ const loadTags = async () => {
     state.tags = result.data;
     debug && console.log('Loaded tags:', state.tags.length);
 
-    // Fetch URL item count for each tag (only URLs for now)
+    // Fetch URL item count for each tag (only http/https URLs)
     for (const tag of state.tags) {
       const itemsResult = await api.datastore.getItemsByTag(tag.id);
       if (itemsResult.success) {
-        tag.addressCount = itemsResult.data.filter(item => item.type === 'url').length;
+        tag.addressCount = itemsResult.data.filter(item =>
+          item.type === 'url' && isWebUrl(item.content)
+        ).length;
       } else {
         tag.addressCount = 0;
       }
@@ -232,14 +254,14 @@ const loadTags = async () => {
     state.tags = [];
   }
 
-  // Get count of untagged URL items (only URLs for now)
+  // Get count of untagged URL items (only http/https URLs)
   // Query all items and filter out those with tags
   const allItemsResult = await api.datastore.queryItems({});
   if (allItemsResult.success) {
     const untaggedItems = [];
     for (const item of allItemsResult.data) {
-      // Only include URL items
-      if (item.type !== 'url') continue;
+      // Only include http/https URL items
+      if (item.type !== 'url' || !isWebUrl(item.content)) continue;
       const tagsResult = await api.datastore.getItemTags(item.id);
       if (tagsResult.success && tagsResult.data.length === 0) {
         untaggedItems.push(item);
@@ -253,13 +275,15 @@ const loadTags = async () => {
 };
 
 /**
- * Load URL items for a specific tag (only URLs for now)
+ * Load URL items for a specific tag (only http/https URLs)
  */
 const loadAddressesForTag = async (tagId) => {
   const result = await api.datastore.getItemsByTag(tagId);
   if (result.success) {
-    // Only include URL items
-    state.addresses = result.data.filter(item => item.type === 'url');
+    // Only include http/https URL items
+    state.addresses = result.data.filter(item =>
+      item.type === 'url' && isWebUrl(item.content)
+    );
     debug && console.log('Loaded URL items for tag:', state.addresses.length);
   } else {
     console.error('Failed to load addresses:', result.error);
@@ -358,14 +382,14 @@ const showAddresses = async (tag) => {
   state.currentTag = tag;
   state.searchQuery = '';
 
-  // Load URL items - handle special untagged group (only URLs for now)
+  // Load URL items - handle special untagged group (only http/https URLs)
   if (tag.isSpecial && tag.id === '__untagged__') {
     const allItemsResult = await api.datastore.queryItems({});
     if (allItemsResult.success) {
       const untaggedItems = [];
       for (const item of allItemsResult.data) {
-        // Only include URL items
-        if (item.type !== 'url') continue;
+        // Only include http/https URL items
+        if (item.type !== 'url' || !isWebUrl(item.content)) continue;
         const tagsResult = await api.datastore.getItemTags(item.id);
         if (tagsResult.success && tagsResult.data.length === 0) {
           untaggedItems.push(item);
@@ -508,10 +532,10 @@ const createAddressCard = (address) => {
   card.appendChild(favicon);
   card.appendChild(content);
 
-  // Click to open address
+  // Click to open address - use IZUI for proper stack tracking
   card.addEventListener('click', async () => {
     debug && console.log('Opening address:', addressUrl);
-    const result = await api.window.open(addressUrl, {
+    const result = await izui.openChildWindow(addressUrl, {
       width: 800,
       height: 600
     });
