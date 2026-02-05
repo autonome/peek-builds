@@ -1,0 +1,9 @@
+{
+  "id": "feeds",
+  "shortname": "feeds",
+  "name": "Feed Reader",
+  "description": "Simple RSS/Atom feed reader demonstrating the series and feeds APIs",
+  "version": "1.0.0",
+  "background": "background.html",
+  "settingsSchema": "./settings-schema.json"
+}
