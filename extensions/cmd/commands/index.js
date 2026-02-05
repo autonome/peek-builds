@@ -10,6 +10,7 @@ import tagsetModule from './tagset.js';
 import urlModule from './url.js';
 import historyModule from './history.js';
 import tagModule from './tag.js';
+import syncCommand from './sync.js';
 
 // Chaining commands - for command composition pipelines
 import listsCommand from './lists.js';
@@ -36,6 +37,7 @@ const activeCommands = [
   openCommand,
   debugCommand,
   modalCommand,
+  syncCommand,
   ...noteModule.commands,
   ...tagsetModule.commands,
   ...urlModule.commands,
