@@ -73,9 +73,6 @@ const restoreHiddenWindows = async () => {
  * Open the Windows view (maximized, transparent)
  */
 const openWindowsView = async () => {
-  // Hide other windows first
-  await hideOtherWindows();
-
   const params = {
     key: address,
     transparent: true,
@@ -93,8 +90,11 @@ const openWindowsView = async () => {
   };
 
   api.window.open(address, params)
-    .then(window => {
+    .then(async (window) => {
       debug && console.log('[ext:windows] Windows view opened:', window);
+      // Hide other windows AFTER the windows view is open and focused
+      // This prevents macOS from switching focus to another app
+      await hideOtherWindows();
     })
     .catch(error => {
       console.error('[ext:windows] Failed to open windows view:', error);
