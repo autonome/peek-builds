@@ -7,6 +7,7 @@
  * - Preview sidebar (live markdown rendering)
  * - Resizable panels
  * - Focus mode
+ * - Autosave for datastore items
  */
 
 import { EditorLayout } from './editor-layout.js';
@@ -19,6 +20,12 @@ let editorLayout = null;
 
 // Settings key for vim mode preference
 const SETTINGS_KEY = 'editor.vimMode';
+
+// Autosave state
+let currentItemId = null;
+let saveStatus = 'saved'; // 'saved' | 'saving' | 'unsaved'
+let saveTimer = null;
+const AUTOSAVE_DELAY_MS = 1500; // 1.5 seconds after typing stops
 
 /**
  * Sample markdown content for testing folding features.
@@ -148,10 +155,11 @@ const init = async () => {
     debug && console.log('[editor] Failed to load settings:', err);
   }
 
-  // Check URL params for content or file path
+  // Check URL params for content, file path, or itemId
   const params = new URLSearchParams(window.location.search);
   const contentParam = params.get('content');
   const fileParam = params.get('file');
+  const itemIdParam = params.get('itemId');
 
   let initialContent = SAMPLE_CONTENT;
 
@@ -172,6 +180,27 @@ const init = async () => {
     }
   }
 
+  // If itemId provided, load from datastore
+  if (itemIdParam && api?.datastore?.getItem) {
+    try {
+      const result = await api.datastore.getItem(itemIdParam);
+      if (result.success && result.data) {
+        initialContent = result.data.content || '';
+        currentItemId = itemIdParam;
+        debug && console.log('[editor] Loaded item from datastore:', itemIdParam);
+
+        // Set context to editor mode
+        if (api?.context?.setMode) {
+          api.context.setMode('editor', { metadata: { itemId: itemIdParam } });
+        }
+      } else {
+        console.error('[editor] Failed to load item:', result.error);
+      }
+    } catch (err) {
+      console.error('[editor] Failed to load item:', err);
+    }
+  }
+
   // Create editor layout
   editorLayout = new EditorLayout({
     container: rootEl,
@@ -180,6 +209,11 @@ const init = async () => {
     onContentChange: handleContentChange,
     onVimModeChange: handleVimModeChange,
   });
+
+  // Show save status indicator if editing a datastore item
+  if (currentItemId) {
+    editorLayout.setSaveStatusVisible(true);
+  }
 
   // Set up escape handler
   if (api?.escape) {
@@ -196,12 +230,92 @@ const init = async () => {
 };
 
 /**
+ * Update save status indicator in the UI
+ */
+const updateSaveStatusUI = () => {
+  const statusEl = document.getElementById('save-status');
+  if (!statusEl) return;
+
+  statusEl.className = `save-status save-status-${saveStatus}`;
+  switch (saveStatus) {
+    case 'saved':
+      statusEl.textContent = 'Saved';
+      break;
+    case 'saving':
+      statusEl.textContent = 'Saving...';
+      break;
+    case 'unsaved':
+      statusEl.textContent = 'Unsaved';
+      break;
+  }
+};
+
+/**
+ * Perform autosave to datastore
+ */
+const performAutosave = async (content) => {
+  if (!currentItemId || !api?.datastore?.updateItem) {
+    return;
+  }
+
+  saveStatus = 'saving';
+  updateSaveStatusUI();
+
+  try {
+    const result = await api.datastore.updateItem(currentItemId, { content });
+    if (result.success) {
+      saveStatus = 'saved';
+      debug && console.log('[editor] Autosaved item:', currentItemId);
+
+      // Publish change event
+      if (api?.publish) {
+        api.publish('editor:changed', { action: 'update', itemId: currentItemId }, api.scopes.GLOBAL);
+      }
+    } else {
+      console.error('[editor] Autosave failed:', result.error);
+      saveStatus = 'unsaved';
+    }
+  } catch (err) {
+    console.error('[editor] Autosave error:', err);
+    saveStatus = 'unsaved';
+  }
+
+  updateSaveStatusUI();
+};
+
+/**
+ * Schedule autosave with debouncing
+ */
+const scheduleAutosave = (content) => {
+  if (!currentItemId) return;
+
+  // Mark as unsaved
+  saveStatus = 'unsaved';
+  updateSaveStatusUI();
+
+  // Clear existing timer
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+  }
+
+  // Schedule save after delay
+  saveTimer = setTimeout(() => {
+    performAutosave(content);
+  }, AUTOSAVE_DELAY_MS);
+};
+
+/**
  * Handle content changes
  */
 const handleContentChange = (content) => {
   // Publish change event for other extensions
   if (api?.publish) {
     api.publish('editor:contentChanged', { content }, api.scopes.GLOBAL);
+  }
+
+  // Schedule autosave if editing a datastore item
+  if (currentItemId) {
+    scheduleAutosave(content);
   }
 };
 
@@ -221,6 +335,17 @@ const handleVimModeChange = (enabled) => {
  * Clean up on unload
  */
 const cleanup = () => {
+  // Clear any pending autosave timer
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+
+  // Reset context when leaving editor
+  if (currentItemId && api?.context?.setMode) {
+    api.context.setMode('default');
+  }
+
   if (editorLayout) {
     editorLayout.destroy();
     editorLayout = null;

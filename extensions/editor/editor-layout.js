@@ -89,6 +89,15 @@ export class EditorLayout {
     sidebarToggles.appendChild(this.focusBtn);
 
     this.toolbar.appendChild(sidebarToggles);
+
+    // Save status indicator (shown when editing datastore items)
+    this.saveStatus = document.createElement('span');
+    this.saveStatus.id = 'save-status';
+    this.saveStatus.className = 'save-status save-status-saved';
+    this.saveStatus.textContent = 'Saved';
+    this.saveStatus.style.display = 'none'; // Hidden until editing an item
+    this.toolbar.appendChild(this.saveStatus);
+
     this.editorContainer.appendChild(this.toolbar);
 
     this.wrapper.appendChild(this.editorContainer);
@@ -464,6 +473,16 @@ export class EditorLayout {
   focus() {
     if (this.cmEditor) {
       CodeMirror.focus(this.cmEditor);
+    }
+  }
+
+  /**
+   * Show/hide save status indicator.
+   * @param {boolean} visible - Whether to show the indicator
+   */
+  setSaveStatusVisible(visible) {
+    if (this.saveStatus) {
+      this.saveStatus.style.display = visible ? 'inline-block' : 'none';
     }
   }
 

@@ -72,7 +72,7 @@ const extension = {
     // Register global shortcut Option+e
     api.shortcuts.register('Option+e', () => openEditor());
 
-    // Subscribe to editor:open — open editor with optional content
+    // Subscribe to editor:open — open editor with optional content or itemId
     api.subscribe('editor:open', (msg) => {
       const params = {};
       if (msg?.content) {
@@ -80,6 +80,9 @@ const extension = {
       }
       if (msg?.file) {
         params.file = msg.file;
+      }
+      if (msg?.itemId) {
+        params.itemId = msg.itemId;
       }
       openEditor(Object.keys(params).length > 0 ? params : undefined);
     }, api.scopes.GLOBAL);

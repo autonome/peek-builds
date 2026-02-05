@@ -405,3 +405,31 @@ body {
   background: var(--base0D);
   color: var(--base00);
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Save Status Indicator
+   ═══════════════════════════════════════════════════════════════════ */
+
+.save-status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  user-select: none;
+  transition: color 0.2s, background 0.2s;
+}
+
+.save-status-saved {
+  color: var(--base0B);
+  background: transparent;
+}
+
+.save-status-saving {
+  color: var(--base0A);
+  background: transparent;
+}
+
+.save-status-unsaved {
+  color: var(--base08);
+  background: var(--base01);
+}

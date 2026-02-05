@@ -7,6 +7,7 @@
  */
 import debugCommand from './debug.js';
 import noteModule from './note.js';
+import editModule from './edit.js';
 import urlModule from './url.js';
 import historyModule from './history.js';
 
@@ -34,6 +35,7 @@ import emailCommand from './email.js';
 const activeCommands = [
   debugCommand,
   ...noteModule.commands,
+  ...editModule.commands,
   ...urlModule.commands,
   ...historyModule.commands,
 
