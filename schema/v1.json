@@ -16,9 +16,9 @@
         "type": {
           "type": "text",
           "not_null": true,
-          "check": "type IN ('url', 'text', 'tagset', 'image')",
+          "check": "type IN ('url', 'text', 'tagset', 'image', 'series', 'feed')",
           "sync": true,
-          "description": "Content type: url, text, tagset, or image"
+          "description": "Content type: url, text, tagset, image, series, or feed"
         },
         "content": {
           "type": "text",
@@ -256,6 +256,59 @@
         { "name": "idx_item_tags_tagId", "columns": ["tagId"], "sync": true },
         { "name": "idx_item_tags_unique", "columns": ["itemId", "tagId"], "unique": true, "sync": true }
       ]
+    },
+
+    "item_events": {
+      "description": "Events/entries for series and feeds - append-only time-series data",
+      "columns": {
+        "id": {
+          "type": "text",
+          "primary_key": true,
+          "not_null": true,
+          "sync": true,
+          "description": "Unique identifier (UUID)"
+        },
+        "itemId": {
+          "type": "text",
+          "not_null": true,
+          "sync": true,
+          "description": "Reference to parent series or feed item"
+        },
+        "content": {
+          "type": "text",
+          "nullable": true,
+          "sync": true,
+          "description": "Text value, URL, or message"
+        },
+        "value": {
+          "type": "real",
+          "nullable": true,
+          "sync": true,
+          "description": "Numeric value (for series observations)"
+        },
+        "occurredAt": {
+          "type": "integer",
+          "not_null": true,
+          "sync": true,
+          "description": "When the event happened (Unix ms)"
+        },
+        "metadata": {
+          "type": "text",
+          "default": "'{}'",
+          "sync": true,
+          "description": "JSON metadata object"
+        },
+        "createdAt": {
+          "type": "integer",
+          "not_null": true,
+          "sync": true,
+          "description": "Creation timestamp (Unix ms)"
+        }
+      },
+      "indexes": [
+        { "name": "idx_item_events_item_time", "columns": ["itemId", "occurredAt"], "order": "DESC", "sync": true },
+        { "name": "idx_item_events_occurred", "columns": ["occurredAt"], "order": "DESC", "sync": true }
+      ]
     }
   },
 
@@ -266,7 +319,8 @@
     "required_sync_columns": {
       "items": ["id", "type", "content", "syncId", "syncSource", "syncedAt", "createdAt", "updatedAt", "deletedAt"],
       "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt"],
-      "item_tags": ["itemId", "tagId", "createdAt"]
+      "item_tags": ["itemId", "tagId", "createdAt"],
+      "item_events": ["id", "itemId", "content", "value", "occurredAt", "metadata", "createdAt"]
     }
   }
 }
