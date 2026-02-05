@@ -88,7 +88,9 @@ export interface AddressTag {
 // - text: Text content/notes
 // - tagset: Tag-only items
 // - image: Binary images
-export type ItemType = 'url' | 'text' | 'tagset' | 'image';
+// - series: Time-series data (numeric or text values over time)
+// - feed: External feeds (RSS, ATProto, APIs, logs)
+export type ItemType = 'url' | 'text' | 'tagset' | 'image' | 'series' | 'feed';
 
 export interface Item {
   id: string;
@@ -307,6 +309,36 @@ export interface ItemVisitOptions {
   interacted?: number;
 }
 
+// Event/entry record for series and feeds (item_events table)
+// - For series: events are observations (value is numeric or content is text)
+// - For feeds: events are entries (content is URL/URI, metadata has title/author/etc)
+export interface ItemEvent {
+  id: string;
+  itemId: string;
+  content: string | null;
+  value: number | null;
+  occurredAt: number;
+  metadata: string;
+  createdAt: number;
+}
+
+export interface ItemEventFilter {
+  itemId?: string;
+  itemIds?: string[];
+  since?: number;
+  until?: number;
+  limit?: number;
+  offset?: number;
+  order?: 'asc' | 'desc';
+}
+
+export interface ItemEventOptions {
+  content?: string;
+  value?: number;
+  occurredAt?: number;
+  metadata?: string;
+}
+
 // ==================== Table Names ====================
 
 export type TableName =
@@ -324,6 +356,7 @@ export type TableName =
   | 'items'
   | 'item_tags'
   | 'item_visits'
+  | 'item_events'
   | 'item_groups'
   | 'item_group_members'
   | 'settings';
@@ -343,6 +376,7 @@ export const tableNames: TableName[] = [
   'items',
   'item_tags',
   'item_visits',
+  'item_events',
   'item_groups',
   'item_group_members',
   'settings'

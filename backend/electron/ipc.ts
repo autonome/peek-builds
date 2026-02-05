@@ -49,6 +49,14 @@ import {
   queryItemVisits,
   trackNavigation,
   queryItemsByFrecency,
+  // Item event operations (series & feeds)
+  addItemEvent,
+  getItemEvent,
+  queryItemEvents,
+  deleteItemEvent,
+  deleteItemEvents,
+  getLatestItemEvent,
+  countItemEvents,
   // History operations
   trackWindowLoad,
   getHistory,
@@ -594,6 +602,77 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-query-items-by-frecency', async (ev, data = {}) => {
     try {
       const result = queryItemsByFrecency(data.filter);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Item event operations (series & feeds)
+  ipcMain.handle('datastore-add-item-event', async (ev, data) => {
+    try {
+      const result = addItemEvent(data.itemId, data.options);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-get-item-event', async (ev, data) => {
+    try {
+      const result = getItemEvent(data.eventId);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-query-item-events', async (ev, data = {}) => {
+    try {
+      const result = queryItemEvents(data.filter);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-delete-item-event', async (ev, data) => {
+    try {
+      const result = deleteItemEvent(data.eventId);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-delete-item-events', async (ev, data) => {
+    try {
+      const result = deleteItemEvents(data.itemId);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-get-latest-item-event', async (ev, data) => {
+    try {
+      const result = getLatestItemEvent(data.itemId);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-count-item-events', async (ev, data) => {
+    try {
+      const result = countItemEvents(data.itemId, data.filter);
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

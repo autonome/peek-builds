@@ -31,6 +31,9 @@ import type {
   ItemVisit,
   ItemVisitFilter,
   ItemVisitOptions,
+  ItemEvent,
+  ItemEventFilter,
+  ItemEventOptions,
 } from '../types/index.js';
 import { tableNames } from '../types/index.js';
 import { DEBUG } from './config.js';
@@ -263,7 +266,7 @@ const createTableStatements = `
 
   CREATE TABLE IF NOT EXISTS items (
     id TEXT PRIMARY KEY,
-    type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image')),
+    type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed')),
     content TEXT,
     mimeType TEXT DEFAULT '',
     metadata TEXT DEFAULT '{}',
@@ -345,6 +348,19 @@ const createTableStatements = `
   CREATE INDEX IF NOT EXISTS idx_item_group_members_groupId ON item_group_members(groupId);
   CREATE INDEX IF NOT EXISTS idx_item_group_members_itemId ON item_group_members(itemId);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_item_group_members_unique ON item_group_members(groupId, itemId);
+
+  CREATE TABLE IF NOT EXISTS item_events (
+    id TEXT PRIMARY KEY,
+    itemId TEXT NOT NULL,
+    content TEXT,
+    value REAL,
+    occurredAt INTEGER NOT NULL,
+    metadata TEXT DEFAULT '{}',
+    createdAt INTEGER NOT NULL,
+    FOREIGN KEY(itemId) REFERENCES items(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
+  CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
 `;
 
 // Module state
@@ -2470,6 +2486,123 @@ export function queryItemsByFrecency(filter: {
   return getDb().prepare(
     `SELECT * FROM items ${whereClause} ORDER BY frecencyScore DESC, lastVisitAt DESC ${limit}`
   ).all(...values) as Item[];
+}
+
+// ==================== Item Events (Series & Feeds) ====================
+
+/**
+ * Add an event/entry to a series or feed item
+ */
+export function addItemEvent(itemId: string, options: ItemEventOptions = {}): { id: string } {
+  const eventId = generateId('event');
+  const timestamp = now();
+
+  getDb().prepare(`
+    INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    eventId,
+    itemId,
+    options.content ?? null,
+    options.value ?? null,
+    options.occurredAt ?? timestamp,
+    options.metadata || '{}',
+    timestamp
+  );
+
+  return { id: eventId };
+}
+
+/**
+ * Get an event by ID
+ */
+export function getItemEvent(eventId: string): ItemEvent | null {
+  const result = getDb().prepare('SELECT * FROM item_events WHERE id = ?').get(eventId);
+  return (result as ItemEvent) || null;
+}
+
+/**
+ * Query events for a series or feed
+ */
+export function queryItemEvents(filter: ItemEventFilter = {}): ItemEvent[] {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  if (filter.itemId) {
+    conditions.push('itemId = ?');
+    values.push(filter.itemId);
+  }
+  if (filter.itemIds && filter.itemIds.length > 0) {
+    const placeholders = filter.itemIds.map(() => '?').join(', ');
+    conditions.push(`itemId IN (${placeholders})`);
+    values.push(...filter.itemIds);
+  }
+  if (filter.since) {
+    conditions.push('occurredAt >= ?');
+    values.push(filter.since);
+  }
+  if (filter.until) {
+    conditions.push('occurredAt <= ?');
+    values.push(filter.until);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const order = filter.order === 'asc' ? 'ASC' : 'DESC';
+  const limit = filter.limit ? `LIMIT ${filter.limit}` : '';
+  const offset = filter.offset ? `OFFSET ${filter.offset}` : '';
+
+  return getDb().prepare(
+    `SELECT * FROM item_events ${whereClause} ORDER BY occurredAt ${order} ${limit} ${offset}`
+  ).all(...values) as ItemEvent[];
+}
+
+/**
+ * Delete an event by ID
+ */
+export function deleteItemEvent(eventId: string): boolean {
+  const result = getDb().prepare('DELETE FROM item_events WHERE id = ?').run(eventId);
+  return result.changes > 0;
+}
+
+/**
+ * Delete all events for an item (used when deleting a series or feed)
+ */
+export function deleteItemEvents(itemId: string): number {
+  const result = getDb().prepare('DELETE FROM item_events WHERE itemId = ?').run(itemId);
+  return result.changes;
+}
+
+/**
+ * Get the latest event for a series or feed
+ */
+export function getLatestItemEvent(itemId: string): ItemEvent | null {
+  const result = getDb().prepare(
+    'SELECT * FROM item_events WHERE itemId = ? ORDER BY occurredAt DESC LIMIT 1'
+  ).get(itemId);
+  return (result as ItemEvent) || null;
+}
+
+/**
+ * Count events for a series or feed
+ */
+export function countItemEvents(itemId: string, filter: { since?: number; until?: number } = {}): number {
+  const conditions: string[] = ['itemId = ?'];
+  const values: unknown[] = [itemId];
+
+  if (filter.since) {
+    conditions.push('occurredAt >= ?');
+    values.push(filter.since);
+  }
+  if (filter.until) {
+    conditions.push('occurredAt <= ?');
+    values.push(filter.until);
+  }
+
+  const result = getDb().prepare(
+    `SELECT COUNT(*) as count FROM item_events WHERE ${conditions.join(' AND ')}`
+  ).get(...values) as { count: number };
+
+  return result.count;
 }
 
 /**
