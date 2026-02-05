@@ -509,11 +509,24 @@ const init = async () => {
     }
   });
 
-  // Always open settings window on startup
+  // Open startup feature (settings by default, or user-configured feature)
   try {
-    await openSettingsWindow(p);
+    const startupUrl = p.startupFeature || settingsAddress;
+    log('core', 'Opening startup feature:', startupUrl);
+
+    if (startupUrl === settingsAddress) {
+      await openSettingsWindow(p);
+    } else {
+      // Open the configured startup feature
+      await windowManager.createWindow(startupUrl, {
+        key: startupUrl,
+        transparent: true,
+        height: p.height || 600,
+        width: p.width || 800
+      });
+    }
   } catch (error) {
-    log.error('core', 'Error opening startup settings window:', error);
+    log.error('core', 'Error opening startup feature:', error);
   }
 
   // Feature enable/disable handler
