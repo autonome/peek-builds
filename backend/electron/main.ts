@@ -875,7 +875,7 @@ export function createBackgroundWindow(): BrowserWindow {
       backgroundColor: featuresMap.transparent ? undefined : getSystemThemeBackgroundColor(),
       webPreferences: {
         preload: preloadPath,
-        session: profileSession,
+        session: getProfileSession(),
       }
     };
 

@@ -19,6 +19,7 @@
 import { session, Session } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { registerProtocolOnSession } from './protocol.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -49,6 +50,9 @@ export function getProfileSession(): Session {
     const partitionString = getPartitionString(currentProfileId);
     profileSession = session.fromPartition(partitionString);
     DEBUG && console.log('[session] Created profile session:', partitionString);
+
+    // Register the peek:// protocol handler on the profile session
+    registerProtocolOnSession(profileSession);
   }
 
   return profileSession;

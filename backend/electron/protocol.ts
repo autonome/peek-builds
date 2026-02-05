@@ -149,13 +149,9 @@ export function getExtensionPath(id: string): string | null {
 }
 
 /**
- * Initialize the protocol handler
- * Must be called after app.ready
+ * The protocol request handler - extracted so it can be registered on multiple sessions
  */
-export function initProtocol(appRootDir: string): void {
-  rootDir = appRootDir;
-
-  protocol.handle(APP_SCHEME, async (req) => {
+async function handleProtocolRequest(req: Request): Promise<Response> {
     let { host, pathname } = new URL(req.url);
 
     // trim leading slash
@@ -289,5 +285,26 @@ export function initProtocol(appRootDir: string): void {
     const fileURL = pathToFileURL(absolutePath).toString();
 
     return net.fetch(fileURL);
-  });
+}
+
+/**
+ * Initialize the protocol handler on the default session
+ * Must be called after app.ready
+ */
+export function initProtocol(appRootDir: string): void {
+  rootDir = appRootDir;
+  protocol.handle(APP_SCHEME, handleProtocolRequest);
+}
+
+/**
+ * Register the protocol handler on a specific session
+ * Call this for profile sessions to enable peek:// URLs
+ */
+export function registerProtocolOnSession(session: Electron.Session): void {
+  if (!rootDir) {
+    console.error('[protocol] Cannot register on session - initProtocol not called yet');
+    return;
+  }
+  session.protocol.handle(APP_SCHEME, handleProtocolRequest);
+  DEBUG && console.log('[protocol] Registered peek:// handler on session');
 }
