@@ -485,6 +485,29 @@ api.datastore = {
   // Navigation tracking (unified entry point for page loads)
   trackNavigation: (uri, options = {}) => {
     return ipcRenderer.invoke('datastore-track-navigation', { uri, options });
+  },
+
+  // Item event operations (series & feeds)
+  addItemEvent: (itemId, options = {}) => {
+    return ipcRenderer.invoke('datastore-add-item-event', { itemId, options });
+  },
+  getItemEvent: (eventId) => {
+    return ipcRenderer.invoke('datastore-get-item-event', { eventId });
+  },
+  queryItemEvents: (filter = {}) => {
+    return ipcRenderer.invoke('datastore-query-item-events', { filter });
+  },
+  deleteItemEvent: (eventId) => {
+    return ipcRenderer.invoke('datastore-delete-item-event', { eventId });
+  },
+  deleteItemEvents: (itemId) => {
+    return ipcRenderer.invoke('datastore-delete-item-events', { itemId });
+  },
+  getLatestItemEvent: (itemId) => {
+    return ipcRenderer.invoke('datastore-get-latest-item-event', { itemId });
+  },
+  countItemEvents: (itemId, filter = {}) => {
+    return ipcRenderer.invoke('datastore-count-item-events', { itemId, filter });
   }
 };
 
