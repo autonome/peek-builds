@@ -5,7 +5,7 @@
 -- Unified content storage - URLs, text notes, tagsets, and images
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY NOT NULL,
-  type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image')),
+  type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed')),
   content TEXT,
   mimeType TEXT DEFAULT '',
   metadata TEXT DEFAULT '{}',
@@ -49,3 +49,17 @@ CREATE TABLE IF NOT EXISTS item_tags (
 CREATE INDEX IF NOT EXISTS idx_item_tags_itemId ON item_tags(itemId);
 CREATE INDEX IF NOT EXISTS idx_item_tags_tagId ON item_tags(tagId);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_item_tags_unique ON item_tags(itemId, tagId);
+
+-- Events/entries for series and feeds - append-only time-series data
+CREATE TABLE IF NOT EXISTS item_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  itemId TEXT NOT NULL,
+  content TEXT,
+  value REAL,
+  occurredAt INTEGER NOT NULL,
+  metadata TEXT DEFAULT '{}',
+  createdAt INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
+CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);

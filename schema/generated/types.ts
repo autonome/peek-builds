@@ -8,7 +8,7 @@
 export interface SchemaItems {
   /** Unique identifier (UUID or generated ID) */
   id: string;
-  /** Content type: url, text, tagset, or image */
+  /** Content type: url, text, tagset, image, series, or feed */
   type: string;
   /** URL for type=url, text content for type=text, null for tagset/image */
   content: string | null;
@@ -86,12 +86,31 @@ export interface SchemaItemTags {
   createdAt: number;
 }
 
+/** Events/entries for series and feeds - append-only time-series data */
+export interface SchemaItemEvents {
+  /** Unique identifier (UUID) */
+  id: string;
+  /** Reference to parent series or feed item */
+  itemId: string;
+  /** Text value, URL, or message */
+  content: string | null;
+  /** Numeric value (for series observations) */
+  value: number | null;
+  /** When the event happened (Unix ms) */
+  occurredAt: number;
+  /** JSON metadata object */
+  metadata: string;
+  /** Creation timestamp (Unix ms) */
+  createdAt: number;
+}
+
 /** Valid sync table names */
-export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags';
+export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'item_events';
 
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {
   items: ["id","type","content","syncId","syncSource","syncedAt","createdAt","updatedAt","deletedAt"],
   tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
   item_tags: ["itemId","tagId","createdAt"],
+  item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
 };

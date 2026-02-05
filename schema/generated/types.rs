@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct SchemaItems {
     /// Unique identifier (UUID or generated ID)
     pub id: String,
-    /// Content type: url, text, tagset, or image
+    /// Content type: url, text, tagset, image, series, or feed
     pub r#type: String,
     /// URL for type=url, text content for type=text, null for tagset/image
     pub content: Option<String>,
@@ -104,5 +104,27 @@ pub struct SchemaItemTags {
     pub tag_id: String,
     #[serde(rename = "createdAt")]
     /// Link creation timestamp (Unix ms)
+    pub created_at: i64,
+}
+
+/// Events/entries for series and feeds - append-only time-series data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaItemEvents {
+    /// Unique identifier (UUID)
+    pub id: String,
+    #[serde(rename = "itemId")]
+    /// Reference to parent series or feed item
+    pub item_id: String,
+    /// Text value, URL, or message
+    pub content: Option<String>,
+    /// Numeric value (for series observations)
+    pub value: Option<f64>,
+    #[serde(rename = "occurredAt")]
+    /// When the event happened (Unix ms)
+    pub occurred_at: i64,
+    /// JSON metadata object
+    pub metadata: String,
+    #[serde(rename = "createdAt")]
+    /// Creation timestamp (Unix ms)
     pub created_at: i64,
 }
