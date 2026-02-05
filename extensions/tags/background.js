@@ -489,6 +489,10 @@ const extension = {
     if (hasPeekAPI) {
       api.commands.unregister('open tags');
       api.commands.unregister('list tags');
+      api.commands.unregister('tag');
+      api.commands.unregister('tags');
+      api.commands.unregister('untag');
+      api.commands.unregister('tagset');
       api.shortcuts.unregister('Option+t');
     }
   }

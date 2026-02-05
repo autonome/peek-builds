@@ -3,19 +3,16 @@
  * Note: groups commands are now provided by the groups extension
  * Note: sync command is now provided by the sync extension
  * Note: open/modal commands are now provided by the page extension
+ * Note: tag, tags, untag, tagset commands are now provided by the tags extension
  */
 import debugCommand from './debug.js';
 import noteModule from './note.js';
-import tagsetModule from './tagset.js';
 import urlModule from './url.js';
 import historyModule from './history.js';
-import tagModule from './tag.js';
 
 // Chaining commands - for command composition pipelines
 import listsCommand from './lists.js';
 // csv and save commands moved to files extension
-
-console.log('[cmd:commands/index] tagModule.commands:', tagModule.commands?.map(c => c.name));
 
 // Source commands (commented out as they need browser extension APIs)
 // These modules contain command sources that dynamically generate commands
@@ -33,13 +30,12 @@ import emailCommand from './email.js';
 // Note: groups commands are dynamically registered by the groups extension
 // Note: sync command is dynamically registered by the sync extension
 // Note: open/modal commands are dynamically registered by the page extension
+// Note: tag, tags, untag, tagset commands are dynamically registered by the tags extension
 const activeCommands = [
   debugCommand,
   ...noteModule.commands,
-  ...tagsetModule.commands,
   ...urlModule.commands,
   ...historyModule.commands,
-  ...tagModule.commands,
 
   // Chaining commands
   listsCommand
