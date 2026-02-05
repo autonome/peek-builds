@@ -12,8 +12,7 @@ const commands = [
     description: 'Save a URL',
     async execute(ctx) {
       if (!ctx.search) {
-        api.publish('editor:add', { type: 'url' }, api.scopes.GLOBAL);
-        return { success: true, message: 'Opening editor' };
+        return { success: false, message: 'URL required' };
       }
 
       const input = ctx.search.trim();
