@@ -51,43 +51,11 @@ body {
   color: var(--peek-glass-text-secondary, rgba(255, 255, 255, 0.5));
 }
 
-/* Cards container */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-  max-width: 1800px;
-  margin: 0 auto;
-}
-
-/* Card base */
-.card {
-  background: var(--peek-glass-bg, rgba(255, 255, 255, 0.1));
-  border-radius: 12px;
-  padding: 20px;
-  cursor: pointer;
-  transition: all 0.15s ease;
+/* Window card internal layout */
+.window-card-inner {
   display: flex;
   align-items: flex-start;
   gap: 16px;
-  backdrop-filter: blur(var(--peek-glass-blur, 10px));
-  border: 1px solid var(--peek-glass-border, rgba(255, 255, 255, 0.1));
-}
-
-.card:hover {
-  background: var(--peek-glass-bg-hover, rgba(255, 255, 255, 0.15));
-  transform: translateY(-2px);
-  box-shadow: var(--peek-glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.3));
-}
-
-.card.selected {
-  background: var(--peek-glass-bg-active, rgba(255, 255, 255, 0.2));
-  border-color: var(--base0D);
-  box-shadow: 0 0 0 2px var(--base0D);
-}
-
-.card.selected:hover {
-  background: rgba(255, 255, 255, 0.25);
 }
 
 /* Window card favicon */

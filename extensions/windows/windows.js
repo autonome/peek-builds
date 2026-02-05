@@ -34,7 +34,7 @@ api.escape.onEscape(() => {
  * Get all cards in the current view
  */
 const getCards = () => {
-  return Array.from(document.querySelectorAll('.cards .card'));
+  return Array.from(document.querySelectorAll('.cards peek-card'));
 };
 
 /**
@@ -43,7 +43,8 @@ const getCards = () => {
 const updateSelection = () => {
   const cards = getCards();
   cards.forEach((card, i) => {
-    card.classList.toggle('selected', i === state.selectedIndex);
+    // Use the selected property on peek-card component
+    card.selected = i === state.selectedIndex;
   });
 
   // Scroll selected card into view
@@ -236,8 +237,9 @@ const renderWindows = () => {
  * Create a card element for a window
  */
 const createWindowCard = (win) => {
-  const card = document.createElement('div');
-  card.className = 'card window-card';
+  const card = document.createElement('peek-card');
+  card.setAttribute('glass', '');
+  card.setAttribute('interactive', '');
   card.dataset.windowId = win.id;
 
   // Try to get favicon from URL
@@ -250,6 +252,10 @@ const createWindowCard = (win) => {
       // Keep default favicon
     }
   }
+
+  // Create inner layout wrapper
+  const inner = document.createElement('div');
+  inner.className = 'window-card-inner';
 
   const favicon = document.createElement('img');
   favicon.className = 'card-favicon';
@@ -272,11 +278,12 @@ const createWindowCard = (win) => {
   content.appendChild(title);
   content.appendChild(url);
 
-  card.appendChild(favicon);
-  card.appendChild(content);
+  inner.appendChild(favicon);
+  inner.appendChild(content);
+  card.appendChild(inner);
 
-  // Click to focus window and close windows view
-  card.addEventListener('click', async () => {
+  // Click to focus window and close windows view (use card-click event from component)
+  card.addEventListener('card-click', async () => {
     debug && console.log('[windows] Clicking window:', win.id, win.title);
     await api.window.focus(win.id);
     closeWindowsView();
