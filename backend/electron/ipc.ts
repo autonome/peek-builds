@@ -1917,8 +1917,9 @@ export function registerWindowHandlers(): void {
           if (!otherWin.isVisible()) continue;
           // Don't hide background windows (check by URL or params)
           const otherInfo = getWindowInfo(otherWin.id);
-          if (otherInfo?.params?.address?.includes('background.html')) continue;
-          if (otherInfo?.params?.address?.includes('extension-host.html')) continue;
+          const otherAddress = otherInfo?.params?.address as string | undefined;
+          if (otherAddress?.includes('background.html')) continue;
+          if (otherAddress?.includes('extension-host.html')) continue;
           // Hide and track
           otherWin.hide();
           hiddenWindowIds.push(otherWin.id);
