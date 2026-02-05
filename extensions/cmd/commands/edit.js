@@ -1,10 +1,14 @@
 /**
  * Edit command - opens notes in the editor
  *
+ * Uses the connector pattern:
+ * - Returns { output: { data, mimeType: 'item' } } for selected notes
+ * - Panel layer handles routing to editor based on mimeType
+ *
  * Usage:
  *   cmd:edit {search} - search for notes and open in editor
- *   - Shows matching notes in dropdown
- *   - On selection: opens editor with note content
+ *   - Shows matching notes in dropdown (via output selection mode)
+ *   - On selection: panel auto-opens editor for 'item' mimeType
  */
 import api from 'peek://app/api.js';
 
@@ -41,23 +45,15 @@ const searchNotes = async (query, limit = 20) => {
 };
 
 /**
- * Format note for dropdown display
+ * Get title from note content
  * @param {Object} note - Note item
- * @returns {Object} Formatted for dropdown
+ * @returns {string} Title extracted from first line
  */
-const formatNoteForDropdown = (note) => {
+const getNoteTitle = (note) => {
   const content = note.content || '';
-  // First line as title, rest as preview
   const lines = content.split('\n');
   const title = lines[0].replace(/^#+ /, '').trim() || 'Untitled';
-  const preview = lines.slice(1).join(' ').trim().substring(0, 100);
-
-  return {
-    id: note.id,
-    title: title.substring(0, 50) + (title.length > 50 ? '...' : ''),
-    description: preview + (preview.length === 100 ? '...' : ''),
-    content: content
-  };
+  return title.substring(0, 50) + (title.length > 50 ? '...' : '');
 };
 
 // Commands
@@ -65,7 +61,7 @@ const commands = [
   {
     name: 'edit',
     description: 'Edit a note',
-    // Accept search text, produce selection
+    // Accept search text, produce item (note object)
     accepts: ['text'],
     produces: ['item'],
 
@@ -82,30 +78,27 @@ const commands = [
         };
       }
 
-      // If exactly one match and query is specific, open directly
+      // If exactly one match and query is specific, return it directly
       if (notes.length === 1 && query.trim()) {
         const note = notes[0];
-        api.publish('editor:open', { itemId: note.id }, api.scopes.GLOBAL);
         return {
           success: true,
-          message: 'Opening note',
-          data: note
+          output: {
+            data: note,
+            mimeType: 'item',
+            title: getNoteTitle(note)
+          }
         };
       }
 
-      // Return dropdown items for selection
-      const dropdownItems = notes.map(formatNoteForDropdown);
-
+      // Return array of notes - panel will enter output selection mode
+      // User picks one, then panel handles the 'item' mimeType routing
       return {
         success: true,
-        dropdown: {
-          items: dropdownItems,
-          placeholder: 'Select a note to edit',
-          onSelect: (selected) => {
-            // This is called when user selects from dropdown
-            api.publish('editor:open', { itemId: selected.id }, api.scopes.GLOBAL);
-            return { success: true, message: 'Opening note' };
-          }
+        output: {
+          data: notes,
+          mimeType: 'item',
+          title: `${notes.length} notes found`
         }
       };
     }

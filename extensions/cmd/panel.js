@@ -766,7 +766,8 @@ function exitOutputSelectionMode() {
 }
 
 /**
- * Select the currently highlighted output item and enter chain mode
+ * Select the currently highlighted output item
+ * Routes to editor for 'item' mimeType, otherwise enters chain mode
  */
 function selectOutputItem() {
   if (!state.outputSelectionMode || state.outputItems.length === 0) return;
@@ -774,12 +775,20 @@ function selectOutputItem() {
   const selectedItem = state.outputItems[state.outputItemIndex];
   log('cmd:panel', 'Selected output item:', state.outputItemIndex, selectedItem);
 
-  // Exit output selection mode
+  // Capture state before exiting selection mode
   const mimeType = state.outputMimeType;
   const sourceCommand = state.outputSourceCommand;
   exitOutputSelectionMode();
 
-  // Enter chain mode with the selected item
+  // Handle 'item' mimeType - route to editor instead of chain mode
+  if (mimeType === 'item' && selectedItem.id) {
+    log('cmd:panel', 'Opening editor for selected item:', selectedItem.id);
+    api.publish('editor:open', { itemId: selectedItem.id }, api.scopes.GLOBAL);
+    setTimeout(shutdown, 100);
+    return;
+  }
+
+  // For other mimeTypes, enter chain mode with the selected item
   enterChainMode({
     data: selectedItem,
     mimeType: mimeType,
@@ -1165,12 +1174,50 @@ async function execute(name, typed) {
     // Check if command produced chainable output
     if (result && result.output && result.output.data && result.output.mimeType) {
       const outputData = result.output.data;
+      const outputMimeType = result.output.mimeType;
+
+      // Handle special mimeTypes that have automatic routing (not chaining)
+      // 'item' - open existing item in editor
+      // 'new-item' - open empty editor for new item
+      if (outputMimeType === 'item' || outputMimeType === 'new-item') {
+        // If output is an array of items, enter selection mode
+        if (Array.isArray(outputData) && outputData.length > 0) {
+          enterOutputSelectionMode(outputData, outputMimeType, name);
+
+          const commandInput = document.getElementById('command-input');
+          if (commandInput) {
+            commandInput.value = '';
+            commandInput.focus();
+          }
+          return;
+        }
+
+        // Single item - route to editor
+        if (outputMimeType === 'new-item') {
+          // Open empty editor for new item
+          log('cmd:panel', 'Opening editor for new item:', outputData);
+          api.publish('editor:add', { type: outputData.type || 'text' }, api.scopes.GLOBAL);
+        } else if (outputData.id) {
+          // Open existing item in editor
+          log('cmd:panel', 'Opening editor for item:', outputData.id);
+          api.publish('editor:open', { itemId: outputData.id }, api.scopes.GLOBAL);
+
+          // If this is a newly created item, also notify of the change
+          if (result.output.isNew) {
+            api.publish('editor:changed', { action: 'add', itemId: outputData.id }, api.scopes.GLOBAL);
+          }
+        }
+
+        // Close panel after routing to editor
+        setTimeout(shutdown, 100);
+        return;
+      }
 
       // If output is an array, enter output selection mode first
       // User picks an item, then we enter chain mode with that item
       if (Array.isArray(outputData) && outputData.length > 0) {
         // Enter output selection mode to let user pick an item
-        enterOutputSelectionMode(outputData, result.output.mimeType, name);
+        enterOutputSelectionMode(outputData, outputMimeType, name);
 
         // Clear input for selection
         const commandInput = document.getElementById('command-input');

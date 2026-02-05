@@ -82,20 +82,45 @@ const commands = [
   {
     name: 'note',
     description: 'Save a note or URL (auto-detects type)',
+    // Produces item when saving content, or signals new-item for empty editor
+    produces: ['item'],
+
     async execute(ctx) {
       if (ctx.search) {
+        // Save the provided content
         try {
           const { itemId, type } = await saveItem(ctx.search);
           console.log(`Saved ${type} item:`, itemId);
-          api.publish('editor:changed', { action: 'add', itemId }, api.scopes.GLOBAL);
-          return { success: true, message: `${type === 'url' ? 'URL' : 'Note'} saved` };
+
+          // Return the saved item through the connector pattern
+          // Panel will handle editor:changed notification and routing
+          return {
+            success: true,
+            message: `${type === 'url' ? 'URL' : 'Note'} saved`,
+            output: {
+              data: { id: itemId, type, content: ctx.search },
+              mimeType: 'item',
+              title: type === 'url' ? 'Saved URL' : 'Saved note',
+              // Flag to indicate this is a newly created item (for editor:changed)
+              isNew: true
+            }
+          };
         } catch (error) {
           console.error('Failed to save:', error);
           return { success: false, message: error.message };
         }
       } else {
-        api.publish('editor:add', { type: 'text' }, api.scopes.GLOBAL);
-        return { success: true, message: 'Opening editor' };
+        // No content provided - signal to open empty editor
+        // Return special output that panel interprets as "open new editor"
+        return {
+          success: true,
+          message: 'Opening editor',
+          output: {
+            data: { type: 'text' },
+            mimeType: 'new-item',
+            title: 'New note'
+          }
+        };
       }
     }
   },
