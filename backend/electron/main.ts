@@ -17,6 +17,7 @@ import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, re
 import { scopes, publish, subscribe, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
 import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, DEBUG } from './config.js';
 import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
+import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 
 // Configuration
 export interface AppConfig {
@@ -215,11 +216,15 @@ export async function createExtensionWindow(extId: string): Promise<BrowserWindo
 
   DEBUG && console.log(`[ext:win] Creating window for extension: ${extId}`);
 
+  // Use profile-specific session for isolation
+  const profileSession = getProfileSession();
+
   const win = new BrowserWindow({
     show: false,
     backgroundColor: getSystemThemeBackgroundColor(),
     webPreferences: {
-      preload: config.preloadPath
+      preload: config.preloadPath,
+      session: profileSession,
     }
   });
 
@@ -335,11 +340,15 @@ export async function loadEnabledExtensions(): Promise<number> {
 async function createExtensionHostWindow(): Promise<BrowserWindow> {
   DEBUG && console.log('[ext:host] Creating consolidated extension host window');
 
+  // Use profile-specific session for isolation
+  const profileSession = getProfileSession();
+
   const win = new BrowserWindow({
     show: false,
     backgroundColor: getSystemThemeBackgroundColor(),
     webPreferences: {
       preload: config.preloadPath,
+      session: profileSession,
       nodeIntegrationInSubFrames: true,  // Preload runs in iframes too
     }
   });
@@ -777,12 +786,16 @@ export function createBackgroundWindow(): BrowserWindow {
   const preloadPath = getPreloadPath();
   const systemAddress = getSystemAddress();
 
+  // Use profile-specific session for isolation
+  const profileSession = getProfileSession();
+
   const winPrefs = {
     show: false,
     backgroundColor: getSystemThemeBackgroundColor(),
     key: 'background-core',
     webPreferences: {
       preload: preloadPath,
+      session: profileSession,
     }
   };
 
@@ -851,6 +864,7 @@ export function createBackgroundWindow(): BrowserWindow {
     }
 
     // Prepare browser window options
+    // Use profile-specific session for isolation
     const winOptions: Electron.BrowserWindowConstructorOptions = {
       frame: frameDefault, // Default based on hideTitleBar pref
       ...(featuresMap as Electron.BrowserWindowConstructorOptions),
@@ -860,7 +874,8 @@ export function createBackgroundWindow(): BrowserWindow {
       // Don't set backgroundColor for transparent windows - it would show through
       backgroundColor: featuresMap.transparent ? undefined : getSystemThemeBackgroundColor(),
       webPreferences: {
-        preload: preloadPath
+        preload: preloadPath,
+        session: profileSession,
       }
     };
 

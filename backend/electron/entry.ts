@@ -78,6 +78,9 @@ import {
   ensureDefaultProfile,
   getActiveProfile,
 } from './profiles.js';
+import {
+  initSessionPartition,
+} from './session-partition.js';
 
 // Catch unhandled errors and promise rejections without showing alert dialogs
 unhandled({
@@ -263,6 +266,10 @@ const onReady = async () => {
 
   // Initialize backend (database, protocol handler, pubsub broadcaster)
   await initialize();
+
+  // Initialize session partitioning for profile isolation
+  // This must happen early, before any sessions are used
+  initSessionPartition(PROFILE, defaultUserDataPath);
 
   // Register all IPC handlers from backend
   registerAllHandlers(onQuit);

@@ -167,6 +167,10 @@ import {
   type MajorModeId,
 } from './datastore.js';
 
+import {
+  getProfileSession,
+} from './session-partition.js';
+
 // ============================================================================
 // Window Focus Tracking for Window-Targeted Commands
 // ============================================================================
@@ -1569,6 +1573,9 @@ export function registerWindowHandlers(): void {
     // Check if this is a web page that will use the transparent canvas
     const isWebPage = url.startsWith('http://') || url.startsWith('https://');
 
+    // Use profile-specific session for isolation
+    const profileSession = getProfileSession();
+
     // Prepare browser window options
     const winOptions: Electron.BrowserWindowConstructorOptions = {
       frame: isWebPage ? false : frameDefault, // Web pages use transparent canvas, no frame
@@ -1582,6 +1589,7 @@ export function registerWindowHandlers(): void {
       webPreferences: {
         ...options.webPreferences,
         preload: getPreloadPath(),
+        session: profileSession,
         webviewTag: true // Enable webview for peek://page container
       }
     };
@@ -2899,6 +2907,23 @@ export function registerProfileHandlers(): void {
     try {
       const syncConfig = getProfileSyncConfig(data.profileId);
       return { success: true, data: syncConfig };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Get the partition string for the current profile's session
+  // Used by renderers to set webview partition attribute
+  ipcMain.handle('profiles:getPartition', async () => {
+    try {
+      const { getPartitionString, getCurrentProfileId } = await import('./session-partition.js');
+      const profileId = getCurrentProfileId();
+      if (!profileId) {
+        return { success: false, error: 'No profile session initialized' };
+      }
+      const partition = getPartitionString(profileId);
+      return { success: true, data: { profileId, partition } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

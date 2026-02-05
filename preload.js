@@ -772,6 +772,15 @@ api.profiles = {
    */
   getSyncConfig: (profileId) => {
     return ipcRenderer.invoke('profiles:getSyncConfig', { profileId });
+  },
+
+  /**
+   * Get the partition string for the current profile's session
+   * Used for setting webview partition attribute for session isolation
+   * @returns {Promise<{success: boolean, data?: {profileId: string, partition: string}, error?: string}>}
+   */
+  getPartition: () => {
+    return ipcRenderer.invoke('profiles:getPartition');
   }
 };
 

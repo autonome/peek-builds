@@ -15,6 +15,8 @@ import { session, Session } from 'electron';
 import { ElectronBlocker, Request } from '@cliqz/adblocker-electron';
 import fetch from 'cross-fetch';
 
+import { getProfileSession } from './session-partition.js';
+
 const DEBUG = !!process.env.DEBUG;
 
 // Module state
@@ -96,17 +98,21 @@ export function disableBlockingInSession(sess: Session): void {
 }
 
 /**
- * Enable ad blocking on the default session
+ * Enable ad blocking on the profile session
+ * Uses profile-specific session for isolation
  */
 export function enableBlocking(): void {
-  enableBlockingInSession(session.defaultSession);
+  const profileSession = getProfileSession();
+  enableBlockingInSession(profileSession);
 }
 
 /**
- * Disable ad blocking on the default session
+ * Disable ad blocking on the profile session
+ * Uses profile-specific session for isolation
  */
 export function disableBlocking(): void {
-  disableBlockingInSession(session.defaultSession);
+  const profileSession = getProfileSession();
+  disableBlockingInSession(profileSession);
 }
 
 /**

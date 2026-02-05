@@ -284,3 +284,13 @@ export type {
   LoadedChromeExtension,
   ChromeExtensionSetting,
 } from './chrome-extensions.js';
+
+// Session partition module
+export {
+  initSessionPartition,
+  getProfileSession,
+  getPartitionString,
+  getCurrentProfileId,
+  isPartitionInitialized,
+  getPartitionInfo,
+} from './session-partition.js';

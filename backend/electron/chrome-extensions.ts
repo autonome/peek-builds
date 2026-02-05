@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { getDb } from './datastore.js';
+import { getProfileSession } from './session-partition.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -219,7 +220,9 @@ async function loadExtension(extInfo: ChromeExtensionInfo): Promise<LoadedChrome
   }
 
   try {
-    const ext = await session.defaultSession.loadExtension(extInfo.path, {
+    // Use profile-specific session for isolation
+    const profileSession = getProfileSession();
+    const ext = await profileSession.loadExtension(extInfo.path, {
       allowFileAccess: true,
     });
 
@@ -252,7 +255,9 @@ async function unloadExtension(extId: string): Promise<boolean> {
   }
 
   try {
-    await session.defaultSession.removeExtension(loaded.electronExtension.id);
+    // Use profile-specific session for isolation
+    const profileSession = getProfileSession();
+    await profileSession.removeExtension(loaded.electronExtension.id);
     loadedExtensions.delete(extId);
     DEBUG && console.log(`[chrome-ext] Unloaded: ${loaded.name}`);
     return true;

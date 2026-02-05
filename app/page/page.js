@@ -70,9 +70,28 @@ function updatePositions() {
 // Initialize positions
 updatePositions();
 
-// Load the target URL
-webview.src = targetUrl;
-urlText.textContent = targetUrl;
+// Set up webview partition for session isolation and load the target URL
+async function initWebview() {
+  try {
+    // Get the partition string for the current profile
+    const result = await api.profiles.getPartition();
+    if (result.success && result.data?.partition) {
+      webview.partition = result.data.partition;
+      DEBUG && console.log('[page] Set webview partition:', result.data.partition);
+    } else {
+      DEBUG && console.log('[page] No partition available, using default session');
+    }
+  } catch (err) {
+    console.error('[page] Failed to get partition:', err);
+  }
+
+  // Load the target URL
+  webview.src = targetUrl;
+  urlText.textContent = targetUrl;
+}
+
+// Start initialization
+initWebview();
 
 // --- Drag to move webview ---
 
