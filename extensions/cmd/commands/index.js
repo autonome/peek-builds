@@ -2,10 +2,9 @@
  * Commands module - exports all available commands
  * Note: groups commands are now provided by the groups extension
  * Note: sync command is now provided by the sync extension
+ * Note: open/modal commands are now provided by the page extension
  */
-import openCommand from './open.js';
 import debugCommand from './debug.js';
-import modalCommand from './modal.js';
 import noteModule from './note.js';
 import tagsetModule from './tagset.js';
 import urlModule from './url.js';
@@ -33,10 +32,9 @@ import emailCommand from './email.js';
 // Active commands - only these will be loaded
 // Note: groups commands are dynamically registered by the groups extension
 // Note: sync command is dynamically registered by the sync extension
+// Note: open/modal commands are dynamically registered by the page extension
 const activeCommands = [
-  openCommand,
   debugCommand,
-  modalCommand,
   ...noteModule.commands,
   ...tagsetModule.commands,
   ...urlModule.commands,

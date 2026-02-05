@@ -1,0 +1,8 @@
+{
+  "id": "page",
+  "name": "Page",
+  "version": "1.0.0",
+  "description": "Page and window commands",
+  "background": "background.html",
+  "builtin": true
+}

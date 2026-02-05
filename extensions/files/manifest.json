@@ -1,0 +1,8 @@
+{
+  "id": "files",
+  "name": "Files",
+  "version": "1.0.0",
+  "description": "File and format commands (CSV, save)",
+  "background": "background.html",
+  "builtin": true
+}
