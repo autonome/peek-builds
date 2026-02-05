@@ -1809,7 +1809,7 @@ export function registerWindowHandlers(): void {
           if (input.type !== 'keyDown' || !input.meta) return;
           if (input.key === 'l') {
             // Show the page container's nav bar
-            publish('peek://system/', PubSubScopes.GLOBAL, 'overlay:show', { windowId: win.id });
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: win.id });
             event.preventDefault();
           }
         });

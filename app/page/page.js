@@ -159,7 +159,7 @@ navbar.addEventListener('mouseleave', hide);
 triggerZone.addEventListener('mouseleave', hide);
 
 // Cmd+L: show with URL focus
-api.subscribe('overlay:show', () => show({ focusUrl: true }), api.scopes.WINDOW);
+api.subscribe('page:show-navbar', () => show({ focusUrl: true }), api.scopes.WINDOW);
 
 // --- Nav button actions ---
 
