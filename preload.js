@@ -1658,6 +1658,163 @@ api.modes = {
   }
 };
 
+// ==================== Context API ====================
+// General-purpose key-value store for application context.
+// "mode" is just one key in this system - extensions can define their own context keys.
+api.context = {
+  /**
+   * Get the current context entry for a key
+   * @param {string} key - Context key (e.g., 'mode')
+   * @param {number|null} windowId - Window ID (null = current window)
+   * @returns {Promise<{success: boolean, data?: {value: any, metadata: object, timestamp: number, source: string}, error?: string}>}
+   */
+  get: (key, windowId = null) => {
+    return ipcRenderer.invoke('context-get', { key, windowId });
+  },
+
+  /**
+   * Set a context value
+   * @param {string} key - Context key (e.g., 'mode')
+   * @param {any} value - Value to set
+   * @param {object} options - Options
+   * @param {object} [options.metadata={}] - Additional metadata
+   * @param {number|null} [options.windowId=null] - Window ID (null = current window)
+   * @returns {Promise<{success: boolean, data?: {id: string, prevEntryId: string|null}, error?: string}>}
+   */
+  set: (key, value, options = {}) => {
+    return ipcRenderer.invoke('context-set', {
+      key,
+      value,
+      metadata: options.metadata,
+      windowId: options.windowId,
+      source: options.source || sourceAddress
+    });
+  },
+
+  /**
+   * Watch for context changes on a key
+   * @param {string} key - Context key to watch
+   * @param {function} callback - Called with (entry, oldEntry) when context changes
+   * @returns {function} Unsubscribe function
+   */
+  watch: (key, callback) => {
+    // Use internal topic pattern for specific key watching
+    const topic = 'context:changed';
+    const wrappedCallback = (msg) => {
+      if (msg.key === key) {
+        callback({
+          value: msg.value,
+          metadata: msg.metadata,
+          windowId: msg.windowId,
+          source: msg.source,
+          entryId: msg.entryId
+        }, null); // oldEntry not available via pubsub
+      }
+    };
+
+    api.subscribe(topic, wrappedCallback, api.scopes.GLOBAL);
+
+    // Return unsubscribe function (note: pubsub doesn't support unsubscribe yet)
+    return () => {
+      DEBUG && console.log('[preload] context.watch unsubscribe not fully supported');
+    };
+  },
+
+  /**
+   * Query context history
+   * @param {string} key - Context key
+   * @param {object} options - Query options
+   * @param {number} [options.since] - Start timestamp
+   * @param {number} [options.until] - End timestamp
+   * @param {number|null} [options.windowId] - Filter by window
+   * @param {number} [options.limit] - Max entries
+   * @param {string} [options.order='desc'] - Sort order ('asc' or 'desc')
+   * @returns {Promise<{success: boolean, data?: Array, error?: string}>}
+   */
+  getHistory: (key, options = {}) => {
+    return ipcRenderer.invoke('context-history', { key, ...options });
+  },
+
+  /**
+   * Get context snapshot at a point in time
+   * @param {number} timestamp - Point in time
+   * @param {string[]} keys - Keys to include (empty = all)
+   * @returns {Promise<{success: boolean, data?: Object, error?: string}>}
+   */
+  getSnapshot: (timestamp, keys = []) => {
+    return ipcRenderer.invoke('context-snapshot', { timestamp, keys });
+  },
+
+  /**
+   * Get all windows with a specific context value
+   * @param {string} key - Context key
+   * @param {any} value - Value to match
+   * @returns {Promise<{success: boolean, data?: number[], error?: string}>}
+   */
+  getWindowsWithValue: (key, value) => {
+    return ipcRenderer.invoke('context-windows-with-value', { key, value });
+  },
+
+  /**
+   * Get all windows in a specific group
+   * @param {string} groupId - Group ID
+   * @returns {Promise<{success: boolean, data?: number[], error?: string}>}
+   */
+  getWindowsInGroup: (groupId) => {
+    return ipcRenderer.invoke('context-windows-in-group', { groupId });
+  },
+
+  // ===== Mode-specific convenience methods =====
+
+  /**
+   * Get the current mode for a window
+   * @param {number|null} windowId - Window ID (null = current)
+   * @returns {Promise<string|null>} Mode value or null
+   */
+  getMode: async (windowId = null) => {
+    const result = await ipcRenderer.invoke('context-get', { key: 'mode', windowId });
+    return result.success && result.data ? result.data.value : null;
+  },
+
+  /**
+   * Set the mode for a window
+   * @param {string} mode - Mode value ('default', 'page', 'group', etc.)
+   * @param {object} options - Options
+   * @param {object} [options.metadata={}] - Mode metadata (e.g., groupId, groupName)
+   * @param {number|null} [options.windowId=null] - Window ID
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  setMode: (mode, options = {}) => {
+    return ipcRenderer.invoke('context-set', {
+      key: 'mode',
+      value: mode,
+      metadata: options.metadata,
+      windowId: options.windowId,
+      source: options.source || sourceAddress
+    });
+  },
+
+  /**
+   * Watch for mode changes
+   * @param {function} callback - Called with (mode, entry) when mode changes
+   * @returns {function} Unsubscribe function
+   */
+  watchMode: (callback) => {
+    return api.context.watch('mode', (entry) => {
+      callback(entry?.value ?? null, entry);
+    });
+  },
+
+  /**
+   * Get all windows in a specific mode
+   * @param {string} mode - Mode value
+   * @returns {Promise<{success: boolean, data?: number[], error?: string}>}
+   */
+  getWindowsInMode: (mode) => {
+    return ipcRenderer.invoke('context-windows-with-value', { key: 'mode', value: mode });
+  }
+};
+
 /**
  * File operations
  */

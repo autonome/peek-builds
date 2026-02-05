@@ -422,6 +422,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateAllAddressesToItems();
   migrateVisitsToItemVisits();
   migrateTagsLastUsedColumn();
+  migrateContextHistory();
 
   // Validate schema against canonical definition
   validateSyncSchema();
@@ -1377,6 +1378,291 @@ function migrateTagsLastUsedColumn(): void {
       DEBUG && console.log('main', 'Failed to add lastUsed column:', (error as Error).message);
     }
   }
+}
+
+// ==================== Context History Migration ====================
+
+/**
+ * Migrate: Create context_history table for storing context changes
+ * This table enables time-series visualization and correlation with visits
+ */
+function migrateContextHistory(): void {
+  if (!db) return;
+
+  const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='context_history'`).all();
+  if (tables.length === 0) {
+    DEBUG && console.log('main', 'Creating context_history table');
+    db.exec(`
+      CREATE TABLE context_history (
+        id TEXT PRIMARY KEY,
+        key TEXT NOT NULL,
+        value TEXT,
+        metadata TEXT DEFAULT '{}',
+        windowId INTEGER,
+        source TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        prevEntryId TEXT DEFAULT NULL
+      );
+      CREATE INDEX idx_context_history_key ON context_history(key);
+      CREATE INDEX idx_context_history_timestamp ON context_history(timestamp);
+      CREATE INDEX idx_context_history_key_timestamp ON context_history(key, timestamp);
+      CREATE INDEX idx_context_history_windowId ON context_history(windowId);
+    `);
+    DEBUG && console.log('main', 'context_history table created');
+  }
+}
+
+// ==================== Context History Operations ====================
+
+export interface ContextEntry {
+  id: string;
+  key: string;
+  value: unknown;
+  metadata: Record<string, unknown>;
+  windowId: number | null;
+  source: string;
+  timestamp: number;
+  prevEntryId: string | null;
+}
+
+export interface ContextHistoryFilter {
+  key?: string;
+  windowId?: number | null;
+  since?: number;
+  until?: number;
+  limit?: number;
+  order?: 'asc' | 'desc';
+}
+
+// In-memory context state per window
+// Map<windowId, Map<key, ContextEntry>>
+const windowContextState = new Map<number | null, Map<string, ContextEntry>>();
+
+/**
+ * Get context state map for a window
+ */
+function getContextStateMap(windowId: number | null): Map<string, ContextEntry> {
+  if (!windowContextState.has(windowId)) {
+    windowContextState.set(windowId, new Map());
+  }
+  return windowContextState.get(windowId)!;
+}
+
+/**
+ * Add a context entry to history
+ */
+export function addContextEntry(
+  key: string,
+  value: unknown,
+  options: {
+    metadata?: Record<string, unknown>;
+    windowId?: number | null;
+    source?: string;
+  } = {}
+): { id: string; prevEntryId: string | null } {
+  const {
+    metadata = {},
+    windowId = null,
+    source = ''
+  } = options;
+
+  const entryId = generateId('ctx');
+  const timestamp = now();
+
+  // Get previous entry ID for chaining
+  const stateMap = getContextStateMap(windowId);
+  const prevEntry = stateMap.get(key);
+  const prevEntryId = prevEntry?.id ?? null;
+
+  // Serialize value as JSON
+  const valueJson = JSON.stringify(value);
+  const metadataJson = JSON.stringify(metadata);
+
+  // Insert into database
+  getDb().prepare(`
+    INSERT INTO context_history (id, key, value, metadata, windowId, source, timestamp, prevEntryId)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(entryId, key, valueJson, metadataJson, windowId, source, timestamp, prevEntryId);
+
+  // Update in-memory state
+  const entry: ContextEntry = {
+    id: entryId,
+    key,
+    value,
+    metadata,
+    windowId,
+    source,
+    timestamp,
+    prevEntryId
+  };
+  stateMap.set(key, entry);
+
+  DEBUG && console.log('main', `context entry added: ${key}=${JSON.stringify(value)} for window ${windowId}`);
+
+  return { id: entryId, prevEntryId };
+}
+
+/**
+ * Get current context value for a key
+ */
+export function getContextEntry(key: string, windowId: number | null = null): ContextEntry | null {
+  const stateMap = getContextStateMap(windowId);
+  return stateMap.get(key) ?? null;
+}
+
+/**
+ * Query context history
+ */
+export function queryContextHistory(filter: ContextHistoryFilter = {}): ContextEntry[] {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  if (filter.key) {
+    conditions.push('key = ?');
+    values.push(filter.key);
+  }
+  if (filter.windowId !== undefined) {
+    if (filter.windowId === null) {
+      conditions.push('windowId IS NULL');
+    } else {
+      conditions.push('windowId = ?');
+      values.push(filter.windowId);
+    }
+  }
+  if (filter.since) {
+    conditions.push('timestamp >= ?');
+    values.push(filter.since);
+  }
+  if (filter.until) {
+    conditions.push('timestamp <= ?');
+    values.push(filter.until);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const orderBy = filter.order === 'asc' ? 'ASC' : 'DESC';
+  const limit = filter.limit ? `LIMIT ${filter.limit}` : '';
+
+  const rows = getDb().prepare(`
+    SELECT * FROM context_history ${whereClause}
+    ORDER BY timestamp ${orderBy} ${limit}
+  `).all(...values) as Array<{
+    id: string;
+    key: string;
+    value: string;
+    metadata: string;
+    windowId: number | null;
+    source: string;
+    timestamp: number;
+    prevEntryId: string | null;
+  }>;
+
+  return rows.map(row => ({
+    id: row.id,
+    key: row.key,
+    value: JSON.parse(row.value),
+    metadata: JSON.parse(row.metadata || '{}'),
+    windowId: row.windowId,
+    source: row.source,
+    timestamp: row.timestamp,
+    prevEntryId: row.prevEntryId
+  }));
+}
+
+/**
+ * Get context snapshot at a point in time
+ * Returns the most recent entry for each key before the given timestamp
+ */
+export function getContextSnapshot(
+  timestamp: number,
+  keys: string[] = []
+): Record<string, ContextEntry> {
+  let keyFilter = '';
+  const values: unknown[] = [timestamp];
+
+  if (keys.length > 0) {
+    keyFilter = `AND key IN (${keys.map(() => '?').join(', ')})`;
+    values.push(...keys);
+  }
+
+  // Use a subquery to get the max timestamp for each key before the target time
+  const rows = getDb().prepare(`
+    SELECT ch.*
+    FROM context_history ch
+    INNER JOIN (
+      SELECT key, windowId, MAX(timestamp) as maxTs
+      FROM context_history
+      WHERE timestamp <= ? ${keyFilter}
+      GROUP BY key, windowId
+    ) latest ON ch.key = latest.key
+      AND (ch.windowId = latest.windowId OR (ch.windowId IS NULL AND latest.windowId IS NULL))
+      AND ch.timestamp = latest.maxTs
+  `).all(...values) as Array<{
+    id: string;
+    key: string;
+    value: string;
+    metadata: string;
+    windowId: number | null;
+    source: string;
+    timestamp: number;
+    prevEntryId: string | null;
+  }>;
+
+  const snapshot: Record<string, ContextEntry> = {};
+  for (const row of rows) {
+    snapshot[row.key] = {
+      id: row.id,
+      key: row.key,
+      value: JSON.parse(row.value),
+      metadata: JSON.parse(row.metadata || '{}'),
+      windowId: row.windowId,
+      source: row.source,
+      timestamp: row.timestamp,
+      prevEntryId: row.prevEntryId
+    };
+  }
+
+  return snapshot;
+}
+
+/**
+ * Clean up context state when a window closes
+ */
+export function cleanupWindowContext(windowId: number): void {
+  windowContextState.delete(windowId);
+  DEBUG && console.log('main', `context state cleaned up for window ${windowId}`);
+}
+
+/**
+ * Get all windows with a specific context value
+ */
+export function getWindowsWithContextValue(key: string, value: unknown): number[] {
+  const windowIds: number[] = [];
+  for (const [windowId, stateMap] of windowContextState) {
+    if (windowId === null) continue;
+    const entry = stateMap.get(key);
+    if (entry && JSON.stringify(entry.value) === JSON.stringify(value)) {
+      windowIds.push(windowId);
+    }
+  }
+  return windowIds;
+}
+
+/**
+ * Get all windows matching a context predicate
+ */
+export function getWindowsMatchingContext(
+  key: string,
+  predicate: (entry: ContextEntry) => boolean
+): number[] {
+  const windowIds: number[] = [];
+  for (const [windowId, stateMap] of windowContextState) {
+    if (windowId === null) continue;
+    const entry = stateMap.get(key);
+    if (entry && predicate(entry)) {
+      windowIds.push(windowId);
+    }
+  }
+  return windowIds;
 }
 
 // ==================== Version Check ====================

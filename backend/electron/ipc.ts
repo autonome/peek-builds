@@ -60,6 +60,14 @@ import {
   // History operations
   trackWindowLoad,
   getHistory,
+  // Context operations
+  addContextEntry,
+  getContextEntry,
+  queryContextHistory,
+  getContextSnapshot,
+  cleanupWindowContext,
+  getWindowsWithContextValue,
+  getWindowsMatchingContext,
 } from './datastore.js';
 
 import {
@@ -135,6 +143,7 @@ import {
   publish,
   subscribe,
   scopes as PubSubScopes,
+  getSystemAddress,
 } from './pubsub.js';
 
 import {
@@ -1698,6 +1707,53 @@ export function registerWindowHandlers(): void {
           // Keep original URL
         }
       }
+
+      // Check for group mode inheritance from options
+      // If opener passed groupMode, inherit it instead of URL-based detection
+      if (options.groupMode) {
+        const { groupId, groupName, color } = options.groupMode;
+        // Set group mode via context API
+        addContextEntry('mode', 'group', {
+          windowId: win.id,
+          source: msg.source,
+          metadata: { groupId, groupName, color, url: modeUrl }
+        });
+        DEBUG && console.log('Inherited group mode for window:', win.id, 'group:', groupName);
+      } else {
+        // Check if opener is in group mode - inherit if so
+        let openerGroupMode = null;
+        const callingWin = BrowserWindow.fromWebContents(ev.sender);
+        if (callingWin && !callingWin.isDestroyed()) {
+          const openerContext = getContextEntry('mode', callingWin.id);
+          if (openerContext && openerContext.value === 'group' && openerContext.metadata) {
+            openerGroupMode = openerContext;
+          }
+        }
+
+        if (openerGroupMode) {
+          // Inherit group mode from opener
+          addContextEntry('mode', 'group', {
+            windowId: win.id,
+            source: msg.source,
+            metadata: {
+              ...openerGroupMode.metadata,
+              url: modeUrl,
+              inheritedFrom: openerGroupMode.windowId
+            }
+          });
+          DEBUG && console.log('Inherited group mode from opener:', openerGroupMode.metadata?.groupName);
+        } else {
+          // Set mode based on URL detection (original behavior)
+          const detectedMode = detectModeFromUrl(modeUrl);
+          addContextEntry('mode', detectedMode, {
+            windowId: win.id,
+            source: msg.source,
+            metadata: { url: modeUrl }
+          });
+        }
+      }
+
+      // Also set via old modes API for backwards compatibility
       const detectedMode = detectModeFromUrl(modeUrl);
       setMajorMode(win.id, detectedMode);
       DEBUG && console.log('Set window mode:', win.id, 'url:', modeUrl, 'mode:', detectedMode);
@@ -3005,6 +3061,143 @@ export function registerModesHandlers(): void {
 }
 
 /**
+ * Register context-related IPC handlers
+ *
+ * The context API provides a general-purpose key-value store for application context.
+ * "mode" is just one key in this system - extensions can define their own context keys.
+ */
+export function registerContextHandlers(): void {
+  // Get current context entry for a key
+  ipcMain.handle('context-get', async (ev, data: { key: string; windowId?: number | null }) => {
+    try {
+      let windowId = data.windowId;
+
+      // If no windowId provided, try to get from calling window
+      if (windowId === undefined) {
+        const callingWin = BrowserWindow.fromWebContents(ev.sender);
+        windowId = callingWin?.id ?? null;
+      }
+
+      const entry = getContextEntry(data.key, windowId);
+      return { success: true, data: entry };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Set context value (persists to history)
+  ipcMain.handle('context-set', async (ev, data: {
+    key: string;
+    value: unknown;
+    metadata?: Record<string, unknown>;
+    windowId?: number | null;
+    source?: string;
+  }) => {
+    try {
+      let windowId = data.windowId;
+      let source = data.source;
+
+      // If no windowId provided, try to get from calling window
+      if (windowId === undefined) {
+        const callingWin = BrowserWindow.fromWebContents(ev.sender);
+        windowId = callingWin?.id ?? null;
+      }
+
+      // If no source provided, try to get from calling window's URL
+      if (!source) {
+        const callingWin = BrowserWindow.fromWebContents(ev.sender);
+        source = callingWin?.webContents.getURL() ?? '';
+      }
+
+      const result = addContextEntry(data.key, data.value, {
+        metadata: data.metadata,
+        windowId,
+        source
+      });
+
+      // Publish context change event for watchers
+      if (publish && PubSubScopes && getSystemAddress) {
+        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'context:changed', {
+          key: data.key,
+          value: data.value,
+          metadata: data.metadata || {},
+          windowId,
+          source,
+          entryId: result.id
+        });
+      }
+
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Query context history
+  ipcMain.handle('context-history', async (ev, data: {
+    key?: string;
+    windowId?: number | null;
+    since?: number;
+    until?: number;
+    limit?: number;
+    order?: 'asc' | 'desc';
+  }) => {
+    try {
+      const entries = queryContextHistory(data);
+      return { success: true, data: entries };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Get context snapshot at a point in time
+  ipcMain.handle('context-snapshot', async (ev, data: {
+    timestamp: number;
+    keys?: string[];
+  }) => {
+    try {
+      const snapshot = getContextSnapshot(data.timestamp, data.keys || []);
+      return { success: true, data: snapshot };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Get all windows with a specific context value
+  ipcMain.handle('context-windows-with-value', async (ev, data: {
+    key: string;
+    value: unknown;
+  }) => {
+    try {
+      const windowIds = getWindowsWithContextValue(data.key, data.value);
+      return { success: true, data: windowIds };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Get windows in a specific group (convenience method for mode='group' with groupId)
+  ipcMain.handle('context-windows-in-group', async (ev, data: { groupId: string }) => {
+    try {
+      const windowIds = getWindowsMatchingContext('mode', (entry) => {
+        return entry.value === 'group' && entry.metadata?.groupId === data.groupId;
+      });
+      return { success: true, data: windowIds };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  DEBUG && console.log('[ipc] Context handlers registered');
+}
+
+/**
  * Register IPC handlers for bundled web extensions (adblocker + chrome extensions)
  */
 export function registerWebExtensionHandlers(): void {
@@ -3125,6 +3318,7 @@ export function registerAllHandlers(onQuit: () => void): void {
   registerBackupHandlers();
   registerProfileHandlers();
   registerModesHandlers();
+  registerContextHandlers();
   registerWebExtensionHandlers();
   registerMiscHandlers(onQuit);
 }

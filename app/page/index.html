@@ -123,9 +123,61 @@
       cursor: se-resize;
       z-index: 10;
     }
+
+    /* Mode indicator - subtle corner badge */
+    .mode-indicator {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+      font-family: var(--theme-font-sans, system-ui, -apple-system, sans-serif);
+      z-index: 200;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .mode-indicator.visible {
+      display: flex;
+    }
+
+    .mode-indicator .mode-label {
+      text-transform: capitalize;
+    }
+
+    .mode-indicator .group-name {
+      display: none;
+      opacity: 0.9;
+    }
+
+    /* Mode-specific styles */
+    .mode-indicator[data-mode="page"] {
+      display: none; /* Hide in page mode - it's the default */
+    }
+
+    .mode-indicator[data-mode="group"] {
+      display: flex;
+      background: rgba(153, 102, 204, 0.85);
+      color: white;
+      border: 1px solid rgba(153, 102, 204, 0.9);
+    }
+
+    .mode-indicator[data-mode="group"] .group-name {
+      display: inline;
+    }
   </style>
 </head>
 <body>
+  <!-- Mode indicator - shown when in group mode -->
+  <div id="mode-indicator" class="mode-indicator">
+    <span class="mode-label">page</span>
+    <span class="group-name"></span>
+  </div>
   <div class="trigger-zone" id="trigger-zone"></div>
   <div class="navbar" id="navbar">
     <button class="nav-btn" id="btn-back" title="Back (Cmd+[)">&#8592;</button>

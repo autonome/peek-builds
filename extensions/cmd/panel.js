@@ -104,6 +104,7 @@ const MAJOR_MODES = ['default', 'page', 'group', 'settings'];
 
 // Current mode for UI display
 let currentMode = 'default';
+let currentModeMetadata = {};
 
 /**
  * Load the current command context (target window, mode state)
@@ -111,12 +112,28 @@ let currentMode = 'default';
  */
 const loadCommandContext = async () => {
   try {
+    // Use context API to get mode for the target window
+    // First get the focused visible window ID
+    const targetWindowId = await api.window.getFocusedVisibleWindowId();
+
+    // Get mode from context API
+    if (api.context) {
+      const modeResult = await api.context.get('mode', targetWindowId);
+      if (modeResult.success && modeResult.data) {
+        currentMode = modeResult.data.value || 'default';
+        currentModeMetadata = modeResult.data.metadata || {};
+        log('cmd:panel', 'Loaded mode from context:', currentMode, currentModeMetadata);
+        updateModeIndicator();
+      }
+    }
+
+    // Also load from old modes API for backwards compatibility
     const result = await api.modes.getCommandContext();
     if (result.success) {
       commandContext = result.data;
       log('cmd:panel', 'Loaded command context:', commandContext);
-      // Update mode from context
-      if (commandContext?.mode?.major) {
+      // Update mode from context if not already set via context API
+      if (!currentMode && commandContext?.mode?.major) {
         currentMode = commandContext.mode.major;
         updateModeIndicator();
       }
@@ -138,9 +155,15 @@ function updateModeIndicator() {
 
   const label = indicator.querySelector('.mode-label');
   indicator.setAttribute('data-mode', currentMode);
-  label.textContent = currentMode;
 
-  log('cmd:panel', 'Mode indicator updated:', currentMode);
+  // Show group name in group mode
+  if (currentMode === 'group' && currentModeMetadata.groupName) {
+    label.textContent = currentModeMetadata.groupName;
+  } else {
+    label.textContent = currentMode;
+  }
+
+  log('cmd:panel', 'Mode indicator updated:', currentMode, currentModeMetadata);
 }
 
 /**
@@ -153,12 +176,25 @@ async function cycleMode() {
 
   log('cmd:panel', 'Cycling mode from', currentMode, 'to', nextMode);
 
-  // Set the mode via the API
+  // Try context API first
+  if (api.context) {
+    const targetWindowId = await api.window.getFocusedVisibleWindowId();
+    const result = await api.context.setMode(nextMode, { windowId: targetWindowId });
+    if (result.success) {
+      currentMode = nextMode;
+      currentModeMetadata = {};
+      updateModeIndicator();
+      await loadCommandContext();
+      return;
+    }
+  }
+
+  // Fall back to old modes API
   const result = await api.modes.setMajorMode(nextMode);
   if (result.success) {
     currentMode = nextMode;
+    currentModeMetadata = {};
     updateModeIndicator();
-    // Reload command context with new mode
     await loadCommandContext();
   } else {
     log.error('cmd:panel', 'Failed to set mode:', result.error);
@@ -186,11 +222,24 @@ async function initModeIndicator() {
     });
   }
 
-  // Subscribe to mode changes
+  // Watch context API for mode changes (preferred)
+  if (api.context) {
+    api.context.watchMode((mode, entry) => {
+      log('cmd:panel', 'Context mode changed:', mode, entry);
+      currentMode = mode || 'default';
+      currentModeMetadata = entry?.metadata || {};
+      updateModeIndicator();
+    });
+  }
+
+  // Also subscribe to old modes API for backwards compatibility
   api.modes.onModeChange((modeState, windowId) => {
-    log('cmd:panel', 'Mode changed:', modeState, 'for window:', windowId);
-    currentMode = modeState.major || 'default';
-    updateModeIndicator();
+    log('cmd:panel', 'Mode changed (modes API):', modeState, 'for window:', windowId);
+    // Only update if context API hasn't set a value
+    if (!currentMode || currentMode === 'default') {
+      currentMode = modeState.major || 'default';
+      updateModeIndicator();
+    }
   });
 
   log('cmd:panel', 'Mode indicator initialized with mode:', currentMode);

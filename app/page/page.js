@@ -37,6 +37,7 @@ const btnBack = document.getElementById('btn-back');
 const btnForward = document.getElementById('btn-forward');
 const btnReload = document.getElementById('btn-reload');
 const urlText = document.getElementById('url-text');
+const modeIndicator = document.getElementById('mode-indicator');
 
 // Current webview bounds
 let bounds = { x: initialX, y: initialY, width: initialWidth, height: initialHeight };
@@ -335,5 +336,82 @@ api.commands.register({
   scope: 'window',
   execute: () => webview.reload()
 });
+
+// --- Mode indicator ---
+
+let currentMode = 'page';
+let currentModeMetadata = {};
+
+/**
+ * Update the mode indicator display
+ */
+function updateModeIndicator() {
+  if (!modeIndicator) return;
+
+  const label = modeIndicator.querySelector('.mode-label');
+  const groupName = modeIndicator.querySelector('.group-name');
+
+  modeIndicator.setAttribute('data-mode', currentMode);
+
+  if (label) {
+    label.textContent = currentMode;
+  }
+
+  // Show group name when in group mode
+  if (groupName) {
+    if (currentMode === 'group' && currentModeMetadata.groupName) {
+      groupName.textContent = currentModeMetadata.groupName;
+      groupName.style.display = 'inline';
+    } else {
+      groupName.style.display = 'none';
+    }
+  }
+
+  DEBUG && console.log('[page] Mode indicator updated:', currentMode, currentModeMetadata);
+}
+
+/**
+ * Initialize mode context on page load
+ */
+async function initModeContext() {
+  try {
+    // Set page mode via context API
+    const result = await api.context.setMode('page', {
+      metadata: {
+        url: targetUrl,
+        title: document.title
+      }
+    });
+
+    if (result.success) {
+      DEBUG && console.log('[page] Page mode set via context');
+    } else {
+      console.warn('[page] Failed to set page mode:', result.error);
+    }
+
+    // Check if we inherited group mode from opener
+    const modeResult = await api.context.get('mode');
+    if (modeResult.success && modeResult.data) {
+      currentMode = modeResult.data.value || 'page';
+      currentModeMetadata = modeResult.data.metadata || {};
+      updateModeIndicator();
+    }
+
+    // Watch for mode changes
+    api.context.watchMode((mode, entry) => {
+      if (mode) {
+        currentMode = mode;
+        currentModeMetadata = entry?.metadata || {};
+        updateModeIndicator();
+      }
+    });
+
+  } catch (err) {
+    console.error('[page] Failed to initialize mode context:', err);
+  }
+}
+
+// Initialize mode context
+initModeContext();
 
 DEBUG && console.log('[page] Container initialized for:', targetUrl);

@@ -22,6 +22,13 @@ let currentSettings = {
   prefs: defaults.prefs
 };
 
+// Track the groups window ID for mode cleanup
+let groupsWindowId = null;
+
+// Track the current active group context
+let activeGroupId = null;
+let activeGroupName = null;
+
 /**
  * Load settings from datastore
  * @returns {Promise<{prefs: object}>}
@@ -62,10 +69,62 @@ const openGroupsWindow = () => {
   api.window.open(address, params)
     .then(window => {
       debug && console.log('[ext:groups] Groups window opened:', window);
+      groupsWindowId = window?.id || null;
     })
     .catch(error => {
       console.error('[ext:groups] Failed to open groups window:', error);
     });
+};
+
+/**
+ * Set group mode for a window via context API
+ */
+const setGroupMode = async (windowId, groupId, groupName, color = null) => {
+  if (!api.context) {
+    debug && console.log('[ext:groups] Context API not available');
+    return;
+  }
+
+  try {
+    await api.context.setMode('group', {
+      windowId,
+      metadata: {
+        groupId,
+        groupName,
+        color
+      }
+    });
+    debug && console.log(`[ext:groups] Set group mode for window ${windowId}: ${groupName}`);
+  } catch (err) {
+    console.error('[ext:groups] Failed to set group mode:', err);
+  }
+};
+
+/**
+ * Exit group mode for all windows in a group
+ * Resets them back to their content-based mode (page/default)
+ */
+const exitGroupMode = async (groupId) => {
+  if (!api.context) {
+    debug && console.log('[ext:groups] Context API not available');
+    return;
+  }
+
+  try {
+    // Get all windows in this group
+    const result = await api.context.getWindowsInGroup(groupId);
+    if (!result.success || !result.data) return;
+
+    const windowIds = result.data;
+    debug && console.log(`[ext:groups] Exiting group mode for ${windowIds.length} windows`);
+
+    // Reset each window to page mode (content-based)
+    for (const windowId of windowIds) {
+      await api.context.setMode('page', { windowId });
+    }
+  } catch (err) {
+    console.error('[ext:groups] Failed to exit group mode:', err);
+  }
 };
 
 // ===== Command helpers =====
@@ -164,15 +223,32 @@ const openGroup = async (groupName) => {
     return { success: false, error: 'Group is empty' };
   }
 
+  // Track active group for mode inheritance
+  activeGroupId = tag.id;
+  activeGroupName = tag.name;
+
+  // Open windows and set group mode
+  const openedWindows = [];
   for (const item of urlItems) {
-    await api.window.open(item.content, {
+    const result = await api.window.open(item.content, {
       trackingSource: 'cmd',
-      trackingSourceId: `group:${groupName}`
+      trackingSourceId: `group:${groupName}`,
+      // Pass group context for mode inheritance
+      groupMode: {
+        groupId: tag.id,
+        groupName: tag.name,
+        color: tag.color
+      }
     });
+    if (result?.id) {
+      openedWindows.push(result.id);
+      // Set group mode for the opened window
+      await setGroupMode(result.id, tag.id, tag.name, tag.color);
+    }
   }
 
   console.log(`[ext:groups] Opened ${urlItems.length} windows from group "${groupName}"`);
-  return { success: true, count: urlItems.length };
+  return { success: true, count: urlItems.length, windowIds: openedWindows };
 };
 
 // ===== Command definitions =====
@@ -349,6 +425,20 @@ const init = async () => {
   // Wait for cmd:ready before registering commands
   api.subscribe('cmd:ready', () => {
     initCommands();
+  }, api.scopes.GLOBAL);
+
+  // Listen for window close events to cleanup group mode
+  api.subscribe('window:closed', async (msg) => {
+    const closedWindowId = msg?.windowId;
+
+    // If the groups window closed, exit group mode for all windows in the active group
+    if (closedWindowId === groupsWindowId && activeGroupId) {
+      debug && console.log('[ext:groups] Groups window closed, exiting group mode for active group');
+      await exitGroupMode(activeGroupId);
+      activeGroupId = null;
+      activeGroupName = null;
+      groupsWindowId = null;
+    }
   }, api.scopes.GLOBAL);
 
   // Query in case cmd is already ready (it usually is since cmd loads first)
