@@ -196,6 +196,8 @@ urlText.addEventListener('click', (e) => {
 
 // --- IZUI integration ---
 
+// Initialize IZUI for proper stack navigation
+// Web page containers can have children (links opening new windows)
 izui.init({
   canHaveChildren: true,
   onEscape: () => {
@@ -207,6 +209,8 @@ izui.init({
     DEBUG && console.log('[page] ESC: at root, closing');
     return { handled: false };
   }
+}).catch(err => {
+  console.error('[page] IZUI init error:', err);
 });
 
 // --- Webview events ---
