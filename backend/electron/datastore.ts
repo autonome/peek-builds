@@ -1669,19 +1669,13 @@ export function getWindowsMatchingContext(
 
 // ==================== Mode Helpers (Context-based replacements for modes.ts) ====================
 
-export type MajorModeId = 'page' | 'group' | 'settings' | 'default';
-export type MinorModeId = 'preview' | 'edit' | 'annotate' | 'search';
+export type MajorModeId = 'page' | 'group' | 'default';
 
 /**
  * Detect the appropriate major mode based on URL
  */
 export function detectModeFromUrl(url: string): MajorModeId {
   if (!url) return 'default';
-
-  // Settings page
-  if (url.includes('/settings/') || url.includes('settings.html')) {
-    return 'settings';
-  }
 
   // Groups extension
   if (url.includes('/groups/') || url.includes('groups.html')) {
@@ -1724,30 +1718,20 @@ export function updateModeForNavigation(windowId: number, url: string): void {
  */
 export function checkModeConditions(
   windowId: number,
-  requiredMajorMode?: MajorModeId,
-  requiredMinorModes?: MinorModeId[]
+  requiredMajorMode?: MajorModeId
 ): boolean {
   const entry = getContextEntry('mode', windowId);
   const currentMode = entry?.value as MajorModeId | undefined;
 
   // No mode state = default mode
   if (!currentMode) {
-    if (requiredMajorMode && requiredMajorMode !== 'default') {
-      return false;
-    }
-    if (requiredMinorModes && requiredMinorModes.length > 0) {
-      return false;
-    }
-    return true;
+    return !requiredMajorMode || requiredMajorMode === 'default';
   }
 
   // Check major mode
   if (requiredMajorMode && currentMode !== requiredMajorMode) {
     return false;
   }
-
-  // Minor modes not implemented in context API yet - always pass
-  // (minor modes were rarely used and can be added later if needed)
 
   return true;
 }

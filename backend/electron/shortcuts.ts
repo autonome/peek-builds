@@ -9,7 +9,7 @@
  */
 
 import { DEBUG } from './config.js';
-import { checkModeConditions, type MajorModeId, type MinorModeId } from './datastore.js';
+import { checkModeConditions, type MajorModeId } from './datastore.js';
 
 // Lazy-load Electron modules to allow testing without Electron
 let globalShortcut: typeof import('electron').globalShortcut | null = null;
@@ -39,7 +39,6 @@ interface ParsedShortcut {
 
 interface ModeConditions {
   majorMode?: MajorModeId;
-  minorModes?: MinorModeId[];
 }
 
 interface LocalShortcutEntry {
@@ -226,12 +225,12 @@ export function registerLocalShortcut(
 
   // If mode-conditional, add to array (allows same key with different modes)
   // If not mode-conditional, replace any existing non-conditional entry
-  if (modeConditions?.majorMode || modeConditions?.minorModes?.length) {
+  if (modeConditions?.majorMode) {
     // Mode-conditional: add to array
     entries.push(entry);
   } else {
     // Non-conditional: find and replace any existing non-conditional entry
-    const nonConditionalIndex = entries.findIndex(e => !e.modeConditions?.majorMode && !e.modeConditions?.minorModes?.length);
+    const nonConditionalIndex = entries.findIndex(e => !e.modeConditions?.majorMode);
     if (nonConditionalIndex >= 0) {
       entries[nonConditionalIndex] = entry;
     } else {
@@ -266,7 +265,7 @@ export function unregisterLocalShortcut(shortcut: string, source?: string, modeC
     }
 
     // No mode conditions - remove non-conditional entries
-    return entry.modeConditions?.majorMode || entry.modeConditions?.minorModes?.length;
+    return !!entry.modeConditions?.majorMode;
   });
 
   if (filtered.length > 0) {
@@ -291,7 +290,7 @@ export function handleLocalShortcut(input: InputEvent, focusedWindowId?: number)
     for (const entry of entries) {
       if (inputMatchesShortcut(input, entry.parsed)) {
         // Check mode conditions if specified
-        if (entry.modeConditions?.majorMode || entry.modeConditions?.minorModes?.length) {
+        if (entry.modeConditions?.majorMode) {
           // Need a window ID to check mode
           if (focusedWindowId === undefined && BrowserWindow) {
             // Try to get focused window
@@ -302,8 +301,7 @@ export function handleLocalShortcut(input: InputEvent, focusedWindowId?: number)
           if (focusedWindowId !== undefined) {
             const modeMatches = checkModeConditions(
               focusedWindowId,
-              entry.modeConditions.majorMode,
-              entry.modeConditions.minorModes
+              entry.modeConditions.majorMode
             );
 
             if (modeMatches) {

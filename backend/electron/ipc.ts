@@ -165,7 +165,6 @@ import {
 import {
   detectModeFromUrl,
   type MajorModeId,
-  type MinorModeId,
 } from './datastore.js';
 
 // ============================================================================
@@ -2451,9 +2450,7 @@ export function registerMiscHandlers(onQuit: () => void): void {
       registerGlobalShortcut(msg.shortcut, msg.source, callback);
     } else {
       // Build mode conditions if provided
-      const modeConditions = (msg.mode || msg.minorModes?.length)
-        ? { majorMode: msg.mode, minorModes: msg.minorModes }
-        : undefined;
+      const modeConditions = msg.mode ? { majorMode: msg.mode } : undefined;
       registerLocalShortcut(msg.shortcut, msg.source, callback, modeConditions);
     }
   });
@@ -2470,9 +2467,7 @@ export function registerMiscHandlers(onQuit: () => void): void {
       }
     } else {
       // Build mode conditions if provided
-      const modeConditions = (msg.mode || msg.minorModes?.length)
-        ? { majorMode: msg.mode, minorModes: msg.minorModes }
-        : undefined;
+      const modeConditions = msg.mode ? { majorMode: msg.mode } : undefined;
       unregisterLocalShortcut(msg.shortcut, msg.source, modeConditions);
     }
   });
@@ -2918,18 +2913,11 @@ export function registerProfileHandlers(): void {
  * New code should use the context API (api.context) instead.
  */
 export function registerModesHandlers(): void {
-  // Mode definitions (hardcoded since modes.ts is removed)
-  const MAJOR_MODES = [
-    { id: 'default', name: 'Default', description: 'Standard browsing mode', type: 'major' },
-    { id: 'page', name: 'Page', description: 'Viewing a web page', type: 'major' },
-    { id: 'group', name: 'Group', description: 'Managing tab groups', type: 'major' },
-    { id: 'settings', name: 'Settings', description: 'Application settings', type: 'major' },
-  ];
-  const MINOR_MODES = [
-    { id: 'preview', name: 'Preview', description: 'Preview mode (read-only)', type: 'minor' },
-    { id: 'edit', name: 'Edit', description: 'Edit mode', type: 'minor' },
-    { id: 'annotate', name: 'Annotate', description: 'Annotation mode', type: 'minor' },
-    { id: 'search', name: 'Search', description: 'Search mode active', type: 'minor' },
+  // Mode definitions
+  const MODES = [
+    { id: 'default', name: 'Default', description: 'Standard browsing mode' },
+    { id: 'page', name: 'Page', description: 'Viewing a web page' },
+    { id: 'group', name: 'Group', description: 'Managing tab groups' },
   ];
 
   // Get mode state for a window (uses context API)
@@ -2948,8 +2936,7 @@ export function registerModesHandlers(): void {
 
       const entry = getContextEntry('mode', windowId);
       const state = {
-        major: (entry?.value as MajorModeId) || 'default',
-        minors: [] as MinorModeId[] // Minor modes not implemented in context API
+        major: (entry?.value as MajorModeId) || 'default'
       };
       return { success: true, data: state };
     } catch (error) {
@@ -2980,7 +2967,6 @@ export function registerModesHandlers(): void {
       publish(getSystemAddress(), PubSubScopes.GLOBAL, 'modes:changed', {
         windowId,
         major: data.mode,
-        minors: [],
       });
 
       return { success: true };
@@ -2990,27 +2976,9 @@ export function registerModesHandlers(): void {
     }
   });
 
-  // Minor modes - stub implementations (not used in context API)
-  ipcMain.handle('modes:enableMinorMode', async () => {
-    return { success: true }; // No-op, minor modes not implemented
-  });
-
-  ipcMain.handle('modes:disableMinorMode', async () => {
-    return { success: true }; // No-op, minor modes not implemented
-  });
-
-  ipcMain.handle('modes:toggleMinorMode', async () => {
-    return { success: true, data: false }; // No-op, minor modes not implemented
-  });
-
   // List all available modes
   ipcMain.handle('modes:listModes', async () => {
-    try {
-      return { success: true, data: [...MAJOR_MODES, ...MINOR_MODES] };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
+    return { success: true, data: MODES };
   });
 
   // Get command context for current state
@@ -3033,8 +3001,7 @@ export function registerModesHandlers(): void {
       const context = {
         windowId,
         mode: {
-          major: (entry?.value as MajorModeId) || 'default',
-          minors: [] as MinorModeId[]
+          major: (entry?.value as MajorModeId) || 'default'
         },
         url,
         title,

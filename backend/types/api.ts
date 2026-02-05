@@ -42,24 +42,15 @@ export type CommandScope = 'global' | 'window' | 'page';
  * Only one major mode can be active per window at a time.
  * Inspired by Emacs major modes.
  */
-export type MajorModeId = 'page' | 'group' | 'settings' | 'default';
-
-/**
- * Minor modes are optional features that can be combined.
- * Multiple minor modes can be active simultaneously.
- * Inspired by Emacs minor modes.
- */
-export type MinorModeId = 'preview' | 'edit' | 'annotate' | 'search';
+export type MajorModeId = 'page' | 'group' | 'default';
 
 /**
  * Mode metadata for display and behavior
  */
 export interface ModeInfo {
-  id: MajorModeId | MinorModeId;
+  id: MajorModeId;
   name: string;
   description?: string;
-  /** Whether this is a major (exclusive) or minor (stackable) mode */
-  type: 'major' | 'minor';
 }
 
 /**
@@ -68,8 +59,6 @@ export interface ModeInfo {
 export interface WindowModeState {
   /** Current major mode */
   major: MajorModeId;
-  /** Active minor modes */
-  minors: MinorModeId[];
 }
 
 /**
@@ -98,15 +87,6 @@ export interface IModesApi {
   /** Set the major mode for a window */
   setMajorMode(mode: MajorModeId, windowId?: number | null): Promise<ApiResult<void>>;
 
-  /** Enable a minor mode for a window */
-  enableMinorMode(mode: MinorModeId, windowId?: number | null): Promise<ApiResult<void>>;
-
-  /** Disable a minor mode for a window */
-  disableMinorMode(mode: MinorModeId, windowId?: number | null): Promise<ApiResult<void>>;
-
-  /** Toggle a minor mode for a window */
-  toggleMinorMode(mode: MinorModeId, windowId?: number | null): Promise<ApiResult<boolean>>;
-
   /** Get all available modes */
   listModes(): Promise<ApiResult<ModeInfo[]>>;
 
@@ -121,8 +101,6 @@ export interface ShortcutOptions {
   global?: boolean;
   /** Only trigger shortcut when in this major mode */
   mode?: MajorModeId;
-  /** Only trigger shortcut when these minor modes are active */
-  minorModes?: MinorModeId[];
 }
 
 export interface IShortcutsApi {

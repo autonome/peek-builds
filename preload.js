@@ -113,8 +113,7 @@ api.shortcuts = {
    * @param {function} cb - Callback function when shortcut is triggered
    * @param {object} options - Optional configuration
    * @param {boolean} options.global - If true, shortcut works even when app doesn't have focus (default: false)
-   * @param {string} options.mode - Only trigger in this major mode ('page', 'group', 'settings', 'default')
-   * @param {string[]} options.minorModes - Only trigger when these minor modes are active
+   * @param {string} options.mode - Only trigger in this major mode ('page', 'group', 'default')
    */
   register: (shortcut, cb, options = {}) => {
     const isGlobal = options.global === true;
@@ -128,8 +127,7 @@ api.shortcuts = {
       shortcut,
       replyTopic,
       global: isGlobal,
-      mode: options.mode,
-      minorModes: options.minorModes
+      mode: options.mode
     });
 
     ipcRenderer.on(replyTopic, (ev, msg) => {
@@ -152,8 +150,7 @@ api.shortcuts = {
       source: sourceAddress,
       shortcut,
       global: isGlobal,
-      mode: options.mode,
-      minorModes: options.minorModes
+      mode: options.mode
     });
   }
 };
@@ -1579,12 +1576,12 @@ ipcRenderer.on('escape-pressed', async (event, data) => {
 });
 
 // ==================== Modes API ====================
-// Context-aware command system with major/minor modes
+// Context-aware command system
 api.modes = {
   /**
    * Get the current mode state for a window
    * @param {number|null} windowId - Window ID (null = current/last focused)
-   * @returns {Promise<{success: boolean, data?: {major: string, minors: string[]}, error?: string}>}
+   * @returns {Promise<{success: boolean, data?: {major: string}, error?: string}>}
    */
   getWindowMode: (windowId = null) => {
     return ipcRenderer.invoke('modes:getWindowMode', { windowId });
@@ -1592,7 +1589,7 @@ api.modes = {
 
   /**
    * Set the major mode for a window
-   * @param {string} mode - Major mode ID ('page', 'group', 'settings', 'default')
+   * @param {string} mode - Major mode ID ('page', 'group', 'default')
    * @param {number|null} windowId - Window ID (null = current/last focused)
    * @returns {Promise<{success: boolean, error?: string}>}
    */
@@ -1601,38 +1598,8 @@ api.modes = {
   },
 
   /**
-   * Enable a minor mode for a window
-   * @param {string} mode - Minor mode ID ('preview', 'edit', 'annotate', 'search')
-   * @param {number|null} windowId - Window ID (null = current/last focused)
-   * @returns {Promise<{success: boolean, error?: string}>}
-   */
-  enableMinorMode: (mode, windowId = null) => {
-    return ipcRenderer.invoke('modes:enableMinorMode', { mode, windowId });
-  },
-
-  /**
-   * Disable a minor mode for a window
-   * @param {string} mode - Minor mode ID
-   * @param {number|null} windowId - Window ID (null = current/last focused)
-   * @returns {Promise<{success: boolean, error?: string}>}
-   */
-  disableMinorMode: (mode, windowId = null) => {
-    return ipcRenderer.invoke('modes:disableMinorMode', { mode, windowId });
-  },
-
-  /**
-   * Toggle a minor mode for a window
-   * @param {string} mode - Minor mode ID
-   * @param {number|null} windowId - Window ID (null = current/last focused)
-   * @returns {Promise<{success: boolean, data?: boolean, error?: string}>} data is true if now enabled
-   */
-  toggleMinorMode: (mode, windowId = null) => {
-    return ipcRenderer.invoke('modes:toggleMinorMode', { mode, windowId });
-  },
-
-  /**
-   * Get all available modes (major and minor)
-   * @returns {Promise<{success: boolean, data?: Array<{id: string, name: string, description: string, type: string}>, error?: string}>}
+   * Get all available modes
+   * @returns {Promise<{success: boolean, data?: Array<{id: string, name: string, description: string}>, error?: string}>}
    */
   listModes: () => {
     return ipcRenderer.invoke('modes:listModes');
@@ -1653,7 +1620,7 @@ api.modes = {
    */
   onModeChange: (callback) => {
     api.subscribe('modes:changed', (msg) => {
-      callback({ major: msg.major, minors: msg.minors }, msg.windowId);
+      callback({ major: msg.major }, msg.windowId);
     }, api.scopes.GLOBAL);
   }
 };
