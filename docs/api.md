@@ -14,6 +14,7 @@ This API is implemented by both the Electron and Tauri backends, ensuring fronte
 - [Commands (Command Palette)](#commands-command-palette)
 - [Theme](#theme)
 - [Escape Handling](#escape-handling)
+- [IZUI State](#izui-state)
 - [Logging](#logging)
 - [Debug Mode](#debug-mode)
 - [App Control](#app-control)
@@ -452,6 +453,44 @@ window.app.escape.onEscape(() => {
   }
   return { handled: false };   // Allow close
 });
+```
+
+---
+
+## IZUI State
+
+Query the IZUI state machine to determine if the current session is transient (invoked from another app) or active (invoked within Peek). See `docs/izui.md` for full details.
+
+### `window.app.izui.isTransient()`
+
+Check if the current session was invoked transiently (app wasn't focused).
+
+```javascript
+const isTransient = await window.app.izui.isTransient();
+if (isTransient) {
+  // User invoked from another app - show simplified UI
+  currentMode = 'default';
+} else {
+  // User is working within Peek - show contextual UI
+  currentMode = targetWindow.mode;
+}
+```
+
+### `window.app.izui.getEffectiveMode()`
+
+Get the effective mode for display. Returns `'default'` for transient sessions, `'active'` otherwise.
+
+```javascript
+const mode = await window.app.izui.getEffectiveMode();
+```
+
+### `window.app.izui.getState()`
+
+Get the current IZUI state.
+
+```javascript
+const state = await window.app.izui.getState();
+// Returns: 'idle' | 'transient' | 'active' | 'overlay'
 ```
 
 ---

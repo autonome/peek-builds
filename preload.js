@@ -356,6 +356,48 @@ api.window = {
    */
   getWindowId: () => {
     return ipcRenderer.invoke('get-window-id');
+  },
+  /**
+   * Check if this window was opened transiently (app wasn't focused when opened)
+   * Used for IZUI policy: transient windows use different escape/mode behavior
+   * @returns {Promise<boolean>} True if window is transient
+   */
+  isTransient: () => {
+    return ipcRenderer.invoke('window-is-transient');
+  }
+};
+
+// ============================================================================
+// IZUI State Coordinator API
+// ============================================================================
+// Centralized IZUI state management. Preferred over api.window.isTransient()
+// because it re-evaluates state on each invocation, fixing keepLive windows
+// that would otherwise be stuck with stale transient state.
+api.izui = {
+  /**
+   * Check if the current IZUI session is in transient mode
+   * Re-evaluates on each call (unlike window.isTransient which is frozen at creation)
+   * @returns {Promise<boolean>} True if session is transient (app wasn't focused when invoked)
+   */
+  isTransient: () => {
+    return ipcRenderer.invoke('izui-is-transient');
+  },
+
+  /**
+   * Get the effective mode for display
+   * Returns 'default' for transient sessions, 'active' for focused sessions
+   * @returns {Promise<string>} 'default' or 'active'
+   */
+  getEffectiveMode: () => {
+    return ipcRenderer.invoke('izui-get-effective-mode');
+  },
+
+  /**
+   * Get the current IZUI state
+   * @returns {Promise<string>} 'idle' | 'transient' | 'active' | 'overlay'
+   */
+  getState: () => {
+    return ipcRenderer.invoke('izui-get-state');
   }
 };
 

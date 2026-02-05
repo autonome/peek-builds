@@ -199,7 +199,11 @@ Commands live in `extensions/cmd/commands/` and are loaded by the cmd panel.
 - Windows identified by keys for lifecycle management (e.g., `peek:${address}`)
 - Modal windows use `type: 'panel'` to return focus to previous app on close
 - Parameters: `modal`, `keepLive`, `persistState`, `transparent`, `height`, `width`, `key`
-- "Escape IZUI" design - ESC key always returns to previous context
+- **IZUI State Machine** - manages transient vs active window behavior. See `docs/izui.md`
+  - **Transient**: Invoked from another app (global hotkey) - ESC closes immediately
+  - **Active**: Invoked within Peek - ESC navigates internally, never closes
+  - Transient state propagates to child windows (e.g., cmd → overlay)
+  - Use `api.izui.isTransient()` to query current session state
 
 ### Data Storage
 

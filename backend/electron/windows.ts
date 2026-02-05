@@ -23,6 +23,10 @@ import {
   getChildWindows,
 } from './main.js';
 
+import {
+  getIzuiCoordinator,
+} from './izui-state.js';
+
 /**
  * Get the appropriate background color based on system theme
  * This helps prevent the "white flash" when opening windows in dark mode
@@ -137,9 +141,19 @@ export function addEscHandler(bw: BrowserWindow): void {
 
       // For 'auto' mode, check if transient (no focused window when opened)
       if (escapeMode === 'auto') {
-        if (params.transient) {
-          // Transient mode - close immediately (user invoked via global hotkey)
-          console.log('[esc] Auto mode (transient) - closing directly');
+        // Use IZUI coordinator for consistent state management
+        const coordinator = getIzuiCoordinator();
+        const isCoordinatorOverlay = coordinator.isOverlay();
+
+        // Overlay windows always close on ESC (they're full-screen temporary views)
+        const isOverlay = isCoordinatorOverlay || params.overlay === true || params.overlayHiddenWindows;
+
+        // Check transient from coordinator (re-evaluated) or window params (fallback)
+        const isTransient = coordinator.isTransient() || params.transient === true;
+
+        if (isTransient || isOverlay) {
+          // Transient mode or overlay - close immediately
+          console.log('[esc] Auto mode (transient or overlay) - closing directly, coordinator.isTransient:', coordinator.isTransient());
         } else {
           // Active mode (Peek was focused when window opened)
           // IZUI Policy: ESC only navigates internal state, does NOT close

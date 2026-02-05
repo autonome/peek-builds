@@ -171,6 +171,10 @@ import {
   getProfileSession,
 } from './session-partition.js';
 
+import {
+  getIzuiCoordinator,
+} from './izui-state.js';
+
 // ============================================================================
 // Window Focus Tracking for Window-Targeted Commands
 // ============================================================================
@@ -1549,17 +1553,34 @@ export function registerWindowHandlers(): void {
     const { url, options } = msg;
 
     // IMPORTANT: Determine transient state BEFORE creating the window
-    // A window is transient if opened when no Peek window was focused (e.g., via global hotkey)
-    // This must be checked before window creation because the new window will become focused
-    const focusedWindowBeforeCreate = BrowserWindow.getFocusedWindow();
-    const isTransient = !focusedWindowBeforeCreate || focusedWindowBeforeCreate.isDestroyed();
-    DEBUG && console.log('Transient detection:', { isTransient, focusedWindowId: focusedWindowBeforeCreate?.id });
+    // A window is transient if:
+    // 1. The current IZUI session is transient (user invoked from background), OR
+    // 2. No Peek window was focused when evaluated
+    // Check session state FIRST before evaluateOnShow() might change it
+    const coordinator = getIzuiCoordinator();
+    const sessionWasTransient = coordinator.isTransient();
+
+    // Now evaluate (this might update session state based on current focus)
+    const entryMode = coordinator.evaluateOnShow();
+
+    // Use session state if available, otherwise use evaluated state
+    const isTransient = sessionWasTransient || entryMode === 'transient';
+    DEBUG && console.log('[izui] Transient detection:', { sessionWasTransient, entryMode, isTransient });
 
     // Check if window with this key already exists
     if (options.key) {
       const existingWindow = findWindowByKey(msg.source, options.key);
       if (existingWindow) {
         DEBUG && console.log('Reusing existing window with key:', options.key);
+
+        // RE-EVALUATE transient state on show, not just creation
+        // This fixes keepLive windows (like cmd bar) being stuck with stale transient state
+        const coordinator = getIzuiCoordinator();
+        const newTransientState = coordinator.evaluateOnShow();
+        const existingData = existingWindow.data as { params: Record<string, unknown> };
+        existingData.params.transient = (newTransientState === 'transient');
+        DEBUG && console.log('Reused window transient re-evaluated:', newTransientState);
+
         if (!isHeadless()) {
           existingWindow.window.show();
         }
@@ -2389,6 +2410,47 @@ export function registerMiscHandlers(onQuit: () => void): void {
   ipcMain.handle('get-window-id', (ev) => {
     const win = BrowserWindow.fromWebContents(ev.sender);
     return win ? win.id : null;
+  });
+
+  // Check if current window is transient (opened when app wasn't focused)
+  // Used for IZUI policy: transient windows have different escape/mode behavior
+  ipcMain.handle('window-is-transient', (ev) => {
+    const win = BrowserWindow.fromWebContents(ev.sender);
+    if (!win) return false;
+    const windowData = getWindowInfo(win.id);
+    return windowData?.params?.transient === true;
+  });
+
+  // ============================================================================
+  // IZUI State Coordinator IPC Handlers
+  // ============================================================================
+  // Centralized IZUI state management for consistent transient detection,
+  // mode display, and ESC behavior across all windows.
+
+  // Check if IZUI session is in transient mode (app wasn't focused when invoked)
+  // Re-evaluates at query time, excluding the requesting window from focus check
+  // (since the cmd window itself has focus by the time it asks this question)
+  ipcMain.handle('izui-is-transient', (ev) => {
+    const coordinator = getIzuiCoordinator();
+    const requestingWindow = BrowserWindow.fromWebContents(ev.sender);
+    // Re-evaluate excluding the requesting window
+    const entryMode = coordinator.evaluateOnShow(requestingWindow?.id);
+    const result = entryMode === 'transient';
+    DEBUG && console.log('[izui] izui-is-transient:', result, 'windowId:', requestingWindow?.id);
+    return result;
+  });
+
+  // Get the effective mode for display
+  // Returns 'default' for transient sessions, 'active' otherwise (caller resolves actual mode)
+  ipcMain.handle('izui-get-effective-mode', () => {
+    const coordinator = getIzuiCoordinator();
+    return coordinator.getEffectiveMode();
+  });
+
+  // Get the current IZUI state (idle, transient, active, overlay)
+  ipcMain.handle('izui-get-state', () => {
+    const coordinator = getIzuiCoordinator();
+    return coordinator.getState();
   });
 
   // Get window position

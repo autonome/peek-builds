@@ -112,6 +112,24 @@ let currentModeMetadata = {};
  */
 const loadCommandContext = async () => {
   try {
+    // IZUI Policy: If invoked transiently (app wasn't focused when invoked),
+    // use "default" mode since we're not targeting a specific window context.
+    // Use api.izui.isTransient() which re-evaluates on each call (not frozen at creation)
+    // This fixes keepLive windows being stuck with stale transient state.
+    const isTransient = await api.izui.isTransient();
+    if (isTransient) {
+      log('cmd:panel', 'Transient invocation - using default mode');
+      currentMode = 'default';
+      currentModeMetadata = {};
+      updateModeIndicator();
+      // Still load command context for backwards compat, but don't use its mode
+      const result = await api.modes.getCommandContext();
+      if (result.success) {
+        commandContext = result.data;
+      }
+      return;
+    }
+
     // Use context API to get mode for the target window
     // First get the focused visible window ID
     const targetWindowId = await api.window.getFocusedVisibleWindowId();
@@ -207,10 +225,16 @@ async function cycleMode() {
 async function initModeIndicator() {
   // Use commandContext which has the target window's mode (not the cmd panel's mode)
   // commandContext is loaded by loadCommandContext() before this is called
-  if (commandContext?.mode?.major) {
+  // BUT: Don't override if loadCommandContext already set 'default' (transient mode)
+  if (currentMode === 'default') {
+    // Already set by transient detection - don't override
+    updateModeIndicator();
+  } else if (commandContext?.mode?.major) {
     currentMode = commandContext.mode.major;
+    updateModeIndicator();
+  } else {
+    updateModeIndicator();
   }
-  updateModeIndicator();
 
   // Set up click handler for cycling
   const indicator = document.getElementById('mode-indicator');

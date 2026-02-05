@@ -18,6 +18,7 @@ import { scopes, publish, subscribe, setExtensionBroadcaster, getSystemAddress }
 import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, DEBUG } from './config.js';
 import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
+import { getIzuiCoordinator } from './izui-state.js';
 
 // Configuration
 export interface AppConfig {
@@ -136,17 +137,27 @@ export async function initialize(): Promise<void> {
     window.on('closed', () => {
       const windowData = windowRegistry.get(windowId);
 
+      // Clean up IZUI coordinator state
+      const coordinator = getIzuiCoordinator();
+      coordinator.clearFocusedWindow(windowId);
+      coordinator.popWindow(windowId);
+
       if (windowData) {
         // If this was an overlay window, restore the windows that were hidden
+        // BUT: In transient mode, don't restore - just close and return to previous app
+        // Use the window's own transient param (not coordinator - session may be ended by popWindow)
         const hiddenWindowIds = windowData.params.overlayHiddenWindows as number[] | undefined;
-        if (hiddenWindowIds && hiddenWindowIds.length > 0) {
-          DEBUG && console.log('Overlay closed, restoring', hiddenWindowIds.length, 'windows');
+        const isTransient = windowData.params.transient === true;
+        if (hiddenWindowIds && hiddenWindowIds.length > 0 && !isTransient) {
+          DEBUG && console.log('[izui] Overlay closed (active mode), restoring', hiddenWindowIds.length, 'windows');
           for (const hiddenId of hiddenWindowIds) {
             const hiddenWin = BrowserWindow.fromId(hiddenId);
             if (hiddenWin && !hiddenWin.isDestroyed()) {
               hiddenWin.show();
             }
           }
+        } else if (isTransient && hiddenWindowIds && hiddenWindowIds.length > 0) {
+          DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring', hiddenWindowIds.length, 'windows');
         }
 
         publish(windowData.source, scopes.GLOBAL, 'window:closed', {

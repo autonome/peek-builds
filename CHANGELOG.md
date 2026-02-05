@@ -29,6 +29,16 @@ Desktop
   - Respects system theme (dark/light)
   - Only applies when page doesn't set its own background
 - [x] fix(build): exclude tmp/ agent workspaces from electron-builder
+- [x] feat(izui): implement IZUI state machine for transient vs active window behavior
+  - Centralized `IzuiStateCoordinator` manages session-based state tracking
+  - Fixes cmd bar stuck on "group" mode when invoked transiently
+  - Fixes ESC from overlay showing groups instead of returning to previous app
+  - Transient state propagates to child windows (cmd → overlay)
+  - Uses `isFocused()` for accurate system focus detection
+  - KeepLive windows re-evaluate transient state on each show
+  - Added `api.izui.*` renderer API for querying state
+  - 54 unit tests with dependency injection for testability
+  - See `docs/izui.md` for full documentation
 
 Testing
 - [x] feat(tests): add Playwright browser extension e2e tests
