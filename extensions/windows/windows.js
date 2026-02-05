@@ -34,7 +34,7 @@ api.escape.onEscape(() => {
  * Get all cards in the current view
  */
 const getCards = () => {
-  return Array.from(document.querySelectorAll('.cards peek-card'));
+  return Array.from(document.querySelectorAll('.cards .card'));
 };
 
 /**
@@ -43,8 +43,7 @@ const getCards = () => {
 const updateSelection = () => {
   const cards = getCards();
   cards.forEach((card, i) => {
-    // Use the selected property on peek-card component
-    card.selected = i === state.selectedIndex;
+    card.classList.toggle('selected', i === state.selectedIndex);
   });
 
   // Scroll selected card into view
@@ -237,9 +236,8 @@ const renderWindows = () => {
  * Create a card element for a window
  */
 const createWindowCard = (win) => {
-  const card = document.createElement('peek-card');
-  card.setAttribute('glass', '');
-  card.setAttribute('interactive', '');
+  const card = document.createElement('div');
+  card.className = 'card';
   card.dataset.windowId = win.id;
 
   // Try to get favicon from URL
@@ -253,10 +251,6 @@ const createWindowCard = (win) => {
     }
   }
 
-  // Create inner layout wrapper
-  const inner = document.createElement('div');
-  inner.className = 'window-card-inner';
-
   const favicon = document.createElement('img');
   favicon.className = 'card-favicon';
   favicon.src = faviconUrl;
@@ -267,7 +261,7 @@ const createWindowCard = (win) => {
   const content = document.createElement('div');
   content.className = 'card-content';
 
-  const title = document.createElement('h2');
+  const title = document.createElement('div');
   title.className = 'card-title';
   title.textContent = win.title || 'Untitled';
 
@@ -278,12 +272,11 @@ const createWindowCard = (win) => {
   content.appendChild(title);
   content.appendChild(url);
 
-  inner.appendChild(favicon);
-  inner.appendChild(content);
-  card.appendChild(inner);
+  card.appendChild(favicon);
+  card.appendChild(content);
 
-  // Click to focus window and close windows view (use card-click event from component)
-  card.addEventListener('card-click', async () => {
+  // Click to focus window and close windows view
+  card.addEventListener('click', async () => {
     debug && console.log('[windows] Clicking window:', win.id, win.title);
     await api.window.focus(win.id);
     closeWindowsView();

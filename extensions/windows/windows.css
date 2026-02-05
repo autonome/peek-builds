@@ -15,56 +15,82 @@ html {
 }
 
 body {
-  /* Transparent background with slight dark overlay */
-  background: var(--peek-overlay-bg, rgba(0, 0, 0, 0.85));
+  /* Fully transparent - window itself handles transparency */
+  background: transparent;
   color: var(--base05);
   min-height: 100vh;
-  padding: 48px;
 }
 
 /* Search */
 .search-container {
-  max-width: 600px;
-  margin: 0 auto 32px auto;
+  padding: 24px 24px 0 24px;
 }
 
 .search-input {
   width: 100%;
-  padding: 16px 24px;
-  font-size: 18px;
+  padding: 12px 16px;
+  font-size: 15px;
   font-family: var(--theme-font-sans);
-  background: var(--peek-glass-bg, rgba(255, 255, 255, 0.1));
-  border: 1px solid var(--peek-glass-border-hover, rgba(255, 255, 255, 0.2));
-  border-radius: 12px;
-  color: var(--peek-glass-text, white);
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 8px;
+  color: var(--base05);
   outline: none;
   transition: all 0.15s ease;
-  backdrop-filter: blur(var(--peek-glass-blur, 10px));
 }
 
 .search-input:focus {
   border-color: var(--base0D);
-  background: var(--peek-glass-bg-hover, rgba(255, 255, 255, 0.15));
+  background: var(--base00);
 }
 
 .search-input::placeholder {
-  color: var(--peek-glass-text-secondary, rgba(255, 255, 255, 0.5));
+  color: var(--base03);
 }
 
-/* Window card internal layout */
-.window-card-inner {
+/* Cards container - matches groups/tags */
+.cards {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+/* Card base - matches groups/tags */
+.card {
+  background: var(--base01);
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.15s ease;
   display: flex;
   align-items: flex-start;
-  gap: 16px;
+  gap: 12px;
+}
+
+.card:hover {
+  background: var(--base02);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.card.selected {
+  background: var(--base02);
+  outline: 2px solid var(--base0D);
+  outline-offset: -2px;
+}
+
+.card.selected:hover {
+  background: var(--base03);
 }
 
 /* Window card favicon */
 .card-favicon {
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
   flex-shrink: 0;
-  background: var(--peek-glass-bg, rgba(255, 255, 255, 0.1));
+  background: var(--base02);
   object-fit: contain;
 }
 
@@ -75,9 +101,9 @@ body {
 }
 
 .card-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  color: var(--peek-glass-text, white);
+  color: var(--base05);
   margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
@@ -85,42 +111,18 @@ body {
 }
 
 .card-url {
-  font-size: 13px;
-  color: var(--peek-glass-text-secondary, rgba(255, 255, 255, 0.6));
+  font-size: 12px;
+  color: var(--base04);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 8px;
-}
-
-.card-meta {
-  font-size: 12px;
-  color: var(--peek-glass-text-muted, rgba(255, 255, 255, 0.4));
 }
 
 /* Empty state */
 .empty-state {
   grid-column: 1 / -1;
   text-align: center;
-  padding: 80px 24px;
-  color: var(--peek-glass-text-secondary, rgba(255, 255, 255, 0.5));
-  font-size: 18px;
-}
-
-/* Hint at bottom */
-.hint {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 13px;
-  color: var(--peek-glass-text-muted, rgba(255, 255, 255, 0.4));
-  text-align: center;
-}
-
-.hint kbd {
-  background: var(--peek-glass-bg, rgba(255, 255, 255, 0.1));
-  padding: 2px 8px;
-  border-radius: 4px;
-  margin: 0 4px;
+  padding: 48px 24px;
+  color: var(--base03);
+  font-size: 15px;
 }
