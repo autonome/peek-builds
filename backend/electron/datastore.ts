@@ -1478,11 +1478,13 @@ export function addContextEntry(
   const valueJson = JSON.stringify(value);
   const metadataJson = JSON.stringify(metadata);
 
-  // Insert into database
-  getDb().prepare(`
-    INSERT INTO context_history (id, key, value, metadata, windowId, source, timestamp, prevEntryId)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(entryId, key, valueJson, metadataJson, windowId, source, timestamp, prevEntryId);
+  // Insert into database (if initialized - may not be during tests)
+  if (db) {
+    db.prepare(`
+      INSERT INTO context_history (id, key, value, metadata, windowId, source, timestamp, prevEntryId)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(entryId, key, valueJson, metadataJson, windowId, source, timestamp, prevEntryId);
+  }
 
   // Update in-memory state
   const entry: ContextEntry = {
@@ -1663,6 +1665,91 @@ export function getWindowsMatchingContext(
     }
   }
   return windowIds;
+}
+
+// ==================== Mode Helpers (Context-based replacements for modes.ts) ====================
+
+export type MajorModeId = 'page' | 'group' | 'settings' | 'default';
+export type MinorModeId = 'preview' | 'edit' | 'annotate' | 'search';
+
+/**
+ * Detect the appropriate major mode based on URL
+ */
+export function detectModeFromUrl(url: string): MajorModeId {
+  if (!url) return 'default';
+
+  // Settings page
+  if (url.includes('/settings/') || url.includes('settings.html')) {
+    return 'settings';
+  }
+
+  // Groups extension
+  if (url.includes('/groups/') || url.includes('groups.html')) {
+    return 'group';
+  }
+
+  // Web pages
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return 'page';
+  }
+
+  return 'default';
+}
+
+/**
+ * Update mode for navigation - sets context based on URL
+ */
+export function updateModeForNavigation(windowId: number, url: string): void {
+  const detectedMode = detectModeFromUrl(url);
+  const currentEntry = getContextEntry('mode', windowId);
+
+  // Don't override group mode with page mode (group mode persists)
+  if (currentEntry?.value === 'group' && detectedMode === 'page') {
+    DEBUG && console.log('main', `Preserving group mode for window ${windowId} during navigation`);
+    return;
+  }
+
+  if (!currentEntry || currentEntry.value !== detectedMode) {
+    addContextEntry('mode', detectedMode, {
+      windowId,
+      source: 'navigation',
+      metadata: { url }
+    });
+  }
+}
+
+/**
+ * Check if mode conditions are satisfied for a window
+ * Used by shortcuts system for mode-conditional shortcuts
+ */
+export function checkModeConditions(
+  windowId: number,
+  requiredMajorMode?: MajorModeId,
+  requiredMinorModes?: MinorModeId[]
+): boolean {
+  const entry = getContextEntry('mode', windowId);
+  const currentMode = entry?.value as MajorModeId | undefined;
+
+  // No mode state = default mode
+  if (!currentMode) {
+    if (requiredMajorMode && requiredMajorMode !== 'default') {
+      return false;
+    }
+    if (requiredMinorModes && requiredMinorModes.length > 0) {
+      return false;
+    }
+    return true;
+  }
+
+  // Check major mode
+  if (requiredMajorMode && currentMode !== requiredMajorMode) {
+    return false;
+  }
+
+  // Minor modes not implemented in context API yet - always pass
+  // (minor modes were rarely used and can be added later if needed)
+
+  return true;
 }
 
 // ==================== Version Check ====================

@@ -9,7 +9,7 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme } from 'ele
 import path from 'node:path';
 import fs from 'node:fs';
 
-import { initDatabase, closeDatabase, getDb, trackWindowLoad } from './datastore.js';
+import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateModeForNavigation } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath } from './protocol.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions } from './extensions.js';
 import { initTray } from './tray.js';
@@ -17,7 +17,6 @@ import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, re
 import { scopes, publish, subscribe, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
 import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, DEBUG } from './config.js';
 import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
-import { updateModeForNavigation } from './modes.js';
 
 // Configuration
 export interface AppConfig {

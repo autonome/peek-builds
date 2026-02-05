@@ -163,18 +163,10 @@ import {
 } from './backup.js';
 
 import {
-  getWindowModeState,
-  setMajorMode,
-  enableMinorMode,
-  disableMinorMode,
-  toggleMinorMode,
-  getAllModes,
-  buildCommandContext,
-  cleanupWindowMode,
   detectModeFromUrl,
   type MajorModeId,
   type MinorModeId,
-} from './modes.js';
+} from './datastore.js';
 
 // ============================================================================
 // Window Focus Tracking for Window-Targeted Commands
@@ -1753,9 +1745,8 @@ export function registerWindowHandlers(): void {
         }
       }
 
-      // Also set via old modes API for backwards compatibility
+      // Log the detected mode
       const detectedMode = detectModeFromUrl(modeUrl);
-      setMajorMode(win.id, detectedMode);
       DEBUG && console.log('Set window mode:', win.id, 'url:', modeUrl, 'mode:', detectedMode);
 
       // Track this load in history (skip internal peek:// URLs)
@@ -2923,15 +2914,29 @@ export function registerProfileHandlers(): void {
 /**
  * Register modes-related IPC handlers
  *
- * Handles mode state queries and changes for the context-aware command system.
+ * These handlers provide backwards compatibility with the old modes API.
+ * New code should use the context API (api.context) instead.
  */
 export function registerModesHandlers(): void {
-  // Get mode state for a window
+  // Mode definitions (hardcoded since modes.ts is removed)
+  const MAJOR_MODES = [
+    { id: 'default', name: 'Default', description: 'Standard browsing mode', type: 'major' },
+    { id: 'page', name: 'Page', description: 'Viewing a web page', type: 'major' },
+    { id: 'group', name: 'Group', description: 'Managing tab groups', type: 'major' },
+    { id: 'settings', name: 'Settings', description: 'Application settings', type: 'major' },
+  ];
+  const MINOR_MODES = [
+    { id: 'preview', name: 'Preview', description: 'Preview mode (read-only)', type: 'minor' },
+    { id: 'edit', name: 'Edit', description: 'Edit mode', type: 'minor' },
+    { id: 'annotate', name: 'Annotate', description: 'Annotation mode', type: 'minor' },
+    { id: 'search', name: 'Search', description: 'Search mode active', type: 'minor' },
+  ];
+
+  // Get mode state for a window (uses context API)
   ipcMain.handle('modes:getWindowMode', async (ev, data: { windowId?: number | null }) => {
     try {
       let windowId = data.windowId;
 
-      // If no windowId provided, try to get the calling window or last focused
       if (windowId === undefined || windowId === null) {
         const callingWin = BrowserWindow.fromWebContents(ev.sender);
         windowId = callingWin?.id ?? lastFocusedVisibleWindowId;
@@ -2941,7 +2946,11 @@ export function registerModesHandlers(): void {
         return { success: false, error: 'No target window' };
       }
 
-      const state = getWindowModeState(windowId);
+      const entry = getContextEntry('mode', windowId);
+      const state = {
+        major: (entry?.value as MajorModeId) || 'default',
+        minors: [] as MinorModeId[] // Minor modes not implemented in context API
+      };
       return { success: true, data: state };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2949,21 +2958,31 @@ export function registerModesHandlers(): void {
     }
   });
 
-  // Set major mode for a window
+  // Set major mode for a window (uses context API)
   ipcMain.handle('modes:setMajorMode', async (ev, data: { mode: MajorModeId; windowId?: number | null }) => {
     try {
       let windowId = data.windowId;
+      let source = '';
 
       if (windowId === undefined || windowId === null) {
         const callingWin = BrowserWindow.fromWebContents(ev.sender);
         windowId = callingWin?.id ?? lastFocusedVisibleWindowId;
+        source = callingWin?.webContents.getURL() ?? '';
       }
 
       if (windowId === null || windowId === undefined) {
         return { success: false, error: 'No target window' };
       }
 
-      setMajorMode(windowId, data.mode);
+      addContextEntry('mode', data.mode, { windowId, source });
+
+      // Publish mode change for backwards compatibility
+      publish(getSystemAddress(), PubSubScopes.GLOBAL, 'modes:changed', {
+        windowId,
+        major: data.mode,
+        minors: [],
+      });
+
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2971,77 +2990,23 @@ export function registerModesHandlers(): void {
     }
   });
 
-  // Enable a minor mode
-  ipcMain.handle('modes:enableMinorMode', async (ev, data: { mode: MinorModeId; windowId?: number | null }) => {
-    try {
-      let windowId = data.windowId;
-
-      if (windowId === undefined || windowId === null) {
-        const callingWin = BrowserWindow.fromWebContents(ev.sender);
-        windowId = callingWin?.id ?? lastFocusedVisibleWindowId;
-      }
-
-      if (windowId === null || windowId === undefined) {
-        return { success: false, error: 'No target window' };
-      }
-
-      enableMinorMode(windowId, data.mode);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
+  // Minor modes - stub implementations (not used in context API)
+  ipcMain.handle('modes:enableMinorMode', async () => {
+    return { success: true }; // No-op, minor modes not implemented
   });
 
-  // Disable a minor mode
-  ipcMain.handle('modes:disableMinorMode', async (ev, data: { mode: MinorModeId; windowId?: number | null }) => {
-    try {
-      let windowId = data.windowId;
-
-      if (windowId === undefined || windowId === null) {
-        const callingWin = BrowserWindow.fromWebContents(ev.sender);
-        windowId = callingWin?.id ?? lastFocusedVisibleWindowId;
-      }
-
-      if (windowId === null || windowId === undefined) {
-        return { success: false, error: 'No target window' };
-      }
-
-      disableMinorMode(windowId, data.mode);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
+  ipcMain.handle('modes:disableMinorMode', async () => {
+    return { success: true }; // No-op, minor modes not implemented
   });
 
-  // Toggle a minor mode
-  ipcMain.handle('modes:toggleMinorMode', async (ev, data: { mode: MinorModeId; windowId?: number | null }) => {
-    try {
-      let windowId = data.windowId;
-
-      if (windowId === undefined || windowId === null) {
-        const callingWin = BrowserWindow.fromWebContents(ev.sender);
-        windowId = callingWin?.id ?? lastFocusedVisibleWindowId;
-      }
-
-      if (windowId === null || windowId === undefined) {
-        return { success: false, error: 'No target window' };
-      }
-
-      const enabled = toggleMinorMode(windowId, data.mode);
-      return { success: true, data: enabled };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
+  ipcMain.handle('modes:toggleMinorMode', async () => {
+    return { success: true, data: false }; // No-op, minor modes not implemented
   });
 
   // List all available modes
   ipcMain.handle('modes:listModes', async () => {
     try {
-      const modes = getAllModes();
-      return { success: true, data: modes };
+      return { success: true, data: [...MAJOR_MODES, ...MINOR_MODES] };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -3051,7 +3016,30 @@ export function registerModesHandlers(): void {
   // Get command context for current state
   ipcMain.handle('modes:getCommandContext', async () => {
     try {
-      const context = buildCommandContext(lastFocusedVisibleWindowId);
+      const windowId = lastFocusedVisibleWindowId;
+      const entry = getContextEntry('mode', windowId);
+
+      let url: string | null = null;
+      let title: string | null = null;
+
+      if (windowId !== null) {
+        const win = BrowserWindow.fromId(windowId);
+        if (win && !win.isDestroyed()) {
+          url = win.webContents.getURL();
+          title = win.getTitle();
+        }
+      }
+
+      const context = {
+        windowId,
+        mode: {
+          major: (entry?.value as MajorModeId) || 'default',
+          minors: [] as MinorModeId[]
+        },
+        url,
+        title,
+        hasSelection: false
+      };
       return { success: true, data: context };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -9,7 +9,7 @@
  */
 
 import { DEBUG } from './config.js';
-import { checkModeConditions, type MajorModeId, type MinorModeId } from './modes.js';
+import { checkModeConditions, type MajorModeId, type MinorModeId } from './datastore.js';
 
 // Lazy-load Electron modules to allow testing without Electron
 let globalShortcut: typeof import('electron').globalShortcut | null = null;

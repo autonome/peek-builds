@@ -9,13 +9,13 @@ import type { InputEvent } from './shortcuts.js';
 
 // Import will be done after ensuring module is compiled
 let shortcuts: typeof import('./shortcuts.js');
-let modes: typeof import('./modes.js');
+let datastore: typeof import('./datastore.js');
 
 describe('Shortcuts Module Tests', () => {
   before(async () => {
     // Dynamic import of the compiled modules
     shortcuts = await import('./shortcuts.js');
-    modes = await import('./modes.js');
+    datastore = await import('./datastore.js');
   });
 
   describe('parseShortcut', () => {
@@ -219,7 +219,7 @@ describe('Shortcuts Module Tests', () => {
       defaultCallCount = 0;
 
       // Set up test window mode
-      modes.setMajorMode(10001, 'page');
+      datastore.addContextEntry('mode', 'page', { windowId: 10001 });
     });
 
     afterEach(() => {
@@ -227,7 +227,7 @@ describe('Shortcuts Module Tests', () => {
       shortcuts.unregisterLocalShortcut('Ctrl+M', 'test-mode-page', { majorMode: 'page' });
       shortcuts.unregisterLocalShortcut('Ctrl+M', 'test-mode-group', { majorMode: 'group' });
       shortcuts.unregisterLocalShortcut('Ctrl+M', 'test-mode-default');
-      modes.cleanupWindowMode(10001);
+      datastore.cleanupWindowContext(10001);
     });
 
     it('should trigger mode-conditional shortcut when mode matches', () => {
@@ -290,14 +290,14 @@ describe('Shortcuts Module Tests', () => {
       };
 
       // In page mode - should trigger page handler
-      modes.setMajorMode(10001, 'page');
+      datastore.addContextEntry('mode', 'page', { windowId: 10001 });
       let handled = shortcuts.handleLocalShortcut(input, 10001);
       assert.strictEqual(handled, true);
       assert.strictEqual(pageCallCount, 1);
       assert.strictEqual(groupCallCount, 0);
 
       // Switch to group mode - should trigger group handler
-      modes.setMajorMode(10001, 'group');
+      datastore.addContextEntry('mode', 'group', { windowId: 10001 });
       handled = shortcuts.handleLocalShortcut(input, 10001);
       assert.strictEqual(handled, true);
       assert.strictEqual(pageCallCount, 1); // No change
@@ -325,7 +325,7 @@ describe('Shortcuts Module Tests', () => {
       };
 
       // In page mode - group doesn't match, should trigger default
-      modes.setMajorMode(10001, 'page');
+      datastore.addContextEntry('mode', 'page', { windowId: 10001 });
       const handled = shortcuts.handleLocalShortcut(input, 10001);
       assert.strictEqual(handled, true);
       assert.strictEqual(groupCallCount, 0);
