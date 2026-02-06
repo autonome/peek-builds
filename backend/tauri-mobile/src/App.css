@@ -2667,6 +2667,7 @@ body.dark .clear-btn {
 
 /* Editor Card - base layout for all editors */
 .editor-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   max-height: calc(100% - 1rem);
@@ -2736,7 +2737,7 @@ body.dark .clear-btn {
   bottom: auto;
   transform: none;
   height: auto;
-  padding: 16px 0;
+  padding: 8px 0;
 }
 
 body.dark .resizable-input-textarea {
@@ -3283,7 +3284,7 @@ body.dark .auto-sync-toggle {
 /* Editor drag handle for swipe-to-close */
 .editor-drag-handle {
   width: 100%;
-  padding: 16px 0;
+  padding: 10px 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3324,13 +3325,14 @@ body.dark .tags-empty-message {
   padding: 0.5rem;
 }
 
-/* Undo/Redo buttons for editor */
+/* Undo/Redo buttons for editor — positioned at top-right of editor card, level with swipe indicator */
 .undo-redo-buttons {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  z-index: 10;
   display: flex;
   gap: 4px;
-  padding: 4px 12px;
-  justify-content: flex-end;
-  flex-shrink: 0;
 }
 
 .undo-redo-buttons button {

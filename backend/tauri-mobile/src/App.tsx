@@ -148,7 +148,7 @@ const SWIPE_THRESHOLD = 80;
 
 const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyboardHeight, className = '' }) => {
   // Use actual keyboard height when available, fall back to fixed estimate
-  const effectiveKeyboardPadding = keyboardHeight > 0 ? keyboardHeight + 20 : 350;
+  const effectiveKeyboardPadding = keyboardHeight > 0 ? keyboardHeight : 350;
 
   // Swipe-down-to-close state
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -559,25 +559,26 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   }, []);
 
   return (
+    <>
+    <div className="undo-redo-buttons">
+      <button type="button" onClick={handleUndo} disabled={historyIndexRef.current <= 0} title="Undo">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="1 4 1 10 7 10"></polyline>
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+        </svg>
+      </button>
+      <button type="button" onClick={handleRedo} disabled={historyIndexRef.current >= historyRef.current.length - 1} title="Redo">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"></path>
+        </svg>
+      </button>
+    </div>
     <div
       className="resizable-input-wrapper"
       ref={wrapperRef}
       style={{ height: `${currentHeight}px`, minHeight: `${minHeight}px` }}
     >
-      <div className="undo-redo-buttons">
-        <button type="button" onClick={handleUndo} disabled={historyIndexRef.current <= 0} title="Undo">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="1 4 1 10 7 10"></polyline>
-            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-          </svg>
-        </button>
-        <button type="button" onClick={handleRedo} disabled={historyIndexRef.current >= historyRef.current.length - 1} title="Redo">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"></path>
-          </svg>
-        </button>
-      </div>
       <textarea
         ref={textareaRef}
         className="resizable-input-textarea"
@@ -611,6 +612,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
         <div className="drag-handle-bar" />
       </div>
     </div>
+    </>
   );
 };
 
@@ -2319,13 +2321,24 @@ function App() {
           </div>
           <div className="card-title">{summary}</div>
           {urlMatch && (
+            <>
+            <button
+              className="card-open-url-btn"
+              onClick={(e) => openInWebview(urlMatch[0], item.id, e)}
+              title="Open in app"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="3" y1="9" x2="21" y2="9"></line>
+              </svg>
+            </button>
             <button
               className="card-open-url-btn"
               onClick={(e) => {
                 e.stopPropagation();
                 openUrl(urlMatch[0]);
               }}
-              title="Open URL"
+              title="Open in Safari"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
@@ -2333,6 +2346,7 @@ function App() {
                 <line x1="10" y1="14" x2="21" y2="3"></line>
               </svg>
             </button>
+            </>
           )}
           <button
             className="card-delete-btn"
