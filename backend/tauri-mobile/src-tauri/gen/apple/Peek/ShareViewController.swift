@@ -558,10 +558,12 @@ class DatabaseManager {
     }
 
     func findExistingUrl(_ url: String) -> SavedItem? {
+        let normalized = url.normalizeURL()
         do {
             return try dbQueue?.read { db in
+                // Check both normalized and original to match legacy data
                 guard let record = try ItemRecord
-                    .filter(Column("url") == url && Column("type") == "url" && Column("deleted_at") == nil)
+                    .filter((Column("url") == normalized || Column("url") == url) && Column("type") == "url" && Column("deleted_at") == nil)
                     .fetchOne(db) else {
                     return nil
                 }
@@ -1123,6 +1125,22 @@ extension String {
         // Remove www. prefix if present
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
+
+    /// Normalize URL by ensuring trailing slash on bare authority URLs.
+    /// "https://example.com" -> "https://example.com/"
+    /// "https://example.com/path" is left unchanged.
+    func normalizeURL() -> String {
+        guard let url = URL(string: self),
+              let scheme = url.scheme,
+              (scheme == "http" || scheme == "https") else {
+            return self
+        }
+        // If path is empty, add trailing slash
+        if url.path.isEmpty || url.path == "" {
+            return self.hasSuffix("/") ? self : self + "/"
+        }
+        return self
+    }
 }
 
 // MARK: - ShareViewController
@@ -1683,8 +1701,9 @@ class ShareViewController: UIViewController {
             os_log("Content already set, ignoring URL: %{public}@", log: shareLog, type: .info, urlString)
             return
         }
-        os_log("Setting shared URL: %{public}@", log: shareLog, type: .info, urlString)
-        sharedURL = urlString
+        let normalized = urlString.normalizeURL()
+        os_log("Setting shared URL: %{public}@ (normalized: %{public}@)", log: shareLog, type: .info, urlString, normalized)
+        sharedURL = normalized
         sharedItemType = .page
         contentLabel.text = urlString
         contentLabel.numberOfLines = 2

@@ -2223,8 +2223,25 @@ fn debug_export_database(app: tauri::AppHandle) -> Result<String, String> {
     Ok(format!("Exported {} bytes to {}", data.len(), locations))
 }
 
+/// Normalize a URL by ensuring a trailing slash on bare authority URLs
+/// (e.g. "https://example.com" -> "https://example.com/").
+/// URLs with an existing path, query, or fragment are left unchanged.
+fn normalize_url(url: &str) -> String {
+    // Parse with url crate if available, otherwise simple heuristic:
+    // If after stripping scheme + authority there's no path, add trailing slash
+    if let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) {
+        // rest is like "example.com" or "example.com/" or "example.com/path"
+        if !rest.contains('/') {
+            // Bare domain with no path at all -> add trailing slash
+            return format!("{}/", url);
+        }
+    }
+    url.to_string()
+}
+
 #[tauri::command]
 async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::Value>) -> Result<(), String> {
+    let url = normalize_url(&url);
     println!("[Rust] save_url called with url: {}, tags: {:?}, metadata: {:?}", url, tags, metadata);
 
     let conn = get_connection()?;
@@ -2233,26 +2250,28 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
     let metadata_json = metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
 
     // Check if URL already exists (as a page type)
+    // Check both normalized and without trailing slash to match legacy data
+    let url_without_slash = url.strip_suffix('/').unwrap_or(&url);
     let existing_id: Option<String> = conn
         .query_row(
-            "SELECT id FROM items WHERE type = 'url' AND url = ? AND deleted_at IS NULL",
-            params![&url],
+            "SELECT id FROM items WHERE type = 'url' AND (url = ? OR url = ?) AND deleted_at IS NULL",
+            params![&url, &url_without_slash],
             |row| row.get(0),
         )
         .ok();
 
     let item_id = if let Some(existing) = existing_id {
-        // Update existing item (update metadata if provided)
+        // Update existing item (normalize URL + update metadata if provided)
         if metadata_json.is_some() {
             conn.execute(
-                "UPDATE items SET updated_at = ?, metadata = ? WHERE id = ?",
-                params![&now, &metadata_json, &existing],
+                "UPDATE items SET url = ?, updated_at = ?, metadata = ? WHERE id = ?",
+                params![&url, &now, &metadata_json, &existing],
             )
             .map_err(|e| format!("Failed to update item: {}", e))?;
         } else {
             conn.execute(
-                "UPDATE items SET updated_at = ? WHERE id = ?",
-                params![&now, &existing],
+                "UPDATE items SET url = ?, updated_at = ? WHERE id = ?",
+                params![&url, &now, &existing],
             )
             .map_err(|e| format!("Failed to update item: {}", e))?;
         }
