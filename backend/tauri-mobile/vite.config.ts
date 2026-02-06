@@ -1,14 +1,26 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { execSync } from "child_process";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 // @ts-expect-error process is a nodejs global
 const port = parseInt(process.env.DEV_PORT, 10) || 1420;
 
+const buildNumber = (() => {
+  try {
+    return execSync("git rev-list --count HEAD").toString().trim();
+  } catch {
+    return "0";
+  }
+})();
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  define: {
+    __BUILD_NUMBER__: JSON.stringify(`v${buildNumber}`),
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

@@ -2714,7 +2714,7 @@ body.dark .clear-btn {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 20px;
+  height: 44px;
   transform: translateY(calc(50% + 0.5px));
   cursor: ns-resize;
   display: flex;
@@ -2736,7 +2736,7 @@ body.dark .clear-btn {
   bottom: auto;
   transform: none;
   height: auto;
-  padding: 5px 0;
+  padding: 16px 0;
 }
 
 body.dark .resizable-input-textarea {
@@ -3283,7 +3283,7 @@ body.dark .auto-sync-toggle {
 /* Editor drag handle for swipe-to-close */
 .editor-drag-handle {
   width: 100%;
-  padding: 8px 0;
+  padding: 16px 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3322,4 +3322,89 @@ body.dark .tags-empty-message {
 .editor-tags-section.collapsed .expandable-card-section:last-child {
   min-height: 32px;
   padding: 0.5rem;
+}
+
+/* Undo/Redo buttons for editor */
+.undo-redo-buttons {
+  display: flex;
+  gap: 4px;
+  padding: 4px 12px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.undo-redo-buttons button {
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.undo-redo-buttons button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.undo-redo-buttons button:active:not(:disabled) {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+body.dark .undo-redo-buttons button {
+  border-color: #444;
+  color: #aaa;
+}
+
+body.dark .undo-redo-buttons button:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* URL open button for text items */
+.card-open-url-btn {
+  background: none;
+  border: none;
+  color: #007AFF;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.card-open-url-btn:active {
+  opacity: 0.5;
+}
+
+body.dark .card-open-url-btn {
+  color: #5AC8FA;
+}
+
+/* Sort button in header */
+.sort-btn {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.sort-btn:active {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+body.dark .sort-btn {
+  color: #aaa;
+}
+
+body.dark .sort-btn:active {
+  background: rgba(255, 255, 255, 0.1);
 }

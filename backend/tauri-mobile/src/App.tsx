@@ -4,6 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
+declare const __BUILD_NUMBER__: string;
+
 type ItemType = "page" | "text" | "tagset" | "image";
 
 interface ItemMetadata {
@@ -144,10 +146,9 @@ interface EditorOverlayProps {
 
 const SWIPE_THRESHOLD = 80;
 
-const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyboardHeight: _keyboardHeight, className = '' }) => {
-  // Use fixed keyboard padding to avoid any dynamic changes
-  // Standard iOS keyboard is ~300px, we use 350 to be safe
-  const FIXED_KEYBOARD_PADDING = 350;
+const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyboardHeight, className = '' }) => {
+  // Use actual keyboard height when available, fall back to fixed estimate
+  const effectiveKeyboardPadding = keyboardHeight > 0 ? keyboardHeight + 20 : 350;
 
   // Swipe-down-to-close state
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -198,7 +199,7 @@ const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyb
   return (
     <div
       className={`edit-overlay ${className}`}
-      style={{ paddingBottom: `${FIXED_KEYBOARD_PADDING}px` }}
+      style={{ paddingBottom: `${effectiveKeyboardPadding}px` }}
       onClick={(e) => e.target === e.currentTarget && onDismiss()}
     >
       <div
@@ -370,7 +371,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   onChange,
   placeholder = "Enter text...",
   minHeightPercent = 0.5,
-  keyboardHeight: _keyboardHeight,
+  keyboardHeight,
   autoFocus = false,
   showClearButton = true,
   onAutoSave
@@ -382,9 +383,54 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   const dragStartYRef = useRef(0);
   const dragStartHeightRef = useRef(0);
 
-  // Use fixed keyboard height for sizing to avoid layout jumps when QuickType changes
-  // Standard iOS keyboard is ~300px, we use 350 to match EditorOverlay
-  const FIXED_KEYBOARD_HEIGHT = 350;
+  // Undo/redo history
+  const historyRef = useRef<string[]>([value]);
+  const historyIndexRef = useRef(0);
+  const isUndoRedoRef = useRef(false);
+  const [, forceRender] = useState(0);
+
+  // Track value changes for undo history
+  useEffect(() => {
+    if (isUndoRedoRef.current) {
+      isUndoRedoRef.current = false;
+      return;
+    }
+    const history = historyRef.current;
+    const idx = historyIndexRef.current;
+    // Only push if different from current position
+    if (history[idx] !== value) {
+      // Truncate any redo history
+      historyRef.current = history.slice(0, idx + 1);
+      historyRef.current.push(value);
+      // Bound to 100 entries
+      if (historyRef.current.length > 100) {
+        historyRef.current.shift();
+      }
+      historyIndexRef.current = historyRef.current.length - 1;
+      forceRender(n => n + 1);
+    }
+  }, [value]);
+
+  const handleUndo = () => {
+    if (historyIndexRef.current > 0) {
+      historyIndexRef.current--;
+      isUndoRedoRef.current = true;
+      onChange(historyRef.current[historyIndexRef.current]);
+      forceRender(n => n + 1);
+    }
+  };
+
+  const handleRedo = () => {
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      historyIndexRef.current++;
+      isUndoRedoRef.current = true;
+      onChange(historyRef.current[historyIndexRef.current]);
+      forceRender(n => n + 1);
+    }
+  };
+
+  // Use actual keyboard height when available, fall back to fixed estimate
+  const FIXED_KEYBOARD_HEIGHT = keyboardHeight > 0 ? keyboardHeight : 350;
 
   // Calculate default height (initial size) and min height (resize floor)
   const headerHeight = 56;
@@ -401,6 +447,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     dragStartHeightRef.current = wrapperRef.current.offsetHeight;
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'ns-resize';
+    document.body.dataset.resizing = 'true';
   };
 
   const handleDragMove = (clientY: number) => {
@@ -414,6 +461,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     isDraggingRef.current = false;
     document.body.style.userSelect = '';
     document.body.style.cursor = '';
+    delete document.body.dataset.resizing;
   };
 
   // Auto markdown list continuation on Enter
@@ -516,6 +564,20 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
       ref={wrapperRef}
       style={{ height: `${currentHeight}px`, minHeight: `${minHeight}px` }}
     >
+      <div className="undo-redo-buttons">
+        <button type="button" onClick={handleUndo} disabled={historyIndexRef.current <= 0} title="Undo">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="1 4 1 10 7 10"></polyline>
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+          </svg>
+        </button>
+        <button type="button" onClick={handleRedo} disabled={historyIndexRef.current >= historyRef.current.length - 1} title="Redo">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"></path>
+          </svg>
+        </button>
+      </div>
       <textarea
         ref={textareaRef}
         className="resizable-input-textarea"
@@ -535,10 +597,10 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        autoCapitalize="none"
-        autoCorrect="off"
+        autoCapitalize="sentences"
+        autoCorrect="on"
         autoComplete="off"
-        spellCheck={false}
+        spellCheck={true}
       />
       {showClearButton && <ClearButton show={value.length > 0} onClear={() => onChange('')} className="textarea-clear" />}
       <div
@@ -641,9 +703,19 @@ function App() {
   // Delete confirmation state
   const [pendingDelete, setPendingDelete] = useState<{ id: string; type: ItemType } | null>(null);
 
-  // Search and tag filter state
-  const [searchText, setSearchText] = useState("");
-  const [selectedFilterTags, setSelectedFilterTags] = useState<Set<string>>(new Set());
+  // Search and tag filter state (persisted to localStorage)
+  const [searchText, setSearchText] = useState<string>(() => {
+    return localStorage.getItem('searchText') || "";
+  });
+  const [selectedFilterTags, setSelectedFilterTags] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem('selectedFilterTags');
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+
+  // Sort order state (persisted to localStorage)
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>(() => {
+    return (localStorage.getItem('sortOrder') as 'newest' | 'oldest') || 'newest';
+  });
 
   // Filter tags resizable state
   const [filterTagsHeight, setFilterTagsHeight] = useState<number>(() => {
@@ -652,6 +724,7 @@ function App() {
   });
   const filterTagsRef = useRef<HTMLDivElement>(null);
   const filterTagsDraggingRef = useRef(false);
+  const isResizingRef = useRef(false);
   const filterTagsDragStartYRef = useRef(0);
   const filterTagsDragStartHeightRef = useRef(0);
 
@@ -705,6 +778,7 @@ function App() {
   // Filter tags drag-to-resize handlers
   const handleFilterTagsDragStart = (clientY: number) => {
     filterTagsDraggingRef.current = true;
+    isResizingRef.current = true;
     filterTagsDragStartYRef.current = clientY;
     filterTagsDragStartHeightRef.current = filterTagsRef.current?.offsetHeight ?? filterTagsHeight;
     document.body.style.userSelect = 'none';
@@ -725,6 +799,7 @@ function App() {
     const handleEnd = () => {
       if (!filterTagsDraggingRef.current) return;
       filterTagsDraggingRef.current = false;
+      isResizingRef.current = false;
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
       // Persist to localStorage
@@ -742,6 +817,21 @@ function App() {
       document.removeEventListener('touchend', handleEnd);
     };
   }, [filterTagsHeight]);
+
+  // Persist search text to localStorage
+  useEffect(() => {
+    localStorage.setItem('searchText', searchText);
+  }, [searchText]);
+
+  // Persist selected filter tags to localStorage
+  useEffect(() => {
+    localStorage.setItem('selectedFilterTags', JSON.stringify(Array.from(selectedFilterTags)));
+  }, [selectedFilterTags]);
+
+  // Persist sort order to localStorage
+  useEffect(() => {
+    localStorage.setItem('sortOrder', sortOrder);
+  }, [sortOrder]);
 
   // DEV: random background tint on every load to verify page refreshed
   useEffect(() => {
@@ -1733,9 +1823,10 @@ function App() {
 
   // Pull-to-refresh touch handlers
   const handleTouchStart = (e: React.TouchEvent) => {
-    // Ignore if editing, add input expanded, or already syncing
+    // Ignore if editing, add input expanded, already syncing, or resizing
     const anyEditing = editingUrlId || editingTextId || editingTagsetId || editingImageId;
     if (anyEditing || addInputExpanded || isSyncing) return;
+    if (isResizingRef.current || document.body.dataset.resizing) return;
 
     const main = mainRef.current;
     if (!main) return;
@@ -1750,6 +1841,14 @@ function App() {
 
   const handleTouchMove = (e: TouchEvent) => {
     if (pullStartY.current === null) return;
+
+    // Cancel pull if resizing detected
+    if (isResizingRef.current || document.body.dataset.resizing) {
+      pullStartY.current = null;
+      pullThresholdCrossedAt.current = null;
+      setPullState('idle');
+      return;
+    }
 
     const pullDistance = e.touches[0].clientY - pullStartY.current;
 
@@ -1910,8 +2009,11 @@ function App() {
       return matchesSearch && matchesTags;
     });
 
-    // Sort by date, newest first
-    return filtered.sort((a, b) => new Date(b.saved_at).getTime() - new Date(a.saved_at).getTime());
+    // Sort by date, respecting sort order
+    return filtered.sort((a, b) => {
+      const diff = new Date(b.saved_at).getTime() - new Date(a.saved_at).getTime();
+      return sortOrder === 'oldest' ? -diff : diff;
+    });
   };
 
   // Check if any edit mode is active
@@ -2201,6 +2303,8 @@ function App() {
     // Get summary: first line or truncated content (without hashtags for display)
     const contentWithoutTags = item.content.replace(/#\w+/g, '').trim();
     const summary = contentWithoutTags.split('\n')[0].slice(0, 100) || item.content.slice(0, 100);
+    // Extract first URL from content
+    const urlMatch = item.content.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
 
     return (
       <div key={item.id} className="saved-item-card" onClick={() => startEditingText(item)}>
@@ -2214,6 +2318,22 @@ function App() {
             </svg>
           </div>
           <div className="card-title">{summary}</div>
+          {urlMatch && (
+            <button
+              className="card-open-url-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                openUrl(urlMatch[0]);
+              }}
+              title="Open URL"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </button>
+          )}
           <button
             className="card-delete-btn"
             onClick={(e) => {
@@ -3065,7 +3185,7 @@ function App() {
           }}
           style={{ cursor: "pointer" }}
         >
-          Peek <span style={{ fontSize: '0.5em', opacity: 0.5 }}>v459</span>
+          Peek <span style={{ fontSize: '0.5em', opacity: 0.5 }}>{__BUILD_NUMBER__}</span>
         </h1>
         <div className="filter-icons">
           <button
@@ -3117,6 +3237,23 @@ function App() {
             <span className="filter-count">{savedImages.length}</span>
           </button>
         </div>
+        <button
+          className="sort-btn"
+          onClick={() => setSortOrder(prev => prev === 'newest' ? 'oldest' : 'newest')}
+          title={sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
+        >
+          {sortOrder === 'newest' ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <polyline points="19 12 12 19 5 12"></polyline>
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5"></line>
+              <polyline points="5 12 12 5 19 12"></polyline>
+            </svg>
+          )}
+        </button>
         <button className={`header-btn settings-btn ${isSyncing ? 'syncing' : ''}`} onClick={() => setShowSettings(true)}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"></circle>

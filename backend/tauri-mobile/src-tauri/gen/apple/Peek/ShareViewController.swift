@@ -1136,6 +1136,7 @@ class ShareViewController: UIViewController {
     var sharedMetadata: [String: Any] = [:]  // Captured metadata from share extension
     var selectedTags: Set<String> = []
     var availableTags: [TagStats] = []
+    var tagFilterText = ""
     var existingSavedItem: SavedItem?
     var savedImageId: String?  // Track saved image ID to prevent duplicates
     var pendingImageUrl: String?  // Store image URL when seen, for use by image handler
@@ -1330,6 +1331,7 @@ class ShareViewController: UIViewController {
         newTagTextField.returnKeyType = .done
         newTagTextField.translatesAutoresizingMaskIntoConstraints = false
         newTagTextField.delegate = self
+        newTagTextField.addTarget(self, action: #selector(tagTextFieldChanged), for: .editingChanged)
         inputContainerView.addSubview(newTagTextField)
 
         addTagButton.setTitle("Add", for: .normal)
@@ -1406,6 +1408,11 @@ class ShareViewController: UIViewController {
         ])
     }
 
+    @objc func tagTextFieldChanged() {
+        tagFilterText = newTagTextField.text?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+        updateTagsUI()
+    }
+
     @objc func addTagPressed() {
         guard let text = newTagTextField.text?.trimmingCharacters(in: .whitespaces).lowercased(),
               !text.isEmpty else { return }
@@ -1417,6 +1424,7 @@ class ShareViewController: UIViewController {
         }
 
         newTagTextField.text = ""
+        tagFilterText = ""
         updateTagsUI()
         saveCurrentState()
     }
@@ -1951,7 +1959,10 @@ class ShareViewController: UIViewController {
     }
 
     func getUnusedTags() -> [TagStats] {
-        return availableTags.filter { !selectedTags.contains($0.name) }
+        return availableTags.filter { tag in
+            !selectedTags.contains(tag.name) &&
+            (tagFilterText.isEmpty || tag.name.lowercased().contains(tagFilterText))
+        }
     }
 
     func getSortedSelectedTags() -> [String] {
@@ -2045,6 +2056,7 @@ class ShareViewController: UIViewController {
     }
 
     @objc func closePressed() {
+        saveCurrentState()
         extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
     }
 
@@ -2096,6 +2108,8 @@ extension ShareViewController: UICollectionViewDelegate, UICollectionViewDataSou
             // Tapping unused tag adds it
             let tag = getUnusedTags()[indexPath.item]
             selectedTags.insert(tag.name)
+            tagFilterText = ""
+            newTagTextField.text = ""
         }
         updateTagsUI()
         saveCurrentState()
