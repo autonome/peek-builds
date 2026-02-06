@@ -793,9 +793,8 @@ a.card-title {
 .edit-buttons {
   display: flex;
   gap: 0.5rem;
-  margin-top: 1rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid #e0e0e0;
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
 }
 
 .edit-buttons button {
@@ -1043,7 +1042,6 @@ body.dark .tag-chip.selected {
 }
 
 body.dark .edit-buttons {
-  border-top-color: #444;
 }
 
 body.dark .delete-btn {
@@ -2447,7 +2445,7 @@ body.dark .captured-image-preview {
   align-items: flex-start;
   justify-content: center;
   padding: 0.5rem;
-  padding-top: calc(env(safe-area-inset-top, 0px) + 5rem);
+  padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
   /* Prevent iOS from scrolling the viewport when keyboard appears */
   overflow: hidden;
   overscroll-behavior: contain;
@@ -2670,7 +2668,7 @@ body.dark .clear-btn {
   position: relative;
   display: flex;
   flex-direction: column;
-  max-height: calc(100% - 1rem);
+  max-height: 100%;
   height: auto;
 }
 
@@ -2737,7 +2735,7 @@ body.dark .clear-btn {
   bottom: auto;
   transform: none;
   height: auto;
-  padding: 8px 0;
+  padding: 4px 0;
 }
 
 body.dark .resizable-input-textarea {
@@ -2755,7 +2753,7 @@ body.dark .drag-handle-bar {
   max-height: none;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0.65rem 1.15rem;
+  padding: 0.25rem 1.15rem;
 }
 
 /* Editor Buttons - always visible at bottom */
@@ -3284,7 +3282,7 @@ body.dark .auto-sync-toggle {
 /* Editor drag handle for swipe-to-close */
 .editor-drag-handle {
   width: 100%;
-  padding: 10px 0;
+  padding: 6px 0;
   display: flex;
   align-items: center;
   justify-content: center;

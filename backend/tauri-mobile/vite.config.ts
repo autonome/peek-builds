@@ -9,9 +9,14 @@ const port = parseInt(process.env.DEV_PORT, 10) || 1420;
 
 const buildNumber = (() => {
   try {
-    return execSync("git rev-list --count HEAD").toString().trim();
+    // Use jj revision count (includes all jj commits), fall back to git
+    return execSync("jj log --no-graph -r 'all()' -T 'change_id ++ \"\\n\"' 2>/dev/null | wc -l").toString().trim();
   } catch {
-    return "0";
+    try {
+      return execSync("git rev-list --count HEAD").toString().trim();
+    } catch {
+      return "0";
+    }
   }
 })();
 
