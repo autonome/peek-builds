@@ -30,7 +30,7 @@
     "sim:launch": "xcrun simctl terminate booted com.dietrich.peek-mobile 2>/dev/null; xcrun simctl launch booted com.dietrich.peek-mobile",
     "sim:log": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\"' --level debug",
     "sim:log:webview": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\" AND eventMessage CONTAINS \"webview\"' --style compact",
-    "sim:install": "xcrun simctl install booted ~/Library/Developer/Xcode/DerivedData/peek-save-ehfugnwyfhzyqlghrdloqqajrbnd/Build/Products/debug-iphonesimulator/Peek\\ Save.app",
+    "sim:install": "xcrun simctl install booted \"$(ls -dt ~/Library/Developer/Xcode/DerivedData/peek-save-*/Build/Products/debug-iphonesimulator/Peek\\ Save.app | head -1)\"",
     "xcode:build": "cd src-tauri/gen/apple && xcodebuild -project peek-save.xcodeproj -scheme Peek -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -configuration Debug build"
   },
   "dependencies": {
