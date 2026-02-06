@@ -118,7 +118,13 @@ public func webviewPluginOpen(urlPtr: UnsafePointer<CChar>, itemIdPtr: UnsafePoi
         webVC.configure(url: url, itemId: itemId)
 
         let navController = UINavigationController(rootViewController: webVC)
-        navController.modalPresentationStyle = .fullScreen
+        navController.modalPresentationStyle = .pageSheet
+
+        if #available(iOS 15, *) {
+            navController.sheetPresentationController?.detents = [.medium(), .large()]
+            navController.sheetPresentationController?.prefersScrollingExpandsWhenScrolledToEdge = true
+            navController.sheetPresentationController?.preferredCornerRadius = 12
+        }
 
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let window = windowScene.windows.first,

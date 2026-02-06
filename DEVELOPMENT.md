@@ -279,6 +279,27 @@ yarn test:electron              # Run automated tests
 - Different security model than traditional browsers
 - Be cautious with cross-origin access and custom APIs
 
+## Claude Code Permissions
+
+All package.json scripts are pre-approved via wildcard permissions in `.claude/settings.local.json`:
+
+```json
+"Bash(yarn:*)"   // All yarn commands
+"Bash(npm:*)"    // All npm commands
+"Bash(npx:*)"    // All npx commands
+```
+
+This covers all 146+ scripts automatically, including:
+- Development: `yarn dev`, `yarn start`, `yarn debug`
+- Testing: `yarn test`, `yarn test:*`
+- Building: `yarn build`, `yarn build:*`
+- Mobile: `yarn mobile:*`, `yarn tauri:*`
+- Server: `yarn server:*`
+
+**No manual permission updates needed** when adding new scripts - the wildcards handle it.
+
+Other pre-approved tool patterns: `git:*`, `jj:*`, `node:*`, `cargo:*`, `electron:*`
+
 ## Mobile Development (Tauri iOS/Android)
 
 Mobile development uses the separate `peek-save` app in `backend/tauri-mobile/`.
