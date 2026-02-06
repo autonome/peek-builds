@@ -2075,6 +2075,8 @@ class ShareViewController: UIViewController {
     }
 
     @objc func closePressed() {
+        // Commit any tag text the user typed but didn't explicitly "Add"
+        addTagPressed()
         saveCurrentState()
         extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
     }
