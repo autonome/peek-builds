@@ -369,6 +369,23 @@ const extension = {
     // Initial poll after short delay
     setTimeout(pollAllFeeds, 5000);
 
+    // React to feed item changes from other sources
+    api.subscribe('item:created', async (msg) => {
+      if (msg.itemType === 'feed') {
+        console.log('[feeds] New feed added externally, polling immediately');
+        const item = await api.datastore.getItem(msg.itemId);
+        if (item.success && item.data) {
+          await pollFeed(msg.itemId, item.data.content);
+        }
+      }
+    }, api.scopes.GLOBAL);
+
+    api.subscribe('item:deleted', (msg) => {
+      if (msg.itemType === 'feed') {
+        console.log('[feeds] Feed removed externally:', msg.itemId);
+      }
+    }, api.scopes.GLOBAL);
+
     console.log('[feeds] Extension loaded');
   },
 

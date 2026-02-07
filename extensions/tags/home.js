@@ -11,6 +11,17 @@
 const api = window.app;
 const debug = api?.debug;
 
+/**
+ * Simple debounce helper - collapses rapid calls into one
+ */
+const debounce = (fn, ms) => {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+};
+
 // State
 let state = {
   activeFilter: 'all',  // 'all' | 'page' | 'text' | 'tagset' | 'image'
@@ -117,35 +128,54 @@ const loadTags = async () => {
  * Set up all event listeners
  */
 const setupEventListeners = () => {
+  // Debounced full refresh for reactive updates (collapses rapid events like batch imports)
+  const debouncedRefresh = debounce(async () => {
+    debug && console.log('[tags] debounced refresh triggered');
+    await loadData();
+    render();
+  }, 150);
+
   // Subscribe to tag events for reactive updates
-  api.subscribe('tag:item-added', async (msg) => {
+  api.subscribe('tag:item-added', (msg) => {
     debug && console.log('[tags] tag:item-added event received:', msg);
-    // Update the specific item's tags in state
+    // Optimistic local update before debounced full refresh
     const currentTags = state.itemTags.get(msg.itemId) || [];
     if (!currentTags.find(t => t.id === msg.tagId)) {
       currentTags.push({ id: msg.tagId, name: msg.tagName });
       state.itemTags.set(msg.itemId, currentTags);
     }
-    // Refresh tag list if new tag
-    if (!state.tags.find(t => t.id === msg.tagId)) {
-      await loadTags(); // Just reload tags, not all data
-    }
-    render();
+    debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:item-removed', async (msg) => {
+  api.subscribe('tag:item-removed', (msg) => {
     debug && console.log('[tags] tag:item-removed event received:', msg);
+    // Optimistic local update
     const currentTags = state.itemTags.get(msg.itemId) || [];
     state.itemTags.set(msg.itemId, currentTags.filter(t => t.id !== msg.tagId));
-    render();
+    debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:created', async (msg) => {
+  api.subscribe('tag:created', (msg) => {
     debug && console.log('[tags] tag:created event received:', msg);
+    // Optimistic local update
     if (!state.tags.find(t => t.id === msg.tagId)) {
       state.tags.push({ id: msg.tagId, name: msg.tagName });
     }
-    render();
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  // Subscribe to item events for reactive updates
+  api.subscribe('item:created', (msg) => {
+    debug && console.log('[tags] item:created event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('item:deleted', (msg) => {
+    debug && console.log('[tags] item:deleted event received:', msg);
+    // Optimistic local update - remove deleted item from state
+    state.items = state.items.filter(i => i.id !== msg.itemId);
+    state.itemTags.delete(msg.itemId);
+    debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Search input

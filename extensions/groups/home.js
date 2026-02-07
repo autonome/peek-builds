@@ -14,6 +14,17 @@ const api = window.app;
 const debug = api.debug;
 
 /**
+ * Simple debounce helper - collapses rapid calls into one
+ */
+const debounce = (fn, ms) => {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+};
+
+/**
  * Check if a URL is a navigable web URL (http/https only)
  * Excludes peek:// and other internal URLs
  */
@@ -214,30 +225,39 @@ const init = async () => {
   // Keyboard navigation
   document.addEventListener('keydown', handleKeydown);
 
+  // Debounced refresh for reactive updates (collapses rapid events like batch imports)
+  const debouncedRefresh = debounce(async () => {
+    debug && console.log('[groups] debounced refresh triggered');
+    await loadTags();
+    if (state.view === VIEW_GROUPS) renderGroups();
+    else if (state.view === VIEW_ADDRESSES) renderAddresses();
+  }, 150);
+
   // Subscribe to tag events for reactive updates
-  api.subscribe('tag:item-added', async (msg) => {
+  api.subscribe('tag:item-added', (msg) => {
     debug && console.log('[groups] tag:item-added event received:', msg);
-    // Reload tag counts (an item was tagged)
-    await loadTags();
-    if (state.view === VIEW_GROUPS) renderGroups();
-    else if (state.view === VIEW_ADDRESSES && state.currentTag?.name === msg.tagName) {
-      renderAddresses();
-    }
+    debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:item-removed', async (msg) => {
+  api.subscribe('tag:item-removed', (msg) => {
     debug && console.log('[groups] tag:item-removed event received:', msg);
-    await loadTags();
-    if (state.view === VIEW_GROUPS) renderGroups();
-    else if (state.view === VIEW_ADDRESSES && state.currentTag?.name === msg.tagName) {
-      renderAddresses();
-    }
+    debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:created', async (msg) => {
+  api.subscribe('tag:created', (msg) => {
     debug && console.log('[groups] tag:created event received:', msg);
-    await loadTags();
-    if (state.view === VIEW_GROUPS) renderGroups();
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  // Subscribe to item events for reactive updates
+  api.subscribe('item:created', (msg) => {
+    debug && console.log('[groups] item:created event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('item:deleted', (msg) => {
+    debug && console.log('[groups] item:deleted event received:', msg);
+    debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Show groups view

@@ -5,6 +5,11 @@
 import windows from 'peek://app/windows.js';
 import api from 'peek://app/api.js';
 
+const debug = window.app?.debug;
+
+// Store addCommand callback for reactive updates
+let _addCommand = null;
+
 /**
  * Get URL items sorted by most recent
  * Optionally filter by search term
@@ -104,32 +109,49 @@ const commands = [
  * Initialize history entries as commands
  * Each history entry becomes a searchable command
  */
-export const initializeSources = async (addCommand) => {
-  const history = await getHistory('', 50);
-  console.log('Adding history entries as commands:', history.length);
+/**
+ * Register a single item as history commands (URL + title)
+ */
+const registerHistoryItem = (addCommand, item) => {
+  const url = item.content;
+  const title = getItemTitle(item);
 
-  history.forEach(item => {
-    const url = item.content;
-    const title = getItemTitle(item);
+  addCommand({
+    name: url,
+    async execute(ctx) {
+      await openFromHistory(url);
+    }
+  });
 
-    // Add URL as command
+  if (title && title !== url) {
     addCommand({
-      name: url,
+      name: title,
       async execute(ctx) {
         await openFromHistory(url);
       }
     });
+  }
+};
 
-    // Also add title as a command if different from URL
-    if (title && title !== url) {
-      addCommand({
-        name: title,
-        async execute(ctx) {
-          await openFromHistory(url);
+export const initializeSources = async (addCommand) => {
+  _addCommand = addCommand;
+
+  const history = await getHistory('', 50);
+  console.log('Adding history entries as commands:', history.length);
+  history.forEach(item => registerHistoryItem(addCommand, item));
+
+  // Subscribe to new URL items so history commands stay fresh
+  api.subscribe('item:created', (msg) => {
+    if (msg.itemType === 'url' && _addCommand) {
+      debug && console.log('[history] New URL item, registering command:', msg.content);
+      _addCommand({
+        name: msg.content,
+        async execute() {
+          await openFromHistory(msg.content);
         }
       });
     }
-  });
+  }, api.scopes.GLOBAL);
 };
 
 export default {

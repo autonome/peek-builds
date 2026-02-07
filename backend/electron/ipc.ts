@@ -495,6 +495,15 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-add-item', async (ev, data) => {
     try {
       const result = addItem(data.type, data.options);
+
+      // Emit item:created event
+      publish('system', PubSubScopes.GLOBAL, 'item:created', {
+        itemId: result.id,
+        itemType: data.type,
+        content: data.options?.content
+      });
+      if (DEBUG) console.log('[ipc] item:created', result.id, data.type);
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -515,6 +524,18 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-update-item', async (ev, data) => {
     try {
       const result = updateItem(data.id, data.options);
+
+      // Emit item:updated event if update was successful
+      if (result) {
+        const db = getDb();
+        const item = db.prepare('SELECT type FROM items WHERE id = ?').get(data.id) as { type: string } | undefined;
+        publish('system', PubSubScopes.GLOBAL, 'item:updated', {
+          itemId: data.id,
+          itemType: item?.type
+        });
+        if (DEBUG) console.log('[ipc] item:updated', data.id, item?.type);
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -524,7 +545,21 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-delete-item', async (ev, data) => {
     try {
+      // Fetch item type before deletion (need it for event payload)
+      const db = getDb();
+      const item = db.prepare('SELECT type FROM items WHERE id = ?').get(data.id) as { type: string } | undefined;
+
       const result = deleteItem(data.id);
+
+      // Emit item:deleted event if deletion was successful
+      if (result) {
+        publish('system', PubSubScopes.GLOBAL, 'item:deleted', {
+          itemId: data.id,
+          itemType: item?.type
+        });
+        if (DEBUG) console.log('[ipc] item:deleted', data.id, item?.type);
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
