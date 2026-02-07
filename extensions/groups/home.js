@@ -65,12 +65,15 @@ window._groupsState = state;
  * Returns { handled: false } if at root (groups list) and window should close
  */
 const handleEscape = () => {
+  console.log('[groups:esc] handleEscape called, view:', state.view, 'searchQuery:', state.searchQuery);
+
   // If search has content, clear it first
   const searchInput = document.querySelector('.search-input');
   if (state.searchQuery) {
     state.searchQuery = '';
     searchInput.value = '';
     renderCurrentView();
+    console.log('[groups:esc] Cleared search, returning handled: true');
     return { handled: true };
   }
 
@@ -82,9 +85,11 @@ const handleEscape = () => {
         console.error('[groups] Error navigating back to groups:', err);
       });
     }, 0);
+    console.log('[groups:esc] VIEW_ADDRESSES -> navigating to groups, returning handled: true');
     return { handled: true };
   }
   // At root (groups list) - let window close
+  console.log('[groups:esc] At root (VIEW_GROUPS), returning handled: false');
   return { handled: false };
 };
 

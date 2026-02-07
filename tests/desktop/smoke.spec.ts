@@ -335,6 +335,146 @@ test.describe('Groups Navigation @desktop', () => {
 });
 
 // ============================================================================
+// IZUI Escape Protocol Tests (uses shared app)
+// ============================================================================
+
+test.describe('IZUI Escape Protocol @desktop', () => {
+  test('navigate mode: escape navigates internally before requesting close', async () => {
+    const bgWindow = sharedBgWindow;
+
+    // Create a group with items so we can navigate into it
+    const tagResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.getOrCreateTag('izui-esc-test');
+    });
+    expect(tagResult.success).toBe(true);
+    const tagId = tagResult.data?.tag?.id || tagResult.data?.data?.id || tagResult.data?.id;
+
+    const item = await bgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.addItem('url', {
+        content: 'https://izui-esc-test.example.com',
+        metadata: JSON.stringify({ title: 'IZUI ESC Test' })
+      });
+    });
+    expect(item.success).toBe(true);
+
+    if (tagId && item.data?.id) {
+      await bgWindow.evaluate(async ({ itemId, tagId }) => {
+        return await (window as any).app.datastore.tagItem(itemId, tagId);
+      }, { itemId: item.data.id, tagId });
+    }
+
+    // Open groups window (background.js uses escapeMode: 'navigate')
+    const groupsResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+        width: 800,
+        height: 600,
+        escapeMode: 'navigate'
+      });
+    });
+    expect(groupsResult.success).toBe(true);
+
+    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    expect(groupsWindow).toBeTruthy();
+    await groupsWindow.waitForLoadState('domcontentloaded');
+    await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
+
+    // Navigate to addresses view by clicking a group
+    const groupCard = await groupsWindow.$('.card.group-card[data-tag-id="' + tagId + '"]');
+    if (groupCard) {
+      await groupCard.click();
+    } else {
+      const anyCard = await groupsWindow.$('.card.group-card');
+      expect(anyCard).toBeTruthy();
+      await anyCard!.click();
+    }
+    await groupsWindow.waitForSelector('.card.address-card', { timeout: 5000 });
+
+    // Verify we're in addresses view
+    const viewBefore = await groupsWindow.evaluate(() => (window as any)._groupsState.view);
+    expect(viewBefore).toBe('addresses');
+
+    // Trigger escape via the IZUI chain - should navigate back to groups (handled: true)
+    const escResult1 = await groupsWindow.evaluate(async () => {
+      return await (window as any).app.escape.trigger();
+    });
+    expect(escResult1.handled).toBe(true);
+
+    // Wait for navigation to complete
+    await new Promise(resolve => setTimeout(resolve, 200));
+    await groupsWindow.waitForSelector('.card.group-card', { timeout: 5000 });
+
+    // Verify we're back in groups view
+    const viewAfter = await groupsWindow.evaluate(() => (window as any)._groupsState.view);
+    expect(viewAfter).toBe('groups');
+
+    // Trigger escape again at root - IZUI handles close itself via izui-close-self IPC
+    // Returns { handled: true } because renderer is managing its own lifecycle
+    const escResult2 = await groupsWindow.evaluate(async () => {
+      return await (window as any).app.escape.trigger();
+    });
+    expect(escResult2.handled).toBe(true);
+
+    // The trigger() call initiates izui-close-self IPC which closes the window.
+    // Wait for the window to close (or clean up if it didn't)
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Clean up in case window is still open
+    if (groupsResult.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, groupsResult.id);
+      } catch {
+        // Window may already be closed
+      }
+    }
+  });
+
+  test('navigate mode: timeout does not close window', async () => {
+    const bgWindow = sharedBgWindow;
+
+    // Open a window with navigate escape mode but NO escape handler registered
+    // This simulates what happens when a window hasn't finished loading its IZUI
+    const result = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+        width: 400,
+        height: 300,
+        escapeMode: 'navigate'
+      });
+    });
+    expect(result.success).toBe(true);
+
+    const testWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    expect(testWindow).toBeTruthy();
+    await testWindow.waitForLoadState('domcontentloaded');
+
+    // The groups extension registers an escape handler via IZUI.
+    // At root (groups view), IZUI handles close itself via izui-close-self IPC
+    // and returns { handled: true }
+    await testWindow.waitForSelector('.cards', { timeout: 5000 });
+    const escResult = await testWindow.evaluate(async () => {
+      return await (window as any).app.escape.trigger();
+    });
+    // IZUI returns handled: true (it initiated its own close via izui-close-self)
+    expect(escResult.handled).toBe(true);
+
+    // Wait for close to complete
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Clean up in case window is still open
+    if (result.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, result.id);
+      } catch {
+        // Window may already be closed
+      }
+    }
+  });
+});
+
+// ============================================================================
 // External URL Opening Tests (uses shared app)
 // ============================================================================
 

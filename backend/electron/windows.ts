@@ -68,20 +68,26 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
 }
 
 /**
- * Ask renderer to handle escape key
- * Returns Promise<{ handled: boolean }>
+ * Ask renderer to handle escape key.
+ *
+ * Protocol:
+ *   { handled: true }                - Renderer navigated internally, no action needed
+ *   { handled: false, close: true }  - Renderer at root, explicitly requesting close
+ *   { handled: false }               - Renderer didn't handle (or timeout/error)
+ *
+ * For 'navigate' mode, backend only closes on explicit { close: true }.
+ * For 'auto' mode, { handled: false } is sufficient (active mode won't close anyway).
  */
-export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled: boolean }> {
+export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled: boolean; close?: boolean; timeout?: boolean }> {
   return new Promise((resolve) => {
     const responseChannel = `escape-response-${bw.id}-${Date.now()}`;
     console.log(`[esc] Asking renderer to handle escape, channel: ${responseChannel}`);
 
-    // Timeout after 100ms - if renderer doesn't respond, assume not handled
     const timeout = setTimeout(() => {
-      console.log(`[esc] Renderer timeout (100ms) - no response on ${responseChannel}`);
+      console.log(`[esc] Renderer timeout (500ms) - no response on ${responseChannel}`);
       ipcMain.removeAllListeners(responseChannel);
-      resolve({ handled: false });
-    }, 100);
+      resolve({ handled: false, timeout: true });
+    }, 500);
 
     ipcMain.once(responseChannel, (_event, response) => {
       console.log(`[esc] Renderer responded on ${responseChannel}:`, response);
@@ -106,8 +112,21 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
  */
 export function addEscHandler(bw: BrowserWindow): void {
   DEBUG && console.log('adding esc handler to window:', bw.id);
+  let lastEscTime = 0;
   bw.webContents.on('before-input-event', async (e, i) => {
     if (i.key === 'Escape' && i.type === 'keyUp') {
+      // Debounce: ignore ESC events within 200ms of each other
+      // Prevents double-fires from key propagation or OS focus changes
+      const now = Date.now();
+      if (now - lastEscTime < 200) {
+        console.log(`[esc] Debounced ESC keyUp on window ${bw.id} (${now - lastEscTime}ms since last)`);
+        return;
+      }
+      lastEscTime = now;
+
+      // Prevent ESC from propagating to the page
+      e.preventDefault();
+
       // Get window info
       const entry = getWindowInfo(bw.id);
       const params = entry?.params || {};
@@ -122,20 +141,16 @@ export function addEscHandler(bw: BrowserWindow): void {
         return;
       }
 
-      // For 'navigate' mode, ask renderer to handle ESC first
-      // If renderer handles it (internal navigation), do nothing
-      // If renderer doesn't handle it, close the window
+      // For 'navigate' mode, renderer owns the window lifecycle completely.
+      // Backend NEVER closes navigate mode windows from ESC handler.
+      // Renderer handles internal navigation and calls izui-close-self IPC when done.
       if (escapeMode === 'navigate') {
-        console.log(`[esc] navigate mode - asking renderer to handle`);
+        console.log(`[esc] navigate mode - forwarding to renderer (backend will NOT close)`);
         const response = await askRendererToHandleEscape(bw);
-        console.log(`[esc] Renderer escape response:`, response);
-        if (response.handled) {
-          // Renderer handled it (internal navigation or closed itself)
-          return;
-        }
-        // Renderer didn't handle it, close the window
-        console.log('[esc] Renderer did not handle, closing window');
-        closeOrHideWindow(bw.id);
+        console.log(`[esc] navigate mode response (informational only):`, response);
+        // Navigate mode: renderer is fully responsible for lifecycle.
+        // If renderer wants to close, it calls izui-close-self IPC directly.
+        // Backend never closes here - prevents races and phantom ESC issues.
         return;
       }
 
@@ -157,17 +172,19 @@ export function addEscHandler(bw: BrowserWindow): void {
         } else {
           // Active mode (Peek was focused when window opened)
           // IZUI Policy: ESC only navigates internal state, does NOT close
-          // Ask renderer to handle (e.g., go back in webview history)
+          // Unless renderer explicitly requests close via { close: true }
           console.log(`[esc] auto mode (non-transient/active) - asking renderer to handle`);
           const response = await askRendererToHandleEscape(bw);
           console.log(`[esc] Renderer escape response (auto/active):`, response);
           if (response.handled) {
-            // Renderer handled it (internal navigation)
             return;
           }
-          // Active mode: renderer didn't handle but we do NOT close
-          // Per IZUI policy, active mode windows stay open on ESC
-          console.log('[esc] Active mode - renderer did not handle, but NOT closing (IZUI policy)');
+          if (response.close) {
+            console.log('[esc] Active mode - renderer explicitly requested close');
+            closeOrHideWindow(bw.id);
+            return;
+          }
+          console.log('[esc] Active mode - renderer did not handle, NOT closing (IZUI policy)');
           return;
         }
       }

@@ -141,9 +141,12 @@ export function setupEscapeHandler(internalHandler, options = {}) {
   const { closeOnEscape = true } = options;
 
   const handler = async () => {
+    DEBUG && console.log('[IZUI] Escape handler called, hasInternalHandler:', !!internalHandler, 'closeOnEscape:', closeOnEscape);
+
     // First, try internal navigation
     if (internalHandler) {
       const result = await internalHandler();
+      DEBUG && console.log('[IZUI] Internal handler returned:', JSON.stringify(result));
       if (result && result.handled) {
         DEBUG && console.log('[IZUI] Internal handler handled ESC');
         return { handled: true };
@@ -154,10 +157,14 @@ export function setupEscapeHandler(internalHandler, options = {}) {
     notifyParentFocus(null); // Global publish
 
     if (closeOnEscape) {
-      DEBUG && console.log('[IZUI] ESC at root, deferring to backend closeOrHideWindow');
-      // Return handled: false so backend's closeOrHideWindow runs
-      // (properly cleans up child windows, hides app, etc.)
-      return { handled: false };
+      DEBUG && console.log('[IZUI] ESC at root, closing via izui-close-self');
+      // Renderer-driven close: call backend's closeOrHideWindow directly.
+      // This avoids race conditions where backend ESC handler might close
+      // the wrong window or close prematurely due to IPC timing.
+      if (api.izui && api.izui.closeSelf) {
+        api.izui.closeSelf();
+      }
+      return { handled: true }; // Tell backend we handled it (we're closing ourselves)
     } else {
       DEBUG && console.log('[IZUI] ESC at root, not closing (closeOnEscape=false)');
     }

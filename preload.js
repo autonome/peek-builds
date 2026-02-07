@@ -398,6 +398,16 @@ api.izui = {
    */
   getState: () => {
     return ipcRenderer.invoke('izui-get-state');
+  },
+
+  /**
+   * Request this window to close/hide via the IZUI model.
+   * Goes through closeOrHideWindow for proper keepLive/modal/child handling.
+   * Used by navigate mode windows where renderer owns the lifecycle.
+   * @returns {Promise<{success: boolean}>}
+   */
+  closeSelf: () => {
+    return ipcRenderer.invoke('izui-close-self');
   }
 };
 
@@ -1595,6 +1605,20 @@ api.escape = {
    */
   onEscape: (callback) => {
     _escapeCallback = callback;
+    // Self-declare: tell backend this window has an escape handler
+    // This ensures escapeMode='navigate' even if the opener didn't set it
+    // (e.g., consolidated iframe extensions where params may be lost in IPC)
+    ipcRenderer.invoke('izui-set-escape-mode', 'navigate');
+  },
+  /**
+   * Trigger the escape handler directly (for testing)
+   * Returns the handler's response without going through IPC
+   */
+  trigger: async () => {
+    if (_escapeCallback) {
+      return await _escapeCallback();
+    }
+    return { handled: false };
   }
 };
 
@@ -1605,23 +1629,25 @@ api.escape = {
 // Note: Web pages are now wrapped in peek://page containers which have IZUI handlers.
 // This fallback is for any peek:// window that doesn't register a handler.
 ipcRenderer.on('escape-pressed', async (event, data) => {
-  DEBUG && console.log('[preload:esc] escape-pressed received, hasCallback:', !!_escapeCallback);
+  console.log('[preload:esc] escape-pressed received, hasCallback:', !!_escapeCallback, 'source:', sourceAddress);
 
   try {
     // If app registered a handler (IZUI), use it
     if (_escapeCallback) {
-      DEBUG && console.log('[preload:esc] Calling app escape handler');
+      console.log('[preload:esc] Calling app escape handler');
+      const startTime = Date.now();
       const result = await _escapeCallback();
-      DEBUG && console.log('[preload:esc] App handler returned:', result);
+      const elapsed = Date.now() - startTime;
+      console.log('[preload:esc] App handler returned:', JSON.stringify(result), `(${elapsed}ms)`);
       ipcRenderer.send(data.responseChannel, result || { handled: false });
       return;
     }
 
     // No handler registered - let backend close the window
-    DEBUG && console.log('[preload:esc] No handler, returning { handled: false }');
+    console.log('[preload:esc] No handler registered, returning { handled: false }');
     ipcRenderer.send(data.responseChannel, { handled: false });
   } catch (err) {
-    console.error('[preload] Error in escape handler:', err);
+    console.error('[preload:esc] Error in escape handler:', err);
     ipcRenderer.send(data.responseChannel, { handled: false });
   }
 });

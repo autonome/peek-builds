@@ -1654,6 +1654,9 @@ export function registerWindowHandlers(): void {
 
     const { url, options } = msg;
 
+    // Always log escapeMode for debugging window lifecycle
+    console.log(`[window-open] url: ${url}, source: ${msg.source}, escapeMode: ${options?.escapeMode}, key: ${options?.key}, options keys: ${options ? Object.keys(options).join(',') : 'none'}`);
+
     // IMPORTANT: Determine transient state BEFORE creating the window
     // A window is transient if:
     // 1. The current IZUI session is transient (user invoked from background), OR
@@ -1681,7 +1684,12 @@ export function registerWindowHandlers(): void {
         const newTransientState = coordinator.evaluateOnShow();
         const existingData = existingWindow.data as { params: Record<string, unknown> };
         existingData.params.transient = (newTransientState === 'transient');
-        DEBUG && console.log('Reused window transient re-evaluated:', newTransientState);
+        // Preserve IZUI-relevant params from the new open request
+        // escapeMode may differ between invocations (e.g., first open vs reuse)
+        if (options.escapeMode) {
+          existingData.params.escapeMode = options.escapeMode;
+        }
+        DEBUG && console.log('Reused window transient re-evaluated:', newTransientState, 'escapeMode:', existingData.params.escapeMode);
 
         if (!isHeadless()) {
           existingWindow.window.show();
@@ -1816,7 +1824,7 @@ export function registerWindowHandlers(): void {
         address: url,
         transient: isTransient
       };
-      DEBUG && console.log('Adding window to manager:', win.id, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient);
+      console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient);
       registerWindow(win.id, msg.source, windowParams);
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);
@@ -2555,6 +2563,36 @@ export function registerMiscHandlers(onQuit: () => void): void {
   ipcMain.handle('izui-get-state', () => {
     const coordinator = getIzuiCoordinator();
     return coordinator.getState();
+  });
+
+  // IZUI: renderer self-declares its escape mode
+  // Called when a window registers an escape handler via api.escape.onEscape()
+  // This ensures the backend respects renderer-owned lifecycle even if the
+  // opener's escapeMode param was lost (e.g., consolidated iframe IPC)
+  ipcMain.handle('izui-set-escape-mode', (ev, mode: string) => {
+    const win = BrowserWindow.fromWebContents(ev.sender);
+    if (win && !win.isDestroyed()) {
+      const entry = getWindowInfo(win.id);
+      if (entry) {
+        const oldMode = entry.params.escapeMode;
+        entry.params.escapeMode = mode;
+        console.log(`[izui] Window ${win.id} self-declared escapeMode: ${oldMode} -> ${mode}`);
+        return { success: true };
+      }
+    }
+    return { success: false, error: 'Window not found' };
+  });
+
+  // IZUI: renderer requests its own window to close/hide (navigate mode)
+  // Goes through closeOrHideWindow for proper keepLive/modal/child handling
+  ipcMain.handle('izui-close-self', (ev) => {
+    const win = BrowserWindow.fromWebContents(ev.sender);
+    if (win && !win.isDestroyed()) {
+      console.log('[izui] izui-close-self for window:', win.id);
+      closeOrHideWindow(win.id);
+      return { success: true };
+    }
+    return { success: false, error: 'Window not found' };
   });
 
   // Get window position
