@@ -105,6 +105,8 @@ const MAJOR_MODES = ['default', 'page', 'group', 'settings'];
 // Current mode for UI display
 let currentMode = 'default';
 let currentModeMetadata = {};
+// Flag to track if mode was explicitly set (vs still at initial 'default')
+let modeWasSet = false;
 
 /**
  * Load the current command context (target window, mode state)
@@ -121,6 +123,7 @@ const loadCommandContext = async () => {
       log('cmd:panel', 'Transient invocation - using default mode');
       currentMode = 'default';
       currentModeMetadata = {};
+      modeWasSet = true; // Explicitly set by transient detection
       updateModeIndicator();
       // Still load command context for backwards compat, but don't use its mode
       const result = await api.modes.getCommandContext();
@@ -140,6 +143,7 @@ const loadCommandContext = async () => {
       if (modeResult.success && modeResult.data) {
         currentMode = modeResult.data.value || 'default';
         currentModeMetadata = modeResult.data.metadata || {};
+        modeWasSet = true; // Explicitly set from context API
         log('cmd:panel', 'Loaded mode from context:', currentMode, currentModeMetadata);
         updateModeIndicator();
       }
@@ -150,9 +154,10 @@ const loadCommandContext = async () => {
     if (result.success) {
       commandContext = result.data;
       log('cmd:panel', 'Loaded command context:', commandContext);
-      // Update mode from context if not already set via context API
-      if (!currentMode && commandContext?.mode?.major) {
+      // Update mode from old API if context API didn't set a mode
+      if (!modeWasSet && commandContext?.mode?.major) {
         currentMode = commandContext.mode.major;
+        modeWasSet = true;
         updateModeIndicator();
       }
     }
@@ -225,14 +230,18 @@ async function cycleMode() {
 async function initModeIndicator() {
   // Use commandContext which has the target window's mode (not the cmd panel's mode)
   // commandContext is loaded by loadCommandContext() before this is called
-  // BUT: Don't override if loadCommandContext already set 'default' (transient mode)
-  if (currentMode === 'default') {
-    // Already set by transient detection - don't override
+  // If mode was explicitly set (by transient detection or context API), use that
+  // Otherwise try to get mode from commandContext (legacy modes API)
+  if (modeWasSet) {
+    // Mode was explicitly set by loadCommandContext - use it
     updateModeIndicator();
   } else if (commandContext?.mode?.major) {
+    // Fallback to legacy modes API
     currentMode = commandContext.mode.major;
+    modeWasSet = true;
     updateModeIndicator();
   } else {
+    // No mode data available - stay at 'default'
     updateModeIndicator();
   }
 
@@ -390,6 +399,10 @@ async function render() {
       }
       // Reset showResults
       state.showResults = false;
+      // Reset mode state for fresh context loading
+      currentMode = 'default';
+      currentModeMetadata = {};
+      modeWasSet = false;
       // Load current command context (mode, target window)
       await loadCommandContext();
     }

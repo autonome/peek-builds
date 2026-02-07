@@ -214,6 +214,32 @@ const init = async () => {
   // Keyboard navigation
   document.addEventListener('keydown', handleKeydown);
 
+  // Subscribe to tag events for reactive updates
+  api.subscribe('tag:item-added', async (msg) => {
+    debug && console.log('[groups] tag:item-added event received:', msg);
+    // Reload tag counts (an item was tagged)
+    await loadTags();
+    if (state.view === VIEW_GROUPS) renderGroups();
+    else if (state.view === VIEW_ADDRESSES && state.currentTag?.name === msg.tagName) {
+      renderAddresses();
+    }
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('tag:item-removed', async (msg) => {
+    debug && console.log('[groups] tag:item-removed event received:', msg);
+    await loadTags();
+    if (state.view === VIEW_GROUPS) renderGroups();
+    else if (state.view === VIEW_ADDRESSES && state.currentTag?.name === msg.tagName) {
+      renderAddresses();
+    }
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('tag:created', async (msg) => {
+    debug && console.log('[groups] tag:created event received:', msg);
+    await loadTags();
+    if (state.view === VIEW_GROUPS) renderGroups();
+  }, api.scopes.GLOBAL);
+
   // Show groups view
   showGroups();
 };
@@ -322,6 +348,16 @@ const showGroups = async () => {
   state.currentTag = null;
   state.searchQuery = '';
 
+  // Reset mode context to 'default' when returning to groups list
+  if (api.context) {
+    try {
+      await api.context.setMode('default', {});
+      debug && console.log('[groups] Reset to default mode');
+    } catch (err) {
+      console.error('[groups] Failed to reset mode:', err);
+    }
+  }
+
   // Refresh tags
   await loadTags();
 
@@ -381,6 +417,22 @@ const showAddresses = async (tag) => {
   state.view = VIEW_ADDRESSES;
   state.currentTag = tag;
   state.searchQuery = '';
+
+  // Set mode context to 'group' so cmd bar shows correct mode
+  if (api.context) {
+    try {
+      await api.context.setMode('group', {
+        metadata: {
+          groupId: tag.id,
+          groupName: tag.name,
+          color: tag.color
+        }
+      });
+      debug && console.log('[groups] Set group mode:', tag.name);
+    } catch (err) {
+      console.error('[groups] Failed to set group mode:', err);
+    }
+  }
 
   // Load URL items - handle special untagged group (only http/https URLs)
   if (tag.isSpecial && tag.id === '__untagged__') {

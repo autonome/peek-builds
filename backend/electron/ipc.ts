@@ -387,6 +387,16 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-get-or-create-tag', async (ev, data) => {
     try {
       const result = getOrCreateTag(data.name);
+
+      // Emit event if tag was newly created
+      if (result.created) {
+        publish('system', PubSubScopes.GLOBAL, 'tag:created', {
+          tagId: result.tag.id,
+          tagName: result.tag.name
+        });
+        if (DEBUG) console.log('[ipc] tag:created', result.tag.id, result.tag.name);
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -397,6 +407,19 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-tag-address', async (ev, data) => {
     try {
       const result = tagAddress(data.addressId, data.tagId);
+
+      // Emit event if this is a new link (not already tagged)
+      if (!result.alreadyExists) {
+        // Fetch tag name for event payload
+        const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(data.tagId) as { name: string } | undefined;
+        publish('system', PubSubScopes.GLOBAL, 'tag:address-added', {
+          tagId: data.tagId,
+          tagName: tag?.name,
+          addressId: data.addressId
+        });
+        if (DEBUG) console.log('[ipc] tag:address-added', data.tagId, data.addressId);
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -406,7 +429,21 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-untag-address', async (ev, data) => {
     try {
+      // Fetch tag name before untagging (need it for event payload)
+      const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(data.tagId) as { name: string } | undefined;
+
       const result = untagAddress(data.addressId, data.tagId);
+
+      // Emit event if the untag actually removed something
+      if (result) {
+        publish('system', PubSubScopes.GLOBAL, 'tag:address-removed', {
+          tagId: data.tagId,
+          tagName: tag?.name,
+          addressId: data.addressId
+        });
+        if (DEBUG) console.log('[ipc] tag:address-removed', data.tagId, data.addressId);
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -518,6 +555,22 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-tag-item', async (ev, data) => {
     try {
       const result = tagItem(data.itemId, data.tagId);
+
+      // Emit event if this is a new link (not already tagged)
+      if (!result.alreadyExists) {
+        // Fetch tag name and item type for event payload
+        const db = getDb();
+        const tag = db.prepare('SELECT name FROM tags WHERE id = ?').get(data.tagId) as { name: string } | undefined;
+        const item = db.prepare('SELECT type FROM items WHERE id = ?').get(data.itemId) as { type: string } | undefined;
+        publish('system', PubSubScopes.GLOBAL, 'tag:item-added', {
+          tagId: data.tagId,
+          tagName: tag?.name,
+          itemId: data.itemId,
+          itemType: item?.type
+        });
+        if (DEBUG) console.log('[ipc] tag:item-added', data.tagId, data.itemId);
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -527,7 +580,21 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-untag-item', async (ev, data) => {
     try {
+      // Fetch tag name before untagging (need it for event payload)
+      const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(data.tagId) as { name: string } | undefined;
+
       const result = untagItem(data.itemId, data.tagId);
+
+      // Emit event if the untag actually removed something
+      if (result) {
+        publish('system', PubSubScopes.GLOBAL, 'tag:item-removed', {
+          tagId: data.tagId,
+          tagName: tag?.name,
+          itemId: data.itemId
+        });
+        if (DEBUG) console.log('[ipc] tag:item-removed', data.tagId, data.itemId);
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

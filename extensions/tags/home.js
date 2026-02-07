@@ -101,9 +101,53 @@ const loadData = async () => {
 };
 
 /**
+ * Load just the tags list (for incremental updates)
+ */
+const loadTags = async () => {
+  const tagsResult = await api.datastore.getTagsByFrecency();
+  if (tagsResult.success) {
+    state.tags = tagsResult.data;
+    debug && console.log('[tags] Reloaded tags:', state.tags.length);
+  } else {
+    console.error('[tags] Failed to reload tags:', tagsResult.error);
+  }
+};
+
+/**
  * Set up all event listeners
  */
 const setupEventListeners = () => {
+  // Subscribe to tag events for reactive updates
+  api.subscribe('tag:item-added', async (msg) => {
+    debug && console.log('[tags] tag:item-added event received:', msg);
+    // Update the specific item's tags in state
+    const currentTags = state.itemTags.get(msg.itemId) || [];
+    if (!currentTags.find(t => t.id === msg.tagId)) {
+      currentTags.push({ id: msg.tagId, name: msg.tagName });
+      state.itemTags.set(msg.itemId, currentTags);
+    }
+    // Refresh tag list if new tag
+    if (!state.tags.find(t => t.id === msg.tagId)) {
+      await loadTags(); // Just reload tags, not all data
+    }
+    render();
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('tag:item-removed', async (msg) => {
+    debug && console.log('[tags] tag:item-removed event received:', msg);
+    const currentTags = state.itemTags.get(msg.itemId) || [];
+    state.itemTags.set(msg.itemId, currentTags.filter(t => t.id !== msg.tagId));
+    render();
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('tag:created', async (msg) => {
+    debug && console.log('[tags] tag:created event received:', msg);
+    if (!state.tags.find(t => t.id === msg.tagId)) {
+      state.tags.push({ id: msg.tagId, name: msg.tagName });
+    }
+    render();
+  }, api.scopes.GLOBAL);
+
   // Search input
   searchInput.addEventListener('input', (e) => {
     state.searchQuery = e.target.value;
