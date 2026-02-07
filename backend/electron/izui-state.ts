@@ -162,11 +162,10 @@ class IzuiStateCoordinator {
     // If we don't have a session, start one with the detected mode
     if (!this.session) {
       this.startSession(result);
-    } else {
-      // Update the session's entry mode for this invocation
-      this.session.entryMode = result;
-      this.state = result === 'transient' ? 'transient' : (this.state === 'overlay' ? 'overlay' : 'active');
     }
+    // Don't update this.session.entryMode on subsequent evaluateOnShow calls.
+    // Once a session starts as transient, it should STAY transient even if
+    // a window gains focus during the session.
 
     return result;
   }

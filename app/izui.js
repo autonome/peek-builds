@@ -83,39 +83,6 @@ export function setupFocusListener() {
   DEBUG && console.log('[IZUI] Focus listener set up for:', myAddress);
 }
 
-/**
- * Set up listener for child window escape events.
- * When a child we opened presses ESC, update nav stack and focus ourselves.
- * Child window closes itself via preload default handler.
- * This enables navigation stack behavior even for web pages without IZUI.
- */
-export function setupChildEscapeListener() {
-  api.subscribe('izui:child-escape', async (msg) => {
-    const { windowId } = msg || {};
-
-    DEBUG && console.log('[IZUI] Received child-escape from window:', windowId, 'stack:', navigationStack.map(e => e.windowId));
-
-    // Check if this child is in our navigation stack
-    const stackIndex = navigationStack.findIndex(entry => entry.windowId === windowId);
-    if (stackIndex === -1) {
-      DEBUG && console.log('[IZUI] Child not in our stack, ignoring');
-      return;
-    }
-
-    // Remove this child and all children opened after it (if any)
-    const removed = navigationStack.splice(stackIndex);
-    DEBUG && console.log('[IZUI] Popped from stack:', removed.length, 'remaining:', navigationStack.length);
-
-    // Child closes itself via preload - just focus ourselves
-    const myWindowId = await api.window.getWindowId();
-    if (myWindowId) {
-      await api.window.focus(myWindowId);
-      DEBUG && console.log('[IZUI] Focused self:', myWindowId);
-    }
-  }, api.scopes.GLOBAL);
-
-  DEBUG && console.log('[IZUI] Child escape listener set up');
-}
 
 /**
  * Open a child window with IZUI tracking.
@@ -187,14 +154,15 @@ export function setupEscapeHandler(internalHandler, options = {}) {
     notifyParentFocus(null); // Global publish
 
     if (closeOnEscape) {
-      DEBUG && console.log('[IZUI] ESC at root, closing window');
-      // Close this window - parent was already notified
-      window.close();
+      DEBUG && console.log('[IZUI] ESC at root, deferring to backend closeOrHideWindow');
+      // Return handled: false so backend's closeOrHideWindow runs
+      // (properly cleans up child windows, hides app, etc.)
+      return { handled: false };
     } else {
       DEBUG && console.log('[IZUI] ESC at root, not closing (closeOnEscape=false)');
     }
 
-    return { handled: true }; // We handled it (by closing or not)
+    return { handled: true }; // We handled it (by not closing)
   };
 
   // Register with the escape API
@@ -235,7 +203,6 @@ export async function init(options = {}) {
 
   if (canHaveChildren) {
     setupFocusListener();
-    setupChildEscapeListener();
   }
 
   // Always set up escape handler so parent is notified before close
@@ -250,7 +217,6 @@ export async function init(options = {}) {
 export default {
   init,
   setupFocusListener,
-  setupChildEscapeListener,
   setupEscapeHandler,
   openChildWindow,
   notifyParentFocus

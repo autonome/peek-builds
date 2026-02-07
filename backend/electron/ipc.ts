@@ -1818,6 +1818,8 @@ export function registerWindowHandlers(): void {
       };
       DEBUG && console.log('Adding window to manager:', win.id, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient);
       registerWindow(win.id, msg.source, windowParams);
+      const coordinator = getIzuiCoordinator();
+      coordinator.pushWindow(win.id);
 
       // Set window mode based on URL
       // For page containers (peek://app/page), extract the actual URL

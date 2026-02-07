@@ -62,6 +62,7 @@ const openGroupsWindow = () => {
     key: address,
     height,
     width,
+    escapeMode: 'navigate',
     trackingSource: 'cmd',
     trackingSourceId: 'groups'
   };
