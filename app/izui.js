@@ -101,9 +101,28 @@ export async function openChildWindow(address, params = {}) {
     myWindowId = await api.window.getWindowId();
   }
 
+  // Center child over parent window by default
+  let centerPos = {};
+  if (params.x === undefined && params.y === undefined && myWindowId && api.window.getBounds) {
+    try {
+      const bounds = await api.window.getBounds(myWindowId);
+      if (bounds && bounds.x !== undefined) {
+        const childW = params.width || 800;
+        const childH = params.height || 600;
+        centerPos = {
+          x: Math.round(bounds.x + (bounds.width - childW) / 2),
+          y: Math.round(bounds.y + (bounds.height - childH) / 2)
+        };
+      }
+    } catch (e) {
+      DEBUG && console.log('[IZUI] Could not get parent bounds for centering:', e);
+    }
+  }
+
   // Track this window as the parent - pass our window ID so child can target us
   // Set escapeMode: 'navigate' so backend asks renderer before closing
   const childParams = {
+    ...centerPos,
     ...params,
     izuiParent: myAddress,
     izuiParentWindowId: myWindowId,
