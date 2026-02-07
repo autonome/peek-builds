@@ -137,87 +137,6 @@ const ClearButton: React.FC<ClearButtonProps> = ({ onClear, show, className = ''
   );
 };
 
-// Webview overlay — expands from card position to fullscreen iframe
-const WebviewOverlay: React.FC<{
-  url: string;
-  startRect: DOMRect;
-  onClose: () => void;
-}> = ({ url, startRect, onClose }) => {
-  const [expanded, setExpanded] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
-
-  // Trigger expansion animation on mount
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => setExpanded(true));
-    });
-  }, []);
-
-  const handleClose = () => {
-    setExpanded(false);
-    setTimeout(onClose, 300);
-  };
-
-  const collapsedStyle: React.CSSProperties = {
-    top: startRect.top,
-    left: startRect.left,
-    width: startRect.width,
-    height: startRect.height,
-    borderRadius: '10px',
-  };
-
-  const expandedStyle: React.CSSProperties = {
-    top: 0,
-    left: 0,
-    width: '100vw',
-    height: '100vh',
-    borderRadius: '0px',
-  };
-
-  const style = expanded ? expandedStyle : collapsedStyle;
-
-  let hostname = '';
-  try { hostname = new URL(url).hostname; } catch { hostname = url; }
-
-  return (
-    <div className={`webview-overlay ${expanded ? 'expanded' : ''}`}>
-      <div className="webview-card" style={style}>
-        <div className="webview-header">
-          <button className="webview-close-btn" onClick={handleClose}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
-          <span className="webview-url">{hostname}</span>
-          <button className="webview-browser-btn" onClick={() => openUrl(url)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </button>
-        </div>
-        {!error ? (
-          <iframe
-            src={url}
-            className="webview-iframe"
-            onLoad={() => setLoaded(true)}
-            onError={() => setError(true)}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-          />
-        ) : (
-          <div className="webview-error">
-            <p>This site can't be displayed inline.</p>
-            <button onClick={() => openUrl(url)}>Open in Safari</button>
-          </div>
-        )}
-        {!loaded && !error && <div className="webview-loading">Loading...</div>}
-      </div>
-    </div>
-  );
-};
-
 interface EditorOverlayProps {
   children: React.ReactNode;
   onDismiss: () => void;
@@ -445,6 +364,8 @@ interface ResizableInputProps {
   autoFocus?: boolean;
   showClearButton?: boolean;
   onAutoSave?: (value: string) => void;
+  autoCapitalize?: string;
+  autoCorrect?: string;
 }
 
 const ResizableInput: React.FC<ResizableInputProps> = ({
@@ -455,7 +376,9 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   keyboardHeight,
   autoFocus = false,
   showClearButton = true,
-  onAutoSave
+  onAutoSave,
+  autoCapitalize: autoCapitalizeProp = "sentences",
+  autoCorrect: autoCorrectProp = "on"
 }) => {
   const [height, setHeight] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -679,10 +602,10 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        autoCapitalize="sentences"
-        autoCorrect="on"
+        autoCapitalize={autoCapitalizeProp}
+        autoCorrect={autoCorrectProp}
         autoComplete="off"
-        spellCheck={true}
+        spellCheck={autoCorrectProp === "on"}
       />
       {showClearButton && <ClearButton show={value.length > 0} onClear={() => onChange('')} className="textarea-clear" />}
       <div
@@ -784,12 +707,17 @@ function App() {
   const [addInputExpanded, setAddInputExpanded] = useState(false);
   const [addInputNewTag, setAddInputNewTag] = useState("");
 
-  // Webview overlay state
-  const [webviewState, setWebviewState] = useState<{
+  // Webview animation duration (ms) — must match --webview-anim in CSS
+  const WEBVIEW_ANIM_MS = 300;
+
+  // Inline webview expansion state: which item is expanded with an iframe
+  const [expandedWebview, setExpandedWebview] = useState<{
     url: string;
     itemId: string;
-    rect: DOMRect;
   } | null>(null);
+  const [webviewAnimated, setWebviewAnimated] = useState(false); // drives height transition
+  const [webviewLoaded, setWebviewLoaded] = useState(false);
+  const [webviewError, setWebviewError] = useState(false);
 
   // Camera capture state
   const [capturedImage, setCapturedImage] = useState<string | null>(null); // base64 data URL
@@ -2316,12 +2244,42 @@ function App() {
     }
   };
 
+  const renderWebviewInline = (url: string) => {
+    return (
+      <div className={`webview-inline ${webviewAnimated ? 'webview-expanded' : ''}`}>
+        {!webviewError ? (
+          <iframe
+            src={url}
+            className="webview-iframe"
+            onLoad={() => setWebviewLoaded(true)}
+            onError={() => setWebviewError(true)}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          />
+        ) : (
+          <div className="webview-error">
+            <p>This site can't be displayed inline.</p>
+            <button onClick={(e) => { e.stopPropagation(); openUrl(url); }}>Open in Safari</button>
+          </div>
+        )}
+        {!webviewLoaded && !webviewError && <div className="webview-loading">Loading...</div>}
+      </div>
+    );
+  };
+
   const renderUrlItem = (item: SavedUrl) => {
     const title = item.metadata?.title as string | undefined;
+    const isExpanded = expandedWebview?.itemId === item.id;
 
     return (
-      <div key={item.id} className="saved-item-card" onClick={() => startEditing(item)}>
+      <div key={item.id} id={`card-${item.id}`} className={`saved-item-card ${isExpanded ? 'card-webview-expanded' : ''}`} onClick={() => !isExpanded && startEditing(item)}>
         <div className="card-header">
+          {isExpanded && (
+            <button className={`card-action-btn webview-back-btn ${webviewAnimated ? 'visible' : ''}`} onClick={(e) => { e.stopPropagation(); closeWebview(); }} title="Back">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+          )}
           <div className="card-type-icon">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10"></circle>
@@ -2333,7 +2291,7 @@ function App() {
           <div className="card-actions">
             <button
               className="card-action-btn"
-              onClick={(e) => openInBrowser(item.url, item.id, e)}
+              onClick={(e) => isExpanded ? (e.stopPropagation(), openUrl(item.url)) : openInBrowser(item.url, item.id, e)}
               title="Open in Safari"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2344,8 +2302,8 @@ function App() {
             </button>
             <button
               className="card-action-btn"
-              onClick={(e) => openInWebview(item.url, item.id, e)}
-              title="Open in app"
+              onClick={(e) => isExpanded ? (e.stopPropagation(), closeWebview()) : openInWebview(item.url, item.id, e)}
+              title={isExpanded ? "Close webview" : "Open in app"}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -2366,6 +2324,7 @@ function App() {
             </button>
           </div>
         </div>
+        {isExpanded && renderWebviewInline(expandedWebview.url)}
         <div className="card-footer">
           {(item.tags.includes("todo") || item.tags.includes("done")) && (
             <button
@@ -2406,9 +2365,18 @@ function App() {
     // Extract first URL from content
     const urlMatch = item.content.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
 
+    const isExpanded = expandedWebview?.itemId === item.id;
+
     return (
-      <div key={item.id} className="saved-item-card" onClick={() => startEditingText(item)}>
+      <div key={item.id} id={`card-${item.id}`} className={`saved-item-card ${isExpanded ? 'card-webview-expanded' : ''}`} onClick={() => !isExpanded && startEditingText(item)}>
         <div className="card-header">
+          {isExpanded && (
+            <button className={`card-action-btn webview-back-btn ${webviewAnimated ? 'visible' : ''}`} onClick={(e) => { e.stopPropagation(); closeWebview(); }} title="Back">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+          )}
           <div className="card-type-icon">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -2420,10 +2388,9 @@ function App() {
           <div className="card-title">{summary}</div>
           <div className="card-actions">
             {urlMatch && (
-              <>
               <button
                 className="card-action-btn"
-                onClick={(e) => openInBrowser(urlMatch[0], item.id, e)}
+                onClick={(e) => isExpanded ? (e.stopPropagation(), openUrl(urlMatch[0])) : openInBrowser(urlMatch[0], item.id, e)}
                 title="Open in Safari"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2432,17 +2399,18 @@ function App() {
                   <line x1="10" y1="14" x2="21" y2="3"></line>
                 </svg>
               </button>
+            )}
+            {urlMatch && (
               <button
                 className="card-action-btn"
-                onClick={(e) => openInWebview(urlMatch[0], item.id, e)}
-                title="Open in app"
+                onClick={(e) => isExpanded ? (e.stopPropagation(), closeWebview()) : openInWebview(urlMatch[0], item.id, e)}
+                title={isExpanded ? "Close webview" : "Open in app"}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                   <line x1="3" y1="9" x2="21" y2="9"></line>
                 </svg>
               </button>
-              </>
             )}
             <button
               className="card-delete-btn"
@@ -2458,6 +2426,7 @@ function App() {
             </button>
           </div>
         </div>
+        {isExpanded && renderWebviewInline(expandedWebview.url)}
         <div className="card-footer">
           {(tags.includes("todo") || tags.includes("done")) && (
             <button
@@ -2662,17 +2631,58 @@ function App() {
     }
   };
 
-  // Open URL in embedded webview overlay
+  // Open URL in inline webview (expand card in-place)
+  const appRef = useRef<HTMLDivElement>(null);
+
   const openInWebview = async (url: string, itemId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    setWebviewLoaded(false);
+    setWebviewError(false);
+    setWebviewAnimated(false);
+    setExpandedWebview({ url, itemId });
+    // Double-rAF: first renders at height 0, second triggers the transition
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const card = document.getElementById(`card-${itemId}`);
+        const app = appRef.current;
+        if (card && app) {
+          // Measure card's visual offset from top of app viewport
+          const cardRect = card.getBoundingClientRect();
+          const appRect = app.getBoundingClientRect();
+          // Leave safe-area gap at top so rounded corners + app bg show behind notch
+          const probe = document.createElement('div');
+          probe.style.cssText = 'position:fixed;top:0;height:env(safe-area-inset-top,0px);visibility:hidden;';
+          document.body.appendChild(probe);
+          const safeTop = probe.offsetHeight;
+          document.body.removeChild(probe);
+          const offset = cardRect.top - appRect.top - safeTop;
+          app.style.setProperty('--slide-offset', `${Math.max(0, offset)}px`);
+        }
+        // Set open easing on root so all transitions use it
+        document.documentElement.style.setProperty('--webview-ease', 'var(--webview-ease-in)');
+        setWebviewAnimated(true);
+      });
+    });
     try {
       await invoke("record_visit", { itemId, source: "webview", windowType: "embedded" });
-      const card = (e.currentTarget as HTMLElement).closest('.saved-item-card');
-      const rect = card?.getBoundingClientRect() ?? new DOMRect(0, 0, window.innerWidth, 60);
-      setWebviewState({ url, itemId, rect });
     } catch (error) {
-      console.error("[App] Failed to open webview:", error);
+      console.error("[App] Failed to record webview visit:", error);
     }
+  };
+
+  const closeWebview = () => {
+    // Switch to close easing before animating
+    document.documentElement.style.setProperty('--webview-ease', 'var(--webview-ease-out)');
+    setWebviewAnimated(false);
+    if (appRef.current) {
+      appRef.current.style.setProperty('--slide-offset', '0px');
+    }
+    // Wait for collapse animation, then unmount
+    setTimeout(() => {
+      setExpandedWebview(null);
+      setWebviewLoaded(false);
+      setWebviewError(false);
+    }, WEBVIEW_ANIM_MS);
   };
 
   const renderDiscardConfirmModal = () => {
@@ -3282,7 +3292,7 @@ function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${expandedWebview ? 'webview-active' : ''}`} ref={appRef}>
       {cameraInput}
       <header>
         <h1
@@ -3484,15 +3494,6 @@ function App() {
       {/* Edit modal overlay */}
       {renderEditModal()}
 
-      {/* Webview overlay */}
-      {webviewState && (
-        <WebviewOverlay
-          url={webviewState.url}
-          startRect={webviewState.rect}
-          onClose={() => setWebviewState(null)}
-        />
-      )}
-
       {/* Quick Add overlay */}
       {addInputExpanded && (
         <EditorOverlay onDismiss={() => setAddInputExpanded(false)} keyboardHeight={keyboardHeight}>
@@ -3502,6 +3503,8 @@ function App() {
             placeholder="Enter text, URL, or just select tags..."
             keyboardHeight={keyboardHeight}
             autoFocus
+            autoCapitalize="none"
+            autoCorrect="off"
           />
           <TagsSection
             selectedTags={addInputTags}
