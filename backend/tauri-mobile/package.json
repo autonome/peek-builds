@@ -33,7 +33,8 @@
     "sim:log": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\"' --level debug",
     "sim:log:webview": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\" AND eventMessage CONTAINS \"webview\"' --style compact",
     "sim:install": "xcrun simctl install booted \"$(ls -dt ~/Library/Developer/Xcode/DerivedData/peek-save-*/Build/Products/debug-iphonesimulator/Peek\\ Save.app | head -1)\"",
-    "xcode:build": "cd src-tauri/gen/apple && xcodebuild -project peek-save.xcodeproj -scheme Peek -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -configuration Debug build"
+    "xcode:clean": "cd src-tauri/gen/apple && xcodebuild -project peek-save.xcodeproj -scheme Peek -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -configuration Debug clean",
+    "xcode:build": "cd src-tauri/gen/apple && xcodebuild -project peek-save.xcodeproj -scheme Peek -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -configuration Debug clean build"
   },
   "dependencies": {
     "@tauri-apps/api": "2.9.1",

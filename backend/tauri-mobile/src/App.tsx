@@ -137,6 +137,87 @@ const ClearButton: React.FC<ClearButtonProps> = ({ onClear, show, className = ''
   );
 };
 
+// Webview overlay — expands from card position to fullscreen iframe
+const WebviewOverlay: React.FC<{
+  url: string;
+  startRect: DOMRect;
+  onClose: () => void;
+}> = ({ url, startRect, onClose }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
+
+  // Trigger expansion animation on mount
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => setExpanded(true));
+    });
+  }, []);
+
+  const handleClose = () => {
+    setExpanded(false);
+    setTimeout(onClose, 300);
+  };
+
+  const collapsedStyle: React.CSSProperties = {
+    top: startRect.top,
+    left: startRect.left,
+    width: startRect.width,
+    height: startRect.height,
+    borderRadius: '10px',
+  };
+
+  const expandedStyle: React.CSSProperties = {
+    top: 0,
+    left: 0,
+    width: '100vw',
+    height: '100vh',
+    borderRadius: '0px',
+  };
+
+  const style = expanded ? expandedStyle : collapsedStyle;
+
+  let hostname = '';
+  try { hostname = new URL(url).hostname; } catch { hostname = url; }
+
+  return (
+    <div className={`webview-overlay ${expanded ? 'expanded' : ''}`}>
+      <div className="webview-card" style={style}>
+        <div className="webview-header">
+          <button className="webview-close-btn" onClick={handleClose}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+          <span className="webview-url">{hostname}</span>
+          <button className="webview-browser-btn" onClick={() => openUrl(url)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+          </button>
+        </div>
+        {!error ? (
+          <iframe
+            src={url}
+            className="webview-iframe"
+            onLoad={() => setLoaded(true)}
+            onError={() => setError(true)}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          />
+        ) : (
+          <div className="webview-error">
+            <p>This site can't be displayed inline.</p>
+            <button onClick={() => openUrl(url)}>Open in Safari</button>
+          </div>
+        )}
+        {!loaded && !error && <div className="webview-loading">Loading...</div>}
+      </div>
+    </div>
+  );
+};
+
 interface EditorOverlayProps {
   children: React.ReactNode;
   onDismiss: () => void;
@@ -702,6 +783,13 @@ function App() {
   const [addInputTags, setAddInputTags] = useState<Set<string>>(new Set());
   const [addInputExpanded, setAddInputExpanded] = useState(false);
   const [addInputNewTag, setAddInputNewTag] = useState("");
+
+  // Webview overlay state
+  const [webviewState, setWebviewState] = useState<{
+    url: string;
+    itemId: string;
+    rect: DOMRect;
+  } | null>(null);
 
   // Camera capture state
   const [capturedImage, setCapturedImage] = useState<string | null>(null); // base64 data URL
@@ -2574,20 +2662,16 @@ function App() {
     }
   };
 
-  // Open URL in embedded webview
+  // Open URL in embedded webview overlay
   const openInWebview = async (url: string, itemId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log("[App] openInWebview called:", url, itemId);
     try {
-      // Record initial visit
-      console.log("[App] Recording visit...");
       await invoke("record_visit", { itemId, source: "webview", windowType: "embedded" });
-      console.log("[App] Visit recorded, opening webview...");
-      // Use direct Tauri command instead of plugin to bypass iOS plugin routing issues
-      await invoke("open_native_webview", { url, itemId });
-      console.log("[App] Webview invoke completed");
+      const card = (e.currentTarget as HTMLElement).closest('.saved-item-card');
+      const rect = card?.getBoundingClientRect() ?? new DOMRect(0, 0, window.innerWidth, 60);
+      setWebviewState({ url, itemId, rect });
     } catch (error) {
-      console.error("[App] Failed to open in webview:", error);
+      console.error("[App] Failed to open webview:", error);
     }
   };
 
@@ -3399,6 +3483,15 @@ function App() {
 
       {/* Edit modal overlay */}
       {renderEditModal()}
+
+      {/* Webview overlay */}
+      {webviewState && (
+        <WebviewOverlay
+          url={webviewState.url}
+          startRect={webviewState.rect}
+          onClose={() => setWebviewState(null)}
+        />
+      )}
 
       {/* Quick Add overlay */}
       {addInputExpanded && (
