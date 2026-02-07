@@ -26,7 +26,7 @@
     "clean:ios:device": "cd src-tauri && rm -rf target/aarch64-apple-ios/release/build/peek-save-* 2>/dev/null; touch build.rs; echo 'iOS device cache cleaned'",
     "rebuild:ios:sim": "./build-ios.sh --force",
     "rebuild:ios:device": "./build-release.sh --force",
-    "deploy:sim": "./build-ios.sh --force && npm run xcode:build && npm run sim:install && npm run sim:launch",
+    "deploy:sim": "node -e \"const f='BUILD_NUMBER';require('fs').writeFileSync(f,String(+require('fs').readFileSync(f,'utf-8').trim()+1)+'\\n')\" && ./build-ios.sh --force && npm run xcode:build && npm run sim:install && npm run sim:launch",
     "test": "node tests/integration.test.js",
     "test:verbose": "VERBOSE=1 node tests/integration.test.js",
     "sim:launch": "xcrun simctl terminate booted com.dietrich.peek-mobile 2>/dev/null; xcrun simctl launch booted com.dietrich.peek-mobile",

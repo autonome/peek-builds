@@ -2445,7 +2445,7 @@ body.dark .captured-image-preview {
   align-items: flex-start;
   justify-content: center;
   padding: 0.5rem;
-  padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
+  padding-top: env(safe-area-inset-top, 4px);
   /* Prevent iOS from scrolling the viewport when keyboard appears */
   overflow: hidden;
   overscroll-behavior: contain;
@@ -2540,8 +2540,7 @@ textarea.expandable-card-input.expanded-input {
 .expandable-card-buttons {
   display: flex;
   gap: 0.85rem;
-  padding: 0.85rem 1.15rem;
-  border-top: 1px solid #e8e8e8;
+  padding: 0.5rem 1.15rem;
   background: white;
   flex-shrink: 0;
 }
@@ -2586,7 +2585,6 @@ body.dark textarea.expandable-card-input.expanded-input {
 
 body.dark .expandable-card-buttons {
   background: #2c2c2e;
-  border-top-color: #444;
 }
 
 body.dark .expandable-card-buttons .cancel-btn {
@@ -2675,9 +2673,10 @@ body.dark .clear-btn {
 /* Resizable Input Component */
 .resizable-input-wrapper {
   position: relative;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .resizable-input-textarea {
@@ -2746,14 +2745,13 @@ body.dark .drag-handle-bar {
   background: #555;
 }
 
-/* Tags Section - scrollable tag area */
+/* Tags Section - sizes to content, scrolls when exceeding max */
 .editor-tags-section {
-  flex: 1;
-  min-height: 60px;
-  max-height: none;
+  flex-shrink: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 0.25rem 1.15rem;
+  max-height: 140px;
 }
 
 /* Editor Buttons - always visible at bottom */
@@ -2828,7 +2826,6 @@ body.dark .editor-image-preview .edit-image-title {
 /* Legacy text editor classes - keep for backwards compatibility */
 .text-editor-overlay {
   align-items: stretch;
-  padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
 }
 
 .text-editor-card {

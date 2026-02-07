@@ -1,24 +1,16 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { execSync } from "child_process";
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 // @ts-expect-error process is a nodejs global
 const port = parseInt(process.env.DEV_PORT, 10) || 1420;
 
-const buildNumber = (() => {
-  try {
-    // Use jj revision count (includes all jj commits), fall back to git
-    return execSync("jj log --no-graph -r 'all()' -T 'change_id ++ \"\\n\"' 2>/dev/null | wc -l").toString().trim();
-  } catch {
-    try {
-      return execSync("git rev-list --count HEAD").toString().trim();
-    } catch {
-      return "0";
-    }
-  }
-})();
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const buildNumber = readFileSync(resolve(__dirname, "BUILD_NUMBER"), "utf-8").trim();
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({

@@ -148,7 +148,7 @@ const SWIPE_THRESHOLD = 80;
 
 const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyboardHeight, className = '' }) => {
   // Use actual keyboard height when available, fall back to fixed estimate
-  const effectiveKeyboardPadding = keyboardHeight > 0 ? keyboardHeight : 350;
+  const effectiveKeyboardPadding = keyboardHeight > 0 ? keyboardHeight + 4 : 350;
 
   // Swipe-down-to-close state
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -577,7 +577,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     <div
       className="resizable-input-wrapper"
       ref={wrapperRef}
-      style={{ height: `${currentHeight}px`, minHeight: `${minHeight}px` }}
+      style={height != null ? { height: `${currentHeight}px`, minHeight: `${minHeight}px` } : { minHeight: `${minHeight}px` }}
     >
       <textarea
         ref={textareaRef}
@@ -621,17 +621,27 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
 // ============================================================================
 
 // Custom hook to detect iOS keyboard height via Visual Viewport API
+// Uses max observed height while keyboard is open to prevent layout shifts
+// when switching between inputs with different suggestion bar states
 const useKeyboardHeight = () => {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const maxHeightRef = useRef(0);
 
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
 
     const handleResize = () => {
-      // Calculate keyboard height from visual viewport
       const newHeight = Math.max(0, window.innerHeight - viewport.height);
-      setKeyboardHeight(newHeight);
+      if (newHeight === 0) {
+        // Keyboard dismissed — reset
+        maxHeightRef.current = 0;
+        setKeyboardHeight(0);
+      } else {
+        // Keyboard visible — use max to prevent shrinking on input switch
+        maxHeightRef.current = Math.max(maxHeightRef.current, newHeight);
+        setKeyboardHeight(maxHeightRef.current);
+      }
     };
 
     viewport.addEventListener('resize', handleResize);
