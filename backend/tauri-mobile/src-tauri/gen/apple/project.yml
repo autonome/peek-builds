@@ -2,7 +2,7 @@ name: peek-save
 options:
   bundleIdPrefix: com.dietrich.peek-mobile
   deploymentTarget:
-    iOS: 14.0
+    iOS: 16.0
 fileGroups: [../../src]
 packages:
   GRDB:
@@ -119,7 +119,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.dietrich.peek-mobile.share
         DEVELOPMENT_TEAM: TXZTDLL5LC
         TARGETED_DEVICE_FAMILY: "1,2"
-        IPHONEOS_DEPLOYMENT_TARGET: 14.0
+        IPHONEOS_DEPLOYMENT_TARGET: 16.0
     dependencies:
       - package: GRDB
         product: GRDB

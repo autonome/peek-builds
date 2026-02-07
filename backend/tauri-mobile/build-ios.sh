@@ -58,6 +58,9 @@ npm run build
 cd "$TAURI_DIR"
 
 echo "Building Rust for iOS simulator (debug)..."
+# Match the Xcode project's deployment target so cc-compiled objects
+# don't emit "built for newer iOS-simulator" linker warnings
+export IPHONEOS_DEPLOYMENT_TARGET=16.0
 # Build only the lib target - the bin target would fail to link because
 # Swift FFI symbols (webview_plugin_*) are provided by Xcode at final link time
 cargo build --lib --target aarch64-apple-ios-sim
