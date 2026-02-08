@@ -1762,7 +1762,21 @@ export function registerWindowHandlers(): void {
       winOptions.y = parseInt(options.y);
     }
 
-    // Center window on screen if no position specified
+    // Center window on parent if opener exists and no explicit position
+    // Priority: explicit x/y > center on parent > center on screen
+    const openerWindow = BrowserWindow.fromWebContents(ev.sender);
+    if (options.centerOnParent !== false &&
+        openerWindow && !openerWindow.isDestroyed() &&
+        winOptions.x === undefined && winOptions.y === undefined) {
+      const bounds = openerWindow.getBounds();
+      const winW = winOptions.width as number || APP_DEF_WIDTH;
+      const winH = winOptions.height as number || APP_DEF_HEIGHT;
+      winOptions.x = Math.round(bounds.x + (bounds.width - winW) / 2);
+      winOptions.y = Math.round(bounds.y + (bounds.height - winH) / 2);
+      DEBUG && console.log('[window-open] Centered on parent window:', openerWindow.id, 'at', winOptions.x, winOptions.y);
+    }
+
+    // Center window on screen if no position specified (fallback when no opener)
     if (winOptions.x === undefined && winOptions.y === undefined) {
       const primaryDisplay = screen.getPrimaryDisplay();
       const { width: screenW, height: screenH } = primaryDisplay.workAreaSize;
@@ -1833,7 +1847,8 @@ export function registerWindowHandlers(): void {
       const windowParams = {
         ...options,
         address: url,
-        transient: isTransient
+        transient: isTransient,
+        parentWindowId: openerWindow && !openerWindow.isDestroyed() ? openerWindow.id : null,
       };
       console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient);
       registerWindow(win.id, msg.source, windowParams);
@@ -1907,12 +1922,19 @@ export function registerWindowHandlers(): void {
       // Track this load in history (skip internal peek:// URLs)
       if (!url.startsWith('peek://')) {
         try {
-          trackWindowLoad(url, {
+          const trackResult = trackWindowLoad(url, {
             source: options.trackingSource || options.feature || 'window',
             sourceId: options.trackingSourceId || '',
             windowType: options.modal ? 'modal' : 'main',
             title: options.title || win.getTitle() || '',
           });
+          if (trackResult.created) {
+            publish('system', PubSubScopes.GLOBAL, 'item:created', {
+              itemId: trackResult.itemId,
+              itemType: 'url',
+              content: url
+            });
+          }
         } catch (e) {
           DEBUG && console.log('Failed to track window load:', e);
         }
@@ -1927,12 +1949,19 @@ export function registerWindowHandlers(): void {
         // Skip internal peek:// URLs
         if (navUrl.startsWith('peek://')) return;
         try {
-          trackWindowLoad(navUrl, {
+          const navTrack = trackWindowLoad(navUrl, {
             source: 'navigation',
             sourceId: '',
             windowType: options.modal ? 'modal' : 'main',
             title: win.getTitle() || '',
           });
+          if (navTrack.created) {
+            publish('system', PubSubScopes.GLOBAL, 'item:created', {
+              itemId: navTrack.itemId,
+              itemType: 'url',
+              content: navUrl
+            });
+          }
         } catch (e) {
           DEBUG && console.log('Failed to track did-navigate:', e);
         }
@@ -1943,11 +1972,18 @@ export function registerWindowHandlers(): void {
         win.webContents.setWindowOpenHandler((details: Electron.HandlerDetails) => {
           // Track the URL that JS is trying to open
           try {
-            trackWindowLoad(details.url, {
+            const popupTrack = trackWindowLoad(details.url, {
               source: 'window-open',
               sourceId: url,
               windowType: 'main',
             });
+            if (popupTrack.created) {
+              publish('system', PubSubScopes.GLOBAL, 'item:created', {
+                itemId: popupTrack.itemId,
+                itemType: 'url',
+                content: details.url
+              });
+            }
           } catch (e) {
             DEBUG && console.log('Failed to track setWindowOpenHandler:', e);
           }

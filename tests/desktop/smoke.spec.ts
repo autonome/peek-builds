@@ -407,18 +407,15 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     const viewAfter = await groupsWindow.evaluate(() => (window as any)._groupsState.view);
     expect(viewAfter).toBe('groups');
 
-    // Trigger escape again at root - IZUI handles close itself via izui-close-self IPC
-    // Returns { handled: true } because renderer is managing its own lifecycle
+    // Trigger escape again at root - renderer returns { handled: false } at root
+    // Backend handles close policy (child/transient windows close, active root stays)
     const escResult2 = await groupsWindow.evaluate(async () => {
       return await (window as any).app.escape.trigger();
     });
-    expect(escResult2.handled).toBe(true);
+    // trigger() calls the handler directly - at root, groups returns { handled: false }
+    expect(escResult2.handled).toBe(false);
 
-    // The trigger() call initiates izui-close-self IPC which closes the window.
-    // Wait for the window to close (or clean up if it didn't)
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // Clean up in case window is still open
+    // Clean up - trigger() doesn't go through backend ESC path, so window is still open
     if (groupsResult.id) {
       try {
         await bgWindow.evaluate(async (id: number) => {
@@ -460,13 +457,15 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     await groupsWindow.waitForLoadState('domcontentloaded');
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
 
-    // Trigger ESC at root in active mode - should NOT close
+    // Trigger ESC at root in active mode - renderer returns { handled: false }
+    // Backend applies IZUI policy: active root window does NOT close
     const escResult = await groupsWindow.evaluate(async () => {
       return await (window as any).app.escape.trigger();
     });
-    expect(escResult.handled).toBe(true);
+    // trigger() calls handler directly - at root, groups returns { handled: false }
+    expect(escResult.handled).toBe(false);
 
-    // Wait a moment - window should still be open
+    // Wait a moment - window should still be open (trigger doesn't go through backend)
     await new Promise(resolve => setTimeout(resolve, 500));
 
     // Verify window is still alive (can still evaluate JS)
@@ -505,20 +504,18 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     expect(testWindow).toBeTruthy();
     await testWindow.waitForLoadState('domcontentloaded');
 
-    // The groups extension registers an escape handler via IZUI.
-    // At root (groups view), IZUI handles close itself via izui-close-self IPC
-    // and returns { handled: true }
+    // The groups extension registers an escape handler via api.escape.onEscape.
+    // At root (groups view), handler returns { handled: false }.
+    // Backend handles close policy via navigate mode.
     await testWindow.waitForSelector('.cards', { timeout: 5000 });
     const escResult = await testWindow.evaluate(async () => {
       return await (window as any).app.escape.trigger();
     });
-    // IZUI returns handled: true (it initiated its own close via izui-close-self)
-    expect(escResult.handled).toBe(true);
+    // trigger() calls handler directly - at root, groups returns { handled: false }
+    expect(escResult.handled).toBe(false);
 
-    // Wait for close to complete
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // Clean up in case window is still open
+    // trigger() doesn't go through backend ESC path, window is still open
+    // Clean up
     if (result.id) {
       try {
         await bgWindow.evaluate(async (id: number) => {

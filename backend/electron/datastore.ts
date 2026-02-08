@@ -1993,23 +1993,30 @@ export interface HistoryEntry {
 }
 
 /**
- * Track a window load: find or create address, then add visit with chaining
+ * Track a window load: creates/updates item + records visit via trackNavigation,
+ * AND maintains legacy address/visit tables for backward compat.
  */
 export function trackWindowLoad(uri: string, options: {
   source?: string;
   sourceId?: string;
   windowType?: string;
   title?: string;
-} = {}): { visitId: string; addressId: string } {
-  const normalizedUri = normalizeUrl(uri);
+} = {}): { visitId: string; addressId: string; itemId: string; created: boolean } {
+  // Track in items table (used by cmd history) via trackNavigation
+  const navResult = trackNavigation(uri, {
+    source: options.source,
+    sourceId: options.sourceId,
+    windowType: options.windowType,
+    title: options.title,
+  });
 
-  // Find existing address by URI
+  // Also maintain legacy addresses/visits tables
+  const normalizedUri = normalizeUrl(uri);
   const existing = getDb().prepare('SELECT id FROM addresses WHERE uri = ?').get(normalizedUri) as { id: string } | undefined;
 
   let addressId: string;
   if (existing) {
     addressId = existing.id;
-    // Update title if provided and different
     if (options.title) {
       getDb().prepare('UPDATE addresses SET title = ?, updatedAt = ? WHERE id = ? AND (title = \'\' OR title IS NULL)').run(options.title, now(), addressId);
     }
@@ -2024,7 +2031,7 @@ export function trackWindowLoad(uri: string, options: {
     windowType: options.windowType || 'main',
   });
 
-  return { visitId: visit.id, addressId };
+  return { visitId: visit.id, addressId, itemId: navResult.itemId, created: navResult.created };
 }
 
 /**

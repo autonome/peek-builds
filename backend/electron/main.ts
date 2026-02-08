@@ -142,6 +142,16 @@ export async function initialize(): Promise<void> {
       coordinator.clearFocusedWindow(windowId);
       coordinator.popWindow(windowId);
 
+      // Focus parent window if this was a child
+      if (windowData && windowData.params.parentWindowId) {
+        const parentId = windowData.params.parentWindowId as number;
+        const parentWin = BrowserWindow.fromId(parentId);
+        if (parentWin && !parentWin.isDestroyed()) {
+          DEBUG && console.log('[izui] Child window closed, focusing parent:', parentId);
+          parentWin.focus();
+        }
+      }
+
       if (windowData) {
         // If this was an overlay window, restore the windows that were hidden
         // BUT: In transient mode, don't restore - just close and return to previous app

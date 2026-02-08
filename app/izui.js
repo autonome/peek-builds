@@ -1,218 +1,66 @@
 /**
- * IZUI: Inverted Zooming User Interface - Minimal Implementation
+ * IZUI: Inverted Zooming User Interface - Thin Backward-Compatibility Wrapper
  *
- * Simple parent-child window tracking for focus restoration.
- * When a child window closes, focus returns to its parent.
+ * The backend now handles all IZUI policy:
+ * - Parent centering (centerOnParent in window-open handler)
+ * - Parent tracking (parentWindowId auto-set from ev.sender)
+ * - Focus restoration (parent focused on child close)
+ * - ESC policy for children vs root windows
  *
- * Navigation stack: Parent windows track children they've opened.
- * When a child presses ESC, parent closes it and pops the stack.
- * This works even for web pages that don't have IZUI code.
+ * This file exists only for backward compatibility. New code should use
+ * api.window.open() and api.escape.onEscape() directly.
  *
- * See notes/izui-model.md for the full design and future plans.
+ * See notes/izui-model.md for the full design.
  */
 
 import api from './api.js';
 
 const DEBUG = true;
 
-// Navigation stack - tracks child windows opened by this window
-// Each entry: { windowId, url }
-const navigationStack = [];
-
-// My window ID (set during init)
-let myWindowId = null;
-
-// Parent window ID (if this window was opened as a child)
-let parentWindowId = null;
-
 /**
- * Notify parent window to take focus.
- * Called when this window is about to close/hide.
- * If we know our parent window ID, only that window should respond.
+ * Open a child window.
+ * Delegates to api.window.open() - the backend handles centering and parent tracking.
  *
- * @param {number} [targetParentId] - Specific parent window ID to notify (optional)
- */
-export function notifyParentFocus(targetParentId) {
-  const targetId = targetParentId || parentWindowId;
-  DEBUG && console.log('[IZUI] Notifying parent to focus, target:', targetId || '(global)');
-
-  // Publish focus request - if we have a target parent ID, include it
-  api.publish('izui:focus-request', {
-    from: window.location.toString(),
-    fromWindowId: myWindowId,
-    targetWindowId: targetId || null
-  }, api.scopes.GLOBAL);
-}
-
-/**
- * Set up focus listener for this window.
- * When a child window closes and targets us, this window will receive focus.
- * Only responds if we're the target or if no specific target was given and
- * the request came from a window we have in our navigation stack.
- */
-export function setupFocusListener() {
-  const myAddress = window.location.toString();
-
-  api.subscribe('izui:focus-request', async (msg) => {
-    const { targetWindowId, fromWindowId, from } = msg || {};
-
-    DEBUG && console.log('[IZUI] Received focus request from:', from, 'target:', targetWindowId, 'myId:', myWindowId);
-
-    // If a specific target was given, only respond if we're that target
-    if (targetWindowId !== null && targetWindowId !== undefined) {
-      if (targetWindowId !== myWindowId) {
-        DEBUG && console.log('[IZUI] Focus request not for us, ignoring');
-        return;
-      }
-    } else {
-      // No specific target - only respond if the sender is in our nav stack
-      const inOurStack = navigationStack.some(entry => entry.windowId === fromWindowId);
-      if (!inOurStack && fromWindowId) {
-        DEBUG && console.log('[IZUI] Sender not in our stack, ignoring');
-        return;
-      }
-    }
-
-    // Focus this window
-    if (api.window && api.window.focus && myWindowId) {
-      api.window.focus(myWindowId);
-      DEBUG && console.log('[IZUI] Focused self:', myWindowId);
-    }
-  }, api.scopes.GLOBAL);
-
-  DEBUG && console.log('[IZUI] Focus listener set up for:', myAddress);
-}
-
-
-/**
- * Open a child window with IZUI tracking.
- * The child will notify this window to focus when it closes.
- * Child is added to navigation stack - ESC in child will close it and return here.
- *
+ * @deprecated Use api.window.open() directly. Backend auto-centers on parent and tracks parentWindowId.
  * @param {string} address - URL to open
  * @param {Object} params - Window parameters
  * @returns {Promise<Object>} Window controller with { id, ... }
  */
 export async function openChildWindow(address, params = {}) {
-  const myAddress = window.location.toString();
-
-  // Ensure we have our window ID
-  if (!myWindowId && api.window && api.window.getWindowId) {
-    myWindowId = await api.window.getWindowId();
-  }
-
-  // Center child over parent window by default
-  let centerPos = {};
-  if (params.x === undefined && params.y === undefined && myWindowId && api.window.getBounds) {
-    try {
-      const bounds = await api.window.getBounds(myWindowId);
-      if (bounds && bounds.x !== undefined) {
-        const childW = params.width || 800;
-        const childH = params.height || 600;
-        centerPos = {
-          x: Math.round(bounds.x + (bounds.width - childW) / 2),
-          y: Math.round(bounds.y + (bounds.height - childH) / 2)
-        };
-      }
-    } catch (e) {
-      DEBUG && console.log('[IZUI] Could not get parent bounds for centering:', e);
-    }
-  }
-
-  // Track this window as the parent - pass our window ID so child can target us
-  // Set escapeMode: 'navigate' so backend asks renderer before closing
-  const childParams = {
-    ...centerPos,
-    ...params,
-    izuiParent: myAddress,
-    izuiParentWindowId: myWindowId,
-    escapeMode: params.escapeMode || 'navigate'
-  };
-
-  DEBUG && console.log('[IZUI] Opening child window:', address, 'parent:', myAddress, 'parentId:', myWindowId);
-
-  const result = await api.window.open(address, childParams);
-
-  // Track child in navigation stack
-  if (result && result.id) {
-    navigationStack.push({
-      windowId: result.id,
-      url: address
-    });
-    DEBUG && console.log('[IZUI] Added to nav stack:', result.id, 'stack size:', navigationStack.length);
-  }
-
-  return result;
+  DEBUG && console.log('[IZUI] openChildWindow (delegating to api.window.open):', address);
+  return api.window.open(address, params);
 }
 
 /**
- * Handle ESC key for IZUI navigation.
- * If the window has internal navigation, handle that first.
- * Otherwise, notify parent and close this window.
+ * Notify parent window to take focus.
+ * @deprecated Backend now focuses parent automatically on child close.
+ */
+export function notifyParentFocus() {
+  DEBUG && console.log('[IZUI] notifyParentFocus (no-op, backend handles focus restoration)');
+}
+
+/**
+ * Set up focus listener.
+ * @deprecated Backend now focuses parent automatically on child close.
+ */
+export function setupFocusListener() {
+  DEBUG && console.log('[IZUI] setupFocusListener (no-op, backend handles focus restoration)');
+}
+
+/**
+ * Set up escape handler.
+ * Delegates to api.escape.onEscape().
  *
- * @param {Function} [internalHandler] - Optional handler for internal navigation
- *   Should return { handled: true } if it handled the ESC internally
- * @param {Object} [options] - Options
- * @param {boolean} [options.closeOnEscape=true] - Whether to close when no internal navigation
+ * @deprecated Use api.escape.onEscape() directly.
+ * @param {Function} [internalHandler] - Handler for internal navigation
+ * @param {Object} [options] - Options (ignored, backend handles close policy)
  * @returns {Function} Cleanup function
  */
 export function setupEscapeHandler(internalHandler, options = {}) {
-  const { closeOnEscape = true } = options;
+  DEBUG && console.log('[IZUI] setupEscapeHandler (delegating to api.escape.onEscape)');
 
-  const handler = async () => {
-    DEBUG && console.log('[IZUI] Escape handler called, hasInternalHandler:', !!internalHandler, 'closeOnEscape:', closeOnEscape);
-
-    // First, try internal navigation
-    if (internalHandler) {
-      const result = await internalHandler();
-      DEBUG && console.log('[IZUI] Internal handler returned:', JSON.stringify(result));
-      if (result && result.handled) {
-        DEBUG && console.log('[IZUI] Internal handler handled ESC');
-        return { handled: true };
-      }
-    }
-
-    // No internal navigation - notify parent, then optionally close
-    notifyParentFocus(null); // Global publish
-
-    if (closeOnEscape) {
-      // Child windows (have a parent) always close on ESC at root - return to parent.
-      // Root windows only close in transient mode (active mode state is persistent).
-      const isChild = !!parentWindowId;
-
-      let shouldClose = isChild; // Children always close
-      if (!isChild) {
-        // Root window: only close if transient
-        let isTransient = true; // Default to close if can't determine
-        if (api.izui && api.izui.isTransient) {
-          try {
-            isTransient = await api.izui.isTransient();
-          } catch (e) {
-            DEBUG && console.log('[IZUI] Failed to check transient state:', e);
-          }
-        }
-        shouldClose = isTransient;
-      }
-
-      if (shouldClose) {
-        DEBUG && console.log('[IZUI] ESC at root, closing via izui-close-self (child:', isChild, ')');
-        if (api.izui && api.izui.closeSelf) {
-          api.izui.closeSelf();
-        }
-        return { handled: true };
-      } else {
-        DEBUG && console.log('[IZUI] ESC at root (active mode, root window), NOT closing');
-      }
-    } else {
-      DEBUG && console.log('[IZUI] ESC at root, not closing (closeOnEscape=false)');
-    }
-
-    return { handled: true }; // We handled it (by not closing)
-  };
-
-  // Register with the escape API
   if (api.escape && api.escape.onEscape) {
-    api.escape.onEscape(handler);
+    api.escape.onEscape(internalHandler);
   }
 
   return () => {
@@ -222,38 +70,24 @@ export function setupEscapeHandler(internalHandler, options = {}) {
 
 /**
  * Initialize IZUI for a window.
- * Sets up focus listening and escape handling.
+ * Thin wrapper that sets up escape handling via api.escape.onEscape().
  *
+ * @deprecated Use api.escape.onEscape() directly instead of izui.init().
  * @param {Object} options
- * @param {Function} [options.onEscape] - Internal escape handler (returns { handled: true } to prevent close)
- * @param {boolean} [options.canHaveChildren=true] - Whether this window may open children
- * @param {boolean} [options.setupEscape=true] - Whether to set up escape handling (notifies parent on close)
- * @param {boolean} [options.closeOnEscape=true] - Whether ESC closes this window (when no internal nav)
- * @param {number} [options.parentWindowId] - Parent window ID (if known, for targeted focus return)
+ * @param {Function} [options.onEscape] - Internal escape handler
+ * @param {boolean} [options.canHaveChildren] - Ignored (backend tracks parents)
+ * @param {boolean} [options.setupEscape=true] - Whether to set up escape handling
+ * @param {boolean} [options.closeOnEscape] - Ignored (backend handles close policy)
+ * @param {number} [options.parentWindowId] - Ignored (backend auto-tracks parent)
  */
 export async function init(options = {}) {
-  const { onEscape, canHaveChildren = true, setupEscape = true, closeOnEscape = true, parentWindowId: providedParentId } = options;
+  const { onEscape, setupEscape = true } = options;
 
-  // Get our window ID
-  if (api.window && api.window.getWindowId) {
-    myWindowId = await api.window.getWindowId();
-    DEBUG && console.log('[IZUI] My window ID:', myWindowId);
-  }
+  DEBUG && console.log('[IZUI] init (thin wrapper, backend handles policy)');
 
-  // Store parent window ID if provided
-  if (providedParentId) {
-    parentWindowId = providedParentId;
-    DEBUG && console.log('[IZUI] Parent window ID:', parentWindowId);
-  }
-
-  if (canHaveChildren) {
-    setupFocusListener();
-  }
-
-  // Always set up escape handler so parent is notified before close
-  // Pass onEscape if provided for internal navigation handling
-  if (setupEscape) {
-    setupEscapeHandler(onEscape, { closeOnEscape });
+  // Only set up escape handler if requested and handler provided
+  if (setupEscape && onEscape) {
+    setupEscapeHandler(onEscape);
   }
 
   DEBUG && console.log('[IZUI] Initialized for:', window.location.toString());

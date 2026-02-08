@@ -8,8 +8,6 @@
  * - Viewing a group shows all addresses with that tag
  */
 
-import izui from 'peek://app/izui.js';
-
 const api = window.app;
 const debug = api.debug;
 
@@ -210,12 +208,9 @@ const handleKeydown = (e) => {
 const init = async () => {
   debug && console.log('Groups init');
 
-  // Initialize IZUI for proper escape handling and child window tracking
-  await izui.init({
-    onEscape: handleEscape,
-    canHaveChildren: true,
-    closeOnEscape: true
-  });
+  // Register escape handler for internal navigation
+  // Backend handles parent centering, child tracking, and focus restoration
+  api.escape.onEscape(handleEscape);
 
   // Load tags from datastore
   await loadTags();
@@ -609,10 +604,10 @@ const createAddressCard = (address) => {
   card.appendChild(favicon);
   card.appendChild(content);
 
-  // Click to open address - use IZUI for proper stack tracking
+  // Click to open address - backend handles centering and parent tracking
   card.addEventListener('click', async () => {
     debug && console.log('Opening address:', addressUrl);
-    const result = await izui.openChildWindow(addressUrl, {
+    const result = await api.window.open(addressUrl, {
       width: 800,
       height: 600
     });

@@ -141,16 +141,29 @@ export function addEscHandler(bw: BrowserWindow): void {
         return;
       }
 
-      // For 'navigate' mode, renderer owns the window lifecycle completely.
-      // Backend NEVER closes navigate mode windows from ESC handler.
-      // Renderer handles internal navigation and calls izui-close-self IPC when done.
+      // For 'navigate' mode, always ask renderer first.
+      // If renderer handles internally, do nothing.
+      // If renderer returns { handled: false }, backend applies IZUI close policy:
+      //   - Child windows (have parentWindowId) close to return to parent
+      //   - Transient windows close
+      //   - Active root windows do NOT close (IZUI policy)
       if (escapeMode === 'navigate') {
-        console.log(`[esc] navigate mode - forwarding to renderer (backend will NOT close)`);
+        console.log(`[esc] navigate mode - forwarding to renderer`);
         const response = await askRendererToHandleEscape(bw);
-        console.log(`[esc] navigate mode response (informational only):`, response);
-        // Navigate mode: renderer is fully responsible for lifecycle.
-        // If renderer wants to close, it calls izui-close-self IPC directly.
-        // Backend never closes here - prevents races and phantom ESC issues.
+        console.log(`[esc] navigate mode response:`, response);
+        if (response.handled) {
+          return;
+        }
+        // Renderer didn't handle - apply IZUI close policy
+        const coordinator = getIzuiCoordinator();
+        const isChild = !!params.parentWindowId;
+        const isTransient = coordinator.isTransient() || params.transient === true;
+        if (isChild || isTransient || response.close) {
+          console.log(`[esc] navigate mode - closing (isChild: ${isChild}, isTransient: ${isTransient}, close: ${response.close})`);
+          closeOrHideWindow(bw.id);
+        } else {
+          console.log('[esc] navigate mode - active root window, NOT closing (IZUI policy)');
+        }
         return;
       }
 
@@ -163,17 +176,33 @@ export function addEscHandler(bw: BrowserWindow): void {
         // Overlay windows always close on ESC (they're full-screen temporary views)
         const isOverlay = isCoordinatorOverlay || params.overlay === true || params.overlayHiddenWindows;
 
+        // Child windows (have a parentWindowId) always close on ESC at root
+        // This replaces the client-side parentWindowId check in izui.js
+        const isChild = !!params.parentWindowId;
+
         // Check transient from coordinator (re-evaluated) or window params (fallback)
         const isTransient = coordinator.isTransient() || params.transient === true;
 
-        if (isTransient || isOverlay) {
-          // Transient mode or overlay - close immediately
-          console.log('[esc] Auto mode (transient or overlay) - closing directly, coordinator.isTransient:', coordinator.isTransient());
+        if (isChild || isTransient || isOverlay) {
+          // Child window, transient mode, or overlay - ask renderer first, then close
+          if (isChild && !isTransient && !isOverlay) {
+            // Child in active mode: ask renderer for internal nav first
+            console.log(`[esc] auto mode (child window) - asking renderer before closing`);
+            const response = await askRendererToHandleEscape(bw);
+            console.log(`[esc] Child window escape response:`, response);
+            if (response.handled) {
+              return;
+            }
+            // Not handled internally - close the child window
+            console.log('[esc] Child window at root - closing to return to parent');
+          } else {
+            // Transient mode or overlay - close immediately
+            console.log('[esc] Auto mode (transient/overlay/transient-child) - closing directly, isChild:', isChild, 'coordinator.isTransient:', coordinator.isTransient());
+          }
         } else {
-          // Active mode (Peek was focused when window opened)
-          // IZUI Policy: ESC only navigates internal state, does NOT close
+          // Active mode, root window (no parent) - ESC only navigates internal state, does NOT close
           // Unless renderer explicitly requests close via { close: true }
-          console.log(`[esc] auto mode (non-transient/active) - asking renderer to handle`);
+          console.log(`[esc] auto mode (non-transient/active, root window) - asking renderer to handle`);
           const response = await askRendererToHandleEscape(bw);
           console.log(`[esc] Renderer escape response (auto/active):`, response);
           if (response.handled) {
@@ -184,7 +213,7 @@ export function addEscHandler(bw: BrowserWindow): void {
             closeOrHideWindow(bw.id);
             return;
           }
-          console.log('[esc] Active mode - renderer did not handle, NOT closing (IZUI policy)');
+          console.log('[esc] Active mode (root window) - renderer did not handle, NOT closing (IZUI policy)');
           return;
         }
       }
