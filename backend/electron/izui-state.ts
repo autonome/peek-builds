@@ -23,7 +23,7 @@
  * | OVERLAY   | Inherit from previous| Always close, restore hidden   |
  */
 
-import { DEBUG } from './config.js';
+import { DEBUG, isHeadless } from './config.js';
 
 // Lazy-load Electron modules to allow testing without Electron
 let BrowserWindow: typeof import('electron').BrowserWindow | null = null;
@@ -42,7 +42,7 @@ export type IzuiState = 'idle' | 'transient' | 'active' | 'overlay';
  * Window provider interface for dependency injection (enables testing)
  */
 export interface WindowProvider {
-  getAllWindows(): Array<{ id: number; isDestroyed(): boolean; isFocused(): boolean }>;
+  getAllWindows(): Array<{ id: number; isDestroyed(): boolean; isFocused(): boolean; isVisible(): boolean; webContents?: { getURL(): string } }>;
   fromId(id: number): { show(): void; isDestroyed(): boolean } | null;
 }
 
@@ -144,28 +144,53 @@ class IzuiStateCoordinator {
    * @returns 'active' if a Peek window has system focus, 'transient' if not
    */
   evaluateOnShow(excludeWindowId?: number): 'active' | 'transient' {
-    // Check if ANY Peek window currently has actual system focus
-    // Don't use getFocusedWindow() - it returns internal tracking, not system focus
-    // Exclude the specified window (e.g., the cmd window asking if it's transient)
+    // Determine if user has an active Peek context by checking for visible
+    // content windows. We use isVisible() instead of isFocused() because:
+    // - Modal windows (cmd) steal focus from content windows on open
+    // - By the time this is called, the requesting window may have already stolen focus
+    // - isVisible() is stable: a content window stays visible regardless of focus changes
+    //
+    // Active = at least one visible, non-background, non-modal content window exists
+    // Transient = no visible content windows (user invoked from background/other app)
     const allWindows = this.windowProvider.getAllWindows();
 
-    const focusedWindow = allWindows.find(win =>
-      !win.isDestroyed() &&
-      win.isFocused() &&
-      win.id !== excludeWindowId
-    );
-    const hasActiveFocus = !!focusedWindow;
+    // Background/internal URLs that don't count as user-visible content
+    const INTERNAL_URLS = [
+      'peek://app/background.html',
+      'peek://app/extension-host.html',
+    ];
 
-    const result = hasActiveFocus ? 'active' : 'transient';
-    DEBUG && console.log('[izui] evaluateOnShow:', result, 'excludeWindowId:', excludeWindowId, 'focusedWindowId:', focusedWindow?.id);
+    // In headless mode (tests), windows are created with show:false so isVisible()
+    // always returns false. Skip the visibility check - a non-destroyed, non-background
+    // window is equivalent to "visible" in headless.
+    const checkVisible = !isHeadless();
 
-    // If we don't have a session, start one with the detected mode
+    const visibleContentWindow = allWindows.find(win => {
+      if (win.isDestroyed()) return false;
+      if (checkVisible && !win.isVisible()) return false;
+      if (win.id === excludeWindowId) return false;
+
+      // Exclude internal/background windows
+      const url = win.webContents?.getURL?.() ?? '';
+      if (INTERNAL_URLS.some(internal => url === internal)) return false;
+
+      return true;
+    });
+
+    const hasVisibleContent = !!visibleContentWindow;
+    const result = hasVisibleContent ? 'active' : 'transient';
+    DEBUG && console.log('[izui] evaluateOnShow:', result, 'excludeWindowId:', excludeWindowId,
+      'visibleContentWindow:', visibleContentWindow?.id,
+      'url:', visibleContentWindow?.webContents?.getURL?.()?.substring(0, 60));
+
     if (!this.session) {
       this.startSession(result);
+    } else {
+      // Update entry mode for this invocation (e.g., keepLive window reuse)
+      this.session.entryMode = result;
+      this.state = result;
+      DEBUG && console.log('[izui] Updated session entryMode to:', result);
     }
-    // Don't update this.session.entryMode on subsequent evaluateOnShow calls.
-    // Once a session starts as transient, it should STAY transient even if
-    // a window gains focus during the session.
 
     return result;
   }

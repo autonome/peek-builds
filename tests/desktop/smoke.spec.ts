@@ -430,6 +430,63 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     }
   });
 
+  test('active mode: ESC at root does NOT close window', async () => {
+    const bgWindow = sharedBgWindow;
+
+    // Open a content window first to establish active mode
+    // (visible content window = user has active Peek context)
+    const contentResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/settings/settings.html', {
+        width: 400,
+        height: 300,
+      });
+    });
+    expect(contentResult.success).toBe(true);
+    const contentWindow = await sharedApp.getWindow('settings/settings.html', 5000);
+    expect(contentWindow).toBeTruthy();
+    await contentWindow.waitForLoadState('domcontentloaded');
+
+    // Open groups window - should be in active mode because settings is visible
+    const groupsResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+        width: 400,
+        height: 300,
+        escapeMode: 'navigate'
+      });
+    });
+    expect(groupsResult.success).toBe(true);
+    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    expect(groupsWindow).toBeTruthy();
+    await groupsWindow.waitForLoadState('domcontentloaded');
+    await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
+
+    // Trigger ESC at root in active mode - should NOT close
+    const escResult = await groupsWindow.evaluate(async () => {
+      return await (window as any).app.escape.trigger();
+    });
+    expect(escResult.handled).toBe(true);
+
+    // Wait a moment - window should still be open
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Verify window is still alive (can still evaluate JS)
+    const stillAlive = await groupsWindow.evaluate(() => true).catch(() => false);
+    expect(stillAlive).toBe(true);
+
+    // Clean up both windows
+    for (const id of [groupsResult.id, contentResult.id]) {
+      if (id) {
+        try {
+          await bgWindow.evaluate(async (wid: number) => {
+            return await (window as any).app.window.close(wid);
+          }, id);
+        } catch {
+          // Window may already be closed
+        }
+      }
+    }
+  });
+
   test('navigate mode: timeout does not close window', async () => {
     const bgWindow = sharedBgWindow;
 

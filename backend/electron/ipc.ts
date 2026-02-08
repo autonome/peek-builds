@@ -2540,15 +2540,24 @@ export function registerMiscHandlers(onQuit: () => void): void {
   // mode display, and ESC behavior across all windows.
 
   // Check if IZUI session is in transient mode (app wasn't focused when invoked)
-  // Re-evaluates at query time, excluding the requesting window from focus check
-  // (since the cmd window itself has focus by the time it asks this question)
+  // Uses the session's entry mode which was set at window show time (before focus
+  // was stolen). Don't re-evaluate here - by this point the requesting window
+  // (e.g., cmd panel) has already stolen focus from other windows, making
+  // isFocused() checks unreliable.
   ipcMain.handle('izui-is-transient', (ev) => {
     const coordinator = getIzuiCoordinator();
     const requestingWindow = BrowserWindow.fromWebContents(ev.sender);
-    // Re-evaluate excluding the requesting window
+    // Use session entry mode if available (set correctly at show time)
+    const session = coordinator.getSession();
+    if (session) {
+      const result = coordinator.isTransient();
+      DEBUG && console.log('[izui] izui-is-transient (session):', result, 'windowId:', requestingWindow?.id, 'entryMode:', session.entryMode);
+      return result;
+    }
+    // No session yet - evaluate fresh (excluding requesting window)
     const entryMode = coordinator.evaluateOnShow(requestingWindow?.id);
     const result = entryMode === 'transient';
-    DEBUG && console.log('[izui] izui-is-transient:', result, 'windowId:', requestingWindow?.id);
+    DEBUG && console.log('[izui] izui-is-transient (fresh):', result, 'windowId:', requestingWindow?.id);
     return result;
   });
 

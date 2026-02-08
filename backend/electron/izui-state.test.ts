@@ -20,20 +20,26 @@ interface MockWindow {
   _destroyed: boolean;
   _focused: boolean;
   _visible: boolean;
+  _url: string;
   isDestroyed: () => boolean;
   isFocused: () => boolean;
+  isVisible: () => boolean;
   show: () => void;
+  webContents: { getURL: () => string };
 }
 
-function createMockWindow(id: number, options: { focused?: boolean; destroyed?: boolean } = {}): MockWindow {
+function createMockWindow(id: number, options: { focused?: boolean; destroyed?: boolean; url?: string; visible?: boolean } = {}): MockWindow {
   const win: MockWindow = {
     id,
     _destroyed: options.destroyed ?? false,
     _focused: options.focused ?? false,
-    _visible: true,
+    _visible: options.visible ?? true,
+    _url: options.url ?? `peek://ext/test/window-${id}.html`,
     isDestroyed: function() { return this._destroyed; },
     isFocused: function() { return this._focused; },
+    isVisible: function() { return this._visible; },
     show: function() { this._visible = true; },
+    webContents: { getURL: function() { return win._url; } },
   };
   return win;
 }
@@ -67,10 +73,10 @@ describe('IZUI State Coordinator Tests', () => {
   });
 
   describe('evaluateOnShow', () => {
-    it('should return transient when no window has system focus', () => {
-      // Add unfocused windows
-      mockWindows.push(createMockWindow(1, { focused: false }));
-      mockWindows.push(createMockWindow(2, { focused: false }));
+    it('should return transient when no visible content window exists', () => {
+      // Add hidden windows (not visible)
+      mockWindows.push(createMockWindow(1, { focused: false, visible: false }));
+      mockWindows.push(createMockWindow(2, { focused: false, visible: false }));
 
       const coordinator = izuiState.getIzuiCoordinator();
       const result = coordinator.evaluateOnShow();
@@ -78,56 +84,68 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(result, 'transient');
     });
 
-    it('should return active when a window has system focus', () => {
-      // Add one focused window
-      mockWindows.push(createMockWindow(1, { focused: true }));
-      mockWindows.push(createMockWindow(2, { focused: false }));
+    it('should return transient when only background windows are visible', () => {
+      // Background/internal windows don't count as user content
+      mockWindows.push(createMockWindow(1, { url: 'peek://app/background.html' }));
+      mockWindows.push(createMockWindow(2, { url: 'peek://app/extension-host.html' }));
 
       const coordinator = izuiState.getIzuiCoordinator();
       const result = coordinator.evaluateOnShow();
 
-      assert.strictEqual(result, 'active');
-    });
-
-    it('should correctly exclude the specified windowId from focus check', () => {
-      // The querying window (cmd panel) is focused, but should be excluded
-      const cmdPanelId = 100;
-      mockWindows.push(createMockWindow(cmdPanelId, { focused: true }));
-      mockWindows.push(createMockWindow(2, { focused: false }));
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      const result = coordinator.evaluateOnShow(cmdPanelId);
-
-      // Should be transient because the only focused window is excluded
       assert.strictEqual(result, 'transient');
     });
 
-    it('should return active when another window has focus besides excluded one', () => {
-      const cmdPanelId = 100;
-      mockWindows.push(createMockWindow(cmdPanelId, { focused: true }));
-      mockWindows.push(createMockWindow(2, { focused: true })); // Another focused window
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      const result = coordinator.evaluateOnShow(cmdPanelId);
-
-      // Should be active because window 2 has focus
-      assert.strictEqual(result, 'active');
-    });
-
-    it('should ignore destroyed windows in focus check', () => {
-      // Only window is focused but destroyed
-      mockWindows.push(createMockWindow(1, { focused: true, destroyed: true }));
-      mockWindows.push(createMockWindow(2, { focused: false }));
+    it('should return active when a visible content window exists', () => {
+      // A visible content window means user has active Peek context
+      mockWindows.push(createMockWindow(1, { url: 'peek://ext/groups/home.html' }));
+      mockWindows.push(createMockWindow(2, { focused: false, visible: false }));
 
       const coordinator = izuiState.getIzuiCoordinator();
       const result = coordinator.evaluateOnShow();
 
-      // Destroyed focused window should be ignored, result is transient
+      assert.strictEqual(result, 'active');
+    });
+
+    it('should correctly exclude the specified windowId from visibility check', () => {
+      // The querying window (cmd panel) is visible, but should be excluded
+      const cmdPanelId = 100;
+      mockWindows.push(createMockWindow(cmdPanelId));
+      mockWindows.push(createMockWindow(2, { visible: false }));
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      const result = coordinator.evaluateOnShow(cmdPanelId);
+
+      // Should be transient because the only visible content window is excluded
+      assert.strictEqual(result, 'transient');
+    });
+
+    it('should return active when another visible window exists besides excluded one', () => {
+      const cmdPanelId = 100;
+      mockWindows.push(createMockWindow(cmdPanelId));
+      mockWindows.push(createMockWindow(2)); // Another visible window
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      const result = coordinator.evaluateOnShow(cmdPanelId);
+
+      // Should be active because window 2 is visible
+      assert.strictEqual(result, 'active');
+    });
+
+    it('should ignore destroyed windows in visibility check', () => {
+      // Only window is visible but destroyed
+      mockWindows.push(createMockWindow(1, { destroyed: true }));
+      mockWindows.push(createMockWindow(2, { visible: false }));
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      const result = coordinator.evaluateOnShow();
+
+      // Destroyed window should be ignored, result is transient
       assert.strictEqual(result, 'transient');
     });
 
     it('should update session.entryMode when called', () => {
-      mockWindows.push(createMockWindow(1, { focused: false }));
+      // No visible content windows → transient
+      mockWindows.push(createMockWindow(1, { visible: false }));
 
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.evaluateOnShow();
@@ -138,7 +156,7 @@ describe('IZUI State Coordinator Tests', () => {
     });
 
     it('should start a session if none exists', () => {
-      mockWindows.push(createMockWindow(1, { focused: true }));
+      mockWindows.push(createMockWindow(1));
 
       const coordinator = izuiState.getIzuiCoordinator();
       assert.strictEqual(coordinator.getSession(), null, 'No session should exist initially');
@@ -149,14 +167,14 @@ describe('IZUI State Coordinator Tests', () => {
     });
 
     it('should update existing session entry mode without creating new session', () => {
-      mockWindows.push(createMockWindow(1, { focused: true }));
+      mockWindows.push(createMockWindow(1));
 
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       const originalSessionId = coordinator.getSession()!.id;
 
-      // Now simulate no focus
-      mockWindows[0]._focused = false;
+      // Now simulate all content windows hidden
+      mockWindows[0]._visible = false;
       coordinator.evaluateOnShow();
 
       const session = coordinator.getSession();
@@ -183,18 +201,19 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.isTransient(), false);
     });
 
-    it('should persist transient state even after windows open', () => {
-      mockWindows.push(createMockWindow(1, { focused: false }));
+    it('should persist transient state even after windows are pushed', () => {
+      // No visible content windows → transient
+      mockWindows.push(createMockWindow(1, { visible: false }));
 
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.evaluateOnShow(); // Starts as transient
       coordinator.pushWindow(1);
 
-      // Add another window
-      mockWindows.push(createMockWindow(2, { focused: false }));
+      // Add another hidden window
+      mockWindows.push(createMockWindow(2, { visible: false }));
       coordinator.pushWindow(2);
 
-      // Session should still be transient
+      // Session should still be transient (pushWindow doesn't re-evaluate)
       assert.strictEqual(coordinator.isTransient(), true);
     });
   });
@@ -579,19 +598,19 @@ describe('IZUI State Coordinator Tests', () => {
 
   describe('Session persistence across windows', () => {
     it('should maintain transient mode when opening windows from transient session', () => {
-      // Simulate: user invokes cmd bar via global hotkey (no window focused)
-      mockWindows.push(createMockWindow(1, { focused: false }));
+      // Simulate: user invokes cmd bar via global hotkey (no visible content windows)
+      mockWindows.push(createMockWindow(1, { visible: false, url: 'peek://app/background.html' }));
 
       const coordinator = izuiState.getIzuiCoordinator();
 
-      // Cmd bar evaluates on show - detects transient
+      // Cmd bar evaluates on show - detects transient (no visible content)
       const entryMode = coordinator.evaluateOnShow();
       assert.strictEqual(entryMode, 'transient');
 
       // User opens a window from cmd bar
       coordinator.pushWindow(100);
 
-      // Session is still transient
+      // Session is still transient (pushWindow doesn't re-evaluate)
       assert.strictEqual(coordinator.isTransient(), true);
 
       // User opens another window from that window
@@ -601,17 +620,16 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.isTransient(), true);
 
       // ESC should close everything in transient mode
-      // (behavior tested in integration, but state persists)
       assert.strictEqual(coordinator.getSession()!.entryMode, 'transient');
     });
 
     it('should maintain active mode when user is working within app', () => {
-      // Simulate: user is working in a Peek window, opens cmd bar
-      mockWindows.push(createMockWindow(50, { focused: true })); // User's active window
+      // Simulate: user is working in a visible Peek window, opens cmd bar
+      mockWindows.push(createMockWindow(50)); // User's visible content window
 
       const coordinator = izuiState.getIzuiCoordinator();
 
-      // Cmd bar evaluates on show - detects active (window 50 is focused)
+      // Cmd bar evaluates on show - detects active (window 50 is visible content)
       const entryMode = coordinator.evaluateOnShow(100); // Exclude cmd bar itself
       assert.strictEqual(entryMode, 'active');
 
@@ -632,8 +650,8 @@ describe('IZUI State Coordinator Tests', () => {
     it('should handle full transient workflow: invoke, pick, close', () => {
       const coordinator = izuiState.getIzuiCoordinator();
 
-      // 1. No windows focused - user invokes via global hotkey
-      mockWindows.push(createMockWindow(1, { focused: false }));
+      // 1. No visible content windows - user invokes via global hotkey
+      mockWindows.push(createMockWindow(1, { visible: false }));
 
       // 2. Cmd bar opens and evaluates state
       const entryMode = coordinator.evaluateOnShow();
@@ -664,12 +682,12 @@ describe('IZUI State Coordinator Tests', () => {
     it('should handle full active workflow: work, invoke, navigate back', () => {
       const coordinator = izuiState.getIzuiCoordinator();
 
-      // 1. User has an active Peek window
-      mockWindows.push(createMockWindow(50, { focused: true }));
+      // 1. User has a visible Peek content window
+      mockWindows.push(createMockWindow(50));
       coordinator.startSession('active');
       coordinator.pushWindow(50);
 
-      // 2. User invokes cmd bar (window 50 still focused initially)
+      // 2. User invokes cmd bar (window 50 still visible)
       const entryMode = coordinator.evaluateOnShow(100); // Exclude cmd bar
       assert.strictEqual(entryMode, 'active');
       coordinator.pushWindow(100);
