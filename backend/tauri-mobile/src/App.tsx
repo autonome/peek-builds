@@ -724,6 +724,7 @@ function App() {
   const [capturedImageTags, setCapturedImageTags] = useState<Set<string>>(new Set());
   const [capturedImageTagInput, setCapturedImageTagInput] = useState("");
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const keyboardPrimerRef = useRef<HTMLInputElement>(null);
 
   // Scroll ref for scroll-to-top
   const mainRef = useRef<HTMLElement>(null);
@@ -1563,6 +1564,7 @@ function App() {
   };
 
   const startEditingText = (item: SavedText) => {
+    keyboardPrimerRef.current?.focus();
     setEditingTextId(item.id);
     setEditingTextContent(item.content);
     const existingTags = item.tags.length > 0 ? item.tags : extractHashtags(item.content);
@@ -2347,9 +2349,9 @@ function App() {
             {item.tags.map((tag) => (
               <span key={tag} className="card-tag">{tag}</span>
             ))}
-          </div>
-          <div className="card-date">
-            {new Date(item.saved_at).toLocaleDateString()}
+            <span className="card-date">
+              {new Date(item.saved_at).toLocaleDateString()}
+            </span>
           </div>
         </div>
       </div>
@@ -2449,9 +2451,9 @@ function App() {
             {tags.map((tag) => (
               <span key={tag} className="card-tag">{tag}</span>
             ))}
-          </div>
-          <div className="card-date">
-            {new Date(item.saved_at).toLocaleDateString()}
+            <span className="card-date">
+              {new Date(item.saved_at).toLocaleDateString()}
+            </span>
           </div>
         </div>
       </div>
@@ -2483,9 +2485,10 @@ function App() {
           </button>
         </div>
         <div className="card-footer">
-          <div className="card-tags"></div>
-          <div className="card-date">
-            {new Date(item.saved_at).toLocaleDateString()}
+          <div className="card-tags">
+            <span className="card-date">
+              {new Date(item.saved_at).toLocaleDateString()}
+            </span>
           </div>
         </div>
       </div>
@@ -2790,9 +2793,9 @@ function App() {
             {item.tags.map((tag) => (
               <span key={tag} className="card-tag">{tag}</span>
             ))}
-          </div>
-          <div className="card-date">
-            {new Date(item.saved_at).toLocaleDateString()}
+            <span className="card-date">
+              {new Date(item.saved_at).toLocaleDateString()}
+            </span>
           </div>
         </div>
       </div>
@@ -3293,6 +3296,7 @@ function App() {
 
   return (
     <div className={`app ${expandedWebview ? 'webview-active' : ''}`} ref={appRef}>
+      <input ref={keyboardPrimerRef} style={{ position: 'fixed', opacity: 0, top: '-100px' }} readOnly />
       {cameraInput}
       <header>
         <h1

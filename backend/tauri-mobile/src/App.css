@@ -456,8 +456,7 @@ a.card-title {
 
 .card-footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   margin-top: 0.35rem;
   gap: 0.5rem;
 }
@@ -468,6 +467,7 @@ a.card-title {
   gap: 0.3rem;
   flex: 1;
   min-width: 0;
+  align-items: center;
 }
 
 .card-tag {
@@ -481,6 +481,7 @@ a.card-title {
 .card-date {
   font-size: 0.7rem;
   color: #aaa;
+  margin-left: auto;
   flex-shrink: 0;
 }
 
