@@ -5,9 +5,7 @@
   "identifier": "com.dietrich.peek-mobile",
   "build": {
     "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist",
-    "devUrl": "http://localhost:65050",
-    "beforeDevCommand": "DEV_PORT=65050 npm run dev"
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [

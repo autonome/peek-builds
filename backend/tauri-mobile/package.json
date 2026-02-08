@@ -14,7 +14,6 @@
     "tauri": "tauri",
     "xcode": "mkdir -p src-tauri/gen/apple/Externals/arm64/Debug src-tauri/gen/apple/Externals/arm64/Release && cp src-tauri/target/aarch64-apple-ios-sim/debug/deps/libpeek_save_lib.a src-tauri/gen/apple/Externals/arm64/Debug/libapp.a 2>/dev/null || true && cp src-tauri/target/aarch64-apple-ios/release/deps/libpeek_save_lib.a src-tauri/gen/apple/Externals/arm64/Release/libapp.a 2>/dev/null || true && open src-tauri/gen/apple/peek-save.xcodeproj",
     "dev:ios": "./dev-setup.sh",
-    "dev:ios:quick": "mkdir -p src-tauri/gen/apple/Externals/arm64/Debug && cp src-tauri/target/aarch64-apple-ios-sim/debug/deps/libpeek_save_lib.a src-tauri/gen/apple/Externals/arm64/Debug/libapp.a && open src-tauri/gen/apple/peek-save.xcodeproj && npx vite --port 1420",
     "archive": "./build-archive.sh",
     "build:release": "./build-release.sh",
     "build:release:full": "./build-release.sh --force",
@@ -32,9 +31,9 @@
     "sim:launch": "xcrun simctl terminate booted com.dietrich.peek-mobile 2>/dev/null; xcrun simctl launch booted com.dietrich.peek-mobile",
     "sim:log": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\"' --level debug",
     "sim:log:webview": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\" AND eventMessage CONTAINS \"webview\"' --style compact",
-    "sim:install": "xcrun simctl install booted \"$(ls -dt ~/Library/Developer/Xcode/DerivedData/peek-save-*/Build/Products/debug-iphonesimulator/Peek\\ Save.app | head -1)\"",
-    "xcode:clean": "cd src-tauri/gen/apple && xcodebuild -project peek-save.xcodeproj -scheme Peek -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -configuration Debug clean",
-    "xcode:build": "cd src-tauri/gen/apple && xcodebuild -project peek-save.xcodeproj -scheme Peek -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -configuration Debug clean build"
+    "sim:install": "xcrun simctl install booted '/tmp/peek-xcodebuild/Build/Products/debug-iphonesimulator/Peek Save.app'",
+    "xcode:clean": "cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean",
+    "xcode:build": "rm -rf /tmp/peek-xcodebuild && cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean build"
   },
   "dependencies": {
     "@tauri-apps/api": "2.9.1",
