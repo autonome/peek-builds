@@ -1838,13 +1838,6 @@ export function registerWindowHandlers(): void {
         });
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
-
-        // Make the container window fullscreen and transparent
-        const primaryDisplay = screen.getPrimaryDisplay();
-        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-        win.setSize(screenWidth, screenHeight);
-        win.setPosition(0, 0);
-        win.setBackgroundColor('#00000000'); // Fully transparent
       }
 
       await win.loadURL(loadUrl);
@@ -2462,6 +2455,19 @@ export function registerWindowHandlers(): void {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
     }
+  });
+
+  ipcMain.handle('window-set-bounds', (ev, msg) => {
+    const win = BrowserWindow.fromWebContents(ev.sender);
+    if (!win || win.isDestroyed()) return { success: false, error: 'Window not found' };
+    const bounds = win.getBounds();
+    win.setBounds({
+      x: msg.x ?? bounds.x,
+      y: msg.y ?? bounds.y,
+      width: msg.width ?? bounds.width,
+      height: msg.height ?? bounds.height,
+    });
+    return { success: true };
   });
 
   ipcMain.handle('window-exists', async (_ev, msg) => {

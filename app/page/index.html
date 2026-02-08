@@ -19,19 +19,20 @@
       background: transparent;
     }
 
-    /* Webview is positioned on the transparent canvas */
+    /* Webview fills the entire window */
     webview {
       position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
       border: none;
       border-radius: 10px;
       overflow: hidden;
-      /* Use clip-path as fallback if border-radius doesn't clip webview content */
       -webkit-mask-image: -webkit-radial-gradient(white, white);
     }
 
-    /* Navbar floats above the webview */
+    /* Navbar overlays the top of the webview */
     .navbar {
       position: absolute;
+      top: 0; left: 0; right: 0;
       height: 36px;
       display: none;
       align-items: center;
@@ -106,9 +107,10 @@
       background: var(--theme-bg, rgba(128, 128, 128, 0.18));
     }
 
-    /* Trigger zone above webview */
+    /* Trigger zone at top edge of window */
     .trigger-zone {
       position: absolute;
+      top: 0; left: 0; right: 0;
       height: 50px;
       z-index: 50;
     }

@@ -1,10 +1,11 @@
 /**
  * peek://page - Container for web content
  *
- * Full-screen transparent canvas with:
- * - Webview positioned at caller's coordinates
- * - Floating navbar above the webview (with gap)
- * - Webview is draggable and resizable
+ * Content-sized BrowserWindow with:
+ * - Webview filling the window
+ * - Floating navbar overlay at top (with trigger zone)
+ * - Drag via -webkit-app-region: drag on navbar
+ * - Resize via IPC to resize the BrowserWindow
  */
 
 import izui from '../izui.js';
@@ -15,10 +16,6 @@ const DEBUG = true;
 // Parse URL parameters
 const params = new URLSearchParams(window.location.search);
 const targetUrl = params.get('url');
-const initialX = parseInt(params.get('x')) || 100;
-const initialY = parseInt(params.get('y')) || 100;
-const initialWidth = parseInt(params.get('width')) || 1024;
-const initialHeight = parseInt(params.get('height')) || 768;
 
 if (!targetUrl) {
   console.error('[page] No URL provided');
@@ -26,7 +23,7 @@ if (!targetUrl) {
   throw new Error('No URL provided to peek://page');
 }
 
-DEBUG && console.log('[page] Loading:', targetUrl, 'at', initialX, initialY, initialWidth, initialHeight);
+DEBUG && console.log('[page] Loading:', targetUrl);
 
 // DOM elements
 const navbar = document.getElementById('navbar');
@@ -38,37 +35,6 @@ const btnForward = document.getElementById('btn-forward');
 const btnReload = document.getElementById('btn-reload');
 const urlText = document.getElementById('url-text');
 const modeIndicator = document.getElementById('mode-indicator');
-
-// Current webview bounds
-let bounds = { x: initialX, y: initialY, width: initialWidth, height: initialHeight };
-const NAVBAR_HEIGHT = 36;
-const NAVBAR_GAP = 8;
-
-// Position elements
-function updatePositions() {
-  // Webview position
-  webview.style.left = bounds.x + 'px';
-  webview.style.top = bounds.y + 'px';
-  webview.style.width = bounds.width + 'px';
-  webview.style.height = bounds.height + 'px';
-
-  // Navbar above webview with gap
-  navbar.style.left = bounds.x + 'px';
-  navbar.style.top = (bounds.y - NAVBAR_HEIGHT - NAVBAR_GAP) + 'px';
-  navbar.style.width = bounds.width + 'px';
-
-  // Trigger zone spans navbar area
-  triggerZone.style.left = bounds.x + 'px';
-  triggerZone.style.top = (bounds.y - NAVBAR_HEIGHT - NAVBAR_GAP - 10) + 'px';
-  triggerZone.style.width = bounds.width + 'px';
-
-  // Resize handle at bottom-right of webview
-  resizeHandle.style.left = (bounds.x + bounds.width - 16) + 'px';
-  resizeHandle.style.top = (bounds.y + bounds.height - 16) + 'px';
-}
-
-// Initialize positions
-updatePositions();
 
 // Set up webview partition for session isolation and load the target URL
 async function initWebview() {
@@ -93,37 +59,7 @@ async function initWebview() {
 // Start initialization
 initWebview();
 
-// --- Drag to move webview ---
-
-let isDragging = false;
-let dragStart = { x: 0, y: 0 };
-
-navbar.addEventListener('mousedown', (e) => {
-  if (e.target.classList.contains('nav-btn') || e.target.classList.contains('url-text')) return;
-  isDragging = true;
-  dragStart = { x: e.clientX - bounds.x, y: e.clientY - bounds.y };
-  e.preventDefault();
-});
-
-document.addEventListener('mousemove', (e) => {
-  if (isDragging) {
-    bounds.x = e.clientX - dragStart.x;
-    bounds.y = e.clientY - dragStart.y;
-    updatePositions();
-  }
-  if (isResizing) {
-    bounds.width = Math.max(200, e.clientX - bounds.x);
-    bounds.height = Math.max(150, e.clientY - bounds.y);
-    updatePositions();
-  }
-});
-
-document.addEventListener('mouseup', () => {
-  isDragging = false;
-  isResizing = false;
-});
-
-// --- Resize webview ---
+// --- Resize via IPC (drag on navbar handled natively by -webkit-app-region: drag) ---
 
 let isResizing = false;
 
@@ -131,6 +67,18 @@ resizeHandle.addEventListener('mousedown', (e) => {
   isResizing = true;
   e.preventDefault();
   e.stopPropagation();
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (isResizing) {
+    const newWidth = Math.max(200, e.screenX - window.screenX);
+    const newHeight = Math.max(150, e.screenY - window.screenY);
+    api.invoke('window-set-bounds', { width: newWidth, height: newHeight });
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  isResizing = false;
 });
 
 // --- State display ---
@@ -163,7 +111,6 @@ function isPointInElement(x, y, el) {
 }
 
 function hide(e) {
-  if (isDragging) return; // Don't hide while dragging
   // Check if cursor is still within navbar or trigger zone bounds
   if (isPointInElement(e.clientX, e.clientY, navbar)) return;
   if (isPointInElement(e.clientX, e.clientY, triggerZone)) return;
