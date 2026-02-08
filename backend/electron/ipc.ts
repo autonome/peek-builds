@@ -2763,9 +2763,16 @@ export function registerMiscHandlers(onQuit: () => void): void {
     const modeStr = msg.mode ? ` mode:${msg.mode}` : '';
     DEBUG && console.log('ipc register shortcut', msg.shortcut, isGlobal ? '(global)' : '(local)', modeStr);
 
+    // Capture window ID at registration time — ev.sender may be destroyed when shortcut fires later
+    const windowId = ev.sender?.id;
     const callback = () => {
       DEBUG && console.log('on(registershortcut): shortcut executed', msg.shortcut, msg.replyTopic);
-      ev.reply(msg.replyTopic, { foo: 'bar' });
+      const win = BrowserWindow.fromId(windowId);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(msg.replyTopic, { foo: 'bar' });
+      } else {
+        DEBUG && console.log('on(registershortcut): window', windowId, 'gone, skipping reply');
+      }
     };
 
     if (isGlobal) {

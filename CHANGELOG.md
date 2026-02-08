@@ -7,43 +7,130 @@ Newly done items go here, grouped under third-level headings by week of year.
 
 ### 2026-W06
 
-Mobile / iOS
-- [x] feat(mobile): add URL action icons with native WKWebView + visit tracking
-  - Open in Browser: opens URL in Safari
-  - Open in Webview: opens URL in embedded native WKWebView
-  - Track visits when URLs are loaded/navigated in webview
-- [x] fix(webview-plugin): simplify Swift integration with direct FFI
-- [x] feat(mobile): fix native webview and restore icon system
-- [x] fix(ios): require hold gesture for pull-to-refresh (prevents accidental triggers)
-
-Desktop
-- [x] fix: window-list returns actual URLs from peek://app/page containers
-- [x] fix: mode detection from URL in window creation
-- [x] fix: add native module check script (prevents NODE_MODULE_VERSION mismatch)
-- [x] fix(cmd): support scheme-less URLs with paths in open command
-- [x] feat(cmd): restore mode indicator to command bar (from orphaned commits)
-  - Shows current mode (page/group/settings)
-  - Click to cycle through modes
-  - Auto-hides when in default mode
-- [x] fix(page): set default background on webview content when page has none
-  - Respects system theme (dark/light)
-  - Only applies when page doesn't set its own background
-- [x] fix(build): exclude tmp/ agent workspaces from electron-builder
-- [x] feat(izui): implement IZUI state machine for transient vs active window behavior
+Desktop - IZUI (Inverted Zooming User Interface)
+- [x] feat(izui): implement IZUI state machine for transient vs active window behavior (457ce41d)
   - Centralized `IzuiStateCoordinator` manages session-based state tracking
   - Fixes cmd bar stuck on "group" mode when invoked transiently
   - Fixes ESC from overlay showing groups instead of returning to previous app
-  - Transient state propagates to child windows (cmd → overlay)
+  - Transient state propagates to child windows (cmd -> overlay)
   - Uses `isFocused()` for accurate system focus detection
   - KeepLive windows re-evaluate transient state on each show
   - Added `api.izui.*` renderer API for querying state
   - 54 unit tests with dependency injection for testability
   - See `docs/izui.md` for full documentation
+- [x] fix(izui): OS-level focus for transient detection + graceful test shutdown (e1764328)
+  - Transient detection uses OS-level app focus (`app.isFocused`) instead of window visibility
+  - Tests use graceful `app.quit()` instead of SIGTERM/SIGKILL (no more crash dialogs)
+  - 5 new IZUI behavior tests for real app focus scenarios
+- [x] refactor(izui): passive backend window manager - extensions use api.window.open() directly (188894c4)
+  - Backend no longer creates windows for extensions; extensions open their own via API
+  - Simplifies window lifecycle and reduces coupling
+- [x] fix(izui): child windows always close on ESC + center windows on screen (b0d07b89)
+  - ESC policy: child windows always close, active root windows do not
+  - All new windows centered on screen at creation
+- [x] fix(izui): visibility-based transient detection + active mode ESC protection (d74b62b5)
+- [x] feat(izui): center child windows over parent window (bd947dbc)
+  - Parent window position/size used to calculate centered placement
+  - Focus restored to parent on child close
+- [x] fix(izui): renderer-driven escape lifecycle for navigate mode windows (dc470b7f)
+- [x] fix(izui): fix ESC navigation, window drag, and navbar cleanup (3ca4841b)
+- [x] fix(izui): fix transient detection race condition (d634a52b)
+- [x] fix: clean up modes, remove overlay, fix IZUI navigation stack (6be5fc45)
+- [x] fix(groups): filter peek:// URLs and fix IZUI stack navigation (70ab1706)
+- [x] cleanup(overlay): remove vestigial overlay references and rename events (16402840)
+- [x] fix(main): remove non-existent overlay from CONSOLIDATED_EXTENSION_IDS (518c4406)
+
+Desktop - Reactivity & Events
+- [x] feat(reactivity): add tag-centric events for real-time UI updates (8c229cdf)
+  - `tag:created`, `tag:item-added`, `tag:item-removed` events
+  - Extensions can subscribe to tag changes for live UI updates
+- [x] feat(reactivity): item CRUD events, debouncing, history/feeds subscriptions (1d351083)
+  - `item:created`, `item:updated`, `item:deleted` events
+  - Debounced event emission to prevent UI thrashing
+  - History and feeds extensions subscribe to relevant events
+- [x] feat(datastore): implement item_events table and CRUD operations (78950782)
+- [x] feat(preload): expose item_events API to renderer (f8f85ebc)
+
+Desktop - Window Management
+- [x] feat(window): add overlay mode for transient full-screen views (0727112b)
+- [x] fix(windows): hide other windows AFTER windows view opens (37ee7d43)
+- [x] fix(windows): ESC always closes, remove fallback emoji (3fddd1a6)
+- [x] refactor(windows): transparent bg with groups/tags card style (414e2139)
+- [x] refactor(windows): use peek-card and peek-grid components (666efa8d)
+- [x] fix(windows): use correct path for component imports (8b6686e4)
+
+Desktop - Architecture & Modes
+- [x] feat(context): add app-wide context API for extensible mode management (196a12d0)
+- [x] refactor(modes): remove modes.ts, consolidate into context API and datastore (5943e223)
+- [x] refactor(modes): remove settings mode and minor modes (simplify to page/group/default) (eab54a3f)
+- [x] feat(schema): add feeds and series architecture (8688c501)
+- [x] feat(feeds): add feed reader extension and API documentation (44c5b507)
+
+Desktop - Editor & Commands
+- [x] feat(editor): implement note editing flow with autosave (0ae56bb7)
+- [x] feat(cmd): restore mode indicator to command bar (from orphaned commits) (917640ca)
+  - Shows current mode (page/group/settings)
+  - Click to cycle through modes
+  - Auto-hides when in default mode
+- [x] feat(cmd): add Sync now command for manual sync trigger (18d02d2c)
+- [x] refactor(cmd): use connector pattern for edit and note commands (48465f72)
+- [x] fix(cmd): url command returns error instead of opening editor when no URL provided (5141fb07)
+
+Desktop - UI & Components
+- [x] feat(components): add glass-morphism tokens and component modes (7b2e52dc)
+- [x] fix(ui): center card headers, disable URL input autocapitalize, fix dev script (aa578e0d)
+- [x] fix(page): set default background on webview content when page has none (9fc274ab)
+  - Respects system theme (dark/light)
+  - Only applies when page doesn't set its own background
+- [x] fix(page): use trackNavigation for URL visit recording (f2677891)
+
+Desktop - Profiles & Startup
+- [x] feat(profiles): add Chromium session partition isolation per profile (2d704158)
+- [x] fix(profiles): register peek:// protocol on profile session (cd80de8d)
+- [x] fix(startup): respect startupFeature pref instead of always opening settings (5b920fab)
+
+Desktop - Fixes
+- [x] fix: ESC handling for Active mode windows (IZUI policy compliance)
+- [x] fix: add getFocusedVisibleWindowId API for modal window targeting
+- [x] fix: add trackNavigation API for unified page load tracking
+- [x] fix: update test to use peek://ext/cmd/panel.html (correct URL after cleanup)
+- [x] fix: window-list returns actual URLs from peek://app/page containers
+- [x] fix: mode detection from URL in window creation
+- [x] fix: add native module check script (prevents NODE_MODULE_VERSION mismatch)
+- [x] fix(ipc): cast address to string for type safety (32a7f8a0)
+- [x] fix(ipc): sanitize window params to prevent serialization crash (fca6a26f)
+- [x] fix(build): exclude tmp/ agent workspaces from electron-builder (f0f26e31)
+- [x] fix(build): electron-builder uses yml config via extends (4620155f)
+- [x] fix(url): normalize trailing slash on bare domain URLs (3c2bbd61)
+
+Mobile / iOS
+- [x] feat(mobile): add URL action icons with native WKWebView + visit tracking (ee06ef99)
+  - Open in Browser: opens URL in Safari
+  - Open in Webview: opens URL in embedded native WKWebView
+  - Track visits when URLs are loaded/navigated in webview
+- [x] fix(webview-plugin): simplify Swift integration with direct FFI (18258830)
+- [x] feat(mobile): fix native webview and restore icon system (1b641ed1)
+- [x] fix(ios): require hold gesture for pull-to-refresh (prevents accidental triggers) (0efb4445)
+- [x] feat(ios): bottom sheet webview + research docs (80fb7d8f)
+- [x] feat(webview): card-expansion iframe overlay replaces native bottom sheet (eb43f135)
+- [x] fix(ios): silence linker warnings and remove unused default icons (8cd36323)
+- [x] fix(ios): UX polish pass - 18 fixes for editor, share extension, layout, build (cf5fe38b)
+- [x] fix(ios): UX polish - 13 fixes for share sheet, editor, keyboard, sorting, filters (956fdcb8)
+- [x] fix(ui): maximize editor card space - tighter padding, remove separator, expand to edges (2a0fc4bf)
+- [x] fix(ui): undo/redo at top, reduce gaps, add webview link for text items (90d76c51)
+- [x] fix(share): commit pending tag text when Done is tapped (712a5108)
+- [x] fix(build): use dynamic DerivedData path for sim:install (94420c17)
 
 Testing
 - [x] feat(tests): add Playwright browser extension e2e tests
 - [x] fix(tests): improve extension ID detection and shared instance handling
 - [x] fix(tests): remove Firefox Playwright support (not supported by Playwright)
+- [x] test: add integration tests for tag-centric events (ed9dd17a)
+
+Refactoring
+- [x] refactor(extensions): move tag and tagset commands to tags extension (d6636aaa)
+- [x] refactor(extensions): create files extension with csv and save commands (435cc952)
+- [x] refactor(extensions): create sync extension with sync command (e5867452)
 
 Datastore & UI
 - [x] fix(datastore): show addresses/visits/tags stats with safe error handling
@@ -58,12 +145,6 @@ Code Cleanup
 - [x] chore: simplify app/features.js (all features are now extensions)
 - [x] chore: remove commented-out sendToWindow/onMessage APIs from preload.js
 - [x] chore: remove 7 unused IPC handlers from ipc.ts (~155 lines)
-
-Fixes
-- [x] fix: ESC handling for Active mode windows (IZUI policy compliance)
-- [x] fix: add getFocusedVisibleWindowId API for modal window targeting
-- [x] fix: add trackNavigation API for unified page load tracking
-- [x] fix: update test to use peek://ext/cmd/panel.html (correct URL after cleanup)
 
 ### 2026-W05
 
