@@ -57,6 +57,9 @@ if [ "$FORCE_REBUILD" = true ]; then
 fi
 
 echo "Building Rust for iOS device (release)..."
+# Match the Xcode project's deployment target so cc-compiled objects
+# don't emit "built for newer iOS" linker warnings
+export IPHONEOS_DEPLOYMENT_TARGET=16.0
 # Build only the lib target - the bin target would fail to link because
 # Swift FFI symbols (webview_plugin_*) are provided by Xcode at final link time
 # Use custom-protocol feature for bundled assets (not dev server)

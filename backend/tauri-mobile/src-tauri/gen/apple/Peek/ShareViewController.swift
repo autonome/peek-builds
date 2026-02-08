@@ -1352,12 +1352,18 @@ class ShareViewController: UIViewController {
         newTagTextField.addTarget(self, action: #selector(tagTextFieldChanged), for: .editingChanged)
         inputContainerView.addSubview(newTagTextField)
 
-        addTagButton.setTitle("Add", for: .normal)
-        addTagButton.titleLabel?.font = .boldSystemFont(ofSize: 15)
-        addTagButton.backgroundColor = .systemGreen
-        addTagButton.setTitleColor(.white, for: .normal)
-        addTagButton.layer.cornerRadius = 8
-        addTagButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+        var btnConfig = UIButton.Configuration.filled()
+        btnConfig.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
+        btnConfig.baseBackgroundColor = .systemGreen
+        btnConfig.baseForegroundColor = .white
+        btnConfig.cornerStyle = .medium
+        btnConfig.title = "Add"
+        btnConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .boldSystemFont(ofSize: 15)
+            return outgoing
+        }
+        addTagButton.configuration = btnConfig
         addTagButton.addTarget(self, action: #selector(addTagPressed), for: .touchUpInside)
         addTagButton.translatesAutoresizingMaskIntoConstraints = false
         inputContainerView.addSubview(addTagButton)

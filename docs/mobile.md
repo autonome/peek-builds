@@ -741,6 +741,29 @@ Verify:
 3. Database is being created in the App Group container, not the app sandbox
 4. Check database contents: `sqlite3 <path_to_peek.db> "SELECT * FROM urls;"`
 
+### "Built for newer iOS version" Linker Warnings
+
+**Symptom:** Dozens of linker warnings like `Object file (libapp.a[...]) was built for newer 'iOS' version (26.2) than being linked (16.0)`.
+
+**Cause:** The Rust build compiled C objects (ring crypto, sqlite, AppGroupBridge) using the system SDK's default deployment target instead of the project's iOS 16.0 target.
+
+**Fix:** Both build scripts (`build-ios.sh` and `build-release.sh`) must set `export IPHONEOS_DEPLOYMENT_TARGET=16.0` before `cargo build`. This is already done — if warnings reappear, check that the env var is still present.
+
+### Xcode Points at Wrong Workspace
+
+**Symptom:** Build fails with `search path '.../ios-fixes-XXXX/...' not found` or similar, pointing at an old/different jj workspace.
+
+**Cause:** Xcode's DerivedData caches `$(PROJECT_DIR)` from whichever workspace the project was first opened from.
+
+**Fix:**
+1. Quit Xcode completely
+2. Delete stale DerivedData: `rm -rf ~/Library/Developer/Xcode/DerivedData/peek-save-*`
+3. Reopen from the correct workspace: `open backend/tauri-mobile/src-tauri/gen/apple/peek-save.xcodeproj`
+
+### Xcode "Update to Recommended Settings"
+
+When Xcode prompts to update settings, accept all **except "Enable User Script Sandboxing"** — that would break the "Build Rust Code" run script phase which needs filesystem access outside the sandbox.
+
 ## License
 
 See LICENSE file.
