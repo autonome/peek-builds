@@ -12,6 +12,47 @@ const api = window.app;
 const debug = api?.debug;
 
 /**
+ * Extract the first URL from a text string.
+ * @param {string} text - The text to search for URLs
+ * @returns {string|null} The first URL found, or null
+ */
+const extractUrl = (text) => {
+  if (!text) return null;
+  const trimmed = text.trim();
+  // Check if the entire content is a URL (with protocol)
+  if (/^https?:\/\//i.test(trimmed)) {
+    try { new URL(trimmed); return trimmed; } catch (e) { /* fall through */ }
+  }
+  // Check if it looks like a bare domain
+  if (/^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/\S*)?$/.test(trimmed)) {
+    try { new URL('https://' + trimmed); return 'https://' + trimmed; } catch (e) { /* not valid */ }
+  }
+  // Search for a URL embedded in the text
+  const match = trimmed.match(/https?:\/\/[^\s<>"')\]]+/i);
+  if (match) { try { new URL(match[0]); return match[0]; } catch (e) { /* not valid */ } }
+  return null;
+};
+
+/**
+ * Open a URL in a new page window (same webview mechanism as URL items).
+ * Routes through peek://page which provides the webview container.
+ * @param {string} url - The URL to open
+ */
+const openItemUrl = async (url) => {
+  try {
+    await api.window.open(url, {
+      width: 800,
+      height: 600,
+      trackingSource: 'tags',
+      trackingSourceId: 'note-url'
+    });
+    debug && console.log('[tags] Opened URL from note:', url);
+  } catch (err) {
+    console.error('[tags] Failed to open URL:', err);
+  }
+};
+
+/**
  * Simple debounce helper - collapses rapid calls into one
  */
 const debounce = (fn, ms) => {
@@ -615,6 +656,9 @@ const createItemCard = (item) => {
   const isAddress = !!item.uri;
   const itemType = item.type || 'url';
 
+  // For text items, check if content contains a URL
+  const noteUrl = (itemType === 'text') ? extractUrl(item.content) : null;
+
   let title, subtitle, faviconUrl;
 
   if (isAddress) {
@@ -630,8 +674,14 @@ const createItemCard = (item) => {
       faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
     } else if (itemType === 'text') {
       title = item.content.substring(0, 100) + (item.content.length > 100 ? '...' : '');
-      subtitle = 'Text';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📝</text></svg>';
+      if (noteUrl) {
+        // Note contains a URL - show the URL as subtitle and use a link icon
+        subtitle = noteUrl;
+        faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔗</text></svg>';
+      } else {
+        subtitle = 'Text';
+        faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📝</text></svg>';
+      }
     } else if (itemType === 'tagset') {
       title = 'Tag Set';
       subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';
@@ -643,6 +693,17 @@ const createItemCard = (item) => {
     }
   }
 
+  // Build the open button for items with URLs (both url type and notes with URLs)
+  const itemUrl = isAddress ? item.uri : (itemType === 'url') ? item.content : noteUrl;
+  const openBtnHtml = itemUrl
+    ? `<button class="card-open-btn" data-url="${escapeHtml(itemUrl)}" title="Open page">` +
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+      `<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>` +
+      `<polyline points="15 3 21 3 21 9"></polyline>` +
+      `<line x1="10" y1="14" x2="21" y2="3"></line>` +
+      `</svg></button>`
+    : '';
+
   card.innerHTML = `
     <div class="card-header">
       <img class="card-favicon" src="${escapeHtml(faviconUrl)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>'">
@@ -650,11 +711,22 @@ const createItemCard = (item) => {
         <div class="card-title">${escapeHtml(title)}</div>
         <div class="card-url">${escapeHtml(subtitle)}</div>
       </div>
+      ${openBtnHtml}
     </div>
     <div class="card-tags">
       ${tags.map(tag => `<span class="card-tag" data-tag-id="${tag.id}">${escapeHtml(tag.name)}</span>`).join('')}
     </div>
   `;
+
+  // Click handler for the open button - opens the URL as a web page
+  const openBtn = card.querySelector('.card-open-btn');
+  if (openBtn) {
+    openBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const url = openBtn.dataset.url;
+      if (url) openItemUrl(url);
+    });
+  }
 
   // Click on card to open edit modal
   card.addEventListener('click', (e) => {
@@ -695,6 +767,9 @@ const openEditModal = (item) => {
   const isAddress = !!item.uri;
   const itemType = item.type || 'url';
 
+  // For text items, check if content contains a URL
+  const noteUrl = (itemType === 'text') ? extractUrl(item.content) : null;
+
   let title, subtitle, faviconUrl;
 
   if (isAddress) {
@@ -710,8 +785,13 @@ const openEditModal = (item) => {
       faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
     } else if (itemType === 'text') {
       title = item.content.substring(0, 100) + (item.content.length > 100 ? '...' : '');
-      subtitle = 'Text';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📝</text></svg>';
+      if (noteUrl) {
+        subtitle = noteUrl;
+        faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔗</text></svg>';
+      } else {
+        subtitle = 'Text';
+        faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📝</text></svg>';
+      }
     } else if (itemType === 'tagset') {
       title = 'Tag Set';
       subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';
@@ -727,6 +807,25 @@ const openEditModal = (item) => {
   modal.querySelector('.modal-favicon').src = faviconUrl;
   modal.querySelector('.modal-item-title').textContent = title;
   modal.querySelector('.modal-item-url').textContent = subtitle;
+
+  // Show or hide the "Open Page" button based on whether item has a URL
+  const openPageBtn = modal.querySelector('.modal-open-page-btn');
+  const itemUrl = isAddress ? item.uri : (itemType === 'url' ? item.content : noteUrl);
+  if (openPageBtn) {
+    if (itemUrl) {
+      openPageBtn.style.display = 'flex';
+      openPageBtn.dataset.url = itemUrl;
+      // Clone to remove old listeners, then add fresh listener
+      const newBtn = openPageBtn.cloneNode(true);
+      openPageBtn.parentNode.replaceChild(newBtn, openPageBtn);
+      newBtn.addEventListener('click', () => {
+        openItemUrl(newBtn.dataset.url);
+        closeModal();
+      });
+    } else {
+      openPageBtn.style.display = 'none';
+    }
+  }
 
   // Render current tags
   renderCurrentTags(tags);

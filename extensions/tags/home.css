@@ -608,3 +608,53 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+
+
+/* Card open button - opens URL in webview */
+.card-open-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--base02);
+  border: 1px solid var(--base03);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.card-open-btn:hover {
+  background: var(--base0D);
+  border-color: var(--base0D);
+  color: var(--base00);
+}
+
+/* Modal open page button */
+.modal-open-page-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--base0D);
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--base00);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.modal-open-page-btn:hover {
+  filter: brightness(1.1);
+}
+
+.modal-open-page-btn svg {
+  flex-shrink: 0;
+}

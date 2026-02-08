@@ -217,8 +217,20 @@ const openGroup = async (groupName) => {
     return { success: false, error: 'Failed to get group items' };
   }
 
-  // Filter to URL items only
-  const urlItems = itemsResult.data.filter(item => item.type === 'url');
+  // Filter to items with URLs (explicit URL items + text items containing URLs)
+  const urlItems = itemsResult.data
+    .map(item => {
+      if (item.type === 'url') return { ...item, _openUrl: item.content };
+      if (item.type === 'text' && item.content) {
+        // Check if text note contains a URL
+        const urlMatch = item.content.trim().match(/^https?:\/\/\S+/) || item.content.match(/https?:\/\/[^\s<>"')\]]+/i);
+        if (urlMatch) {
+          try { new URL(urlMatch[0]); return { ...item, _openUrl: urlMatch[0] }; } catch (e) {}
+        }
+      }
+      return null;
+    })
+    .filter(Boolean);
   if (urlItems.length === 0) {
     console.log('[ext:groups] No URLs in group:', groupName);
     return { success: false, error: 'Group is empty' };
@@ -231,7 +243,7 @@ const openGroup = async (groupName) => {
   // Open windows and set group mode
   const openedWindows = [];
   for (const item of urlItems) {
-    const result = await api.window.open(item.content, {
+    const result = await api.window.open(item._openUrl, {
       trackingSource: 'cmd',
       trackingSourceId: `group:${groupName}`,
       // Pass group context for mode inheritance
