@@ -1281,6 +1281,7 @@ function App() {
   };
 
   const startEditing = async (item: SavedUrl) => {
+    keyboardPrimerRef.current?.focus();
     setEditingUrlId(item.id);
     setEditingUrlValue(item.url);
     setEditingTags(new Set(item.tags));
@@ -1679,6 +1680,7 @@ function App() {
 
   // Tagset editing functions
   const startEditingTagset = (item: SavedTagset) => {
+    keyboardPrimerRef.current?.focus();
     setEditingTagsetId(item.id);
     setEditingTagsetTags(new Set(item.tags));
     setEditingTagsetInput("");
@@ -1759,6 +1761,7 @@ function App() {
 
   // Image editing functions
   const startEditingImage = (item: SavedImage) => {
+    keyboardPrimerRef.current?.focus();
     setEditingImageId(item.id);
     setEditingImageTags(new Set(item.tags));
     setEditingImageTagInput("");
@@ -2071,7 +2074,7 @@ function App() {
       if (!item) return null;
 
       return (
-        <EditorOverlay onDismiss={requestCancelEditing} keyboardHeight={keyboardHeight}>
+        <EditorOverlay onDismiss={requestCancelEditing} keyboardHeight={keyboardHeight} className="text-editor-overlay">
           <div className="input-with-clear editor-url-wrapper">
             <input
               type="url"
@@ -2139,7 +2142,7 @@ function App() {
     // Tagset editing
     if (editingTagsetId) {
       return (
-        <EditorOverlay onDismiss={requestCancelEditingTagset} keyboardHeight={keyboardHeight}>
+        <EditorOverlay onDismiss={requestCancelEditingTagset} keyboardHeight={keyboardHeight} className="text-editor-overlay">
           <TagsSection
             selectedTags={editingTagsetTags}
             availableTags={allTags}
@@ -2165,7 +2168,7 @@ function App() {
       const title = metadata?.title as string | undefined;
 
       return (
-        <EditorOverlay onDismiss={requestCancelEditingImage} keyboardHeight={keyboardHeight}>
+        <EditorOverlay onDismiss={requestCancelEditingImage} keyboardHeight={keyboardHeight} className="text-editor-overlay">
           <div className="editor-image-preview">
             {item.thumbnail ? (
               <img

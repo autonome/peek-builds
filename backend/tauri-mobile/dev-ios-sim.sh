@@ -42,4 +42,4 @@ cleanup() {
 trap cleanup EXIT
 
 # Run cargo tauri ios dev (builds Rust in dev mode pointing to devUrl, starts vite, opens Xcode)
-cd src-tauri && cargo tauri ios dev --open
+cd src-tauri && cargo tauri ios dev --open "iPhone 17 Pro"

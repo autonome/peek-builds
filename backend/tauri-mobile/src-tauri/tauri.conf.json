@@ -6,8 +6,8 @@
   "build": {
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:56781",
-    "beforeDevCommand": "DEV_PORT=56781 npm run dev"
+    "devUrl": "http://localhost:65050",
+    "beforeDevCommand": "DEV_PORT=65050 npm run dev"
   },
   "app": {
     "windows": [

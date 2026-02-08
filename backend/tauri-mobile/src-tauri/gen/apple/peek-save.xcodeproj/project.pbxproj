@@ -414,11 +414,12 @@
 					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)",
 					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.dietrich.peek-mobile";
+				PRODUCT_BUNDLE_IDENTIFIER = com.dietrich.peek-mobile;
 				PRODUCT_NAME = "Peek Save";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
+				DEVELOPMENT_TEAM = "TXZTDLL5LC";
 			};
 			name = release;
 		};
@@ -528,11 +529,12 @@
 					"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)",
 					"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.dietrich.peek-mobile";
+				PRODUCT_BUNDLE_IDENTIFIER = com.dietrich.peek-mobile;
 				PRODUCT_NAME = "Peek Save";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
+				DEVELOPMENT_TEAM = "TXZTDLL5LC";
 			};
 			name = debug;
 		};
