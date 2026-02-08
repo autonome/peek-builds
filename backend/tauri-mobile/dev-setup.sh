@@ -58,11 +58,21 @@ else
     echo "  App not installed yet - settings will need manual config on first run"
 fi
 
-# Copy libraries and open Xcode
+# Build and copy libraries
 echo ""
-echo "Copying libraries..."
-cp src-tauri/target/aarch64-apple-ios-sim/debug/deps/libpeek_save_lib.a src-tauri/gen/apple/Externals/arm64/Debug/libapp.a
-cp src-tauri/target/aarch64-apple-ios/release/deps/libpeek_save_lib.a src-tauri/gen/apple/Externals/arm64/Release/libapp.a
+echo "Building Rust libraries..."
+if [ ! -f src-tauri/target/aarch64-apple-ios-sim/debug/libpeek_save_lib.a ]; then
+    echo "  Building debug library (simulator)..."
+    ./build-ios.sh
+else
+    echo "  Debug library exists (use ./build-ios.sh --force to rebuild)"
+fi
+if [ ! -f src-tauri/target/aarch64-apple-ios/release/libpeek_save_lib.a ]; then
+    echo "  Building release library (device)..."
+    ./build-release.sh
+else
+    echo "  Release library exists (use ./build-release.sh --force to rebuild)"
+fi
 
 echo "Opening Xcode..."
 open src-tauri/gen/apple/peek-save.xcodeproj

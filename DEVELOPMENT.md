@@ -412,85 +412,72 @@ Other pre-approved tool patterns: `git:*`, `jj:*`, `node:*`, `cargo:*`, `electro
 
 Mobile development uses the separate `peek-save` app in `backend/tauri-mobile/`.
 
-**CRITICAL - Build with Xcode GUI for iOS:**
-- NEVER run `xcodebuild` commands from terminal for final builds
-- Use Xcode GUI (Product → Build, Product → Run) for reliable builds
-
 **CRITICAL - Do NOT run `xcodegen generate`:**
 - The Xcode project has custom settings that xcodegen overwrites
 
-### Quick Start (One Command)
+### Two Build Pathways
 
-The easiest way to set up mobile development with sync testing:
+There are exactly two ways to build and deploy the iOS app. Always use these — never ad-hoc commands.
+
+#### Pathway 1: Simulator + HMR (frontend development)
+
+For CSS/TSX changes that hot-reload instantly without rebuilding:
 
 ```bash
-cd backend/tauri-mobile
-
-# First time: build both debug and release Rust libraries
-npm run build                    # Build frontend
-cd src-tauri
-cargo build --target aarch64-apple-ios-sim      # Debug (simulator)
-cargo build --target aarch64-apple-ios --release # Release (device)
-cd ..
-
-# Start everything (servers, configure iOS, seed test data, open Xcode)
-npm run dev:ios
+# From repo root:
+yarn mobile:ios:dev
 ```
 
-`npm run dev:ios` does all of this automatically:
-1. Resets server data for a clean slate
-2. Starts backend server on a random port (10000-19999)
-3. Starts frontend dev server on port 1420
-4. Configures iOS simulator with server URL and API key
-5. Copies both debug and release Rust libraries
-6. Opens Xcode
-7. Seeds test data (3 items on server, 3 on iOS)
+This runs `dev-ios-sim.sh` which:
+1. Patches `tauri.conf.json` with a random-port `devUrl` (restores on exit)
+2. Bumps `BUILD_NUMBER` (displayed as `vNNNN` in app footer)
+3. Rebuilds Rust library WITHOUT `custom-protocol` feature (so app loads from devUrl)
+4. Runs `xcodebuild` for simulator
+5. Installs and launches on simulator
+6. Starts vite HMR server — CSS/TSX changes appear instantly
 
-### Available npm Scripts
+After the initial build, edit frontend files and changes appear live. Stop with Ctrl+C.
+
+#### Pathway 2: Device release (testing on physical device)
+
+For testing on a connected USB device:
 
 ```bash
-# Development
-npm run dev:ios:sim  # Hot reload dev - clears libapp.a, starts vite, opens Xcode
-npm run dev:ios      # Full dev setup (servers + config + seed + Xcode)
-npm run xcode        # Just copy libraries and open Xcode
-npm run seed         # Seed test data (needs SERVER_URL and API_KEY env vars)
-npm run reset:server # Delete server data directory
-
-# Building
-npm run build        # Build frontend (tsc + vite)
-npm run build:ios    # Build frontend + debug Rust library (simulator)
-npm run build:ios:sim:release  # Build frontend + release Rust library (simulator)
-npm run build:ios:release  # Build frontend + release Rust library (device)
-
-# Testing
-npm run test         # Run integration tests
-npm run test:verbose # Run tests with verbose output
+# From repo root:
+yarn mobile:ios:xcodebuild:device:full   # build + xcodebuild + install
+yarn mobile:ios:device:launch            # launch on device
 ```
 
-### iOS Build Process (Manual)
+This builds with `--features custom-protocol` so the app uses bundled assets (no dev server needed).
 
-If you need to build manually instead of using `npm run dev:ios`:
+### Why `custom-protocol` Matters
+
+The `custom-protocol` Cargo feature controls whether the app loads from bundled assets or a dev server URL:
+
+- **Without** `custom-protocol` (simulator/HMR): app loads from `devUrl` in `tauri.conf.json` → connects to vite HMR server
+- **With** `custom-protocol` (device/release): app uses bundled assets from `frontendDist` → standalone, no server needed
+
+The default `Cargo.toml` has NO features enabled. `build-release.sh` explicitly adds `--features custom-protocol`. This separation is critical — do not add `custom-protocol` to the default dependency features or HMR will break.
+
+### Build Commands (from repo root)
 
 ```bash
-# 1. Build frontend
-cd backend/tauri-mobile && npm install && npm run build
+# Simulator + HMR (preferred for frontend work)
+yarn mobile:ios:dev                       # Full HMR dev session (recommended)
 
-# 2. Build debug library (for simulator)
-cd src-tauri
-cargo tauri build --target aarch64-apple-ios-sim --debug
-mkdir -p gen/apple/Externals/arm64/Debug
-cp target/aarch64-apple-ios-sim/debug/deps/libpeek_save_lib.a gen/apple/Externals/arm64/Debug/libapp.a
+# Simulator without HMR (one-off testing)
+yarn mobile:ios:build [--force]           # Build Rust library (debug, simulator)
+yarn mobile:ios:xcodebuild               # Build Xcode project
+yarn mobile:ios:xcodebuild:install       # Install on simulator
+yarn mobile:ios:sim:launch               # Launch app
+yarn mobile:ios:xcodebuild:full          # All of the above in one command
 
-# 3. Build release library (for device)
-cargo tauri build --target aarch64-apple-ios
-mkdir -p gen/apple/Externals/arm64/Release
-cp target/aarch64-apple-ios/release/deps/libpeek_save_lib.a gen/apple/Externals/arm64/Release/libapp.a
-
-# 4. Create assets symlink (if missing)
-ln -s ../../../dist gen/apple/assets
-
-# 5. Open Xcode and build from GUI
-open gen/apple/peek-save.xcodeproj
+# Device release
+yarn mobile:ios:build:release [--force]   # Build Rust library (release, device)
+yarn mobile:ios:xcodebuild:device         # Build Xcode project for device
+yarn mobile:ios:device:run                # Install and launch on device
+yarn mobile:ios:xcodebuild:device:full    # All of the above in one command
+yarn mobile:ios:device:launch             # Launch (if already installed)
 ```
 
 ### Testing Bidirectional Sync
@@ -515,121 +502,52 @@ After running `npm run dev:ios`, test data is automatically seeded:
 5. After sync, both server and iOS should have 6 items
 
 **Gotchas:**
-- The `gen/apple/assets` symlink must exist or Xcode fails with "No such file or directory"
-- Debug scheme = simulator, Release scheme = device
-- If Rust code changes, rebuild the library and copy again
-- The "Build Rust Code" pre-build script in Xcode can hang indefinitely - pre-building avoids this
-- iOS simulator can't reach `localhost` - use Mac's IP address (dev:ios handles this automatically)
-
-**Critical Build Pipeline Issues:**
-- **Hot reload requires `dev:ios:sim`** - Use `npm run dev:ios:sim` for hot reload development. This clears `libapp.a` so Xcode rebuilds in dev mode, connecting to the vite server at `localhost:1420`. Without this, the app uses bundled assets.
-- **Xcode rebuild alone doesn't recompile Tauri** - When `tauri.conf.json` changes, you MUST run `npm run build:ios` to rebuild the Rust code. Just rebuilding in Xcode uses stale `libapp.a`.
-- **Invalid tauri.conf.json causes silent failures** - If the config has invalid properties, Tauri build fails but Xcode may still "succeed" using old artifacts. Always check `npm run build:ios` output for errors like "Additional properties are not allowed".
-- **Multiple xcodeproj files exist** - With agent workspaces, there may be many copies at `~/misc/mpeek/*/backend/tauri-mobile/src-tauri/gen/apple/peek-save.xcodeproj`. Verify you're opening the correct one (check Xcode window title or File → Project Settings).
-- **disableInputAccessoryView not in Tauri 2.9.x** - The config option to hide iOS keyboard accessory bar is documented in the schema but not implemented in stable Tauri 2.9. Requires newer version or native Swift workaround.
+- Xcode scheme is `peek-save_iOS` — all xcodebuild commands use this
+- All xcodebuild outputs go to `/tmp/peek-xcodebuild` (derivedDataPath)
+- `tauri.conf.json` should NOT have `devUrl` or `beforeDevCommand` checked in — `dev-ios-sim.sh` patches these temporarily and restores on exit
+- If Rust code changes during HMR, stop vite (Ctrl+C), restart `yarn mobile:ios:dev`
+- `cargo tauri ios dev` is broken on Apple Silicon (passes `ARCHS=x86_64`) — use `yarn mobile:ios:dev` instead which bypasses it
 
 ### iOS Build System Architecture
 
-**⚠️ CRITICAL: The `custom-protocol` Cargo feature is REQUIRED for production builds.**
+#### Why `cargo build --lib` Instead of `cargo tauri build`
 
-Without this feature, the app tries to connect to `localhost` instead of using bundled assets, causing a "failed to request tauri://localhost" error and iOS local network permission prompts.
+`cargo tauri build` fails on iOS because Swift FFI symbols (`webview_plugin_open`, `webview_plugin_close`) are only available at Xcode's final link stage. Our workaround:
 
-```toml
-# backend/tauri-mobile/src-tauri/Cargo.toml
-tauri = { version = "2", features = ["custom-protocol"] }
-```
+1. `cargo build --lib` — build only the Rust library
+2. Copy `libapp.a` to Xcode's expected location
+3. Copy frontend assets to `gen/apple/assets/`
+4. Let xcodebuild do the final linking with Swift code
 
-**Why this happens:** Tauri's build system sets `cargo:dev=true` or `cargo:dev=false` based on the `custom-protocol` feature:
-- **With** `custom-protocol` → `dev=false` → uses bundled assets (production)
-- **Without** `custom-protocol` → `dev=true` → tries to connect to localhost (dev mode)
-
-When using `cargo build` directly (instead of `cargo tauri build`), you MUST have this feature enabled, otherwise the app defaults to dev mode.
-
-### Debug vs Release Build Separation
-
-The build system maintains strict separation between debug (simulator) and release (device) builds:
+#### Debug vs Release Build Separation
 
 | Aspect | Debug (Simulator) | Release (Device) |
 |--------|-------------------|------------------|
 | Target | `aarch64-apple-ios-sim` | `aarch64-apple-ios` |
 | Profile | `dev` (unoptimized) | `release` (optimized) |
+| Features | none (uses devUrl) | `custom-protocol` (uses bundled assets) |
 | Cache | `ios-cache/debug/` | `ios-cache/release/` |
 | Xcode Externals | `Externals/arm64/Debug/` | `Externals/arm64/Release/` |
 | Build script | `build-ios.sh` | `build-release.sh` |
 | yarn command | `yarn mobile:ios:build` | `yarn mobile:ios:build:release` |
 
-**Cache location:** Caches are stored at the git repo root level (`~/misc/mpeek/tmp/ios-cache/`) and shared across agent workspaces. Each cache contains:
-- `libapp.a` - The compiled Rust library
-- `checksum.txt` - Hash of source files for cache invalidation
+#### Build Number
 
-**Cache invalidation:** The cache hash includes:
-- `Cargo.toml`, `Cargo.lock` - Dependencies
-- `tauri.conf.json` - Tauri configuration
-- `build.rs` - Build script
-- `src/*.rs` - All Rust source files
+`backend/tauri-mobile/BUILD_NUMBER` is a plain integer. `vite.config.ts` reads it as `__BUILD_NUMBER__` and displays `vNNNN` in the app footer. `dev-ios-sim.sh` auto-increments it on every HMR session start. Always check the build number in the app footer to confirm your changes deployed.
 
-### Build Commands (from repo root)
+#### Cache
+
+Caches are at the repo root level (`tmp/ios-cache/`) and shared across agent workspaces. The cache hash includes `Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `build.rs`, and `src/*.rs`. Use `--force` to bypass cache.
+
+#### Troubleshooting: "localhost" Error on Device
+
+If the app shows "failed to request tauri://localhost" on device, the `custom-protocol` feature is missing from the build. Verify `build-release.sh` passes `--features custom-protocol` and rebuild:
 
 ```bash
-# Debug for simulator
-yarn mobile:ios:build              # Build Rust library
-yarn mobile:ios:xcodebuild         # Build Xcode project
-yarn mobile:ios:xcodebuild:install # Install on simulator
-yarn mobile:ios:sim:launch         # Launch app
-
-# Release for device
-yarn mobile:ios:build:release      # Build Rust library
-yarn mobile:ios:xcodebuild:device  # Build Xcode project
-yarn mobile:ios:device:run         # Install and launch on device
-
-# Full flows
-yarn mobile:ios:xcodebuild:full           # Debug: build + xcode + install
-yarn mobile:ios:xcodebuild:device:full    # Release: build + xcode + install
+yarn mobile:ios:build:release --force
+yarn mobile:ios:xcodebuild:device
+yarn mobile:ios:device:run
 ```
-
-### Troubleshooting: "localhost" Error on Device
-
-If the app shows "failed to request tauri://localhost" or asks for local network permissions:
-
-1. **Verify `custom-protocol` feature** is in `Cargo.toml`:
-   ```bash
-   grep custom-protocol backend/tauri-mobile/src-tauri/Cargo.toml
-   ```
-
-2. **Clear ALL caches** (shared cache is at repo root, not workspace):
-   ```bash
-   rm -rf ~/misc/mpeek/tmp/ios-cache/release
-   rm -rf backend/tauri-mobile/src-tauri/target/aarch64-apple-ios/release
-   ```
-
-3. **Rebuild from scratch:**
-   ```bash
-   yarn mobile:ios:build:release
-   ```
-
-4. **Copy to Debug location** (Xcode looks in Debug/ even for release builds):
-   ```bash
-   cp backend/tauri-mobile/src-tauri/gen/apple/Externals/arm64/Release/libapp.a \
-      backend/tauri-mobile/src-tauri/gen/apple/Externals/arm64/Debug/libapp.a
-   ```
-
-5. **Rebuild Xcode and install:**
-   ```bash
-   yarn mobile:ios:xcodebuild:device
-   yarn mobile:ios:device:run
-   ```
-
-### Why We Use `cargo build --lib` Instead of `cargo tauri build`
-
-The standard `cargo tauri build` command fails on iOS because of Swift FFI symbols (`webview_plugin_open`, `webview_plugin_close`) that are defined in Swift code and only available at Xcode's final link stage.
-
-Our workaround:
-1. Build only the lib target: `cargo build --lib --target aarch64-apple-ios`
-2. Copy the library to Xcode's expected location
-3. Copy frontend assets manually (normally done by `cargo tauri build`)
-4. Let Xcode do the final linking with Swift code
-
-This requires the `custom-protocol` feature since we're bypassing Tauri's build orchestration.
 
 ## Server Backend (Webhook API)
 

@@ -418,6 +418,7 @@
 				PRODUCT_NAME = "Peek Save";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				ARCHS = arm64;
 				VALID_ARCHS = arm64;
 				DEVELOPMENT_TEAM = "TXZTDLL5LC";
 			};
@@ -533,6 +534,7 @@
 				PRODUCT_NAME = "Peek Save";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				ARCHS = arm64;
 				VALID_ARCHS = arm64;
 				DEVELOPMENT_TEAM = "TXZTDLL5LC";
 			};
