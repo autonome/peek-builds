@@ -5,7 +5,7 @@
  * All Electron-specific code lives here.
  */
 
-import { app } from 'electron';
+import { app, globalShortcut } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import unhandled from 'electron-unhandled';
@@ -40,6 +40,7 @@ import {
   // Shortcuts
   registerLocalShortcut,
   unregisterLocalShortcut,
+  handleLocalShortcut,
   // PubSub
   scopes,
   publish,
@@ -95,6 +96,10 @@ unhandled({
 const ROOT_DIR = app.getAppPath();
 
 const DEBUG = !!process.env.DEBUG;
+
+// Expose test utilities on global for Playwright evaluateMain access
+(globalThis as any).__peek_test = { handleLocalShortcut };
+(globalThis as any).__peek_electron = { globalShortcut };
 
 // Parse --load-extension CLI arguments for dev workflow
 // Usage: yarn start -- --load-extension=/path/to/extension

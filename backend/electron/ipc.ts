@@ -2758,22 +2758,37 @@ export function registerMiscHandlers(onQuit: () => void): void {
   });
 
   // Register shortcut
+  //
+  // The callback closure captures the IpcMainEvent so ev.reply() can route
+  // the response back to the correct sender frame at callback time.
+  //
+  // ev.reply() internally uses sender.sendToFrame(frameId, ...) which correctly
+  // handles both:
+  //   - Normal BrowserWindow senders (main frame)
+  //   - Iframe sub-frame senders (consolidated extensions in extension-host.html)
+  //
+  // We guard against destroyed senders (extension reload, iframe removed from DOM)
+  // to prevent uncaught exceptions. The previous approaches that failed:
+  //   - BrowserWindow.fromId(ev.sender.id): wrong ID space (WebContents vs Window)
+  //   - BrowserWindow.fromWebContents(ev.sender): returns null for iframe senders
+  //   - webContents.fromId(id): does not find sub-frame WebContents
+  //   - sender.send(): sends to main frame only, not the specific iframe
   ipcMain.on(IPC_CHANNELS.REGISTER_SHORTCUT, (ev, msg) => {
     const isGlobal = msg.global === true;
     const modeStr = msg.mode ? ` mode:${msg.mode}` : '';
     DEBUG && console.log('ipc register shortcut', msg.shortcut, isGlobal ? '(global)' : '(local)', modeStr);
 
-    // Capture BrowserWindow ID at registration time — ev.sender (WebContents) may be destroyed when shortcut fires later
-    const senderWindow = BrowserWindow.fromWebContents(ev.sender);
-    const windowId = senderWindow?.id;
     const callback = () => {
       DEBUG && console.log('on(registershortcut): shortcut executed', msg.shortcut, msg.replyTopic);
-      if (!windowId) return;
-      const win = BrowserWindow.fromId(windowId);
-      if (win && !win.isDestroyed()) {
-        win.webContents.send(msg.replyTopic, { foo: 'bar' });
-      } else {
-        DEBUG && console.log('on(registershortcut): window', windowId, 'gone, skipping reply');
+      try {
+        if (!ev.sender.isDestroyed()) {
+          ev.reply(msg.replyTopic, { foo: 'bar' });
+        } else {
+          DEBUG && console.log('on(registershortcut): sender destroyed, skipping reply for', msg.shortcut);
+        }
+      } catch (err) {
+        // Guard against edge cases where sender state changes between check and send
+        DEBUG && console.log('on(registershortcut): reply failed for', msg.shortcut, err);
       }
     };
 

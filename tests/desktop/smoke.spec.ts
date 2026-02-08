@@ -3592,3 +3592,259 @@ test.describe('IZUI Behavior @desktop', () => {
     }
   });
 });
+
+// ============================================================================
+// Shortcut Roundtrip Tests
+//
+// Tests the full IPC roundtrip for shortcut registration and callback firing.
+// The flow: renderer registers shortcut via IPC -> main stores callback with ev.reply ->
+// shortcut fires -> callback calls ev.reply(replyTopic) -> renderer ipcRenderer.on fires cb.
+//
+// Since Playwright keyboard.press does NOT reliably trigger Electron's before-input-event,
+// we trigger the shortcut callback by calling handleLocalShortcut from the main process
+// via evaluateMain with a synthetic input event.
+// ============================================================================
+
+test.describe('Shortcut Roundtrip @desktop', () => {
+  test('local shortcut from background window roundtrip', async () => {
+    // Register a local shortcut from bgWindow, trigger it via handleLocalShortcut
+    // in the main process, verify callback fires in the renderer.
+    // This tests the basic ev.reply roundtrip for a normal BrowserWindow WebContents.
+    const bgWindow = sharedBgWindow;
+
+    // Register a local shortcut from the bgWindow
+    await bgWindow.evaluate(() => {
+      (window as any).__shortcutFired = false;
+      (window as any).app.shortcuts.register('Alt+F7', () => {
+        (window as any).__shortcutFired = true;
+      });
+    });
+
+    // Wait for IPC registration to propagate to main process
+    await sleep(300);
+
+    // Trigger the shortcut from the main process by calling handleLocalShortcut
+    // with a synthetic input event matching Alt+F7
+    const handled = await sharedApp.evaluateMain!(({ app }) => {
+      try {
+        const { handleLocalShortcut } = (globalThis as any).__peek_test;
+        return handleLocalShortcut({
+          type: 'keyDown',
+          alt: true,
+          shift: false,
+          meta: false,
+          control: false,
+          code: 'F7'
+        });
+      } catch (e: any) {
+        return 'peek_test-failed: ' + e.message;
+      }
+    });
+
+    // handleLocalShortcut should return true (shortcut was found and callback invoked)
+    expect(handled).toBe(true);
+
+    // Wait for the reply to reach the renderer and trigger the callback
+    await bgWindow.waitForFunction(
+      () => (window as any).__shortcutFired === true,
+      { timeout: 5000 }
+    );
+
+    const fired = await bgWindow.evaluate(() => (window as any).__shortcutFired);
+    expect(fired).toBe(true);
+
+    // Clean up
+    await bgWindow.evaluate(() => {
+      (window as any).app.shortcuts.unregister('Alt+F7');
+      delete (window as any).__shortcutFired;
+    });
+  });
+
+  test('local shortcut from extension-host iframe roundtrip', async () => {
+    // Register a local shortcut from a consolidated extension iframe (in extension-host.html),
+    // trigger it via handleLocalShortcut in the main process, verify callback fires
+    // in the iframe. This tests ev.reply for iframe WebContents where
+    // BrowserWindow.fromWebContents() returns null.
+    const bgWindow = sharedBgWindow;
+
+    // Find the extension host window
+    const hostWindow = sharedApp.windows().find(w => w.url().includes('extension-host.html'));
+    expect(hostWindow).toBeDefined();
+
+    // Wait for iframes to load
+    await hostWindow!.waitForFunction(
+      () => {
+        const container = document.getElementById('extensions');
+        const iframes = container ? container.querySelectorAll('iframe') : [];
+        return iframes.length >= 1;
+      },
+      { timeout: 10000 }
+    );
+
+    // Find a frame for a consolidated extension (e.g., slides or groups)
+    const frames = hostWindow!.frames();
+    const extFrame = frames.find(f =>
+      f.url().includes('peek://slides/') || f.url().includes('peek://groups/')
+    );
+    expect(extFrame).toBeDefined();
+
+    // Register a local shortcut from the iframe context
+    await extFrame!.evaluate(() => {
+      (window as any).__iframeShortcutFired = false;
+      (window as any).app.shortcuts.register('Alt+F8', () => {
+        (window as any).__iframeShortcutFired = true;
+      });
+    });
+
+    // Wait for IPC registration to reach main process
+    await sleep(300);
+
+    // Trigger the shortcut from the main process
+    const handled = await sharedApp.evaluateMain!(({ app }) => {
+      try {
+        const { handleLocalShortcut } = (globalThis as any).__peek_test;
+        return handleLocalShortcut({
+          type: 'keyDown',
+          alt: true,
+          shift: false,
+          meta: false,
+          control: false,
+          code: 'F8'
+        });
+      } catch (e: any) {
+        return 'peek_test-failed: ' + e.message;
+      }
+    });
+
+    expect(handled).toBe(true);
+
+    // Wait for the reply to reach the iframe and trigger the callback
+    await extFrame!.waitForFunction(
+      () => (window as any).__iframeShortcutFired === true,
+      { timeout: 5000 }
+    );
+
+    const fired = await extFrame!.evaluate(() => (window as any).__iframeShortcutFired);
+    expect(fired).toBe(true);
+
+    // Clean up
+    await extFrame!.evaluate(() => {
+      (window as any).app.shortcuts.unregister('Alt+F8');
+      delete (window as any).__iframeShortcutFired;
+    });
+  });
+
+  test('global shortcut from extension-host iframe roundtrip', async () => {
+    // Register a global shortcut from a consolidated extension iframe,
+    // trigger it from the main process, verify callback fires in the iframe.
+    // This is the exact scenario that breaks slides extension hotkeys.
+
+    // Find the extension host window
+    const hostWindow = sharedApp.windows().find(w => w.url().includes('extension-host.html'));
+    expect(hostWindow).toBeDefined();
+
+    // Find a frame for a consolidated extension
+    const frames = hostWindow!.frames();
+    const extFrame = frames.find(f =>
+      f.url().includes('peek://slides/') || f.url().includes('peek://groups/')
+    );
+    expect(extFrame).toBeDefined();
+
+    // Register a GLOBAL shortcut from the iframe context
+    await extFrame!.evaluate(() => {
+      (window as any).__globalIframeShortcutFired = false;
+      (window as any).app.shortcuts.register('CommandOrControl+Shift+F11', () => {
+        (window as any).__globalIframeShortcutFired = true;
+      }, { global: true });
+    });
+
+    // Wait for IPC registration to propagate
+    await sleep(300);
+
+    // Verify the shortcut was registered in the main process
+    const isRegistered = await sharedApp.evaluateMain!(({ app: electronApp }) => {
+      // Access globalShortcut from the electron app module context
+      const electron = (globalThis as any).__peek_electron || {};
+      if (electron.globalShortcut) {
+        return electron.globalShortcut.isRegistered('CommandOrControl+Shift+F11');
+      }
+      // Fallback: check via the imported shortcuts module
+      return 'no-globalShortcut-access';
+    });
+    expect(isRegistered).toBe(true);
+
+    // Trigger the global shortcut callback. Electron's globalShortcut.register stores
+    // a callback. We simulate the OS-level trigger by emitting the accelerator.
+    // Since we can't trigger OS-level shortcuts from Playwright, we use a workaround:
+    // call the internal shortcut callback via the electron module.
+    // Unfortunately globalShortcut has no programmatic trigger API.
+    // The real test is that the global shortcut was registered (above) and that the
+    // ev.reply mechanism works (tested in the local shortcut tests with same sender).
+    // Here we verify the registration path works for iframe senders.
+
+    // Clean up
+    await extFrame!.evaluate(() => {
+      (window as any).app.shortcuts.unregister('CommandOrControl+Shift+F11', { global: true });
+      delete (window as any).__globalIframeShortcutFired;
+    });
+  });
+
+  test('shortcut from external extension window roundtrip', async () => {
+    // Register a local shortcut from the example extension (separate BrowserWindow),
+    // trigger it via handleLocalShortcut, verify callback fires.
+    // This tests the standard BrowserWindow path for comparison with the iframe path.
+
+    // Find the example extension window
+    const exampleWindow = await waitForWindow(
+      () => sharedApp.windows(),
+      'peek://ext/example/background.html',
+      15000
+    );
+    expect(exampleWindow).toBeDefined();
+
+    // Register a local shortcut from the example extension window
+    await exampleWindow.evaluate(() => {
+      (window as any).__extShortcutFired = false;
+      (window as any).app.shortcuts.register('Alt+F6', () => {
+        (window as any).__extShortcutFired = true;
+      });
+    });
+
+    // Wait for IPC to propagate
+    await sleep(300);
+
+    // Trigger the shortcut from the main process
+    const handled = await sharedApp.evaluateMain!(({ app }) => {
+      try {
+        const { handleLocalShortcut } = (globalThis as any).__peek_test;
+        return handleLocalShortcut({
+          type: 'keyDown',
+          alt: true,
+          shift: false,
+          meta: false,
+          control: false,
+          code: 'F6'
+        });
+      } catch (e: any) {
+        return 'peek_test-failed: ' + e.message;
+      }
+    });
+
+    expect(handled).toBe(true);
+
+    // Wait for the callback to fire in the example extension window
+    await exampleWindow.waitForFunction(
+      () => (window as any).__extShortcutFired === true,
+      { timeout: 5000 }
+    );
+
+    const fired = await exampleWindow.evaluate(() => (window as any).__extShortcutFired);
+    expect(fired).toBe(true);
+
+    // Clean up
+    await exampleWindow.evaluate(() => {
+      (window as any).app.shortcuts.unregister('Alt+F6');
+      delete (window as any).__extShortcutFired;
+    });
+  });
+});

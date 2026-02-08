@@ -50,6 +50,9 @@ export interface DesktopApp {
   /** Get extension background windows */
   getExtensionWindows(): Page[];
 
+  /** Evaluate code in the main (Node) process (Electron only) */
+  evaluateMain?<R>(fn: (ctx: { app: Electron.App; require: NodeRequire }) => R): Promise<R>;
+
   /** Close the app */
   close(): Promise<void>;
 }
@@ -278,6 +281,8 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
     getBackgroundWindow: async () => {
       return waitForWindowHelper(() => electronApp.windows(), 'app/background.html');
     },
+
+    evaluateMain: (fn: any) => electronApp.evaluate(fn as any),
 
     getExtensionWindows: () => {
       return electronApp.windows().filter(w =>
