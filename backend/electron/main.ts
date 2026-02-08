@@ -94,38 +94,58 @@ export async function initialize(): Promise<void> {
 
   // Set up extension broadcaster for pubsub
   // Hybrid mode: broadcast to BOTH consolidated (iframes) AND separate windows
+  // All send() calls are wrapped in try-catch to prevent errors during shutdown
+  // when windows are being destroyed concurrently (race between isDestroyed check and send).
   setExtensionBroadcaster((topic, msg, source) => {
     const sourceOrigin = source.startsWith('peek://') ? new URL(source).origin : source;
 
     // Broadcast to consolidated extension iframes (built-in extensions)
     if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
-      const mainFrame = extensionHostWindow.webContents.mainFrame;
-      for (const frame of mainFrame.framesInSubtree) {
-        if (frame !== mainFrame && frame.url) {
-          const frameOrigin = new URL(frame.url).origin;
-          // Don't echo back to sender
-          if (frameOrigin !== sourceOrigin) {
-            frame.send(`pubsub:${topic}`, {
-              ...(msg as object),
-              source
-            });
+      try {
+        const mainFrame = extensionHostWindow.webContents.mainFrame;
+        for (const frame of mainFrame.framesInSubtree) {
+          if (frame !== mainFrame && frame.url) {
+            const frameOrigin = new URL(frame.url).origin;
+            // Don't echo back to sender
+            if (frameOrigin !== sourceOrigin) {
+              frame.send(`pubsub:${topic}`, {
+                ...(msg as object),
+                source
+              });
+            }
           }
         }
+      } catch {
+        // Window may have been destroyed between check and send (during shutdown)
       }
     }
 
     // Broadcast to separate extension windows (external extensions)
     for (const [extId, entry] of extensionWindows) {
       if (entry.win && !entry.win.isDestroyed() && entry.status === 'running') {
-        const extOrigin = `peek://ext/${extId}`;
-        // Don't echo back to sender
-        if (extOrigin !== sourceOrigin) {
+        try {
           entry.win.webContents.send(`pubsub:${topic}`, {
             ...(msg as object),
             source
           });
+        } catch {
+          // Window may have been destroyed between check and send (during shutdown)
         }
       }
+    }
+  });
+
+  // Track OS-level app focus for IZUI transient detection.
+  // When Peek is the active app, windows opened are "active."
+  // When Peek is in the background, windows opened are "transient."
+  app.on('browser-window-focus', () => {
+    getIzuiCoordinator().setAppFocused(true);
+  });
+  app.on('browser-window-blur', () => {
+    // Only mark unfocused if NO window has focus (user switched to another app).
+    // During window switches within Peek, one window blurs before another focuses.
+    if (!BrowserWindow.getFocusedWindow()) {
+      getIzuiCoordinator().setAppFocused(false);
     }
   });
 
@@ -134,49 +154,57 @@ export async function initialize(): Promise<void> {
     const windowId = window.id;
 
     // Handle window close
+    // Wrapped in try-catch to prevent errors during shutdown from stalling the quit sequence.
+    // During app.quit(), windows close concurrently and some may already be destroyed.
     window.on('closed', () => {
-      const windowData = windowRegistry.get(windowId);
+      try {
+        const windowData = windowRegistry.get(windowId);
 
-      // Clean up IZUI coordinator state
-      const coordinator = getIzuiCoordinator();
-      coordinator.clearFocusedWindow(windowId);
-      coordinator.popWindow(windowId);
+        // Clean up IZUI coordinator state
+        const coordinator = getIzuiCoordinator();
+        coordinator.clearFocusedWindow(windowId);
+        coordinator.popWindow(windowId);
 
-      // Focus parent window if this was a child
-      if (windowData && windowData.params.parentWindowId) {
-        const parentId = windowData.params.parentWindowId as number;
-        const parentWin = BrowserWindow.fromId(parentId);
-        if (parentWin && !parentWin.isDestroyed()) {
-          DEBUG && console.log('[izui] Child window closed, focusing parent:', parentId);
-          parentWin.focus();
-        }
-      }
-
-      if (windowData) {
-        // If this was an overlay window, restore the windows that were hidden
-        // BUT: In transient mode, don't restore - just close and return to previous app
-        // Use the window's own transient param (not coordinator - session may be ended by popWindow)
-        const hiddenWindowIds = windowData.params.overlayHiddenWindows as number[] | undefined;
-        const isTransient = windowData.params.transient === true;
-        if (hiddenWindowIds && hiddenWindowIds.length > 0 && !isTransient) {
-          DEBUG && console.log('[izui] Overlay closed (active mode), restoring', hiddenWindowIds.length, 'windows');
-          for (const hiddenId of hiddenWindowIds) {
-            const hiddenWin = BrowserWindow.fromId(hiddenId);
-            if (hiddenWin && !hiddenWin.isDestroyed()) {
-              hiddenWin.show();
-            }
+        // Focus parent window if this was a child
+        if (windowData && windowData.params.parentWindowId) {
+          const parentId = windowData.params.parentWindowId as number;
+          const parentWin = BrowserWindow.fromId(parentId);
+          if (parentWin && !parentWin.isDestroyed()) {
+            DEBUG && console.log('[izui] Child window closed, focusing parent:', parentId);
+            parentWin.focus();
           }
-        } else if (isTransient && hiddenWindowIds && hiddenWindowIds.length > 0) {
-          DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring', hiddenWindowIds.length, 'windows');
         }
 
-        publish(windowData.source, scopes.GLOBAL, 'window:closed', {
-          id: windowId,
-          source: windowData.source
-        });
-      }
+        if (windowData) {
+          // If this was an overlay window, restore the windows that were hidden
+          // BUT: In transient mode, don't restore - just close and return to previous app
+          // Use the window's own transient param (not coordinator - session may be ended by popWindow)
+          const hiddenWindowIds = windowData.params.overlayHiddenWindows as number[] | undefined;
+          const isTransient = windowData.params.transient === true;
+          if (hiddenWindowIds && hiddenWindowIds.length > 0 && !isTransient) {
+            DEBUG && console.log('[izui] Overlay closed (active mode), restoring', hiddenWindowIds.length, 'windows');
+            for (const hiddenId of hiddenWindowIds) {
+              const hiddenWin = BrowserWindow.fromId(hiddenId);
+              if (hiddenWin && !hiddenWin.isDestroyed()) {
+                hiddenWin.show();
+              }
+            }
+          } else if (isTransient && hiddenWindowIds && hiddenWindowIds.length > 0) {
+            DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring', hiddenWindowIds.length, 'windows');
+          }
 
-      windowRegistry.delete(windowId);
+          publish(windowData.source, scopes.GLOBAL, 'window:closed', {
+            id: windowId,
+            source: windowData.source
+          });
+        }
+
+        windowRegistry.delete(windowId);
+      } catch (err) {
+        // During shutdown, errors here must not prevent the quit sequence
+        DEBUG && console.error('[lifecycle] Error in window closed handler:', err);
+        windowRegistry.delete(windowId);
+      }
     });
 
     // Handle local shortcuts (with window ID for mode-conditional shortcuts)
@@ -596,7 +624,11 @@ export function destroyExtensionWindow(extId: string): boolean {
   DEBUG && console.log(`[ext:win] Destroying window for: ${extId}`);
 
   if (entry.win && !entry.win.isDestroyed()) {
-    entry.win.webContents.send('pubsub:app:shutdown', {});
+    try {
+      entry.win.webContents.send('pubsub:app:shutdown', {});
+    } catch {
+      // Window may have been destroyed between check and send
+    }
     setTimeout(() => {
       if (!entry.win.isDestroyed()) {
         entry.win.destroy();

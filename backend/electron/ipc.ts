@@ -1762,11 +1762,19 @@ export function registerWindowHandlers(): void {
       winOptions.y = parseInt(options.y);
     }
 
+    // Determine opener window and whether it's a real content parent
+    // Background/infrastructure windows (background.html, extension-host.html) are
+    // not real parents — they're just the IPC sender. Only content windows count
+    // as parents for IZUI child-window semantics (ESC closes child, focuses parent).
+    const openerWindow = BrowserWindow.fromWebContents(ev.sender);
+    const INTERNAL_URLS = ['peek://app/background.html', 'peek://app/extension-host.html'];
+    const openerUrl = openerWindow && !openerWindow.isDestroyed() ? openerWindow.webContents?.getURL() ?? '' : '';
+    const isRealParent = openerWindow && !openerWindow.isDestroyed() && !INTERNAL_URLS.some(u => openerUrl === u);
+
     // Center window on parent if opener exists and no explicit position
     // Priority: explicit x/y > center on parent > center on screen
-    const openerWindow = BrowserWindow.fromWebContents(ev.sender);
     if (options.centerOnParent !== false &&
-        openerWindow && !openerWindow.isDestroyed() &&
+        isRealParent &&
         winOptions.x === undefined && winOptions.y === undefined) {
       const bounds = openerWindow.getBounds();
       const winW = winOptions.width as number || APP_DEF_WIDTH;
@@ -1848,7 +1856,7 @@ export function registerWindowHandlers(): void {
         ...options,
         address: url,
         transient: isTransient,
-        parentWindowId: openerWindow && !openerWindow.isDestroyed() ? openerWindow.id : null,
+        parentWindowId: isRealParent ? openerWindow!.id : null,
       };
       console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient);
       registerWindow(win.id, msg.source, windowParams);

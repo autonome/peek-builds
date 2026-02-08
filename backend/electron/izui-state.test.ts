@@ -66,98 +66,54 @@ describe('IZUI State Coordinator Tests', () => {
   beforeEach(() => {
     // Clear mock windows before each test
     mockWindows = [];
-    // End any existing session and reset window provider
+    // Reset all state (session, appFocused, etc.)
     const coordinator = izuiState.getIzuiCoordinator();
-    coordinator.endSession();
+    coordinator._resetAll();
     coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
   });
 
   describe('evaluateOnShow', () => {
-    it('should return transient when no visible content window exists', () => {
-      // Add hidden windows (not visible)
-      mockWindows.push(createMockWindow(1, { focused: false, visible: false }));
-      mockWindows.push(createMockWindow(2, { focused: false, visible: false }));
-
+    it('should return active when app has OS-level focus', () => {
       const coordinator = izuiState.getIzuiCoordinator();
+      // appFocused defaults to true (app startup)
       const result = coordinator.evaluateOnShow();
-
-      assert.strictEqual(result, 'transient');
-    });
-
-    it('should return transient when only background windows are visible', () => {
-      // Background/internal windows don't count as user content
-      mockWindows.push(createMockWindow(1, { url: 'peek://app/background.html' }));
-      mockWindows.push(createMockWindow(2, { url: 'peek://app/extension-host.html' }));
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      const result = coordinator.evaluateOnShow();
-
-      assert.strictEqual(result, 'transient');
-    });
-
-    it('should return active when a visible content window exists', () => {
-      // A visible content window means user has active Peek context
-      mockWindows.push(createMockWindow(1, { url: 'peek://ext/groups/home.html' }));
-      mockWindows.push(createMockWindow(2, { focused: false, visible: false }));
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      const result = coordinator.evaluateOnShow();
-
       assert.strictEqual(result, 'active');
     });
 
-    it('should correctly exclude the specified windowId from visibility check', () => {
-      // The querying window (cmd panel) is visible, but should be excluded
-      const cmdPanelId = 100;
-      mockWindows.push(createMockWindow(cmdPanelId));
-      mockWindows.push(createMockWindow(2, { visible: false }));
-
+    it('should return transient when app does NOT have OS-level focus', () => {
       const coordinator = izuiState.getIzuiCoordinator();
-      const result = coordinator.evaluateOnShow(cmdPanelId);
-
-      // Should be transient because the only visible content window is excluded
+      coordinator.setAppFocused(false); // User is in another app
+      const result = coordinator.evaluateOnShow();
       assert.strictEqual(result, 'transient');
     });
 
-    it('should return active when another visible window exists besides excluded one', () => {
-      const cmdPanelId = 100;
-      mockWindows.push(createMockWindow(cmdPanelId));
-      mockWindows.push(createMockWindow(2)); // Another visible window
-
+    it('should return active at app startup (appFocused defaults to true)', () => {
+      // At startup, app is focused even though no content windows exist yet
       const coordinator = izuiState.getIzuiCoordinator();
-      const result = coordinator.evaluateOnShow(cmdPanelId);
-
-      // Should be active because window 2 is visible
+      // Don't call setAppFocused - verify default is active
+      const result = coordinator.evaluateOnShow();
       assert.strictEqual(result, 'active');
     });
 
-    it('should ignore destroyed windows in visibility check', () => {
-      // Only window is visible but destroyed
-      mockWindows.push(createMockWindow(1, { destroyed: true }));
-      mockWindows.push(createMockWindow(2, { visible: false }));
-
+    it('should update session.entryMode when focus changes', () => {
       const coordinator = izuiState.getIzuiCoordinator();
-      const result = coordinator.evaluateOnShow();
 
-      // Destroyed window should be ignored, result is transient
-      assert.strictEqual(result, 'transient');
-    });
-
-    it('should update session.entryMode when called', () => {
-      // No visible content windows → transient
-      mockWindows.push(createMockWindow(1, { visible: false }));
-
-      const coordinator = izuiState.getIzuiCoordinator();
+      // Start active (app focused)
       coordinator.evaluateOnShow();
+      assert.strictEqual(coordinator.getSession()!.entryMode, 'active');
 
-      const session = coordinator.getSession();
-      assert.ok(session, 'Session should exist');
-      assert.strictEqual(session!.entryMode, 'transient');
+      // User switches to another app
+      coordinator.setAppFocused(false);
+      coordinator.evaluateOnShow();
+      assert.strictEqual(coordinator.getSession()!.entryMode, 'transient');
+
+      // User switches back to Peek
+      coordinator.setAppFocused(true);
+      coordinator.evaluateOnShow();
+      assert.strictEqual(coordinator.getSession()!.entryMode, 'active');
     });
 
     it('should start a session if none exists', () => {
-      mockWindows.push(createMockWindow(1));
-
       const coordinator = izuiState.getIzuiCoordinator();
       assert.strictEqual(coordinator.getSession(), null, 'No session should exist initially');
 
@@ -167,14 +123,12 @@ describe('IZUI State Coordinator Tests', () => {
     });
 
     it('should update existing session entry mode without creating new session', () => {
-      mockWindows.push(createMockWindow(1));
-
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       const originalSessionId = coordinator.getSession()!.id;
 
-      // Now simulate all content windows hidden
-      mockWindows[0]._visible = false;
+      // User switches to another app
+      coordinator.setAppFocused(false);
       coordinator.evaluateOnShow();
 
       const session = coordinator.getSession();
@@ -202,15 +156,11 @@ describe('IZUI State Coordinator Tests', () => {
     });
 
     it('should persist transient state even after windows are pushed', () => {
-      // No visible content windows → transient
-      mockWindows.push(createMockWindow(1, { visible: false }));
-
       const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.setAppFocused(false); // App not focused
       coordinator.evaluateOnShow(); // Starts as transient
       coordinator.pushWindow(1);
 
-      // Add another hidden window
-      mockWindows.push(createMockWindow(2, { visible: false }));
       coordinator.pushWindow(2);
 
       // Session should still be transient (pushWindow doesn't re-evaluate)
@@ -598,12 +548,11 @@ describe('IZUI State Coordinator Tests', () => {
 
   describe('Session persistence across windows', () => {
     it('should maintain transient mode when opening windows from transient session', () => {
-      // Simulate: user invokes cmd bar via global hotkey (no visible content windows)
-      mockWindows.push(createMockWindow(1, { visible: false, url: 'peek://app/background.html' }));
-
+      // Simulate: user invokes cmd bar via global hotkey (app not focused)
       const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.setAppFocused(false);
 
-      // Cmd bar evaluates on show - detects transient (no visible content)
+      // Cmd bar evaluates on show - detects transient (app not focused)
       const entryMode = coordinator.evaluateOnShow();
       assert.strictEqual(entryMode, 'transient');
 
@@ -624,13 +573,12 @@ describe('IZUI State Coordinator Tests', () => {
     });
 
     it('should maintain active mode when user is working within app', () => {
-      // Simulate: user is working in a visible Peek window, opens cmd bar
-      mockWindows.push(createMockWindow(50)); // User's visible content window
-
+      // Simulate: user is working in Peek (app focused), opens cmd bar
       const coordinator = izuiState.getIzuiCoordinator();
+      // appFocused defaults to true
 
-      // Cmd bar evaluates on show - detects active (window 50 is visible content)
-      const entryMode = coordinator.evaluateOnShow(100); // Exclude cmd bar itself
+      // Cmd bar evaluates on show - detects active (app focused)
+      const entryMode = coordinator.evaluateOnShow();
       assert.strictEqual(entryMode, 'active');
 
       coordinator.pushWindow(100); // cmd bar
@@ -650,8 +598,8 @@ describe('IZUI State Coordinator Tests', () => {
     it('should handle full transient workflow: invoke, pick, close', () => {
       const coordinator = izuiState.getIzuiCoordinator();
 
-      // 1. No visible content windows - user invokes via global hotkey
-      mockWindows.push(createMockWindow(1, { visible: false }));
+      // 1. App not focused - user invokes via global hotkey
+      coordinator.setAppFocused(false);
 
       // 2. Cmd bar opens and evaluates state
       const entryMode = coordinator.evaluateOnShow();
@@ -682,13 +630,13 @@ describe('IZUI State Coordinator Tests', () => {
     it('should handle full active workflow: work, invoke, navigate back', () => {
       const coordinator = izuiState.getIzuiCoordinator();
 
-      // 1. User has a visible Peek content window
-      mockWindows.push(createMockWindow(50));
+      // 1. User is working in Peek (app focused)
+      // appFocused defaults to true
       coordinator.startSession('active');
       coordinator.pushWindow(50);
 
-      // 2. User invokes cmd bar (window 50 still visible)
-      const entryMode = coordinator.evaluateOnShow(100); // Exclude cmd bar
+      // 2. User invokes cmd bar (app still focused)
+      const entryMode = coordinator.evaluateOnShow();
       assert.strictEqual(entryMode, 'active');
       coordinator.pushWindow(100);
 

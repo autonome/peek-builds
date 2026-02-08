@@ -78,6 +78,12 @@ class IzuiStateCoordinator {
   private session: IzuiSession | null = null;
   private windowProvider: WindowProvider = defaultWindowProvider;
 
+  // OS-level app focus state. True when Peek is the active app.
+  // Updated by browser-window-focus/blur events in main.ts.
+  // Initial value is true: at app launch, Peek IS the active app.
+  // In headless mode, stays true (no real focus events fire).
+  private appFocused: boolean = true;
+
   /**
    * Set custom window provider (for testing)
    */
@@ -90,6 +96,31 @@ class IzuiStateCoordinator {
    */
   _resetWindowProvider(): void {
     this.windowProvider = defaultWindowProvider;
+  }
+
+  /**
+   * Update OS-level app focus state.
+   * Called from main.ts browser-window-focus/blur event handlers.
+   */
+  setAppFocused(focused: boolean): void {
+    this.appFocused = focused;
+    DEBUG && console.log('[izui] App focus changed:', focused);
+  }
+
+  /**
+   * Check if app currently has OS-level focus.
+   */
+  isAppFocused(): boolean {
+    return this.appFocused;
+  }
+
+  /**
+   * Reset all state (for testing only)
+   */
+  _resetAll(): void {
+    this.state = 'idle';
+    this.session = null;
+    this.appFocused = true;
   }
 
   /**
@@ -130,58 +161,28 @@ class IzuiStateCoordinator {
   }
 
   /**
-   * Re-evaluate transient state when a window is shown (for keepLive windows)
-   * This is the key fix for the cmd bar stuck on "group" mode issue.
-   * When a keepLive window is reused, we need to re-check if the app
-   * was focused when it was invoked.
+   * Evaluate transient state based on OS-level app focus.
    *
-   * IMPORTANT: BrowserWindow.getFocusedWindow() returns Electron's internally
-   * tracked "focused window" which persists even when the app loses system focus.
-   * Instead, we check if ANY window actually has system focus via isFocused().
+   * IZUI policy: transient = Peek was NOT the active/focused app at the OS
+   * window manager level when the window was opened. This is the single source
+   * of truth for transient detection.
    *
-   * @param excludeWindowId Optional window ID to exclude from focus check
-   *        (used when the querying window is already visible/focused)
-   * @returns 'active' if a Peek window has system focus, 'transient' if not
+   * Called from:
+   *   - window-open handler (before window is shown, so focus state is still accurate)
+   *   - keepLive reuse path (re-evaluates on each show)
+   *   - izui-is-transient IPC handler (when no session exists)
+   *
+   * @param _excludeWindowId Unused (kept for API compat), focus is now app-level
+   * @returns 'active' if Peek has OS focus, 'transient' if not
    */
-  evaluateOnShow(excludeWindowId?: number): 'active' | 'transient' {
-    // Determine if user has an active Peek context by checking for visible
-    // content windows. We use isVisible() instead of isFocused() because:
-    // - Modal windows (cmd) steal focus from content windows on open
-    // - By the time this is called, the requesting window may have already stolen focus
-    // - isVisible() is stable: a content window stays visible regardless of focus changes
-    //
-    // Active = at least one visible, non-background, non-modal content window exists
-    // Transient = no visible content windows (user invoked from background/other app)
-    const allWindows = this.windowProvider.getAllWindows();
+  evaluateOnShow(_excludeWindowId?: number): 'active' | 'transient' {
+    // IZUI policy: app focused → active, app not focused → transient.
+    // appFocused is tracked via browser-window-focus/blur events in main.ts.
+    // At startup, appFocused defaults to true (app is active when launched).
+    // In headless mode, appFocused stays true (no real focus events fire).
+    const result = this.appFocused ? 'active' : 'transient';
 
-    // Background/internal URLs that don't count as user-visible content
-    const INTERNAL_URLS = [
-      'peek://app/background.html',
-      'peek://app/extension-host.html',
-    ];
-
-    // In headless mode (tests), windows are created with show:false so isVisible()
-    // always returns false. Skip the visibility check - a non-destroyed, non-background
-    // window is equivalent to "visible" in headless.
-    const checkVisible = !isHeadless();
-
-    const visibleContentWindow = allWindows.find(win => {
-      if (win.isDestroyed()) return false;
-      if (checkVisible && !win.isVisible()) return false;
-      if (win.id === excludeWindowId) return false;
-
-      // Exclude internal/background windows
-      const url = win.webContents?.getURL?.() ?? '';
-      if (INTERNAL_URLS.some(internal => url === internal)) return false;
-
-      return true;
-    });
-
-    const hasVisibleContent = !!visibleContentWindow;
-    const result = hasVisibleContent ? 'active' : 'transient';
-    DEBUG && console.log('[izui] evaluateOnShow:', result, 'excludeWindowId:', excludeWindowId,
-      'visibleContentWindow:', visibleContentWindow?.id,
-      'url:', visibleContentWindow?.webContents?.getURL?.()?.substring(0, 60));
+    DEBUG && console.log('[izui] evaluateOnShow:', result, 'appFocused:', this.appFocused);
 
     if (!this.session) {
       this.startSession(result);

@@ -302,44 +302,113 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
         }
       };
 
-      // Try graceful close first (3s)
+      // Helper to wait for process exit with polling
+      const waitForExit = async (p: number, timeoutMs: number): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (!isRunning(p)) return true;
+          await sleep(100);
+        }
+        return !isRunning(p);
+      };
+
+      // Step 1: Call app.quit() in the main Electron process via evaluate.
+      // The app's before-quit handler ensures cleanup (hot reload watchers,
+      // database, extensions). We also set a safety timeout that calls
+      // process.exit(0) in case the quit sequence stalls (e.g., a window
+      // close handler blocks indefinitely).
+      try {
+        await Promise.race([
+          electronApp.evaluate(({ app }) => {
+            // Safety net: if quit stalls, force-exit after 5 seconds.
+            // This handles edge cases where window close handlers prevent
+            // the normal quit sequence from completing.
+            setTimeout(() => {
+              console.error('[lifecycle] quit safety timeout - forcing process.exit(0)');
+              process.exit(0);
+            }, 5000).unref();
+            app.quit();
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('evaluate timeout')), 3000))
+        ]);
+      } catch {
+        // evaluate may fail/timeout if app is already closing - this is expected
+      }
+
+      // Wait for process to exit after app.quit() was called.
+      // The before-quit handler ensures cleanup, and the safety timeout
+      // guarantees exit within 5 seconds even if quit stalls.
+      if (pid && await waitForExit(pid, 8000)) {
+        await sleep(200); // Let OS release resources
+        return;
+      }
+
+      // Step 2: Try Playwright's electronApp.close() as backup
       try {
         await Promise.race([
           electronApp.close(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('close timeout')), 5000))
         ]);
-        // Give it a moment to fully terminate
-        await sleep(200);
-        if (!pid || !isRunning(pid)) return;
-      } catch { /* continue to force kill */ }
+        if (!pid || await waitForExit(pid, 2000)) {
+          await sleep(200);
+          return;
+        }
+      } catch { /* continue */ }
+
+      // Step 3: Force exit via app.exit(0) - bypasses all close handlers
+      try {
+        await Promise.race([
+          electronApp.evaluate(({ app }) => {
+            app.exit(0);
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('exit timeout')), 2000))
+        ]);
+        if (pid && await waitForExit(pid, 3000)) {
+          await sleep(200);
+          return;
+        }
+      } catch { /* fall through to SIGTERM */ }
 
       if (!pid) return;
 
-      // Try SIGTERM (2s wait)
+      // Step 4: SIGTERM/SIGKILL - this should NEVER happen in normal operation.
+      // If we reach here, the app is stuck. Force-kill and throw an error so the
+      // test is marked as failed (unless we're explicitly testing crash recovery).
+      let forceKilled = false;
+
       if (isRunning(pid)) {
-        console.warn(`[test] Graceful close timed out for PID ${pid}, sending SIGTERM`);
+        console.error(`[test] FAILURE: Graceful shutdown failed for PID ${pid}, sending SIGTERM`);
+        forceKilled = true;
         try {
           process.kill(pid, 'SIGTERM');
         } catch { /* ignore */ }
-        await sleep(2000);
+        if (await waitForExit(pid, 3000)) {
+          // SIGTERM worked but graceful didn't - still a failure
+          await sleep(200);
+          throw new Error(
+            `Electron app (PID ${pid}) did not shut down gracefully and required SIGTERM. ` +
+            `This indicates a shutdown hang - investigate app lifecycle.`
+          );
+        }
       }
 
-      // Last resort: SIGKILL
       if (isRunning(pid)) {
-        console.warn(`[test] SIGTERM failed for PID ${pid}, sending SIGKILL`);
+        console.error(`[test] FAILURE: SIGTERM failed for PID ${pid}, sending SIGKILL`);
         try {
           process.kill(pid, 'SIGKILL');
         } catch { /* ignore */ }
         await sleep(500);
       }
 
-      // Final verification
-      if (isRunning(pid)) {
-        console.error(`[test] WARNING: Process ${pid} still running after SIGKILL`);
-      }
-
       // Allow extra time for OS to fully release resources (ports, files, etc.)
       await sleep(500);
+
+      if (forceKilled) {
+        throw new Error(
+          `Electron app (PID ${pid}) did not shut down gracefully and required force-kill. ` +
+          `This indicates a shutdown hang - investigate app lifecycle.`
+        );
+      }
     }
   };
 }

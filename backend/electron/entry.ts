@@ -34,6 +34,7 @@ import {
   registerActivateHandler,
   requestSingleInstance,
   quitApp,
+  shutdown,
   // Tray
   initTray,
   // Shortcuts
@@ -250,6 +251,22 @@ const onQuit = async () => {
   stopHotReload();
   quitApp();
 };
+
+// Ensure cleanup happens regardless of HOW quit is triggered.
+// When tests call app.quit() directly (via electronApp.evaluate), the onQuit
+// function above is bypassed. This before-quit handler ensures hot reload watchers,
+// database connections, and other resources are cleaned up so the process can exit.
+let _beforeQuitCleanupDone = false;
+app.on('before-quit', () => {
+  if (_beforeQuitCleanupDone) return;
+  _beforeQuitCleanupDone = true;
+  DEBUG && console.log('[lifecycle] before-quit: running cleanup');
+  try { cleanupDevExtensions(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevExtensions error:', e); }
+  try { cleanupAdblocker(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupAdblocker error:', e); }
+  try { stopHotReload(); } catch (e) { DEBUG && console.error('[lifecycle] stopHotReload error:', e); }
+  try { shutdown(); } catch (e) { DEBUG && console.error('[lifecycle] shutdown error:', e); }
+  DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
+});
 
 // ***** init *****
 
