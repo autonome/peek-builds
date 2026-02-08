@@ -176,25 +176,32 @@ export function setupEscapeHandler(internalHandler, options = {}) {
     notifyParentFocus(null); // Global publish
 
     if (closeOnEscape) {
-      // IZUI Policy: Only close on ESC in transient mode (app wasn't focused when invoked).
-      // In active mode, ESC at root does nothing - the user's state is persistent.
-      let isTransient = true; // Default to close if can't determine
-      if (api.izui && api.izui.isTransient) {
-        try {
-          isTransient = await api.izui.isTransient();
-        } catch (e) {
-          DEBUG && console.log('[IZUI] Failed to check transient state:', e);
+      // Child windows (have a parent) always close on ESC at root - return to parent.
+      // Root windows only close in transient mode (active mode state is persistent).
+      const isChild = !!parentWindowId;
+
+      let shouldClose = isChild; // Children always close
+      if (!isChild) {
+        // Root window: only close if transient
+        let isTransient = true; // Default to close if can't determine
+        if (api.izui && api.izui.isTransient) {
+          try {
+            isTransient = await api.izui.isTransient();
+          } catch (e) {
+            DEBUG && console.log('[IZUI] Failed to check transient state:', e);
+          }
         }
+        shouldClose = isTransient;
       }
 
-      if (isTransient) {
-        DEBUG && console.log('[IZUI] ESC at root (transient), closing via izui-close-self');
+      if (shouldClose) {
+        DEBUG && console.log('[IZUI] ESC at root, closing via izui-close-self (child:', isChild, ')');
         if (api.izui && api.izui.closeSelf) {
           api.izui.closeSelf();
         }
         return { handled: true };
       } else {
-        DEBUG && console.log('[IZUI] ESC at root (active mode), NOT closing - state is persistent');
+        DEBUG && console.log('[IZUI] ESC at root (active mode, root window), NOT closing');
       }
     } else {
       DEBUG && console.log('[IZUI] ESC at root, not closing (closeOnEscape=false)');

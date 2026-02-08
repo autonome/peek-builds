@@ -1762,6 +1762,16 @@ export function registerWindowHandlers(): void {
       winOptions.y = parseInt(options.y);
     }
 
+    // Center window on screen if no position specified
+    if (winOptions.x === undefined && winOptions.y === undefined) {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width: screenW, height: screenH } = primaryDisplay.workAreaSize;
+      const winW = winOptions.width as number || APP_DEF_WIDTH;
+      const winH = winOptions.height as number || APP_DEF_HEIGHT;
+      winOptions.x = Math.round((screenW - winW) / 2);
+      winOptions.y = Math.round((screenH - winH) / 2);
+    }
+
     if (options.modal === true) {
       // Use panel type on macOS to improve focus restoration when closed
       if (process.platform === 'darwin') {
@@ -1796,6 +1806,7 @@ export function registerWindowHandlers(): void {
       let loadUrl = url;
       if (isWebPage) {
         // Pass position/size to the page container so it can position the webview
+        // Use the calculated center position (set above) as default
         const pageParams = new URLSearchParams({
           url: url,
           x: String(winOptions.x ?? 100),
