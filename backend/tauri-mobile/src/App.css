@@ -409,6 +409,13 @@ a.card-title {
   color: #007aff;
 }
 
+/* Tag chips in card header (tagset items) */
+.card-title-tags {
+  flex: 1;
+  min-width: 0;
+  margin-left: 0.35rem;
+}
+
 .card-delete-btn {
   flex-shrink: 0;
   background: transparent;
@@ -2445,8 +2452,8 @@ body.dark .captured-image-preview {
   background: rgba(0, 0, 0, 0.4);
   z-index: 1000;
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
   padding: 0.5rem;
   padding-top: env(safe-area-inset-top, 4px);
   /* Prevent iOS from scrolling the viewport when keyboard appears */
@@ -2462,6 +2469,8 @@ body.dark .captured-image-preview {
   width: 100%;
   max-width: 600px;
   margin: 0;
+  flex: 1;
+  min-height: 0;
 }
 
 body.dark .edit-overlay {
@@ -2649,15 +2658,10 @@ body.dark .expandable-card-buttons .save-btn {
 
 /* URL editor wrapper */
 .editor-url-wrapper {
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.editor-url-wrapper .editor-url-input {
-  border-bottom: none;
+  flex-shrink: 0;
 }
 
 body.dark .editor-url-wrapper {
-  border-bottom-color: #444;
 }
 
 body.dark .clear-btn {
@@ -2748,12 +2752,18 @@ body.dark .drag-handle-bar {
   background: #555;
 }
 
-/* Tags Section - sizes to content, scrolls when exceeding max */
+/* Tags Section - expands to fill available space, scrolls when full */
 .editor-tags-section {
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 0.25rem 1.15rem;
+}
+
+/* When a ResizableInput is present, constrain tags so the textarea gets space */
+.resizable-input-wrapper ~ .editor-tags-section {
+  flex: 0 0 auto;
   max-height: 140px;
 }
 
@@ -2769,7 +2779,6 @@ body.dark .drag-handle-bar {
   width: 100%;
   padding: 0.85rem 1.15rem;
   border: none;
-  border-bottom: 1px solid #e0e0e0;
   border-radius: 12px 12px 0 0;
   font-size: 16px;
   font-family: inherit;
@@ -2783,7 +2792,6 @@ body.dark .drag-handle-bar {
 
 body.dark .editor-url-input {
   color: #f6f6f6;
-  border-bottom-color: #444;
 }
 
 /* Image preview for editor */

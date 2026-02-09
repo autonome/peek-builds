@@ -2492,7 +2492,11 @@ function App() {
               <line x1="7" y1="7" x2="7.01" y2="7"></line>
             </svg>
           </div>
-          <div className="card-title">{item.tags.join(', ')}</div>
+          <div className="card-tags card-title-tags">
+            {item.tags.map((tag) => (
+              <span key={tag} className="card-tag">{tag}</span>
+            ))}
+          </div>
           <button
             className="card-delete-btn"
             onClick={(e) => {
