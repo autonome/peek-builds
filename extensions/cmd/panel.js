@@ -480,23 +480,36 @@ function handleSpecialKey(e) {
 
   // Enter key - execute command (but not if in output selection mode - handled above)
   if (e.key === 'Enter' && !hasModifier(e) && !state.outputSelectionMode) {
-    // Check if the typed text is a URL - if so, use the "open" command
+    // Check if the typed text is a URL - if so, open it directly
     const trimmedText = commandInput.value.trim();
     const urlResult = getValidURL(trimmedText);
-    if (urlResult.valid && state.commands['open']) {
-      log('cmd:panel', 'Detected URL, using open command:', urlResult.url);
+    if (urlResult.valid) {
+      log('cmd:panel', 'Detected URL, opening:', urlResult.url);
       state.lastExecuted = 'open';
       updateMatchCount('open');
       updateAdaptiveFeedback(trimmedText.split(' ')[0], 'open');
 
-      // Execute open command with the URL
-      execute('open', 'open ' + trimmedText);
+      // Open URL directly using api.window.open
+      api.window.open(urlResult.url, {
+        width: 800,
+        height: 600,
+        trackingSource: 'cmd',
+        trackingSourceId: 'url-direct'
+      }).then(result => {
+        log('cmd:panel', 'URL opened:', result);
+      }).catch(error => {
+        log.error('cmd:panel', 'Failed to open URL:', error);
+        showExecutionError('open', error.message || 'Failed to open URL');
+      });
 
       // Clear input and UI
       commandInput.value = '';
       state.typed = '';
       updateCommandUI();
       updateResultsUI();
+
+      // Close panel after opening URL
+      setTimeout(shutdown, 100);
       return;
     }
 
@@ -1169,7 +1182,11 @@ function cancelExecution() {
  */
 async function execute(name, typed) {
   log('cmd:panel', 'execute() called with:', name, typed);
-  if (!state.commands[name]) return;
+  if (!state.commands[name]) {
+    log.error('cmd:panel', 'Command not found:', name);
+    showExecutionError(name, 'Command not found. Try again in a moment.');
+    return;
+  }
 
   log('cmd:panel', 'executing cmd', name, typed);
   const context = buildExecutionContext(name, typed);
