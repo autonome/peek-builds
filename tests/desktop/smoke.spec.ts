@@ -262,9 +262,9 @@ test.describe('Groups Navigation @desktop', () => {
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
 
     // Click on the test-group card
-    const groupCard = await groupsWindow.$('.card.group-card[data-tag-id="' + tagId + '"]');
+    const groupCard = await groupsWindow.$('peek-card.group-card[data-tag-id="' + tagId + '"]');
     if (!groupCard) {
-      const anyGroupCard = await groupsWindow.$('.card.group-card');
+      const anyGroupCard = await groupsWindow.$('peek-card.group-card');
       expect(anyGroupCard).toBeTruthy();
       await anyGroupCard!.click();
     } else {
@@ -272,14 +272,17 @@ test.describe('Groups Navigation @desktop', () => {
     }
 
     // Wait for navigation to addresses view (address cards appear)
-    await groupsWindow.waitForSelector('.card.address-card', { timeout: 5000 });
+    await groupsWindow.waitForSelector('peek-card.address-card', { timeout: 5000 });
 
     // Verify we're in addresses view by checking search placeholder
-    const placeholderInGroup = await groupsWindow.$eval('.search-input', (el: HTMLInputElement) => el.placeholder);
+    const placeholderInGroup = await groupsWindow.evaluate(() => {
+      const searchInput = document.querySelector('peek-input.search-input') as any;
+      return searchInput ? searchInput.placeholder : null;
+    });
     expect(placeholderInGroup).toContain('Search in');
 
     // Click on an address card
-    const addressCard = await groupsWindow.$('.card.address-card');
+    const addressCard = await groupsWindow.$('peek-card.address-card');
     expect(addressCard).toBeTruthy();
 
     const windowCountBefore = sharedApp.windows().length;
@@ -306,10 +309,13 @@ test.describe('Groups Navigation @desktop', () => {
     await new Promise(resolve => setTimeout(resolve, 100));
 
     // Wait for groups view (group cards appear, address cards disappear)
-    await groupsWindow.waitForSelector('.card.group-card', { timeout: 5000 });
+    await groupsWindow.waitForSelector('peek-card.group-card', { timeout: 5000 });
 
     // Verify we're back in groups view by checking search placeholder
-    const placeholderInGroups = await groupsWindow.$eval('.search-input', (el: HTMLInputElement) => el.placeholder);
+    const placeholderInGroups = await groupsWindow.evaluate(() => {
+      const searchInput = document.querySelector('peek-input.search-input') as any;
+      return searchInput ? searchInput.placeholder : null;
+    });
     expect(placeholderInGroups).toBe('Search groups...');
 
     // Clean up
@@ -379,15 +385,15 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
 
     // Navigate to addresses view by clicking a group
-    const groupCard = await groupsWindow.$('.card.group-card[data-tag-id="' + tagId + '"]');
+    const groupCard = await groupsWindow.$('peek-card.group-card[data-tag-id="' + tagId + '"]');
     if (groupCard) {
       await groupCard.click();
     } else {
-      const anyCard = await groupsWindow.$('.card.group-card');
+      const anyCard = await groupsWindow.$('peek-card.group-card');
       expect(anyCard).toBeTruthy();
       await anyCard!.click();
     }
-    await groupsWindow.waitForSelector('.card.address-card', { timeout: 5000 });
+    await groupsWindow.waitForSelector('peek-card.address-card', { timeout: 5000 });
 
     // Verify we're in addresses view
     const viewBefore = await groupsWindow.evaluate(() => (window as any)._groupsState.view);
@@ -401,7 +407,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
 
     // Wait for navigation to complete
     await new Promise(resolve => setTimeout(resolve, 200));
-    await groupsWindow.waitForSelector('.card.group-card', { timeout: 5000 });
+    await groupsWindow.waitForSelector('peek-card.group-card', { timeout: 5000 });
 
     // Verify we're back in groups view
     const viewAfter = await groupsWindow.evaluate(() => (window as any)._groupsState.view);
@@ -1811,7 +1817,7 @@ test.describe('Groups View @desktop', () => {
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
 
     // Get all group card tag IDs
-    const groupCards = await groupsWindow.$$eval('.card.group-card', (cards: any[]) =>
+    const groupCards = await groupsWindow.$$eval('peek-card.group-card', (cards: any[]) =>
       cards.map(c => c.dataset.tagId)
     );
 
@@ -1870,7 +1876,7 @@ test.describe('Groups View @desktop', () => {
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
 
     // Check for Untagged group (has special ID __untagged__)
-    const untaggedCard = await groupsWindow.$('.card.group-card[data-tag-id="__untagged__"]');
+    const untaggedCard = await groupsWindow.$('peek-card.group-card[data-tag-id="__untagged__"]');
     expect(untaggedCard).toBeTruthy();
 
     // Verify it shows the special-group class
@@ -3845,10 +3851,10 @@ test.describe('IZUI Behavior @desktop', () => {
 
     // Refresh the groups view to pick up the new data
     // Navigate into the group to have a deep state
-    const groupCard = await groupsWindow.$('.card.group-card');
+    const groupCard = await groupsWindow.$('peek-card.group-card');
     if (groupCard) {
       await groupCard.click();
-      await groupsWindow.waitForSelector('.card.address-card', { timeout: 5000 });
+      await groupsWindow.waitForSelector('peek-card.address-card', { timeout: 5000 });
     }
 
     // Track how many times the escape handler is invoked by wrapping it
