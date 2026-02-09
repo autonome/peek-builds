@@ -25,97 +25,53 @@ body {
   padding: 24px 24px 0 24px;
 }
 
-.search-input {
+/* Component customization for peek-input */
+peek-input.search-input {
   width: 100%;
-  padding: 12px 16px;
-  font-size: 15px;
-  font-family: var(--theme-font-sans);
-  background: var(--base01);
-  border: 1px solid var(--base02);
-  border-radius: 8px;
-  color: var(--base05);
-  outline: none;
-  transition: all 0.15s ease;
+  --peek-input-bg: var(--base01);
+  --peek-input-border: var(--base02);
+  --peek-input-height: 44px;
 }
 
-.search-input:focus {
-  border-color: var(--base0D);
-  background: var(--base00);
+peek-input.search-input:focus-within {
+  --peek-input-border: var(--base0D);
 }
 
-.search-input::placeholder {
-  color: var(--base03);
-}
-
-/* Cards container */
-.cards {
+/* Component customization for peek-grid */
+peek-grid.cards {
   padding: 24px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
+  --peek-grid-min-item-width: 200px;
+  --peek-grid-gap: 12px;
 }
 
-/* Card base */
-.card {
-  background: var(--base01);
-  border-radius: 8px;
-  padding: 16px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+/* Component customization for peek-card */
+peek-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-border: transparent;
+  --peek-card-radius: 8px;
+  --peek-card-padding: 16px;
 }
 
-.card:hover {
-  background: var(--base02);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+peek-card[selected] {
+  --peek-card-bg: var(--base02);
+  --peek-card-border: var(--base0D);
 }
 
-.card.selected {
-  background: var(--base02);
-  outline: 2px solid var(--base0D);
-  outline-offset: -2px;
-}
-
-.card.selected:hover {
-  background: var(--base03);
-}
-
-/* Group card */
-.group-card .color-dot {
+/* Custom styles for card content */
+.color-dot {
   width: 12px;
   height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-top: 4px;
 }
 
-/* Address card */
-.address-card .card-favicon {
+.card-favicon {
   width: 32px;
   height: 32px;
   border-radius: 4px;
   flex-shrink: 0;
   background: var(--base02);
   object-fit: contain;
-}
-
-/* Card content */
-.card-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.card-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--base05);
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .card-url {
@@ -127,12 +83,7 @@ body {
   margin-bottom: 8px;
 }
 
-.card-meta {
-  font-size: 12px;
-  color: var(--base03);
-}
-
-/* Empty state */
+/* Empty state - grid-column for spanning full width in peek-grid */
 .empty-state {
   grid-column: 1 / -1;
   text-align: center;

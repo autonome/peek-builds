@@ -10,7 +10,7 @@ const debug = api.debug;
 
 console.log('[ext:hud] background init');
 
-const HUD_ADDRESS = 'peek://hud/hud.html';
+const HUD_ADDRESS = 'peek://ext/hud/hud.html';
 const STORAGE_KEY = 'hud_enabled';
 
 // Track HUD state

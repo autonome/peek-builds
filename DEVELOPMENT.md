@@ -231,6 +231,114 @@ Peek supports user profiles for isolated data workspaces. See `docs/profiles.md`
   - Sync configuration (optional API key + server profile mapping)
 - `PROFILE` env var overrides automatic detection (for testing)
 
+## UI Development Guidelines
+
+### Always Use Peek Components
+
+**CRITICAL:** All new UI features MUST use components from `app/components/`. DO NOT create manual DOM with `innerHTML` or `createElement` for UI elements.
+
+#### Available Components
+
+- **Layout:** `peek-card`, `peek-grid`, `peek-list`/`peek-list-item`
+- **Forms:** `peek-input`, `peek-button`, `peek-select`, `peek-switch`, `peek-button-group`
+- **Interactive:** `peek-dialog`, `peek-drawer`, `peek-popover`, `peek-tabs`, `peek-carousel`
+- **Native wrappers:** `peek-details` (disclosure/accordion), `peek-tooltip`
+
+See `app/components/README.md` for complete documentation.
+
+#### Component Usage Pattern
+
+```javascript
+// Import components at top of HTML
+<script type="module" src="peek://app/components/peek-card.js"></script>
+<script type="module" src="peek://app/components/peek-grid.js"></script>
+
+// Use in JavaScript
+const card = document.createElement('peek-card');
+card.interactive = true;
+card.elevated = true;
+
+const header = document.createElement('div');
+header.slot = 'header';
+header.textContent = 'Card Title';
+card.appendChild(header);
+
+// Or use innerHTML for static content
+card.innerHTML = `
+  <div slot="header">Card Title</div>
+  <p>Card content here</p>
+`;
+```
+
+#### Styling Guidelines
+
+- Use CSS custom properties for theming (see `app/components/tokens.css`)
+- DO NOT override component internals
+- Extend via slots and CSS parts
+- Follow design tokens for consistency
+
+```css
+peek-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-border: transparent;
+  --peek-card-radius: 8px;
+}
+
+peek-card::part(header) {
+  background: var(--base02);
+}
+```
+
+#### Migration of Existing Code
+
+Existing extensions are being migrated to peek-components. When touching existing UI code:
+
+1. **Check migration status** in `notes/migration-ui-componentry.md`
+2. **Follow established patterns** from already-migrated extensions
+3. **Consider migrating** the code you're working on to components
+4. **Ask first** if uncertain whether to migrate during your change
+
+See `notes/migration-ui-componentry.md` for detailed migration patterns.
+
+#### Benefits
+
+- **Consistency** across all extensions
+- **Automatic theme support** via CSS custom properties
+- **Built-in accessibility** (ARIA patterns, keyboard navigation)
+- **Reduced code duplication** (~50% less UI code)
+- **Easier maintenance** - fix once, applies everywhere
+
+#### Example: Creating a Card-Based UI
+
+```javascript
+// Import components
+import 'peek://app/components/peek-card.js';
+import 'peek://app/components/peek-grid.js';
+
+// Create grid container
+const grid = document.createElement('peek-grid');
+grid.setAttribute('min-item-width', '200');
+grid.setAttribute('gap', '12');
+
+// Create cards
+items.forEach(item => {
+  const card = document.createElement('peek-card');
+  card.interactive = true;
+  card.selected = item.id === selectedId;
+
+  card.innerHTML = `
+    <div slot="header">${escapeHtml(item.title)}</div>
+    <p>${escapeHtml(item.description)}</p>
+    <span slot="footer">${item.count} items</span>
+  `;
+
+  card.addEventListener('card-click', () => handleSelect(item));
+  grid.appendChild(card);
+});
+
+document.body.appendChild(grid);
+```
+
 ## Critical Rules
 
 ### Protected Directories

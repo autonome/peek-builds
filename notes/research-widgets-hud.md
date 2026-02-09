@@ -66,11 +66,72 @@ Research note capturing prior session plans for the Widgets system and HUD.
 
 Full widget infrastructure for Peek. Widgets are the building blocks for HUDs, dashboards, page metadata panels, command previews, and observability displays.
 
+### Integration with Peek Component Framework
+
+Widgets should be built using the existing Lit component system in `app/components/`. This provides:
+
+- **Base Classes**: `PeekElement` (base class with shared styles and utilities) and `DataBoundElement` (adds reactive data binding)
+- **Available Components**: peek-card, peek-grid, peek-list, peek-button, peek-carousel, peek-details, peek-tabs, peek-dialog, peek-drawer, peek-dropdown, and more
+- **Data Binding**: Reactive patterns via `data-binding.js` with support for signals, observables, and static data
+- **Theme Integration**: Automatic via CSS custom properties (design tokens in `base.js`)
+- **Schema Validation**: Built-in JSON Schema validation for widget data
+
+**Widget Type to Component Mapping:**
+- Scalar widget → `peek-card` with single value in body slot
+- List widget → `peek-list` with items
+- Table widget → `peek-grid` with data binding
+- Timeline/Chart → custom `peek-card` with visualization in body
+- Gauge → `peek-card` with progress indicator
+- Carousel → `peek-carousel` with widget cards
+- Stats → `peek-card` with key/value pairs in body
+
+**Design Principle**: Widget API should extend/compose existing components rather than reinvent. Widgets inherit from `DataBoundElement` to get reactive data binding automatically.
+
+**Example: Scalar Widget**
+```javascript
+import { html } from 'lit';
+import { DataBoundElement } from './components/data-binding.js';
+
+class ScalarWidget extends DataBoundElement {
+  static properties = {
+    label: { type: String }
+  };
+
+  static dataSchema = {
+    type: 'object',
+    properties: {
+      value: { type: 'number' },
+      unit: { type: 'string' }
+    }
+  };
+
+  render() {
+    return html`
+      <peek-card>
+        <div slot="header">${this.label}</div>
+        <div slot="body" class="scalar-value">
+          ${this.data.value}
+          <span class="unit">${this.data.unit}</span>
+        </div>
+      </peek-card>
+    `;
+  }
+}
+
+// Usage with reactive data source
+const windowCount = signal({ value: 5, unit: 'windows' });
+const widget = document.createElement('scalar-widget');
+widget.label = 'Open Windows';
+widget.bindTo(windowCount);
+```
+
 ### Widget API
 
-- `api.widgets.register(type, renderer)` — register a widget type with its renderer
-- `api.widgets.create(type, config)` — instantiate a widget
+- `api.widgets.register(type, componentClass)` — register a widget type with its Lit component class
+- `api.widgets.create(type, config)` — instantiate a widget (creates component and configures data binding)
 - `api.widgets.sheets` — manage widget sheets (collections of widgets)
+
+Widget components extend `DataBoundElement` base class for automatic reactive updates via Lit's property/state system.
 
 ### Widget Types
 
@@ -85,8 +146,8 @@ Full widget infrastructure for Peek. Widgets are the building blocks for HUDs, d
 
 ### Implementation Phases
 
-1. **Foundation** — Widget API, database storage for widget configs, basic scalar/list/table types
-2. **Visualization** — Timeline, chart, gauge types, template system
+1. **Foundation** — Widget API, database storage for widget configs, basic scalar/list/table types using existing peek-card/peek-list/peek-grid
+2. **Visualization** — Timeline, chart, gauge types using custom peek-card compositions, Lit template system
 3. **Integration** — Extension API for publishing widgets, sheet management
 4. **Polish** — No-code widget creation path, drag-and-drop layout
 
@@ -96,11 +157,41 @@ Widget configurations stored in datastore — type, config JSON, position, sheet
 
 ### Template System
 
-Widgets bind to data sources and re-render reactively. Callers provide schema + data, widget has default template that can be overridden.
+Widgets use Lit's html tagged template literals for rendering. Reactive updates via Lit's property/state system and `DataBoundElement.bindTo()` method. Components support:
+
+- **Slots**: Customization points (like peek-card's header/body/footer slots)
+- **Data Binding**: `bindTo(source)` connects to signals, observables, or static data
+- **Schema Validation**: Automatic via `dataSchema` property
+- **Reactive Updates**: Lit handles DOM updates when data changes
+
+**Example: List Widget**
+```javascript
+class ListWidget extends DataBoundElement {
+  static dataSchema = {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        items: { type: 'string' }
+      }
+    }
+  };
+
+  render() {
+    return html`
+      <peek-list>
+        ${this.data.items?.map(item => html`
+          <div slot="item">${item}</div>
+        `)}
+      </peek-list>
+    `;
+  }
+}
+```
 
 ### Relationship to UI Componentry
 
-The Widgets system builds on the UI Componentry work outlined in TODO.md (cards, grids, carousels, button sets). Widgets are the data-bound, reactive layer on top of those primitives.
+The Widgets system builds directly on the component framework in `app/components/`. Widgets are the data-bound, reactive layer that composes existing peek-* primitives (cards, grids, lists, carousels, buttons) with schema-validated data sources.
 
 ## HUD (Always-On-Top Overlay)
 

@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "scripts": {
+      "type": "array",
+      "description": "List of user scripts",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "code": { "type": "string" },
+          "matchPatterns": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "excludePatterns": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "runAt": {
+            "type": "string",
+            "enum": ["document-start", "document-end", "document-idle"]
+          },
+          "enabled": { "type": "boolean" },
+          "createdAt": { "type": "number" },
+          "updatedAt": { "type": "number" },
+          "lastExecutedAt": { "type": "number" }
+        }
+      },
+      "default": []
+    }
+  }
+}

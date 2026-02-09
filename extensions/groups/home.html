@@ -6,13 +6,23 @@
     <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
     <title>Groups</title>
     <link rel="stylesheet" type="text/css" href="home.css">
+
+    <script type="module">
+      import 'peek://app/components/peek-card.js';
+      import 'peek://app/components/peek-grid.js';
+      import 'peek://app/components/peek-input.js';
+    </script>
   </head>
   <body>
     <div class="search-container">
-      <input type="text" class="search-input" placeholder="Search groups...">
+      <peek-input
+        class="search-input"
+        placeholder="Search groups..."
+        type="search"
+      ></peek-input>
     </div>
 
-    <main class="cards"></main>
+    <peek-grid class="cards" min-item-width="200" gap="12"></peek-grid>
 
     <script type="module" src="home.js"></script>
   </body>

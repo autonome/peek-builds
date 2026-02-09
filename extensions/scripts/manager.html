@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Scripts Manager</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* Left Panel - Scripts List */
+    .scripts-list {
+      width: 300px;
+      background: #252526;
+      border-right: 1px solid #3e3e42;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .scripts-header {
+      padding: 16px;
+      border-bottom: 1px solid #3e3e42;
+    }
+
+    .scripts-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .new-script-btn {
+      width: 100%;
+      padding: 8px;
+      background: #0e639c;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .new-script-btn:hover {
+      background: #1177bb;
+    }
+
+    .scripts-items {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .script-item {
+      padding: 12px;
+      margin-bottom: 4px;
+      background: #2d2d30;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 2px solid transparent;
+    }
+
+    .script-item:hover {
+      background: #37373d;
+    }
+
+    .script-item.active {
+      border-color: #0e639c;
+      background: #37373d;
+    }
+
+    .script-item-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .script-checkbox {
+      margin: 0;
+    }
+
+    .script-name {
+      flex: 1;
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    .script-status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #808080;
+    }
+
+    .script-status.success {
+      background: #4ec9b0;
+    }
+
+    .script-status.error {
+      background: #f48771;
+    }
+
+    .script-meta {
+      font-size: 11px;
+      color: #858585;
+      margin-left: 28px;
+    }
+
+    /* Center Panel - Editor */
+    .editor-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #1e1e1e;
+    }
+
+    .editor-header {
+      padding: 16px;
+      border-bottom: 1px solid #3e3e42;
+    }
+
+    .editor-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .form-group label {
+      font-size: 12px;
+      color: #858585;
+    }
+
+    .form-group input,
+    .form-group select {
+      padding: 6px 8px;
+      background: #3c3c3c;
+      border: 1px solid #3e3e42;
+      color: #d4d4d4;
+      border-radius: 3px;
+      font-size: 13px;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: #0e639c;
+    }
+
+    .editor-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+    }
+
+    .code-editor {
+      flex: 1;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      padding: 12px;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 13px;
+      resize: none;
+      outline: none;
+    }
+
+    .code-editor:focus {
+      border-color: #0e639c;
+    }
+
+    .editor-actions {
+      padding: 16px;
+      border-top: 1px solid #3e3e42;
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .btn-primary {
+      background: #0e639c;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #1177bb;
+    }
+
+    .btn-danger {
+      background: #a1260d;
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #c72e0d;
+    }
+
+    .btn-secondary {
+      background: #3c3c3c;
+      color: #d4d4d4;
+    }
+
+    .btn-secondary:hover {
+      background: #505050;
+    }
+
+    /* Right Panel - Preview */
+    .preview-panel {
+      width: 350px;
+      background: #252526;
+      border-left: 1px solid #3e3e42;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .preview-header {
+      padding: 16px;
+      border-bottom: 1px solid #3e3e42;
+    }
+
+    .preview-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .test-url-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .test-url-input {
+      padding: 8px;
+      background: #3c3c3c;
+      border: 1px solid #3e3e42;
+      color: #d4d4d4;
+      border-radius: 3px;
+      font-size: 13px;
+    }
+
+    .test-btn {
+      padding: 8px;
+      background: #0e639c;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .test-btn:hover {
+      background: #1177bb;
+    }
+
+    .test-btn:disabled {
+      background: #505050;
+      cursor: not-allowed;
+    }
+
+    .preview-content {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    .result-box {
+      background: #2d2d30;
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .result-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .result-status.success {
+      color: #4ec9b0;
+    }
+
+    .result-status.error {
+      color: #f48771;
+    }
+
+    .result-time {
+      color: #858585;
+      font-size: 12px;
+    }
+
+    .result-data {
+      background: #1e1e1e;
+      padding: 8px;
+      border-radius: 3px;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+
+    .empty-state {
+      color: #858585;
+      text-align: center;
+      padding: 40px 20px;
+      font-size: 13px;
+    }
+
+    .console-output {
+      margin-top: 12px;
+    }
+
+    .console-output h3 {
+      font-size: 12px;
+      color: #858585;
+      margin-bottom: 8px;
+    }
+
+    .console-line {
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 11px;
+      padding: 2px 0;
+    }
+
+    .console-line.log {
+      color: #d4d4d4;
+    }
+
+    .console-line.error {
+      color: #f48771;
+    }
+
+    .console-line.warn {
+      color: #dcdcaa;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Left Panel: Scripts List -->
+    <div class="scripts-list">
+      <div class="scripts-header">
+        <h1>Scripts</h1>
+        <button class="new-script-btn" id="newScriptBtn">+ New Script</button>
+      </div>
+      <div class="scripts-items" id="scriptsList">
+        <div class="empty-state">No scripts yet. Click "+ New Script" to create one.</div>
+      </div>
+    </div>
+
+    <!-- Center Panel: Editor -->
+    <div class="editor-panel">
+      <div class="editor-header">
+        <div class="editor-form" id="editorForm">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="scriptName" placeholder="My Script">
+          </div>
+          <div style="display: flex; gap: 12px;">
+            <div class="form-group" style="flex: 1;">
+              <label>Match Pattern</label>
+              <input type="text" id="matchPattern" placeholder="https://example.com/*">
+            </div>
+            <div class="form-group" style="width: 150px;">
+              <label>Run At</label>
+              <select id="runAt">
+                <option value="document-start">Document Start</option>
+                <option value="document-end" selected>Document End</option>
+                <option value="document-idle">Document Idle</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" id="scriptDescription" placeholder="What does this script do?">
+          </div>
+        </div>
+      </div>
+      <div class="editor-content">
+        <textarea class="code-editor" id="codeEditor" placeholder="// Your script here&#10;const h1 = document.querySelector('h1');&#10;return { title: h1?.textContent || 'No h1 found' };"></textarea>
+      </div>
+      <div class="editor-actions">
+        <button class="btn btn-primary" id="saveBtn">Save</button>
+        <button class="btn btn-secondary" id="revertBtn">Revert</button>
+        <button class="btn btn-danger" id="deleteBtn">Delete</button>
+      </div>
+    </div>
+
+    <!-- Right Panel: Preview -->
+    <div class="preview-panel">
+      <div class="preview-header">
+        <h2>Test & Preview</h2>
+        <div class="test-url-group">
+          <input type="text" class="test-url-input" id="testUrl" placeholder="https://example.com">
+          <button class="test-btn" id="testBtn">Test Script</button>
+        </div>
+      </div>
+      <div class="preview-content" id="previewContent">
+        <div class="empty-state">
+          Enter a test URL and click "Test Script" to see results.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./manager.js"></script>
+</body>
+</html>
