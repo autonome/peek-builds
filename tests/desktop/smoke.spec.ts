@@ -560,28 +560,31 @@ test.describe('External URL Opening @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
-    // Get initial window count
-    const initialWindows = await sharedApp.windowCount();
-
     // Type a domain without protocol
     await cmdWindow.fill('input', 'example.com');
     await cmdWindow.keyboard.press('Enter');
 
-    // Wait for window to close (cmd panel closes after opening URL)
-    await sleep(500);
+    // Wait for window to open
+    await sleep(1000);
 
-    // Verify a new window was opened
-    const finalWindows = await sharedApp.windowCount();
-    expect(finalWindows).toBeGreaterThan(initialWindows - 1); // -1 for closed cmd panel
+    // Verify URL was opened (check window list for the URL)
+    const windowList = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
 
-    // Verify URL was normalized to https://
-    const newWindow = await sharedApp.getWindow('example.com', 5000);
-    expect(newWindow).toBeTruthy();
-    const url = newWindow.url();
-    expect(url).toContain('https://example.com');
+    expect(windowList.success).toBe(true);
+    // URL should be wrapped in page loader with https:// protocol
+    const exampleWindow = windowList.windows?.find((w: any) =>
+      w.url && (w.url.includes('https://example.com') || w.url.includes('https%3A%2F%2Fexample.com'))
+    );
+    expect(exampleWindow).toBeTruthy();
 
     // Clean up
-    await newWindow.close();
+    if (exampleWindow) {
+      await sharedBgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, exampleWindow.id);
+    }
   });
 
   test('cmd panel opens URL with http protocol', async () => {
@@ -609,16 +612,25 @@ test.describe('External URL Opening @desktop', () => {
     await cmdWindow.keyboard.press('Enter');
 
     // Wait for window to open
-    await sleep(500);
+    await sleep(1000);
 
-    // Verify window opened with correct URL
-    const newWindow = await sharedApp.getWindow('example.com', 5000);
-    expect(newWindow).toBeTruthy();
-    const url = newWindow.url();
-    expect(url).toContain('http://example.com');
+    // Verify URL was opened (should preserve http://)
+    const windowList = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+
+    expect(windowList.success).toBe(true);
+    const httpWindow = windowList.windows?.find((w: any) =>
+      w.url && (w.url.includes('http://example.com') || w.url.includes('http%3A%2F%2Fexample.com'))
+    );
+    expect(httpWindow).toBeTruthy();
 
     // Clean up
-    await newWindow.close();
+    if (httpWindow) {
+      await sharedBgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, httpWindow.id);
+    }
   });
 
   test('cmd panel opens URL with https protocol', async () => {
@@ -646,16 +658,25 @@ test.describe('External URL Opening @desktop', () => {
     await cmdWindow.keyboard.press('Enter');
 
     // Wait for window to open
-    await sleep(500);
+    await sleep(1000);
 
-    // Verify window opened
-    const newWindow = await sharedApp.getWindow('example.com', 5000);
-    expect(newWindow).toBeTruthy();
-    const url = newWindow.url();
-    expect(url).toContain('https://example.com');
+    // Verify URL was opened
+    const windowList = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+
+    expect(windowList.success).toBe(true);
+    const httpsWindow = windowList.windows?.find((w: any) =>
+      w.url && (w.url.includes('https://example.com') || w.url.includes('https%3A%2F%2Fexample.com'))
+    );
+    expect(httpsWindow).toBeTruthy();
 
     // Clean up
-    await newWindow.close();
+    if (httpsWindow) {
+      await sharedBgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, httpsWindow.id);
+    }
   });
 
   test('cmd panel opens localhost URLs', async () => {
@@ -683,20 +704,20 @@ test.describe('External URL Opening @desktop', () => {
     await cmdWindow.keyboard.press('Enter');
 
     // Wait for window to open
-    await sleep(500);
+    await sleep(1000);
 
-    // Verify window opened with normalized URL
-    const windows = await sharedBgWindow.evaluate(async () => {
+    // Verify URL was opened (normalized to https://localhost:3000)
+    const windowList = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
 
-    // Check that a window with localhost URL was created
-    const localhostWindow = windows.data?.find((w: any) =>
-      w.url && (w.url.includes('localhost:3000') || w.url.includes('https://localhost:3000'))
+    expect(windowList.success).toBe(true);
+    const localhostWindow = windowList.windows?.find((w: any) =>
+      w.url && (w.url.includes('localhost:3000') || w.url.includes('localhost%3A3000'))
     );
     expect(localhostWindow).toBeTruthy();
 
-    // Clean up - close by window ID
+    // Clean up
     if (localhostWindow) {
       await sharedBgWindow.evaluate(async (id: number) => {
         await (window as any).app.window.close(id);
@@ -724,20 +745,33 @@ test.describe('External URL Opening @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
-    // Get initial window count
-    const initialWindows = await sharedApp.windowCount();
+    // Get initial window list
+    const initialList = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+    const initialCount = initialList.windows?.length || 0;
 
     // Type non-URL text (no dots, no protocol)
     await cmdWindow.fill('input', 'notaurl');
     await cmdWindow.keyboard.press('Enter');
 
     // Wait a moment
-    await sleep(500);
+    await sleep(1000);
 
-    // Verify no new window was opened (or cmd panel tried to execute command)
-    const finalWindows = await sharedApp.windowCount();
+    // Verify no new URL window was opened
+    const finalList = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+    const finalCount = finalList.windows?.length || 0;
+
+    // Check that 'notaurl' was NOT opened as a URL
+    const notaurlWindow = finalList.windows?.find((w: any) =>
+      w.url && w.url.includes('notaurl')
+    );
+    expect(notaurlWindow).toBeFalsy();
+
     // Window count should be same or less (cmd panel might close)
-    expect(finalWindows).toBeLessThanOrEqual(initialWindows);
+    expect(finalCount).toBeLessThanOrEqual(initialCount);
 
     // Close cmd panel if still open
     if (openResult.id) {
