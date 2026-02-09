@@ -207,9 +207,58 @@ public func webviewPluginOpenInline(urlPtr: UnsafePointer<CChar>, topOffset: Dou
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
+        // Inject background management script at document start to prevent white flash.
+        // Makes HTML canvas transparent so the app's background shows through during load,
+        // then at DOMContentLoaded detects the page's real background and fades it in.
+        let bgScript = """
+        (function() {
+          document.documentElement.style.backgroundColor = 'transparent';
+          var s = document.createElement('style');
+          s.id = '__peek_bg';
+          s.textContent = 'body{background-color:transparent!important}';
+          document.documentElement.appendChild(s);
+          function reveal() {
+            var hackStyle = document.getElementById('__peek_bg');
+            if (!hackStyle) return;
+            hackStyle.disabled = true;
+            var bodyBg = getComputedStyle(document.body).backgroundColor;
+            hackStyle.disabled = false;
+            var m = bodyBg.match(/\\d+/g);
+            if (!m || m.length < 3) {
+              hackStyle.remove();
+              document.documentElement.style.backgroundColor = '';
+              return;
+            }
+            var r = m[0], g = m[1], b = m[2];
+            document.documentElement.style.backgroundColor = 'rgba('+r+','+g+','+b+',0)';
+            document.documentElement.style.transition = 'background-color 0.25s ease';
+            document.documentElement.offsetHeight;
+            document.documentElement.style.backgroundColor = 'rgba('+r+','+g+','+b+',1)';
+            hackStyle.textContent = 'body{transition:background-color 0.25s ease}';
+            setTimeout(function() {
+              document.documentElement.style.cssText = '';
+              var h = document.getElementById('__peek_bg');
+              if (h) h.remove();
+            }, 350);
+          }
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', reveal);
+          } else {
+            reveal();
+          }
+        })();
+        """
+        let userScript = WKUserScript(source: bgScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        config.userContentController.addUserScript(userScript)
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.allowsBackForwardNavigationGestures = true
+
+        // Make WKWebView transparent so the app's background shows through during page load
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
 
         // Set Safari-like user agent so sites don't reject us
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1"
