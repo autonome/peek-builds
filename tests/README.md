@@ -25,6 +25,12 @@ Backend-specific tests live in their respective directories:
 # Run all tests (Electron Playwright + Tauri Rust)
 yarn test
 
+# Unit tests (runs under Electron's Node via ELECTRON_RUN_AS_NODE=1)
+yarn test:unit              # All unit tests
+yarn test:unit:datastore    # Datastore tests only
+yarn test:unit:modes        # Modes tests only
+yarn test:unit:shortcuts    # Shortcuts tests only
+
 # Run specific backend
 yarn test:electron          # Electron Playwright tests (headless)
 yarn test:tauri             # Tauri Rust unit tests
@@ -44,6 +50,7 @@ yarn test:debug
 | Backend | Status | Test Framework | Command |
 |---------|--------|----------------|---------|
 | Electron | ✅ Working | Playwright | `yarn test:electron` |
+| Electron | ✅ Working | Node unit tests (ELECTRON_RUN_AS_NODE=1) | `yarn test:unit` |
 | Tauri | ✅ Working | Frontend Mock + Rust | `yarn test:tauri` |
 
 ### Tauri Testing Notes

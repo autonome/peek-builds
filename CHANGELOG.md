@@ -97,6 +97,7 @@ Desktop - Fixes
 - [x] fix: window-list returns actual URLs from peek://app/page containers
 - [x] fix: mode detection from URL in window creation
 - [x] fix: add native module check script (prevents NODE_MODULE_VERSION mismatch)
+- [x] fix: unit tests run under Electron's Node (ELECTRON_RUN_AS_NODE=1) to match native module ABI
 - [x] fix(ipc): cast address to string for type safety (32a7f8a0)
 - [x] fix(ipc): sanitize window params to prevent serialization crash (fca6a26f)
 - [x] fix(build): exclude tmp/ agent workspaces from electron-builder (f0f26e31)

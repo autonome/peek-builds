@@ -2,9 +2,8 @@
 /**
  * Ensure native modules (better-sqlite3) are compiled for Electron's Node ABI.
  *
- * This runs electron-rebuild which is idempotent - it only rebuilds if needed.
- * This prevents the recurring "NODE_MODULE_VERSION mismatch" error that occurs
- * when Electron's embedded Node version differs from the system Node version.
+ * Fast path: tries to require() better-sqlite3 under Electron's Node runtime.
+ * Only runs electron-rebuild if the module fails to load (ABI mismatch).
  */
 
 import { execSync } from 'child_process';
@@ -13,9 +12,28 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
+const MODULE_PATH = join(ROOT, 'node_modules/better-sqlite3');
+
+function canLoad() {
+  try {
+    const result = execSync(
+      `ELECTRON_RUN_AS_NODE=1 npx electron -e "try { require('${MODULE_PATH}'); process.stdout.write('ok') } catch(e) { process.stdout.write('fail') }"`,
+      { cwd: ROOT, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+    return result.trim() === 'ok';
+  } catch {
+    return false;
+  }
+}
+
+if (canLoad()) {
+  console.log('[check-native-modules] better-sqlite3 loads in Electron — skip rebuild');
+  process.exit(0);
+}
+
+console.log('[check-native-modules] better-sqlite3 ABI mismatch — rebuilding...');
 
 try {
-  // electron-rebuild is idempotent - only rebuilds if the ABI doesn't match
   execSync('npx electron-rebuild -f -w better-sqlite3', {
     cwd: ROOT,
     stdio: 'inherit'

@@ -110,7 +110,7 @@ backend/
 │   ├── tabs.js        # Tab sync (one-way import)
 │   ├── history.js     # History sync (one-way import, update-on-revisit)
 │   ├── options.js     # Options page logic
-│   └── tests/         # Node.js unit tests (node --test)
+│   └── tests/         # Unit tests (ELECTRON_RUN_AS_NODE=1, node --test)
 └── server/            # Webhook API server for mobile sync
     ├── index.js       # Hono HTTP server
     ├── db.js          # SQLite via better-sqlite3
