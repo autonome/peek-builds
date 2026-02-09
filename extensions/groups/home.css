@@ -27,63 +27,80 @@ body {
 
 /* Component customization for peek-input */
 peek-input.search-input {
+  display: block;
   width: 100%;
   --peek-input-bg: var(--base01);
   --peek-input-border: var(--base02);
   --peek-input-height: 44px;
 }
 
-peek-input.search-input:focus-within {
-  --peek-input-border: var(--base0D);
+peek-input.search-input::part(input) {
+  color: var(--base05);
+  font-size: 15px;
 }
 
-/* Component customization for peek-grid */
-peek-grid.cards {
+/* Cards container - peek-grid handles layout */
+.cards {
   padding: 24px;
-  --peek-grid-min-item-width: 200px;
-  --peek-grid-gap: 12px;
 }
 
-/* Component customization for peek-card */
+/* Component customization for peek-card - shared across all cards */
 peek-card {
   --peek-card-bg: var(--base01);
+  --peek-card-hover-bg: var(--base02);
   --peek-card-border: transparent;
   --peek-card-radius: 8px;
-  --peek-card-padding: 16px;
+  --peek-card-padding: 12px;
+  --peek-card-gap: 8px;
+  max-width: 300px;
 }
 
 peek-card[selected] {
   --peek-card-bg: var(--base02);
-  --peek-card-border: var(--base0D);
+  /* Don't set --peek-card-border here as it affects footer border-top too */
+  /* peek-card handles selected border styling internally */
 }
 
-/* Custom styles for card content */
-.color-dot {
+peek-card[selected]:hover {
+  --peek-card-bg: var(--base03);
+}
+
+/* Group card slotted content */
+.group-card .color-dot {
   width: 12px;
   height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
+  margin-top: 4px;
 }
 
-.card-favicon {
-  width: 32px;
-  height: 32px;
+/* Address card slotted content */
+.address-card .card-favicon {
+  width: 12px;
+  height: 12px;
   border-radius: 4px;
   flex-shrink: 0;
   background: var(--base02);
   object-fit: contain;
+  margin-top: 4px;
 }
 
-.card-url {
-  font-size: 12px;
-  color: var(--base04);
+/* Shared slotted content styles */
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--base05);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 8px;
 }
 
-/* Empty state - grid-column for spanning full width in peek-grid */
+.card-meta {
+  font-size: 12px;
+  color: var(--base03);
+}
+
+/* Empty state */
 .empty-state {
   grid-column: 1 / -1;
   text-align: center;

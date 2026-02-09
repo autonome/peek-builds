@@ -69,7 +69,7 @@ const handleEscape = () => {
   const searchInput = document.querySelector('peek-input.search-input');
   if (state.searchQuery) {
     state.searchQuery = '';
-    if (searchInput) searchInput.value = '';
+    searchInput.value = '';
     renderCurrentView();
     console.log('[groups:esc] Cleared search, returning handled: true');
     return { handled: true };
@@ -93,7 +93,6 @@ const handleEscape = () => {
 
 /**
  * Get all cards in the current view
- * UPDATED to work with peek-card components
  */
 const getCards = () => {
   return Array.from(document.querySelectorAll('.cards peek-card'));
@@ -101,17 +100,17 @@ const getCards = () => {
 
 /**
  * Update visual selection on cards
- * UPDATED to use peek-card selected property
  */
 const updateSelection = () => {
   const cards = getCards();
   cards.forEach((card, i) => {
-    card.selected = i === state.selectedIndex;
+    card.selected = (i === state.selectedIndex);
   });
 
-  // Scroll selected card into view
+  // Focus and scroll selected card into view
   const selected = cards[state.selectedIndex];
   if (selected) {
+    selected.focus();
     selected.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 };
@@ -146,14 +145,14 @@ const getGridColumns = (cards) => {
  */
 const handleKeydown = (e) => {
   const searchInput = document.querySelector('peek-input.search-input');
-  const searchInputElement = searchInput?.shadowRoot?.querySelector('input');
+  // Check if search input or its internal input is focused
   const isSearchFocused = document.activeElement === searchInput ||
-                          (searchInputElement && searchInput.matches(':focus-within'));
+    (searchInput && searchInput.shadowRoot?.activeElement);
 
   // Focus search with / or Cmd+F
   if ((e.key === '/' || (e.key === 'f' && (e.metaKey || e.ctrlKey))) && !isSearchFocused) {
     e.preventDefault();
-    searchInput?.focus();
+    searchInput.focus();
     return;
   }
 
@@ -219,10 +218,10 @@ const init = async () => {
   // Load tags from datastore
   await loadTags();
 
-  // Set up search input (UPDATED for peek-input)
+  // Set up search input
   const searchInput = document.querySelector('peek-input.search-input');
   searchInput.addEventListener('input', (e) => {
-    state.searchQuery = searchInput.value;
+    state.searchQuery = e.target.value;
     renderCurrentView();
   });
 
@@ -387,10 +386,8 @@ const showGroups = async () => {
 
   // Update search placeholder
   const searchInput = document.querySelector('peek-input.search-input');
-  if (searchInput) {
-    searchInput.value = '';
-    searchInput.placeholder = 'Search groups...';
-  }
+  searchInput.value = '';
+  searchInput.placeholder = 'Search groups...';
 
   renderGroups();
 };
@@ -400,10 +397,9 @@ window.showGroups = showGroups;
 
 /**
  * Render groups cards (separate from showGroups for filtering)
- * UPDATED to use peek-grid
  */
 const renderGroups = () => {
-  const container = document.querySelector('peek-grid.cards');
+  const container = document.querySelector('.cards');
   container.innerHTML = '';
 
   // Build list of all groups (untagged first if it has items)
@@ -423,10 +419,7 @@ const renderGroups = () => {
     const message = state.searchQuery
       ? 'No groups match your search.'
       : 'No groups yet. Tag some pages to create groups.';
-    const emptyState = document.createElement('div');
-    emptyState.className = 'empty-state';
-    emptyState.textContent = message;
-    container.appendChild(emptyState);
+    container.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
 
@@ -487,20 +480,17 @@ const showAddresses = async (tag) => {
 
   // Update search placeholder with group name
   const searchInput = document.querySelector('peek-input.search-input');
-  if (searchInput) {
-    searchInput.value = '';
-    searchInput.placeholder = `Search in ${tag.name}...`;
-  }
+  searchInput.value = '';
+  searchInput.placeholder = `Search in ${tag.name}...`;
 
   renderAddresses();
 };
 
 /**
  * Render address cards (separate from showAddresses for filtering)
- * UPDATED to use peek-grid
  */
 const renderAddresses = () => {
-  const container = document.querySelector('peek-grid.cards');
+  const container = document.querySelector('.cards');
   container.innerHTML = '';
 
   // Apply search filter
@@ -510,10 +500,7 @@ const renderAddresses = () => {
     const message = state.searchQuery
       ? 'No pages match your search.'
       : 'No pages in this group yet.';
-    const emptyState = document.createElement('div');
-    emptyState.className = 'empty-state';
-    emptyState.textContent = message;
-    container.appendChild(emptyState);
+    container.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
 
@@ -529,10 +516,10 @@ const renderAddresses = () => {
 
 /**
  * Create a card element for a group (tag)
- * MIGRATED to use peek-card component
  */
 const createGroupCard = (tag) => {
   const card = document.createElement('peek-card');
+  card.className = 'group-card';
   card.interactive = true;
   card.elevated = true;
   if (tag.isSpecial) {
@@ -540,31 +527,30 @@ const createGroupCard = (tag) => {
   }
   card.dataset.tagId = tag.id;
 
-  // Header with color dot and name
+  // Header slot: color dot + name
   const header = document.createElement('div');
   header.slot = 'header';
   header.style.display = 'flex';
   header.style.alignItems = 'center';
-  header.style.gap = '12px';
+  header.style.gap = '8px';
 
   const colorDot = document.createElement('div');
   colorDot.className = 'color-dot';
-  colorDot.style.width = '12px';
-  colorDot.style.height = '12px';
-  colorDot.style.borderRadius = '50%';
-  colorDot.style.flexShrink = '0';
   colorDot.style.backgroundColor = tag.color || '#999';
 
-  const name = document.createElement('span');
-  name.textContent = tag.name;
+  const title = document.createElement('h2');
+  title.className = 'card-title';
+  title.textContent = tag.name;
+  title.style.margin = '0';
 
   header.appendChild(colorDot);
-  header.appendChild(name);
+  header.appendChild(title);
   card.appendChild(header);
 
-  // Footer with count
-  const footer = document.createElement('span');
+  // Footer slot: count
+  const footer = document.createElement('div');
   footer.slot = 'footer';
+  footer.className = 'card-meta';
   const count = tag.isSpecial ? (tag.frequency || 0) : (tag.addressCount || 0);
   footer.textContent = `${count} ${count === 1 ? 'page' : 'pages'}`;
   card.appendChild(footer);
@@ -578,10 +564,10 @@ const createGroupCard = (tag) => {
 /**
  * Create a card element for an address
  * Handles both Address (uri) and Item (content) objects
- * MIGRATED to use peek-card component
  */
 const createAddressCard = (address) => {
   const card = document.createElement('peek-card');
+  card.className = 'address-card';
   card.interactive = true;
   card.elevated = true;
   card.dataset.addressId = address.id;
@@ -601,44 +587,37 @@ const createAddressCard = (address) => {
   }
   displayTitle = displayTitle || addressUrl;
 
-  // Favicon in media slot
+  // Header slot: favicon + title (matching group card structure)
+  const header = document.createElement('div');
+  header.slot = 'header';
+  header.style.display = 'flex';
+  header.style.alignItems = 'center';
+  header.style.gap = '8px';
+
   const favicon = document.createElement('img');
-  favicon.slot = 'media';
   favicon.className = 'card-favicon';
   favicon.src = address.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-  favicon.alt = '';
-  favicon.style.width = '32px';
-  favicon.style.height = '32px';
-  favicon.style.borderRadius = '4px';
-  favicon.style.flexShrink = '0';
-  favicon.style.objectFit = 'contain';
   favicon.onerror = () => {
     favicon.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
   };
-  card.appendChild(favicon);
 
-  // Header with title
-  const header = document.createElement('div');
-  header.slot = 'header';
-  header.textContent = displayTitle;
+  const title = document.createElement('h2');
+  title.className = 'card-title';
+  title.textContent = displayTitle;
+  title.style.margin = '0';
+  title.style.flex = '1';
+  title.style.minWidth = '0';
+
+  header.appendChild(favicon);
+  header.appendChild(title);
   card.appendChild(header);
 
-  // Body with URL
-  const url = document.createElement('div');
-  url.className = 'card-url';
-  url.textContent = addressUrl;
-  url.style.fontSize = '12px';
-  url.style.color = 'var(--base04)';
-  url.style.overflow = 'hidden';
-  url.style.textOverflow = 'ellipsis';
-  url.style.whiteSpace = 'nowrap';
-  card.appendChild(url);
-
-  // Footer with metadata
-  const footer = document.createElement('span');
+  // Footer slot: visit count (matching group card structure)
+  const footer = document.createElement('div');
   footer.slot = 'footer';
-  const lastVisit = address.lastVisitAt ? new Date(address.lastVisitAt).toLocaleDateString() : 'Never';
-  footer.textContent = `${address.visitCount || 0} visits · Last: ${lastVisit}`;
+  footer.className = 'card-meta';
+  const visitCount = address.visitCount || 0;
+  footer.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
   card.appendChild(footer);
 
   // Click to open address - backend handles centering and parent tracking

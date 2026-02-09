@@ -30,6 +30,41 @@ let activeThemeId = 'basic';
 // Root directory (set during init)
 let rootDir: string;
 
+// Bare import map for resolving npm package imports
+// Maps bare specifiers (e.g., 'lit') to node_modules paths
+const BARE_IMPORT_MAP: Record<string, string> = {
+  'lit': 'node_modules/lit/index.js',
+  'lit/': 'node_modules/lit/',
+  '@lit/reactive-element': 'node_modules/@lit/reactive-element/reactive-element.js',
+  '@lit/reactive-element/': 'node_modules/@lit/reactive-element/',
+  'lit-html': 'node_modules/lit-html/lit-html.js',
+  'lit-html/': 'node_modules/lit-html/',
+  'lit-element': 'node_modules/lit-element/lit-element.js',
+  'lit-element/': 'node_modules/lit-element/'
+};
+
+/**
+ * Resolve a bare import specifier to a file path
+ * @param specifier - Bare import like 'lit' or 'lit/decorators.js'
+ * @returns Resolved path relative to rootDir, or null if not found
+ */
+function resolveBareImport(specifier: string): string | null {
+  // Direct match
+  if (BARE_IMPORT_MAP[specifier]) {
+    return BARE_IMPORT_MAP[specifier];
+  }
+
+  // Subpath match (e.g., 'lit/decorators.js' matches 'lit/')
+  for (const [prefix, basePath] of Object.entries(BARE_IMPORT_MAP)) {
+    if (prefix.endsWith('/') && specifier.startsWith(prefix)) {
+      const subpath = specifier.slice(prefix.length);
+      return basePath + subpath;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Register the peek:// scheme as privileged
  * MUST be called before app.ready
@@ -156,6 +191,38 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
 
     // trim leading slash
     pathname = pathname.replace(/^\//, '');
+
+    // Handle bare imports (e.g., peek://lit or peek://app/components/lit)
+    // When modules import 'lit', browser resolves relative to module URL
+    // So peek://app/components/peek-input.js importing 'lit' becomes peek://app/components/lit
+    // We need to extract just the bare specifier part
+    const fullPath = pathname ? `${host}/${pathname}` : host;
+
+    // Try direct resolution first (e.g., peek://lit)
+    let bareSpecifier = fullPath;
+    let resolvedPath = resolveBareImport(bareSpecifier);
+
+    // If that fails, check if pathname contains a known bare import
+    // e.g., peek://app/components/lit -> extract 'lit'
+    if (!resolvedPath && pathname) {
+      const pathParts = pathname.split('/');
+      // Check each part from the end to find a bare import
+      for (let i = pathParts.length - 1; i >= 0; i--) {
+        const candidateSpecifier = pathParts.slice(i).join('/');
+        resolvedPath = resolveBareImport(candidateSpecifier);
+        if (resolvedPath) {
+          bareSpecifier = candidateSpecifier;
+          break;
+        }
+      }
+    }
+
+    if (resolvedPath) {
+      DEBUG && console.log(`[protocol] Resolved bare import: ${bareSpecifier} -> ${resolvedPath}`);
+      const absolutePath = path.resolve(rootDir, resolvedPath);
+      const fileURL = pathToFileURL(absolutePath).toString();
+      return net.fetch(fileURL);
+    }
 
     // Handle extension content: peek://ext/{ext-id}/{path}
     if (host === 'ext') {
