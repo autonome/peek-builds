@@ -3346,6 +3346,7 @@ function App() {
         >
           Peek <span style={{ fontSize: '0.5em', opacity: 0.5 }}>{__BUILD_NUMBER__}</span>
         </h1>
+        <div style={{ flex: 1 }} />
         <div className="filter-icons">
           <button
             className={`filter-btn ${activeFilter === "page" ? "active" : ""}`}
@@ -3413,6 +3414,7 @@ function App() {
             </svg>
           )}
         </button>
+        <div style={{ flex: 1 }} />
         <button className={`header-btn settings-btn ${isSyncing ? 'syncing' : ''}`} onClick={() => setShowSettings(true)}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
