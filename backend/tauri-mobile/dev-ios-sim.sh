@@ -21,8 +21,14 @@ echo "[dev] Using host IP $HOST_IP"
 # Save original tauri.conf.json for restoration
 cp "$CONF" "$CONF.bak"
 
+VITE_PID=""
 cleanup() {
   echo ""
+  if [ -n "$VITE_PID" ] && kill -0 "$VITE_PID" 2>/dev/null; then
+    echo "[dev] Stopping vite server..."
+    kill "$VITE_PID" 2>/dev/null
+    wait "$VITE_PID" 2>/dev/null
+  fi
   echo "[dev] Restoring tauri.conf.json..."
   mv "$CONF.bak" "$CONF"
   echo "[dev] Done."
@@ -49,12 +55,9 @@ echo "[dev] Build number: v$BUILD_NUM"
 
 # Rebuild Rust library (picks up devUrl from tauri.conf.json)
 # Uses --force to ensure config change is picked up
+# DEV_PORT tells build-ios.sh to patch the bootstrap HTML with the actual port
 echo "[dev] Building Rust library with devUrl..."
-cd "$SCRIPT_DIR" && ./build-ios.sh --force
-
-# Patch bootstrap HTML with actual port
-sed -i.bak "s/__DEV_PORT__/$PORT/g" "$SCRIPT_DIR/src-tauri/gen/apple/assets/index.html"
-rm -f "$SCRIPT_DIR/src-tauri/gen/apple/assets/index.html.bak"
+cd "$SCRIPT_DIR" && DEV_PORT=$PORT ./build-ios.sh --force
 
 # Build with xcodebuild
 echo "[dev] Running xcodebuild..."
@@ -67,12 +70,31 @@ cd "$SCRIPT_DIR/src-tauri/gen/apple" && xcodebuild \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   clean build 2>&1 | tail -5
 
+# Start vite dev server in background BEFORE launching app (avoids race condition)
+echo "[dev] Starting HMR dev server on port $PORT..."
+cd "$SCRIPT_DIR" && npx vite --host 0.0.0.0 --port $PORT &
+VITE_PID=$!
+
+# Wait for vite to be ready
+echo "[dev] Waiting for vite server to be ready..."
+for i in $(seq 1 30); do
+  if curl -s -o /dev/null "http://localhost:$PORT/" 2>/dev/null; then
+    echo "[dev] Vite server ready"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "[dev] ERROR: Vite server did not start within 15 seconds"
+    exit 1
+  fi
+  sleep 0.5
+done
+
 # Install and launch
 echo "[dev] Installing to simulator..."
 xcrun simctl install booted '/tmp/peek-xcodebuild/Build/Products/debug-iphonesimulator/Peek Save.app'
 xcrun simctl terminate booted com.dietrich.peek-mobile 2>/dev/null || true
 xcrun simctl launch booted com.dietrich.peek-mobile
-echo "[dev] App launched, starting HMR dev server on port $PORT..."
+echo "[dev] App launched. HMR active — Ctrl+C to stop."
 
-# Start vite dev server (blocks — HMR active until Ctrl+C)
-cd "$SCRIPT_DIR" && DEV_PORT=$PORT npx vite --host 0.0.0.0 --port $PORT
+# Wait for vite to exit (blocks until Ctrl+C)
+wait $VITE_PID

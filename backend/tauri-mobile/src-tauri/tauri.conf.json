@@ -5,8 +5,7 @@
   "identifier": "com.dietrich.peek-mobile",
   "build": {
     "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist",
-    "devUrl": "http://192.168.50.143:63720"
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [
@@ -14,7 +13,8 @@
         "title": "Peek Save",
         "width": 800,
         "height": 600,
-        "disableInputAccessoryView": true
+        "disableInputAccessoryView": true,
+        "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1"
       }
     ],
     "security": {

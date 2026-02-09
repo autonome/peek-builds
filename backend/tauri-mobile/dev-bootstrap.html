@@ -7,6 +7,7 @@
   <script>
     // Redirect to dev server on localhost
     // iOS simulator can access Mac's localhost
+    // Vite is guaranteed running before app launch (dev-ios-sim.sh waits for it)
     window.location.href = 'http://localhost:__DEV_PORT__/';
   </script>
 </head>

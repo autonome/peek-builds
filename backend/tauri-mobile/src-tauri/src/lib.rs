@@ -21,6 +21,8 @@ fn ios_log(msg: &str) {
 extern "C" {
     fn webview_plugin_open(url: *const std::ffi::c_char, item_id: *const std::ffi::c_char) -> bool;
     fn webview_plugin_close();
+    fn webview_plugin_open_inline(url: *const std::ffi::c_char, top_offset: f64) -> bool;
+    fn webview_plugin_close_inline();
 }
 
 // Sync version constants — must match backend/version.ts and backend/server/version.js
@@ -2597,6 +2599,41 @@ async fn close_native_webview() -> Result<(), String> {
     Ok(())
 }
 
+/// Open a URL in an inline native WKWebView (added as subview, not modal)
+#[tauri::command]
+async fn open_inline_webview(url: String, top_offset: f64) -> Result<(), String> {
+    println!("[Rust] open_inline_webview called for url: {}, top_offset: {}", url, top_offset);
+
+    #[cfg(target_os = "ios")]
+    {
+        use std::ffi::CString;
+        let url_cstr = CString::new(url.as_str()).map_err(|e| format!("Invalid URL string: {}", e))?;
+
+        let result = unsafe { webview_plugin_open_inline(url_cstr.as_ptr(), top_offset) };
+        if result {
+            Ok(())
+        } else {
+            Err("Failed to open inline webview".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (url, top_offset);
+        Ok(())
+    }
+}
+
+/// Close the inline native WKWebView
+#[tauri::command]
+async fn close_inline_webview() -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        unsafe { webview_plugin_close_inline() };
+    }
+    Ok(())
+}
+
 /// Update a page (URL) item - backward compatible
 #[tauri::command]
 async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), String> {
@@ -4853,7 +4890,10 @@ pub fn run() {
             debug_settings_table,
             debug_query_database,
             debug_export_database,
-            swap_profile_databases
+            swap_profile_databases,
+            // Inline webview
+            open_inline_webview,
+            close_inline_webview
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

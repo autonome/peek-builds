@@ -97,8 +97,29 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
     }
 }
 
+// Navigation delegate for inline webview (must be held strongly)
+class InlineWebViewDelegate: NSObject, WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        print("[WebviewPlugin] Inline webview loaded: \(webView.url?.absoluteString ?? "nil")")
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        print("[WebviewPlugin] Inline webview navigation failed: \(error.localizedDescription)")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        print("[WebviewPlugin] Inline webview provisional load failed: \(error.localizedDescription)")
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(.allow)
+    }
+}
+
 // Global state
 private var currentWebViewController: EmbeddedWebViewController?
+private var currentInlineWebView: WKWebView?
+private var inlineWebViewDelegate: InlineWebViewDelegate?
 
 // C-compatible function to open webview - called from Rust FFI
 @_cdecl("webview_plugin_open")
@@ -155,5 +176,76 @@ public func webviewPluginClose() {
     DispatchQueue.main.async {
         currentWebViewController?.dismiss(animated: true)
         currentWebViewController = nil
+    }
+}
+
+// C-compatible function to open inline webview (subview, not modal)
+@_cdecl("webview_plugin_open_inline")
+public func webviewPluginOpenInline(urlPtr: UnsafePointer<CChar>, topOffset: Double) -> Bool {
+    let urlString = String(cString: urlPtr)
+    print("[WebviewPlugin] open_inline called with URL: \(urlString), topOffset: \(topOffset)")
+
+    guard let url = URL(string: urlString) else {
+        print("[WebviewPlugin] Invalid URL: \(urlString)")
+        return false
+    }
+
+    DispatchQueue.main.async {
+        // Remove any existing inline webview
+        currentInlineWebView?.removeFromSuperview()
+        currentInlineWebView = nil
+
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = windowScene.windows.first,
+              let rootView = window.rootViewController?.view else {
+            print("[WebviewPlugin] ERROR: Could not find root view")
+            return
+        }
+
+        // Create WKWebView with Safari-like config
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.allowsBackForwardNavigationGestures = true
+
+        // Set Safari-like user agent so sites don't reject us
+        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1"
+
+        // Set navigation delegate (held strongly in global var)
+        let delegate = InlineWebViewDelegate()
+        webView.navigationDelegate = delegate
+        inlineWebViewDelegate = delegate
+
+        // Add on top of all other subviews
+        rootView.addSubview(webView)
+
+        // Position: starts at topOffset (from JS getBoundingClientRect), extends to bottom
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: rootView.topAnchor, constant: CGFloat(topOffset)),
+            webView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor)
+        ])
+
+        webView.load(URLRequest(url: url))
+        currentInlineWebView = webView
+
+        print("[WebviewPlugin] Inline webview added as subview at topOffset: \(topOffset)")
+    }
+
+    return true
+}
+
+// C-compatible function to close inline webview
+@_cdecl("webview_plugin_close_inline")
+public func webviewPluginCloseInline() {
+    DispatchQueue.main.async {
+        currentInlineWebView?.removeFromSuperview()
+        currentInlineWebView = nil
+        inlineWebViewDelegate = nil
+        print("[WebviewPlugin] Inline webview removed")
     }
 }

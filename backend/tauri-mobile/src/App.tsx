@@ -708,9 +708,9 @@ function App() {
   const [addInputNewTag, setAddInputNewTag] = useState("");
 
   // Webview animation duration (ms) — must match --webview-anim in CSS
-  const WEBVIEW_ANIM_MS = 300;
+  const WEBVIEW_ANIM_MS = 200;
 
-  // Inline webview expansion state: which item is expanded with an iframe
+  // Inline webview expansion state
   const [expandedWebview, setExpandedWebview] = useState<{
     url: string;
     itemId: string;
@@ -2249,23 +2249,42 @@ function App() {
     }
   };
 
-  const renderWebviewInline = (url: string) => {
+  // Create inline native WKWebView via Swift FFI
+  const createInlineWebview = async (url: string, itemId: string) => {
+    try {
+      // Measure the webview-inline div's position so the native WKWebView aligns exactly
+      let topOffset = 0;
+      const card = document.getElementById(`card-${itemId}`);
+      const inlineDiv = card?.querySelector('.webview-inline');
+      if (inlineDiv) {
+        topOffset = inlineDiv.getBoundingClientRect().top;
+      }
+      console.log("[App] Creating inline webview at topOffset:", topOffset, "for:", url);
+      await invoke("open_inline_webview", { url, topOffset });
+      setWebviewLoaded(true);
+    } catch (error) {
+      console.error("[App] Failed to create inline webview:", error);
+      setWebviewError(true);
+    }
+  };
+
+  const destroyInlineWebview = async () => {
+    try {
+      await invoke("close_inline_webview");
+    } catch (error) {
+      console.error("[App] Failed to close inline webview:", error);
+    }
+  };
+
+  const renderWebviewInline = (_url: string) => {
     return (
       <div className={`webview-inline ${webviewAnimated ? 'webview-expanded' : ''}`}>
-        {!webviewError ? (
-          <iframe
-            src={url}
-            className="webview-iframe"
-            onLoad={() => setWebviewLoaded(true)}
-            onError={() => setWebviewError(true)}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-          />
-        ) : (
+        {webviewError ? (
           <div className="webview-error">
             <p>This site can't be displayed inline.</p>
-            <button onClick={(e) => { e.stopPropagation(); openUrl(url); }}>Open in Safari</button>
+            <button onClick={(e) => { e.stopPropagation(); openUrl(_url); }}>Open in Safari</button>
           </div>
-        )}
+        ) : null}
         {!webviewLoaded && !webviewError && <div className="webview-loading">Loading...</div>}
       </div>
     );
@@ -2667,6 +2686,8 @@ function App() {
         // Set open easing on root so all transitions use it
         document.documentElement.style.setProperty('--webview-ease', 'var(--webview-ease-in)');
         setWebviewAnimated(true);
+        // Create native WKWebView after animation completes
+        setTimeout(() => createInlineWebview(url, itemId), WEBVIEW_ANIM_MS);
       });
     });
     try {
@@ -2677,6 +2698,8 @@ function App() {
   };
 
   const closeWebview = () => {
+    // Destroy native webview immediately so it doesn't cover the animation
+    destroyInlineWebview();
     // Switch to close easing before animating
     document.documentElement.style.setProperty('--webview-ease', 'var(--webview-ease-out)');
     setWebviewAnimated(false);

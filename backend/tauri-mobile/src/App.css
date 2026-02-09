@@ -3412,7 +3412,7 @@ body.dark .sort-btn:active {
 /* === Inline Webview (card expansion) === */
 /* Single source of truth for webview animation duration */
 :root {
-  --webview-anim: 0.3s;
+  --webview-anim: 0.2s;
   --webview-ease: cubic-bezier(0.32, 0.72, 0, 1);
   --webview-ease-in: cubic-bezier(0.85, 0, 1, 1);      /* snap open: strong acceleration */
   --webview-ease-out: cubic-bezier(0.32, 0.72, 0, 1);  /* ease out close: decelerate */

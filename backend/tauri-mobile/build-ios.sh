@@ -51,11 +51,26 @@ if [ "$FORCE_REBUILD" = true ]; then
     touch src/lib.rs
 fi
 
-# Build frontend first (normally done by cargo tauri build's beforeBuildCommand)
+# Build frontend first (for type checking), then replace with bootstrap for dev mode
 echo "Building frontend..."
 cd "$SCRIPT_DIR"
 npm run build
 cd "$TAURI_DIR"
+
+# Replace dist/index.html with bootstrap redirect BEFORE cargo build
+# so Tauri's custom-protocol embeds the redirect, not the real app.
+# The actual app will be served by the vite HMR dev server.
+# DEV_PORT env var is set by dev-ios-sim.sh with the actual port.
+echo "Creating bootstrap HTML for dev server mode..."
+cp "$SCRIPT_DIR/dev-bootstrap.html" "$SCRIPT_DIR/dist/index.html"
+mkdir -p "$TAURI_DIR/gen/apple/assets"
+cp "$SCRIPT_DIR/dev-bootstrap.html" "$TAURI_DIR/gen/apple/assets/index.html"
+if [ -n "$DEV_PORT" ]; then
+  sed -i.bak "s/__DEV_PORT__/$DEV_PORT/g" "$SCRIPT_DIR/dist/index.html"
+  rm -f "$SCRIPT_DIR/dist/index.html.bak"
+  sed -i.bak "s/__DEV_PORT__/$DEV_PORT/g" "$TAURI_DIR/gen/apple/assets/index.html"
+  rm -f "$TAURI_DIR/gen/apple/assets/index.html.bak"
+fi
 
 echo "Building Rust for iOS simulator (debug)..."
 # Match the Xcode project's deployment target so cc-compiled objects
@@ -63,18 +78,13 @@ echo "Building Rust for iOS simulator (debug)..."
 export IPHONEOS_DEPLOYMENT_TARGET=16.0
 # Build only the lib target - the bin target would fail to link because
 # Swift FFI symbols (webview_plugin_*) are provided by Xcode at final link time
-cargo build --lib --target aarch64-apple-ios-sim
+# custom-protocol is required so Tauri serves bundled assets via scheme handler;
+# for dev builds the "assets" are a bootstrap HTML that redirects to the dev server
+cargo build --lib --target aarch64-apple-ios-sim --features custom-protocol
 
 # Copy to Xcode location
 mkdir -p "$DEST_DIR"
 cp target/aarch64-apple-ios-sim/debug/libpeek_save_lib.a "$DEST_PATH"
-
-# For debug builds with devUrl, create minimal bootstrap that redirects to dev server
-# Release builds (build-release.sh) will populate this with bundled assets
-echo "Creating bootstrap HTML for dev server mode..."
-mkdir -p "$TAURI_DIR/gen/apple/assets"
-# Copy bootstrap HTML (will be updated with actual port by dev-ios-sim.sh)
-cp "$SCRIPT_DIR/dev-bootstrap.html" "$TAURI_DIR/gen/apple/assets/index.html"
 
 # Update cache
 if [ "$NO_CACHE" = false ]; then
