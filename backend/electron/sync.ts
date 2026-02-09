@@ -23,6 +23,7 @@ import {
   queryItems,
   addItem,
   updateItem,
+  mergeServerItem,
   getItemTags,
   getOrCreateTag,
   tagItem,
@@ -386,18 +387,15 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
     // Item doesn't exist locally - insert it
     DEBUG && console.log(`[sync] Inserting new item from server: ${serverItem.id}`);
 
-    const { id: localId } = addItem(serverItem.type as ItemType, {
-      content: serverItem.content || undefined,
-      metadata: serverItem.metadata ? JSON.stringify(serverItem.metadata) : undefined,
-      syncId: serverItem.id,
-      syncSource: 'server',
+    const { localId } = mergeServerItem({
+      id: serverItem.id,
+      type: serverItem.type,
+      content: serverItem.content,
+      metadata: serverItem.metadata,
+      createdAt: serverItem.createdAt,
+      updatedAt: serverUpdatedAt,
+      deletedAt: 0,
     });
-
-    // Update timestamps to match server, and set syncedAt to track when we synced this item
-    const now = Date.now();
-    db.prepare(`
-      UPDATE items SET createdAt = ?, updatedAt = ?, syncedAt = ? WHERE id = ?
-    `).run(serverItem.createdAt, serverUpdatedAt, now, localId);
 
     // Add tags
     syncTagsToItem(localId, serverItem.tags);
@@ -410,14 +408,13 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
     if (serverUpdatedAt > localItem.updatedAt) {
       // Server is newer — undelete locally and update content
       DEBUG && console.log(`[sync] Undeleting local item from server: ${serverItem.id}`);
-      updateItem(localItem.id, {
-        content: serverItem.content || undefined,
-        metadata: serverItem.metadata ? JSON.stringify(serverItem.metadata) : undefined,
-      });
       const now = Date.now();
+      const metadataJson = serverItem.metadata ? JSON.stringify(serverItem.metadata) : '{}';
       db.prepare(`
-        UPDATE items SET deletedAt = 0, updatedAt = ?, syncedAt = ? WHERE id = ?
-      `).run(serverUpdatedAt, now, localItem.id);
+        UPDATE items
+        SET content = ?, metadata = ?, deletedAt = 0, updatedAt = ?, syncedAt = ?
+        WHERE id = ?
+      `).run(serverItem.content || null, metadataJson, serverUpdatedAt, now, localItem.id);
       syncTagsToItem(localItem.id, serverItem.tags);
       return 'pulled';
     }
@@ -431,16 +428,13 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
     // Server is newer - update local
     DEBUG && console.log(`[sync] Updating local item from server: ${serverItem.id}`);
 
-    updateItem(localItem.id, {
-      content: serverItem.content || undefined,
-      metadata: serverItem.metadata ? JSON.stringify(serverItem.metadata) : undefined,
-    });
-
-    // Update timestamps to match server, and set syncedAt to track when we synced this item
     const now = Date.now();
+    const metadataJson = serverItem.metadata ? JSON.stringify(serverItem.metadata) : '{}';
     db.prepare(`
-      UPDATE items SET updatedAt = ?, syncedAt = ? WHERE id = ?
-    `).run(serverUpdatedAt, now, localItem.id);
+      UPDATE items
+      SET content = ?, metadata = ?, updatedAt = ?, syncedAt = ?
+      WHERE id = ?
+    `).run(serverItem.content || null, metadataJson, serverUpdatedAt, now, localItem.id);
 
     // Update tags
     syncTagsToItem(localItem.id, serverItem.tags);

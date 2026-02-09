@@ -2466,6 +2466,85 @@ export function hardDeleteItem(itemId: string): boolean {
 }
 
 /**
+ * Merge a server item into local database during sync pull.
+ *
+ * This function is used ONLY for sync operations and bypasses addItem/updateItem
+ * to preserve server metadata (including _sync.createdBy, _sync.modifiedBy) without
+ * adding local device metadata.
+ *
+ * @param serverItem - Item from server with all metadata
+ * @returns Object with localId and action taken ('inserted' | 'updated' | 'skipped')
+ */
+export function mergeServerItem(serverItem: {
+  id: string;
+  type: string;
+  content?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}): { localId: string; action: 'inserted' | 'updated' | 'skipped' } {
+  const db = getDb();
+
+  // Find local item by syncId
+  const localItem = db.prepare(
+    'SELECT * FROM items WHERE syncId = ?'
+  ).get(serverItem.id) as Item | undefined;
+
+  const serverUpdatedAt = serverItem.updatedAt;
+  const timestamp = Date.now();
+  const metadataJson = serverItem.metadata ? JSON.stringify(serverItem.metadata) : '{}';
+
+  // Item doesn't exist locally - insert it
+  if (!localItem) {
+    const localId = generateId('item');
+
+    db.prepare(`
+      INSERT INTO items (
+        id, type, content, metadata, syncId, syncSource, syncedAt,
+        createdAt, updatedAt, deletedAt, starred, archived
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+    `).run(
+      localId,
+      serverItem.type,
+      serverItem.content || null,
+      metadataJson,
+      serverItem.id,
+      'server',
+      timestamp,
+      serverItem.createdAt,
+      serverUpdatedAt,
+      serverItem.deletedAt || 0
+    );
+
+    return { localId, action: 'inserted' };
+  }
+
+  // Item exists - check if server is newer
+  if (serverUpdatedAt > localItem.updatedAt) {
+    // Server is newer - update local
+    db.prepare(`
+      UPDATE items
+      SET content = ?, metadata = ?, updatedAt = ?, syncedAt = ?, deletedAt = ?
+      WHERE id = ?
+    `).run(
+      serverItem.content || null,
+      metadataJson,
+      serverUpdatedAt,
+      timestamp,
+      serverItem.deletedAt || 0,
+      localItem.id
+    );
+
+    return { localId: localItem.id, action: 'updated' };
+  }
+
+  // Local is same or newer - skip
+  return { localId: localItem.id, action: 'skipped' };
+}
+
+/**
  * Query items with optional filters
  */
 export function queryItems(filter: ItemFilter = {}): Item[] {
