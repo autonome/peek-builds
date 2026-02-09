@@ -1057,13 +1057,26 @@ export function handleExternalUrl(url: string, sourceId = 'os'): void {
     return;
   }
 
-  // Note: Using trackingSource/trackingSourceId because preload.js overwrites msg.source
-  publish(getSystemAddress(), scopes.GLOBAL, 'external:open-url', {
-    url,
-    trackingSource: 'external',
-    trackingSourceId: sourceId,
-    timestamp: Date.now()
-  });
+  // On macOS, open-url fires during app activation, which can happen before
+  // the app is fully focused. Wait a tick to ensure activation completes.
+  // This fixes the issue where first click from external app focuses Peek
+  // but doesn't open the URL (second click works because app is already focused).
+  const processUrl = () => {
+    // Note: Using trackingSource/trackingSourceId because preload.js overwrites msg.source
+    publish(getSystemAddress(), scopes.GLOBAL, 'external:open-url', {
+      url,
+      trackingSource: 'external',
+      trackingSourceId: sourceId,
+      timestamp: Date.now()
+    });
+  };
+
+  // Small delay to ensure app activation completes before processing URL
+  if (process.platform === 'darwin' && sourceId === 'os') {
+    setTimeout(processUrl, 100);
+  } else {
+    processUrl();
+  }
 }
 
 /**

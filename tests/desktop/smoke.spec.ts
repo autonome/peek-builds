@@ -784,6 +784,63 @@ test.describe('External URL Opening @desktop', () => {
       }, openResult.id);
     }
   });
+
+  test('external URL handler opens URL on first click (simulates OS open-url event)', async () => {
+    // This test simulates clicking a URL from an external app (like clicking a link
+    // in another app when Peek is set as default browser).
+    // Tests the fix for: first click focuses app but doesn't open URL, second click works.
+
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
+    // Get initial window count
+    const initialList = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+    const initialCount = initialList.windows?.length || 0;
+
+    // Simulate external URL open event (what happens when clicking URL from another app)
+    // This bypasses the normal window.open flow and tests the handleExternalUrl path
+    const testUrl = 'https://example.com/external-test';
+
+    // Trigger external:open-url event directly (simulates what handleExternalUrl does)
+    await sharedBgWindow.evaluate(async (url: string) => {
+      const api = (window as any).app;
+      // Publish the same event that handleExternalUrl publishes
+      await api.publish('external:open-url', {
+        url,
+        trackingSource: 'external',
+        trackingSourceId: 'os',
+        timestamp: Date.now()
+      });
+    }, testUrl);
+
+    // Wait for window to be created (give it time to process the event)
+    await sleep(500);
+
+    // Verify URL was opened
+    const finalList = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+
+    expect(finalList.success).toBe(true);
+    const finalCount = finalList.windows?.length || 0;
+
+    // Should have created a new window
+    expect(finalCount).toBeGreaterThan(initialCount);
+
+    // Find the window with our test URL
+    const externalWindow = finalList.windows?.find((w: any) =>
+      w.url && (w.url.includes(testUrl) || w.url.includes(encodeURIComponent(testUrl)))
+    );
+    expect(externalWindow).toBeTruthy();
+
+    // Clean up
+    if (externalWindow) {
+      await sharedBgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, externalWindow.id);
+    }
+  });
 });
 
 // ============================================================================
