@@ -1,0 +1,9 @@
+{
+  "id": "hud",
+  "shortname": "hud",
+  "name": "HUD",
+  "description": "Always-on-top heads-up display showing mode, IZUI state, and window info",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": true
+}

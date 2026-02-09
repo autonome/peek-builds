@@ -1,0 +1,103 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  -webkit-app-region: drag;
+}
+
+#hud-container {
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  -webkit-app-region: no-drag;
+}
+
+.hud-section {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hud-section:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.hud-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 4px;
+}
+
+.hud-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  line-height: 1.4;
+}
+
+.hud-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.hud-small {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Mode-specific colors */
+.mode-default {
+  color: #60a5fa;
+}
+
+.mode-page {
+  color: #34d399;
+}
+
+.mode-group {
+  color: #f472b6;
+}
+
+.mode-settings {
+  color: #fbbf24;
+}
+
+/* IZUI state colors */
+.izui-idle {
+  color: #9ca3af;
+}
+
+.izui-transient {
+  color: #60a5fa;
+}
+
+.izui-active {
+  color: #34d399;
+}
+
+.izui-overlay {
+  color: #f472b6;
+}
