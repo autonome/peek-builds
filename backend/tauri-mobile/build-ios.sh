@@ -69,10 +69,12 @@ cargo build --lib --target aarch64-apple-ios-sim
 mkdir -p "$DEST_DIR"
 cp target/aarch64-apple-ios-sim/debug/libpeek_save_lib.a "$DEST_PATH"
 
-# Copy frontend assets to Xcode location (normally done by cargo tauri build)
-echo "Copying frontend assets..."
-rm -rf "$TAURI_DIR/gen/apple/assets"
-cp -R "$SCRIPT_DIR/dist" "$TAURI_DIR/gen/apple/assets"
+# For debug builds with devUrl, create minimal bootstrap that redirects to dev server
+# Release builds (build-release.sh) will populate this with bundled assets
+echo "Creating bootstrap HTML for dev server mode..."
+mkdir -p "$TAURI_DIR/gen/apple/assets"
+# Copy bootstrap HTML (will be updated with actual port by dev-ios-sim.sh)
+cp "$SCRIPT_DIR/dev-bootstrap.html" "$TAURI_DIR/gen/apple/assets/index.html"
 
 # Update cache
 if [ "$NO_CACHE" = false ]; then

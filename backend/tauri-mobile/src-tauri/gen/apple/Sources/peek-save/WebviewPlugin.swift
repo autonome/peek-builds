@@ -11,6 +11,7 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
 
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self

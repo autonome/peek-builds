@@ -29,23 +29,13 @@ This is exactly what Firefox iOS, Brave iOS, Chrome iOS, and DuckDuckGo all do (
 
 ---
 
-## Task 2: Notes with URLs — Open as Web Pages (Mobile App)
+## Task 2: Notes with URLs — Open as Web Pages
 
-**Status:** Wrong target implemented, needs redo for mobile
+**Status:** Not started
 
-**Problem:** Note-type items containing URLs should be openable as web pages, using the same webview mechanism that URL-type items use.
+**Problem:** Note-type items containing URLs should be openable as web pages, using the same inline webview mechanism that URL-type items use.
 
-**What was done (WRONG TARGET):** Commit `mrwsnryu` (14a36011) modified `extensions/tags/home.js`, `extensions/tags/home.html`, `extensions/tags/home.css`, and `extensions/groups/background.js`. These are **Electron desktop** extensions, NOT the Tauri mobile app.
-
-**What needs to happen:** The mobile app frontend is in `backend/tauri-mobile/src/App.tsx` (125KB React app). The feature needs to be implemented THERE, not in the extensions/ directory.
-
-**Implementation approach:**
-1. Read `App.tsx` to find how URL-type items currently trigger web page viewing
-2. Add URL detection for text/note items (extract first URL from content)
-3. Wire up the same web page viewing path for notes that contain URLs
-4. Show visual indicator (link icon, "Open Page" button) on note cards with URLs
-
-**The `extractUrl()` logic from the desktop implementation is reusable** (priority: full URL → bare domain → embedded URL, validated with `URL` constructor).
+**Implementation:** The mobile app frontend is in `backend/tauri-mobile/src/App.tsx`. Find how URL-type items trigger web page viewing and apply the same approach to note items that contain URLs.
 
 ---
 
