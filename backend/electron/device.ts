@@ -42,8 +42,8 @@ export function getDeviceId(): string {
     // Table might not exist yet, will be created by datastore
   }
 
-  // Generate new device ID
-  deviceId = `desktop-${crypto.randomUUID()}`;
+  // Generate new device ID (raw UUID, no prefix)
+  deviceId = crypto.randomUUID();
   DEBUG && console.log('[device] Generated new device ID:', deviceId);
 
   // Save to database

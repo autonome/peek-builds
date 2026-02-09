@@ -115,6 +115,15 @@ export interface Item {
   favicon: string;
 }
 
+// Sync metadata stored inside item metadata._sync
+// Used by both desktop and mobile to track which device created/modified items
+export interface SyncMetadata {
+  createdBy?: string;
+  createdAt?: number;
+  modifiedBy?: string;
+  modifiedAt?: number;
+}
+
 // Visit record for item_visits table (local-only, not synced)
 export interface ItemVisit {
   id: string;

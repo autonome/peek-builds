@@ -13,6 +13,7 @@ interface ItemMetadata {
   selectedText?: string;
   sourceApp?: string;
   sharedAt?: string;
+  _sync?: SyncMetadata;
 }
 
 interface SavedUrl {
@@ -54,6 +55,13 @@ interface TagStats {
   frequency: number;
   lastUsed: string;
   frecencyScore: number;
+}
+
+interface SyncMetadata {
+  createdBy?: string;
+  createdAt?: number;
+  modifiedBy?: string;
+  modifiedAt?: number;
 }
 
 interface BidirectionalSyncResult {

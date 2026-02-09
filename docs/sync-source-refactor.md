@@ -136,15 +136,24 @@ UPDATE items SET syncId = ?, syncedAt = ? WHERE id = ?
 
 Classifications are already preserved in tags (`from:*`) and metadata JSON.
 
-**Datastore** — remove syncSource gating on device metadata:
-- `backend/electron/datastore.ts:2322-2324` — always call `addDeviceMetadata()`, not just when `!options.syncSource`
+**Datastore** — replace syncSource gating on device metadata with architectural separation (match mobile pattern):
+- `backend/electron/datastore.ts:2322-2324` — currently uses `if (!options.syncSource)` to gate `addDeviceMetadata()`. This guard goes away with syncSource.
 - `backend/electron/datastore.ts:2404-2406` — same for updates
+- **Fix:** Sync pull in `sync.ts` should write server metadata directly to DB (separate codepath) instead of routing through the shared `addItem()`/`updateItem()`. This matches how mobile works — `merge_server_item()` is architecturally separate from user-facing `save_*`/`update_*` commands, so server `_sync` metadata is preserved naturally without any guard.
 
 ### 3. Device ID prefix removal
 
 Device IDs currently use platform prefixes: `"desktop-{uuid}"` (Electron), `"extension-{uuid}"` (browser extension). These prefixes are **not used in any conditional logic** — verified by codebase-wide search. No code checks `startsWith('desktop')` or parses the prefix.
 
 **Change:** Generate plain UUIDs going forward. Platform/type info belongs in the devices table.
+
+**Already done (mobile device ID PR):**
+- `backend/electron/device.ts:46` — now generates `crypto.randomUUID()` (no `desktop-` prefix)
+- `backend/tauri-mobile/src-tauri/src/lib.rs` — mobile generates raw UUID, stores in `settings` table, injects `_sync` metadata on all save/update commands
+- `backend/types/index.ts` — shared `SyncMetadata` interface added
+- `backend/tauri-mobile/src/App.tsx` — `SyncMetadata` interface and `_sync` field on `ItemMetadata`
+
+**Still needed:**
 
 **Migration:** On startup, detect prefixed device IDs and strip the prefix:
 
@@ -161,9 +170,8 @@ This requires updating:
 **One exception:** `backend/extension/environment.js:29` checks `parsed.startsWith('extension-')` for the extension device ID. This needs updating to handle both old prefixed and new plain UUID formats during the transition period.
 
 **Files to update:**
-- `backend/electron/device.ts:46` — `crypto.randomUUID()` (remove `desktop-` prefix)
-- `backend/extension/environment.js` — update `startsWith('extension-')` check
-- Add migration in `backend/electron/datastore.ts` (startup)
+- `backend/extension/environment.js` — update `startsWith('extension-')` check, generate raw UUID
+- Add migration in `backend/electron/datastore.ts` (startup) — strip prefix from stored device ID + update existing item metadata
 - Add migration in `backend/extension/` (startup)
 
 ### 4. New `devices` table
@@ -231,3 +239,29 @@ If needed, the old sync algorithm still works — it just won't push browser imp
 - **Browser imports will start syncing**: This is intentional but may surprise users who had large history imports. Consider a one-time notification or a toggle.
 - **No breaking API changes**: Server doesn't use syncSource for anything — it stores and returns it, that's all
 - **Device ID migration is local-only**: Each client migrates its own stored ID on startup. No server coordination needed.
+
+## Testing Notes
+
+**CRITICAL:** All Node usage must use Electron's Node. No exceptions — `better-sqlite3` is compiled for Electron's Node version and will crash with system Node (`NODE_MODULE_VERSION` mismatch).
+
+```bash
+# WRONG — uses system Node, will crash on better-sqlite3
+yarn test:sync:e2e
+
+# RIGHT — uses Electron's bundled Node
+ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron backend/tests/sync-e2e.test.js
+```
+
+**Current test status (as of mobile device ID PR):**
+
+| Test | Command | Status | Notes |
+|------|---------|--------|-------|
+| Sync integration | `yarn test:sync` | Passes (9/9) | Server-only, no better-sqlite3 dependency |
+| Sync e2e | `ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron backend/tests/sync-e2e.test.js` | Fails (pre-existing) | `item_events` table missing from test DB — schema validation rejects fresh DB without migration |
+| Sync three-way | `yarn test:sync:three-way` | Not tested | Likely same `item_events` issue |
+
+**Pre-existing issues to fix before these tests can validate the refactor:**
+
+1. **`item_events` table migration** — `sync-e2e.test.js` creates a fresh DB but the desktop datastore's `validateSyncSchema()` requires all tables from `schema/v1.json` including `item_events`. Either the test setup needs to run migrations, or `initDatabase()` needs to create missing tables.
+2. **`test:sync:e2e` package.json script** — should use `ELECTRON_RUN_AS_NODE=1` instead of bare `node`. All sync test scripts that touch the desktop datastore need this.
+3. **Server deps** — `backend/server/node_modules` may not be installed in jj workspaces. Run `cd backend/server && npm install` if tests fail with `Cannot find module 'hono'`.

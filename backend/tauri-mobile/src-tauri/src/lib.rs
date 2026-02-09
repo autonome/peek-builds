@@ -5,7 +5,7 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::fs;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 use reqwest;
 use regex::Regex;
 use tauri::Manager;
@@ -1066,6 +1066,7 @@ fn get_db_path() -> Option<PathBuf> {
 use std::sync::Once;
 
 static DB_INIT: Once = Once::new();
+static DEVICE_ID: OnceLock<String> = OnceLock::new();
 
 /// Schema version for tracking compatibility between Rust main app and Swift Share Extension.
 /// Increment this when making schema changes that both codepaths must understand.
@@ -1759,10 +1760,89 @@ fn ensure_database_initialized() -> Result<(), String> {
             }
         }
 
+        // Initialize device ID (generate and store if missing)
+        let device_id: String = conn
+            .query_row("SELECT value FROM settings WHERE key = 'device_id'", [], |row| row.get(0))
+            .unwrap_or_default();
+
+        if device_id.is_empty() {
+            let new_id = uuid::Uuid::new_v4().to_string();
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('device_id', ?1)",
+                params![&new_id],
+            );
+            println!("[Rust] Generated new device ID: {}", new_id);
+            let _ = DEVICE_ID.set(new_id);
+        } else {
+            println!("[Rust] Loaded existing device ID: {}", device_id);
+            let _ = DEVICE_ID.set(device_id);
+        }
+
         println!("[Rust] Database initialized successfully (schema version {})", SCHEMA_VERSION);
     });
 
     init_result
+}
+
+/// Get the device ID (raw UUID, no prefix). Cached in OnceLock after first DB read.
+fn get_device_id() -> &'static str {
+    DEVICE_ID.get().map(|s| s.as_str()).unwrap_or("unknown")
+}
+
+/// Inject _sync metadata for a new item (save/create).
+/// Sets createdBy, createdAt, modifiedBy, modifiedAt.
+fn inject_sync_metadata_for_save(metadata: Option<serde_json::Value>) -> serde_json::Value {
+    let mut meta = match metadata {
+        Some(v) if v.is_object() => v,
+        _ => serde_json::json!({}),
+    };
+    let device_id = get_device_id();
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    meta.as_object_mut().unwrap().insert("_sync".to_string(), serde_json::json!({
+        "createdBy": device_id,
+        "createdAt": timestamp,
+        "modifiedBy": device_id,
+        "modifiedAt": timestamp,
+    }));
+    meta
+}
+
+/// Inject _sync metadata for an update to an existing item.
+/// Preserves createdBy/createdAt, updates modifiedBy/modifiedAt.
+fn inject_sync_metadata_for_update(existing_metadata_str: Option<String>) -> String {
+    let mut meta: serde_json::Value = existing_metadata_str
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let device_id = get_device_id();
+    let timestamp = chrono::Utc::now().timestamp_millis();
+
+    let obj = meta.as_object_mut().unwrap();
+
+    let existing_sync = obj.get("_sync").cloned();
+    let mut sync = existing_sync
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+
+    // Backfill createdBy if missing (items predating this feature)
+    if !sync.contains_key("createdBy") {
+        sync.insert("createdBy".to_string(), serde_json::json!(device_id));
+        sync.insert("createdAt".to_string(), serde_json::json!(timestamp));
+    }
+
+    sync.insert("modifiedBy".to_string(), serde_json::json!(device_id));
+    sync.insert("modifiedAt".to_string(), serde_json::json!(timestamp));
+
+    obj.insert("_sync".to_string(), serde_json::Value::Object(sync));
+
+    serde_json::to_string(&meta).unwrap_or_default()
+}
+
+#[tauri::command]
+async fn get_device_id_command() -> Result<String, String> {
+    ensure_database_initialized()?;
+    Ok(get_device_id().to_string())
 }
 
 fn get_connection() -> Result<Connection, String> {
@@ -2249,7 +2329,6 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
     let conn = get_connection()?;
     let now = Utc::now().to_rfc3339();
     let id = uuid::Uuid::new_v4().to_string();
-    let metadata_json = metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
 
     // Check if URL already exists (as a page type)
     // Check both normalized and without trailing slash to match legacy data
@@ -2263,20 +2342,32 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
         .ok();
 
     let item_id = if let Some(existing) = existing_id {
-        // Update existing item (normalize URL + update metadata if provided)
-        if metadata_json.is_some() {
-            conn.execute(
-                "UPDATE items SET url = ?, updated_at = ?, metadata = ? WHERE id = ?",
-                params![&url, &now, &metadata_json, &existing],
-            )
-            .map_err(|e| format!("Failed to update item: {}", e))?;
+        // Update existing item (normalize URL + update metadata)
+        // Read existing metadata, merge user-provided fields, then inject sync update
+        let existing_meta_str: Option<String> = conn
+            .query_row("SELECT metadata FROM items WHERE id = ?", params![&existing], |row| row.get(0))
+            .ok();
+        // Merge user-provided metadata fields into existing metadata
+        let merged_str = if let Some(new_meta) = &metadata {
+            let mut existing: serde_json::Value = existing_meta_str
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| serde_json::json!({}));
+            if let (Some(dst), Some(src)) = (existing.as_object_mut(), new_meta.as_object()) {
+                for (k, v) in src {
+                    if k != "_sync" { dst.insert(k.clone(), v.clone()); }
+                }
+            }
+            Some(serde_json::to_string(&existing).unwrap_or_default())
         } else {
-            conn.execute(
-                "UPDATE items SET url = ?, updated_at = ? WHERE id = ?",
-                params![&url, &now, &existing],
-            )
-            .map_err(|e| format!("Failed to update item: {}", e))?;
-        }
+            existing_meta_str
+        };
+        let updated_meta = inject_sync_metadata_for_update(merged_str);
+        conn.execute(
+            "UPDATE items SET url = ?, updated_at = ?, metadata = ? WHERE id = ?",
+            params![&url, &now, &updated_meta, &existing],
+        )
+        .map_err(|e| format!("Failed to update item: {}", e))?;
 
         // Remove old tag associations
         conn.execute("DELETE FROM item_tags WHERE item_id = ?", params![&existing])
@@ -2286,6 +2377,8 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
     } else {
         // Insert new url item
         // IMPORTANT: Use 'url' type to match Swift's ItemType.page.rawValue = "url"
+        let meta_with_sync = inject_sync_metadata_for_save(metadata);
+        let metadata_json = serde_json::to_string(&meta_with_sync).unwrap_or_default();
         conn.execute(
             "INSERT INTO items (id, type, url, metadata, created_at, updated_at) VALUES (?, 'url', ?, ?, ?, ?)",
             params![&id, &url, &metadata_json, &now, &now],
@@ -2655,10 +2748,14 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
         return Err("Page not found".to_string());
     }
 
-    // Update URL value and timestamp
+    // Update URL value, timestamp, and sync metadata
+    let existing_meta: Option<String> = conn
+        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
+        .ok();
+    let updated_meta = inject_sync_metadata_for_update(existing_meta);
     conn.execute(
-        "UPDATE items SET url = ?, updated_at = ? WHERE id = ?",
-        params![&url, &now, &id],
+        "UPDATE items SET url = ?, updated_at = ?, metadata = ? WHERE id = ?",
+        params![&url, &now, &updated_meta, &id],
     )
     .map_err(|e| format!("Failed to update item: {}", e))?;
 
@@ -2803,10 +2900,14 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
     let tags_to_add: Vec<&String> = new_tags_set.difference(&existing_tags).collect();
     let tags_to_remove: Vec<&String> = existing_tags.difference(&new_tags_set).collect();
 
-    // Update item's updated_at timestamp
+    // Update item's updated_at timestamp and sync metadata
+    let existing_meta: Option<String> = conn
+        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
+        .ok();
+    let updated_meta = inject_sync_metadata_for_update(existing_meta);
     conn.execute(
-        "UPDATE items SET updated_at = ? WHERE id = ?",
-        params![&now, &id],
+        "UPDATE items SET updated_at = ?, metadata = ? WHERE id = ?",
+        params![&now, &updated_meta, &id],
     )
     .map_err(|e| format!("Failed to update item: {}", e))?;
 
@@ -2900,7 +3001,8 @@ async fn save_text(content: String, tags: Option<Vec<String>>, metadata: Option<
     let conn = get_connection()?;
     let now = Utc::now().to_rfc3339();
     let id = uuid::Uuid::new_v4().to_string();
-    let metadata_json = metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
+    let meta_with_sync = inject_sync_metadata_for_save(metadata);
+    let metadata_json: Option<String> = Some(serde_json::to_string(&meta_with_sync).unwrap_or_default());
 
     // Parse hashtags from content and merge with provided tags
     let mut all_tags = parse_hashtags(&content);
@@ -2990,7 +3092,8 @@ async fn save_tagset(tags: Vec<String>, metadata: Option<serde_json::Value>) -> 
     let conn = get_connection()?;
     let now = Utc::now().to_rfc3339();
     let id = uuid::Uuid::new_v4().to_string();
-    let metadata_json = metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
+    let meta_with_sync = inject_sync_metadata_for_save(metadata);
+    let metadata_json: Option<String> = Some(serde_json::to_string(&meta_with_sync).unwrap_or_default());
 
     // Insert tagset item
     conn.execute(
@@ -3172,10 +3275,14 @@ async fn update_text(id: String, content: String, tags: Vec<String>) -> Result<(
         return Err("Text not found".to_string());
     }
 
-    // Update content and timestamp
+    // Update content, timestamp, and sync metadata
+    let existing_meta: Option<String> = conn
+        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
+        .ok();
+    let updated_meta = inject_sync_metadata_for_update(existing_meta);
     conn.execute(
-        "UPDATE items SET content = ?, updated_at = ? WHERE id = ?",
-        params![&content, &now, &id],
+        "UPDATE items SET content = ?, updated_at = ?, metadata = ? WHERE id = ?",
+        params![&content, &now, &updated_meta, &id],
     )
     .map_err(|e| format!("Failed to update text: {}", e))?;
 
@@ -3301,10 +3408,14 @@ async fn update_tagset(id: String, tags: Vec<String>) -> Result<(), String> {
         return Err("Tagset not found".to_string());
     }
 
-    // Update timestamp
+    // Update timestamp and sync metadata
+    let existing_meta: Option<String> = conn
+        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
+        .ok();
+    let updated_meta = inject_sync_metadata_for_update(existing_meta);
     conn.execute(
-        "UPDATE items SET updated_at = ? WHERE id = ?",
-        params![&now, &id],
+        "UPDATE items SET updated_at = ?, metadata = ? WHERE id = ?",
+        params![&now, &updated_meta, &id],
     )
     .map_err(|e| format!("Failed to update tagset: {}", e))?;
 
@@ -3418,7 +3529,8 @@ async fn save_image(
     let now = Utc::now().to_rfc3339();
     let item_id = uuid::Uuid::new_v4().to_string();
     let blob_id = uuid::Uuid::new_v4().to_string();
-    let metadata_json = metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
+    let meta_with_sync = inject_sync_metadata_for_save(metadata);
+    let metadata_json: Option<String> = Some(serde_json::to_string(&meta_with_sync).unwrap_or_default());
 
     // Decode base64 image data
     use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -3621,10 +3733,14 @@ async fn update_image_tags(id: String, tags: Vec<String>) -> Result<(), String> 
         return Err("Image not found".to_string());
     }
 
-    // Update timestamp
+    // Update timestamp and sync metadata
+    let existing_meta: Option<String> = conn
+        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
+        .ok();
+    let updated_meta = inject_sync_metadata_for_update(existing_meta);
     conn.execute(
-        "UPDATE items SET updated_at = ? WHERE id = ?",
-        params![&now, &id],
+        "UPDATE items SET updated_at = ?, metadata = ? WHERE id = ?",
+        params![&now, &updated_meta, &id],
     )
     .map_err(|e| format!("Failed to update image: {}", e))?;
 
@@ -4857,6 +4973,8 @@ pub fn run() {
             // Tag commands
             get_tags_by_frecency,
             get_tags_by_frecency_for_url,
+            // Device
+            get_device_id_command,
             // Settings and sync
             is_dark_mode,
             get_webhook_url,
