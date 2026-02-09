@@ -62,7 +62,6 @@ const openHud = async () => {
     skipTaskbar: true,
     resizable: false,
     frame: false,
-    focusable: false,
     escapeMode: 'ignore',
     title: 'HUD'
   };
@@ -72,13 +71,6 @@ const openHud = async () => {
     if (result.success) {
       hudWindowId = result.id;
       console.log('[ext:hud] HUD opened:', hudWindowId);
-
-      // Make sure it's always on top with floating level
-      await api.invoke('window-set-always-on-top', {
-        id: hudWindowId,
-        value: true,
-        level: 'floating'
-      });
     } else {
       console.error('[ext:hud] Failed to open HUD:', result.error);
     }
