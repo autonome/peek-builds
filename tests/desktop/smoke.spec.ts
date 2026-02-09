@@ -539,6 +539,217 @@ test.describe('External URL Opening @desktop', () => {
     // Ensure the API is ready
     await waitForAppReady(sharedBgWindow);
   });
+
+  test('cmd panel detects and opens domain without protocol (youtube.com)', async () => {
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
+    // Open cmd panel
+    const openResult = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 50,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+
+    // Get initial window count
+    const initialWindows = await sharedApp.windowCount();
+
+    // Type a domain without protocol
+    await cmdWindow.fill('input', 'example.com');
+    await cmdWindow.keyboard.press('Enter');
+
+    // Wait for window to close (cmd panel closes after opening URL)
+    await sleep(500);
+
+    // Verify a new window was opened
+    const finalWindows = await sharedApp.windowCount();
+    expect(finalWindows).toBeGreaterThan(initialWindows - 1); // -1 for closed cmd panel
+
+    // Verify URL was normalized to https://
+    const newWindow = await sharedApp.getWindow('example.com', 5000);
+    expect(newWindow).toBeTruthy();
+    const url = newWindow.url();
+    expect(url).toContain('https://example.com');
+
+    // Clean up
+    await newWindow.close();
+  });
+
+  test('cmd panel opens URL with http protocol', async () => {
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
+    // Open cmd panel
+    const openResult = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 50,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+
+    // Type URL with http protocol
+    await cmdWindow.fill('input', 'http://example.com');
+    await cmdWindow.keyboard.press('Enter');
+
+    // Wait for window to open
+    await sleep(500);
+
+    // Verify window opened with correct URL
+    const newWindow = await sharedApp.getWindow('example.com', 5000);
+    expect(newWindow).toBeTruthy();
+    const url = newWindow.url();
+    expect(url).toContain('http://example.com');
+
+    // Clean up
+    await newWindow.close();
+  });
+
+  test('cmd panel opens URL with https protocol', async () => {
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
+    // Open cmd panel
+    const openResult = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 50,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+
+    // Type URL with https protocol
+    await cmdWindow.fill('input', 'https://example.com');
+    await cmdWindow.keyboard.press('Enter');
+
+    // Wait for window to open
+    await sleep(500);
+
+    // Verify window opened
+    const newWindow = await sharedApp.getWindow('example.com', 5000);
+    expect(newWindow).toBeTruthy();
+    const url = newWindow.url();
+    expect(url).toContain('https://example.com');
+
+    // Clean up
+    await newWindow.close();
+  });
+
+  test('cmd panel opens localhost URLs', async () => {
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
+    // Open cmd panel
+    const openResult = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 50,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+
+    // Type localhost with port
+    await cmdWindow.fill('input', 'localhost:3000');
+    await cmdWindow.keyboard.press('Enter');
+
+    // Wait for window to open
+    await sleep(500);
+
+    // Verify window opened with normalized URL
+    const windows = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+
+    // Check that a window with localhost URL was created
+    const localhostWindow = windows.data?.find((w: any) =>
+      w.url && (w.url.includes('localhost:3000') || w.url.includes('https://localhost:3000'))
+    );
+    expect(localhostWindow).toBeTruthy();
+
+    // Clean up - close by window ID
+    if (localhostWindow) {
+      await sharedBgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, localhostWindow.id);
+    }
+  });
+
+  test('cmd panel does not treat non-URL text as URL', async () => {
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
+    // Open cmd panel
+    const openResult = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 50,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+
+    // Get initial window count
+    const initialWindows = await sharedApp.windowCount();
+
+    // Type non-URL text (no dots, no protocol)
+    await cmdWindow.fill('input', 'notaurl');
+    await cmdWindow.keyboard.press('Enter');
+
+    // Wait a moment
+    await sleep(500);
+
+    // Verify no new window was opened (or cmd panel tried to execute command)
+    const finalWindows = await sharedApp.windowCount();
+    // Window count should be same or less (cmd panel might close)
+    expect(finalWindows).toBeLessThanOrEqual(initialWindows);
+
+    // Close cmd panel if still open
+    if (openResult.id) {
+      await sharedBgWindow.evaluate(async (id: number) => {
+        try {
+          await (window as any).app.window.close(id);
+        } catch (e) {
+          // Already closed
+        }
+      }, openResult.id);
+    }
+  });
 });
 
 // ============================================================================
