@@ -367,7 +367,7 @@ config = {
     "profiles": [
         {
             "id": "$IOS_PROFILE_ID",
-            "name": "E2E Test",
+            "name": "Development",
             "createdAt": "2026-01-27T00:00:00.000Z",
             "lastUsed": "2026-01-27T00:00:00.000Z",
             "server_url": "$SERVER_URL",
