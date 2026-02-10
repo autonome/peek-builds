@@ -100,108 +100,57 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
 }
 
 /**
+ * ESC policy: given session state and window role, determine what to do.
+ * Pure function — no side effects.
+ */
+function escPolicy(sessionState: string, role: string): 'close' | 'close-and-restore' | 'nothing' {
+  // These roles always close regardless of session state
+  if (['quick-view', 'palette', 'utility'].includes(role)) return 'close';
+  if (role === 'overlay') return 'close-and-restore';
+  if (role === 'child-content') return 'close';
+  // workspace and content: only close in transient sessions
+  if (sessionState === 'transient') return 'close';
+  return 'nothing';
+}
+
+/**
  * Core ESC handling logic for a BrowserWindow.
  * Called when ESC keyDown is detected on the window's own webContents
  * or on a webview guest webContents within the window.
+ *
+ * Uses IZUI window roles to determine behavior via escPolicy().
  *
  * @param bw - The BrowserWindow to handle ESC for
  * @param source - 'host' if from the window's own webContents, 'webview' if from a guest
  */
 async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webview'): Promise<void> {
-  // Get window info
   const entry = getWindowInfo(bw.id);
-  const params = entry?.params || {};
-  const escapeMode = (params.escapeMode as string) || 'auto';
+  if (!entry || bw.isDestroyed()) return;
 
-  // Always log ESC handling for debugging
-  console.log(`[esc] ESC keyDown - window ${bw.id}, source: ${source}, escapeMode: ${escapeMode}, transient: ${params.transient}, url: ${params.address}`);
+  const params = entry.params;
+  const role = (params.role as string) || 'utility';
+  console.log(`[esc] ESC keyDown - window ${bw.id}, source: ${source}, role: ${role}, url: ${params.address}`);
 
-  // For 'ignore' mode, do nothing - let ESC pass through
-  if (escapeMode === 'ignore') {
-    DEBUG && console.log('Ignore mode - not handling ESC');
+  // escapeMode: 'ignore' is a hard override — let ESC pass through entirely
+  if (params.escapeMode === 'ignore') {
+    DEBUG && console.log('[esc] Ignore mode - not handling ESC');
     return;
   }
 
-  // For 'navigate' mode, always ask renderer first.
-  // If renderer handles internally, do nothing.
-  // If renderer returns { handled: false }, backend applies IZUI close policy:
-  //   - Child windows (have parentWindowId) close to return to parent
-  //   - Transient windows close
-  //   - Active root windows do NOT close (IZUI policy)
-  if (escapeMode === 'navigate') {
-    console.log(`[esc] navigate mode - forwarding to renderer`);
-    const response = await askRendererToHandleEscape(bw);
-    console.log(`[esc] navigate mode response:`, response);
-    if (response.handled) {
-      return;
-    }
-    // Renderer didn't handle - apply IZUI close policy
-    const coordinator = getIzuiCoordinator();
-    const isChild = !!params.parentWindowId;
-    const isTransient = coordinator.isTransient() || params.transient === true;
-    if (isChild || isTransient || response.close) {
-      console.log(`[esc] navigate mode - closing (isChild: ${isChild}, isTransient: ${isTransient}, close: ${response.close})`);
-      closeOrHideWindow(bw.id);
-    } else {
-      console.log('[esc] navigate mode - active root window, NOT closing (IZUI policy)');
-    }
-    return;
+  // Ask renderer first (dialog close, internal navigation, etc.)
+  const response = await askRendererToHandleEscape(bw);
+  if (response.handled) return;
+
+  // Look up session state and apply role-based policy
+  const coordinator = getIzuiCoordinator();
+  const sessionState = coordinator.getState();
+  const action = escPolicy(sessionState, role);
+  console.log(`[esc] escPolicy(${sessionState}, ${role}) -> ${action}`);
+
+  if (action === 'close' || action === 'close-and-restore') {
+    closeOrHideWindow(bw.id);
   }
-
-  // For 'auto' mode, check if transient (no focused window when opened)
-  if (escapeMode === 'auto') {
-    // Use IZUI coordinator for consistent state management
-    const coordinator = getIzuiCoordinator();
-    const isCoordinatorOverlay = coordinator.isOverlay();
-
-    // Overlay windows always close on ESC (they're full-screen temporary views)
-    const isOverlay = isCoordinatorOverlay || params.overlay === true || params.overlayHiddenWindows;
-
-    // Child windows (have a parentWindowId) always close on ESC at root
-    // This replaces the client-side parentWindowId check in izui.js
-    const isChild = !!params.parentWindowId;
-
-    // Check transient from coordinator (re-evaluated) or window params (fallback)
-    const isTransient = coordinator.isTransient() || params.transient === true;
-
-    if (isChild || isTransient || isOverlay) {
-      // Child window, transient mode, or overlay - ask renderer first, then close
-      if (isChild && !isTransient && !isOverlay) {
-        // Child in active mode: ask renderer for internal nav first
-        console.log(`[esc] auto mode (child window) - asking renderer before closing`);
-        const response = await askRendererToHandleEscape(bw);
-        console.log(`[esc] Child window escape response:`, response);
-        if (response.handled) {
-          return;
-        }
-        // Not handled internally - close the child window
-        console.log('[esc] Child window at root - closing to return to parent');
-      } else {
-        // Transient mode or overlay - close immediately
-        console.log('[esc] Auto mode (transient/overlay/transient-child) - closing directly, isChild:', isChild, 'coordinator.isTransient:', coordinator.isTransient());
-      }
-    } else {
-      // Active mode, root window (no parent) - ESC only navigates internal state, does NOT close
-      // Unless renderer explicitly requests close via { close: true }
-      console.log(`[esc] auto mode (non-transient/active, root window) - asking renderer to handle`);
-      const response = await askRendererToHandleEscape(bw);
-      console.log(`[esc] Renderer escape response (auto/active):`, response);
-      if (response.handled) {
-        return;
-      }
-      if (response.close) {
-        console.log('[esc] Active mode - renderer explicitly requested close');
-        closeOrHideWindow(bw.id);
-        return;
-      }
-      console.log('[esc] Active mode (root window) - renderer did not handle, NOT closing (IZUI policy)');
-      return;
-    }
-  }
-
-  // Only 'close' mode and transient 'auto' mode reach here
-  console.log('[esc] Closing/hiding window via closeOrHideWindow');
-  closeOrHideWindow(bw.id);
+  // 'nothing' -> return silently (active workspace/content at root)
 }
 
 /**

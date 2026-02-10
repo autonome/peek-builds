@@ -1845,11 +1845,35 @@ export function registerWindowHandlers(): void {
       // Add to window manager with modal parameter
       // Note: isTransient was determined BEFORE window creation (at top of handler)
       // to avoid the race condition where the new window becomes focused before we check
+      const parentWindowId = isRealParent ? openerWindow!.id : null;
+
+      // Phase 1: Compute IZUI role from existing params if not explicitly provided
+      let role = options.role as string | undefined;
+      if (!role) {
+        if (options.overlay === true) {
+          role = 'overlay';
+        } else if (options.modal === true && options.keepLive === true) {
+          role = 'palette';
+        } else if (options.modal === true) {
+          role = 'quick-view';
+        } else if (options.escapeMode === 'navigate') {
+          role = 'workspace';
+        } else if (parentWindowId != null && isWebPage) {
+          role = 'child-content';
+        } else if (isWebPage) {
+          role = 'content';
+        } else {
+          role = 'utility';
+        }
+      }
+      console.log('[izui] Window role:', role, 'for:', url);
+
       const windowParams = {
         ...options,
         address: url,
         transient: isTransient,
-        parentWindowId: isRealParent ? openerWindow!.id : null,
+        parentWindowId,
+        role,
       };
       console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient);
       registerWindow(win.id, msg.source, windowParams);
