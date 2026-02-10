@@ -80,15 +80,16 @@ relaunch_ios_app() {
     xcrun simctl terminate booted "$IOS_BUNDLE_ID" 2>/dev/null || true
     sleep 1
 
-    # Launch with optional auto-sync environment variable
+    # Launch with deterministic profile ID + optional auto-sync
     if [ "$auto_sync" = "true" ]; then
-        echo "  [AUTO-SYNC] Launching with PEEK_AUTO_SYNC=true"
-        SIMCTL_CHILD_PEEK_AUTO_SYNC=true xcrun simctl launch booted "$IOS_BUNDLE_ID" 2>/dev/null || {
+        echo "  [AUTO-SYNC] Launching with PEEK_PROFILE_ID=$IOS_PROFILE_ID PEEK_AUTO_SYNC=true"
+        SIMCTL_CHILD_PEEK_PROFILE_ID="$IOS_PROFILE_ID" SIMCTL_CHILD_PEEK_AUTO_SYNC=true xcrun simctl launch booted "$IOS_BUNDLE_ID" 2>/dev/null || {
             echo "  WARNING: Failed to launch iOS app. Is it installed?"
             return 1
         }
     else
-        xcrun simctl launch booted "$IOS_BUNDLE_ID" 2>/dev/null || {
+        echo "  Launching with PEEK_PROFILE_ID=$IOS_PROFILE_ID"
+        SIMCTL_CHILD_PEEK_PROFILE_ID="$IOS_PROFILE_ID" xcrun simctl launch booted "$IOS_BUNDLE_ID" 2>/dev/null || {
             echo "  WARNING: Failed to launch iOS app. Is it installed?"
             return 1
         }
@@ -367,7 +368,7 @@ config = {
     "profiles": [
         {
             "id": "$IOS_PROFILE_ID",
-            "name": "Development",
+            "name": "E2E Test",
             "createdAt": "2026-01-27T00:00:00.000Z",
             "lastUsed": "2026-01-27T00:00:00.000Z",
             "server_url": "$SERVER_URL",

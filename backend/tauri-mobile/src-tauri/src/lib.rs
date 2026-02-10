@@ -670,8 +670,8 @@ fn load_profile_config_from_file() -> ProfileConfig {
                         println!("[Rust] Loaded profile config: current={}", config.current_profile_id);
                         // Check if we need to migrate old slug-based databases
                         migrate_slug_databases_to_uuid(&config);
-                        // Ensure Development profile exists in dev builds
-                        ensure_dev_profile_in_dev_build(&mut config);
+                        // Apply test profile override or ensure dev profile
+                        apply_profile_override(&mut config);
                         return config;
                     }
                     Err(e) => {
@@ -682,8 +682,8 @@ fn load_profile_config_from_file() -> ProfileConfig {
                             Ok(old_config) => {
                                 println!("[Rust] Found old format profiles.json, migrating...");
                                 let mut new_config = migrate_old_profile_config(old_config);
-                                // Ensure Development profile exists in dev builds
-                                ensure_dev_profile_in_dev_build(&mut new_config);
+                                // Apply test profile override or ensure dev profile
+                                apply_profile_override(&mut new_config);
                                 save_profile_config(&new_config);
                                 return new_config;
                             }
@@ -701,7 +701,8 @@ fn load_profile_config_from_file() -> ProfileConfig {
     }
 
     // Create default config
-    let config = create_default_profile_config();
+    let mut config = create_default_profile_config();
+    apply_profile_override(&mut config);
     save_profile_config(&config);
     config
 }
@@ -836,6 +837,20 @@ fn migrate_slug_databases_to_uuid(config: &ProfileConfig) {
             *guard = Some(updated_config);
         }
         println!("[Rust] Migrated sync settings to profiles.json");
+    }
+}
+
+/// Apply PEEK_PROFILE_ID env var override for e2e testing.
+/// When set, skips ensure_dev_profile_in_dev_build() and forces the active profile ID.
+fn apply_profile_override(config: &mut ProfileConfig) {
+    match std::env::var("PEEK_PROFILE_ID") {
+        Ok(ref id) if is_valid_uuid(id) => {
+            println!("[Rust] PEEK_PROFILE_ID override: {}", id);
+            config.current_profile_id = id.clone();
+        }
+        _ => {
+            ensure_dev_profile_in_dev_build(config);
+        }
     }
 }
 
@@ -1002,7 +1017,7 @@ fn get_db_path() -> Option<PathBuf> {
             // This ensures the database UUID is saved to profiles.json (no orphaned DBs)
             ios_log("No profiles found, creating and saving default profile config");
             let mut new_config = create_default_profile_config();
-            ensure_dev_profile_in_dev_build(&mut new_config);
+            apply_profile_override(&mut new_config);
             save_profile_config(&new_config);
             // Update cache
             if let Ok(mut guard) = PROFILE_CONFIG.write() {
