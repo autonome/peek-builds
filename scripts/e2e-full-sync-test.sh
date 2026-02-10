@@ -311,13 +311,13 @@ echo "  Desktop configured (pulled server items)"
 # Desktop schema: content (no url column), camelCase columns, integer timestamps
 DESKTOP_DB="$DESKTOP_PROFILE_DIR/datastore.sqlite"
 sqlite3 "$DESKTOP_DB" << 'SQLEOF'
-INSERT INTO items (id, type, content, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt)
+INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
 VALUES
   (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(6))),
-   'url', 'https://example.com/desktop-origin-1', '{}', '', '', 0,
+   'url', 'https://example.com/desktop-origin-1', '{}', '', 0,
    strftime('%s','now') * 1000, strftime('%s','now') * 1000, 0),
   (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(6))),
-   'text', 'Note created on desktop', '{}', '', '', 0,
+   'text', 'Note created on desktop', '{}', '', 0,
    strftime('%s','now') * 1000, strftime('%s','now') * 1000, 0);
 SQLEOF
 
@@ -340,7 +340,7 @@ FROM items WHERE content = 'Note created on desktop';
 SQLEOF
 
 DESKTOP_TOTAL=$(sqlite3 "$DESKTOP_DB" "SELECT COUNT(*) FROM items WHERE deletedAt = 0;")
-DESKTOP_LOCAL=$(sqlite3 "$DESKTOP_DB" "SELECT COUNT(*) FROM items WHERE deletedAt = 0 AND syncSource = '';")
+DESKTOP_LOCAL=$(sqlite3 "$DESKTOP_DB" "SELECT COUNT(*) FROM items WHERE deletedAt = 0 AND syncId = '';")
 echo "  Desktop total items: $DESKTOP_TOTAL ($DESKTOP_LOCAL local-only, rest from server pull)"
 
 # Push desktop-origin items to server via full sync
@@ -740,12 +740,12 @@ echo "Step 12: Seeding cross-device identical URL..."
 
 CROSS_URL="https://example.com/cross-device-url"
 
-# Seed into desktop SQLite (no syncId, no syncSource — appears as local-only)
+# Seed into desktop SQLite (no syncId — appears as local-only)
 sqlite3 "$DESKTOP_DB" << SQLEOF
-INSERT INTO items (id, type, content, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt)
+INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
 VALUES
   (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(6))),
-   'url', '$CROSS_URL', '{}', '', '', 0,
+   'url', '$CROSS_URL', '{}', '', 0,
    strftime('%s','now') * 1000, strftime('%s','now') * 1000, 0);
 SQLEOF
 
@@ -754,7 +754,7 @@ sqlite3 "$DESKTOP_DB" << 'SQLEOF'
 INSERT OR IGNORE INTO tags (id, name, slug, createdAt) VALUES ('tag-crossdev', 'cross-device', 'cross-device', strftime('%s','now') * 1000);
 INSERT INTO item_tags (id, itemId, tagId, createdAt)
 SELECT 'it-' || hex(randomblob(8)), id, 'tag-crossdev', strftime('%s','now') * 1000
-FROM items WHERE content = 'https://example.com/cross-device-url' AND syncSource = '';
+FROM items WHERE content = 'https://example.com/cross-device-url' AND syncId = '';
 SQLEOF
 
 echo "  Seeded cross-device URL into desktop"
@@ -781,10 +781,10 @@ echo "Step 13: Seeding cross-device identical tagset..."
 
 # Seed into desktop SQLite
 sqlite3 "$DESKTOP_DB" << 'SQLEOF'
-INSERT INTO items (id, type, content, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt)
+INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
 VALUES
   (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' || hex(randomblob(6))),
-   'tagset', '', '{}', '', '', 0,
+   'tagset', '', '{}', '', 0,
    strftime('%s','now') * 1000, strftime('%s','now') * 1000, 0);
 
 INSERT OR IGNORE INTO tags (id, name, slug, createdAt) VALUES ('tag-shared', 'shared', 'shared', strftime('%s','now') * 1000);
@@ -792,12 +792,12 @@ INSERT OR IGNORE INTO tags (id, name, slug, createdAt) VALUES ('tag-tagset', 'ta
 
 INSERT INTO item_tags (id, itemId, tagId, createdAt)
 SELECT 'it-' || hex(randomblob(8)), id, 'tag-shared', strftime('%s','now') * 1000
-FROM items WHERE type = 'tagset' AND content = '' AND syncSource = '' AND deletedAt = 0
+FROM items WHERE type = 'tagset' AND content = '' AND syncId = '' AND deletedAt = 0
 ORDER BY createdAt DESC LIMIT 1;
 
 INSERT INTO item_tags (id, itemId, tagId, createdAt)
 SELECT 'it-' || hex(randomblob(8)), id, 'tag-tagset', strftime('%s','now') * 1000
-FROM items WHERE type = 'tagset' AND content = '' AND syncSource = '' AND deletedAt = 0
+FROM items WHERE type = 'tagset' AND content = '' AND syncId = '' AND deletedAt = 0
 ORDER BY createdAt DESC LIMIT 1;
 SQLEOF
 
@@ -1057,14 +1057,14 @@ echo "  Pre-seed counts: Server=$SERVER_PRE Desktop=$DESKTOP_PRE iOS=$IOS_PRE"
 
 # SERVER duplicates (camelCase schema, content column for url+text)
 sqlite3 "$SERVER_DB" << 'SQLEOF'
-INSERT INTO items (id, type, content, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt)
+INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
 VALUES
-  ('dup-srv-url-1', 'url', 'https://example.com/server-origin-1', '', '', '', 0, 1000000, 1000000, 0),
-  ('dup-srv-text-1', 'text', 'Note created on server', '', '', '', 0, 1000000, 1000000, 0);
+  ('dup-srv-url-1', 'url', 'https://example.com/server-origin-1', '', '', 0, 1000000, 1000000, 0),
+  ('dup-srv-text-1', 'text', 'Note created on server', '', '', 0, 1000000, 1000000, 0);
 
 -- Duplicate tagset: same tags as cross-device tagset (shared, tagset)
-INSERT INTO items (id, type, content, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt)
-VALUES ('dup-srv-tagset-1', 'tagset', NULL, '', '', '', 0, 1000000, 1000000, 0);
+INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+VALUES ('dup-srv-tagset-1', 'tagset', NULL, '', '', 0, 1000000, 1000000, 0);
 
 INSERT INTO item_tags (itemId, tagId, createdAt)
 SELECT 'dup-srv-tagset-1', id, 1000000 FROM tags WHERE name IN ('shared', 'tagset');
@@ -1073,14 +1073,14 @@ echo "  Seeded 3 duplicates into server DB"
 
 # DESKTOP duplicates (camelCase schema, item_tags has id column)
 sqlite3 "$DESKTOP_DB" << 'SQLEOF'
-INSERT INTO items (id, type, content, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt)
+INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
 VALUES
-  ('dup-desk-url-1', 'url', 'https://example.com/desktop-origin-1', '{}', '', '', 0, 1000000, 1000000, 0),
-  ('dup-desk-text-1', 'text', 'Note created on desktop', '{}', '', '', 0, 1000000, 1000000, 0);
+  ('dup-desk-url-1', 'url', 'https://example.com/desktop-origin-1', '{}', '', 0, 1000000, 1000000, 0),
+  ('dup-desk-text-1', 'text', 'Note created on desktop', '{}', '', 0, 1000000, 1000000, 0);
 
 -- Duplicate tagset
-INSERT INTO items (id, type, content, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt)
-VALUES ('dup-desk-tagset-1', 'tagset', '', '{}', '', '', 0, 1000000, 1000000, 0);
+INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+VALUES ('dup-desk-tagset-1', 'tagset', '', '{}', '', 0, 1000000, 1000000, 0);
 
 INSERT INTO item_tags (id, itemId, tagId, createdAt)
 SELECT 'it-dup-' || hex(randomblob(4)), 'dup-desk-tagset-1', id, 1000000
