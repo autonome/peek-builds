@@ -175,26 +175,11 @@ body {
   padding: 16px 24px;
 }
 
-.search-input {
+peek-input.search-input {
   width: 100%;
-  padding: 10px 14px;
-  font-size: 14px;
-  font-family: var(--theme-font-sans);
-  background: var(--base01);
-  border: 1px solid var(--base02);
-  border-radius: 8px;
-  color: var(--base05);
-  outline: none;
-  transition: all 0.15s ease;
-}
-
-.search-input:focus {
-  border-color: var(--base0D);
-  background: var(--base00);
-}
-
-.search-input::placeholder {
-  color: var(--base03);
+  --peek-input-bg: var(--base01);
+  --peek-input-border: var(--base02);
+  --peek-input-height: 40px;
 }
 
 /* Content wrapper - sidebar + main */
@@ -269,42 +254,28 @@ body {
   padding: 16px 24px;
 }
 
-/* Cards grid */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+/* Cards grid - peek-grid custom properties */
+peek-grid.cards {
+  --peek-grid-min-item-width: 280px;
+  --peek-grid-gap: 12px;
 }
 
-/* Card base */
-.card {
-  background: var(--base01);
-  border-radius: 8px;
-  padding: 14px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* Card customization - peek-card custom properties */
+peek-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-border: transparent;
+  --peek-card-radius: 8px;
+  --peek-card-padding: 14px;
+  --peek-card-gap: 10px;
 }
 
-.card:hover {
-  background: var(--base02);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.card.selected {
-  background: var(--base02);
+peek-card[selected] {
+  --peek-card-bg: var(--base02);
   outline: 2px solid var(--base0D);
   outline-offset: -2px;
 }
 
-.card.selected:hover {
-  background: var(--base03);
-}
-
-/* Card header (favicon + content) */
+/* Card slotted content - styles for elements inside peek-card slots */
 .card-header {
   display: flex;
   align-items: flex-start;
@@ -380,60 +351,10 @@ body {
 }
 
 /* Modal overlay */
-.modal-overlay {
-  display: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal-overlay.visible {
-  display: flex;
-}
-
-.modal {
-  background: var(--base00);
-  border-radius: 12px;
-  width: 90%;
-  max-width: 500px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--base02);
-}
-
-.modal-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--base05);
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  font-size: 24px;
-  color: var(--base04);
-  cursor: pointer;
-  padding: 0;
-  line-height: 1;
-}
-
-.modal-close:hover {
-  color: var(--base05);
+/* Modal - peek-dialog handles overlay and structure */
+peek-dialog#editModal {
+  --peek-dialog-bg: var(--base00);
+  --peek-dialog-overlay-bg: rgba(0, 0, 0, 0.5);
 }
 
 .modal-body {

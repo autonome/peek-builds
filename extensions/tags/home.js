@@ -241,10 +241,8 @@ const setupEventListeners = () => {
   });
 
   // Modal close
-  document.querySelector('.modal-close').addEventListener('click', closeModal);
-  modalOverlay.addEventListener('click', (e) => {
-    if (e.target === modalOverlay) closeModal();
-  });
+  // Modal close - peek-dialog handles close-on-backdrop and close-on-escape automatically
+  modalOverlay.addEventListener('close', closeModal);
 
   // New tag input
   const newTagInput = document.querySelector('.new-tag-input');
@@ -269,7 +267,7 @@ const setupEventListeners = () => {
   if (api.escape) {
     api.escape.onEscape(() => {
       // If modal is open, close it
-      if (modalOverlay.classList.contains('visible')) {
+      if (modalOverlay.open) {
         closeModal();
         return { handled: true };
       }
@@ -307,7 +305,7 @@ const setupEventListeners = () => {
  */
 const handleKeydown = (e) => {
   // Ignore if modal is open and not in an input
-  if (modalOverlay.classList.contains('visible')) {
+  if (modalOverlay.open) {
     if (e.key === 'Escape') {
       closeModal();
     }
@@ -383,7 +381,7 @@ const handleKeydown = (e) => {
 /**
  * Get all cards in the current view
  */
-const getCards = () => Array.from(document.querySelectorAll('.cards .card'));
+const getCards = () => Array.from(document.querySelectorAll('.cards peek-card'));
 
 /**
  * Get number of columns in the grid
@@ -405,7 +403,7 @@ const getGridColumns = (cards) => {
 const updateSelection = () => {
   const cards = getCards();
   cards.forEach((card, i) => {
-    card.classList.toggle('selected', i === state.selectedIndex);
+    card.selected = (i === state.selectedIndex);
   });
 
   const selected = cards[state.selectedIndex];
@@ -525,25 +523,32 @@ const renderActiveTagIndicator = () => {
   const indicator = document.querySelector('.active-tag-indicator');
 
   if (state.activeTags.length > 0) {
-    indicator.innerHTML = state.activeTags.map(tag => `
-      <span class="active-tag-chip" data-tag-id="${tag.id}">
-        ${escapeHtml(tag.name)}
-        <button class="clear-tag" title="Remove tag">&times;</button>
-      </span>
-    `).join('') + `
-      <button class="clear-all-tags" title="Clear all filters">&times; All</button>
-    `;
-    indicator.classList.add('visible');
+    indicator.innerHTML = '';
 
-    indicator.querySelectorAll('.active-tag-chip .clear-tag').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const tagId = parseInt(btn.parentElement.dataset.tagId, 10);
-        removeActiveTag(tagId);
-      });
+    state.activeTags.forEach(tag => {
+      const chip = document.createElement('peek-button');
+      chip.variant = 'primary';
+      chip.size = 'sm';
+      chip.className = 'active-tag-chip';
+      chip.dataset.tagId = tag.id;
+      chip.innerHTML = `
+        ${escapeHtml(tag.name)}
+        <span slot="suffix" class="clear-tag" title="Remove tag">&times;</span>
+      `;
+      chip.addEventListener('click', () => removeActiveTag(tag.id));
+      indicator.appendChild(chip);
     });
 
-    indicator.querySelector('.clear-all-tags').addEventListener('click', clearTagFilter);
+    const clearAll = document.createElement('peek-button');
+    clearAll.variant = 'ghost';
+    clearAll.size = 'sm';
+    clearAll.className = 'clear-all-tags';
+    clearAll.textContent = '× All';
+    clearAll.title = 'Clear all filters';
+    clearAll.addEventListener('click', clearTagFilter);
+    indicator.appendChild(clearAll);
+
+    indicator.classList.add('visible');
   } else {
     indicator.classList.remove('visible');
     indicator.innerHTML = '';
@@ -646,8 +651,8 @@ const renderCards = () => {
  * Create a card element for an item
  */
 const createItemCard = (item) => {
-  const card = document.createElement('div');
-  card.className = 'card';
+  const card = document.createElement('peek-card');
+  card.interactive = true;
   card.dataset.itemId = item.id;
 
   const tags = state.itemTags.get(item.id) || [];
@@ -837,14 +842,14 @@ const openEditModal = (item) => {
   document.querySelector('.new-tag-input').value = '';
 
   // Show modal
-  modalOverlay.classList.add('visible');
+  modalOverlay.showModal();
 };
 
 /**
  * Close the edit modal
  */
 const closeModal = () => {
-  modalOverlay.classList.remove('visible');
+  modalOverlay.close();
   state.editingItem = null;
 };
 
