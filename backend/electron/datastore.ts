@@ -675,71 +675,83 @@ function migrateItemTypes(): void {
   if (needsConstraintUpdate || noteItems.length > 0) {
     DEBUG && console.log('main', `Migrating items table: constraint update=${needsConstraintUpdate}, note items=${noteItems.length}`);
 
-    // SQLite doesn't allow modifying CHECK constraints, so we need to recreate the table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS items_new (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
-        content TEXT,
-        mimeType TEXT DEFAULT '',
-        metadata TEXT DEFAULT '{}',
-        syncId TEXT DEFAULT '',
-        syncedAt INTEGER DEFAULT 0,
-        createdAt INTEGER NOT NULL,
-        updatedAt INTEGER NOT NULL,
-        deletedAt INTEGER DEFAULT 0,
-        starred INTEGER DEFAULT 0,
-        archived INTEGER DEFAULT 0,
-        visitCount INTEGER DEFAULT 0,
-        lastVisitAt INTEGER DEFAULT 0
-      )
-    `);
+    // Disable FK enforcement during table recreation — other tables
+    // (item_visits, item_group_members, item_events) reference items(id)
+    // and DROP TABLE would fail with FOREIGN KEY constraint errors.
+    db.pragma('foreign_keys = OFF');
 
-    // Copy data, converting 'note' type
-    const allItems = db.prepare(`SELECT * FROM items`).all() as Array<Record<string, unknown>>;
-    const insertStmt = db.prepare(`
-      INSERT INTO items_new (id, type, content, mimeType, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    try {
+      // Clean up any leftover temp table from a previous failed migration attempt
+      db.exec(`DROP TABLE IF EXISTS items_new`);
 
-    for (const item of allItems) {
-      let newType = item.type as string;
-      if (newType === 'note') {
-        newType = isUrlLike(item.content as string | null) ? 'url' : 'text';
+      // SQLite doesn't allow modifying CHECK constraints, so we need to recreate the table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS items_new (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
+          content TEXT,
+          mimeType TEXT DEFAULT '',
+          metadata TEXT DEFAULT '{}',
+          syncId TEXT DEFAULT '',
+          syncedAt INTEGER DEFAULT 0,
+          createdAt INTEGER NOT NULL,
+          updatedAt INTEGER NOT NULL,
+          deletedAt INTEGER DEFAULT 0,
+          starred INTEGER DEFAULT 0,
+          archived INTEGER DEFAULT 0,
+          visitCount INTEGER DEFAULT 0,
+          lastVisitAt INTEGER DEFAULT 0
+        )
+      `);
+
+      // Copy data, converting 'note' type
+      const allItems = db.prepare(`SELECT * FROM items`).all() as Array<Record<string, unknown>>;
+      const insertStmt = db.prepare(`
+        INSERT INTO items_new (id, type, content, mimeType, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const item of allItems) {
+        let newType = item.type as string;
+        if (newType === 'note') {
+          newType = isUrlLike(item.content as string | null) ? 'url' : 'text';
+        }
+        insertStmt.run(
+          item.id,
+          newType,
+          item.content,
+          item.mimeType || '',
+          item.metadata || '{}',
+          item.syncId || '',
+          item.syncedAt || 0,
+          item.createdAt,
+          item.updatedAt,
+          item.deletedAt || 0,
+          item.starred || 0,
+          item.archived || 0,
+          item.visitCount || 0,
+          item.lastVisitAt || 0
+        );
       }
-      insertStmt.run(
-        item.id,
-        newType,
-        item.content,
-        item.mimeType || '',
-        item.metadata || '{}',
-        item.syncId || '',
-        item.syncedAt || 0,
-        item.createdAt,
-        item.updatedAt,
-        item.deletedAt || 0,
-        item.starred || 0,
-        item.archived || 0,
-        item.visitCount || 0,
-        item.lastVisitAt || 0
-      );
+
+      db.exec(`DROP TABLE items`);
+      db.exec(`ALTER TABLE items_new RENAME TO items`);
+
+      // Recreate indexes
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
+        CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
+        CREATE INDEX IF NOT EXISTS idx_items_deletedAt ON items(deletedAt);
+        CREATE INDEX IF NOT EXISTS idx_items_createdAt ON items(createdAt DESC);
+        CREATE INDEX IF NOT EXISTS idx_items_starred ON items(starred);
+        CREATE INDEX IF NOT EXISTS idx_items_lastVisitAt ON items(lastVisitAt);
+        CREATE INDEX IF NOT EXISTS idx_items_visitCount ON items(visitCount);
+      `);
+
+      DEBUG && console.log('main', 'Items table migration complete');
+    } finally {
+      db.pragma('foreign_keys = ON');
     }
-
-    db.exec(`DROP TABLE items`);
-    db.exec(`ALTER TABLE items_new RENAME TO items`);
-
-    // Recreate indexes
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
-      CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
-      CREATE INDEX IF NOT EXISTS idx_items_deletedAt ON items(deletedAt);
-      CREATE INDEX IF NOT EXISTS idx_items_createdAt ON items(createdAt DESC);
-      CREATE INDEX IF NOT EXISTS idx_items_starred ON items(starred);
-      CREATE INDEX IF NOT EXISTS idx_items_lastVisitAt ON items(lastVisitAt);
-      CREATE INDEX IF NOT EXISTS idx_items_visitCount ON items(visitCount);
-    `);
-
-    DEBUG && console.log('main', 'Items table migration complete');
   }
 }
 
@@ -1436,55 +1448,67 @@ function migrateEntityType(): void {
     const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[];
     const columnNames = columns.map(c => c.name);
 
-    // Recreate table with updated CHECK constraint
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS items_entity_mig (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
-        content TEXT,
-        mimeType TEXT DEFAULT '',
-        metadata TEXT DEFAULT '{}',
-        syncId TEXT DEFAULT '',
-        syncedAt INTEGER DEFAULT 0,
-        createdAt INTEGER NOT NULL,
-        updatedAt INTEGER NOT NULL,
-        deletedAt INTEGER DEFAULT 0,
-        starred INTEGER DEFAULT 0,
-        archived INTEGER DEFAULT 0,
-        visitCount INTEGER DEFAULT 0,
-        lastVisitAt INTEGER DEFAULT 0,
-        frecencyScore INTEGER DEFAULT 0,
-        title TEXT DEFAULT '',
-        domain TEXT DEFAULT '',
-        favicon TEXT DEFAULT ''
-      )
-    `);
+    // Disable FK enforcement during table recreation — other tables
+    // (item_visits, item_group_members, item_events) reference items(id)
+    // and DROP TABLE would fail with FOREIGN KEY constraint errors.
+    db.pragma('foreign_keys = OFF');
 
-    // Build column list for INSERT - only include columns that exist in both tables
-    const migColumns = ['id', 'type', 'content', 'mimeType', 'metadata', 'syncId', 'syncedAt',
-      'createdAt', 'updatedAt', 'deletedAt', 'starred', 'archived', 'visitCount', 'lastVisitAt',
-      'frecencyScore', 'title', 'domain', 'favicon'];
-    const existingCols = migColumns.filter(c => columnNames.includes(c));
-    const colList = existingCols.join(', ');
+    try {
+      // Clean up any leftover temp table from a previous failed migration attempt
+      db.exec(`DROP TABLE IF EXISTS items_entity_mig`);
 
-    db.exec(`INSERT INTO items_entity_mig (${colList}) SELECT ${colList} FROM items`);
-    db.exec(`DROP TABLE items`);
-    db.exec(`ALTER TABLE items_entity_mig RENAME TO items`);
+      // Recreate table with updated CHECK constraint
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS items_entity_mig (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
+          content TEXT,
+          mimeType TEXT DEFAULT '',
+          metadata TEXT DEFAULT '{}',
+          syncId TEXT DEFAULT '',
+          syncedAt INTEGER DEFAULT 0,
+          createdAt INTEGER NOT NULL,
+          updatedAt INTEGER NOT NULL,
+          deletedAt INTEGER DEFAULT 0,
+          starred INTEGER DEFAULT 0,
+          archived INTEGER DEFAULT 0,
+          visitCount INTEGER DEFAULT 0,
+          lastVisitAt INTEGER DEFAULT 0,
+          frecencyScore INTEGER DEFAULT 0,
+          title TEXT DEFAULT '',
+          domain TEXT DEFAULT '',
+          favicon TEXT DEFAULT ''
+        )
+      `);
 
-    // Recreate standard indexes
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
-      CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
-      CREATE INDEX IF NOT EXISTS idx_items_deletedAt ON items(deletedAt);
-      CREATE INDEX IF NOT EXISTS idx_items_createdAt ON items(createdAt DESC);
-      CREATE INDEX IF NOT EXISTS idx_items_starred ON items(starred);
-      CREATE INDEX IF NOT EXISTS idx_items_lastVisitAt ON items(lastVisitAt);
-      CREATE INDEX IF NOT EXISTS idx_items_visitCount ON items(visitCount);
-      CREATE INDEX IF NOT EXISTS idx_items_frecencyScore ON items(frecencyScore DESC);
-      CREATE INDEX IF NOT EXISTS idx_items_domain ON items(domain);
-    `);
+      // Build column list for INSERT - only include columns that exist in both tables
+      const migColumns = ['id', 'type', 'content', 'mimeType', 'metadata', 'syncId', 'syncedAt',
+        'createdAt', 'updatedAt', 'deletedAt', 'starred', 'archived', 'visitCount', 'lastVisitAt',
+        'frecencyScore', 'title', 'domain', 'favicon'];
+      const existingCols = migColumns.filter(c => columnNames.includes(c));
+      const colList = existingCols.join(', ');
 
-    DEBUG && console.log('main', 'Entity type migration complete');
+      db.exec(`INSERT INTO items_entity_mig (${colList}) SELECT ${colList} FROM items`);
+      db.exec(`DROP TABLE items`);
+      db.exec(`ALTER TABLE items_entity_mig RENAME TO items`);
+
+      // Recreate standard indexes
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
+        CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
+        CREATE INDEX IF NOT EXISTS idx_items_deletedAt ON items(deletedAt);
+        CREATE INDEX IF NOT EXISTS idx_items_createdAt ON items(createdAt DESC);
+        CREATE INDEX IF NOT EXISTS idx_items_starred ON items(starred);
+        CREATE INDEX IF NOT EXISTS idx_items_lastVisitAt ON items(lastVisitAt);
+        CREATE INDEX IF NOT EXISTS idx_items_visitCount ON items(visitCount);
+        CREATE INDEX IF NOT EXISTS idx_items_frecencyScore ON items(frecencyScore DESC);
+        CREATE INDEX IF NOT EXISTS idx_items_domain ON items(domain);
+      `);
+
+      DEBUG && console.log('main', 'Entity type migration complete');
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
   }
 
   // Always ensure entity-specific indexes exist
