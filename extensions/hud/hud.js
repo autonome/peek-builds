@@ -101,19 +101,23 @@ const updateStatsDisplay = () => {
  */
 const refreshWindowInfo = async () => {
   try {
-    // Get list of windows
-    const windowsResult = await api.window.list();
-    if (windowsResult.success && windowsResult.data) {
-      windowCount = windowsResult.data.length;
+    // Get list of windows and the focused visible window ID
+    const [windowsResult, focusedWindowId] = await Promise.all([
+      api.window.list(),
+      api.window.getFocusedVisibleWindowId()
+    ]);
 
-      // Find focused window (excluding HUD itself)
-      const focusedWindow = windowsResult.data.find(w =>
-        w.focused && !w.url?.includes('hud/hud.html')
-      );
+    if (windowsResult.success && windowsResult.windows) {
+      windowCount = windowsResult.windows.length;
+
+      // Find the focused visible window in the list
+      const focusedWindow = focusedWindowId
+        ? windowsResult.windows.find(w => w.id === focusedWindowId)
+        : null;
 
       if (focusedWindow) {
         currentWindowInfo = {
-          title: focusedWindow.label || 'Untitled',
+          title: focusedWindow.title || 'Untitled',
           url: focusedWindow.url || focusedWindow.source
         };
       } else {
@@ -148,12 +152,18 @@ const refreshIzuiState = async () => {
  */
 const refreshMode = async () => {
   try {
-    const result = await api.context.get('mode');
+    // Get the focused visible window's mode (not the HUD's own mode)
+    const focusedWindowId = await api.window.getFocusedVisibleWindowId();
+    const result = await api.context.get('mode', focusedWindowId);
     if (result.success && result.data) {
       currentMode = result.data.value || 'default';
       currentModeMetadata = result.data.metadata || {};
-      updateModeDisplay();
+    } else {
+      // No focused window or no mode set — show "default"
+      currentMode = 'default';
+      currentModeMetadata = {};
     }
+    updateModeDisplay();
   } catch (error) {
     console.error('[hud] Error getting mode:', error);
   }
@@ -196,17 +206,20 @@ const init = async () => {
     }
   }, api.scopes.GLOBAL);
 
-  // Subscribe to window focus changes
+  // Subscribe to window focus changes — refresh mode + window info
   api.subscribe('window:focused', () => {
+    refreshMode();
     refreshWindowInfo();
   }, api.scopes.GLOBAL);
 
   // Subscribe to window open/close events
   api.subscribe('window:opened', () => {
+    refreshMode();
     refreshWindowInfo();
   }, api.scopes.GLOBAL);
 
   api.subscribe('window:closed', () => {
+    refreshMode();
     refreshWindowInfo();
   }, api.scopes.GLOBAL);
 

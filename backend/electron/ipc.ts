@@ -2046,6 +2046,10 @@ export function registerWindowHandlers(): void {
         if (!winInfo?.params?.modal) {
           trackVisibleWindowFocus(win);
         }
+        // Notify HUD and other listeners that a window gained focus
+        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:focused', {
+          id: win.id
+        });
       });
       // Also track immediately if this is a content/visible window (non-modal only)
       trackContentWindowFocus(win);
@@ -2144,6 +2148,13 @@ export function registerWindowHandlers(): void {
 
       // Show dock when window opens
       updateDockVisibility();
+
+      // Notify HUD and other listeners that a window was opened
+      publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:opened', {
+        id: win.id,
+        url,
+        source: msg.source
+      });
 
       return { success: true, id: win.id };
     } catch (error) {
