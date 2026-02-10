@@ -2,21 +2,63 @@
  * HUD Extension Tests
  *
  * Tests the always-on-top HUD overlay that shows mode, IZUI state, and window info.
+ *
+ * Test philosophy: deterministic — no timeouts as assertions.
+ * Uses polling via evaluate()/waitForFunction instead of sleep + snapshot.
  */
 
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
-import { waitForExtensionsReady, sleep, waitForCommand } from '../helpers/window-utils';
+import { waitForExtensionsReady, sleep } from '../helpers/window-utils';
 
 // Shared app for tests
 let sharedApp: DesktopApp;
 let sharedBgWindow: Page;
 
-// Helper to toggle HUD
+/**
+ * Wait for #mode-value text content to match expected value in HUD window.
+ * Deterministic polling — no sleep-based assertions.
+ */
+async function waitForHudModeValue(
+  hudWindow: Page,
+  expected: string | ((text: string) => boolean),
+  timeout = 5000
+): Promise<string> {
+  if (typeof expected === 'string') {
+    await hudWindow.waitForFunction(
+      ([sel, val]: [string, string]) => {
+        const el = document.querySelector(sel);
+        return el && el.textContent === val;
+      },
+      ['#mode-value', expected] as [string, string],
+      { timeout }
+    );
+    return expected;
+  } else {
+    // For predicate-based matching, poll in evaluate
+    const text = await hudWindow.evaluate(
+      async ([sel, timeoutMs]: [string, number]) => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const el = document.querySelector(sel);
+          if (el && el.textContent && el.textContent !== '-') return el.textContent;
+          await new Promise(r => setTimeout(r, 100));
+        }
+        const el = document.querySelector(sel);
+        return el?.textContent || null;
+      },
+      ['#mode-value', timeout] as [string, number]
+    );
+    return text || '';
+  }
+}
+
+// Helper to toggle HUD and wait for the window to appear/disappear
 const toggleHUD = async () => {
   await sharedBgWindow.evaluate(async () => {
     (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
   });
+  // Allow the command to be processed and window to open/close
   await sleep(500);
 };
 
@@ -32,16 +74,23 @@ test.afterAll(async () => {
 
 test.describe('HUD Extension @desktop', () => {
   test('HUD extension loads', async () => {
-    // Verify HUD extension is registered
-    const extensions = await sharedBgWindow.evaluate(async () => {
-      const exts = await (window as any).app.extensions.list();
-      return exts.data || [];
+    // Verify the HUD extension loaded by executing its command.
+    // The command was registered by the HUD extension's init, so a successful
+    // toggle proves the extension loaded, initialized, and registered its command.
+    await sharedBgWindow.evaluate(async () => {
+      (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
     });
+    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    expect(hudWindow).toBeTruthy();
 
-    const hudExt = extensions.find((ext: any) => ext.id === 'hud');
-    expect(hudExt).toBeTruthy();
-    expect(hudExt.manifest.name).toBe('HUD');
-    expect(hudExt.manifest.builtin).toBe(true);
+    // Verify the HUD has basic DOM structure
+    await hudWindow.waitForSelector('#hud-container', { timeout: 5000 });
+
+    // Clean up - toggle off
+    await sharedBgWindow.evaluate(async () => {
+      (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
+    });
+    await sleep(500);
   });
 
   test('hud command is registered', async () => {
@@ -92,9 +141,9 @@ test.describe('HUD Extension @desktop', () => {
       return await (window as any).app.context.setMode('default');
     });
 
-    await sleep(500);
+    // Deterministic wait: poll until #mode-value shows 'default'
+    await waitForHudModeValue(hudWindow, 'default');
 
-    // Get mode value - should be 'default' from the subscription
     const modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
     expect(modeValue).toBeTruthy();
     expect(['default', 'page', 'group', 'settings']).toContain(modeValue);
@@ -104,13 +153,13 @@ test.describe('HUD Extension @desktop', () => {
       return await (window as any).app.context.setMode('page', { metadata: { url: 'https://example.com' } });
     });
 
-    await sleep(500);
+    // Deterministic wait: poll until #mode-value shows 'page'
+    await waitForHudModeValue(hudWindow, 'page');
 
-    // Verify mode updated in HUD
     const newModeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
     expect(newModeValue).toBe('page');
 
-    // Verify mode color class is applied
+    // Verify mode color class is applied (already updated since text matched)
     const modeClasses = await hudWindow.$eval('#mode-value', el => el.className);
     expect(modeClasses).toContain('mode-page');
 
@@ -223,8 +272,8 @@ test.describe('HUD Extension @desktop', () => {
       return await (window as any).app.context.setMode('default');
     });
 
-    await sleep(500);
-
+    // Deterministic wait for mode update
+    await waitForHudModeValue(hudWindow, 'default');
     let modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
     expect(modeValue).toBe('default');
 
@@ -233,8 +282,8 @@ test.describe('HUD Extension @desktop', () => {
       return await (window as any).app.context.setMode('page', { metadata: { url: 'https://test.com' } });
     });
 
-    await sleep(500);
-
+    // Deterministic wait for mode update
+    await waitForHudModeValue(hudWindow, 'page');
     modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
     expect(modeValue).toBe('page');
 
@@ -243,8 +292,8 @@ test.describe('HUD Extension @desktop', () => {
       return await (window as any).app.context.setMode('settings');
     });
 
-    await sleep(500);
-
+    // Deterministic wait for mode update
+    await waitForHudModeValue(hudWindow, 'settings');
     modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
     expect(modeValue).toBe('settings');
 
@@ -273,7 +322,16 @@ test.describe('HUD Extension @desktop', () => {
       });
     });
 
-    await sleep(500);
+    // Deterministic wait: poll until #mode-value contains 'Test Group'
+    // (group mode displays as "group: Test Group")
+    await hudWindow.waitForFunction(
+      (sel: string) => {
+        const el = document.querySelector(sel);
+        return el && el.textContent && el.textContent.includes('Test Group');
+      },
+      '#mode-value',
+      { timeout: 5000 }
+    );
 
     // Verify group name is displayed
     const modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);

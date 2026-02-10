@@ -23,7 +23,7 @@ let hudWindowId = null;
 const loadState = async () => {
   if (api?.settings?.getKey) {
     try {
-      const result = await api.settings.getKey('enabled');
+      const result = await api.settings.getKey('overlay_visible');
       if (result.success && result.data !== undefined && result.data !== null) {
         hudEnabled = !!result.data;
         console.log('[ext:hud] Loaded state from datastore - enabled:', hudEnabled);
@@ -55,9 +55,9 @@ const saveState = (enabled) => {
 
   // Write to extension settings API (datastore) as source of truth
   if (api?.settings?.setKey) {
-    api.settings.setKey('enabled', enabled).then(result => {
+    api.settings.setKey('overlay_visible', enabled).then(result => {
       if (result.success) {
-        console.log('[ext:hud] Saved state to datastore - enabled:', enabled);
+        console.log('[ext:hud] Saved state to datastore - overlay_visible:', enabled);
       } else {
         console.error('[ext:hud] Failed to save state to datastore:', result.error);
       }
@@ -192,12 +192,23 @@ const init = async () => {
   initShortcut();
 
   // Wait for cmd:ready before registering commands
+  let commandsRegistered = false;
   api.subscribe('cmd:ready', () => {
-    initCommands();
+    if (!commandsRegistered) {
+      commandsRegistered = true;
+      initCommands();
+    }
   }, api.scopes.GLOBAL);
 
-  // Query in case cmd is already ready
-  api.publish('cmd:query', {}, api.scopes.GLOBAL);
+  // Query in case cmd is already ready, with retries.
+  // The cmd:query → cmd:ready roundtrip crosses multiple IPC boundaries
+  // (iframe → main → cmd iframe → main → hud iframe) and can be lost.
+  const retryCmdQuery = (attempt) => {
+    if (commandsRegistered || attempt >= 5) return;
+    api.publish('cmd:query', {}, api.scopes.GLOBAL);
+    setTimeout(() => retryCmdQuery(attempt + 1), 500);
+  };
+  retryCmdQuery(0);
 
   // Open HUD if it was enabled
   if (hudEnabled) {

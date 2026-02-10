@@ -114,13 +114,16 @@ export function isBuiltinExtensionEnabled(extId: string): boolean {
 
   try {
     const db = getDb();
+    // Use 'ext_disabled' key to avoid collision with extension-internal settings.
+    // Extensions may use 'enabled' for their own purposes (e.g., HUD overlay toggle),
+    // so we use a distinct key that only the extension manager writes.
     const setting = db.prepare(
       'SELECT * FROM extension_settings WHERE extensionId = ? AND key = ?'
-    ).get(extId, 'enabled') as { value?: string } | undefined;
+    ).get(extId, 'ext_disabled') as { value?: string } | undefined;
 
     if (setting) {
       try {
-        return JSON.parse(setting.value || 'true') !== false;
+        return JSON.parse(setting.value || 'false') !== true;
       } catch {
         return true;
       }

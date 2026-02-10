@@ -8,7 +8,7 @@
  *   yarn test:electron:bg
  */
 
-import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
+import { test, expect, DesktopApp, getSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady, sleep } from '../helpers/window-utils';
 
@@ -22,9 +22,9 @@ test.beforeAll(async () => {
   await waitForExtensionsReady(sharedBgWindow);
 });
 
-test.afterAll(async () => {
-  await closeSharedApp();
-});
+// Don't close the shared app here — let subsequent test files reuse it.
+// Closing between files forces a fresh app launch which adds startup latency.
+// The last test file (smoke.spec.ts) handles cleanup.
 
 // ============================================================================
 // Helper: Create a group (tag) with tagged URL items

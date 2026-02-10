@@ -242,8 +242,8 @@ const initCommandRegistry = () => {
 
   // Handle command list queries from the panel
   api.subscribe('cmd:query-commands', () => {
-    log('ext:cmd', 'cmd:query-commands received');
     const commands = Array.from(commandRegistry.values());
+    log('ext:cmd', 'cmd:query-commands received');
     api.publish('cmd:query-commands-response', { commands }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
