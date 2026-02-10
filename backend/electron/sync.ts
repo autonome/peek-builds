@@ -23,10 +23,10 @@ import {
   queryItems,
   addItem,
   updateItem,
-  mergeServerItem,
   getItemTags,
   getOrCreateTag,
   tagItem,
+  generateId,
 } from './datastore.js';
 import { DEBUG } from './config.js';
 import { DATASTORE_VERSION, PROTOCOL_VERSION } from '../version.js';
@@ -295,7 +295,7 @@ interface PullResult {
  * Pull items from server and merge into local database
  *
  * For each server item:
- * - If not found locally (by syncId): insert with syncId=server.id, syncSource='server'
+ * - If not found locally (by syncId): insert with syncId=server.id, syncedAt=server.updatedAt
  * - If found and server newer: update local
  * - If found and local newer: skip (will be pushed later)
  */
@@ -387,15 +387,24 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
     // Item doesn't exist locally - insert it
     DEBUG && console.log(`[sync] Inserting new item from server: ${serverItem.id}`);
 
-    const { localId } = mergeServerItem({
-      id: serverItem.id,
-      type: serverItem.type,
-      content: serverItem.content,
-      metadata: serverItem.metadata,
-      createdAt: serverItem.createdAt,
-      updatedAt: serverUpdatedAt,
-      deletedAt: 0,
-    });
+    const localId = generateId('item');
+    const now = Date.now();
+    const metadataJson = serverItem.metadata ? JSON.stringify(serverItem.metadata) : '{}';
+
+    db.prepare(`
+      INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, syncedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+    `).run(
+      localId,
+      serverItem.type,
+      serverItem.content || null,
+      'text/html', // default mimeType for synced items
+      metadataJson,
+      serverItem.id,
+      serverItem.createdAt,
+      serverUpdatedAt,
+      now
+    );
 
     // Add tags
     syncTagsToItem(localId, serverItem.tags);
@@ -480,7 +489,7 @@ interface PushResult {
  * Push unsynced local items to server
  *
  * Query items where:
- * - syncSource is empty (never synced), OR
+ * - syncedAt = 0 (never synced), OR
  * - updatedAt > lastSyncTime (modified since last sync)
  */
 export async function pushToServer(
@@ -499,7 +508,7 @@ export async function pushToServer(
 
   // Find items to push
   // Push items that:
-  // 1. Have never been synced (syncSource = ''), OR
+  // 1. Have never been synced (syncedAt = 0), OR
   // 2. Have been locally modified after their last sync (updatedAt > syncedAt)
   // This prevents re-pushing items that were just pulled from the server
   let items: Item[];
@@ -508,14 +517,14 @@ export async function pushToServer(
     // Also include deleted tombstones that need to be pushed
     items = db.prepare(`
       SELECT * FROM items
-      WHERE (deletedAt = 0 AND (syncSource = '' OR (syncedAt > 0 AND updatedAt > syncedAt)))
+      WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt)))
          OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)
     `).all() as Item[];
   } else {
     // Full: all items that haven't been synced
     items = db.prepare(`
       SELECT * FROM items
-      WHERE deletedAt = 0 AND syncSource = ''
+      WHERE deletedAt = 0 AND syncedAt = 0
     `).all() as Item[];
   }
 
@@ -610,7 +619,7 @@ async function pushSingleItem(
   // Update local item with sync info and set syncedAt to track when we synced
   const now = Date.now();
   db.prepare(`
-    UPDATE items SET syncId = ?, syncSource = 'server', syncedAt = ? WHERE id = ?
+    UPDATE items SET syncId = ?, syncedAt = ? WHERE id = ?
   `).run(response.id, now, item.id);
 
   DEBUG && console.log(`[sync] Pushed item ${item.id} → ${response.id}`);
@@ -658,7 +667,7 @@ function resetSyncStateIfServerChanged(serverUrl: string): boolean {
   if (urlChanged || profileChanged) {
     DEBUG && console.log(`[sync] Server changed (url: '${storedUrl}' -> '${serverUrl}', profile: '${storedProfileId}' -> '${currentProfileId}') — resetting per-item sync state`);
     db.prepare(`
-      UPDATE items SET syncSource = '', syncedAt = 0, syncId = '' WHERE deletedAt = 0
+      UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
     `).run();
     updateLastSyncTime(activeProfile.id, 0);
     return true;
@@ -764,7 +773,7 @@ export function getSyncStatus(): {
   // Also count deleted tombstones that need to be pushed
   const pendingCount = (db.prepare(`
     SELECT COUNT(*) as count FROM items
-    WHERE (deletedAt = 0 AND (syncSource = '' OR (syncedAt > 0 AND updatedAt > syncedAt)))
+    WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt)))
        OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)
   `).get() as { count: number }).count;
 

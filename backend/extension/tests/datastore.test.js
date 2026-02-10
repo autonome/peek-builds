@@ -63,7 +63,6 @@ describe('datastore', () => {
 
       assert.equal(item.deletedAt, 0);
       assert.equal(item.syncId, '');
-      assert.equal(item.syncSource, '');
       assert.ok(item.createdAt > 0);
       assert.ok(item.updatedAt > 0);
     });

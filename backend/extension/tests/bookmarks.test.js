@@ -145,7 +145,7 @@ describe('bookmarks', () => {
       assert.ok(tagNames.includes('from:bookmark'));
     });
 
-    it('should add items with syncSource bookmark and from:bookmark tag', async () => {
+    it('should add items with metadata.importSource bookmark and from:bookmark tag', async () => {
       setBookmarkTree([
         {
           id: '0',
@@ -160,7 +160,8 @@ describe('bookmarks', () => {
 
       const items = await queryItems({ type: 'url' });
       assert.equal(items.data.length, 1);
-      assert.equal(items.data[0].syncSource, 'bookmark');
+      const meta = JSON.parse(items.data[0].metadata);
+      assert.equal(meta.importSource, 'bookmark');
       assert.equal(items.data[0].content, 'https://tagged.com');
 
       const tags = await getItemTags(items.data[0].id);
@@ -209,7 +210,8 @@ describe('bookmarks', () => {
       const items = await queryItems({ type: 'url' });
       assert.equal(items.data.length, 1);
       assert.equal(items.data[0].content, 'https://live.example.com');
-      assert.equal(items.data[0].syncSource, 'bookmark');
+      const meta = JSON.parse(items.data[0].metadata);
+      assert.equal(meta.importSource, 'bookmark');
     });
 
     it('should skip duplicate on created', async () => {

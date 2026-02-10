@@ -631,7 +631,6 @@ fn test_item_type_migration() {
                 mimeType TEXT DEFAULT '',
                 metadata TEXT DEFAULT '{}',
                 syncId TEXT DEFAULT '',
-                syncSource TEXT DEFAULT '',
                 createdAt INTEGER NOT NULL,
                 updatedAt INTEGER NOT NULL,
                 deletedAt INTEGER DEFAULT 0,

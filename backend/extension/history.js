@@ -65,6 +65,7 @@ async function getExistingUrlMap() {
 
 function buildHistoryMetadata(historyItem, visits) {
   return {
+    importSource: 'history',
     title: historyItem.title || '',
     lastVisitTime: historyItem.lastVisitTime || 0,
     visitCount: historyItem.visitCount || 0,
@@ -116,7 +117,6 @@ async function addOrUpdateHistoryItem(url, historyItem, visits, existingUrlMap) 
     const result = await addItem('url', {
       content: url,
       metadata,
-      syncSource: 'history',
       createdAt: earliestVisitTime || undefined,
     });
 
@@ -212,7 +212,7 @@ export async function importAllHistory() {
 /**
  * Returns { historyItems, imported, synced }.
  * historyItems = count from chrome.history.search() excluding internal URLs
- * imported = Peek items with syncSource 'history'
+ * imported = Peek items with metadata.importSource 'history'
  * synced = subset of imported that have been synced (syncedAt > 0)
  */
 export async function getHistoryStats() {

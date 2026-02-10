@@ -91,7 +91,7 @@ describe('sync', () => {
       assert.equal(items.length, 1);
       assert.equal(items[0].content, 'From server');
       assert.equal(items[0].syncId, 'server-1');
-      assert.equal(items[0].syncSource, 'server');
+      assert.ok(items[0].syncedAt > 0, 'Should have syncedAt timestamp');
     });
 
     it('should update local when server is newer', async () => {
@@ -99,7 +99,6 @@ describe('sync', () => {
       const { id: localId } = await data.addItem('text', {
         content: 'Old content',
         syncId: 'server-2',
-        syncSource: 'server',
       });
 
       // Make server item newer
@@ -128,7 +127,6 @@ describe('sync', () => {
       const { id: localId } = await data.addItem('text', {
         content: 'Local content',
         syncId: 'server-3',
-        syncSource: 'server',
       });
 
       // Server item has old timestamp
@@ -183,12 +181,17 @@ describe('sync', () => {
     });
 
     it('should not push server-synced items', async () => {
-      // Item from server (syncSource set)
-      await data.addItem('text', {
+      // Item from server (syncedAt set to indicate already synced)
+      const { id } = await data.addItem('text', {
         content: 'From server',
         syncId: 'server-x',
-        syncSource: 'server',
       });
+      // Manually set syncedAt to simulate item pulled from server
+      await data.updateItem(id, {});
+      const item = await data.getItem(id);
+      // Directly update DB to set syncedAt = updatedAt (simulating synced state)
+      await data._adapter.db.transaction(['items'], 'readwrite')
+        .objectStore('items').put({ ...item, syncedAt: item.updatedAt });
 
       let pushCount = 0;
       mockFetchHandler = async (url, opts) => {
@@ -278,11 +281,14 @@ describe('sync', () => {
   describe('resetSyncStateIfServerChanged', () => {
     it('should reset sync markers when server URL changes', async () => {
       // Add an item synced from server
-      await data.addItem('text', {
+      const { id } = await data.addItem('text', {
         content: 'Synced item',
         syncId: 'server-sc-1',
-        syncSource: 'server',
       });
+      // Simulate synced state
+      const item = await data.getItem(id);
+      await data._adapter.db.transaction(['items'], 'readwrite')
+        .objectStore('items').put({ ...item, syncedAt: item.updatedAt });
 
       // Save current server config
       await sync.saveSyncServerConfig('https://test-server.example.com');
@@ -299,17 +305,19 @@ describe('sync', () => {
       // Verify sync markers were reset
       const items = await data.queryItems();
       const syncedItem = items.find(i => i.content === 'Synced item');
-      assert.equal(syncedItem.syncSource, '');
       assert.equal(syncedItem.syncedAt, 0);
       assert.equal(syncedItem.syncId, '');
     });
 
     it('should not reset when server URL is unchanged', async () => {
-      await data.addItem('text', {
+      const { id } = await data.addItem('text', {
         content: 'Stable item',
         syncId: 'server-sc-2',
-        syncSource: 'server',
       });
+      // Simulate synced state
+      const item = await data.getItem(id);
+      await data._adapter.db.transaction(['items'], 'readwrite')
+        .objectStore('items').put({ ...item, syncedAt: item.updatedAt });
 
       // Save config with same URL
       await sync.saveSyncServerConfig('https://test-server.example.com');
@@ -321,17 +329,20 @@ describe('sync', () => {
       // Verify sync markers are intact
       const items = await data.queryItems();
       const item = items.find(i => i.content === 'Stable item');
-      assert.equal(item.syncSource, 'server');
       assert.equal(item.syncId, 'server-sc-2');
+      assert.ok(item.syncedAt > 0, 'Should still have syncedAt timestamp');
     });
 
     it('should not reset on first run (no stored config)', async () => {
       // Add server-synced items without any stored config (simulates upgrade)
-      await data.addItem('text', {
+      const { id } = await data.addItem('text', {
         content: 'Legacy item',
         syncId: 'server-legacy-1',
-        syncSource: 'server',
       });
+      // Simulate synced state
+      const item = await data.getItem(id);
+      await data._adapter.db.transaction(['items'], 'readwrite')
+        .objectStore('items').put({ ...item, syncedAt: item.updatedAt });
 
       // No stored config yet — unified engine does NOT reset on first run
       const changed = await sync.resetSyncStateIfServerChanged('https://test-server.example.com');
@@ -340,8 +351,8 @@ describe('sync', () => {
       // Sync markers should be intact
       const items = await data.queryItems();
       const item = items.find(i => i.content === 'Legacy item');
-      assert.equal(item.syncSource, 'server');
       assert.equal(item.syncId, 'server-legacy-1');
+      assert.ok(item.syncedAt > 0, 'Should still have syncedAt timestamp');
     });
   });
 });

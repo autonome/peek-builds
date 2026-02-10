@@ -455,7 +455,7 @@ fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<Stri
     // Find local item by syncId matching server id (include deleted items)
     let local_item: Option<Item> = conn
         .query_row(
-            "SELECT id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE syncId = ?1",
+            "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE syncId = ?1",
             params![server_item.id],
             |row| {
                 Ok(Item {
@@ -631,7 +631,7 @@ fn query_items_to_push(conn: &Connection, last_sync_time: i64) -> Result<Vec<Ite
         // Incremental: items modified locally after their last sync, or never synced
         let mut stmt = conn
             .prepare(
-                "SELECT id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE (deletedAt = 0 AND (syncSource = '' OR (syncedAt > 0 AND updatedAt > syncedAt))) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
+                "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt))) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
             )
             .map_err(|e| format!("Query error: {}", e))?;
         let result: Vec<Item> = stmt
@@ -662,7 +662,7 @@ fn query_items_to_push(conn: &Connection, last_sync_time: i64) -> Result<Vec<Ite
         // Full: all items that haven't been synced
         let mut stmt = conn
             .prepare(
-                "SELECT id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE (deletedAt = 0 AND syncSource = '') OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
+                "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE (deletedAt = 0 AND syncedAt = 0) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
             )
             .map_err(|e| format!("Query error: {}", e))?;
         let result: Vec<Item> = stmt
@@ -796,7 +796,7 @@ pub async fn push_to_server(
                 let conn = db.lock().unwrap();
                 let now_ts = datastore::now();
                 if let Err(e) = conn.execute(
-                    "UPDATE items SET syncId = ?1, syncSource = 'server', syncedAt = ?2 WHERE id = ?3",
+                    "UPDATE items SET syncId = ?1, syncedAt = ?2 WHERE id = ?3",
                     params![response.id, now_ts, item_data.id],
                 ) {
                     println!(
@@ -891,7 +891,7 @@ pub fn get_sync_status(datastore_conn: &Connection, profiles_conn: &Connection) 
     // Count items that need to be synced
     let pending_count: i64 = datastore_conn
         .query_row(
-            "SELECT COUNT(*) FROM items WHERE (deletedAt = 0 AND (syncSource = '' OR (syncedAt > 0 AND updatedAt > syncedAt))) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
+            "SELECT COUNT(*) FROM items WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt))) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
             [],
             |row| row.get(0),
         )

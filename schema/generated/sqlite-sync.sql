@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS items (
   mimeType TEXT DEFAULT '',
   metadata TEXT DEFAULT '{}',
   syncId TEXT DEFAULT '',
-  syncSource TEXT DEFAULT '',
   syncedAt INTEGER DEFAULT 0,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,

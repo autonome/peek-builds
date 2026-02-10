@@ -99,7 +99,6 @@ export interface Item {
   mimeType: string;
   metadata: string;
   syncId: string;
-  syncSource: string;
   syncedAt: number;
   createdAt: number;
   updatedAt: number;
@@ -283,7 +282,6 @@ export interface ItemOptions {
   mimeType?: string;
   metadata?: string;
   syncId?: string;
-  syncSource?: string;
   starred?: number;
   archived?: number;
 }

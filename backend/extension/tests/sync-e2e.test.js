@@ -2,7 +2,7 @@
  * E2E sync tests for browser extension
  *
  * Tests the complete sync flow:
- * - Browser imports (history, bookmarks, tabs) stay local (syncSource prevents push)
+ * - Browser imports (history, bookmarks, tabs) stay local (metadata.importSource prevents push)
  * - User-added items (notes, URLs via popup) sync bidirectionally
  * - Original timestamps (dateAdded, earliest visit) preserved as createdAt
  */
@@ -70,7 +70,7 @@ describe('e2e sync', () => {
   // ==================== Browser Imports Stay Local ====================
 
   describe('browser imports stay local (not pushed)', () => {
-    it('history items with syncSource=history should not be pushed', async () => {
+    it('history items with metadata.importSource=history should not be pushed', async () => {
       setMockHistoryItems([
         { url: 'https://history.example.com', title: 'History Page', lastVisitTime: 1000, visitCount: 5, typedCount: 2 },
       ]);
@@ -83,10 +83,11 @@ describe('e2e sync', () => {
       const importResult = await importAllHistory();
       assert.equal(importResult.imported, 1);
 
-      // Verify item has syncSource = 'history'
+      // Verify item has metadata.importSource = 'history'
       const items = await data.queryItems({ type: 'url' });
       assert.equal(items.length, 1);
-      assert.equal(items[0].syncSource, 'history');
+      const meta = JSON.parse(items[0].metadata);
+      assert.equal(meta.importSource, 'history');
 
       // Push should not include this item
       const pushResult = await sync.pushToServer();
@@ -94,7 +95,7 @@ describe('e2e sync', () => {
       assert.equal(pushedItems.length, 0);
     });
 
-    it('bookmark items with syncSource=bookmark should not be pushed', async () => {
+    it('bookmark items with metadata.importSource=bookmark should not be pushed', async () => {
       setBookmarkTree([
         {
           id: '1',
@@ -108,10 +109,11 @@ describe('e2e sync', () => {
       const importResult = await importAllBookmarks();
       assert.equal(importResult.imported, 1);
 
-      // Verify item has syncSource = 'bookmark'
+      // Verify item has metadata.importSource = 'bookmark'
       const items = await data.queryItems({ type: 'url' });
       assert.equal(items.length, 1);
-      assert.equal(items[0].syncSource, 'bookmark');
+      const meta = JSON.parse(items[0].metadata);
+      assert.equal(meta.importSource, 'bookmark');
 
       // Push should not include this item
       const pushResult = await sync.pushToServer();
@@ -135,14 +137,14 @@ describe('e2e sync', () => {
       ]);
       await importAllBookmarks();
 
-      // Add user item (no syncSource)
+      // Add user item (no importSource in metadata)
       await data.addItem('text', { content: 'User note from popup' });
       await data.addItem('url', { content: 'https://user-added.example.com' });
 
       const items = await data.queryItems();
       assert.equal(items.length, 4);
 
-      // Push should only include user items (2 items without syncSource)
+      // Push should only include user items (2 items without metadata.importSource)
       const pushResult = await sync.pushToServer();
       assert.equal(pushResult.pushed, 2);
       assert.equal(pushedItems.length, 2);
@@ -252,7 +254,7 @@ describe('e2e sync', () => {
       assert.equal(items.length, 1);
       assert.equal(items[0].content, 'Note from server');
       assert.equal(items[0].syncId, 'server-item-1');
-      assert.equal(items[0].syncSource, 'server');
+      assert.ok(items[0].syncedAt > 0, 'Should have syncedAt timestamp from server');
     });
 
     it('full sync should pull then push', async () => {

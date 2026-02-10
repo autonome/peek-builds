@@ -1,7 +1,7 @@
 /**
  * Integration tests for Desktop (Electron) datastore
  * Tests the unified data model with url, text, tagset, image types
- * and sync columns (syncId, syncSource, syncedAt)
+ * and sync columns (syncId, syncedAt)
  */
 
 import { describe, it, before, after, beforeEach } from 'node:test';
@@ -63,14 +63,6 @@ describe('Desktop Datastore Tests', () => {
       const columnNames = columns.map((col) => col.name);
 
       assert.ok(columnNames.includes('syncId'), 'Should have syncId column');
-    });
-
-    it('should have syncSource column', () => {
-      const db = datastore.getDb();
-      const columns = db.prepare("PRAGMA table_info(items)").all() as { name: string }[];
-      const columnNames = columns.map((col) => col.name);
-
-      assert.ok(columnNames.includes('syncSource'), 'Should have syncSource column');
     });
 
     it('should have syncedAt column', () => {
@@ -198,17 +190,15 @@ describe('Desktop Datastore Tests', () => {
   });
 
   describe('Sync options', () => {
-    it('should save item with syncId and syncSource', () => {
+    it('should save item with syncId', () => {
       const { id } = datastore.addItem('url', {
         content: 'https://synced.com',
         syncId: 'remote-123',
-        syncSource: 'server',
       });
 
       const item = datastore.getItem(id);
       assert.ok(item);
       assert.strictEqual(item!.syncId, 'remote-123');
-      assert.strictEqual(item!.syncSource, 'server');
     });
 
     it('should update item with sync options', () => {
@@ -216,13 +206,11 @@ describe('Desktop Datastore Tests', () => {
 
       datastore.updateItem(id, {
         syncId: 'sync-456',
-        syncSource: 'mobile',
       });
 
       const item = datastore.getItem(id);
       assert.ok(item);
       assert.strictEqual(item!.syncId, 'sync-456');
-      assert.strictEqual(item!.syncSource, 'mobile');
     });
   });
 

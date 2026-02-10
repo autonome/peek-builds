@@ -21,9 +21,6 @@ pub struct SchemaItems {
     #[serde(rename = "syncId")]
     /// ID from originating device (for dedup during sync)
     pub sync_id: String,
-    #[serde(rename = "syncSource")]
-    /// Source device/platform identifier
-    pub sync_source: String,
     #[serde(rename = "syncedAt")]
     /// Timestamp of last sync (Unix ms)
     pub synced_at: i64,

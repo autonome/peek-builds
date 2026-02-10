@@ -209,7 +209,6 @@ const CREATE_TABLE_STATEMENTS: &str = r#"
     mimeType TEXT DEFAULT '',
     metadata TEXT DEFAULT '{}',
     syncId TEXT DEFAULT '',
-    syncSource TEXT DEFAULT '',
     createdAt INTEGER NOT NULL,
     updatedAt INTEGER NOT NULL,
     deletedAt INTEGER DEFAULT 0,
@@ -412,7 +411,6 @@ pub struct ItemOptions {
     pub mime_type: Option<String>,
     pub metadata: Option<String>,
     pub sync_id: Option<String>,
-    pub sync_source: Option<String>,
     pub starred: Option<i64>,
     pub archived: Option<i64>,
 }
@@ -588,7 +586,6 @@ fn migrate_item_types(conn: &Connection) -> Result<()> {
             mimeType TEXT DEFAULT '',
             metadata TEXT DEFAULT '{}',
             syncId TEXT DEFAULT '',
-            syncSource TEXT DEFAULT '',
             createdAt INTEGER NOT NULL,
             updatedAt INTEGER NOT NULL,
             deletedAt INTEGER DEFAULT 0,
@@ -610,7 +607,7 @@ fn migrate_item_types(conn: &Connection) -> Result<()> {
                  WHEN type = 'note' THEN 'text'
                  ELSE type
                END,
-               content, mimeType, metadata, syncId, syncSource,
+               content, mimeType, metadata, syncId,
                createdAt, updatedAt, deletedAt, starred, archived,
                COALESCE(syncedAt, 0),
                COALESCE(visitCount, 0),
@@ -1430,8 +1427,8 @@ pub fn add_item(conn: &Connection, item_type: &str, options: &ItemOptions) -> Re
 
     conn.execute(
         r#"INSERT INTO items
-           (id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, 0, 0, 0)"#,
+           (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, 0, 0, 0)"#,
         params![
             item_id,
             item_type,
@@ -1439,7 +1436,6 @@ pub fn add_item(conn: &Connection, item_type: &str, options: &ItemOptions) -> Re
             options.mime_type.as_deref().unwrap_or(""),
             options.metadata.as_deref().unwrap_or("{}"),
             options.sync_id.as_deref().unwrap_or(""),
-            options.sync_source.as_deref().unwrap_or(""),
             timestamp,
             timestamp,
             options.starred.unwrap_or(0),
@@ -1452,7 +1448,7 @@ pub fn add_item(conn: &Connection, item_type: &str, options: &ItemOptions) -> Re
 
 pub fn get_item(conn: &Connection, id: &str) -> Result<Option<Item>> {
     let mut stmt = conn.prepare(
-        "SELECT id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE id = ?1 AND deletedAt = 0",
+        "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE id = ?1 AND deletedAt = 0",
     )?;
 
     let mut rows = stmt.query(params![id])?;
@@ -1502,11 +1498,6 @@ pub fn update_item(conn: &Connection, id: &str, options: &ItemOptions) -> Result
     if let Some(ref sync_id) = options.sync_id {
         updates.push(format!("syncId = ?{}", idx));
         values.push(Box::new(sync_id.clone()));
-        idx += 1;
-    }
-    if let Some(ref sync_source) = options.sync_source {
-        updates.push(format!("syncSource = ?{}", idx));
-        values.push(Box::new(sync_source.clone()));
         idx += 1;
     }
     if let Some(starred) = options.starred {
@@ -1599,7 +1590,7 @@ pub fn query_items(conn: &Connection, filter: &ItemFilter) -> Result<Vec<Item>> 
         .unwrap_or_default();
 
     let sql = format!(
-        "SELECT id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items {} ORDER BY {} {}",
+        "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items {} ORDER BY {} {}",
         where_clause, order_by, limit_clause
     );
 
@@ -1713,7 +1704,7 @@ pub fn get_item_tags(conn: &Connection, item_id: &str) -> Result<Vec<Tag>> {
 
 pub fn get_items_by_tag(conn: &Connection, tag_id: &str) -> Result<Vec<Item>> {
     let mut stmt = conn.prepare(
-        r#"SELECT i.id, i.type, i.content, i.mimeType, i.metadata, i.syncId, i.syncSource,
+        r#"SELECT i.id, i.type, i.content, i.mimeType, i.metadata, i.syncId,
                   i.createdAt, i.updatedAt, i.deletedAt, i.starred, i.archived,
                   i.syncedAt, i.visitCount, i.lastVisitAt
            FROM items i

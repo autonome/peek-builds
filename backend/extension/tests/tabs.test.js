@@ -108,7 +108,7 @@ describe('tabs', () => {
       assert.ok(tagNames.includes('from:tab'));
     });
 
-    it('should add items with syncSource tab and from:tab tag', async () => {
+    it('should add items with metadata.importSource tab and from:tab tag', async () => {
       setMockTabs([
         { id: 1, url: 'https://tagged.com', title: 'Tagged', groupId: -1 },
       ]);
@@ -117,7 +117,8 @@ describe('tabs', () => {
 
       const items = await queryItems({ type: 'url' });
       assert.equal(items.data.length, 1);
-      assert.equal(items.data[0].syncSource, 'tab');
+      const meta = JSON.parse(items.data[0].metadata);
+      assert.equal(meta.importSource, 'tab');
       assert.equal(items.data[0].content, 'https://tagged.com');
 
       const tags = await getItemTags(items.data[0].id);
@@ -219,7 +220,7 @@ describe('tabs', () => {
       ]);
 
       // Add an item and tag it with from:tab (simulating a real import)
-      const itemResult = await addItem('url', { content: 'https://imported.com', syncSource: 'tab' });
+      const itemResult = await addItem('url', { content: 'https://imported.com', metadata: { importSource: 'tab' } });
       const tagResult = await getOrCreateTag('from:tab');
       await tagItem(itemResult.data.id, tagResult.data.tag.id);
 
@@ -270,7 +271,8 @@ describe('tabs', () => {
       const items = await queryItems({ type: 'url' });
       assert.equal(items.data.length, 1);
       assert.equal(items.data[0].content, 'https://live.example.com');
-      assert.equal(items.data[0].syncSource, 'tab');
+      const meta = JSON.parse(items.data[0].metadata);
+      assert.equal(meta.importSource, 'tab');
     });
 
     it('should skip when status is not complete', async () => {

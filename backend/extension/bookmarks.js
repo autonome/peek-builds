@@ -80,8 +80,7 @@ async function addBookmarkItem(url, title, dateAdded, existingUrlMap) {
 
   const result = await addItem('url', {
     content: url,
-    metadata: { title, dateAdded },
-    syncSource: 'bookmark',
+    metadata: { importSource: 'bookmark', title, dateAdded },
     createdAt: dateAdded || undefined,
   });
 
@@ -122,7 +121,7 @@ export async function importAllBookmarks() {
 /**
  * Returns { browserBookmarks, imported, synced }.
  * browserBookmarks = total URLs in the bookmark tree
- * imported = Peek items with syncSource 'bookmark'
+ * imported = Peek items with metadata.importSource 'bookmark'
  * synced = subset of imported that have been synced (syncedAt > 0)
  */
 export async function getBookmarkStats() {

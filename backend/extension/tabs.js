@@ -134,8 +134,7 @@ async function addTabItem(tab, existingUrlMap) {
 
   const result = await addItem('url', {
     content: url,
-    metadata,
-    syncSource: 'tab',
+    metadata: { ...metadata, importSource: 'tab' },
   });
 
   if (result.success) {
@@ -189,7 +188,7 @@ export async function importAllTabs() {
 /**
  * Returns { openTabs, imported, synced }.
  * openTabs = count from chrome.tabs.query (excluding internal URLs)
- * imported = Peek items with syncSource 'tab'
+ * imported = Peek items with metadata.importSource 'tab'
  * synced = subset of imported that have been synced (syncedAt > 0)
  */
 export async function getTabStats() {

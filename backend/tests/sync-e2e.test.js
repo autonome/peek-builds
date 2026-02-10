@@ -11,10 +11,11 @@
  */
 
 import { spawn } from 'child_process';
-import { mkdtemp, rm, mkdir } from 'fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createWriteStream } from 'fs';
 
 // Import compiled desktop modules (from dist/)
 import * as datastore from '../../dist/backend/electron/datastore.js';
@@ -68,25 +69,53 @@ async function startServer() {
 
   // Generate a test API key
   apiKey = 'test-e2e-key-' + Math.random().toString(36).substring(2);
+  log(`Generated API key: ${apiKey}`);
+
+  // Create log file for server output
+  const serverLogPath = '/tmp/peek-e2e-server.log';
+  const serverLogStream = createWriteStream(serverLogPath, { flags: 'w' });
+  await writeFile(serverLogPath, `Starting server with API key: ${apiKey}\n`);
 
   // Start server with temp data dir and test API key
+  // Use single-user mode with E2E_TEST flag to bypass auth
   serverProcess = spawn('node', ['index.js'], {
     cwd: SERVER_PATH,
     env: {
       ...process.env,
       PORT: TEST_PORT.toString(),
       DATA_DIR: serverTempDir,
-      API_KEY: apiKey,
+      SINGLE_USER_MODE: 'true',
+      SINGLE_USER_ID: 'default',
+      E2E_TEST: 'true', // Bypass authentication in e2e tests
     },
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'], // Always use piped I/O to capture logs
   });
 
+  // Capture server output to log file (console output only in VERBOSE mode)
   serverProcess.stdout.on('data', (data) => {
-    log(`[server] ${data.toString().trim()}`);
+    const msg = data.toString();
+    serverLogStream.write(`[stdout] ${msg}`);
+    if (process.env.VERBOSE && msg.trim()) {
+      console.log(`[server] ${msg.trim()}`);
+    }
   });
 
   serverProcess.stderr.on('data', (data) => {
-    log(`[server err] ${data.toString().trim()}`);
+    const msg = data.toString();
+    serverLogStream.write(`[stderr] ${msg}`);
+    if (process.env.VERBOSE && msg.trim()) {
+      console.log(`[server] ${msg.trim()}`);
+    }
+  });
+
+  serverProcess.on('error', (error) => {
+    console.error(`[server] Process error:`, error);
+    serverLogStream.write(`[process error] ${error}\n`);
+  });
+
+  serverProcess.on('exit', (code, signal) => {
+    console.error(`[server] Process exited with code ${code}, signal ${signal}`);
+    serverLogStream.write(`[process exit] code=${code}, signal=${signal}\n`);
   });
 
   await waitForServer();
@@ -152,10 +181,11 @@ async function cleanupDesktop() {
 
 // Server API helpers
 async function serverRequest(method, path, body = null) {
+  const authHeader = `Bearer ${apiKey}`;
   const options = {
     method,
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': authHeader,
       'Content-Type': 'application/json',
     },
   };
@@ -164,10 +194,12 @@ async function serverRequest(method, path, body = null) {
     options.body = JSON.stringify(body);
   }
 
+  log(`Request: ${method} ${path}, Auth: ${authHeader.substring(0, 20)}...`);
   const res = await fetch(`${BASE_URL}${path}`, options);
   const data = await res.json();
 
   if (!res.ok) {
+    log(`Response ${res.status}: ${JSON.stringify(data)}`);
     throw new Error(`API error ${res.status}: ${JSON.stringify(data)}`);
   }
 
@@ -619,7 +651,7 @@ async function testPushFailureNotRetried() {
   const { id: id2 } = datastore.addItem('url', { content: content2 });
   console.log(`  Created second item on desktop: ${id2}`);
 
-  // Verify item needs to be synced (syncSource is empty)
+  // Verify item needs to be synced (syncedAt is 0)
   const status1 = sync.getSyncStatus();
   console.log(`  Pending items before sync: ${status1.pendingCount}`);
 

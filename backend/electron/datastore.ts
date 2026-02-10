@@ -271,7 +271,6 @@ const createTableStatements = `
     mimeType TEXT DEFAULT '',
     metadata TEXT DEFAULT '{}',
     syncId TEXT DEFAULT '',
-    syncSource TEXT DEFAULT '',
     syncedAt INTEGER DEFAULT 0,
     createdAt INTEGER NOT NULL,
     updatedAt INTEGER NOT NULL,
@@ -612,7 +611,6 @@ function migrateSyncColumns(): void {
       DEBUG && console.log('main', `Adding sync columns to ${table}`);
       try {
         db.exec(`ALTER TABLE ${table} ADD COLUMN syncId TEXT DEFAULT ''`);
-        db.exec(`ALTER TABLE ${table} ADD COLUMN syncSource TEXT DEFAULT ''`);
       } catch (error) {
         // Column might already exist in some edge cases
         DEBUG && console.log('main', `Sync columns migration for ${table}:`, (error as Error).message);
@@ -685,7 +683,6 @@ function migrateItemTypes(): void {
         mimeType TEXT DEFAULT '',
         metadata TEXT DEFAULT '{}',
         syncId TEXT DEFAULT '',
-        syncSource TEXT DEFAULT '',
         syncedAt INTEGER DEFAULT 0,
         createdAt INTEGER NOT NULL,
         updatedAt INTEGER NOT NULL,
@@ -700,8 +697,8 @@ function migrateItemTypes(): void {
     // Copy data, converting 'note' type
     const allItems = db.prepare(`SELECT * FROM items`).all() as Array<Record<string, unknown>>;
     const insertStmt = db.prepare(`
-      INSERT INTO items_new (id, type, content, mimeType, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO items_new (id, type, content, mimeType, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const item of allItems) {
@@ -716,7 +713,6 @@ function migrateItemTypes(): void {
         item.mimeType || '',
         item.metadata || '{}',
         item.syncId || '',
-        item.syncSource || '',
         item.syncedAt || 0,
         item.createdAt,
         item.updatedAt,
@@ -836,15 +832,14 @@ function migrateAddressesToItems(): void {
       }
 
       db.prepare(`
-        INSERT INTO items (id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+        INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
       `).run(
         itemId,
         'url',
         addr.uri,
         addr.mimeType || 'text/html',
         JSON.stringify(metadata),
-        '',
         '',
         addr.createdAt || timestamp,
         addr.updatedAt || timestamp,
@@ -1181,15 +1176,14 @@ function migrateAllAddressesToItems(): void {
       }
 
       db.prepare(`
-        INSERT INTO items (id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt, frecencyScore, title, domain, favicon)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 0, ?, ?, ?)
+        INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt, frecencyScore, title, domain, favicon)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 0, ?, ?, ?)
       `).run(
         itemId,
         'url',
         addr.uri,
         addr.mimeType || 'text/html',
         JSON.stringify(metadata),
-        '',
         '',
         addr.createdAt || timestamp,
         addr.updatedAt || timestamp,
@@ -2325,16 +2319,14 @@ export function addItem(type: ItemType, options: ItemOptions = {}): { id: string
     }
   }
 
-  // Add device metadata (only if not from sync - sync items preserve original metadata)
-  if (!options.syncSource) {
-    metadata = addDeviceMetadata(metadata, true);
-  }
+  // Add device metadata (user-created items only, not sync pulls)
+  metadata = addDeviceMetadata(metadata, true);
 
   const metadataJson = JSON.stringify(metadata);
 
   getDb().prepare(`
-    INSERT INTO items (id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     itemId,
     type,
@@ -2342,7 +2334,6 @@ export function addItem(type: ItemType, options: ItemOptions = {}): { id: string
     options.mimeType || '',
     metadataJson,
     options.syncId || '',
-    options.syncSource || '',
     timestamp,
     timestamp,
     options.starred || 0,
@@ -2407,10 +2398,8 @@ export function updateItem(itemId: string, options: ItemOptions): boolean {
     // Merge: new metadata overwrites existing, except _sync which is merged
     metadata = { ...metadata, ...newMetadata };
 
-    // Add device metadata for modification (only if not from sync)
-    if (!options.syncSource) {
-      metadata = addDeviceMetadata(metadata, false);
-    }
+    // Add device metadata for modification
+    metadata = addDeviceMetadata(metadata, false);
 
     updates.push('metadata = ?');
     values.push(JSON.stringify(metadata));
@@ -2418,10 +2407,6 @@ export function updateItem(itemId: string, options: ItemOptions): boolean {
   if (options.syncId !== undefined) {
     updates.push('syncId = ?');
     values.push(options.syncId);
-  }
-  if (options.syncSource !== undefined) {
-    updates.push('syncSource = ?');
-    values.push(options.syncSource);
   }
   if (options.starred !== undefined) {
     updates.push('starred = ?');
@@ -2501,17 +2486,16 @@ export function mergeServerItem(serverItem: {
 
     db.prepare(`
       INSERT INTO items (
-        id, type, content, metadata, syncId, syncSource, syncedAt,
+        id, type, content, metadata, syncId, syncedAt,
         createdAt, updatedAt, deletedAt, starred, archived
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
     `).run(
       localId,
       serverItem.type,
       serverItem.content || null,
       metadataJson,
       serverItem.id,
-      'server',
       timestamp,
       serverItem.createdAt,
       serverUpdatedAt,
@@ -2856,15 +2840,14 @@ export function trackNavigation(uri: string, options: {
     if (options.favicon) metadata.favicon = options.favicon;
 
     d.prepare(`
-      INSERT INTO items (id, type, content, mimeType, metadata, syncId, syncSource, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt, frecencyScore, title, domain, favicon)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?, ?)
+      INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, visitCount, lastVisitAt, frecencyScore, title, domain, favicon)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?, ?)
     `).run(
       itemId,
       'url',
       normalizedUri,
       'text/html',
       JSON.stringify(metadata),
-      '',
       '',
       timestamp,
       timestamp,

@@ -14,7 +14,7 @@
  */
 export function validateSyncSchema(getColumns) {
   const required = {
-    items: ["id","type","content","syncId","syncSource","syncedAt","createdAt","updatedAt","deletedAt"],
+    items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt"],
     tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
     item_tags: ["itemId","tagId","createdAt"],
     item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
@@ -57,7 +57,7 @@ export const SCHEMA_VERSION = 1;
 
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS = {
-  items: ["id","type","content","syncId","syncSource","syncedAt","createdAt","updatedAt","deletedAt"],
+  items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt"],
   tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
   item_tags: ["itemId","tagId","createdAt"],
   item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],

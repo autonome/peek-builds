@@ -104,8 +104,7 @@ describe('history', () => {
       // Pre-add an item with the same URL
       await addItem('url', {
         content: 'https://example.com',
-        metadata: { title: 'Old Title', visitCount: 1 },
-        syncSource: 'history',
+        metadata: { importSource: 'history', title: 'Old Title', visitCount: 1 },
       });
 
       setMockHistoryItems([
@@ -135,7 +134,7 @@ describe('history', () => {
       assert.equal(meta.typedCount, 3);
     });
 
-    it('should add items with syncSource history and from:history tag', async () => {
+    it('should add items with metadata.importSource history and from:history tag', async () => {
       setMockHistoryItems([
         { url: 'https://tagged.com', title: 'Tagged', lastVisitTime: 1000, visitCount: 1, typedCount: 0 },
       ]);
@@ -147,7 +146,8 @@ describe('history', () => {
 
       const items = await queryItems({ type: 'url' });
       assert.equal(items.data.length, 1);
-      assert.equal(items.data[0].syncSource, 'history');
+      const meta = JSON.parse(items.data[0].metadata);
+      assert.equal(meta.importSource, 'history');
       assert.equal(items.data[0].content, 'https://tagged.com');
 
       const tags = await getItemTags(items.data[0].id);
@@ -229,7 +229,7 @@ describe('history', () => {
       ]);
 
       // Add a history-sourced item and tag it (simulating a real import)
-      const itemResult = await addItem('url', { content: 'https://imported.com', syncSource: 'history' });
+      const itemResult = await addItem('url', { content: 'https://imported.com', metadata: { importSource: 'history' } });
       const tagResult = await getOrCreateTag('from:history');
       await tagItem(itemResult.data.id, tagResult.data.tag.id);
 
@@ -287,15 +287,15 @@ describe('history', () => {
       const items = await queryItems({ type: 'url' });
       assert.equal(items.data.length, 1);
       assert.equal(items.data[0].content, 'https://live.example.com');
-      assert.equal(items.data[0].syncSource, 'history');
+      const meta = JSON.parse(items.data[0].metadata);
+      assert.equal(meta.importSource, 'history');
     });
 
     it('should update existing item on revisit', async () => {
       // Pre-add an item
       await addItem('url', {
         content: 'https://revisit.com',
-        metadata: { title: 'Original', visitCount: 1 },
-        syncSource: 'history',
+        metadata: { importSource: 'history', title: 'Original', visitCount: 1 },
       });
 
       setMockVisitsByUrl({

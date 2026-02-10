@@ -18,8 +18,6 @@ export interface SchemaItems {
   metadata: string;
   /** ID from originating device (for dedup during sync) */
   syncId: string;
-  /** Source device/platform identifier */
-  syncSource: string;
   /** Timestamp of last sync (Unix ms) */
   syncedAt: number;
   /** Creation timestamp (Unix ms) */
@@ -109,7 +107,7 @@ export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'item_events'
 
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {
-  items: ["id","type","content","syncId","syncSource","syncedAt","createdAt","updatedAt","deletedAt"],
+  items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt"],
   tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
   item_tags: ["itemId","tagId","createdAt"],
   item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
