@@ -4,9 +4,89 @@
     <title>Peek Changelog</title>
     <link>https://peekclient.com/changelog</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 10 Feb 2026 11:01:28 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 10 Feb 2026 16:12:11 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://peekclient.com/changelog/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-02-09</title>
+      <link>https://peekclient.com/changelog</link>
+      <guid isPermaLink="false">https://peekclient.com/changelog#2026-02-09</guid>
+      <pubDate>Mon, 09 Feb 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Desktop - IZUI Role-Based Redesign<br>
+<ul><li>feat(izui): systemic ESC handling, peek-component migrations, HUD test fixes (21d59cc0)</li><br>
+<li style="margin-left:1em">Migrated peek-card, peek-grid, peek-list to shared peek-components</li><br>
+<li style="margin-left:1em">Unified ESC key handling across all window types</li><br>
+<li style="margin-left:1em">Fixed HUD test infrastructure</li><br>
+<li>feat(izui): implement role-based window policy (Phase 1-2) (3fbcade9)</li><br>
+<li style="margin-left:1em">Replaced session-based transient/active detection with deterministic role system</li><br>
+<li style="margin-left:1em">Five roles: root, child-content, child-tool, hud, transient</li><br>
+<li style="margin-left:1em">Role assigned at window creation, governs ESC behavior and lifecycle</li><br>
+<li>feat(izui): complete role-based migration (Phase 3-6) (8528f053)</li><br>
+<li style="margin-left:1em">Migrated all window creation sites to use role-based policy</li><br>
+<li style="margin-left:1em">Removed legacy IzuiStateCoordinator session tracking</li><br>
+<li style="margin-left:1em">ESC behavior fully determined by window role</li><br>
+<li>fix(izui): promote content to child-content when opened from parent window (92d359c5)</li><br>
+<li>fix(izui): promote transient session on app focus, fix startup role (055b77ed)</li><br>
+</ul><br>
+Desktop - Navigation & UI<br>
+<ul><li>fix(nav): restore floating nav bar — remove embedded regression (93060df3)</li><br>
+<li>fix(peek-card): delegate click/focus through shadow DOM boundary (b15c6434)</li><br>
+<li>feat(tags): migrate tags UI to shared peek-components (3145a08a)</li><br>
+<li style="margin-left:1em">Tags extension uses peek-card, peek-grid from shared component library</li><br>
+<li style="margin-left:1em">Consistent styling across all card-based views</li><br>
+<li>fix(config): align startupFeature schema default with actual default (aab2b20b)</li><br>
+<li>fix(external-url): delay URL processing to ensure app activation completes (f0d1e5bd)</li><br>
+</ul><br>
+Desktop - Entity Recognition<br>
+<ul><li>feat(entities): implement Phase 1 entity recognition extension (ae0cd811)</li><br>
+<li style="margin-left:1em">Extract entities (people, places, dates, etc.) from saved items</li><br>
+<li style="margin-left:1em">Extensible matcher and store architecture</li><br>
+<li style="margin-left:1em">Unit tests for extractors, matcher, and store</li><br>
+</ul><br>
+Desktop - HUD & Groups<br>
+<ul><li>fix(hud): populate mode, active window, and stats fields (be18f49f)</li><br>
+<li>fix(groups): preserve group context through page navigation (1d69ce8f)</li><br>
+<li>fix(datastore): disable FK checks during entity type migration (98025bcc)</li><br>
+</ul><br>
+Desktop - Shortcuts & Page<br>
+<ul><li>fix(shortcuts): guard ev.reply() against destroyed senders + add roundtrip tests (49b626e9)</li><br>
+<li>fix(shortcuts): use BrowserWindow ID not WebContents ID for shortcut callbacks (d6fe8cbf)</li><br>
+<li>fix(shortcuts): resolve stale IPC reference in global shortcut callbacks (221d5a44)</li><br>
+<li>fix(page): content-sized BrowserWindow instead of fullscreen canvas (2eb7a703)</li><br>
+</ul><br>
+Desktop - Command Bar<br>
+<ul><li>fix(cmd): restore URL detection for domains without protocol (youtube.com) (8abf13b6)</li><br>
+</ul><br>
+Sync Architecture - syncSource Migration<br>
+<ul><li>feat(sync): Phase 1 - separate sync pull from user operations (b3cbb47e)</li><br>
+<li style="margin-left:1em">Sync pull is now architecturally separate from user-facing operations</li><br>
+<li style="margin-left:1em">Server _sync metadata preserved naturally without guards</li><br>
+<li>refactor(sync): remove syncSource from unified sync module and update docs (3ffa9bf1)</li><br>
+<li style="margin-left:1em">Removed syncSource column from schema and all datastore code</li><br>
+<li style="margin-left:1em">Replaced with device ID tracking via _sync metadata in item metadata JSON</li><br>
+<li>refactor(mobile): remove active sync_source usage from iOS sync (3ca335f0)</li><br>
+<li>feat(mobile): add device ID and _sync metadata to mobile backend (abc40815)</li><br>
+</ul><br>
+Mobile / iOS<br>
+<ul><li>feat(ios): native inline WKWebView + fix dev build pipeline (ac1154e7)</li><br>
+<li>fix(ios): separate dev/release build paths and enable media autoplay (50444786)</li><br>
+<li>fix(mobile): prevent white flash when opening inline webview (edc1b5b9)</li><br>
+<li>fix(mobile): tighten header layout alignment (6f639e85)</li><br>
+<li>fix(ui): editor overlays fill to keyboard, tagset cards use tag chips (bb032a08)</li><br>
+<li>fix(mobile): replace Once::call_once with retryable Mutex for DB init (bb02d535)</li><br>
+<li>feat(mobile): hide from:history items from default list view (c6acfc60)</li><br>
+<li>fix(build): separate derivedDataPath for simulator and device builds (d6870291)</li><br>
+<li>fix(build): add --standalone flag to embed real frontend in iOS builds (90c7f5d8)</li><br>
+</ul><br>
+Testing<br>
+<ul><li>test(cmd): add comprehensive URL detection tests for command panel (ccc5a13b)</li><br>
+<li>test(server): add syncSource migration simulation tests (72731acf)</li><br>
+<li>test(entities): add unit tests for extractors, matcher, and store (8759b707)</li><br>
+<li>test(groups): add mode context propagation tests (5fbcc1ca)</li><br>
+<li>feat(test): deterministic profile IDs via PEEK_PROFILE_ID env var (7c61aa6e)</li><br>
+<li>fix(test): run unit tests under Electron's Node to match native module ABI (e1e0c7c5)</li><br>
+<li>fix(server): enable single-user mode for e2e tests (c6c249b5)</li></ul></p>]]></description>
+    </item>
     <item>
       <title>2026-02-02</title>
       <link>https://peekclient.com/changelog</link>

@@ -12,6 +12,83 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-09
+
+Desktop - IZUI Role-Based Redesign
+- [x] feat(izui): systemic ESC handling, peek-component migrations, HUD test fixes (21d59cc0)
+  - Migrated peek-card, peek-grid, peek-list to shared peek-components
+  - Unified ESC key handling across all window types
+  - Fixed HUD test infrastructure
+- [x] feat(izui): implement role-based window policy (Phase 1-2) (3fbcade9)
+  - Replaced session-based transient/active detection with deterministic role system
+  - Five roles: root, child-content, child-tool, hud, transient
+  - Role assigned at window creation, governs ESC behavior and lifecycle
+- [x] feat(izui): complete role-based migration (Phase 3-6) (8528f053)
+  - Migrated all window creation sites to use role-based policy
+  - Removed legacy IzuiStateCoordinator session tracking
+  - ESC behavior fully determined by window role
+- [x] fix(izui): promote content to child-content when opened from parent window (92d359c5)
+- [x] fix(izui): promote transient session on app focus, fix startup role (055b77ed)
+
+Desktop - Navigation & UI
+- [x] fix(nav): restore floating nav bar — remove embedded regression (93060df3)
+- [x] fix(peek-card): delegate click/focus through shadow DOM boundary (b15c6434)
+- [x] feat(tags): migrate tags UI to shared peek-components (3145a08a)
+  - Tags extension uses peek-card, peek-grid from shared component library
+  - Consistent styling across all card-based views
+- [x] fix(config): align startupFeature schema default with actual default (aab2b20b)
+- [x] fix(external-url): delay URL processing to ensure app activation completes (f0d1e5bd)
+
+Desktop - Entity Recognition
+- [x] feat(entities): implement Phase 1 entity recognition extension (ae0cd811)
+  - Extract entities (people, places, dates, etc.) from saved items
+  - Extensible matcher and store architecture
+  - Unit tests for extractors, matcher, and store
+
+Desktop - HUD & Groups
+- [x] fix(hud): populate mode, active window, and stats fields (be18f49f)
+- [x] fix(groups): preserve group context through page navigation (1d69ce8f)
+- [x] fix(datastore): disable FK checks during entity type migration (98025bcc)
+
+Desktop - Shortcuts & Page
+- [x] fix(shortcuts): guard ev.reply() against destroyed senders + add roundtrip tests (49b626e9)
+- [x] fix(shortcuts): use BrowserWindow ID not WebContents ID for shortcut callbacks (d6fe8cbf)
+- [x] fix(shortcuts): resolve stale IPC reference in global shortcut callbacks (221d5a44)
+- [x] fix(page): content-sized BrowserWindow instead of fullscreen canvas (2eb7a703)
+
+Desktop - Command Bar
+- [x] fix(cmd): restore URL detection for domains without protocol (youtube.com) (8abf13b6)
+
+Sync Architecture - syncSource Migration
+- [x] feat(sync): Phase 1 - separate sync pull from user operations (b3cbb47e)
+  - Sync pull is now architecturally separate from user-facing operations
+  - Server _sync metadata preserved naturally without guards
+- [x] refactor(sync): remove syncSource from unified sync module and update docs (3ffa9bf1)
+  - Removed syncSource column from schema and all datastore code
+  - Replaced with device ID tracking via _sync metadata in item metadata JSON
+- [x] refactor(mobile): remove active sync_source usage from iOS sync (3ca335f0)
+- [x] feat(mobile): add device ID and _sync metadata to mobile backend (abc40815)
+
+Mobile / iOS
+- [x] feat(ios): native inline WKWebView + fix dev build pipeline (ac1154e7)
+- [x] fix(ios): separate dev/release build paths and enable media autoplay (50444786)
+- [x] fix(mobile): prevent white flash when opening inline webview (edc1b5b9)
+- [x] fix(mobile): tighten header layout alignment (6f639e85)
+- [x] fix(ui): editor overlays fill to keyboard, tagset cards use tag chips (bb032a08)
+- [x] fix(mobile): replace Once::call_once with retryable Mutex for DB init (bb02d535)
+- [x] feat(mobile): hide from:history items from default list view (c6acfc60)
+- [x] fix(build): separate derivedDataPath for simulator and device builds (d6870291)
+- [x] fix(build): add --standalone flag to embed real frontend in iOS builds (90c7f5d8)
+
+Testing
+- [x] test(cmd): add comprehensive URL detection tests for command panel (ccc5a13b)
+- [x] test(server): add syncSource migration simulation tests (72731acf)
+- [x] test(entities): add unit tests for extractors, matcher, and store (8759b707)
+- [x] test(groups): add mode context propagation tests (5fbcc1ca)
+- [x] feat(test): deterministic profile IDs via PEEK_PROFILE_ID env var (7c61aa6e)
+- [x] fix(test): run unit tests under Electron's Node to match native module ABI (e1e0c7c5)
+- [x] fix(server): enable single-user mode for e2e tests (c6c249b5)
+
 ## 2026-02-02
 
 Desktop - IZUI (Inverted Zooming User Interface)
