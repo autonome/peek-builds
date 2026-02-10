@@ -2,9 +2,9 @@
  * peek://page - Container for web content
  *
  * Content-sized BrowserWindow with:
- * - Webview filling the window
- * - Floating navbar overlay at top (with trigger zone)
- * - Drag via -webkit-app-region: drag on navbar
+ * - Webview filling the entire window
+ * - Floating navbar overlay (Cmd+L to show, Escape/click-outside to dismiss)
+ *   NOT embedded in window chrome — floats over content like a command palette
  * - Resize via IPC to resize the BrowserWindow
  */
 
@@ -104,26 +104,27 @@ function show(opts) {
   }
 }
 
-function isPointInElement(x, y, el) {
-  const rect = el.getBoundingClientRect();
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
-function hide(e) {
-  // Check if cursor is still within navbar or trigger zone bounds
-  if (isPointInElement(e.clientX, e.clientY, navbar)) return;
-  if (isPointInElement(e.clientX, e.clientY, triggerZone)) return;
+function hide() {
   navbar.classList.remove('visible');
   window.getSelection().removeAllRanges();
 }
 
-// Show navbar when entering trigger zone or navbar itself
-triggerZone.addEventListener('mouseenter', () => show({}));
-navbar.addEventListener('mouseenter', () => show({}));
-navbar.addEventListener('mouseleave', hide);
-triggerZone.addEventListener('mouseleave', hide);
+// Floating navbar: shown on demand via Cmd+L only, dismissed by clicking outside or Escape
+// No trigger zone hover — the navbar is a floating overlay, not an embedded bar.
+document.addEventListener('mousedown', (e) => {
+  if (navbar.classList.contains('visible') && !navbar.contains(e.target)) {
+    hide();
+  }
+});
 
-// Cmd+L: show with URL focus
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && navbar.classList.contains('visible')) {
+    hide();
+    e.stopPropagation();
+  }
+});
+
+// Cmd+L: show floating navbar with URL focus
 api.subscribe('page:show-navbar', () => show({ focusUrl: true }), api.scopes.WINDOW);
 
 // --- Nav button actions ---

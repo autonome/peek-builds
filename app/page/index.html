@@ -29,24 +29,28 @@
       -webkit-mask-image: -webkit-radial-gradient(white, white);
     }
 
-    /* Navbar overlays the top of the webview */
+    /* Floating navbar - command-palette style overlay, NOT embedded */
     .navbar {
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 36px;
+      position: fixed;
+      top: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(90%, 600px);
+      height: 40px;
       display: none;
       align-items: center;
       gap: 8px;
       padding: 0 12px;
-      background: var(--theme-bg-secondary, rgba(30, 30, 30, 0.92));
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      background: var(--theme-bg-secondary, rgba(30, 30, 30, 0.95));
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       color: var(--theme-text, #e0e0e0);
       font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
       font-size: 15px;
-      border: none;
+      border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 10px;
-      -webkit-app-region: drag;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+      -webkit-app-region: no-drag;
       user-select: none;
       -webkit-user-select: none;
       z-index: 100;
@@ -107,12 +111,9 @@
       background: var(--theme-bg, rgba(128, 128, 128, 0.18));
     }
 
-    /* Trigger zone at top edge of window */
+    /* Trigger zone hidden — navbar is shown on demand via Cmd+L only */
     .trigger-zone {
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 50px;
-      z-index: 50;
+      display: none;
     }
 
     /* Resize handle */
