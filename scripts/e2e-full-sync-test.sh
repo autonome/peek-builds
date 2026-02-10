@@ -1037,14 +1037,16 @@ SERVER_DB="$SERVER_TEMP_DIR/default/profiles/$SERVER_PROFILE_ID/datastore.sqlite
 
 # --- Step 19: Stop server and desktop ---
 
-echo "Step 19: Stopping server and desktop for dedup seeding..."
+echo "Step 19: Stopping all platforms for dedup seeding..."
+xcrun simctl terminate booted "$IOS_BUNDLE_ID" 2>/dev/null || true
 kill "$DESKTOP_PID" 2>/dev/null || true
 wait "$DESKTOP_PID" 2>/dev/null || true
 DESKTOP_PID=""
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 SERVER_PID=""
-echo "  Stopped."
+sleep 2
+echo "  Stopped all platforms (iOS, desktop, server)."
 
 # --- Step 20: Record counts and seed duplicates ---
 
@@ -1120,6 +1122,8 @@ echo "Step 21: Clearing dedup_cleanup_v1 flags..."
 sqlite3 "$SERVER_DB" "DELETE FROM settings WHERE key = 'dedup_cleanup_v1';"
 sqlite3 "$DESKTOP_DB" "DELETE FROM settings WHERE key = 'dedup_cleanup_v1';"
 sqlite3 "$IOS_DB" "DELETE FROM settings WHERE key = 'dedup_cleanup_v1';"
+# Checkpoint WAL to ensure external writes are in main DB file for next app launch
+sqlite3 "$IOS_DB" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || true
 echo "  Cleared all dedup flags"
 
 # --- Step 22: Restart server (triggers deduplicateAllUsers at startup) ---
