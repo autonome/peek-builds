@@ -18,8 +18,8 @@ const debug = api?.debug;
 // Editor layout instance
 let editorLayout = null;
 
-// Settings key for vim mode preference
-const SETTINGS_KEY = 'editor.vimMode';
+// Settings storage key (matches how Settings app stores under 'prefs' key)
+const PREFS_STORAGE_KEY = 'prefs';
 
 // Autosave state
 let currentItemId = null;
@@ -146,29 +146,20 @@ const init = async () => {
     return;
   }
 
-  // Load vim mode preference from extension settings API, fallback to localStorage cache
+  // Load vim mode preference from extension settings API (Settings app stores under 'prefs' key)
   let vimMode = false;
   try {
     if (api?.settings?.getKey) {
-      const result = await api.settings.getKey('vimMode');
-      if (result.success && result.data !== undefined && result.data !== null) {
-        vimMode = !!result.data;
-        debug && console.log('[editor] Loaded vimMode from datastore:', vimMode);
+      const result = await api.settings.getKey(PREFS_STORAGE_KEY);
+      if (result.success && result.data && typeof result.data === 'object') {
+        vimMode = !!result.data.vimMode;
+        debug && console.log('[editor] Loaded vimMode from prefs:', vimMode);
       } else {
-        // Fallback to localStorage cache
-        vimMode = localStorage.getItem(SETTINGS_KEY) === 'true';
-        debug && console.log('[editor] Loaded vimMode from localStorage fallback:', vimMode);
+        debug && console.log('[editor] No prefs found in datastore, using default vimMode:', vimMode);
       }
-    } else {
-      vimMode = localStorage.getItem(SETTINGS_KEY) === 'true';
-      debug && console.log('[editor] Loaded vimMode from localStorage (no settings API):', vimMode);
     }
   } catch (err) {
-    // Last resort fallback to localStorage
-    try {
-      vimMode = localStorage.getItem(SETTINGS_KEY) === 'true';
-    } catch {}
-    debug && console.log('[editor] Failed to load settings, used localStorage fallback:', err);
+    debug && console.log('[editor] Failed to load settings:', err);
   }
 
   // Check URL params for content, file path, or itemId
@@ -223,7 +214,6 @@ const init = async () => {
     initialContent,
     vimMode,
     onContentChange: handleContentChange,
-    onVimModeChange: handleVimModeChange,
   });
 
   // Show save status indicator if editing a datastore item
@@ -240,6 +230,27 @@ const init = async () => {
       }
       return { handled: false };
     });
+  }
+
+  // Listen for settings changes from Settings app to live-reload vim mode
+  if (api?.subscribe) {
+    api.subscribe('editor:settings-changed', async () => {
+      debug && console.log('[editor] Settings changed, reloading vim mode');
+      try {
+        if (api?.settings?.getKey) {
+          const result = await api.settings.getKey(PREFS_STORAGE_KEY);
+          if (result.success && result.data && typeof result.data === 'object') {
+            const newVimMode = !!result.data.vimMode;
+            if (editorLayout) {
+              editorLayout.setVimMode(newVimMode);
+            }
+            debug && console.log('[editor] Updated vimMode from settings:', newVimMode);
+          }
+        }
+      } catch (err) {
+        debug && console.log('[editor] Failed to reload settings:', err);
+      }
+    }, api.scopes.GLOBAL);
   }
 
   debug && console.log('[editor] Editor initialized');
@@ -332,33 +343,6 @@ const handleContentChange = (content) => {
   // Schedule autosave if editing a datastore item
   if (currentItemId) {
     scheduleAutosave(content);
-  }
-};
-
-/**
- * Handle vim mode changes - persist to extension settings API and localStorage cache
- */
-const handleVimModeChange = (enabled) => {
-  // Write to localStorage as fast cache for next init
-  try {
-    localStorage.setItem(SETTINGS_KEY, enabled ? 'true' : 'false');
-  } catch (err) {
-    debug && console.log('[editor] Failed to cache vimMode to localStorage:', err);
-  }
-
-  // Write to extension settings API (datastore) as source of truth
-  if (api?.settings?.setKey) {
-    api.settings.setKey('vimMode', enabled).then(result => {
-      if (result.success) {
-        console.log('[editor] Saved vimMode to datastore:', enabled);
-      } else {
-        console.error('[editor] Failed to save vimMode to datastore:', result.error);
-      }
-    }).catch(err => {
-      console.error('[editor] Failed to save vimMode to datastore:', err);
-    });
-  } else {
-    console.log('[editor] Saved vimMode to localStorage only (no settings API):', enabled);
   }
 };
 
