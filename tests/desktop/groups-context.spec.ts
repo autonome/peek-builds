@@ -10,7 +10,7 @@
 
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
-import { waitForExtensionsReady, waitForWindowCount, sleep } from '../helpers/window-utils';
+import { waitForExtensionsReady, sleep } from '../helpers/window-utils';
 
 // Shared app and background window
 let sharedApp: DesktopApp;
