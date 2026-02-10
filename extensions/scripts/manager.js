@@ -384,7 +384,7 @@ function showPreviewResult(result) {
 function showPreviewError(message) {
   previewContent.innerHTML = `
     <div class="result-box">
-      <div class="result-status error">✗ Error</div>
+      <div class="result-status error">Error</div>
       <div class="result-data">${escapeHtml(message)}</div>
     </div>
   `;
