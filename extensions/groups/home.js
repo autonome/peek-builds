@@ -228,6 +228,20 @@ const init = async () => {
   // Keyboard navigation
   document.addEventListener('keydown', handleKeydown);
 
+  // Re-assert group mode when window regains focus (e.g., after child page closes)
+  window.addEventListener('focus', async () => {
+    if (state.view === VIEW_ADDRESSES && state.currentTag && api.context) {
+      await api.context.setMode('group', {
+        metadata: {
+          groupId: state.currentTag.id,
+          groupName: state.currentTag.name,
+          color: state.currentTag.color
+        }
+      });
+      debug && console.log('[groups] Re-asserted group mode on focus:', state.currentTag.name);
+    }
+  });
+
   // Debounced refresh for reactive updates (collapses rapid events like batch imports)
   const debouncedRefresh = debounce(async () => {
     debug && console.log('[groups] debounced refresh triggered');
@@ -623,11 +637,19 @@ const createAddressCard = (address) => {
   // Click to open address - backend handles centering and parent tracking
   card.addEventListener('card-click', async () => {
     debug && console.log('Opening address:', addressUrl);
-    const result = await api.window.open(addressUrl, {
+    const openOptions = {
       role: 'content',
       width: 800,
       height: 600
-    });
+    };
+    if (state.currentTag && state.currentTag.id !== '__untagged__') {
+      openOptions.groupMode = {
+        groupId: state.currentTag.id,
+        groupName: state.currentTag.name,
+        color: state.currentTag.color
+      };
+    }
+    const result = await api.window.open(addressUrl, openOptions);
     debug && console.log('Window opened:', result);
   });
 

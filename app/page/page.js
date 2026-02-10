@@ -340,21 +340,30 @@ function updateModeIndicator() {
  */
 async function initModeContext() {
   try {
-    // Set page mode via context API
-    const result = await api.context.setMode('page', {
-      metadata: {
-        url: targetUrl,
-        title: document.title
-      }
-    });
-
-    if (result.success) {
-      DEBUG && console.log('[page] Page mode set via context');
+    // Check if we inherited group mode from opener BEFORE setting page mode
+    const existingMode = await api.context.get('mode');
+    if (existingMode.success && existingMode.data && existingMode.data.value === 'group') {
+      // Window inherited group mode from opener - preserve it
+      currentMode = 'group';
+      currentModeMetadata = existingMode.data.metadata || {};
+      DEBUG && console.log('[page] Inherited group mode, preserving:', currentModeMetadata);
     } else {
-      console.warn('[page] Failed to set page mode:', result.error);
+      // No inherited group mode - set page mode as before
+      const result = await api.context.setMode('page', {
+        metadata: {
+          url: targetUrl,
+          title: document.title
+        }
+      });
+
+      if (result.success) {
+        DEBUG && console.log('[page] Page mode set via context');
+      } else {
+        console.warn('[page] Failed to set page mode:', result.error);
+      }
     }
 
-    // Check if we inherited group mode from opener
+    // Read back the current mode
     const modeResult = await api.context.get('mode');
     if (modeResult.success && modeResult.data) {
       currentMode = modeResult.data.value || 'page';
