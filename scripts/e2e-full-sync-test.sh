@@ -15,7 +15,7 @@
 # │    yarn interactive-test:e2e:full-sync -- --headless --build    │
 # │                                                                 │
 # │  The --build flag uses xcodebuild CLI with isolated DerivedData │
-# │  path (/tmp/peek-xcodebuild) to avoid conflicts with Xcode GUI. │
+# │  path (/tmp/peek-xcodebuild-sim) to avoid conflicts with Xcode GUI. │
 # └─────────────────────────────────────────────────────────────────┘
 #
 # Clean-room test covering all sync permutations:
@@ -548,7 +548,7 @@ if [ "$CLI_BUILD" = true ]; then
     # Build with xcodebuild using isolated DerivedData path
     cd backend/tauri-mobile/src-tauri/gen/apple
     xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator \
-        -derivedDataPath /tmp/peek-xcodebuild \
+        -derivedDataPath /tmp/peek-xcodebuild-sim \
         -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
         build 2>&1 | grep -E "(BUILD|error:|warning:.*error)" || true
 
@@ -561,7 +561,7 @@ if [ "$CLI_BUILD" = true ]; then
 
     # Install to simulator
     echo "  Installing to simulator..."
-    xcrun simctl install booted '/tmp/peek-xcodebuild/Build/Products/debug-iphonesimulator/Peek Save.app'
+    xcrun simctl install booted '/tmp/peek-xcodebuild-sim/Build/Products/debug-iphonesimulator/Peek Save.app'
     echo "  iOS app installed"
     cd "$PROJECT_DIR"
 fi

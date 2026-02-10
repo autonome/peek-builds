@@ -681,7 +681,7 @@ yarn mobile:ios:xcodebuild:device:full  # For device
 
 **Fix:** The yarn scripts use `clean build`. If using Xcode GUI:
 1. Product → Clean Build Folder (Cmd+Shift+K)
-2. Delete DerivedData: `rm -rf /tmp/peek-xcodebuild`
+2. Delete DerivedData: `rm -rf /tmp/peek-xcodebuild-sim /tmp/peek-xcodebuild-device`
 3. Rebuild
 
 ### Wrong Library Architecture

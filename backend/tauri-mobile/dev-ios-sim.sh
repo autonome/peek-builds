@@ -61,12 +61,12 @@ cd "$SCRIPT_DIR" && DEV_PORT=$PORT ./build-ios.sh --force
 
 # Build with xcodebuild
 echo "[dev] Running xcodebuild..."
-rm -rf /tmp/peek-xcodebuild
+rm -rf /tmp/peek-xcodebuild-sim
 cd "$SCRIPT_DIR/src-tauri/gen/apple" && xcodebuild \
   -scheme peek-save_iOS \
   -configuration Debug \
   -sdk iphonesimulator \
-  -derivedDataPath /tmp/peek-xcodebuild \
+  -derivedDataPath /tmp/peek-xcodebuild-sim \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   clean build 2>&1 | tail -5
 
@@ -91,7 +91,7 @@ done
 
 # Install and launch
 echo "[dev] Installing to simulator..."
-xcrun simctl install booted '/tmp/peek-xcodebuild/Build/Products/debug-iphonesimulator/Peek Save.app'
+xcrun simctl install booted '/tmp/peek-xcodebuild-sim/Build/Products/debug-iphonesimulator/Peek Save.app'
 xcrun simctl terminate booted com.dietrich.peek-mobile 2>/dev/null || true
 xcrun simctl launch booted com.dietrich.peek-mobile
 echo "[dev] App launched. HMR active — Ctrl+C to stop."

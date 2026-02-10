@@ -503,7 +503,7 @@ After running `npm run dev:ios`, test data is automatically seeded:
 
 **Gotchas:**
 - Xcode scheme is `peek-save_iOS` — all xcodebuild commands use this
-- All xcodebuild outputs go to `/tmp/peek-xcodebuild` (derivedDataPath)
+- Simulator builds go to `/tmp/peek-xcodebuild-sim`, device builds to `/tmp/peek-xcodebuild-device` (separate derivedDataPaths so they can run in parallel)
 - `tauri.conf.json` should NOT have `devUrl` or `beforeDevCommand` checked in — `dev-ios-sim.sh` patches these temporarily and restores on exit
 - If Rust code changes during HMR, stop vite (Ctrl+C), restart `yarn mobile:ios:dev`
 - `cargo tauri ios dev` is broken on Apple Silicon (passes `ARCHS=x86_64`) — use `yarn mobile:ios:dev` instead which bypasses it
