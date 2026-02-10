@@ -17,7 +17,7 @@ let state = {
 // Handle ESC - close the windows view
 api.escape.onEscape(() => {
   // If search has content, clear it first
-  const searchInput = document.querySelector('.search-input');
+  const searchInput = document.querySelector('peek-input.search-input');
   if (state.searchQuery) {
     state.searchQuery = '';
     searchInput.value = '';
@@ -32,7 +32,7 @@ api.escape.onEscape(() => {
  * Get all cards in the current view
  */
 const getCards = () => {
-  return Array.from(document.querySelectorAll('.cards .card'));
+  return Array.from(document.querySelectorAll('.cards peek-card'));
 };
 
 /**
@@ -41,7 +41,7 @@ const getCards = () => {
 const updateSelection = () => {
   const cards = getCards();
   cards.forEach((card, i) => {
-    card.classList.toggle('selected', i === state.selectedIndex);
+    card.selected = (i === state.selectedIndex);
   });
 
   // Scroll selected card into view
@@ -94,8 +94,10 @@ const getGridColumns = (cards) => {
  * Handle keyboard navigation (vim-style hjkl for grid movement)
  */
 const handleKeydown = (e) => {
-  const searchInput = document.querySelector('.search-input');
-  const isSearchFocused = document.activeElement === searchInput;
+  const searchInput = document.querySelector('peek-input.search-input');
+  // Check if search input or its internal input is focused
+  const isSearchFocused = document.activeElement === searchInput ||
+    (searchInput && searchInput.shadowRoot?.activeElement);
 
   // Focus search with / or Cmd+F
   if ((e.key === '/' || (e.key === 'f' && (e.metaKey || e.ctrlKey))) && !isSearchFocused) {
@@ -203,7 +205,7 @@ const filterWindows = (windows) => {
  * Render window cards
  */
 const renderWindows = () => {
-  const container = document.querySelector('.cards');
+  const container = document.querySelector('peek-grid.cards');
   container.innerHTML = '';
 
   const filteredWindows = filterWindows(state.windows);
@@ -212,7 +214,10 @@ const renderWindows = () => {
     const message = state.searchQuery
       ? 'No windows match your search.'
       : 'No windows open.';
-    container.innerHTML = `<div class="empty-state">${message}</div>`;
+    const emptyState = document.createElement('div');
+    emptyState.className = 'empty-state';
+    emptyState.textContent = message;
+    container.appendChild(emptyState);
     return;
   }
 
@@ -232,48 +237,48 @@ const renderWindows = () => {
  * Create a card element for a window
  */
 const createWindowCard = (win) => {
-  const card = document.createElement('div');
-  card.className = 'card';
+  const card = document.createElement('peek-card');
+  card.interactive = true;
+  card.elevated = true;
   card.dataset.windowId = win.id;
 
+  // Header with optional favicon and title
+  const header = document.createElement('div');
+  header.slot = 'header';
+  header.style.display = 'flex';
+  header.style.alignItems = 'center';
+  header.style.gap = '8px';
+  header.style.minWidth = '0';
+
   // Try to get favicon from URL (only for external URLs)
-  let faviconUrl = null;
   if (win.url && !win.url.startsWith('peek://')) {
     try {
       const url = new URL(win.url);
-      faviconUrl = `${url.origin}/favicon.ico`;
+      const favicon = document.createElement('img');
+      favicon.className = 'card-favicon';
+      favicon.src = `${url.origin}/favicon.ico`;
+      favicon.onerror = () => favicon.remove();
+      header.appendChild(favicon);
     } catch (e) {
       // No favicon
     }
   }
 
-  // Only add favicon if we have one
-  if (faviconUrl) {
-    const favicon = document.createElement('img');
-    favicon.className = 'card-favicon';
-    favicon.src = faviconUrl;
-    favicon.onerror = () => favicon.remove();
-    card.appendChild(favicon);
-  }
-
-  const content = document.createElement('div');
-  content.className = 'card-content';
-
-  const title = document.createElement('div');
+  const title = document.createElement('span');
   title.className = 'card-title';
   title.textContent = win.title || 'Untitled';
+  header.appendChild(title);
 
+  card.appendChild(header);
+
+  // URL in body
   const url = document.createElement('div');
   url.className = 'card-url';
   url.textContent = win.url || '';
-
-  content.appendChild(title);
-  content.appendChild(url);
-
-  card.appendChild(content);
+  card.appendChild(url);
 
   // Click to focus window and close windows view
-  card.addEventListener('click', async () => {
+  card.addEventListener('card-click', async () => {
     debug && console.log('[windows] Clicking window:', win.id, win.title);
     await api.window.focus(win.id);
     closeWindowsView();
@@ -289,9 +294,9 @@ const init = async () => {
   await loadWindows();
 
   // Set up search input
-  const searchInput = document.querySelector('.search-input');
-  searchInput.addEventListener('input', (e) => {
-    state.searchQuery = e.target.value;
+  const searchInput = document.querySelector('peek-input.search-input');
+  searchInput.addEventListener('input', () => {
+    state.searchQuery = searchInput.value;
     state.selectedIndex = 0;
     renderWindows();
   });

@@ -240,8 +240,7 @@ const setupEventListeners = () => {
     });
   });
 
-  // Modal close
-  // Modal close - peek-dialog handles close-on-backdrop and close-on-escape automatically
+  // Modal close - peek-dialog handles close-on-backdrop; ESC is handled by the preload escape system
   modalOverlay.addEventListener('close', closeModal);
 
   // New tag input
@@ -266,11 +265,9 @@ const setupEventListeners = () => {
   // Escape handling
   if (api.escape) {
     api.escape.onEscape(() => {
-      // If modal is open, close it
-      if (modalOverlay.open) {
-        closeModal();
-        return { handled: true };
-      }
+      // Dialog closing is handled automatically by the preload escape system.
+      // When ESC is pressed, the preload detects open peek-dialog elements and
+      // closes them before this callback is reached. No per-extension workaround needed.
 
       // If search has content, clear it
       if (state.searchQuery) {
@@ -304,11 +301,10 @@ const setupEventListeners = () => {
  * Handle keyboard navigation
  */
 const handleKeydown = (e) => {
-  // Ignore if modal is open and not in an input
+  // If modal is open, let the keydown be absorbed (don't process navigation keys).
+  // ESC closing of dialogs is handled by the preload escape system which intercepts
+  // ESC on keyDown via before-input-event before DOM dispatch reaches here.
   if (modalOverlay.open) {
-    if (e.key === 'Escape') {
-      closeModal();
-    }
     return;
   }
 
@@ -765,7 +761,7 @@ const createItemCard = (item) => {
 const openEditModal = (item) => {
   state.editingItem = item;
 
-  const modal = document.querySelector('.modal');
+  const modal = modalOverlay;
   const tags = state.itemTags.get(item.id) || [];
 
   // Handle both old address schema and new item schema

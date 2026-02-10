@@ -100,6 +100,111 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
 }
 
 /**
+ * Core ESC handling logic for a BrowserWindow.
+ * Called when ESC keyDown is detected on the window's own webContents
+ * or on a webview guest webContents within the window.
+ *
+ * @param bw - The BrowserWindow to handle ESC for
+ * @param source - 'host' if from the window's own webContents, 'webview' if from a guest
+ */
+async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webview'): Promise<void> {
+  // Get window info
+  const entry = getWindowInfo(bw.id);
+  const params = entry?.params || {};
+  const escapeMode = (params.escapeMode as string) || 'auto';
+
+  // Always log ESC handling for debugging
+  console.log(`[esc] ESC keyDown - window ${bw.id}, source: ${source}, escapeMode: ${escapeMode}, transient: ${params.transient}, url: ${params.address}`);
+
+  // For 'ignore' mode, do nothing - let ESC pass through
+  if (escapeMode === 'ignore') {
+    DEBUG && console.log('Ignore mode - not handling ESC');
+    return;
+  }
+
+  // For 'navigate' mode, always ask renderer first.
+  // If renderer handles internally, do nothing.
+  // If renderer returns { handled: false }, backend applies IZUI close policy:
+  //   - Child windows (have parentWindowId) close to return to parent
+  //   - Transient windows close
+  //   - Active root windows do NOT close (IZUI policy)
+  if (escapeMode === 'navigate') {
+    console.log(`[esc] navigate mode - forwarding to renderer`);
+    const response = await askRendererToHandleEscape(bw);
+    console.log(`[esc] navigate mode response:`, response);
+    if (response.handled) {
+      return;
+    }
+    // Renderer didn't handle - apply IZUI close policy
+    const coordinator = getIzuiCoordinator();
+    const isChild = !!params.parentWindowId;
+    const isTransient = coordinator.isTransient() || params.transient === true;
+    if (isChild || isTransient || response.close) {
+      console.log(`[esc] navigate mode - closing (isChild: ${isChild}, isTransient: ${isTransient}, close: ${response.close})`);
+      closeOrHideWindow(bw.id);
+    } else {
+      console.log('[esc] navigate mode - active root window, NOT closing (IZUI policy)');
+    }
+    return;
+  }
+
+  // For 'auto' mode, check if transient (no focused window when opened)
+  if (escapeMode === 'auto') {
+    // Use IZUI coordinator for consistent state management
+    const coordinator = getIzuiCoordinator();
+    const isCoordinatorOverlay = coordinator.isOverlay();
+
+    // Overlay windows always close on ESC (they're full-screen temporary views)
+    const isOverlay = isCoordinatorOverlay || params.overlay === true || params.overlayHiddenWindows;
+
+    // Child windows (have a parentWindowId) always close on ESC at root
+    // This replaces the client-side parentWindowId check in izui.js
+    const isChild = !!params.parentWindowId;
+
+    // Check transient from coordinator (re-evaluated) or window params (fallback)
+    const isTransient = coordinator.isTransient() || params.transient === true;
+
+    if (isChild || isTransient || isOverlay) {
+      // Child window, transient mode, or overlay - ask renderer first, then close
+      if (isChild && !isTransient && !isOverlay) {
+        // Child in active mode: ask renderer for internal nav first
+        console.log(`[esc] auto mode (child window) - asking renderer before closing`);
+        const response = await askRendererToHandleEscape(bw);
+        console.log(`[esc] Child window escape response:`, response);
+        if (response.handled) {
+          return;
+        }
+        // Not handled internally - close the child window
+        console.log('[esc] Child window at root - closing to return to parent');
+      } else {
+        // Transient mode or overlay - close immediately
+        console.log('[esc] Auto mode (transient/overlay/transient-child) - closing directly, isChild:', isChild, 'coordinator.isTransient:', coordinator.isTransient());
+      }
+    } else {
+      // Active mode, root window (no parent) - ESC only navigates internal state, does NOT close
+      // Unless renderer explicitly requests close via { close: true }
+      console.log(`[esc] auto mode (non-transient/active, root window) - asking renderer to handle`);
+      const response = await askRendererToHandleEscape(bw);
+      console.log(`[esc] Renderer escape response (auto/active):`, response);
+      if (response.handled) {
+        return;
+      }
+      if (response.close) {
+        console.log('[esc] Active mode - renderer explicitly requested close');
+        closeOrHideWindow(bw.id);
+        return;
+      }
+      console.log('[esc] Active mode (root window) - renderer did not handle, NOT closing (IZUI policy)');
+      return;
+    }
+  }
+
+  // Only 'close' mode and transient 'auto' mode reach here
+  console.log('[esc] Closing/hiding window via closeOrHideWindow');
+  closeOrHideWindow(bw.id);
+}
+
+/**
  * Add escape key handler to a window
  * Supports escapeMode: 'auto' (default), 'close', 'navigate', 'ignore'
  *
@@ -109,119 +214,58 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
  * - 'navigate': ESC only triggers internal navigation, never closes
  *   (renderer handles ESC via IZUI - parent focus, internal nav, etc.)
  * - 'ignore': ESC is completely ignored (for overlays that shouldn't respond)
+ *
+ * Also handles ESC pressed inside <webview> guests. The BrowserWindow's
+ * before-input-event does NOT fire for keystrokes in a webview — those go to the
+ * guest's own WebContents. We listen for did-attach-webview to add ESC
+ * interception on guest WebContents, delegating back to the host window's
+ * escape handling (which sends escape-pressed IPC to the host renderer
+ * where the preload's onEscape callback lives).
  */
 export function addEscHandler(bw: BrowserWindow): void {
   DEBUG && console.log('adding esc handler to window:', bw.id);
   let lastEscTime = 0;
-  bw.webContents.on('before-input-event', async (e, i) => {
-    if (i.key === 'Escape' && i.type === 'keyUp') {
-      // Debounce: ignore ESC events within 200ms of each other
-      // Prevents double-fires from key propagation or OS focus changes
-      const now = Date.now();
-      if (now - lastEscTime < 200) {
-        console.log(`[esc] Debounced ESC keyUp on window ${bw.id} (${now - lastEscTime}ms since last)`);
-        return;
-      }
-      lastEscTime = now;
 
-      // Prevent ESC from propagating to the page
-      e.preventDefault();
+  // Helper: attach ESC interception to a WebContents (host or guest)
+  const attachEscListener = (wc: Electron.WebContents, source: 'host' | 'webview') => {
+    wc.on('before-input-event', async (e, i) => {
+      if (i.key === 'Escape' && i.type === 'keyDown') {
+        // Intercept ESC on keyDown (not keyUp) so the IPC fires BEFORE DOM keydown handlers.
+        // This prevents a race condition where peek-dialog closes on DOM keydown,
+        // then the IPC callback (on keyUp) sees no open dialog and returns { handled: false },
+        // causing the backend to close the entire window.
+        // With keyDown interception + e.preventDefault(), the DOM keydown never reaches
+        // peek-dialog, and the preload's escape handler sees the dialog still open.
 
-      // Get window info
-      const entry = getWindowInfo(bw.id);
-      const params = entry?.params || {};
-      const escapeMode = (params.escapeMode as string) || 'auto';
-
-      // Always log ESC handling for debugging
-      console.log(`[esc] ESC keyUp - window ${bw.id}, escapeMode: ${escapeMode}, transient: ${params.transient}, url: ${params.address}`);
-
-      // For 'ignore' mode, do nothing - let ESC pass through
-      if (escapeMode === 'ignore') {
-        DEBUG && console.log('Ignore mode - not handling ESC');
-        return;
-      }
-
-      // For 'navigate' mode, always ask renderer first.
-      // If renderer handles internally, do nothing.
-      // If renderer returns { handled: false }, backend applies IZUI close policy:
-      //   - Child windows (have parentWindowId) close to return to parent
-      //   - Transient windows close
-      //   - Active root windows do NOT close (IZUI policy)
-      if (escapeMode === 'navigate') {
-        console.log(`[esc] navigate mode - forwarding to renderer`);
-        const response = await askRendererToHandleEscape(bw);
-        console.log(`[esc] navigate mode response:`, response);
-        if (response.handled) {
+        // Debounce: ignore ESC events within 200ms of each other
+        // Prevents double-fires from key propagation or OS focus changes
+        const now = Date.now();
+        if (now - lastEscTime < 200) {
+          console.log(`[esc] Debounced ESC keyDown on window ${bw.id} source:${source} (${now - lastEscTime}ms since last)`);
           return;
         }
-        // Renderer didn't handle - apply IZUI close policy
-        const coordinator = getIzuiCoordinator();
-        const isChild = !!params.parentWindowId;
-        const isTransient = coordinator.isTransient() || params.transient === true;
-        if (isChild || isTransient || response.close) {
-          console.log(`[esc] navigate mode - closing (isChild: ${isChild}, isTransient: ${isTransient}, close: ${response.close})`);
-          closeOrHideWindow(bw.id);
-        } else {
-          console.log('[esc] navigate mode - active root window, NOT closing (IZUI policy)');
-        }
-        return;
+        lastEscTime = now;
+
+        // Prevent ESC from propagating to the page (blocks DOM keydown dispatch)
+        e.preventDefault();
+
+        await handleEscapeForWindow(bw, source);
       }
+    });
+  };
 
-      // For 'auto' mode, check if transient (no focused window when opened)
-      if (escapeMode === 'auto') {
-        // Use IZUI coordinator for consistent state management
-        const coordinator = getIzuiCoordinator();
-        const isCoordinatorOverlay = coordinator.isOverlay();
+  // Listen for ESC on the window's own WebContents (host page)
+  attachEscListener(bw.webContents, 'host');
 
-        // Overlay windows always close on ESC (they're full-screen temporary views)
-        const isOverlay = isCoordinatorOverlay || params.overlay === true || params.overlayHiddenWindows;
-
-        // Child windows (have a parentWindowId) always close on ESC at root
-        // This replaces the client-side parentWindowId check in izui.js
-        const isChild = !!params.parentWindowId;
-
-        // Check transient from coordinator (re-evaluated) or window params (fallback)
-        const isTransient = coordinator.isTransient() || params.transient === true;
-
-        if (isChild || isTransient || isOverlay) {
-          // Child window, transient mode, or overlay - ask renderer first, then close
-          if (isChild && !isTransient && !isOverlay) {
-            // Child in active mode: ask renderer for internal nav first
-            console.log(`[esc] auto mode (child window) - asking renderer before closing`);
-            const response = await askRendererToHandleEscape(bw);
-            console.log(`[esc] Child window escape response:`, response);
-            if (response.handled) {
-              return;
-            }
-            // Not handled internally - close the child window
-            console.log('[esc] Child window at root - closing to return to parent');
-          } else {
-            // Transient mode or overlay - close immediately
-            console.log('[esc] Auto mode (transient/overlay/transient-child) - closing directly, isChild:', isChild, 'coordinator.isTransient:', coordinator.isTransient());
-          }
-        } else {
-          // Active mode, root window (no parent) - ESC only navigates internal state, does NOT close
-          // Unless renderer explicitly requests close via { close: true }
-          console.log(`[esc] auto mode (non-transient/active, root window) - asking renderer to handle`);
-          const response = await askRendererToHandleEscape(bw);
-          console.log(`[esc] Renderer escape response (auto/active):`, response);
-          if (response.handled) {
-            return;
-          }
-          if (response.close) {
-            console.log('[esc] Active mode - renderer explicitly requested close');
-            closeOrHideWindow(bw.id);
-            return;
-          }
-          console.log('[esc] Active mode (root window) - renderer did not handle, NOT closing (IZUI policy)');
-          return;
-        }
-      }
-
-      // Only 'close' mode and transient 'auto' mode reach here
-      console.log('[esc] Closing/hiding window via closeOrHideWindow');
-      closeOrHideWindow(bw.id);
-    }
+  // Listen for webview guests attaching to this window.
+  // When a <webview> tag creates its guest WebContents, keystrokes inside the
+  // webview go to the guest — not the host BrowserWindow's webContents.
+  // We add an ESC listener on each guest so that ESC in web content (e.g. slides
+  // showing youtube.com) is intercepted and routed through the host window's
+  // escape handling (which talks to the host renderer's preload onEscape callback).
+  bw.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+    console.log(`[esc] Webview guest attached to window ${bw.id}, adding ESC listener`);
+    attachEscListener(guestWebContents, 'webview');
   });
 }
 

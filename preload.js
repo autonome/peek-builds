@@ -1623,15 +1623,36 @@ api.escape = {
 };
 
 // Escape handler - responds to backend's escape query
-// If app registers a handler via onEscape(), that runs first (e.g., IZUI internal navigation)
-// Otherwise, returns { handled: false } so backend closes the window
+// The backend intercepts ESC on keyDown via before-input-event and calls e.preventDefault(),
+// so the DOM keydown event never reaches the page. This means peek-dialog's own keydown
+// handler won't fire, and we handle dialog closing here in the preload instead.
 //
-// Note: Web pages are now wrapped in peek://page containers which have IZUI handlers.
-// This fallback is for any peek:// window that doesn't register a handler.
+// Order of precedence:
+// 1. Open peek-dialog or native <dialog> - close the topmost one automatically
+// 2. Extension's onEscape() callback - for internal navigation (search clear, filter reset, etc.)
+// 3. Return { handled: false } - backend decides whether to close the window
+//
+// This eliminates the keyDown/keyUp race condition: since we intercept on keyDown and
+// prevent DOM propagation, the dialog is still open when this handler runs.
 ipcRenderer.on('escape-pressed', async (event, data) => {
   console.log('[preload:esc] escape-pressed received, hasCallback:', !!_escapeCallback, 'source:', sourceAddress);
 
   try {
+    // Check for open dialogs first (peek-dialog or native <dialog>).
+    // Find the topmost open dialog and close it. This handles ALL extensions
+    // using peek-dialog without requiring per-extension workarounds.
+    const openDialog = _findTopmostOpenDialog();
+    if (openDialog) {
+      const tag = openDialog.tagName;
+      console.log('[preload:esc] Found open overlay:', tag, '- closing it');
+      // Close via component API (peek-dialog, peek-drawer) or native dialog close
+      if (typeof openDialog.close === 'function') {
+        openDialog.close();
+      }
+      ipcRenderer.send(data.responseChannel, { handled: true });
+      return;
+    }
+
     // If app registered a handler (IZUI), use it
     if (_escapeCallback) {
       console.log('[preload:esc] Calling app escape handler');
@@ -1651,6 +1672,35 @@ ipcRenderer.on('escape-pressed', async (event, data) => {
     ipcRenderer.send(data.responseChannel, { handled: false });
   }
 });
+
+/**
+ * Find the topmost open dialog/drawer in the document that should close on ESC.
+ * Checks for peek-dialog[open], peek-drawer[open], and native dialog[open] elements.
+ * Respects the closeOnEscape property (defaults to true on peek-dialog/peek-drawer).
+ * Returns the element to close, or null if none found.
+ */
+function _findTopmostOpenDialog() {
+  // Check for open peek-dialog and peek-drawer components (both reflect `open` as attribute)
+  const peekOverlays = document.querySelectorAll('peek-dialog[open], peek-drawer[open]');
+  if (peekOverlays.length > 0) {
+    // Walk from last (topmost in DOM order) to first, respecting closeOnEscape property
+    for (let i = peekOverlays.length - 1; i >= 0; i--) {
+      const overlay = peekOverlays[i];
+      // Default is true, so only skip if explicitly set to false
+      if (overlay.closeOnEscape !== false) {
+        return overlay;
+      }
+    }
+  }
+
+  // Check for native <dialog open> elements at document level
+  const nativeDialogs = document.querySelectorAll('dialog[open]');
+  if (nativeDialogs.length > 0) {
+    return nativeDialogs[nativeDialogs.length - 1];
+  }
+
+  return null;
+}
 
 // ==================== Modes API ====================
 // Context-aware command system

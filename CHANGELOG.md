@@ -1,11 +1,18 @@
 # Peek CHANGELOG
 
+<!--
+@marss
+title: Peek Changelog
+link: https://peekclient.com/changelog
+description: Recent changes to Peek
+-->
+
 Completed work, grouped by week of year.
 - See TODO.md for pending items, WIP.md for in-progress items
 
-Newly done items go here, grouped under third-level headings by week of year.
+Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
-### 2026-W06
+## 2026-02-02
 
 Desktop - IZUI (Inverted Zooming User Interface)
 - [x] feat(izui): implement IZUI state machine for transient vs active window behavior (457ce41d)
@@ -147,7 +154,7 @@ Code Cleanup
 - [x] chore: remove commented-out sendToWindow/onMessage APIs from preload.js
 - [x] chore: remove 7 unused IPC handlers from ipc.ts (~155 lines)
 
-### 2026-W05
+## 2026-01-26
 
 Server
 - [x] feat(server): add single-user mode support (no auth required for solo use)
@@ -225,7 +232,7 @@ Developer Tooling
 - [x] docs: add CLAUDE.coordinator.md for coordinator agents
 - [x] docs: update jj workflow - always commit before operations
 
-### 2026-W04
+## 2026-01-19
 
 - [x][desktop] history & addressability: track peek:// loads, all window/webview loads, in-page navigation, JS window.open child windows (mkylrnxy)
 - [x][desktop] history chaining: prevId/nextId columns on visits table with migration backfill (mkylrnxy)
@@ -306,7 +313,7 @@ Developer Tooling
 - [x][workflow] restore git/github push for Railway deploys (vkrunkpn)
 - [x][workflow] fix jj commit/merge strategy - agents no longer touch main bookmark (srmykyqy)
 
-### 2026-W03
+## 2026-01-12
 
 - [x][desktop] settings UI for sync (vyvorvtq)
 - [x][desktop] test sync and package (ssxzpoxo)

@@ -3873,8 +3873,8 @@ test.describe('IZUI Behavior @desktop', () => {
       }
     });
 
-    // Send two ESC keyUp events in rapid succession (< 200ms apart)
-    // The debouncing in windows.ts:118-125 should filter the second one
+    // Send two ESC key presses in rapid succession (< 200ms apart)
+    // The debouncing in windows.ts should filter the second one
     await groupsWindow.keyboard.press('Escape');
     // Immediately press again - well within the 200ms debounce window
     await groupsWindow.keyboard.press('Escape');
@@ -3884,7 +3884,7 @@ test.describe('IZUI Behavior @desktop', () => {
 
     // Check call count - due to debouncing, only 0 or 1 calls should have gone through
     // Note: Playwright keyboard.press sends both keyDown and keyUp, and the ESC handler
-    // only fires on keyUp. The debounce ensures rapid presses are collapsed.
+    // fires on keyDown via before-input-event. The debounce ensures rapid presses are collapsed.
     const callCount = await groupsWindow.evaluate(() => (window as any).__escCallCount);
 
     // The debounce should ensure at most 1 handler call for 2 rapid presses

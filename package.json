@@ -172,7 +172,8 @@
     "restart:headless": "yarn kill && yarn debug:headless",
     "restart:electron": "yarn kill:electron && sleep 1 && yarn debug:electron",
     "restart:tauri": "yarn kill:tauri && sleep 1 && yarn debug:tauri",
-    "lint": "echo \"No linting configured\""
+    "lint": "echo \"No linting configured\"",
+    "rss": "node scripts/changelog-to-rss.js"
   },
   "dependencies": {
     "@cliqz/adblocker-electron": "^1.34.0",

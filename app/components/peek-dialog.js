@@ -70,6 +70,9 @@ export class PeekDialog extends PeekElement {
         max-width: min(90vw, var(--peek-dialog-width, 480px));
         max-height: var(--peek-dialog-max-height, 85vh);
         overflow: hidden;
+      }
+
+      dialog[open] {
         display: flex;
         flex-direction: column;
       }
@@ -243,9 +246,9 @@ export class PeekDialog extends PeekElement {
     const dialog = this.dialogElement;
     if (!dialog || !dialog.open) return;
 
-    dialog.close();
     document.removeEventListener('keydown', this._handleKeydown);
     this.open = false;
+    dialog.close();
     this.emit('close', { reason });
   }
 

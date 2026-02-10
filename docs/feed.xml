@@ -1,0 +1,451 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Peek Changelog</title>
+    <link>https://peekclient.com/changelog</link>
+    <description>Recent changes to Peek</description>
+    <lastBuildDate>Tue, 10 Feb 2026 11:01:28 GMT</lastBuildDate>
+    <generator>changelog-to-rss.js</generator>
+    <atom:link href="https://peekclient.com/changelog/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-02-02</title>
+      <link>https://peekclient.com/changelog</link>
+      <guid isPermaLink="false">https://peekclient.com/changelog#2026-02-02</guid>
+      <pubDate>Mon, 02 Feb 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Desktop - IZUI (Inverted Zooming User Interface)<br>
+<ul><li>feat(izui): implement IZUI state machine for transient vs active window behavior (457ce41d)</li><br>
+<li style="margin-left:1em">Centralized <code>IzuiStateCoordinator</code> manages session-based state tracking</li><br>
+<li style="margin-left:1em">Fixes cmd bar stuck on "group" mode when invoked transiently</li><br>
+<li style="margin-left:1em">Fixes ESC from overlay showing groups instead of returning to previous app</li><br>
+<li style="margin-left:1em">Transient state propagates to child windows (cmd -> overlay)</li><br>
+<li style="margin-left:1em">Uses <code>isFocused()</code> for accurate system focus detection</li><br>
+<li style="margin-left:1em">KeepLive windows re-evaluate transient state on each show</li><br>
+<li style="margin-left:1em">Added <code>api.izui.*</code> renderer API for querying state</li><br>
+<li style="margin-left:1em">54 unit tests with dependency injection for testability</li><br>
+<li style="margin-left:1em">See <code>docs/izui.md</code> for full documentation</li><br>
+<li>fix(izui): OS-level focus for transient detection + graceful test shutdown (e1764328)</li><br>
+<li style="margin-left:1em">Transient detection uses OS-level app focus (<code>app.isFocused</code>) instead of window visibility</li><br>
+<li style="margin-left:1em">Tests use graceful <code>app.quit()</code> instead of SIGTERM/SIGKILL (no more crash dialogs)</li><br>
+<li style="margin-left:1em">5 new IZUI behavior tests for real app focus scenarios</li><br>
+<li>refactor(izui): passive backend window manager - extensions use api.window.open() directly (188894c4)</li><br>
+<li style="margin-left:1em">Backend no longer creates windows for extensions; extensions open their own via API</li><br>
+<li style="margin-left:1em">Simplifies window lifecycle and reduces coupling</li><br>
+<li>fix(izui): child windows always close on ESC + center windows on screen (b0d07b89)</li><br>
+<li style="margin-left:1em">ESC policy: child windows always close, active root windows do not</li><br>
+<li style="margin-left:1em">All new windows centered on screen at creation</li><br>
+<li>fix(izui): visibility-based transient detection + active mode ESC protection (d74b62b5)</li><br>
+<li>feat(izui): center child windows over parent window (bd947dbc)</li><br>
+<li style="margin-left:1em">Parent window position/size used to calculate centered placement</li><br>
+<li style="margin-left:1em">Focus restored to parent on child close</li><br>
+<li>fix(izui): renderer-driven escape lifecycle for navigate mode windows (dc470b7f)</li><br>
+<li>fix(izui): fix ESC navigation, window drag, and navbar cleanup (3ca4841b)</li><br>
+<li>fix(izui): fix transient detection race condition (d634a52b)</li><br>
+<li>fix: clean up modes, remove overlay, fix IZUI navigation stack (6be5fc45)</li><br>
+<li>fix(groups): filter peek:// URLs and fix IZUI stack navigation (70ab1706)</li><br>
+<li>cleanup(overlay): remove vestigial overlay references and rename events (16402840)</li><br>
+<li>fix(main): remove non-existent overlay from CONSOLIDATED_EXTENSION_IDS (518c4406)</li><br>
+</ul><br>
+Desktop - Reactivity & Events<br>
+<ul><li>feat(reactivity): add tag-centric events for real-time UI updates (8c229cdf)</li><br>
+<li style="margin-left:1em"><code>tag:created</code>, <code>tag:item-added</code>, <code>tag:item-removed</code> events</li><br>
+<li style="margin-left:1em">Extensions can subscribe to tag changes for live UI updates</li><br>
+<li>feat(reactivity): item CRUD events, debouncing, history/feeds subscriptions (1d351083)</li><br>
+<li style="margin-left:1em"><code>item:created</code>, <code>item:updated</code>, <code>item:deleted</code> events</li><br>
+<li style="margin-left:1em">Debounced event emission to prevent UI thrashing</li><br>
+<li style="margin-left:1em">History and feeds extensions subscribe to relevant events</li><br>
+<li>feat(datastore): implement item_events table and CRUD operations (78950782)</li><br>
+<li>feat(preload): expose item_events API to renderer (f8f85ebc)</li><br>
+</ul><br>
+Desktop - Window Management<br>
+<ul><li>feat(window): add overlay mode for transient full-screen views (0727112b)</li><br>
+<li>fix(windows): hide other windows AFTER windows view opens (37ee7d43)</li><br>
+<li>fix(windows): ESC always closes, remove fallback emoji (3fddd1a6)</li><br>
+<li>refactor(windows): transparent bg with groups/tags card style (414e2139)</li><br>
+<li>refactor(windows): use peek-card and peek-grid components (666efa8d)</li><br>
+<li>fix(windows): use correct path for component imports (8b6686e4)</li><br>
+</ul><br>
+Desktop - Architecture & Modes<br>
+<ul><li>feat(context): add app-wide context API for extensible mode management (196a12d0)</li><br>
+<li>refactor(modes): remove modes.ts, consolidate into context API and datastore (5943e223)</li><br>
+<li>refactor(modes): remove settings mode and minor modes (simplify to page/group/default) (eab54a3f)</li><br>
+<li>feat(schema): add feeds and series architecture (8688c501)</li><br>
+<li>feat(feeds): add feed reader extension and API documentation (44c5b507)</li><br>
+</ul><br>
+Desktop - Editor & Commands<br>
+<ul><li>feat(editor): implement note editing flow with autosave (0ae56bb7)</li><br>
+<li>feat(cmd): restore mode indicator to command bar (from orphaned commits) (917640ca)</li><br>
+<li style="margin-left:1em">Shows current mode (page/group/settings)</li><br>
+<li style="margin-left:1em">Click to cycle through modes</li><br>
+<li style="margin-left:1em">Auto-hides when in default mode</li><br>
+<li>feat(cmd): add Sync now command for manual sync trigger (18d02d2c)</li><br>
+<li>refactor(cmd): use connector pattern for edit and note commands (48465f72)</li><br>
+<li>fix(cmd): url command returns error instead of opening editor when no URL provided (5141fb07)</li><br>
+</ul><br>
+Desktop - UI & Components<br>
+<ul><li>feat(components): add glass-morphism tokens and component modes (7b2e52dc)</li><br>
+<li>fix(ui): center card headers, disable URL input autocapitalize, fix dev script (aa578e0d)</li><br>
+<li>fix(page): set default background on webview content when page has none (9fc274ab)</li><br>
+<li style="margin-left:1em">Respects system theme (dark/light)</li><br>
+<li style="margin-left:1em">Only applies when page doesn't set its own background</li><br>
+<li>fix(page): use trackNavigation for URL visit recording (f2677891)</li><br>
+</ul><br>
+Desktop - Profiles & Startup<br>
+<ul><li>feat(profiles): add Chromium session partition isolation per profile (2d704158)</li><br>
+<li>fix(profiles): register peek:// protocol on profile session (cd80de8d)</li><br>
+<li>fix(startup): respect startupFeature pref instead of always opening settings (5b920fab)</li><br>
+</ul><br>
+Desktop - Fixes<br>
+<ul><li>fix: ESC handling for Active mode windows (IZUI policy compliance)</li><br>
+<li>fix: add getFocusedVisibleWindowId API for modal window targeting</li><br>
+<li>fix: add trackNavigation API for unified page load tracking</li><br>
+<li>fix: update test to use peek://ext/cmd/panel.html (correct URL after cleanup)</li><br>
+<li>fix: window-list returns actual URLs from peek://app/page containers</li><br>
+<li>fix: mode detection from URL in window creation</li><br>
+<li>fix: add native module check script (prevents NODE_MODULE_VERSION mismatch)</li><br>
+<li>fix: unit tests run under Electron's Node (ELECTRON_RUN_AS_NODE=1) to match native module ABI</li><br>
+<li>fix(ipc): cast address to string for type safety (32a7f8a0)</li><br>
+<li>fix(ipc): sanitize window params to prevent serialization crash (fca6a26f)</li><br>
+<li>fix(build): exclude tmp/ agent workspaces from electron-builder (f0f26e31)</li><br>
+<li>fix(build): electron-builder uses yml config via extends (4620155f)</li><br>
+<li>fix(url): normalize trailing slash on bare domain URLs (3c2bbd61)</li><br>
+</ul><br>
+Mobile / iOS<br>
+<ul><li>feat(mobile): add URL action icons with native WKWebView + visit tracking (ee06ef99)</li><br>
+<li style="margin-left:1em">Open in Browser: opens URL in Safari</li><br>
+<li style="margin-left:1em">Open in Webview: opens URL in embedded native WKWebView</li><br>
+<li style="margin-left:1em">Track visits when URLs are loaded/navigated in webview</li><br>
+<li>fix(webview-plugin): simplify Swift integration with direct FFI (18258830)</li><br>
+<li>feat(mobile): fix native webview and restore icon system (1b641ed1)</li><br>
+<li>fix(ios): require hold gesture for pull-to-refresh (prevents accidental triggers) (0efb4445)</li><br>
+<li>feat(ios): bottom sheet webview + research docs (80fb7d8f)</li><br>
+<li>feat(webview): card-expansion iframe overlay replaces native bottom sheet (eb43f135)</li><br>
+<li>fix(ios): silence linker warnings and remove unused default icons (8cd36323)</li><br>
+<li>fix(ios): UX polish pass - 18 fixes for editor, share extension, layout, build (cf5fe38b)</li><br>
+<li>fix(ios): UX polish - 13 fixes for share sheet, editor, keyboard, sorting, filters (956fdcb8)</li><br>
+<li>fix(ui): maximize editor card space - tighter padding, remove separator, expand to edges (2a0fc4bf)</li><br>
+<li>fix(ui): undo/redo at top, reduce gaps, add webview link for text items (90d76c51)</li><br>
+<li>fix(share): commit pending tag text when Done is tapped (712a5108)</li><br>
+<li>fix(build): use dynamic DerivedData path for sim:install (94420c17)</li><br>
+</ul><br>
+Testing<br>
+<ul><li>feat(tests): add Playwright browser extension e2e tests</li><br>
+<li>fix(tests): improve extension ID detection and shared instance handling</li><br>
+<li>fix(tests): remove Firefox Playwright support (not supported by Playwright)</li><br>
+<li>test: add integration tests for tag-centric events (ed9dd17a)</li><br>
+</ul><br>
+Refactoring<br>
+<ul><li>refactor(extensions): move tag and tagset commands to tags extension (d6636aaa)</li><br>
+<li>refactor(extensions): create files extension with csv and save commands (435cc952)</li><br>
+<li>refactor(extensions): create sync extension with sync command (e5867452)</li><br>
+</ul><br>
+Datastore & UI<br>
+<ul><li>fix(datastore): show addresses/visits/tags stats with safe error handling</li><br>
+<li>fix(datastore): extract stats from result.data wrapper</li><br>
+<li>chore: clean up settings and diagnostic UI</li><br>
+</ul><br>
+Code Cleanup<br>
+<ul><li>chore: remove vestigial app/cmd/ directory (24 files, replaced by extensions/cmd/)</li><br>
+<li>chore: remove app/scripts/ (disabled feature with missing HTML files)</li><br>
+<li>chore: remove dead functions from app/index.js (uninitFeature, initIframeFeature)</li><br>
+<li>chore: remove Cmd and Scripts entries from app/config.js (non-existent URLs)</li><br>
+<li>chore: simplify app/features.js (all features are now extensions)</li><br>
+<li>chore: remove commented-out sendToWindow/onMessage APIs from preload.js</li><br>
+<li>chore: remove 7 unused IPC handlers from ipc.ts (~155 lines)</li></ul></p>]]></description>
+    </item>
+    <item>
+      <title>2026-01-26</title>
+      <link>https://peekclient.com/changelog</link>
+      <guid isPermaLink="false">https://peekclient.com/changelog#2026-01-26</guid>
+      <pubDate>Mon, 26 Jan 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Server<br>
+<ul><li>feat(server): add single-user mode support (no auth required for solo use)</li><br>
+<li>feat(server): add storage abstraction layer for image handling</li><br>
+<li>feat(server): add SQL abstraction layer for database portability</li><br>
+</ul><br>
+Extension<br>
+<ul><li>feat(extension): add command bar popup with tag, note, search</li><br>
+<li>feat(extension): add Alt+P hotkey for command bar popup</li><br>
+<li>feat(extension): simplify command bar popup UI</li><br>
+<li>feat(extension): add e2e sync tests and preserve original timestamps</li><br>
+</ul><br>
+Desktop - Fullscreen Canvas<br>
+<ul><li>feat(page): implement fullscreen transparent canvas architecture</li><br>
+<li>feat(page): fullscreen transparent canvas with floating navbar</li><br>
+<li>fix(navbar): prevent hiding when hovering over gaps between child elements</li><br>
+</ul><br>
+Desktop - IZUI / ESC Handling<br>
+<ul><li>feat(izui): add minimal IZUI window navigation system</li><br>
+<li>feat(izui): complete ESC key handling with IZUI integration</li><br>
+<li>feat(izui): navigation stack for ESC in child windows</li><br>
+<li>feat(izui): complete preload API wiring for ESC key handling</li><br>
+<li>feat(esc): change default escapeMode from 'close' to 'auto'</li><br>
+<li>fix(izui): overlay no longer steals ESC from web pages</li><br>
+<li>fix(esc): web pages now close on first ESC key press</li><br>
+<li>feat(cmd): add mode indicator to command bar</li><br>
+</ul><br>
+Mobile<br>
+<ul><li>feat(mobile): improve item card UI and keyboard stability</li><br>
+<li>feat(mobile): migrate tags.id from INTEGER to TEXT for sync compatibility</li><br>
+<li>fix(mobile): prevent orphaned databases and ensure dev profile in dev builds</li><br>
+<li>fix(mobile): resolve deadlock and respect profile choice in dev builds</li><br>
+<li>fix(sync): filter out peek:// URLs from server sync</li><br>
+</ul><br>
+Schema & Data Layer<br>
+<ul><li>feat(schema): add schema codegen system with single source of truth</li><br>
+<li>feat(schema): integrate codegen into build system with Rust backend tests</li><br>
+<li>feat(schema): comprehensive test coverage for generated types</li><br>
+<li>chore(server): align Node engine to repo-wide v22 policy</li><br>
+</ul><br>
+Testing Infrastructure<br>
+<ul><li>test(components): add component test infrastructure</li><br>
+<li>test(components): expand coverage to 56 tests with deterministic waits</li><br>
+<li>docs(components): add Testing section to README</li><br>
+<li>fix(tests): consolidate packaged tests to single Electron instance</li><br>
+</ul><br>
+Editor<br>
+<ul><li>feat(editor): integrate CodeMirror markdown editor with three-panel layout</li><br>
+<li style="margin-left:1em">Outline sidebar with header navigation</li><br>
+<li style="margin-left:1em">Live markdown preview sidebar</li><br>
+<li style="margin-left:1em">Vim mode toggle (persisted in settings)</li><br>
+<li style="margin-left:1em">Resizable panels, focus mode</li><br>
+<li style="margin-left:1em">Full syntax highlighting</li><br>
+<li>feat(editor): add vim fold commands, status line, and comprehensive tests</li><br>
+</ul><br>
+Web Extensions<br>
+<ul><li>feat(web-ext): add bundled web extensions infrastructure</li><br>
+<li>feat(extensions): bundle Consent-O-Matic for automatic cookie consent handling</li><br>
+<li>docs: add research on bundled web extensions (uBlock, Proton Pass, Consent-O-Matic)</li><br>
+<li>Integrated @cliqz/adblocker-electron for native ad blocking</li><br>
+</ul><br>
+Mobile / iOS<br>
+<ul><li>feat(mobile): add Release CLI builds via xcodebuild</li><br>
+<li style="margin-left:1em">Fix Share Extension configuration inheritance (CONFIGURATION=Release override)</li><br>
+<li style="margin-left:1em">Add yarn mobile:ios:xcodebuild:release command</li><br>
+<li style="margin-left:1em">Add yarn mobile:ios:xcodebuild:install:release command</li><br>
+<li>feat(tests): iOS e2e testing improvements and window utilities</li><br>
+<li style="margin-left:1em">Add PEEK_AUTO_SYNC env var support</li><br>
+<li style="margin-left:1em">Add --headless and --build flags to e2e-full-sync-test.sh</li><br>
+<li>docs: add research on xcodebuild CLI vs Xcode GUI environment issues</li><br>
+</ul><br>
+Developer Tooling<br>
+<ul><li>chore: add multi-agent workflow with jj workspaces</li><br>
+<li>chore: update agent-setup to handle both install and update</li><br>
+<li>docs: add CLAUDE.coordinator.md for coordinator agents</li><br>
+<li>docs: update jj workflow - always commit before operations</li></ul></p>]]></description>
+    </item>
+    <item>
+      <title>2026-01-19</title>
+      <link>https://peekclient.com/changelog</link>
+      <guid isPermaLink="false">https://peekclient.com/changelog#2026-01-19</guid>
+      <pubDate>Mon, 19 Jan 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p><ul><li>[x][desktop] history & addressability: track peek:// loads, all window/webview loads, in-page navigation, JS window.open child windows (mkylrnxy)</li><br>
+<li>[x][desktop] history chaining: prevId/nextId columns on visits table with migration backfill (mkylrnxy)</li><br>
+<li>[x][desktop] history API: getHistory() with date range filtering, enriched visit+address join query, IPC + preload exposure (mkylrnxy)</li><br>
+<li>add device ID tracking to item metadata (swskpulq)</li><br>
+<li>app version and datastore version as separate layers of compatibility (rltmkytv)</li><br>
+<li>define compat detection system across desktop/server/mobile/other (rltmkytv)</li><br>
+<li>define how sync works when incompatible (clients only sync w/ datastore-compatible nodes) (rltmkytv)</li><br>
+<li>sync is not spoke server - all nodes equal participants (rltmkytv)</li><br>
+<li>implement version compat in desktop/server (DATASTORE_VERSION + PROTOCOL_VERSION, exact match, 409 on mismatch) (rltmkytv)</li><br>
+<li>implement version compat in mobile (add version headers to lib.rs sync) (rlrlqkqz)</li><br>
+<li>[x][mobile] fix sync re-pushing all items every time - per-item synced_at (nxszorty)</li><br>
+<li>[x][mobile] add version headers to mobile sync - DATASTORE_VERSION + PROTOCOL_VERSION (rlrlqkqz)</li><br>
+<li>[x][desktop] add new items - url/tagset/note commands (pwuyrstl)</li><br>
+<li>[x][desktop] editor extension with full note editing (rmztsrkr)</li><br>
+<li>[x][tauri] sync module, schema migrations, version compat to match Electron (zzyllzsk)</li><br>
+<li>e2e sync & version test suite, fix sync profile resolution (rlrlqkqz)</li><br>
+<li>[x][mobile] fix share extension creating duplicate items per tag (yvumsuqr)</li><br>
+<li>[x][mobile] merge home and search into unified view, configurable archive tag (txzkumku)</li><br>
+<li>[x][mobile] fix big bottom bar showing again (tqnmowqm)</li><br>
+<li>[x][mobile] iOS profile support with build detection and per-profile databases (ylkwxtut)</li><br>
+<li>[x][mobile] UUID-based profile sync across mobile, desktop, and server (mlqntkvw)</li><br>
+<li>[x][mobile] iOS share extension fixes + tag input filtering (smuxwlzx)</li><br>
+<li>[x][mobile] consolidate editor views with shared components (wvvqrquo)</li><br>
+<li>[x][mobile] add clear buttons to all input fields and textareas (vyuwkrpy)</li><br>
+<li>[x][mobile] fix tags not persisting on text notes (qowppxlk)</li><br>
+<li>[x][mobile] add archive tag support to hide items from views (urmmzrvr)</li><br>
+<li>[x][mobile] add font size slider in settings with realtime preview (umqpnqto)</li><br>
+<li>[x][mobile] mobile editing ux - toasts, validation, draft persistence, spacing, bottom bar fix (rqwmmpnm)</li><br>
+<li>[x][mobile] pull-to-refresh gesture triggers sync (roqqsxyp)</li><br>
+<li>[x][desktop] window titlebar hide/show pref with settings UI (wpykxvrl)</li><br>
+<li>[x][desktop] windows movable and resizable by default with window.open API params (wpykxvrl)</li><br>
+<li>[x][desktop] persist keyed/url window position+size across app restarts (wpykxvrl)</li><br>
+<li>[x][desktop] pin window on top (app and OS level) with commands (wpykxvrl)</li><br>
+<li>[x][desktop] configurable escape behavior per-window via window.open API (wpykxvrl)</li><br>
+<li>[x][desktop] window animation API (to/from coords, time) + slides impl (wpykxvrl)</li><br>
+<li>[x][desktop] Desktop Windows - title bar, persistence, pin controls, animations (wpykxvrl)</li><br>
+<li>[x][desktop] migrate old addresses to items table, fix CHECK constraint (ltovmzon)</li><br>
+<li>[x][desktop] multi-tag search in tags UI (ltovmzon)</li><br>
+<li>[x][desktop] extension nav styling improvements (ltovmzon)</li><br>
+<li>[x][desktop] fix groups extension - add visit tracking, filter for URLs only (wuywuwyn)</li><br>
+<li>[x][desktop] fix sync status in settings UI - use correct field name for display (xxtpswys)</li><br>
+<li>[x][desktop] persist autoSync setting in extension_settings (vyvorvtq)</li><br>
+<li>[x][desktop+server] add sync version compatibility - DATASTORE_VERSION + PROTOCOL_VERSION (rltmkytv)</li><br>
+<li>[x][desktop+server] add user profiles and profile switching (qlyszyzx)</li><br>
+<li>[x][desktop] add tags extension for tag visualization and management (kwuwspun)</li><br>
+<li>[x][desktop] click-and-hold window dragging for frameless windows (myyozwzx)</li><br>
+<li>[x][desktop] fix better-sqlite3 node/electron version mismatch with postinstall script (mmywmysr)</li><br>
+<li>[x][desktop] debug and stabilize build on new Electron (stale node_modules after upgrade) (kszpuvqr)</li><br>
+<li>[x][desktop] upgrade Electron to 40 + pin Node to 24 (kszpuvqr)</li><br>
+<li>[x][desktop] e2e sync test infrastructure for production (snrnkvls)</li><br>
+<li>[x][desktop] daily data snapshots saved to compress archives in ~/sync/peek-backups (qkpozntl)</li><br>
+<li>[x][desktop] fix 5GB packaged build by adding exclusions to electron-builder.yml (~280MB now) (qknnlynl)</li><br>
+<li>[x][desktop] update release build and drive it (rlytpznn)</li><br>
+<li>[x][security] remove production server endpoint from source - require env config (rnxppwkx)</li><br>
+<li>[x][server] Add pre-migration backup to server migration (uvkkmoos)</li><br>
+<li>[x][server] add daily snapshot backups on server, test locally, deploy, test and confirm working on railway (vpvuotkr)</li><br>
+<li>[x][server] document Railway deployment info so agents don't have to relearn each time (wlwruzuq)</li><br>
+<li>[x][sync] fix duplicates: add sync_id parameter for server-side deduplication (yswsyzvl)</li><br>
+<li>[x][sync] investigate remaining sync edge cases (purnxzzz)</li><br>
+<li>[x][sync] E2E integration tests for desktop-server sync (uowlzlxm)</li><br>
+<li>data model: multi-user support (server full, desktop profile isolation) (qlyszyzx)</li><br>
+<li>desktop sync working (bidirectional in backend/electron/sync.ts) (mxwrymlv)</li><br>
+<li>sync config in settings UI (vyvorvtq)</li><br>
+<li>windows draggable/moveable (click-and-hold in app/drag.js) (myyozwzx)</li><br>
+<li>notes in datastore (items table with type='text') (xxnxwnwx)</li><br>
+<li>peek-node supports text/urls/tagsets/images (xxnxwnwx)</li><br>
+<li>backup/restore snapshots (daily automated + manual) (zuzylokr)</li><br>
+<li>action history storage (visits table) (wuywuwyn)</li><br>
+<li>update main README (kpylorrl)</li><br>
+<li>[x][mobile] shared iOS build cache to avoid Rust rebuilds across agent workspaces (nputkypr)</li><br>
+<li>[x][mobile] update to full bidirectional sync (pull + push, not just webhook push) (otsvqvzo)</li><br>
+<li>[x][workflow] agent workspace isolation - rules to stay in workspace, no parent repo access (lorkrruo)</li><br>
+<li>[x][workflow] fix divergent commits - mmerge uses jj new+restore pattern (zponttxz)</li><br>
+<li>[x][workflow] Railway deploy scripts - npm/yarn scripts with --service flag (zponttxz)</li><br>
+<li>[x][workflow] fix TODO archival - updated agent templates with clearer instructions (uytsrstx)</li><br>
+<li>[x][workflow] clarify ./app rule - now about respecting front-end/back-end architecture boundary (tkvzpvlu)</li><br>
+<li>[x][workflow] restore git/github push for Railway deploys (vkrunkpn)</li><br>
+<li>[x][workflow] fix jj commit/merge strategy - agents no longer touch main bookmark (srmykyqy)</li></ul></p>]]></description>
+    </item>
+    <item>
+      <title>2026-01-12</title>
+      <link>https://peekclient.com/changelog</link>
+      <guid isPermaLink="false">https://peekclient.com/changelog#2026-01-12</guid>
+      <pubDate>Mon, 12 Jan 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p><ul><li>[x][desktop] settings UI for sync (vyvorvtq)</li><br>
+<li>[x][desktop] test sync and package (ssxzpoxo)</li><br>
+<li>merge peek-node into peek repo (now at backend/server/) (zturryym)</li><br>
+<li>update peek-node to support multi-user and the core types (already done) (zturryym)</li><br>
+<li>unify data model across mobile/desktop/server (nlxqykul)</li><br>
+<li>sync working between all three (mxwrymlv)</li><br>
+<li>[x][mobile] test and deploy ios to prod (rtmtkykn)</li><br>
+</ul><br>
+<h3>Old completed items</h3></p><p><h3>Addressability / Core history</h3><br>
+<ul><li>add peek:// loads to history table (mkylrnxy)</li><br>
+<li>peek urls don't need params yet, but we'll need to do cmd params and connector data somehow maybe (mkylrnxy)</li><br>
+<li>ensure all window/frame/webview loads of any kind are entered in history (mkylrnxy)</li><br>
+<li>bug: some link clicks in web pages open in a window with a title bar that's clearly not entered in peek's window tracking, maybe js in the page opening windows? (mkylrnxy)</li><br>
+<li>sync: don't sync peek addresses for now (mkylrnxy)</li><br>
+<li>not doing paths/forking yet - is just one single chain of actions (mkylrnxy)</li><br>
+<li>add next/prev cols to history table, or maintain in new table? (mkylrnxy)</li><br>
+<li>when a history record is added, set prevId pointing to previous history record (mkylrnxy)</li><br>
+<li>each time a history record is added, set nextId to its prevId (mkylrnxy)</li><br>
+<li>enumerate history (mkylrnxy)</li><br>
+<li>filter on date ranges (mkylrnxy)</li><br>
+</ul><br>
+<h3>Server Backend</h3><br>
+<ul><li>Add database integrity verification (uvkkmoos)</li><br>
+</ul><br>
+<h3>Base Extensions</h3><br>
+<ul><li>see notes/extensibility.md</li><br>
+<li>window manager views (bad name, but what Peek "features" are now)</li><br>
+<li>commands (eg Quicksilver, Ubiquity, Raycast style)</li><br>
+</ul><br>
+<h3>Portability</h3><br>
+<ul><li>Abstract back-end system</li><br>
+<li>Electron back-end</li><br>
+<li>Tauri back-end</li><br>
+</ul><br>
+<h3>Pages, Tagging & Groups</h3><br>
+<ul><li>Open page by default in cmd</li><br>
+<li>Open page from OS, other apps</li><br>
+<li>Cmd to tag current page</li><br>
+<li>Groups based on tags, for now</li><br>
+<li>Untagged -> default group</li><br>
+<li>Cmd to open groups home</li><br>
+<li>Escape for navigating back up the group views, not closing window</li><br>
+<li>adaptive matching</li><br>
+<li>frecency</li><br>
+</ul><br>
+<h3>V.0.3 - Datastore</h3><br>
+<ul><li>Datastore</li><br>
+</ul><br>
+<h3>v0.2 - MVCP</h3><br>
+<ul><li>app showing in dock even tho disabled</li><br>
+<li>app not showing in tray, even tho enabled</li><br>
+<li>all api calls get source attached</li><br>
+<li>window cache s/custom/map/</li><br>
+<li>window cache all windows not just persistent</li><br>
+<li>window cache - evaluate key approach (use-case: apps need to identify windows they open)</li><br>
+<li>always return window id, so apps can manage it</li><br>
+<li>reimplement keys, so much easier for callers than managing ids</li><br>
+<li>account for number of renderer processes (seems double?)</li><br>
+<li>prototype window.open</li><br>
+<li>evaluate webContents.setWindowOpenHandler</li><br>
+<li>stop using openWindow to show pre-existing hidden windows?</li><br>
+<li style="margin-left:1em">[x] can track web windows locally</li><br>
+<li style="margin-left:1em">[x] can identify web windows on both sides (key/name)</li><br>
+<li style="margin-left:1em">[x] add new custom api for windows superpowers</li><br>
+<li>collapse window opening to span both approaches</li><br>
+<li>finish converting all openWindow to window.open</li><br>
+<li>figure out single devtools window if possible</li><br>
+</ul><br>
+<h3>v0.1 - MVPOC</h3></p><p>minimum viable proof of concept.</p><p>question: would i use this?</p><p>Core moduluarization<br>
+<ul><li>Modularize feature types, eyeing the extensibility model</li><br>
+<li>move settings window to features/settings</li><br>
+</ul><br>
+App cleanup<br>
+<ul><li>main window vs settings</li><br>
+<li>change settings shortcut from global+esc to opt+comma</li><br>
+</ul><br>
+Window lifecycle<br>
+<ul><li>modularize window open/close + hidden/visible</li><br>
+<li>update settings, peeks, slides, scripts</li><br>
+<li>hide/show window vs create fresh</li><br>
+<li>update slides impl to use openWindow (x, y)</li><br>
+</ul><br>
+Minimal Electron + Maximal Web<br>
+<ul><li>move features to all web code, with a couple special apis</li><br>
+<li>make globalShortcut an api like openWindow</li><br>
+</ul><br>
+Create core app<br>
+<ul><li>core settings</li><br>
+<li>registers other features</li><br>
+</ul><br>
+Move all features to web implementation<br>
+<ul><li>move all possible code from the electron file to the web app</li><br>
+<li>move to web implemented globalShortcut</li><br>
+<li>move to web implemented openWindow</li><br>
+<li>move settings re-use code to utils lib</li><br>
+<li>ability to add clickable links in settings panes</li><br>
+<li>add links to Settings app</li><br>
+<li>per-feature settings ui</li><br>
+</ul><br>
+Core+settings<br>
+<ul><li>move feature list and enablement to storage</li><br>
+<li>merge core + settings</li><br>
+<li>enable/disable features</li><br>
+<li>configurable default feature to load on app open (default to settings)</li><br>
+<li>wire up tray icon to pref</li><br>
+<li>tray click opens default app</li><br>
+</ul><br>
+Core/Basic<br>
+<ul><li>basic command bar to open pages</li><br>
+<li>fix setting layout wrapping issue</li><br>
+</ul><br>
+Commands/messaging<br>
+<ul><li>implement pubsub api</li><br>
+<li>way to tell feature to open default ui (if there is one)</li><br>
+<li>way tell feature to open its settings ui (if there is one)</li><br>
+</ul><br>
+Features cleanup<br>
+<ul><li>enable/disable individual slides, peeks</li><br>
+<li>enable/disable individual scripts</li><br>
+</ul><br>
+Internal cleanup<br>
+<ul><li>s/guid/id/</li><br>
+<li>fix label names, match to pwa manifest</li><br>
+<li>put readable log labels back in</li></ul></p>]]></description>
+    </item>
+  </channel>
+</rss>
