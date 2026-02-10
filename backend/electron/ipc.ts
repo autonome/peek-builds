@@ -3650,6 +3650,33 @@ export function registerWebExtensionHandlers(): void {
     }
   });
 
+  // Get UI entry points for all loaded chrome extensions
+  ipcMain.handle('chrome-ext:getUiEntries', async () => {
+    try {
+      const { getChromeExtensionUiEntries } = await import('./chrome-extensions.js');
+      const entries = getChromeExtensionUiEntries();
+      return { success: true, data: entries };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Open a chrome extension's options page or popup in a window
+  ipcMain.handle('chrome-ext:openPage', async (_ev, data: { id: string; type: 'options' | 'popup' }) => {
+    try {
+      const { openChromeExtensionPage } = await import('./chrome-extensions.js');
+      const win = openChromeExtensionPage(data.id, data.type);
+      if (win) {
+        return { success: true, data: { windowId: win.id } };
+      }
+      return { success: false, error: `No ${data.type} page available for extension: ${data.id}` };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   DEBUG && console.log('[ipc] Web extension handlers registered');
 }
 

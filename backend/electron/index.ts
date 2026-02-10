@@ -275,12 +275,15 @@ export {
   isChromeExtensionEnabled,
   isChromeExtensionLoaded,
   getChromeExtensionStatus,
+  getChromeExtensionUiEntries,
+  openChromeExtensionPage,
   cleanupChromeExtensions,
 } from './chrome-extensions.js';
 
 export type {
   ChromeManifest,
   ChromeExtensionInfo,
+  ChromeExtensionUiEntry,
   LoadedChromeExtension,
   ChromeExtensionSetting,
 } from './chrome-extensions.js';

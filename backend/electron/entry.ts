@@ -72,6 +72,8 @@ import {
 import {
   initChromeExtensionManager,
   loadEnabledChromeExtensions,
+  getChromeExtensionUiEntries,
+  openChromeExtensionPage,
   cleanupChromeExtensions,
 } from './chrome-extensions.js';
 import {
@@ -273,6 +275,46 @@ app.on('before-quit', () => {
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
 });
 
+/**
+ * Register command palette entries for chrome extension UI pages.
+ * Called after chrome extensions are loaded so we know which ones
+ * have options pages or popups.
+ *
+ * For each UI entry point, registers a command and subscribes to
+ * its execution topic so the main process can open the window.
+ */
+function registerChromeExtensionCommands(): void {
+  const entries = getChromeExtensionUiEntries();
+  if (entries.length === 0) return;
+
+  const systemAddress = getSystemAddress();
+
+  for (const entry of entries) {
+    const commandName = entry.type === 'options'
+      ? `${entry.extensionName} Settings`
+      : entry.extensionName;
+
+    // Subscribe to execution topic so we can handle it from the main process
+    const execTopic = `cmd:execute:${commandName}`;
+    subscribe(systemAddress, scopes.GLOBAL, execTopic, () => {
+      DEBUG && console.log(`[chrome-ext] Executing command: ${commandName}`);
+      openChromeExtensionPage(entry.extensionId, entry.type);
+    });
+
+    // Register the command with the cmd extension
+    publish(systemAddress, scopes.GLOBAL, 'cmd:register', {
+      name: commandName,
+      description: entry.type === 'options'
+        ? `Open ${entry.extensionName} settings`
+        : `Open ${entry.extensionName} popup`,
+      source: systemAddress,
+      scope: 'global',
+    });
+  }
+
+  DEBUG && console.log(`[chrome-ext] Registered ${entries.length} command(s) for chrome extension UI pages`);
+}
+
 // ***** init *****
 
 // Electron app load
@@ -456,8 +498,10 @@ const onReady = async () => {
         });
       }
 
-      // Load enabled chrome extensions
-      loadEnabledChromeExtensions().catch(err => {
+      // Load enabled chrome extensions, then register their UI pages as commands
+      loadEnabledChromeExtensions().then(() => {
+        registerChromeExtensionCommands();
+      }).catch(err => {
         console.error('[startup] Chrome extensions init failed:', err);
       });
 

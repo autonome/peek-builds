@@ -911,6 +911,24 @@ api.chromeExtensions = {
    */
   getStatus: () => {
     return ipcRenderer.invoke('chrome-ext:getStatus');
+  },
+
+  /**
+   * Get UI entry points for all loaded chrome extensions (options pages, popups)
+   * @returns {Promise<{success: boolean, data?: Array<{extensionId: string, extensionName: string, type: string, title: string, url: string, width: number, height: number}>, error?: string}>}
+   */
+  getUiEntries: () => {
+    return ipcRenderer.invoke('chrome-ext:getUiEntries');
+  },
+
+  /**
+   * Open a chrome extension's options page or popup in a window
+   * @param {string} id - Extension ID
+   * @param {'options' | 'popup'} type - Page type to open
+   * @returns {Promise<{success: boolean, data?: {windowId: number}, error?: string}>}
+   */
+  openPage: (id, type) => {
+    return ipcRenderer.invoke('chrome-ext:openPage', { id, type });
   }
 };
 

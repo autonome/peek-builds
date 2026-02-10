@@ -11,7 +11,7 @@
  * - Compatible with electron-chrome-extensions for enhanced API support
  */
 
-import { session, Extension } from 'electron';
+import { session, Extension, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -47,6 +47,25 @@ export interface ChromeManifest {
     default_icon?: string | Record<string, string>;
     default_title?: string;
   };
+  options_page?: string;
+  options_ui?: {
+    page: string;
+    open_in_tab?: boolean;
+  };
+}
+
+/**
+ * UI entry point for a chrome extension (options page or popup)
+ */
+export interface ChromeExtensionUiEntry {
+  extensionId: string;
+  extensionName: string;
+  type: 'options' | 'popup';
+  title: string;
+  url: string;
+  /** Suggested window dimensions */
+  width: number;
+  height: number;
 }
 
 /**
@@ -85,6 +104,8 @@ export interface ChromeExtensionSetting {
 let extensionsDir: string | null = null;
 const discoveredExtensions: Map<string, ChromeExtensionInfo> = new Map();
 const loadedExtensions: Map<string, LoadedChromeExtension> = new Map();
+// Track open extension UI windows: key = `${extId}:${type}` -> BrowserWindow
+const extensionUiWindows: Map<string, BrowserWindow> = new Map();
 
 /**
  * Initialize the chrome_extensions table in the database
@@ -382,10 +403,125 @@ export function getChromeExtensionStatus(): {
 }
 
 /**
+ * Get UI entry points (options page, popup) for all loaded chrome extensions.
+ * Returns entries only for extensions that are currently loaded and have UI pages.
+ */
+export function getChromeExtensionUiEntries(): ChromeExtensionUiEntry[] {
+  const entries: ChromeExtensionUiEntry[] = [];
+
+  for (const [extId, loaded] of loadedExtensions) {
+    const discovered = discoveredExtensions.get(extId);
+    if (!discovered) continue;
+
+    const manifest = discovered.manifest;
+    const baseUrl = loaded.electronExtension.url; // chrome-extension://[id]/
+
+    // Options page (options_ui takes priority over options_page)
+    const optionsPage = manifest.options_ui?.page || manifest.options_page;
+    if (optionsPage) {
+      entries.push({
+        extensionId: extId,
+        extensionName: discovered.name,
+        type: 'options',
+        title: `${discovered.name} Settings`,
+        url: `${baseUrl}${optionsPage}`,
+        width: 800,
+        height: 600,
+      });
+    }
+
+    // Action popup
+    if (manifest.action?.default_popup) {
+      entries.push({
+        extensionId: extId,
+        extensionName: discovered.name,
+        type: 'popup',
+        title: manifest.action.default_title || discovered.name,
+        url: `${baseUrl}${manifest.action.default_popup}`,
+        width: 400,
+        height: 500,
+      });
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * Open a chrome extension's UI page (options or popup) in a BrowserWindow.
+ * Reuses an existing window if one is already open for this extension+type.
+ * @returns The window ID on success, null on failure
+ */
+export function openChromeExtensionPage(
+  extensionId: string,
+  pageType: 'options' | 'popup'
+): BrowserWindow | null {
+  const windowKey = `${extensionId}:${pageType}`;
+
+  // Reuse existing window if it's still open
+  const existing = extensionUiWindows.get(windowKey);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return existing;
+  }
+
+  // Find the UI entry
+  const entries = getChromeExtensionUiEntries();
+  const entry = entries.find(e => e.extensionId === extensionId && e.type === pageType);
+  if (!entry) {
+    console.error(`[chrome-ext] No ${pageType} page found for extension: ${extensionId}`);
+    return null;
+  }
+
+  // Use profile-specific session so the extension page has access to chrome.* APIs
+  const profileSession = getProfileSession();
+
+  const win = new BrowserWindow({
+    width: entry.width,
+    height: entry.height,
+    title: entry.title,
+    show: true,
+    webPreferences: {
+      session: profileSession,
+      // No preload — these are chrome extension pages, they use chrome.* APIs
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  // Track the window
+  extensionUiWindows.set(windowKey, win);
+
+  win.on('closed', () => {
+    extensionUiWindows.delete(windowKey);
+    DEBUG && console.log(`[chrome-ext] UI window closed: ${windowKey}`);
+  });
+
+  win.loadURL(entry.url).catch(error => {
+    console.error(`[chrome-ext] Failed to load ${pageType} page for ${extensionId}:`, error);
+    if (!win.isDestroyed()) {
+      win.destroy();
+    }
+  });
+
+  DEBUG && console.log(`[chrome-ext] Opened ${pageType} page for ${extensionId}: ${entry.url}`);
+
+  return win;
+}
+
+/**
  * Clean up chrome extension manager
  */
 export async function cleanupChromeExtensions(): Promise<void> {
   DEBUG && console.log('[chrome-ext] Cleaning up...');
+
+  // Close any open UI windows
+  for (const [key, win] of extensionUiWindows) {
+    if (!win.isDestroyed()) {
+      win.destroy();
+    }
+  }
+  extensionUiWindows.clear();
 
   for (const extId of loadedExtensions.keys()) {
     await unloadExtension(extId);
