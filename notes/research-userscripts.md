@@ -2,9 +2,8 @@
 
 Comprehensive design for a Greasemonkey/Tampermonkey-compatible content scripts system for Peek, inspired by [quoid/userscripts](https://github.com/quoid/userscripts) Safari extension.
 
-**Last Updated:** 2026-02-09
-**Status:** Design/Planning Phase
-**Agent:** a9b4e5d
+**Last Updated:** 2026-02-10
+**Status:** Phase 1 implemented (see `feat(scripts): implement Phase 1 of userscripts/content scripts system`). Phases 2+ pending.
 
 ---
 

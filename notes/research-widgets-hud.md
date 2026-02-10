@@ -2,8 +2,8 @@
 
 Research note capturing prior session plans for the Widgets system and HUD.
 
-**Last Updated:** 2026-02-09
-**Status:** Basic HUD in progress, full widget system not yet started
+**Last Updated:** 2026-02-10
+**Status:** Basic mode-aware HUD implemented (see `feat(hud): implement basic mode-aware HUD extension`). Full widget system not yet started.
 
 ---
 
