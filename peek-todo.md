@@ -243,6 +243,7 @@ The web makes the publisher the apex of understanding.
 Browsers do not not acknowledge entities across pages.
 If you load two pages about the band Tortoise, the browser only knows you loaded two different domains.
 Peek's entity-centrism projects uplifts the apex of understanding from publishers, into the user agent.
+
 The application identifies and records entities in the pages you load.
 Aims for approximate equivalancy via confidence threshold scoring.
 The expirement starts with coarse types, eg person, place, event, organization.
@@ -255,8 +256,22 @@ Uses Wikidata for a first experiment in entity validation and triangulation.
 Uses the sourcing data to infer links between entities.
 Scores entities based on frecency of observation and interaction.
 
-- [ ] get people, places, dates/times/events
-- [ ] get meaningful numbers, and their label, eg phone
+Entity detection first take is using regexes against page content.
+Can experiment also with https://github.com/mozilla/readability which we'll need for other features as well.
+Can harvest microformats with https://github.com/microformats/microformats-parser, index as the relevant entity type.
+We'll experiment with offline NER machine learning models as well, including training micro-models here from the data we're collecting.
+
+We'll cast a wide net to start, recording everything.
+Over time, we'll learn more about our needs and the limits of this approach.
+Then we can design expiration policies, archiving, import/export, etc.
+But the default should be to never lose anything.
+
+Initial entities to harvest:
+
+- [ ] people and related info, eg homepage, nick, social, email
+- [ ] places
+- [ ] dates/times/events
+- [ ] meaningful numbers and their label, eg phone numbers, tracking numbers, booking numbers
 
 - [ ] extract a table as csv
 - [ ] layer outside of web page, and in between pages (eg event page -> event -> any calendar page)
