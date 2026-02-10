@@ -4326,14 +4326,13 @@ fn check_response_version_headers(headers: &reqwest::header::HeaderMap) -> Resul
 fn get_items_to_push(conn: &Connection) -> Result<Vec<(String, String, Option<String>, Option<String>, String, String, String, Option<String>)>, String> {
     // Returns: (id, type, url, content, metadata, updated_at, sync_id, deleted_at)
     // Push items that:
-    // 1. Have never been synced (sync_source = '' or NULL), OR
+    // 1. Have never been synced (synced_at IS NULL), OR
     // 2. Have been locally modified after their last sync (updated_at > synced_at)
     // 3. Have been soft-deleted locally with a sync_id (need to propagate delete to server)
-    // This prevents re-pushing items that were just pulled from the server
     let mut stmt = conn
         .prepare(
             "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at FROM items
-             WHERE (deleted_at IS NULL AND (sync_source = '' OR sync_source IS NULL OR (synced_at IS NOT NULL AND updated_at > synced_at)))
+             WHERE (deleted_at IS NULL AND (synced_at IS NULL OR updated_at > synced_at))
              OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' AND synced_at IS NOT NULL AND updated_at > synced_at)"
         )
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -4503,8 +4502,8 @@ fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<&'st
     };
 
     conn.execute(
-        "INSERT INTO items (id, type, url, content, metadata, sync_id, sync_source, synced_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'server', ?, ?, ?)",
+        "INSERT INTO items (id, type, url, content, metadata, sync_id, synced_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             &new_id,
             item_type,
@@ -4793,7 +4792,7 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
                         // Update local item with sync info
                         let now = Utc::now().to_rfc3339();
                         conn.execute(
-                            "UPDATE items SET sync_id = ?, sync_source = 'server', synced_at = ? WHERE id = ?",
+                            "UPDATE items SET sync_id = ?, synced_at = ? WHERE id = ?",
                             params![&create_response.id, &now, item_id],
                         ).ok();
 
@@ -4889,7 +4888,7 @@ fn get_sync_status() -> Result<SyncStatus, String> {
 
     // Count pending items (never synced, locally modified after last sync, or locally deleted needing push)
     let pending_count: usize = conn.query_row(
-        "SELECT COUNT(*) FROM items WHERE (deleted_at IS NULL AND (sync_source = '' OR sync_source IS NULL OR (synced_at IS NOT NULL AND updated_at > synced_at))) OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' AND synced_at IS NOT NULL AND updated_at > synced_at)",
+        "SELECT COUNT(*) FROM items WHERE (deleted_at IS NULL AND (synced_at IS NULL OR updated_at > synced_at)) OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' AND synced_at IS NOT NULL AND updated_at > synced_at)",
         [],
         |row| row.get::<_, i64>(0),
     )
@@ -5322,22 +5321,21 @@ mod tests {
         let id = uuid::Uuid::new_v4().to_string();
 
         conn.execute(
-            "INSERT INTO items (id, type, url, sync_id, sync_source, synced_at, created_at, updated_at) VALUES (?, 'url', ?, ?, ?, ?, ?, ?)",
-            params![&id, "https://sync-test.com", "remote-123", "server", &now, &now, &now],
+            "INSERT INTO items (id, type, url, sync_id, synced_at, created_at, updated_at) VALUES (?, 'url', ?, ?, ?, ?, ?)",
+            params![&id, "https://sync-test.com", "remote-123", &now, &now, &now],
         )
         .expect("Failed to insert item with sync columns");
 
         // Retrieve and verify
-        let (sync_id, sync_source, synced_at): (String, String, String) = conn
+        let (sync_id, synced_at): (String, String) = conn
             .query_row(
-                "SELECT sync_id, sync_source, synced_at FROM items WHERE id = ?",
+                "SELECT sync_id, synced_at FROM items WHERE id = ?",
                 params![&id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("Failed to query sync columns");
 
         assert_eq!(sync_id, "remote-123", "sync_id should be saved");
-        assert_eq!(sync_source, "server", "sync_source should be saved");
         assert_eq!(synced_at, now, "synced_at should be saved");
     }
 

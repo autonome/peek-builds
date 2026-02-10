@@ -62,14 +62,14 @@ UUID3=$(uuidgen | tr '[:upper:]' '[:lower:]')
 
 sqlite3 "$DB_PATH" <<EOF
 -- Insert test items (unsynced - no sync_id)
-INSERT OR IGNORE INTO items (id, type, url, content, created_at, updated_at, sync_id, sync_source)
-VALUES ('$UUID1', 'url', 'https://mobile-only-1.example.com', NULL, '$NOW', '$NOW', '', '');
+INSERT OR IGNORE INTO items (id, type, url, content, created_at, updated_at, sync_id)
+VALUES ('$UUID1', 'url', 'https://mobile-only-1.example.com', NULL, '$NOW', '$NOW', '');
 
-INSERT OR IGNORE INTO items (id, type, url, content, created_at, updated_at, sync_id, sync_source)
-VALUES ('$UUID2', 'text', NULL, 'This text was created on mobile only', '$NOW', '$NOW', '', '');
+INSERT OR IGNORE INTO items (id, type, url, content, created_at, updated_at, sync_id)
+VALUES ('$UUID2', 'text', NULL, 'This text was created on mobile only', '$NOW', '$NOW', '');
 
-INSERT OR IGNORE INTO items (id, type, url, content, created_at, updated_at, sync_id, sync_source)
-VALUES ('$UUID3', 'url', 'https://mobile-news.example.com', NULL, '$NOW', '$NOW', '', '');
+INSERT OR IGNORE INTO items (id, type, url, content, created_at, updated_at, sync_id)
+VALUES ('$UUID3', 'url', 'https://mobile-news.example.com', NULL, '$NOW', '$NOW', '');
 
 -- Add tags for the items
 INSERT OR IGNORE INTO tags (name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
