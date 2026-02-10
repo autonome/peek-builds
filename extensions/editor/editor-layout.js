@@ -90,6 +90,25 @@ export class EditorLayout {
 
     this.toolbar.appendChild(sidebarToggles);
 
+    // Vim mode toggle
+    this.vimToggle = document.createElement('label');
+    this.vimToggle.className = 'vim-toggle';
+    this.vimToggle.title = 'Toggle vim keybindings';
+
+    this.vimCheckbox = document.createElement('input');
+    this.vimCheckbox.type = 'checkbox';
+    this.vimCheckbox.checked = this.vimMode;
+    this.vimCheckbox.addEventListener('change', () => {
+      this.updateVimModeState(this.vimCheckbox.checked);
+    });
+
+    const vimLabel = document.createElement('span');
+    vimLabel.textContent = 'Vim';
+
+    this.vimToggle.appendChild(this.vimCheckbox);
+    this.vimToggle.appendChild(vimLabel);
+    this.toolbar.appendChild(this.vimToggle);
+
     // Save status indicator (shown when editing datastore items)
     this.saveStatus = document.createElement('span');
     this.saveStatus.id = 'save-status';
@@ -458,6 +477,10 @@ export class EditorLayout {
    */
   setVimMode(enabled) {
     this.updateVimModeState(enabled);
+    // Keep checkbox in sync with programmatic changes
+    if (this.vimCheckbox) {
+      this.vimCheckbox.checked = enabled;
+    }
   }
 
   /**
