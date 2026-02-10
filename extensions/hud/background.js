@@ -18,22 +18,55 @@ let hudEnabled = false;
 let hudWindowId = null;
 
 /**
- * Load HUD enabled state from localStorage
+ * Load HUD enabled state from extension settings API, fallback to localStorage cache
  */
-const loadState = () => {
+const loadState = async () => {
+  if (api?.settings?.getKey) {
+    try {
+      const result = await api.settings.getKey('enabled');
+      if (result.success && result.data !== undefined && result.data !== null) {
+        hudEnabled = !!result.data;
+        console.log('[ext:hud] Loaded state from datastore - enabled:', hudEnabled);
+        return hudEnabled;
+      }
+    } catch (err) {
+      console.log('[ext:hud] Failed to load from datastore, falling back to localStorage:', err);
+    }
+  }
+  // Fallback to localStorage cache
   const stored = localStorage.getItem(STORAGE_KEY);
   hudEnabled = stored === 'true';
-  console.log('[ext:hud] Loaded state - enabled:', hudEnabled);
+  console.log('[ext:hud] Loaded state from localStorage fallback - enabled:', hudEnabled);
   return hudEnabled;
 };
 
 /**
- * Save HUD enabled state to localStorage
+ * Save HUD enabled state to extension settings API and localStorage cache
  */
 const saveState = (enabled) => {
   hudEnabled = enabled;
-  localStorage.setItem(STORAGE_KEY, String(enabled));
-  console.log('[ext:hud] Saved state - enabled:', enabled);
+
+  // Write to localStorage as fast cache
+  try {
+    localStorage.setItem(STORAGE_KEY, String(enabled));
+  } catch (err) {
+    debug && console.log('[ext:hud] Failed to cache state to localStorage:', err);
+  }
+
+  // Write to extension settings API (datastore) as source of truth
+  if (api?.settings?.setKey) {
+    api.settings.setKey('enabled', enabled).then(result => {
+      if (result.success) {
+        console.log('[ext:hud] Saved state to datastore - enabled:', enabled);
+      } else {
+        console.error('[ext:hud] Failed to save state to datastore:', result.error);
+      }
+    }).catch(err => {
+      console.error('[ext:hud] Failed to save state to datastore:', err);
+    });
+  } else {
+    console.log('[ext:hud] Saved state to localStorage only - enabled:', enabled);
+  }
 };
 
 /**
@@ -153,7 +186,7 @@ const init = async () => {
   console.log('[ext:hud] init');
 
   // Load persisted state
-  loadState();
+  await loadState();
 
   // Register shortcut
   initShortcut();
