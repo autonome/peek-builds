@@ -505,25 +505,13 @@ test.describe('IZUI Escape Protocol @desktop', () => {
   test('active mode: ESC at root does NOT close window', async () => {
     const bgWindow = sharedBgWindow;
 
-    // Open a content window first to establish active mode
-    // (visible content window = user has active Peek context)
-    const contentResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/settings/settings.html', {
-        width: 400,
-        height: 300,
-      });
-    });
-    expect(contentResult.success).toBe(true);
-    const contentWindow = await sharedApp.getWindow('settings/settings.html', 5000);
-    expect(contentWindow).toBeTruthy();
-    await contentWindow.waitForLoadState('domcontentloaded');
-
-    // Open groups window - should be in active mode because settings is visible
+    // Open groups window with role: 'workspace' (like the real groups extension does)
+    // In headless/test mode, appFocused defaults to true → session is 'active'
     const groupsResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://ext/groups/home.html', {
+        role: 'workspace',
         width: 400,
         height: 300,
-        escapeMode: 'navigate'
       });
     });
     expect(groupsResult.success).toBe(true);
@@ -532,31 +520,36 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     await groupsWindow.waitForLoadState('domcontentloaded');
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
 
-    // Trigger ESC at root in active mode - renderer returns { handled: false }
-    // Backend applies IZUI policy: active root window does NOT close
-    const escResult = await groupsWindow.evaluate(async () => {
-      return await (window as any).app.escape.trigger();
+    // Verify the window's role is 'workspace' and session is 'active'
+    const izuiState = await bgWindow.evaluate(async () => {
+      return await (window as any).app.izui.getState();
     });
-    // trigger() calls handler directly - at root, groups returns { handled: false }
-    expect(escResult.handled).toBe(false);
+    expect(izuiState).toBe('active');
 
-    // Wait a moment - window should still be open (trigger doesn't go through backend)
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Press ESC via keyboard — goes through full backend path:
+    // before-input-event → handleEscapeForWindow → askRendererToHandleEscape →
+    // renderer returns { handled: false } at root → escPolicy('active', 'workspace') → 'nothing'
+    await groupsWindow.keyboard.press('Escape');
 
-    // Verify window is still alive (can still evaluate JS)
+    // Wait for the async ESC handling to complete
+    await new Promise(resolve => setTimeout(resolve, 600));
+
+    // Verify window is still alive — if escPolicy is wrong, the window would be closed
     const stillAlive = await groupsWindow.evaluate(() => true).catch(() => false);
     expect(stillAlive).toBe(true);
 
-    // Clean up both windows
-    for (const id of [groupsResult.id, contentResult.id]) {
-      if (id) {
-        try {
-          await bgWindow.evaluate(async (wid: number) => {
-            return await (window as any).app.window.close(wid);
-          }, id);
-        } catch {
-          // Window may already be closed
-        }
+    // Also verify the view is still at root (groups list)
+    const view = await groupsWindow.evaluate(() => (window as any)._groupsState?.view);
+    expect(view).toBe('groups');
+
+    // Clean up
+    if (groupsResult.id) {
+      try {
+        await bgWindow.evaluate(async (wid: number) => {
+          return await (window as any).app.window.close(wid);
+        }, groupsResult.id);
+      } catch {
+        // Window may already be closed
       }
     }
   });
