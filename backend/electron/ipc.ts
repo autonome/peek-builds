@@ -1835,8 +1835,6 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
       }
 
-      await win.loadURL(loadUrl);
-
       // Add to window manager with modal parameter
       // Note: isTransient was determined BEFORE window creation (at top of handler)
       // to avoid the race condition where the new window becomes focused before we check
@@ -1885,7 +1883,7 @@ export function registerWindowHandlers(): void {
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);
 
-      // Set window mode based on URL
+      // Set window mode based on URL — BEFORE loadURL so page.js can read it
       // For page containers (peek://app/page), extract the actual URL
       let modeUrl = url;
       if (url.startsWith('peek://app/page')) {
@@ -1948,6 +1946,9 @@ export function registerWindowHandlers(): void {
       // Log the detected mode
       const detectedMode = detectModeFromUrl(modeUrl);
       DEBUG && console.log('Set window mode:', win.id, 'url:', modeUrl, 'mode:', detectedMode);
+
+      // Load the URL AFTER mode/context is set, so page.js can read inherited mode
+      await win.loadURL(loadUrl);
 
       // Track this load in history (skip internal peek:// URLs)
       if (!url.startsWith('peek://')) {
@@ -3418,8 +3419,8 @@ export function registerContextHandlers(): void {
     try {
       let windowId = data.windowId;
 
-      // If no windowId provided, try to get from calling window
-      if (windowId === undefined) {
+      // If no windowId provided (or null from preload default), use calling window
+      if (windowId == null) {
         const callingWin = BrowserWindow.fromWebContents(ev.sender);
         windowId = callingWin?.id ?? null;
       }
@@ -3444,8 +3445,8 @@ export function registerContextHandlers(): void {
       let windowId = data.windowId;
       let source = data.source;
 
-      // If no windowId provided, try to get from calling window
-      if (windowId === undefined) {
+      // If no windowId provided (or null from preload default), use calling window
+      if (windowId == null) {
         const callingWin = BrowserWindow.fromWebContents(ev.sender);
         windowId = callingWin?.id ?? null;
       }
