@@ -32,6 +32,6 @@ src-tauri/gen/apple/build/
 # Claude Code local settings
 .claude/
 
-# Dev artifacts (overwritten every dev session)
+# Dev/build artifacts (regenerated every build)
 BUILD_NUMBER
-src-tauri/gen/apple/assets/index.html
+src-tauri/gen/apple/assets/
