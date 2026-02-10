@@ -1,0 +1,184 @@
+/* Import theme variables */
+@import url('peek://theme/variables.css');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--theme-font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+body {
+  background: var(--base00);
+  color: var(--base05);
+  min-height: 100vh;
+}
+
+/* Search */
+.search-container {
+  padding: 24px 24px 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Component customization for peek-input */
+peek-input.search-input {
+  display: block;
+  flex: 1;
+  --peek-input-bg: var(--base01);
+  --peek-input-border: var(--base02);
+  --peek-input-height: 44px;
+}
+
+peek-input.search-input::part(input) {
+  color: var(--base05);
+  font-size: 15px;
+}
+
+.result-count {
+  font-size: 12px;
+  color: var(--base03);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Results container */
+.results {
+  padding: 16px 24px;
+  overflow-y: auto;
+  max-height: calc(100vh - 100px);
+}
+
+/* Result group (URLs, Notes, Tags, etc.) */
+.result-group {
+  margin-bottom: 20px;
+}
+
+.result-group-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--base03);
+  padding: 0 4px 6px 4px;
+  border-bottom: 1px solid var(--base02);
+  margin-bottom: 8px;
+}
+
+/* Result item (card-like row) */
+.result-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+
+.result-item:hover {
+  background: var(--base01);
+}
+
+.result-item.selected {
+  background: var(--base02);
+}
+
+.result-item.selected:hover {
+  background: var(--base03);
+}
+
+/* Type icon */
+.result-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  margin-top: 2px;
+  color: var(--base03);
+}
+
+.result-icon img {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+/* Result content */
+.result-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.result-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--base05);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-preview {
+  font-size: 12px;
+  color: var(--base03);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.result-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.result-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--base02);
+  color: var(--base04);
+}
+
+.result-date {
+  font-size: 11px;
+  color: var(--base03);
+}
+
+/* Highlight matched text */
+mark {
+  background: var(--base0A, #f0c674);
+  color: var(--base00);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--base03);
+  font-size: 15px;
+}
+
+/* No results state */
+.no-results {
+  text-align: center;
+  padding: 32px 24px;
+  color: var(--base03);
+  font-size: 14px;
+}
