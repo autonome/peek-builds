@@ -1,0 +1,9 @@
+{
+  "id": "pagestream",
+  "shortname": "pagestream",
+  "name": "Pagestream",
+  "description": "Vertical, chat-like navigational interface for web history",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": true
+}
