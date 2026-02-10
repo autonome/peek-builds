@@ -42,11 +42,11 @@ All platforms use the same unified types:
 
 ### Push (Client → Server)
 
-1. Query items where `syncSource = ''` OR `updatedAt > lastSyncTime`
-   - Includes soft-deleted items (those with `deleted_at` set) so tombstones propagate
+1. Query items where `syncedAt = 0` (never synced) OR `updatedAt > syncedAt` (modified since last sync)
+   - Includes soft-deleted items (those with `deletedAt` set) so tombstones propagate
 2. For each item: `POST /items` with type, content, tags
-   - If item has `deleted_at`: include it in the push payload so the server records the tombstone
-3. On success: update local `syncId` and `syncSource`
+   - If item has `deletedAt`: include it in the push payload so the server records the tombstone
+3. On success: update local `syncId` and `syncedAt`
 
 ### Conflict Resolution
 
@@ -149,7 +149,7 @@ Deletions propagate across platforms via **tombstones** (soft-deletes with a `de
 
 ## Server-Change Detection
 
-When a user changes sync servers (or configures sync for the first time after having synced previously), per-item sync markers (`syncSource`, `syncedAt`, `syncId`) from the old server would prevent items from being pushed to the new server. Both desktop and mobile detect this:
+When a user changes sync servers (or configures sync for the first time after having synced previously), per-item sync markers (`syncedAt`, `syncId`) from the old server would prevent items from being pushed to the new server. Both desktop and mobile detect this:
 
 1. After every pull or full sync, the current server URL and profile ID are saved to a `settings` table (`lastSyncServerUrl`, `lastSyncProfileId`).
 2. Before `syncAll()`, the stored values are compared to the current config.

@@ -24,10 +24,10 @@ The desktop app has **two parallel data models** that need unification:
 - **Use case**: Tracking all navigation activity across any source
 
 **Items (Curated) - `backend/electron/datastore.ts`:**
-- **items table**: Stores user-curated items (type: url|text|tagset|image, content, metadata, syncId, syncSource, starred, archived, visitCount, lastVisitAt)
+- **items table**: Stores user-curated items (type: url|text|tagset|image, content, metadata, syncId, starred, archived, visitCount, lastVisitAt)
 - **item_tags table**: M2M junction for tagging items
 - **Use case**: Saved URLs, notes, groups, images with annotations
-- **Key difference**: Explicit user creation, sync-aware (syncId, syncSource, syncedAt)
+- **Key difference**: Explicit user creation, sync-aware (syncId, syncedAt)
 
 **Browser Extension History Import:**
 - **history.js**: One-way import of browser history as URL items (tags with `from:history`)
@@ -45,7 +45,7 @@ The desktop app has **two parallel data models** that need unification:
 | **Visit tracking** | Explicit visits table | visitCount + lastVisitAt only |
 | **Timestamps** | createdAt/updatedAt | createdAt/updatedAt/syncedAt/deletedAt |
 | **Deletion** | Hard delete | Soft delete (deletedAt) |
-| **Source tracking** | Source field in visits | syncSource in items |
+| **Source tracking** | Source field in visits | Tags (`from:*`) + metadata._sync |
 
 ---
 
@@ -103,7 +103,7 @@ All content (URLs, notes, groups, images) and their visit history unified under 
 1. **Base item** with type, content, metadata
 2. **Annotation layer** (tags, starred, archived, groups)
 3. **Visit tracking** (detailed history with frecency)
-4. **Sync support** (syncId, syncSource, deleted records)
+4. **Sync support** (syncId, syncedAt, deleted records)
 5. **Addressability** (peek:// URLs for all items)
 
 ### Proposed Schema
@@ -122,7 +122,6 @@ CREATE TABLE items (
 
   -- Sync fields
   syncId TEXT DEFAULT '',
-  syncSource TEXT DEFAULT '',
   syncedAt INTEGER DEFAULT 0,
 
   -- Audit
@@ -217,7 +216,7 @@ CREATE TABLE item_group_members (
 api.datastore.addItem(type, content, options)
   // type: 'url' | 'text' | 'tagset' | 'image'
   // content: string (URL for type:url, text for type:text, etc)
-  // options: { title, metadata, syncSource, syncId }
+  // options: { title, metadata, syncId }
 
 api.datastore.recordVisit(itemId, options)
   // Replaces trackNavigation()

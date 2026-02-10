@@ -235,11 +235,9 @@ describe('DataEngine: Items', () => {
     const { id } = await data.addItem('url', {
       content: 'https://example.com',
       syncId: 'server-123',
-      syncSource: 'server',
-    });
+         });
     const item = await data.getItem(id);
     assert.strictEqual(item.syncId, 'server-123');
-    assert.strictEqual(item.syncSource, 'server');
   });
 });
 
@@ -662,7 +660,6 @@ describe('SyncEngine: Pull', () => {
     assert.strictEqual(items.length, 1);
     assert.strictEqual(items[0].content, 'https://from-server.com');
     assert.strictEqual(items[0].syncId, 'server-1');
-    assert.strictEqual(items[0].syncSource, 'server');
 
     const tags = await data.getItemTags(items[0].id);
     assert.strictEqual(tags.length, 1);
@@ -691,8 +688,7 @@ describe('SyncEngine: Pull', () => {
       content: 'https://old.com',
       metadata: null,
       syncId: 'server-1',
-      syncSource: 'server',
-      syncedAt: 1000,
+           syncedAt: 1000,
       createdAt: 1000,
       updatedAt: 2000,
       deletedAt: 0,
@@ -727,8 +723,7 @@ describe('SyncEngine: Pull', () => {
       content: 'https://local-new.com',
       metadata: null,
       syncId: 'server-1',
-      syncSource: 'server',
-      syncedAt: 500,
+           syncedAt: 500,
       createdAt: 500,
       updatedAt: Date.now() + 5000, // much newer
       deletedAt: 0,
@@ -820,7 +815,6 @@ describe('SyncEngine: Push', () => {
 
     // Item should now have sync info
     const items = await data.queryItems();
-    assert.strictEqual(items[0].syncSource, 'server');
     assert.ok(items[0].syncedAt > 0);
   });
 
@@ -835,8 +829,7 @@ describe('SyncEngine: Push', () => {
       content: 'https://server.com',
       metadata: null,
       syncId: 'server-id',
-      syncSource: 'server',
-      syncedAt: Date.now(),
+           syncedAt: Date.now(),
       createdAt: 1000,
       updatedAt: 1000,
       deletedAt: 0,
@@ -951,7 +944,7 @@ describe('SyncEngine: Delete Propagation', () => {
         metadata: null,
         createdAt: new Date(1000).toISOString(),
         updatedAt: new Date(Date.now() + 10000).toISOString(),
-        deleted_at: Date.now() + 5000,
+        deletedAt: Date.now() + 5000,
       },
     ];
     const { adapter, data, sync } = createSyncTestEngine(serverItems);
@@ -964,8 +957,7 @@ describe('SyncEngine: Delete Propagation', () => {
       content: 'https://deleted-on-server.com',
       metadata: null,
       syncId: 'server-del-1',
-      syncSource: 'server',
-      syncedAt: 1000,
+           syncedAt: 1000,
       createdAt: 1000,
       updatedAt: 2000,
       deletedAt: 0,
@@ -995,7 +987,7 @@ describe('SyncEngine: Delete Propagation', () => {
         metadata: null,
         createdAt: new Date(1000).toISOString(),
         updatedAt: new Date(2000).toISOString(),
-        deleted_at: 3000,
+        deletedAt: 3000,
       },
     ];
     const { adapter, data, sync } = createSyncTestEngine(serverItems);
@@ -1031,8 +1023,7 @@ describe('SyncEngine: Delete Propagation', () => {
       content: 'https://undeleted.com',
       metadata: null,
       syncId: 'server-undelete-1',
-      syncSource: 'server',
-      syncedAt: 1000,
+           syncedAt: 1000,
       createdAt: 1000,
       updatedAt: 2000,
       deletedAt: 3000,
@@ -1070,8 +1061,7 @@ describe('SyncEngine: Delete Propagation', () => {
       content: 'https://conflict.com',
       metadata: null,
       syncId: 'server-conflict-1',
-      syncSource: 'server',
-      syncedAt: 500,
+           syncedAt: 500,
       createdAt: 500,
       updatedAt: Date.now() + 5000, // much newer
       deletedAt: Date.now() + 5000,
@@ -1142,8 +1132,7 @@ describe('SyncEngine: Delete Propagation', () => {
       content: 'https://was-deleted.com',
       metadata: null,
       syncId: 'server-id-123',
-      syncSource: 'server',
-      syncedAt: 1000,
+           syncedAt: 1000,
       createdAt: 1000,
       updatedAt: 2000,
       deletedAt: 2000,
@@ -1152,7 +1141,7 @@ describe('SyncEngine: Delete Propagation', () => {
     const result = await sync.pushToServer();
     assert.strictEqual(result.pushed, 1);
     assert.strictEqual(pushedBodies.length, 1);
-    assert.ok(pushedBodies[0].deleted_at > 0, 'should include deleted_at in push body');
+    assert.ok(pushedBodies[0].deletedAt > 0, 'should include deletedAt in push body');
   });
 
   it('should not push deleted items without syncId (never synced)', async () => {
@@ -1166,8 +1155,7 @@ describe('SyncEngine: Delete Propagation', () => {
       content: 'https://never-synced.com',
       metadata: null,
       syncId: '',
-      syncSource: '',
-      syncedAt: 0,
+           syncedAt: 0,
       createdAt: 1000,
       updatedAt: 2000,
       deletedAt: 2000,
@@ -1191,8 +1179,7 @@ describe('SyncEngine: Delete Propagation', () => {
       content: 'https://pending-delete.com',
       metadata: null,
       syncId: 'server-xyz',
-      syncSource: 'server',
-      syncedAt: 1000,
+           syncedAt: 1000,
       createdAt: 1000,
       updatedAt: 2000,
       deletedAt: 2000,
@@ -1221,8 +1208,7 @@ describe('SyncEngine: Server Change Detection', () => {
       content: 'https://synced.com',
       metadata: null,
       syncId: 'remote-id',
-      syncSource: 'server',
-      syncedAt: 1000,
+           syncedAt: 1000,
       createdAt: 1000,
       updatedAt: 1000,
       deletedAt: 0,
@@ -1234,7 +1220,6 @@ describe('SyncEngine: Server Change Detection', () => {
 
     // Item sync markers should be cleared
     const item = await data.getItem('synced-item');
-    assert.strictEqual(item.syncSource, '');
     assert.strictEqual(item.syncedAt, 0);
     assert.strictEqual(item.syncId, '');
   });
@@ -1254,15 +1239,14 @@ describe('SyncEngine: Server Change Detection', () => {
     const { adapter, data, sync } = createSyncTestEngine();
     await adapter.open();
 
-    // No stored server config, but items exist with syncSource='server'
+    // No stored server config, but items exist from prior sync
     await adapter.insertItem({
       id: 'orphan',
       type: 'url',
       content: 'https://orphan.com',
       metadata: null,
       syncId: 'old-server-id',
-      syncSource: 'server',
-      syncedAt: 1000,
+           syncedAt: 1000,
       createdAt: 1000,
       updatedAt: 1000,
       deletedAt: 0,
@@ -1274,7 +1258,7 @@ describe('SyncEngine: Server Change Detection', () => {
     assert.strictEqual(reset, false);
 
     const item = await data.getItem('orphan');
-    assert.strictEqual(item.syncSource, 'server');
+    assert.ok(item.syncedAt > 0);
   });
 });
 
@@ -1287,7 +1271,7 @@ describe('Memory Adapter', () => {
 
     await adapter.insertItem({
       id: 'test', type: 'url', content: 'https://test.com',
-      metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+      metadata: null, syncId: '', syncedAt: 0,
       createdAt: 1000, updatedAt: 1000, deletedAt: 0,
     });
 
@@ -1323,7 +1307,7 @@ describe('Memory Adapter', () => {
 
     await adapter.insertItem({
       id: 'local-id', type: 'url', content: 'https://test.com',
-      metadata: null, syncId: 'remote-id', syncSource: 'server', syncedAt: 1000,
+      metadata: null, syncId: 'remote-id', syncedAt: 1000,
       createdAt: 1000, updatedAt: 1000, deletedAt: 0,
     });
 
@@ -1344,7 +1328,7 @@ describe('Memory Adapter', () => {
 
     await adapter.insertItem({
       id: 'del', type: 'url', content: 'https://deleted.com',
-      metadata: null, syncId: 'del-sync', syncSource: '', syncedAt: 0,
+      metadata: null, syncId: 'del-sync', syncedAt: 0,
       createdAt: 1000, updatedAt: 1000, deletedAt: 2000,
     });
 
@@ -1437,7 +1421,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       const item = {
         id: 'test-1', type: 'url', content: 'https://example.com',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 0,
       };
       await adapter.insertItem(item);
@@ -1450,7 +1434,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'del-1', type: 'url', content: 'https://deleted.com',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 2000,
       });
       const item = await adapter.getItem('del-1');
@@ -1461,7 +1445,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'upd-1', type: 'text', content: 'original',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 0,
       });
       await adapter.updateItem('upd-1', { content: 'updated', updatedAt: 2000 });
@@ -1474,7 +1458,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'sd-1', type: 'url', content: 'https://test.com',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 0,
       });
       await adapter.deleteItem('sd-1');
@@ -1485,7 +1469,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'hd-1', type: 'url', content: 'https://test.com',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 0,
       });
       await adapter.insertTag({
@@ -1522,7 +1506,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'it-1', type: 'url', content: 'https://test.com',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 0,
       });
       await adapter.insertTag({
@@ -1549,7 +1533,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'ct-1', type: 'url', content: 'https://test.com',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 0,
       });
       await adapter.insertTag({
@@ -1580,7 +1564,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'local-1', type: 'url', content: 'https://test.com',
-        metadata: null, syncId: 'remote-1', syncSource: 'server', syncedAt: 1000,
+        metadata: null, syncId: 'remote-1', syncedAt: 1000,
         createdAt: 1000, updatedAt: 1000, deletedAt: 0,
       });
 
@@ -1603,7 +1587,7 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'del-sync', type: 'url', content: 'https://deleted.com',
-        metadata: null, syncId: 'del-remote', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: 'del-remote', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 2000,
       });
       const bySyncId = await adapter.findItemBySyncId('del-remote');
@@ -1620,17 +1604,17 @@ if (betterSqliteWorks) {
       await adapter.open();
       await adapter.insertItem({
         id: 'f-1', type: 'url', content: 'https://a.com',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 1000, updatedAt: 1000, deletedAt: 0,
       });
       await adapter.insertItem({
         id: 'f-2', type: 'text', content: 'note',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 2000, updatedAt: 2000, deletedAt: 0,
       });
       await adapter.insertItem({
         id: 'f-3', type: 'url', content: 'https://b.com',
-        metadata: null, syncId: '', syncSource: '', syncedAt: 0,
+        metadata: null, syncId: '', syncedAt: 0,
         createdAt: 3000, updatedAt: 3000, deletedAt: 0,
       });
 

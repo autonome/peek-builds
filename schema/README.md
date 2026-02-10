@@ -79,7 +79,7 @@ The schema defines three core sync tables:
 ### items
 Unified content storage for URLs, text notes, tagsets, and images.
 
-**Sync columns**: id, type, content, mimeType, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt, starred, archived
+**Sync columns**: id, type, content, mimeType, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, starred, archived
 
 **Local-only columns**: visitCount, lastVisitAt, frecencyScore, title, domain, favicon
 

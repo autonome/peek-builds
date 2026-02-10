@@ -42,7 +42,6 @@ CREATE TABLE items (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image')),
   syncId TEXT DEFAULT '',
-  syncSource TEXT DEFAULT '',
   syncedAt INTEGER DEFAULT 0,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
@@ -83,7 +82,7 @@ CREATE TABLE tags (
 
 **Migrations Implemented:**
 1. `migrateTinyBaseData()` - Legacy format conversion
-2. `migrateSyncColumns()` - Add syncId, syncSource, syncedAt
+2. `migrateSyncColumns()` - Add syncId, syncedAt
 3. `migrateItemTypes()` - 'note' → 'url'/'text' conversion
 4. `migrateItemVisitColumns()` - Add visitCount, lastVisitAt
 5. `migrateAddressesToItems()` - Convert tagged addresses to items
@@ -207,7 +206,6 @@ tables:
       type: { type: text, not_null: true, check: "type IN ('url', 'text', 'tagset', 'image')" }
       content: { type: text }
       syncId: { type: text, default: '' }
-      syncSource: { type: text, default: '' }
       syncedAt: { type: integer, default: 0 }
       createdAt: { type: integer, not_null: true }
       updatedAt: { type: integer, not_null: true }
@@ -283,7 +281,7 @@ fn migrate_tag_ids(conn: &Connection) -> Result<()> {
 // Tauri validation (add to both desktop and mobile)
 fn validate_schema(conn: &Connection) -> Result<(), String> {
     let required = vec![
-        ("items", vec!["id", "type", "syncId", "syncSource", "syncedAt", "createdAt", "updatedAt", "deletedAt"]),
+        ("items", vec!["id", "type", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt"]),
         ("tags", vec!["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt"]),
         ("item_tags", vec!["itemId", "tagId", "createdAt"]),
     ];

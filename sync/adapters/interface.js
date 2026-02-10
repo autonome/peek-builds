@@ -11,7 +11,6 @@
  * @property {string|null} content
  * @property {string|null} metadata - JSON string
  * @property {string} syncId
- * @property {string} syncSource
  * @property {number} syncedAt - Unix ms
  * @property {number} createdAt - Unix ms
  * @property {number} updatedAt - Unix ms

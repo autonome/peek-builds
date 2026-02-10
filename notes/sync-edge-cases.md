@@ -37,8 +37,8 @@ const localItem = db.prepare(
 ```javascript
 items = db.prepare(`
   SELECT * FROM items
-  WHERE deletedAt = 0 AND (syncSource = '' OR updatedAt > ?)
-`).all(lastSyncTime);
+  WHERE deletedAt = 0 AND (syncedAt = 0 OR updatedAt > syncedAt)
+`).all();
 ```
 
 **Server db.js - getItemsSince (line 717)**:

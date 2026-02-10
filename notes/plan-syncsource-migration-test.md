@@ -8,33 +8,27 @@ The `syncSource` column was removed from desktop and server schemas as part of t
 
 | Platform | syncSource Status | Details |
 |----------|------------------|---------|
-| Desktop Electron (`backend/electron/`) | Removed from schema + code | No `syncSource` in generated schema or sync code |
-| Server (`backend/server/`) | Removed from schema + code | No `syncSource` in db.js or index.js |
-| Unified sync module (`sync/sync.js`) | **STILL USES IT** | Push filter, post-push update, pending count all reference `syncSource` |
+| Desktop Electron (`backend/electron/`) | **Removed** | No `syncSource` in generated schema or sync code |
+| Server (`backend/server/`) | **Removed** | No `syncSource` in db.js or index.js |
+| Unified sync module (`sync/sync.js`) | **Removed** | Push filter uses `syncedAt === 0`, no syncSource references |
 | iOS mobile (`backend/tauri-mobile/`) | Still has `sync_source` | Actively used for push filtering, merge, post-push |
 | Tauri Desktop (`backend/tauri/`) | Still has `sync_source` | Item struct, column access, sync operations |
 | Browser Extension (`backend/extension/`) | Clean | No references |
 
 ## Issues Found During Investigation
 
-### Critical: `sync/sync.js` not refactored
+### ~~Critical: `sync/sync.js` not refactored~~ (DONE)
 
-The unified sync module still actively uses `syncSource`:
-- `sync.js:102,107` — push filter: `i.syncSource === ''`
-- `sync.js:165` — sets `syncSource: 'server'` after push
-- `sync.js:217` — pending count: `i.syncSource === ''`
-- `sync.js:279` — server change reset: `syncSource: ''`
-- `better-sqlite3.js:34` — adapter schema includes `syncSource TEXT DEFAULT ''`
+The unified sync module has been refactored:
+- Push filter now uses `syncedAt === 0` instead of `syncSource === ''`
+- Post-push update no longer sets `syncSource`
+- Server change reset no longer resets `syncSource`
+- `better-sqlite3.js` schema no longer includes `syncSource` column
+- `_mergeServerItem` now uses `fromISOString()` for server timestamp conversion (bugfix)
 
-If this module is used against a DB without `syncSource`, the `i.syncSource === ''` filter evaluates `undefined === ''` → `false`, causing all items to be excluded from push.
+### ~~Stale test assertion~~ (FIXED)
 
-### Stale test assertion
-
-`backend/server/test.js:620` asserts `syncSource` column exists:
-```js
-assert.ok(columnNames.includes("syncSource"))
-```
-This will fail with the current schema.
+`backend/server/test.js:620` — `syncSource` assertion removed. Legacy migration test schemas preserved for backward compatibility testing.
 
 ### Behavioral change: extension-origin items
 

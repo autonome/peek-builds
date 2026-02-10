@@ -687,7 +687,7 @@ Three sync modules import browser data as Peek URL items. All are one-way (brows
 | `tabs.js` | `peek_tabs_enabled` | `from:tab` | Add-and-skip: open tabs imported, listens for `onUpdated` |
 | `history.js` | `peek_history_enabled` | `from:history` | **Update-on-revisit**: existing items get fresh visit metadata via `updateItem()` |
 
-**Cross-source tagging**: When a URL already exists in Peek (from any source), each sync module still adds its own source tag to the existing item. Stats count by tag, not `syncSource`. This means an item imported via bookmarks and later visited in history will have both `from:bookmark` and `from:history` tags.
+**Cross-source tagging**: When a URL already exists in Peek (from any source), each sync module still adds its own source tag to the existing item. Stats count by tag (e.g. `from:bookmark`, `from:history`). This means an item imported via bookmarks and later visited in history will have both `from:bookmark` and `from:history` tags.
 
 **Diagnostics**: Stats are fetched from the background script via message passing (`get-bookmark-stats`, `get-tab-stats`, `get-history-stats`), not queried directly from the options page, due to Firefox IndexedDB isolation between extension contexts.
 

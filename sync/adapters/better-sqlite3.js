@@ -31,7 +31,6 @@ export function createBetterSqliteAdapter(db) {
         content TEXT,
         metadata TEXT,
         syncId TEXT DEFAULT '',
-        syncSource TEXT DEFAULT '',
         syncedAt INTEGER DEFAULT 0,
         createdAt INTEGER NOT NULL,
         updatedAt INTEGER NOT NULL,
@@ -90,9 +89,6 @@ export function createBetterSqliteAdapter(db) {
     if (!itemColNames.has('syncId')) {
       db.exec("ALTER TABLE items ADD COLUMN syncId TEXT DEFAULT ''");
     }
-    if (!itemColNames.has('syncSource')) {
-      db.exec("ALTER TABLE items ADD COLUMN syncSource TEXT DEFAULT ''");
-    }
     if (!itemColNames.has('syncedAt')) {
       db.exec('ALTER TABLE items ADD COLUMN syncedAt INTEGER DEFAULT 0');
     }
@@ -103,8 +99,8 @@ export function createBetterSqliteAdapter(db) {
       getItem: db.prepare('SELECT * FROM items WHERE id = ? AND deletedAt = 0'),
       getItemIncludeDeleted: db.prepare('SELECT * FROM items WHERE id = ?'),
       insertItem: db.prepare(`
-        INSERT INTO items (id, type, content, metadata, syncId, syncSource, syncedAt, createdAt, updatedAt, deletedAt)
-        VALUES (@id, @type, @content, @metadata, @syncId, @syncSource, @syncedAt, @createdAt, @updatedAt, @deletedAt)
+        INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+        VALUES (@id, @type, @content, @metadata, @syncId, @syncedAt, @createdAt, @updatedAt, @deletedAt)
       `),
       deleteItemSoft: db.prepare('UPDATE items SET deletedAt = @deletedAt, updatedAt = @updatedAt WHERE id = @id AND deletedAt = 0'),
       hardDeleteItem: db.prepare('DELETE FROM items WHERE id = ?'),

@@ -45,16 +45,16 @@ The sync module handles conversion transparently.
 1. Fetch items: `GET /items` (full) or `GET /items/since/:timestamp` (incremental)
 2. For each server item:
    - Find local item by `syncId` matching server `id`
-   - If not found: insert with `syncId=server.id`, `syncSource='server'`
+   - If not found: insert with `syncId=server.id`
    - If found and server is newer (`updated_at > local.updatedAt`): update local
    - If found and local is newer: skip (will be pushed later)
 
 ### Push (Desktop → Server)
 
-1. Query items where `syncSource = ''` (never synced) OR `updatedAt > lastSyncTime`
+1. Query items where `syncedAt = 0` (never synced) OR `updatedAt > syncedAt` (modified since last sync)
 2. For each item:
    - `POST /items` with type, content, tags, metadata
-   - On success: update local `syncId` and `syncSource='server'`
+   - On success: update local `syncId` and `syncedAt`
 
 ### Conflict Resolution
 
@@ -132,7 +132,7 @@ CREATE TABLE items (
   mimeType TEXT DEFAULT '',
   metadata TEXT DEFAULT '{}',
   syncId TEXT DEFAULT '',      -- Server item ID
-  syncSource TEXT DEFAULT '',  -- 'server' if synced
+  syncedAt INTEGER DEFAULT 0,  -- Last sync timestamp (ms)
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER DEFAULT 0,

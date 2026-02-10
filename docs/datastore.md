@@ -47,7 +47,6 @@ Stores all user content types: URLs, text notes, tagsets, images.
 | mimeType | TEXT | MIME type (e.g., `text/html`) |
 | metadata | TEXT | JSON for flexible extra data |
 | syncId | TEXT | Server-assigned ID for sync |
-| syncSource | TEXT | Origin of sync (`server`, `history`, etc.) |
 | syncedAt | INTEGER | Last sync timestamp (ms) |
 | createdAt | INTEGER | Creation timestamp (ms) |
 | updatedAt | INTEGER | Last update timestamp (ms) |

@@ -90,7 +90,7 @@ Already stored redundantly — **removing syncSource loses nothing**:
 
 ## Changes
 
-### 1. Remove syncSource from sync algorithm
+### 1. Remove syncSource from sync algorithm ✅ DONE (desktop, server, unified sync module)
 
 **Push query** — replace syncSource filter with timestamp-based:
 
@@ -122,10 +122,13 @@ UPDATE items SET syncId = ?, syncedAt = ? WHERE id = ?
 
 **On server change** — reset `syncedAt = 0` to force full re-sync. No need to touch syncSource.
 
-**Files to update:**
-- `backend/electron/sync.ts` — lines 393, 515-525, 619-620, 667-668, 773-775
-- `sync/sync.js` — lines 102-107, 162-166, 277-282, 399-400
-- `backend/tauri/src-tauri/src/sync.rs` — lines 521-522, 634-665, 799-800, 894
+**Files updated:**
+- ✅ `backend/electron/sync.ts` — syncSource removed from push filter, post-push update, server-change reset
+- ✅ `sync/sync.js` — syncSource replaced with syncedAt-based filtering, fromISOString() added for server timestamp conversion
+- ✅ `sync/adapters/better-sqlite3.js` — syncSource removed from schema, migration, INSERT
+- ✅ `sync/data.js` — syncSource removed from addItem and saveItem
+- ⬜ `backend/tauri/src-tauri/src/sync.rs` — still has sync_source (Tauri desktop)
+- ⬜ `backend/tauri-mobile/src-tauri/src/lib.rs` — still has sync_source (iOS mobile)
 
 ### 2. Stop setting syncSource on item creation
 

@@ -38,7 +38,6 @@ export class DataEngine {
    * @param {string|null} [options.content]
    * @param {string|null} [options.metadata] - JSON string
    * @param {string} [options.syncId]
-   * @param {string} [options.syncSource]
    * @param {number} [options.createdAt] - Override creation timestamp (for imports)
    * @returns {Promise<{id: string}>}
    */
@@ -61,7 +60,6 @@ export class DataEngine {
       content: options.content ?? null,
       metadata,
       syncId: options.syncId || '',
-      syncSource: options.syncSource || '',
       syncedAt: 0,
       createdAt,
       updatedAt: now,
@@ -250,7 +248,6 @@ export class DataEngine {
         content: content ?? null,
         metadata: metadataStr,
         syncId: syncId || '',
-        syncSource: '',
         syncedAt: 0,
         createdAt: timestamp,
         updatedAt: timestamp,

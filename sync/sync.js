@@ -99,12 +99,12 @@ export class SyncEngine {
       // Incremental: never synced OR locally modified after their last sync
       itemsToPush = allItems.filter(
         i =>
-          i.syncSource === '' ||
+          i.syncedAt === 0 ||
           (i.syncedAt > 0 && i.updatedAt > i.syncedAt)
       );
     } else {
       // Full: all items that haven't been synced
-      itemsToPush = allItems.filter(i => i.syncSource === '');
+      itemsToPush = allItems.filter(i => i.syncedAt === 0);
     }
 
     // Also include deleted items that need tombstone push
@@ -162,7 +162,6 @@ export class SyncEngine {
         // Update local item with sync info
         await this.data.adapter.updateItem(item.id, {
           syncId: response.id,
-          syncSource: 'server',
           syncedAt: Date.now(),
         });
 
@@ -214,7 +213,7 @@ export class SyncEngine {
     const allItems = await this.data.queryItems({ includeDeleted: false });
     const pendingCount = allItems.filter(
       i =>
-        i.syncSource === '' ||
+        i.syncedAt === 0 ||
         (i.syncedAt > 0 && i.updatedAt > i.syncedAt)
     ).length;
 
@@ -276,7 +275,6 @@ export class SyncEngine {
       const allItems = await this.data.queryItems({ includeDeleted: false });
       for (const item of allItems) {
         await this.data.adapter.updateItem(item.id, {
-          syncSource: '',
           syncedAt: 0,
           syncId: '',
         });
@@ -359,8 +357,8 @@ export class SyncEngine {
    * @returns {Promise<'pulled'|'conflict'|'skipped'>}
    */
   async _mergeServerItem(serverItem) {
-    const serverUpdatedAt = serverItem.updatedAt;
-    const serverDeletedAt = serverItem.deletedAt || 0;
+    const serverUpdatedAt = fromISOString(serverItem.updatedAt);
+    const serverDeletedAt = fromISOString(serverItem.deletedAt) || 0;
 
     // Find local item by syncId
     const localItem = await this.data.adapter.findItemBySyncId(serverItem.id);
@@ -396,12 +394,11 @@ export class SyncEngine {
           ? JSON.stringify(serverItem.metadata)
           : null,
         syncId: serverItem.id,
-        syncSource: 'server',
       });
 
       // Overwrite timestamps to match server
       await this.data.adapter.updateItem(localId, {
-        createdAt: serverItem.createdAt,
+        createdAt: fromISOString(serverItem.createdAt),
         updatedAt: serverUpdatedAt,
         syncedAt: Date.now(),
       });

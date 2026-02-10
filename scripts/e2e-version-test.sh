@@ -389,7 +389,7 @@ run_desktop_sync() {
   else
     log_fail "$PHASE" "$LABEL: got $ITEM_COUNT items, expected $EXPECTED_COUNT"
     log "$PHASE" "  Items in DB:"
-    sqlite3 "$DB_PATH" "SELECT id, type, content, syncSource FROM items WHERE deletedAt = 0;" | while IFS= read -r row; do
+    sqlite3 "$DB_PATH" "SELECT id, type, content, syncedAt FROM items WHERE deletedAt = 0;" | while IFS= read -r row; do
       log "$PHASE" "    $row"
     done
   fi
