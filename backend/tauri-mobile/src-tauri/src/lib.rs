@@ -4918,11 +4918,18 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(move |_app| {
+            // Eagerly initialize database on app start (runs migrations including dedup)
+            // This ensures one-time migrations run even if the frontend hasn't loaded yet
+            match ensure_database_initialized() {
+                Ok(()) => println!("[Rust] Database initialized on startup"),
+                Err(e) => println!("[Rust] WARNING: Database init on startup failed: {}", e),
+            }
+
             if auto_sync_on_launch {
                 println!("[Rust] PEEK_AUTO_SYNC enabled - triggering sync on launch");
                 // Spawn async task to sync after app is ready
                 tauri::async_runtime::spawn(async move {
-                    // Small delay to ensure database is fully initialized
+                    // Small delay to let app UI settle before syncing
                     std::thread::sleep(std::time::Duration::from_secs(2));
 
                     // Check if sync is configured before attempting

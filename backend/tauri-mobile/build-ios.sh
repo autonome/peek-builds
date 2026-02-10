@@ -16,6 +16,7 @@ source "$REPO_ROOT/scripts/ios-cache.sh"
 # Parse flags
 FORCE_REBUILD=false
 NO_CACHE=false
+STANDALONE=false
 while [ $# -gt 0 ]; do
     case "$1" in
         --force|-f)
@@ -24,9 +25,12 @@ while [ $# -gt 0 ]; do
         --no-cache)
             NO_CACHE=true
             ;;
+        --standalone)
+            STANDALONE=true
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--force|-f] [--no-cache]"
+            echo "Usage: $0 [--force|-f] [--no-cache] [--standalone]"
             exit 1
             ;;
     esac
@@ -57,19 +61,26 @@ cd "$SCRIPT_DIR"
 npm run build
 cd "$TAURI_DIR"
 
-# Replace dist/index.html with bootstrap redirect BEFORE cargo build
-# so Tauri's custom-protocol embeds the redirect, not the real app.
-# The actual app will be served by the vite HMR dev server.
-# DEV_PORT env var is set by dev-ios-sim.sh with the actual port.
-echo "Creating bootstrap HTML for dev server mode..."
-cp "$SCRIPT_DIR/dev-bootstrap.html" "$SCRIPT_DIR/dist/index.html"
-mkdir -p "$TAURI_DIR/gen/apple/assets"
-cp "$SCRIPT_DIR/dev-bootstrap.html" "$TAURI_DIR/gen/apple/assets/index.html"
-if [ -n "$DEV_PORT" ]; then
-  sed -i.bak "s/__DEV_PORT__/$DEV_PORT/g" "$SCRIPT_DIR/dist/index.html"
-  rm -f "$SCRIPT_DIR/dist/index.html.bak"
-  sed -i.bak "s/__DEV_PORT__/$DEV_PORT/g" "$TAURI_DIR/gen/apple/assets/index.html"
-  rm -f "$TAURI_DIR/gen/apple/assets/index.html.bak"
+if [ "$STANDALONE" = true ]; then
+  # Standalone mode: embed the real bundled frontend (no dev server needed)
+  echo "Embedding bundled frontend for standalone mode..."
+  mkdir -p "$TAURI_DIR/gen/apple/assets"
+  cp "$SCRIPT_DIR/dist/index.html" "$TAURI_DIR/gen/apple/assets/index.html"
+else
+  # Dev mode: replace dist/index.html with bootstrap redirect BEFORE cargo build
+  # so Tauri's custom-protocol embeds the redirect, not the real app.
+  # The actual app will be served by the vite HMR dev server.
+  # DEV_PORT env var is set by dev-ios-sim.sh with the actual port.
+  echo "Creating bootstrap HTML for dev server mode..."
+  cp "$SCRIPT_DIR/dev-bootstrap.html" "$SCRIPT_DIR/dist/index.html"
+  mkdir -p "$TAURI_DIR/gen/apple/assets"
+  cp "$SCRIPT_DIR/dev-bootstrap.html" "$TAURI_DIR/gen/apple/assets/index.html"
+  if [ -n "$DEV_PORT" ]; then
+    sed -i.bak "s/__DEV_PORT__/$DEV_PORT/g" "$SCRIPT_DIR/dist/index.html"
+    rm -f "$SCRIPT_DIR/dist/index.html.bak"
+    sed -i.bak "s/__DEV_PORT__/$DEV_PORT/g" "$TAURI_DIR/gen/apple/assets/index.html"
+    rm -f "$TAURI_DIR/gen/apple/assets/index.html.bak"
+  fi
 fi
 
 echo "Building Rust for iOS simulator (debug)..."

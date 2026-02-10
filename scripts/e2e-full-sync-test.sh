@@ -192,7 +192,7 @@ echo "Step 1: Building desktop + iOS Rust library..."
 cd "$PROJECT_DIR"
 yarn build
 echo "  Desktop build complete"
-yarn mobile:ios:build --force
+yarn mobile:ios:build --force --standalone
 echo "  iOS Rust library build complete"
 
 # --- Step 2: Find and wipe iOS simulator data ---
@@ -1207,7 +1207,7 @@ fi
 echo "  The dedup migration runs in ensure_database_initialized() on startup."
 echo "  Polling iOS database for dedup_cleanup_v1 flag..."
 
-IOS_POLL_TIMEOUT=120
+IOS_POLL_TIMEOUT=30
 IOS_POLL_INTERVAL=3
 IOS_POLL_ELAPSED=0
 
@@ -1217,7 +1217,7 @@ while [ "$IOS_POLL_ELAPSED" -lt "$IOS_POLL_TIMEOUT" ]; do
         echo "  iOS dedup flag detected!"
         break
     fi
-    echo "  ... waiting for iOS app restart (${IOS_POLL_ELAPSED}s elapsed)"
+    echo "  ... waiting for iOS dedup (${IOS_POLL_ELAPSED}s elapsed)"
     sleep "$IOS_POLL_INTERVAL"
     IOS_POLL_ELAPSED=$(($IOS_POLL_ELAPSED + $IOS_POLL_INTERVAL))
 done
