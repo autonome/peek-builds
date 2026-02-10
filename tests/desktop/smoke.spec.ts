@@ -3640,7 +3640,7 @@ test.describe('IZUI Behavior @desktop', () => {
     }
   });
 
-  test('izui-set-escape-mode updates window escape mode via onEscape', async () => {
+  test('onEscape registers callback without changing backend escapeMode (role-based)', async () => {
     const bgWindow = sharedBgWindow;
 
     // Open a plain window with no escapeMode set (defaults to 'auto')
@@ -3656,41 +3656,38 @@ test.describe('IZUI Behavior @desktop', () => {
     const contentWindow = await sharedApp.getWindow('about:blank', 5000);
     expect(contentWindow).toBeTruthy();
 
-    // Verify the window starts without 'navigate' escape mode
+    // Get escapeMode before registering handler
     const infoBefore = await bgWindow.evaluate(async (wid: number) => {
       const listResult = await (window as any).app.window.list({ includeInternal: true });
       if (!listResult.success) return null;
       return listResult.windows.find((w: any) => w.id === wid);
     }, windowId);
     expect(infoBefore).toBeTruthy();
-    // Should be undefined or 'auto', not 'navigate'
-    expect(infoBefore.params.escapeMode).not.toBe('navigate');
+    const escapeModeBefore = infoBefore.params.escapeMode;
 
-    // Call api.escape.onEscape() from the content window, which internally
-    // invokes ipcRenderer.invoke('izui-set-escape-mode', 'navigate')
+    // Call api.escape.onEscape() — this should NOT change escapeMode on the backend
+    // (self-declaration removed; role determines behavior now)
     await contentWindow.evaluate(() => {
       (window as any).app.escape.onEscape(() => ({ handled: false }));
     });
 
-    // Poll for the escape mode to be updated (the IPC is async)
-    const windowInfo = await bgWindow.evaluate(async (wid: number) => {
-      const start = Date.now();
-      while (Date.now() - start < 3000) {
-        const listResult = await (window as any).app.window.list({ includeInternal: true });
-        if (listResult.success) {
-          const win = listResult.windows.find((w: any) => w.id === wid);
-          if (win && win.params.escapeMode === 'navigate') {
-            return win;
-          }
-        }
-        await new Promise(r => setTimeout(r, 100));
-      }
-      // Return the last result for debugging
-      const finalResult = await (window as any).app.window.list({ includeInternal: true });
-      return finalResult.success ? finalResult.windows.find((w: any) => w.id === wid) : null;
+    // Small delay to ensure any async IPC would have completed
+    await new Promise(r => setTimeout(r, 300));
+
+    // Verify escapeMode was NOT changed by onEscape registration
+    const infoAfter = await bgWindow.evaluate(async (wid: number) => {
+      const listResult = await (window as any).app.window.list({ includeInternal: true });
+      if (!listResult.success) return null;
+      return listResult.windows.find((w: any) => w.id === wid);
     }, windowId);
-    expect(windowInfo).toBeTruthy();
-    expect(windowInfo.params.escapeMode).toBe('navigate');
+    expect(infoAfter).toBeTruthy();
+    expect(infoAfter.params.escapeMode).toBe(escapeModeBefore);
+
+    // Verify the callback IS registered and responds via escape trigger
+    const triggerResult = await contentWindow.evaluate(async () => {
+      return await (window as any).app.escape.trigger();
+    });
+    expect(triggerResult).toEqual({ handled: false });
 
     // Clean up
     if (windowId) {

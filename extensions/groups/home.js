@@ -624,6 +624,7 @@ const createAddressCard = (address) => {
   card.addEventListener('card-click', async () => {
     debug && console.log('Opening address:', addressUrl);
     const result = await api.window.open(addressUrl, {
+      role: 'content',
       width: 800,
       height: 600
     });

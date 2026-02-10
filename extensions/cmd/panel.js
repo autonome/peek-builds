@@ -491,6 +491,7 @@ function handleSpecialKey(e) {
 
       // Open URL directly using api.window.open
       api.window.open(urlResult.url, {
+        role: 'content',
         width: 800,
         height: 600,
         trackingSource: 'cmd',

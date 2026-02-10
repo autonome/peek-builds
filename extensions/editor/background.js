@@ -24,6 +24,7 @@ function openEditor(params) {
       if (qs) url += '?' + qs;
     }
     api.window.open(url, {
+      role: 'workspace',
       key: 'editor-home',
       width: 1200,
       height: 800,

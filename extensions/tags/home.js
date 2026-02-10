@@ -41,6 +41,7 @@ const extractUrl = (text) => {
 const openItemUrl = async (url) => {
   try {
     await api.window.open(url, {
+      role: 'content',
       width: 800,
       height: 600,
       trackingSource: 'tags',

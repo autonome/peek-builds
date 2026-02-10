@@ -59,10 +59,12 @@ const openGroupsWindow = () => {
   const width = 800;
 
   const params = {
+    // IZUI role
+    role: 'workspace',
+
     key: address,
     height,
     width,
-    escapeMode: 'navigate',
     trackingSource: 'cmd',
     trackingSourceId: 'groups'
   };
@@ -244,6 +246,7 @@ const openGroup = async (groupName) => {
   const openedWindows = [];
   for (const item of urlItems) {
     const result = await api.window.open(item._openUrl, {
+      role: 'content',
       trackingSource: 'cmd',
       trackingSourceId: `group:${groupName}`,
       // Pass group context for mode inheritance

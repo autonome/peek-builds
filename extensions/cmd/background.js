@@ -261,6 +261,9 @@ const openPanelWindow = (prefs) => {
   const width = prefs.width || 600;
 
   const params = {
+    // IZUI role
+    role: 'palette',
+
     debug: log.debug,
     key: panelAddress,
     height: initialHeight,
@@ -466,6 +469,7 @@ const init = async () => {
       const downloadPageUrl = `peek://ext/cmd/download.html?id=${downloadId}`;
 
       await api.window.open(downloadPageUrl, {
+        role: 'utility',
         width: 400,
         height: 200,
         show: true,

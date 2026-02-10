@@ -2,7 +2,6 @@ import appConfig from '../config.js';
 import { createDatastoreStore } from '../utils.js';
 import api from '../api.js';
 import fc from '../features.js';
-import izui from '../izui.js';
 
 const DEBUG = api.debug;
 const clear = false;
@@ -2465,7 +2464,8 @@ const init = async () => {
   datastoreNav.textContent = 'Datastore';
   datastoreNav.style.cursor = 'pointer';
   datastoreNav.addEventListener('click', () => {
-    izui.openChildWindow('peek://app/datastore/viewer.html', {
+    api.window.open('peek://app/datastore/viewer.html', {
+      role: 'utility',
       width: 900,
       height: 600,
       key: 'datastore-viewer'
@@ -2479,7 +2479,8 @@ const init = async () => {
   diagnosticNav.textContent = 'Diagnostic';
   diagnosticNav.style.cursor = 'pointer';
   diagnosticNav.addEventListener('click', () => {
-    izui.openChildWindow('peek://app/diagnostic.html', {
+    api.window.open('peek://app/diagnostic.html', {
+      role: 'utility',
       width: 900,
       height: 700,
       key: 'diagnostic-tool'
@@ -2515,9 +2516,7 @@ const init = async () => {
 
 window.addEventListener('load', init);
 
-// Initialize IZUI for focus restoration when child windows close
-// Settings is a parent window, so ESC should not close it
-izui.init({ canHaveChildren: true, closeOnEscape: false });
+// No IZUI init needed — backend handles focus restoration and ESC policy via roles.
 
 window.addEventListener('blur', () => {
   console.log('core settings blur');

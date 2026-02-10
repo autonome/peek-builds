@@ -1,11 +1,9 @@
 // Datastore Viewer
 import api from '../api.js';
-import izui from '../izui.js';
 
 console.log('datastore viewer loading');
 
-// Initialize IZUI - this window is a child of settings, notify parent on close
-izui.init({ canHaveChildren: false });
+// No IZUI init needed — backend handles parent tracking and focus restoration via roles.
 
 const tables = ['addresses', 'visits', 'content', 'tags', 'blobs', 'scripts_data', 'feeds'];
 

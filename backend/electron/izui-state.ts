@@ -187,10 +187,15 @@ class IzuiStateCoordinator {
     if (!this.session) {
       this.startSession(result);
     } else {
-      // Update entry mode for this invocation (e.g., keepLive window reuse)
-      this.session.entryMode = result;
-      this.state = result;
-      DEBUG && console.log('[izui] Updated session entryMode to:', result);
+      // One-way ratchet: transient -> active is allowed, active -> transient is not.
+      // Once a session becomes active (user is working in Peek), it stays active.
+      if (this.session.entryMode === 'transient' && result === 'active') {
+        this.session.entryMode = 'active';
+        this.state = 'active';
+        DEBUG && console.log('[izui] Promoted session from transient to active');
+      } else {
+        DEBUG && console.log('[izui] Session entryMode unchanged:', this.session.entryMode, '(evaluated:', result, ')');
+      }
     }
 
     return result;

@@ -19,6 +19,7 @@ const api = hasPeekAPI ? window.app : null;
 function openTags() {
   if (hasPeekAPI) {
     api.window.open('peek://ext/tags/home.html', {
+      role: 'workspace',
       key: 'tags-home',
       width: 900,
       height: 700,

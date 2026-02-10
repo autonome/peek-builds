@@ -1678,18 +1678,13 @@ export function registerWindowHandlers(): void {
       if (existingWindow) {
         DEBUG && console.log('Reusing existing window with key:', options.key);
 
-        // RE-EVALUATE transient state on show, not just creation
-        // This fixes keepLive windows (like cmd bar) being stuck with stale transient state
+        // For keepLive reuse, update the per-window transient flag from current session state
+        // but do NOT call evaluateOnShow() — session state shouldn't change just because
+        // a hidden window was re-shown (Phase 4: session entryMode is stable)
         const coordinator = getIzuiCoordinator();
-        const newTransientState = coordinator.evaluateOnShow();
         const existingData = existingWindow.data as { params: Record<string, unknown> };
-        existingData.params.transient = (newTransientState === 'transient');
-        // Preserve IZUI-relevant params from the new open request
-        // escapeMode may differ between invocations (e.g., first open vs reuse)
-        if (options.escapeMode) {
-          existingData.params.escapeMode = options.escapeMode;
-        }
-        DEBUG && console.log('Reused window transient re-evaluated:', newTransientState, 'escapeMode:', existingData.params.escapeMode);
+        existingData.params.transient = coordinator.isTransient();
+        DEBUG && console.log('Reused window transient from session:', existingData.params.transient);
 
         if (!isHeadless()) {
           existingWindow.window.show();
@@ -2657,24 +2652,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
   ipcMain.handle('izui-get-state', () => {
     const coordinator = getIzuiCoordinator();
     return coordinator.getState();
-  });
-
-  // IZUI: renderer self-declares its escape mode
-  // Called when a window registers an escape handler via api.escape.onEscape()
-  // This ensures the backend respects renderer-owned lifecycle even if the
-  // opener's escapeMode param was lost (e.g., consolidated iframe IPC)
-  ipcMain.handle('izui-set-escape-mode', (ev, mode: string) => {
-    const win = BrowserWindow.fromWebContents(ev.sender);
-    if (win && !win.isDestroyed()) {
-      const entry = getWindowInfo(win.id);
-      if (entry) {
-        const oldMode = entry.params.escapeMode;
-        entry.params.escapeMode = mode;
-        console.log(`[izui] Window ${win.id} self-declared escapeMode: ${oldMode} -> ${mode}`);
-        return { success: true };
-      }
-    }
-    return { success: false, error: 'Window not found' };
   });
 
   // IZUI: renderer requests its own window to close/hide (navigate mode)

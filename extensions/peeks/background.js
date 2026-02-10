@@ -58,6 +58,9 @@ const executeItem = (item) => {
   const width = item.width || 800;
 
   const params = {
+    // IZUI role
+    role: 'quick-view',
+
     // browserwindow
     height,
     width,
@@ -67,7 +70,6 @@ const executeItem = (item) => {
     type: 'panel',
 
     // peek
-    feature: labels.name,
     keepLive: item.keepLive || false,
     persistState: item.persistState || false,
 

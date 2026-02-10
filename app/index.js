@@ -249,6 +249,7 @@ const registerExtensionCommands = () => {
     description: 'Open Datastore viewer',
     execute: async () => {
       await api.window.open('peek://app/datastore/viewer.html', {
+        role: 'utility',
         width: 900,
         height: 600,
         key: 'datastore-viewer'
@@ -261,6 +262,7 @@ const registerExtensionCommands = () => {
     description: 'Open Diagnostic tool',
     execute: async () => {
       await api.window.open('peek://app/diagnostic.html', {
+        role: 'utility',
         width: 900,
         height: 700,
         key: 'diagnostic-tool'

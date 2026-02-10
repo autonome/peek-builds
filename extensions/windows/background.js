@@ -39,6 +39,9 @@ const loadSettings = async () => {
  */
 const openWindowsView = async () => {
   const params = {
+    // IZUI role
+    role: 'overlay',
+
     key: address,
     transparent: true,
     alwaysOnTop: true,

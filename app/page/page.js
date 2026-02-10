@@ -8,7 +8,6 @@
  * - Resize via IPC to resize the BrowserWindow
  */
 
-import izui from '../izui.js';
 import api from '../api.js';
 
 const DEBUG = true;
@@ -160,23 +159,18 @@ urlText.addEventListener('click', (e) => {
   sel.addRange(range);
 });
 
-// --- IZUI integration ---
+// --- Escape handling ---
 
-// Initialize IZUI for proper stack navigation
-// Web page containers can have children (links opening new windows)
-izui.init({
-  canHaveChildren: true,
-  onEscape: () => {
-    if (webview.canGoBack()) {
-      DEBUG && console.log('[page] ESC: webview going back');
-      webview.goBack();
-      return { handled: true };
-    }
-    DEBUG && console.log('[page] ESC: at root, closing');
-    return { handled: false };
+// Register escape handler for internal navigation (back in webview history)
+// The backend determines close policy based on the window's role.
+api.escape.onEscape(() => {
+  if (webview.canGoBack()) {
+    DEBUG && console.log('[page] ESC: webview going back');
+    webview.goBack();
+    return { handled: true };
   }
-}).catch(err => {
-  console.error('[page] IZUI init error:', err);
+  DEBUG && console.log('[page] ESC: at root, letting backend decide');
+  return { handled: false };
 });
 
 // --- Webview events ---
@@ -210,7 +204,7 @@ webview.addEventListener('did-navigate-in-page', (e) => {
 webview.addEventListener('new-window', async (e) => {
   DEBUG && console.log('[page] new-window:', e.url);
   e.preventDefault();
-  await izui.openChildWindow(e.url, { width: 1024, height: 768 });
+  await api.window.open(e.url, { role: 'child-content', width: 1024, height: 768 });
 });
 
 webview.addEventListener('did-fail-load', (e) => {

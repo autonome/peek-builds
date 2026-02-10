@@ -95,21 +95,24 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(result, 'active');
     });
 
-    it('should update session.entryMode when focus changes', () => {
+    it('should implement one-way ratchet: transient -> active, never active -> transient', () => {
       const coordinator = izuiState.getIzuiCoordinator();
 
-      // Start active (app focused)
+      // Start transient (app not focused)
+      coordinator.setAppFocused(false);
       coordinator.evaluateOnShow();
+      assert.strictEqual(coordinator.getSession()!.entryMode, 'transient');
+
+      // User focuses Peek (app gains focus)
+      coordinator.setAppFocused(true);
+      coordinator.evaluateOnShow();
+      // Should promote from transient to active
       assert.strictEqual(coordinator.getSession()!.entryMode, 'active');
 
       // User switches to another app
       coordinator.setAppFocused(false);
       coordinator.evaluateOnShow();
-      assert.strictEqual(coordinator.getSession()!.entryMode, 'transient');
-
-      // User switches back to Peek
-      coordinator.setAppFocused(true);
-      coordinator.evaluateOnShow();
+      // Should NOT downgrade from active to transient (one-way ratchet)
       assert.strictEqual(coordinator.getSession()!.entryMode, 'active');
     });
 
@@ -122,7 +125,7 @@ describe('IZUI State Coordinator Tests', () => {
       assert.ok(coordinator.getSession(), 'Session should be created');
     });
 
-    it('should update existing session entry mode without creating new session', () => {
+    it('should not downgrade active session to transient (one-way ratchet)', () => {
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       const originalSessionId = coordinator.getSession()!.id;
@@ -133,7 +136,7 @@ describe('IZUI State Coordinator Tests', () => {
 
       const session = coordinator.getSession();
       assert.strictEqual(session!.id, originalSessionId, 'Should be same session');
-      assert.strictEqual(session!.entryMode, 'transient', 'Entry mode should be updated');
+      assert.strictEqual(session!.entryMode, 'active', 'Entry mode should NOT be downgraded');
     });
   });
 

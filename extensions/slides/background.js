@@ -125,6 +125,9 @@ const executeItem = (item) => {
 
   function openNewSlide() {
     const params = {
+      // IZUI role
+      role: 'quick-view',
+
       address: item.address,
       height,
       width,
@@ -134,7 +137,6 @@ const executeItem = (item) => {
       modal: true,
       type: 'panel',
 
-      feature: labels.name,
       keepLive: item.keepLive || false,
       persistState: item.persistState || false,
 

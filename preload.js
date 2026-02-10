@@ -1605,10 +1605,9 @@ api.escape = {
    */
   onEscape: (callback) => {
     _escapeCallback = callback;
-    // Self-declare: tell backend this window has an escape handler
-    // This ensures escapeMode='navigate' even if the opener didn't set it
-    // (e.g., consolidated iframe extensions where params may be lost in IPC)
-    ipcRenderer.invoke('izui-set-escape-mode', 'navigate');
+    // The callback is purely informational — the backend consults it via
+    // escape-pressed IPC and decides close/nothing based on the window's
+    // declared role (set at open time), not self-declaration.
   },
   /**
    * Trigger the escape handler directly (for testing)
