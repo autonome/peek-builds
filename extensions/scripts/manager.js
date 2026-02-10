@@ -273,7 +273,7 @@ async function handleTest() {
   }
 
   testBtn.disabled = true;
-  testBtn.textContent = 'Running...';
+  testBtn.loading = true;
 
   try {
     // Use current form values (not saved script)
@@ -296,7 +296,7 @@ async function handleTest() {
     showPreviewError(error.message);
   } finally {
     testBtn.disabled = false;
-    testBtn.textContent = 'Test Script';
+    testBtn.loading = false;
   }
 }
 
@@ -335,11 +335,11 @@ function showPreviewResult(result) {
   if (result.status === 'success') {
     html = `
       <div class="result-box">
-        <div class="result-status success">✓ Success</div>
+        <div class="result-status success">Success</div>
         <div class="result-time">Execution time: ${result.executionTime}ms</div>
         ${result.result !== undefined ? `
-          <div style="margin-top: 12px;">
-            <strong style="font-size: 12px; color: #858585;">Result:</strong>
+          <div>
+            <div class="result-label">Result:</div>
             <div class="result-data">${JSON.stringify(result.result, null, 2)}</div>
           </div>
         ` : ''}
@@ -356,12 +356,12 @@ function showPreviewResult(result) {
   } else if (result.status === 'error') {
     html = `
       <div class="result-box">
-        <div class="result-status error">✗ Error</div>
+        <div class="result-status error">Error</div>
         <div class="result-data">${escapeHtml(result.error)}</div>
         ${result.stack ? `
-          <div style="margin-top: 8px; font-size: 11px; color: #858585;">
+          <div class="result-stack">
             <strong>Stack:</strong>
-            <pre style="margin-top: 4px;">${escapeHtml(result.stack)}</pre>
+            <pre>${escapeHtml(result.stack)}</pre>
           </div>
         ` : ''}
       </div>
@@ -369,8 +369,8 @@ function showPreviewResult(result) {
   } else if (result.status === 'skipped') {
     html = `
       <div class="result-box">
-        <div class="result-status" style="color: #dcdcaa;">⊘ Skipped</div>
-        <div style="font-size: 12px; color: #858585;">${escapeHtml(result.reason)}</div>
+        <div class="result-status skipped">Skipped</div>
+        <div class="result-reason">${escapeHtml(result.reason)}</div>
       </div>
     `;
   }

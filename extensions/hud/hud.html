@@ -1,34 +1,35 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HUD</title>
-  <link rel="stylesheet" href="./styles.css">
-</head>
-<body>
-  <div id="hud-container">
-    <div class="hud-section">
-      <div class="hud-label">Mode</div>
-      <div id="mode-value" class="hud-value">-</div>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>HUD</title>
+    <link rel="stylesheet" type="text/css" href="styles.css">
+  </head>
+  <body>
+    <div id="hud-container">
+      <div class="hud-section">
+        <div class="hud-label">Mode</div>
+        <div id="mode-value" class="hud-value">-</div>
+      </div>
+
+      <div class="hud-section">
+        <div class="hud-label">IZUI State</div>
+        <div id="izui-value" class="hud-value">-</div>
+      </div>
+
+      <div class="hud-section">
+        <div class="hud-label">Active Window</div>
+        <div id="window-title" class="hud-value hud-truncate">-</div>
+      </div>
+
+      <div class="hud-section">
+        <div class="hud-label">Stats</div>
+        <div id="stats-value" class="hud-value hud-small">-</div>
+      </div>
     </div>
 
-    <div class="hud-section">
-      <div class="hud-label">IZUI State</div>
-      <div id="izui-value" class="hud-value">-</div>
-    </div>
-
-    <div class="hud-section">
-      <div class="hud-label">Active Window</div>
-      <div id="window-title" class="hud-value hud-truncate">-</div>
-    </div>
-
-    <div class="hud-section">
-      <div class="hud-label">Stats</div>
-      <div id="stats-value" class="hud-value hud-small">-</div>
-    </div>
-  </div>
-
-  <script type="module" src="./hud.js"></script>
-</body>
+    <script type="module" src="hud.js"></script>
+  </body>
 </html>
