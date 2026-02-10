@@ -519,9 +519,10 @@ const init = async () => {
     if (startupUrl === settingsAddress) {
       await openSettingsWindow(p);
     } else {
-      // Open the configured startup feature
+      // Open the configured startup feature as a workspace
       await windowManager.createWindow(startupUrl, {
         key: startupUrl,
+        role: 'workspace',
         transparent: true,
         height: p.height || 600,
         width: p.width || 800

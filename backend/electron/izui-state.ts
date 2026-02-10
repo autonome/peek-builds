@@ -105,6 +105,14 @@ class IzuiStateCoordinator {
   setAppFocused(focused: boolean): void {
     this.appFocused = focused;
     DEBUG && console.log('[izui] App focus changed:', focused);
+
+    // One-way ratchet: when app gains focus during a transient session,
+    // promote to active. The user is now working in Peek.
+    if (focused && this.session && this.session.entryMode === 'transient') {
+      this.session.entryMode = 'active';
+      this.state = 'active';
+      DEBUG && console.log('[izui] Promoted session from transient to active (app gained focus)');
+    }
   }
 
   /**
