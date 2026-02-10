@@ -32,7 +32,7 @@ const prefsSchema = {
     "startupFeature": {
       "description": "Address of what to load at startup, if anything",
       "type": "string",
-      "default": "Settings"
+      "default": "peek://app/settings/settings.html"
     },
     "showTrayIcon": {
       "description": "Whether to show app icon in system tray",
