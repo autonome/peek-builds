@@ -635,22 +635,30 @@ const createAddressCard = (address) => {
   card.appendChild(footer);
 
   // Click to open address - backend handles centering and parent tracking
+  let isOpening = false;
   card.addEventListener('card-click', async () => {
-    debug && console.log('Opening address:', addressUrl);
-    const openOptions = {
-      role: 'content',
-      width: 800,
-      height: 600
-    };
-    if (state.currentTag && state.currentTag.id !== '__untagged__') {
-      openOptions.groupMode = {
-        groupId: state.currentTag.id,
-        groupName: state.currentTag.name,
-        color: state.currentTag.color
+    if (isOpening) return;
+    isOpening = true;
+    try {
+      debug && console.log('Opening address:', addressUrl);
+      const openOptions = {
+        role: 'content',
+        key: addressUrl,
+        width: 800,
+        height: 600
       };
+      if (state.currentTag && state.currentTag.id !== '__untagged__') {
+        openOptions.groupMode = {
+          groupId: state.currentTag.id,
+          groupName: state.currentTag.name,
+          color: state.currentTag.color
+        };
+      }
+      const result = await api.window.open(addressUrl, openOptions);
+      debug && console.log('Window opened:', result);
+    } finally {
+      setTimeout(() => { isOpening = false; }, 500);
     }
-    const result = await api.window.open(addressUrl, openOptions);
-    debug && console.log('Window opened:', result);
   });
 
   return card;

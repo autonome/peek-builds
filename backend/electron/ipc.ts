@@ -1648,6 +1648,8 @@ export function registerDarkModeHandlers(): void {
 /**
  * Register window management IPC handlers
  */
+const pendingWindowKeys = new Set<string>();
+
 export function registerWindowHandlers(): void {
   ipcMain.handle('window-open', async (ev, msg) => {
     DEBUG && console.log('window-open', msg);
@@ -1672,8 +1674,16 @@ export function registerWindowHandlers(): void {
     const isTransient = sessionWasTransient || entryMode === 'transient';
     DEBUG && console.log('[izui] Transient detection:', { sessionWasTransient, entryMode, isTransient });
 
-    // Check if window with this key already exists
+    // Check if window with this key already exists or is being created
     if (options.key) {
+      const fullKey = `${msg.source}:${options.key}`;
+
+      // Race guard: if another call is already creating this window, skip
+      if (pendingWindowKeys.has(fullKey)) {
+        DEBUG && console.log('Window with key already being created, skipping:', options.key);
+        return { success: true, id: null, reused: true };
+      }
+
       const existingWindow = findWindowByKey(msg.source, options.key);
       if (existingWindow) {
         DEBUG && console.log('Reusing existing window with key:', options.key);
@@ -1691,6 +1701,9 @@ export function registerWindowHandlers(): void {
         }
         return { success: true, id: existingWindow.id, reused: true };
       }
+
+      // Mark this key as pending creation
+      pendingWindowKeys.add(fullKey);
     }
 
     // Determine frame setting based on explicit option or preference
@@ -2273,8 +2286,17 @@ export function registerWindowHandlers(): void {
         source: msg.source
       });
 
+      // Clear pending key now that window is registered
+      if (options.key) {
+        pendingWindowKeys.delete(`${msg.source}:${options.key}`);
+      }
+
       return { success: true, id: win.id };
     } catch (error) {
+      // Clear pending key on failure too
+      if (options?.key) {
+        pendingWindowKeys.delete(`${msg.source}:${options.key}`);
+      }
       console.error('Failed to open window:', error);
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

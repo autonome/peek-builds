@@ -2450,9 +2450,22 @@ export function addItem(type: ItemType, options: ItemOptions = {}): { id: string
 
   const metadataJson = JSON.stringify(metadata);
 
+  // Extract title and domain for URL-type items
+  let title = '';
+  let domain = '';
+  if (type === 'url' && options.content) {
+    try {
+      const parsed = new URL(options.content);
+      domain = parsed.hostname;
+    } catch { /* not a valid URL */ }
+    if (metadata.title) {
+      title = String(metadata.title);
+    }
+  }
+
   getDb().prepare(`
-    INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, title, domain)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
   `).run(
     itemId,
     type,
@@ -2463,7 +2476,9 @@ export function addItem(type: ItemType, options: ItemOptions = {}): { id: string
     timestamp,
     timestamp,
     options.starred || 0,
-    options.archived || 0
+    options.archived || 0,
+    title,
+    domain
   );
 
   return { id: itemId };

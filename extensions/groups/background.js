@@ -54,29 +54,33 @@ const saveSettings = async (settings) => {
   }
 };
 
-const openGroupsWindow = () => {
-  const height = 600;
-  const width = 800;
+let isOpeningGroups = false;
+const openGroupsWindow = async () => {
+  if (isOpeningGroups) return;
+  isOpeningGroups = true;
+  try {
+    const height = 600;
+    const width = 800;
 
-  const params = {
-    // IZUI role
-    role: 'workspace',
+    const params = {
+      // IZUI role
+      role: 'workspace',
 
-    key: address,
-    height,
-    width,
-    trackingSource: 'cmd',
-    trackingSourceId: 'groups'
-  };
+      key: address,
+      height,
+      width,
+      trackingSource: 'cmd',
+      trackingSourceId: 'groups'
+    };
 
-  api.window.open(address, params)
-    .then(window => {
-      debug && console.log('[ext:groups] Groups window opened:', window);
-      groupsWindowId = window?.id || null;
-    })
-    .catch(error => {
-      console.error('[ext:groups] Failed to open groups window:', error);
-    });
+    const window = await api.window.open(address, params);
+    debug && console.log('[ext:groups] Groups window opened:', window);
+    groupsWindowId = window?.id || null;
+  } catch (error) {
+    console.error('[ext:groups] Failed to open groups window:', error);
+  } finally {
+    isOpeningGroups = false;
+  }
 };
 
 /**
@@ -135,11 +139,27 @@ const exitGroupMode = async (groupId) => {
 /**
  * Helper to get or create a URL item
  */
+const normalizeUrlForCompare = (url) => {
+  try {
+    const u = new URL(url);
+    // Lowercase hostname, remove default ports, remove trailing slash for non-root paths
+    let normalized = u.protocol + '//' + u.hostname.toLowerCase();
+    if (u.port && u.port !== '80' && u.port !== '443') normalized += ':' + u.port;
+    let path = u.pathname;
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    normalized += path + u.search + u.hash;
+    return normalized;
+  } catch {
+    return url;
+  }
+};
+
 const getOrCreateUrlItem = async (url, title = '') => {
   const result = await api.datastore.queryItems({ type: 'url' });
   if (!result.success) return null;
 
-  const existing = result.data.find(item => item.content === url);
+  const normalizedUrl = normalizeUrlForCompare(url);
+  const existing = result.data.find(item => normalizeUrlForCompare(item.content) === normalizedUrl);
   if (existing) return existing;
 
   const addResult = await api.datastore.addItem('url', {
@@ -445,7 +465,7 @@ const init = async () => {
 
   // Listen for window close events to cleanup group mode
   api.subscribe('window:closed', async (msg) => {
-    const closedWindowId = msg?.windowId;
+    const closedWindowId = msg?.id;
 
     // If the groups window closed, exit group mode for all windows in the active group
     if (closedWindowId === groupsWindowId && activeGroupId) {
