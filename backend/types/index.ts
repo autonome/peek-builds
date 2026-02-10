@@ -90,7 +90,8 @@ export interface AddressTag {
 // - image: Binary images
 // - series: Time-series data (numeric or text values over time)
 // - feed: External feeds (RSS, ATProto, APIs, logs)
-export type ItemType = 'url' | 'text' | 'tagset' | 'image' | 'series' | 'feed';
+// - entity: Extracted entities (people, places, orgs, events, etc.)
+export type ItemType = 'url' | 'text' | 'tagset' | 'image' | 'series' | 'feed' | 'entity';
 
 export interface Item {
   id: string;

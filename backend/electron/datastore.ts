@@ -266,7 +266,7 @@ const createTableStatements = `
 
   CREATE TABLE IF NOT EXISTS items (
     id TEXT PRIMARY KEY,
-    type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed')),
+    type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
     content TEXT,
     mimeType TEXT DEFAULT '',
     metadata TEXT DEFAULT '{}',
@@ -422,6 +422,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateVisitsToItemVisits();
   migrateTagsLastUsedColumn();
   migrateContextHistory();
+  migrateEntityType();
 
   // Validate schema against canonical definition
   validateSyncSchema();
@@ -678,7 +679,7 @@ function migrateItemTypes(): void {
     db.exec(`
       CREATE TABLE IF NOT EXISTS items_new (
         id TEXT PRIMARY KEY,
-        type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image')),
+        type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
         content TEXT,
         mimeType TEXT DEFAULT '',
         metadata TEXT DEFAULT '{}',
@@ -1403,6 +1404,107 @@ function migrateContextHistory(): void {
       CREATE INDEX idx_context_history_windowId ON context_history(windowId);
     `);
     DEBUG && console.log('main', 'context_history table created');
+  }
+}
+
+/**
+ * Add 'entity' to items type CHECK constraint for existing databases.
+ * Also creates indexes for entity queries (entity type, wikidata QID, event source URL).
+ */
+function migrateEntityType(): void {
+  if (!db) return;
+
+  // Check if items table exists
+  const tableExists = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='items'`
+  ).get();
+  if (!tableExists) return;
+
+  // Check if CHECK constraint already includes 'entity'
+  const tableSchema = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='items'`
+  ).get() as { sql: string } | undefined;
+
+  if (!tableSchema) return;
+
+  const needsConstraintUpdate = !tableSchema.sql.includes("'entity'");
+
+  if (needsConstraintUpdate) {
+    DEBUG && console.log('main', 'Adding entity type to items CHECK constraint');
+
+    // Get current columns to build the new table
+    const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[];
+    const columnNames = columns.map(c => c.name);
+
+    // Recreate table with updated CHECK constraint
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS items_entity_mig (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
+        content TEXT,
+        mimeType TEXT DEFAULT '',
+        metadata TEXT DEFAULT '{}',
+        syncId TEXT DEFAULT '',
+        syncedAt INTEGER DEFAULT 0,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER DEFAULT 0,
+        starred INTEGER DEFAULT 0,
+        archived INTEGER DEFAULT 0,
+        visitCount INTEGER DEFAULT 0,
+        lastVisitAt INTEGER DEFAULT 0,
+        frecencyScore INTEGER DEFAULT 0,
+        title TEXT DEFAULT '',
+        domain TEXT DEFAULT '',
+        favicon TEXT DEFAULT ''
+      )
+    `);
+
+    // Build column list for INSERT - only include columns that exist in both tables
+    const migColumns = ['id', 'type', 'content', 'mimeType', 'metadata', 'syncId', 'syncedAt',
+      'createdAt', 'updatedAt', 'deletedAt', 'starred', 'archived', 'visitCount', 'lastVisitAt',
+      'frecencyScore', 'title', 'domain', 'favicon'];
+    const existingCols = migColumns.filter(c => columnNames.includes(c));
+    const colList = existingCols.join(', ');
+
+    db.exec(`INSERT INTO items_entity_mig (${colList}) SELECT ${colList} FROM items`);
+    db.exec(`DROP TABLE items`);
+    db.exec(`ALTER TABLE items_entity_mig RENAME TO items`);
+
+    // Recreate standard indexes
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
+      CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
+      CREATE INDEX IF NOT EXISTS idx_items_deletedAt ON items(deletedAt);
+      CREATE INDEX IF NOT EXISTS idx_items_createdAt ON items(createdAt DESC);
+      CREATE INDEX IF NOT EXISTS idx_items_starred ON items(starred);
+      CREATE INDEX IF NOT EXISTS idx_items_lastVisitAt ON items(lastVisitAt);
+      CREATE INDEX IF NOT EXISTS idx_items_visitCount ON items(visitCount);
+      CREATE INDEX IF NOT EXISTS idx_items_frecencyScore ON items(frecencyScore DESC);
+      CREATE INDEX IF NOT EXISTS idx_items_domain ON items(domain);
+    `);
+
+    DEBUG && console.log('main', 'Entity type migration complete');
+  }
+
+  // Always ensure entity-specific indexes exist
+  try {
+    // Fast lookup by entity type within entities
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_items_entity_type
+      ON items((json_extract(metadata, '$.entityType')))
+      WHERE type = 'entity'`);
+
+    // Fast Wikidata QID lookup
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_items_wikidata
+      ON items((json_extract(metadata, '$.wikidata')))
+      WHERE type = 'entity' AND json_extract(metadata, '$.wikidata') IS NOT NULL`);
+
+    // item_events by source URL (find all entities on a page)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_item_events_content
+      ON item_events(content)
+      WHERE content LIKE 'http%'`);
+  } catch (error) {
+    DEBUG && console.log('main', `Entity indexes:`, (error as Error).message);
   }
 }
 

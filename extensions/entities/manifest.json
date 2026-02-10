@@ -1,0 +1,8 @@
+{
+  "id": "entities",
+  "shortname": "entities",
+  "name": "Entity Recognition",
+  "description": "Automatically extracts and indexes entities (people, places, orgs, events) from visited pages",
+  "version": "1.0.0",
+  "background": "background.html"
+}
