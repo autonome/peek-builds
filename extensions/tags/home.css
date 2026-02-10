@@ -57,30 +57,10 @@ body {
   flex-wrap: wrap;
 }
 
-.active-tag-chip {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  background: var(--base0D);
-  color: var(--base00);
-  border-radius: 12px;
-}
-
-.active-tag-chip .clear-tag {
-  background: none;
-  border: none;
-  color: var(--base00);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0;
-  margin-left: 2px;
-  opacity: 0.8;
-}
-
-.active-tag-chip .clear-tag:hover {
-  opacity: 1;
+.active-tag-badge {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--base0D);
 }
 
 .clear-all-tags {
@@ -216,7 +196,7 @@ peek-input.search-input {
 .tag-chip {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   padding: 8px 10px;
   background: var(--base01);
   border: 1px solid var(--base02);
@@ -225,6 +205,20 @@ peek-input.search-input {
   color: var(--base05);
   cursor: pointer;
   transition: all 0.15s;
+}
+
+.tag-chip .tag-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-chip .tag-count {
+  font-size: 11px;
+  opacity: 0.7;
+  flex-shrink: 0;
 }
 
 .tag-chip:hover {
@@ -238,13 +232,19 @@ peek-input.search-input {
   color: var(--base00);
 }
 
-.tag-chip .tag-count {
-  font-size: 11px;
-  opacity: 0.7;
-}
-
 .tag-chip.selected .tag-count {
   opacity: 0.9;
+}
+
+.tag-chip .tag-check {
+  flex-shrink: 0;
+}
+
+/* Separator between selected and unselected tags */
+.tag-separator {
+  height: 1px;
+  background: var(--base02);
+  margin: 6px 0;
 }
 
 /* Items container */

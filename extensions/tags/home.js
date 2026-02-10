@@ -5,7 +5,8 @@
  * - View all saved items (addresses) filtered by type
  * - Tag-based filtering via clickable tag buttons
  * - Tag editing on items (add/remove tags)
- * - Search across items and tags
+ * - Content search across items (URLs, titles, text) with tag combo filtering
+ * - Selected tags pinned to top of sidebar with visual distinction
  */
 
 const api = window.app;
@@ -436,7 +437,12 @@ const updateFilterCounts = () => {
 };
 
 /**
- * Filter items based on current state
+ * Filter items based on current state.
+ *
+ * Search behaviour:
+ *   - Search query filters items by content, title, URL, domain, AND tag names.
+ *   - When tags are selected, items must have ALL selected tags (AND logic)
+ *     AND match the search query against content/title/URL/tags.
  */
 const getFilteredItems = () => {
   let items = [...state.items];
@@ -461,22 +467,24 @@ const getFilteredItems = () => {
     });
   }
 
-  // Filter by search query - match tag names (supports multiple tags separated by comma or space)
+  // Filter by search query - searches content, title, URL, domain, and tag names
   if (state.searchQuery) {
-    // Split by comma or space, filter empty strings
-    const searchTerms = state.searchQuery.toLowerCase()
-      .split(/[,\s]+/)
-      .map(t => t.trim())
-      .filter(t => t.length > 0);
-
-    if (searchTerms.length > 0) {
+    const q = state.searchQuery.toLowerCase().trim();
+    if (q.length > 0) {
       items = items.filter(item => {
+        // Search item content fields
+        const content = (item.content || '').toLowerCase();
+        const title = (item.title || '').toLowerCase();
+        const uri = (item.uri || '').toLowerCase();
+        const domain = (item.domain || '').toLowerCase();
+
+        if (content.includes(q) || title.includes(q) || uri.includes(q) || domain.includes(q)) {
+          return true;
+        }
+
+        // Also search tag names on the item
         const tags = state.itemTags.get(item.id) || [];
-        const tagNames = tags.map(t => t.name.toLowerCase());
-        // Item must have tags matching ALL search terms (AND logic)
-        return searchTerms.every(term =>
-          tagNames.some(tagName => tagName.includes(term))
-        );
+        return tags.some(t => t.name.toLowerCase().includes(q));
       });
     }
   }
@@ -485,12 +493,17 @@ const getFilteredItems = () => {
 };
 
 /**
- * Filter tags based on search query
+ * Filter tags based on search query.
+ * When tags are selected, don't filter the tag list by search (search applies to items instead).
+ * Selected tags are always included regardless of search filter.
  */
 const getFilteredTags = () => {
-  if (!state.searchQuery) return state.tags;
+  if (!state.searchQuery || state.activeTags.length > 0) return state.tags;
   const q = state.searchQuery.toLowerCase();
-  return state.tags.filter(tag => tag.name.toLowerCase().includes(q));
+  const selectedIds = new Set(state.activeTags.map(t => t.id));
+  return state.tags.filter(tag =>
+    selectedIds.has(tag.id) || tag.name.toLowerCase().includes(q)
+  );
 };
 
 /**
@@ -501,6 +514,18 @@ const render = () => {
   renderTagSidebar();
   renderCards();
   renderActiveTagIndicator();
+  updateSearchPlaceholder();
+};
+
+/**
+ * Update search placeholder based on whether tags are selected
+ */
+const updateSearchPlaceholder = () => {
+  if (state.activeTags.length > 0) {
+    searchInput.placeholder = 'Search within tagged items...';
+  } else {
+    searchInput.placeholder = 'Search content, titles, and tags...';
+  }
 };
 
 /**
@@ -514,7 +539,9 @@ const renderFilterButtons = () => {
 };
 
 /**
- * Render active tag indicator in header
+ * Render active tag indicator in header.
+ * Shows a compact filter count + clear button. The sidebar is the primary
+ * location for selected tags (pinned to top with visual distinction).
  */
 const renderActiveTagIndicator = () => {
   const indicator = document.querySelector('.active-tag-indicator');
@@ -522,26 +549,17 @@ const renderActiveTagIndicator = () => {
   if (state.activeTags.length > 0) {
     indicator.innerHTML = '';
 
-    state.activeTags.forEach(tag => {
-      const chip = document.createElement('peek-button');
-      chip.variant = 'primary';
-      chip.size = 'sm';
-      chip.className = 'active-tag-chip';
-      chip.dataset.tagId = tag.id;
-      chip.innerHTML = `
-        ${escapeHtml(tag.name)}
-        <span slot="suffix" class="clear-tag" title="Remove tag">&times;</span>
-      `;
-      chip.addEventListener('click', () => removeActiveTag(tag.id));
-      indicator.appendChild(chip);
-    });
+    const badge = document.createElement('span');
+    badge.className = 'active-tag-badge';
+    badge.textContent = `${state.activeTags.length} tag${state.activeTags.length > 1 ? 's' : ''} selected`;
+    indicator.appendChild(badge);
 
     const clearAll = document.createElement('peek-button');
     clearAll.variant = 'ghost';
     clearAll.size = 'sm';
     clearAll.className = 'clear-all-tags';
-    clearAll.textContent = '× All';
-    clearAll.title = 'Clear all filters';
+    clearAll.textContent = 'Clear';
+    clearAll.title = 'Clear all tag filters';
     clearAll.addEventListener('click', clearTagFilter);
     indicator.appendChild(clearAll);
 
@@ -571,7 +589,8 @@ const clearTagFilter = () => {
 };
 
 /**
- * Render the tag sidebar
+ * Render the tag sidebar.
+ * Selected tags are pinned to the top of the list with a visual separator.
  */
 const renderTagSidebar = () => {
   const tags = getFilteredTags();
@@ -583,7 +602,12 @@ const renderTagSidebar = () => {
 
   tagList.innerHTML = '';
 
-  tags.forEach(tag => {
+  const selectedIds = new Set(state.activeTags.map(t => t.id));
+  const selectedTags = tags.filter(t => selectedIds.has(t.id));
+  const unselectedTags = tags.filter(t => !selectedIds.has(t.id));
+
+  // Helper to build a tag chip
+  const buildTagChip = (tag, isSelected) => {
     // Count items with this tag
     let count = 0;
     state.itemTags.forEach(itemTags => {
@@ -592,12 +616,16 @@ const renderTagSidebar = () => {
 
     const chip = document.createElement('div');
     chip.className = 'tag-chip';
-    const isSelected = state.activeTags.some(t => t.id === tag.id);
     if (isSelected) {
       chip.classList.add('selected');
     }
 
+    const checkIcon = isSelected
+      ? '<svg class="tag-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+      : '';
+
     chip.innerHTML = `
+      ${checkIcon}
       <span class="tag-name">${escapeHtml(tag.name)}</span>
       <span class="tag-count">${count}</span>
     `;
@@ -613,7 +641,24 @@ const renderTagSidebar = () => {
       render();
     });
 
-    tagList.appendChild(chip);
+    return chip;
+  };
+
+  // Render selected tags pinned at top
+  selectedTags.forEach(tag => {
+    tagList.appendChild(buildTagChip(tag, true));
+  });
+
+  // Add separator between selected and unselected
+  if (selectedTags.length > 0 && unselectedTags.length > 0) {
+    const separator = document.createElement('div');
+    separator.className = 'tag-separator';
+    tagList.appendChild(separator);
+  }
+
+  // Render unselected tags
+  unselectedTags.forEach(tag => {
+    tagList.appendChild(buildTagChip(tag, false));
   });
 };
 
