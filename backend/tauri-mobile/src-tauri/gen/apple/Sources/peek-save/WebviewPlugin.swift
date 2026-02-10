@@ -231,20 +231,24 @@ public func webviewPluginOpenInline(urlPtr: UnsafePointer<CChar>, topOffset: Dou
             }
             var r = m[0], g = m[1], b = m[2];
             document.documentElement.style.backgroundColor = 'rgba('+r+','+g+','+b+',0)';
-            document.documentElement.style.transition = 'background-color 0.25s ease';
-            document.documentElement.offsetHeight;
-            document.documentElement.style.backgroundColor = 'rgba('+r+','+g+','+b+',1)';
-            hackStyle.textContent = 'body{transition:background-color 0.25s ease}';
-            setTimeout(function() {
-              document.documentElement.style.cssText = '';
-              var h = document.getElementById('__peek_bg');
-              if (h) h.remove();
-            }, 350);
+            document.documentElement.style.transition = 'background-color 3s ease';
+            requestAnimationFrame(function() {
+              requestAnimationFrame(function() {
+                document.documentElement.style.backgroundColor = 'rgba('+r+','+g+','+b+',1)';
+                hackStyle.textContent = 'body{transition:background-color 3s ease}';
+                setTimeout(function() {
+                  document.documentElement.style.cssText = '';
+                  var h = document.getElementById('__peek_bg');
+                  if (h) h.remove();
+                }, 3500);
+              });
+            });
           }
+          function delayedReveal() { setTimeout(reveal, 2000); }
           if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', reveal);
+            document.addEventListener('DOMContentLoaded', delayedReveal);
           } else {
-            reveal();
+            delayedReveal();
           }
         })();
         """
