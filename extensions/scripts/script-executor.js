@@ -102,61 +102,103 @@ export class ScriptExecutor {
   }
 
   /**
-   * Execute script with timeout, capturing console output
+   * Execute script with timeout, capturing console output.
+   * Uses a Web Worker via blob URL to avoid CSP unsafe-eval restrictions
+   * and to provide true timeout protection (worker.terminate() kills infinite loops).
    * @param {string} code - JavaScript code to execute
-   * @param {Document} document - Document object
-   * @param {Window} window - Window object
+   * @param {Document} doc - Document object (not available inside Worker)
+   * @param {Window} win - Window object (not available inside Worker)
    * @param {number} timeout - Timeout in milliseconds
    * @returns {Promise<object>} Result with time, output, and result
    */
-  async runScriptInContext(code, document, window, timeout) {
+  async runScriptInContext(code, doc, win, timeout) {
     const startTime = performance.now();
-    const logs = [];
 
-    // Capture console output
-    const originalLog = console.log;
-    const originalError = console.error;
-    const originalWarn = console.warn;
-
-    console.log = (...args) => {
-      logs.push({ level: 'log', message: this.formatArgs(args) });
-      originalLog(...args);
-    };
-    console.error = (...args) => {
-      logs.push({ level: 'error', message: this.formatArgs(args) });
-      originalError(...args);
-    };
-    console.warn = (...args) => {
-      logs.push({ level: 'warn', message: this.formatArgs(args) });
-      originalWarn(...args);
-    };
-
-    try {
-      // Wrap in async function to support await
-      const wrappedCode = `
-        (async () => {
-          ${code}
-        })()
-      `;
-
-      const fn = new Function('document', 'window', `return ${wrappedCode}`);
-      const result = await Promise.race([
-        fn(document, window),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Script timeout')), timeout)
-        )
-      ]);
-
-      return {
-        time: Math.round(performance.now() - startTime),
-        output: logs,
-        result
+    // Build Worker code that:
+    // 1. Provides minimal document/window stubs so scripts don't throw on DOM access
+    // 2. Executes the user code in an async wrapper
+    // 3. Posts the result (or error) back to the main thread
+    const workerCode = `
+      // Minimal DOM stubs - querySelector returns null, etc.
+      const document = {
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        getElementById: () => null,
+        getElementsByClassName: () => [],
+        getElementsByTagName: () => [],
+        createElement: () => ({ style: {}, setAttribute: () => {}, appendChild: () => {} }),
+        head: { appendChild: () => {} },
+        body: { appendChild: () => {} }
       };
-    } finally {
-      console.log = originalLog;
-      console.error = originalError;
-      console.warn = originalWarn;
-    }
+      const window = self;
+
+      const __logs = [];
+      const __origLog = console.log;
+      const __origError = console.error;
+      const __origWarn = console.warn;
+      console.log = (...args) => {
+        __logs.push({ level: 'log', message: args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ') });
+        __origLog(...args);
+      };
+      console.error = (...args) => {
+        __logs.push({ level: 'error', message: args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ') });
+        __origError(...args);
+      };
+      console.warn = (...args) => {
+        __logs.push({ level: 'warn', message: args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ') });
+        __origWarn(...args);
+      };
+
+      (async () => {
+        try {
+          const result = await (async () => {
+            ${code}
+          })();
+          postMessage({ type: 'result', result, logs: __logs });
+        } catch (e) {
+          postMessage({ type: 'error', error: e.message, stack: e.stack, logs: __logs });
+        }
+      })();
+    `;
+
+    const blob = new Blob([workerCode], { type: 'application/javascript' });
+    const blobUrl = URL.createObjectURL(blob);
+    const worker = new Worker(blobUrl);
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        worker.terminate();
+        URL.revokeObjectURL(blobUrl);
+        reject(new Error('Script timeout'));
+      }, timeout);
+
+      worker.onmessage = (e) => {
+        clearTimeout(timer);
+        worker.terminate();
+        URL.revokeObjectURL(blobUrl);
+
+        const { type, result, error, stack, logs } = e.data;
+        if (type === 'error') {
+          // Re-throw as an Error so the caller gets status: 'error'
+          const err = new Error(error);
+          err.stack = stack;
+          reject(err);
+        } else {
+          resolve({
+            time: Math.round(performance.now() - startTime),
+            output: logs || [],
+            result
+          });
+        }
+      };
+
+      worker.onerror = (e) => {
+        clearTimeout(timer);
+        worker.terminate();
+        URL.revokeObjectURL(blobUrl);
+        reject(new Error(e.message || 'Worker error'));
+      };
+    });
   }
 
   /**

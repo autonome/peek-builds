@@ -286,11 +286,28 @@ export class PeekCard extends PeekElement {
   }
 
   /**
-   * Focus the card (only works when interactive)
+   * Focus the card (only works when interactive).
+   * Waits for first render if shadow DOM isn't ready yet.
    */
-  focus() {
-    if (this.interactive) {
+  async focus() {
+    if (!this.interactive) return;
+    const inner = this.shadowRoot?.querySelector('.card');
+    if (inner) {
+      inner.focus();
+    } else {
+      await this.updateComplete;
       this.shadowRoot?.querySelector('.card')?.focus();
+    }
+  }
+
+  /**
+   * Programmatic click — delegates to the inner .card div so the
+   * @click handler fires and emits card-click.
+   */
+  click() {
+    const inner = this.shadowRoot?.querySelector('.card');
+    if (inner) {
+      inner.click();
     }
   }
 }

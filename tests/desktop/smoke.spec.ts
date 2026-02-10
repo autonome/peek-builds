@@ -433,6 +433,75 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     }
   });
 
+  test('peek-card: Enter key activates card via card-click event', async () => {
+    const bgWindow = sharedBgWindow;
+
+    // Create a group with an item
+    const tagResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.getOrCreateTag('enter-key-test');
+    });
+    expect(tagResult.success).toBe(true);
+    const tagId = tagResult.data?.tag?.id || tagResult.data?.data?.id || tagResult.data?.id;
+
+    const item = await bgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.addItem('url', {
+        content: 'https://enter-key-test.example.com',
+        metadata: JSON.stringify({ title: 'Enter Key Test' })
+      });
+    });
+    expect(item.success).toBe(true);
+
+    if (tagId && item.data?.id) {
+      await bgWindow.evaluate(async ({ itemId, tagId }) => {
+        return await (window as any).app.datastore.tagItem(itemId, tagId);
+      }, { itemId: item.data.id, tagId });
+    }
+
+    // Open groups window
+    const groupsResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+        role: 'workspace',
+        width: 800,
+        height: 600
+      });
+    });
+    expect(groupsResult.success).toBe(true);
+
+    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    expect(groupsWindow).toBeTruthy();
+    await groupsWindow.waitForLoadState('domcontentloaded');
+    await groupsWindow.waitForSelector('peek-card.group-card', { timeout: 5000 });
+
+    // Verify we're in groups view
+    const viewBefore = await groupsWindow.evaluate(() => (window as any)._groupsState.view);
+    expect(viewBefore).toBe('groups');
+
+    // Programmatically activate the first card (simulates Enter key path)
+    const activated = await groupsWindow.evaluate(async () => {
+      const card = document.querySelector('peek-card.group-card') as any;
+      if (!card) return false;
+      card.click();
+      return true;
+    });
+    expect(activated).toBe(true);
+
+    // Should navigate to addresses view
+    await groupsWindow.waitForSelector('peek-card.address-card', { timeout: 5000 });
+    const viewAfter = await groupsWindow.evaluate(() => (window as any)._groupsState.view);
+    expect(viewAfter).toBe('addresses');
+
+    // Clean up
+    if (groupsResult.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, groupsResult.id);
+      } catch {
+        // Window may already be closed
+      }
+    }
+  });
+
   test('active mode: ESC at root does NOT close window', async () => {
     const bgWindow = sharedBgWindow;
 

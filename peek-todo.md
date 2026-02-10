@@ -8,7 +8,7 @@
 - This file is not for notes or description - link to documents in ./notes for that
 - Checkbox states: `- [ ]` pending, `- [~]` in-progress (move to WIP.md), `- [x]` done (move to CHANGELOG.md)
 
-## Design principles
+## Design principles / capablities / etc
 
 core
 - feels like home: trust, comfort, control
@@ -19,48 +19,62 @@ core
 what makes a home
 - everything is right where you need it, b/c you control what is where
 - when you know what is where, you can make things without frustration
+- you generally know what’s happening - who’s around/coming/going, etc, not a lot of surprises
+
+what makes magical mind-readingness
+- frecency everywhere all of the time: user actions are training data for sorting
+
+what provides awareness
+- actions tracked at the core
+- metrics generated, rollups displayed, synthesis emergent
 
 synthesis
 - frecency + adaptive matching gives experience/feeling of magical mind-readingness
 - ability to customize/create/generate interfaces gives the comfort of home
-
-cf
-- bulthaup - german kitchen company w/ designs based on carpentry workshops
 
 the rules
 - files > arcane/opaque boxes/formats
 - metadata can be weird non-file, as long as consistent
 - external systems require consent to touch my stuff (eg http caching rules)
 
+key capabilities from action/application history chain + addressibility
+
+- record/replay
+- state feedback loops
+- observability
+
+interface spectrum
+- consistent predicable interfaces are easy, off-the-shelf
+- weird/generative possible via power trio: backgrounding, wm apis, web surface
+
+cf
+- bulthaup - german kitchen maker w/ designs based on carpentry workshops
+
 ## Unfiled
 
 context
-- [ ] implement old context plan eg https://www.reddit.com/r/hackernews/comments/1qddidm/sun_position_calculator/
-
-server
-- [ ] edgeworkernode/server vs what we got now? both? lite-version, or this it?
+- [ ] implement old context plan: https://github.com/autonome/context
+- [ ] implement as extension, expose as api or data emitter?
+- eg https://www.reddit.com/r/hackernews/comments/1qddidm/sun_position_calculator/
 
 peeks on links
 - [ ] click modifier to one-off peek a link
 - [ ] anchored to cursor w/in window bounds
 - [ ] as an extension? hotkey + page viewer
 
-once we have cardinal ui
+## To make
+
 - [ ] option to flash keyboard shortcuts on screen
 - [ ] pop up a board of built-in shortcuts/actions
 - [ ] pop up a board of common shortcuts/actions you use
 
-## Addessibility / Core history / feeds
+- [ ] daily ribbon along bottom of screen, populated with actions and favicons of pages loaded (filter on web only?)
 
-For record/replay, daily ribbon, state feedback loops and observability, etc we need a complete chained history.
-All of those require addressibility of all primary actions, and connections to prev/next actions.
-Includes any peek:// invocation and parameters passed.
-May require the connector/parameter context for each invocation, tbd.
-Requires explicit chaining.
-
-Review against impl
 - [ ] step counter: app level interaction tracing/counting. when is reset? when does action end and new one start?
-- [ ] peeks/slides as tagged addresses with metadata properties? or urls?
+
+- may require connector/parameter context for each peek address load and connector invocation in a chained command
+
+- peeks/slides as addresses + metadata? or urls? eg open({json of peek url + context}) => localhost in left slide, or peek://slide?where=top&url=http://localhost? both? opens up the idea of packaging these declaratively, and no-code createable
 
 ## UI Componentry
 
@@ -157,24 +171,6 @@ tags
 - [ ] tag input field
 - [ ] combo of selected tags, input w/ filtering search, available tags
 
-## Modes/scopes
-
-notes
-- Pages have a specific mode, with specific hotkeys, etc.
-- Commands like "theme dark here" operate on the "target window".
-- Target window is usually what the user was looking at before opening cmd.
-- Currently this works but there's no visual indication.
-
-examples
-- web page viewing has a mode w/ special actions and hotkeys
-- when "in" a group, we need special mode optimized for working w/ the group's set of pages
-- cmd might operate differently depending on if it's in a mode or not
-
-- [ ] How to do page "mode" (for example) with conditional context/hotkeys/actions
-- [ ] Should commands declare `scope: 'window' | 'page' | 'global'` in registration?
-- [ ] How does cmd indicate scope/target?
-   - [ ] eg "Target: [window title]" header when window-scoped command is selected?
-
 ## Web page experience (reviewme: partially done)
 
 Page loading core
@@ -197,18 +193,195 @@ Page info/metadata/action widgets (depends on window templates maybe?)
 - [ ] scripts (tbd)
 
 Titlebar
-- [ ] show titlebar on hover at top edge of window for all pages
+- [x] show titlebar on hover at top edge of window for all pages
+
+## Feeds, time-series data
+
+We need a generalized system for feeds and time-series data.
+It might be two different systems, based on analysis of the use-cases.
+It might be a new system + the items system we already have, and using metadata.
+The use-cases below cover a variety of feed-like needs.
+
+Use-case: Querying web pages for time-series data
+- Pattern: checking urls, collecting web data over time
+- Eg a bank account balance, stock price, weather report
+- Periodically load a web page in background hiddent window, and run a content script against it, returning a value and writing it to datastore (and metadata like page url, created/updated, custom metadata)
+- Have a widget that shows latest value and its age
+- Have a widget that shows graph of values over time
+
+Use-case: Checking web page for ticket availability
+- Pattern: checking urls for a one-time trigger
+- Want to know when tickets go on sale for an event
+- Periodically load a page in background, and run a content script against it
+- Notify user when page change matched some criteria
+
+Use-case: Pull data from external systems
+- Pattern: harvesting 3rd party content feeds
+- Eg RSS feeds or importing my posts/etc from other accounts - plays on Soundcloud, or thumbs-ups on Youtube, etc
+- Imagine an extension which walks you through Oauth login for various systems, and then pulls their data into Peek via the system's API. Could be URLs with custom metadata (like Soundcloud plays) or non-URL data (like sports scores)
+- Or someone could implement a feed reader extension focused on RSS reading
+
+Use-case: System metrics
+- Pattern: aggregating system metadata
+- We need to be able to log and reflect all kinds of system information
+- See the "Metadata, QS and reflection" section in this document for examples
+- Other examples: datastore size-on-disk, ongoing performance and resource usage data
+- Surface these in diagnostic panels, widgets, HUDs, etc
+
+Use-case: Tag streaks, group change feeds
+- Pattern: aggregating sysetm user data
+- tag streaks - eg one day you add tags "pushups, 10", next day "pushups, 20", then be able to query feed data for number of days in a row, max pushups, graph of pushups over time, longest streak, etc
+- show in widgets
+- push individual records or any rollup as an atproto record to get social streaking
+
+## Entity-centrism (aka NER indices)
+
+Many significant entities in our lives are singletons.
+A person, a place, an event.
+Even replaceable objects are singletons, eg "my Ford Escort".
+The web makes the publisher the apex of understanding.
+Browsers do not not acknowledge entities across pages.
+If you load two pages about the band Tortoise, the browser only knows you loaded two different domains.
+Peek's entity-centrism projects uplifts the apex of understanding from publishers, into the user agent.
+The application identifies and records entities in the pages you load.
+Aims for approximate equivalancy via confidence threshold scoring.
+The expirement starts with coarse types, eg person, place, event, organization.
+Stores these in indices in local datastore.
+The indicies are syncable with other Peek instances. 
+The indices store references to the URLs entities were detected on.
+The source references provide reproducibility, entity history/context, and bidirectional linking and interactions.
+Provides APIs for building on top of the indexes in Peek extensions.
+Uses Wikidata for a first experiment in entity validation and triangulation.
+Uses the sourcing data to infer links between entities.
+Scores entities based on frecency of observation and interaction.
+
+- [ ] get people, places, dates/times/events
+- [ ] get meaningful numbers, and their label, eg phone
+
+- [ ] extract a table as csv
+- [ ] layer outside of web page, and in between pages (eg event page -> event -> any calendar page)
+
+- [ ] Entity catalog definition (eg Wikidata defs, or custom to start?)
+- [ ] Datastore support
+- [ ] Basic NER testing (regex, etc)
+- [ ] Page metadata viz
+- [ ] Entity search/browse
+- [ ] ML NER
+
+## Widgets
+
+notes/questions
+- maybe just cards in a sheet, fillable
+- api for extensions to publish into
+- fill either template+data
+- or extension publishing into, iframe-like
+- review w3c spec
+- are widgets mini-apps (in spec sense)
+- what aspects of tiles do they have?
+- should be called widgets, or something else?
+
+core uses
+- page metadata panels
+- command previews
+- observability hud
+- calculators
+
+helpers
+- widget sheets? overlays of widgets, etc - like window manager views/templates, which don't require extensions, reusable
+
+- fun with feeds + widgets
+- daytum style custom tracking/displaying
+
+- sheet widgets - tabular data in a reactive resizable widget view (chain query -> tabular -> sheet -> widget)
+
+## Modes/scopes
+
+notes
+- Pages have a specific mode, with specific hotkeys, etc.
+- Commands like "theme dark here" operate on the "target window".
+- Target window is usually what the user was looking at before opening cmd.
+- Currently this works but there's no visual indication.
+
+examples
+- web page viewing has a mode w/ special actions and hotkeys
+- when "in" a group, we need special mode optimized for working w/ the group's set of pages
+- cmd might operate differently depending on if it's in a mode or not
+
+- [ ] How to do page "mode" (for example) with conditional context/hotkeys/actions
+- [ ] Should commands declare `scope: 'window' | 'page' | 'global'` in registration?
+- [ ] How does cmd indicate scope/target?
+   - [ ] eg "Target: [window title]" header when window-scoped command is selected?
+
+## Content-/User-scripts
+
+- [ ] Command support for blocking on a content script running
+- [ ] Extension api for executing arbitrary scripts against a page
+- [ ] Timeouts for page scripts in commands
+- [ ] Support for scheduling scripts (or maybe that's just in the extension... harder to manage tho)
+- [ ] Page load triggers for background scripts
+
+
+## Browser status quo extensibility
+
+Status quo
+- [ ] Browser extensions (limited, to get a couple of popular ones working)
+- [ ] Opensearch plugins
+- [ ] Quicksearch
+- [ ] Bookmark keywords (equivalent)
+- [ ] Bookmarklets (equivalent)
+- [ ] Userscripts (cf general approach to content/user scripts)
+- [ ] Language packs (cf general approach to i18n/l10n)
+
+Search
+- [ ] Local
+- [ ] OpenSearch
+
+Web extensions
+- [x] WebExtension integration for bundled extensions (Electron, using electron-chrome-extensions)
+- [x] @cliqz/adblocker-electron for native ad blocking
+- [x] Consent-O-Matic for automatic cookie consent handling (MIT, Aarhus University)
+- [ ] Proton Pass for password management
+- [ ] Enable/disable toggles in Settings UI
 
 ## Metadata, QS and reflection
 
-- [ ] tabstats for peek
+- [ ] basically tabstats but for peek: https://github.com/autonome/tabstatistics
 - [ ] view: a page of different widgets showing this info, or a hud/dashboard
+
+collections (depends on feeds?)
+- interaction count
+- page load count
+- page open
+- page switch
+- page close
+- open window count
+- hidden+visible window count
+
+interaction tracing/counting
+- [ ] when is reset? what makes a discrete action start/stop/change?
+
+hud playground
+- [ ] hud for system data (number of windows, etc
+- [ ] using timeseries/feeds api
+- [ ] each as widgets
+
+## History 
+
+- [ ] history views (again using groups ui, maybe plug that into an extension itself?)
+
+History (depends on ui primitives)
+- [ ] history viewer
+- [ ] history search
+- [ ] Infinite lossless personal encrypted archive of web history
 
 ## Files-ness
 
 - [ ] access to notes folder(s) on filesystem to import+sync
 - [ ] syncing peek-only ontes as markdown files in specified dir (or library, boo)
+
+manual imports
 - [ ] import signal note-to-self archive into peek notes
+- [ ] stickiets
 
 ## Accounts/profiles/sync safety/fidelity
 
@@ -223,26 +396,6 @@ syncing history
 - [ ] shared libs, eg utils
 - [ ] language: call them feature or apps? other? extensions? mods?
 
-## Izui
-
-formalizing and stabilizing Peek’s window management system
-
-immediate
-- [ ] hotfix: disable escape-to-close window when peek app is focused application in the OS
-
-model formalization
-- [ ] review the windowing approach used in ./app to manage windows by analyzing the source code of it and the peek extensions
-- [ ] formalize that review into a state machine or other declarative set of rules which let’s us easily reason about, revise, and generate code and tests for it
-- [ ] implement izui window manager based on those rules
-
-key pieces
-- [ ] esc works when global hotkeys are executed and peek is not focused
-- [ ] in-app navigations with escape, eg moving from sub items in settings back to settings default pane
-- [ ] centralized place we add to history chain
-
-## Polish
-
-- [ ] (already done?) if no api key set, sync settings are disabled, and pull-to-sync on mobile
 
 ## Window templates
 
@@ -253,10 +406,17 @@ key pieces
 
 ## Pagestream
 
-- a new peek web navigational system
+A web navigational system with a vertical chat-like view of web history.
+
 - vertical up/down chat-style history of pages/actions
-- left/right for page-specific stuff
-- maybe uses carousels + window template from ui componentry?
+- but floating cards, not chat bubbles in a column
+- left/right for page-specific metadata/actions
+- uses vertical carousel component + page view
+- vim navigational keys
+- active card pops up/open
+- screenshots for pages
+- open new page == scroll to bottom == open a "new tab" kind of view
+- cmd+L -> url, adds to bottom of "chat"
 
 ## Notes & Editor
 
@@ -272,10 +432,11 @@ Used for
 - editing in command chaining interstitials (edit cmd can apply to anything text-ish)
 - OS level handler for editing files on filesystem
 
-Implementation 
-- [ ] import from ~/misc/peek-editor, put in ./extensions/editor for now
-- [ ] evaluate using raw codemirror which is like “toolkit for an editor"
-- [ ] evaluate using https://github.com/MarkEdit-app/MarkEdit or its approach
+Implementation
+- [x] CodeMirror integrated with three-panel layout (outline, editor, preview)
+- [x] Vim mode toggle with settings persistence
+- [x] Live markdown preview sidebar
+- [x] Outline navigation from headers
 
 Features
 - [ ] add support for paste operations
@@ -404,9 +565,6 @@ Image saving
 - [ ] take and save screenshot of loaded windows for any new address
 - [ ] store in profile screenshot cache, and save that as metadata record on the address
 
-## Extension back-end
-
-- [ ] tbd
 
 ## Server Backend
 
@@ -421,9 +579,15 @@ misc
 - [ ] Add migration dry-run mode
 - [ ] Add automatic backup cleanup after grace period
 
-## harvester / hearts and stars
+## Extension: harvester
 
-- [ ] push all services to peek node webhook, eg bsky like, reddit, oauthwonderwall?
+- [ ] push all services to peek node webhook, eg bsky likes, reddit
+
+- oauthwonderwall?
+
+## Extension: hearts and stars
+
+- tweetdeck-like column set, but narrower and each a feed
 
 ## Mobile
 
@@ -436,55 +600,6 @@ misc
 - [ ] export/import
 - [ ] session restore
 
-## Browser status quo extensibility
-
-Status quo
-- [ ] Browser extensions (limited, to get a couple of popular ones working)
-- [ ] Opensearch plugins
-- [ ] Quicksearch
-- [ ] Bookmark keywords (equivalent)
-- [ ] Bookmarklets (equivalent)
-- [ ] Userscripts (cf general approach to content/user scripts)
-- [ ] Language packs (cf general approach to i18n/l10n)
-
-Search
-- [ ] Local
-- [ ] OpenSearch
-
-Web extensions
-- [ ] WebExtension integration for priority only, on some platforms, some back-ends
-- [ ] Electron first, using https://github.com/samuelmaddock/electron-browser-shell/tree/master/packages/electron-chrome-extensions
-- [ ] uBlock Origin
-- [ ] Proton Pass
-- [ ] Bypass Paywalls Clean
-
-## Feeds, time-series, scripts
-
-- [ ] API for logging outputs to datastore (time series data, feeds)
-- [ ] Command support for blocking on a content script running
-- [ ] Extension api for executing arbitrary scripts against a page
-- [ ] Timeouts for page scripts in commands
-- [ ] Support for scheduling scripts (or maybe that's just in the extension... harder to manage tho)
-- [ ] Page load triggers for background scripts
-
-- [ ] tag streaks -> atproto streaks (feeds + daytum)
-- [ ] hud for system data (number of windows, etc - using timeseries/feeds in datastore + page metadata / daytum / widgets framework) (widget sheets? kinda like window manager views/templates?)
-
-## Entity centrism (NER streams)
-
-- [ ] get people, places, dates/times/events
-- [ ] get meaningful numbers, and their label
-- [ ] extract a table as csv
-- [ ] layer outside of web page, and in between pages (eg event page -> event -> any calendar page)
-
-
-- [ ] Entity catalog definition (eg Wikidata defs, or custom to start?)
-- [ ] Datastore support
-- [ ] Basic NER testing (regex, etc)
-- [ ] Page metadata viz
-- [ ] Entity search/browse
-- [ ] ML NER
-
 ## Archiving / expiration
 
 - [ ] archived notes (lower score, hidden by default)
@@ -492,7 +607,9 @@ Web extensions
 ## Sorting/scoring/magic
 
 Generally default is based on the old Firefox "awesomebar" scoring/search algorithms.
+
 Frecency + adaptive matching.
+
 The app *learns* you, and what you want magically appears w/o AI as requirement.
 
 ## Desktop Performance
@@ -526,21 +643,15 @@ Demo reel
 - [ ] Slides: soundcloud, crypto prices, notepad, todo list
 - [ ] Scripts: stock price, weather change
 
-## History 
-
-- [ ] history views (again using groups ui, maybe plug that into an extension itself?)
-
-History (depends on ui primitives)
-- [ ] history viewer
-- [ ] history search
-- [ ] Infinite lossless personal encrypted archive of web history
-
 ## Publishing, Provenance, Remote Extensions
 
+misc ideas
 - [ ] share system
 - [ ] poke at remote loading + provenance
 - [ ] publish pages/apps?
-- [ ] local publishing w/ Helia or something like this
+
+experiment: helia
+- [ ] local publishing, eg use editor to write a blog post, hit publish… and share (handwave)
 
 ## Minimum viable web workbench
 
@@ -558,10 +669,12 @@ History (depends on ui primitives)
 - [ ] Devtools command to open devtools for a specific extension or window
 - [ ] Fix `api.extensions.devtools()` - currently not working for consolidated extensions
 
-## Later
+## Storage
 
-storage backends
 - [ ] try DuckDB as datastore storage backend instead of SQLite
+
+
+## Parking lot
 
 - [ ] Identities system
 - [ ] Contacts integration
