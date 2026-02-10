@@ -176,7 +176,6 @@
     "rss": "node scripts/changelog-to-rss.js"
   },
   "dependencies": {
-    "@cliqz/adblocker-electron": "^1.34.0",
     "@codemirror/commands": "^6.10.1",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language": "^6.12.1",
@@ -184,6 +183,7 @@
     "@codemirror/state": "^6.5.4",
     "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.39.11",
+    "@ghostery/adblocker-electron": "^2.13.4",
     "@replit/codemirror-vim": "^6.3.0",
     "archiver": "^7.0.0",
     "better-sqlite3": "^12.5.0",

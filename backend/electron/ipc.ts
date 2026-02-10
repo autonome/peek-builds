@@ -1998,27 +1998,143 @@ export function registerWindowHandlers(): void {
         }
       });
 
-      // Track JS window.open() from web content windows
+      // Handle window.open() / target="_blank" from <webview> guest webContents.
+      // The host BrowserWindow loads peek://app/page/index.html which contains a <webview>.
+      // Keystrokes and window.open() calls from web content go to the guest's webContents,
+      // NOT the host's. We use did-attach-webview to intercept when the guest attaches
+      // and set up a setWindowOpenHandler that routes popups through Peek's window system
+      // instead of letting Electron create raw default BrowserWindows.
       if (url.startsWith('http://') || url.startsWith('https://')) {
-        win.webContents.setWindowOpenHandler((details: Electron.HandlerDetails) => {
-          // Track the URL that JS is trying to open
-          try {
-            const popupTrack = trackWindowLoad(details.url, {
-              source: 'window-open',
-              sourceId: url,
-              windowType: 'main',
-            });
-            if (popupTrack.created) {
-              publish('system', PubSubScopes.GLOBAL, 'item:created', {
-                itemId: popupTrack.itemId,
-                itemType: 'url',
-                content: details.url
-              });
+        win.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+          console.log(`[webview-popup] Guest webContents attached to window ${win.id}, adding setWindowOpenHandler`);
+
+          guestWebContents.setWindowOpenHandler(({ url: popupUrl }) => {
+            if (popupUrl.startsWith('http://') || popupUrl.startsWith('https://')) {
+              console.log(`[webview-popup] Intercepted popup from window ${win.id}: ${popupUrl}`);
+
+              // Open asynchronously — create a proper Peek page container window.
+              // This runs outside the synchronous handler return.
+              (async () => {
+                try {
+                  // Track the popup URL in history
+                  try {
+                    const popupTrack = trackWindowLoad(popupUrl, {
+                      source: 'window-open',
+                      sourceId: url,
+                      windowType: 'main',
+                    });
+                    if (popupTrack.created) {
+                      publish('system', PubSubScopes.GLOBAL, 'item:created', {
+                        itemId: popupTrack.itemId,
+                        itemType: 'url',
+                        content: popupUrl
+                      });
+                    }
+                  } catch (e) {
+                    DEBUG && console.log('Failed to track webview popup:', e);
+                  }
+
+                  // Inherit group mode from parent window if applicable
+                  let groupMode: { groupId: string; groupName: string; color: string } | undefined = undefined;
+                  const parentContext = getContextEntry('mode', win.id);
+                  if (parentContext && parentContext.value === 'group' && parentContext.metadata) {
+                    groupMode = {
+                      groupId: parentContext.metadata.groupId as string,
+                      groupName: parentContext.metadata.groupName as string,
+                      color: parentContext.metadata.color as string,
+                    };
+                  }
+
+                  // Get the source address from the parent window's registration
+                  const parentInfo = getWindowInfo(win.id);
+                  const source = parentInfo ? parentInfo.source : 'system';
+
+                  // Build page container URL
+                  const parentBounds = win.getBounds();
+                  const pageParams = new URLSearchParams({
+                    url: popupUrl,
+                    x: String(parentBounds.x + 30),
+                    y: String(parentBounds.y + 30),
+                    width: String(1024),
+                    height: String(768),
+                  });
+                  const loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
+
+                  // Determine IZUI session state for transient detection
+                  const coordinator = getIzuiCoordinator();
+                  const isTransient = coordinator.isTransient();
+                  coordinator.evaluateOnShow();
+
+                  // Use profile-specific session for isolation
+                  const profileSession = getProfileSession();
+
+                  // Create the new BrowserWindow (page container)
+                  const popupWin = new BrowserWindow({
+                    frame: false,
+                    width: 1024,
+                    height: 768,
+                    x: parentBounds.x + 30,
+                    y: parentBounds.y + 30,
+                    show: isHeadless() ? false : true,
+                    transparent: true,
+                    webPreferences: {
+                      preload: getPreloadPath(),
+                      session: profileSession,
+                      webviewTag: true,
+                    },
+                  });
+
+                  // Register in window manager with proper IZUI role
+                  const popupParams: Record<string, unknown> = {
+                    address: popupUrl,
+                    transient: isTransient,
+                    parentWindowId: win.id,
+                    role: 'child-content',
+                  };
+                  if (groupMode) {
+                    popupParams.groupMode = groupMode;
+                  }
+                  registerWindow(popupWin.id, source, popupParams);
+                  coordinator.pushWindow(popupWin.id);
+
+                  // Set mode context (inherit group mode or detect from URL)
+                  if (groupMode) {
+                    addContextEntry('mode', 'group', {
+                      windowId: popupWin.id,
+                      source,
+                      metadata: { ...groupMode, url: popupUrl, inheritedFrom: win.id },
+                    });
+                  } else {
+                    const detectedMode = detectModeFromUrl(popupUrl);
+                    addContextEntry('mode', detectedMode, {
+                      windowId: popupWin.id,
+                      source,
+                      metadata: { url: popupUrl },
+                    });
+                  }
+
+                  // Load the page container URL
+                  await popupWin.loadURL(loadUrl);
+
+                  // Add ESC handler (also sets up did-attach-webview for the new window)
+                  addEscHandler(popupWin);
+
+                  // Update dock visibility
+                  updateDockVisibility();
+
+                  console.log(`[webview-popup] Created Peek window ${popupWin.id} for popup: ${popupUrl}`);
+                } catch (e) {
+                  console.error('[webview-popup] Failed to create popup window:', e);
+                }
+              })();
+
+              // Deny the default BrowserWindow creation
+              return { action: 'deny' };
             }
-          } catch (e) {
-            DEBUG && console.log('Failed to track setWindowOpenHandler:', e);
-          }
-          return { action: 'allow' };
+
+            // Allow non-http(s) URLs (e.g. about:blank) to open normally
+            return { action: 'allow' };
+          });
         });
       }
 

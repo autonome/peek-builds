@@ -839,7 +839,7 @@ api.profiles = {
 // ========== Bundled Web Extensions API ==========
 
 /**
- * Adblocker API - Native ad blocking powered by @cliqz/adblocker-electron
+ * Adblocker API - Native ad blocking powered by @ghostery/adblocker-electron
  */
 api.adblocker = {
   /**

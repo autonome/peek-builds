@@ -202,11 +202,10 @@ webview.addEventListener('did-navigate-in-page', (e) => {
   }
 });
 
-webview.addEventListener('new-window', async (e) => {
-  DEBUG && console.log('[page] new-window:', e.url);
-  e.preventDefault();
-  await api.window.open(e.url, { role: 'child-content', width: 1024, height: 768 });
-});
+// NOTE: The 'new-window' webview event was removed in Electron 22.
+// Popups from webview guests (window.open / target="_blank") are now handled
+// by setWindowOpenHandler on the guest webContents, attached via
+// did-attach-webview in backend/electron/ipc.ts.
 
 webview.addEventListener('did-fail-load', (e) => {
   if (e.errorCode === -3) return;

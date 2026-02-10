@@ -1,7 +1,7 @@
 /**
  * Ad Blocker Module for Electron
  *
- * Provides native ad blocking using @cliqz/adblocker-electron.
+ * Provides native ad blocking using @ghostery/adblocker-electron.
  * This approach avoids webRequest API conflicts with browser extensions.
  *
  * Features:
@@ -12,7 +12,7 @@
  */
 
 import { session, Session } from 'electron';
-import { ElectronBlocker, Request } from '@cliqz/adblocker-electron';
+import { ElectronBlocker, Request } from '@ghostery/adblocker-electron';
 import fetch from 'cross-fetch';
 
 import { getProfileSession } from './session-partition.js';
