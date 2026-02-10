@@ -44,7 +44,7 @@ The codebase already has the primitives needed:
 
 ## 3. Entity Types
 
-### 3.1 Phase 1: Structured/Extractable Entities (regex + microformats)
+### 3.1 Phase 1: Structured/Extractable Entities (regex + microformats + structured data)
 
 These have well-defined patterns and can be extracted reliably:
 
@@ -58,17 +58,35 @@ These have well-defined patterns and can be extracted reliably:
 | **Tracking number** | Regex (carrier patterns) | `1Z999AA10123456784` | carrier, number, context |
 | **Price/Currency** | Regex `\$[\d,.]+`, `EUR [\d,.]+` | `$199.99` | amount, currency, context |
 | **Code/Reference** | Regex (flight, booking, order) | `UA 1234`, `ORDER-789` | type, number, context |
+| **Person** | Microformats `h-card` with `p-name`, JSON-LD Person, vCard | `Alice Smith` | name, url, photo, email, org |
+| **Organization** | Microformats `h-card` (org), JSON-LD Organization, meta publisher | `Acme Corp` | name, url, logo, description |
+| **Event** | Microformats `h-event`, JSON-LD Event | `PyCon 2026` | name, date, location, url |
+| **Place** | Microformats `h-adr`, JSON-LD Place, geo meta | `Portland, OR` | name, address, coordinates |
 
-### 3.2 Phase 2: Named Entity Recognition (heuristic + ML)
+### 3.2 Phase 2: Heuristic NER (coarse scoring, no ML)
 
-These require NLP/statistical methods:
+Extract people/orgs/places from unstructured text using simple signals. The goal is high-confidence entities in the common case without ML.
+
+**Approach: Coarse heuristic with signal stacking.**
+
+For each candidate proper noun phrase in page text:
+
+| Signal | Score Bump | Example |
+|--------|-----------|---------|
+| **Proper noun** (capitalized multi-word not at sentence start) | base 0.3 | "John McEntire" |
+| **Is linked** (appears as anchor text with href) | +0.2 | `<a href="...">John McEntire</a>` |
+| **Mentioned >1 time on page** | +0.15 | "McEntire" appears 3 times |
+| **Matches existing entity** (already in our store) | +0.2 | Previously extracted from another page |
+| **Has org suffix** (Inc, LLC, Ltd, Corp, Foundation) | +0.2 (→ org type) | "Mozilla Foundation" |
+| **Context clue** (preceded by Mr/Mrs/Dr/CEO/etc) | +0.15 (→ person type) | "Dr. Smith" |
+
+Confidence >= 0.5 → store. This catches the common case: a person or org mentioned multiple times and linked at least once is almost certainly a real entity.
 
 | Entity Type | Detection Method | Wikidata Mapping |
 |-------------|-----------------|-----------------|
-| **Person** | Capitalization heuristics, microformats `h-card`, LD+JSON Person | Q5 (human) |
-| **Organization** | Capitalization + suffixes (Inc, LLC, Ltd), microformats, LD+JSON | Q43229 (organization) |
-| **Place/Location** | Gazetteer matching, microformats `h-adr`, LD+JSON Place | Q17334923 (location) |
-| **Event** | Microformats `h-event`, LD+JSON Event, date+venue co-occurrence | Q1656682 (event) |
+| **Person** | Proper noun + context clues (title, role) + link/mention scoring | Q5 (human) |
+| **Organization** | Proper noun + org suffixes + link/mention scoring | Q43229 (organization) |
+| **Place/Location** | Proper noun + gazetteer matching (common city/country names) | Q17334923 (location) |
 | **Product** | LD+JSON Product, schema.org markup | Q2424752 (product) |
 | **Creative Work** | LD+JSON, og:type=article/book/music | Q17537576 (creative work) |
 
@@ -401,7 +419,30 @@ Entities participate in the existing search infrastructure:
 - When searching URLs/notes, also show entities found on matching pages.
 - Entity names as search suggestions in cmd.
 
-### 6.5 Page Info / Metadata Overlay
+### 6.5 Context Object + HUD Integration
+
+Entities surface in the per-window **context object** (`app/context/`), making them available to any UI that reads context — including the HUD.
+
+```javascript
+// In entities/background.js, after extraction completes:
+api.context.update(windowId, {
+  entities: extractedEntities.map(e => ({
+    id: e.id,
+    name: e.name,
+    type: e.entityType,
+    confidence: e.confidence
+  }))
+});
+```
+
+**HUD ambient awareness**: The HUD can show entities from context as ambient info — people/orgs/places detected on the current page, without the user explicitly asking. This is a test of the "ambient awareness" concept: does passively surfacing entities feel useful or noisy?
+
+- HUD reads `context.entities` and renders a compact entity chip list
+- Only show entities above a confidence threshold (e.g., 0.7)
+- Clicking an entity chip opens detail view or shows "also seen on" pages
+- This replaces the previous "page info overlay" concept — entities flow through context, not a separate overlay
+
+### 6.6 Page Info / Metadata Overlay
 
 When viewing a page, show detected entities in the page info overlay:
 - List of entities found on the current page.
@@ -409,18 +450,25 @@ When viewing a page, show detected entities in the page info overlay:
 - "Also seen on" links showing other pages where the entity appears.
 - This ties into the "Page info/metadata/action widgets" todo.
 
-### 6.6 Feeds Integration
+### 6.7 Feeds Integration
 
 When feeds pull in new entries, run entity extraction on entry content:
 - Extract entities from RSS item descriptions.
 - Link entity observations to the feed entry's URL.
 - Over time, feeds become a rich source of entity observations.
 
-### 6.7 Sync
+### 6.8 Sync + Mobile Visibility
 
 - Entity items sync like any other item (via `syncId`/`syncedAt`).
 - Entity observations (`item_events`) are local-only by default (high volume). Can opt-in to sync via `metadata.sync: true` per entity.
 - Wikidata QIDs provide stable cross-device entity identity.
+
+**Mobile: hide entities from default views.** Entities should not appear in the main mobile item lists. Same treatment as navigational URL visits — they exist in the data but are filtered out of default queries. Mobile can expose entities through a dedicated "entities" view later, but they must not clutter the primary save/capture workflow.
+
+Implementation:
+- Server sync delivers entity items normally (they're just items with `type: 'entity'`).
+- Mobile `queryItems` default filter excludes `type = 'entity'` (same pattern as filtering navigational visits via `metadata.navigational`).
+- Dedicated entity UI on mobile is a future phase — not needed until entity data proves useful on desktop first.
 
 ## 7. Wikidata Integration
 
@@ -541,52 +589,54 @@ When typing in cmd, entity names appear as suggestions alongside URLs and comman
 
 ## 10. Implementation Phases
 
-### Phase 1: Foundation (Core Infrastructure)
+### Phase 1: Foundation + Structured Data (regex + microformats + JSON-LD)
 
 1. **Schema migration**: Add `entity` to items type CHECK constraint.
 2. **`extensions/entities/` skeleton**: Manifest, background script, init/uninit lifecycle.
 3. **Regex extractors**: Email, phone, date/time, tracking numbers, prices.
-4. **Entity store**: CRUD operations using `api.datastore` item and item_event APIs.
-5. **Basic matching**: Exact name + type dedup.
-6. **Extraction trigger**: Hook into `page:loaded` pubsub or `trackWindowLoad`.
-7. **Commands**: `entities`, `entity:extract`.
-8. **Basic browser UI**: Card grid listing all entities, filter by type.
+4. **Structured data extractors**: JSON-LD, microformats (h-card, h-event, h-adr), Open Graph. People and orgs come "free" from microformats on many pages — include from day one.
+5. **Entity store**: CRUD operations using `api.datastore` item and item_event APIs.
+6. **Basic matching**: Exact name + type dedup.
+7. **Confidence scoring**: Multi-signal confidence calculation.
+8. **Extraction trigger**: Hook into `page:loaded` pubsub or `trackWindowLoad`.
+9. **Context object integration**: Populate `context.entities` per window after extraction.
+10. **Commands**: `entities`, `entity:extract`.
+11. **Basic browser UI**: Card grid listing all entities, filter by type.
+12. **HUD ambient awareness**: Show entity chips from context in HUD.
 
-**Deliverable**: Structured data (emails, phones, dates) automatically extracted from visited pages, viewable in entity browser.
+**Deliverable**: Structured entities (emails, phones, dates, people, orgs, places, events) automatically extracted from visited pages via regex + microformats + JSON-LD. Entities visible in entity browser and as ambient HUD chips.
 
-### Phase 2: Structured Data + Wikidata
+### Phase 2: Heuristic NER + Wikidata
 
-1. **Structured data extractors**: JSON-LD, microformats (h-card, h-event, h-adr), Open Graph.
-2. **Readability integration**: Clean content extraction for better entity context.
+1. **Coarse heuristic NER**: Proper noun detection with signal stacking — linked (+score), mentioned multiple times (+score), org suffix (+score), title/role context (+score). No ML needed.
+2. **Readability integration**: Clean text extraction for better NER input.
 3. **Wikidata validation**: API integration for entity validation/enrichment.
-4. **Confidence scoring**: Multi-signal confidence calculation.
-5. **Entity detail view**: Full detail page with observations, attributes, related entities.
-6. **Page entity overlay**: Show entities in page info.
-7. **Search integration**: Entity names as cmd suggestions.
+4. **Entity detail view**: Full detail page with observations, attributes, related entities.
+5. **Search integration**: Entity names as cmd suggestions.
+6. **Observation dedup + expiration**: One observation per entity per URL per day, prune old observations.
 
-**Deliverable**: Named entities (people, places, orgs) extracted from structured data, validated against Wikidata, browsable with full detail views.
+**Deliverable**: High-confidence people/orgs/places extracted from unstructured text using simple heuristics, validated against Wikidata, browsable with full detail views.
 
-### Phase 3: NER + Relationships
+### Phase 3: Relationships + Polish
 
-1. **Heuristic NER**: Capitalization analysis, context patterns, gazetteer matching.
-2. **Approximate matching**: Fuzzy dedup, alias resolution.
-3. **Entity merging**: UI and API for merging duplicate entities.
-4. **Relationship inference**: Co-occurrence analysis, Wikidata relationship mining.
-5. **Smart groups**: Auto-generated groups from entity clusters.
-6. **Feeds integration**: Entity extraction from feed entries.
+1. **Approximate matching**: Fuzzy dedup, alias resolution.
+2. **Entity merging**: UI and API for merging duplicate entities.
+3. **Relationship inference**: Co-occurrence analysis, Wikidata relationship mining.
+4. **Smart groups**: Auto-generated groups from entity clusters.
+5. **Feeds integration**: Entity extraction from feed entries.
+6. **Expiration policies**: Archiving low-confidence, stale entities.
+7. **Performance tuning**: Extraction throttling, index optimization, cache strategies.
 
-**Deliverable**: Statistical entity extraction from unstructured text, entity relationship graph, cross-page entity linking.
+**Deliverable**: Entity relationship graph, cross-page entity linking, production-ready performance.
 
-### Phase 4: ML + Polish
+### Phase 4: ML (optional, only if heuristics hit ceiling)
 
 1. **ML NER models**: ONNX models in Web Workers for offline NER.
 2. **Micro-model training**: Train specialized models from accumulated entity data.
-3. **Expiration policies**: Archiving low-confidence, stale entities.
-4. **Import/export**: Entity data portability.
-5. **Sync optimization**: Selective entity sync, conflict resolution.
-6. **Performance tuning**: Extraction throttling, index optimization, cache strategies.
+3. **Import/export**: Entity data portability.
+4. **Sync optimization**: Selective entity sync, conflict resolution.
 
-**Deliverable**: ML-powered entity extraction, self-improving models, production-ready performance.
+**Deliverable**: ML-powered entity extraction, self-improving models. Only pursue if Phase 2 heuristics prove insufficient for the entity types we care about.
 
 ## 11. Technical Considerations
 
@@ -614,12 +664,22 @@ When typing in cmd, entity names appear as suggestions alongside URLs and comman
 
 ### 11.4 Storage Volume
 
+**Concern: items table overload.** Entity observations will generate high volume data. The items table is the core of Peek — it must stay fast.
+
+Mitigation strategies:
+- **Observations are item_events, not items.** The `item_events` table is append-only and designed for high volume. Entity *items* grow slowly (Zipf distribution), but *observations* grow linearly with browsing. Keep them separate.
+- **Batch writes**: Collect all extractions from a page, write in a single transaction.
+- **Expiration policy**: Observations older than N days can be pruned while preserving the entity item and its frecency. Old observations are low-value — the entity's existence and score matter more than individual sightings.
+- **Lazy extraction**: Start with metadata-only extraction (structured data, microformats). Full-text NER generates far more observations — gate behind user opt-in or Phase 2+.
+- **Dedup observations**: One observation per entity per URL per day. Don't re-record if the same entity was already seen on the same page today.
+
 Conservative estimates:
-- Average page yields 5-10 entity observations.
-- 100 pages/day = 500-1000 observations/day.
+- Average page yields 3-5 entity observations (metadata-only extraction).
+- 100 pages/day = 300-500 observations/day.
 - Each observation is ~200 bytes in item_events.
-- 365 days = ~73 MB of observations. Manageable for SQLite.
-- Unique entities grow slowly (Zipf distribution): ~50-100 new entities/day initially, declining.
+- 365 days = ~36-73 MB of observations. Manageable for SQLite.
+- Unique entities grow slowly (Zipf distribution): ~20-50 new entities/day initially, declining.
+- With dedup + expiration, steady-state storage stays well under 100 MB.
 
 ### 11.5 Extension Settings Schema
 
