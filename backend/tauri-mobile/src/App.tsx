@@ -2047,6 +2047,14 @@ function App() {
       const archiveSelected = archiveTag && selectedFilterTags.has(archiveTag);
       if (isArchived && !archiveSelected) return false;
 
+      // Hide auto-hide tagged items (e.g. from:history) unless searching or tag selected
+      const AUTO_HIDE_TAGS = ['from:history'];
+      const isAutoHidden = AUTO_HIDE_TAGS.some(t => item.tags.includes(t));
+      if (isAutoHidden) {
+        const autoHideTagSelected = AUTO_HIDE_TAGS.some(t => selectedFilterTags.has(t));
+        if (!searchText.trim() && !autoHideTagSelected) return false;
+      }
+
       return matchesSearch && matchesTags;
     });
 
