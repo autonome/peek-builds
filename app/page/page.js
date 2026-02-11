@@ -1,21 +1,34 @@
 /**
- * peek://page - Container for web content
+ * peek://page - Fullscreen transparent canvas container for web content
  *
- * Content-sized BrowserWindow with:
- * - Webview filling the entire window
- * - Full-width navbar at the top (Cmd+L or hover near top to show, Escape/click-outside to dismiss)
- * - When shown, the webview shifts down so the Electron <webview> layer doesn't cover the navbar
- * - Drag via -webkit-app-region: drag on the navbar
- * - Resize via IPC to resize the BrowserWindow
+ * Architecture: A fullscreen transparent BrowserWindow covers the entire display.
+ * All UI elements (webview, navbar, trigger zone, resize handle, mode indicator)
+ * are position:absolute siblings, positioned by JS via updatePositions() using
+ * a `bounds` object. The navbar sits ABOVE the webview with an 8px gap.
+ *
+ * - Custom drag: mousedown on navbar moves bounds
+ * - Custom resize: mousedown on resize handle changes bounds size
+ * - Hover trigger zone above navbar reveals/hides navbar
+ * - Cmd+L shows navbar with URL focus
  */
 
 import api from '../api.js';
 
 const DEBUG = true;
 
-// Parse URL parameters
+// --- Constants ---
+const NAVBAR_HEIGHT = 36;
+const NAVBAR_GAP = 8;
+const MIN_WIDTH = 200;
+const MIN_HEIGHT = 150;
+
+// --- Parse URL parameters ---
 const params = new URLSearchParams(window.location.search);
 const targetUrl = params.get('url');
+const initialX = parseInt(params.get('x')) || 100;
+const initialY = parseInt(params.get('y')) || 100;
+const initialWidth = parseInt(params.get('width')) || 800;
+const initialHeight = parseInt(params.get('height')) || 600;
 
 if (!targetUrl) {
   console.error('[page] No URL provided');
@@ -23,9 +36,18 @@ if (!targetUrl) {
   throw new Error('No URL provided to peek://page');
 }
 
-DEBUG && console.log('[page] Loading:', targetUrl);
+DEBUG && console.log('[page] Loading:', targetUrl, 'at', initialX, initialY, initialWidth, initialHeight);
 
-// DOM elements
+// --- Bounds state ---
+// All positioning is derived from this single object
+let bounds = {
+  x: initialX,
+  y: initialY,
+  width: initialWidth,
+  height: initialHeight,
+};
+
+// --- DOM elements ---
 const navbar = document.getElementById('navbar');
 const triggerZone = document.getElementById('trigger-zone');
 const webview = document.getElementById('content');
@@ -36,7 +58,45 @@ const btnReload = document.getElementById('btn-reload');
 const urlText = document.getElementById('url-text');
 const modeIndicator = document.getElementById('mode-indicator');
 
-// Set up webview partition for session isolation and load the target URL
+// --- Position all elements based on bounds ---
+
+function updatePositions() {
+  const { x, y, width, height } = bounds;
+
+  // Webview — the main content area
+  webview.style.left = `${x}px`;
+  webview.style.top = `${y}px`;
+  webview.style.width = `${width}px`;
+  webview.style.height = `${height}px`;
+
+  // Navbar — above the webview with a gap
+  const navbarTop = Math.max(0, y - NAVBAR_GAP - NAVBAR_HEIGHT);
+  navbar.style.left = `${x}px`;
+  navbar.style.top = `${navbarTop}px`;
+  navbar.style.width = `${width}px`;
+
+  // Trigger zone — covers the area above the webview where hover reveals the navbar
+  const triggerTop = Math.max(0, navbarTop - 14);
+  triggerZone.style.left = `${x}px`;
+  triggerZone.style.top = `${triggerTop}px`;
+  triggerZone.style.width = `${width}px`;
+
+  // Resize handle — bottom-right corner of the webview
+  resizeHandle.style.left = `${x + width - 16}px`;
+  resizeHandle.style.top = `${y + height - 16}px`;
+
+  // Mode indicator — top-right corner of the webview
+  if (modeIndicator) {
+    modeIndicator.style.left = `${x + width - 120}px`;
+    modeIndicator.style.top = `${y + 8}px`;
+  }
+}
+
+// Initial positioning
+updatePositions();
+
+// --- Set up webview partition and load URL ---
+
 async function initWebview() {
   try {
     // Get the partition string for the current profile
@@ -59,26 +119,70 @@ async function initWebview() {
 // Start initialization
 initWebview();
 
-// --- Resize via IPC ---
+// --- Custom drag (navbar) ---
+
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let dragStartBoundsX = 0;
+let dragStartBoundsY = 0;
+
+navbar.addEventListener('mousedown', (e) => {
+  // Don't start drag on buttons or URL text
+  if (e.target.closest('.nav-btn') || e.target.closest('.url-text')) return;
+  isDragging = true;
+  dragStartX = e.screenX;
+  dragStartY = e.screenY;
+  dragStartBoundsX = bounds.x;
+  dragStartBoundsY = bounds.y;
+  navbar.style.cursor = 'grabbing';
+  e.preventDefault();
+});
+
+// --- Custom resize (resize handle) ---
 
 let isResizing = false;
+let resizeStartX = 0;
+let resizeStartY = 0;
+let resizeStartWidth = 0;
+let resizeStartHeight = 0;
 
 resizeHandle.addEventListener('mousedown', (e) => {
   isResizing = true;
+  resizeStartX = e.screenX;
+  resizeStartY = e.screenY;
+  resizeStartWidth = bounds.width;
+  resizeStartHeight = bounds.height;
   e.preventDefault();
   e.stopPropagation();
 });
 
+// --- Shared mousemove/mouseup for drag and resize ---
+
 document.addEventListener('mousemove', (e) => {
-  if (isResizing) {
-    const newWidth = Math.max(200, e.screenX - window.screenX);
-    const newHeight = Math.max(150, e.screenY - window.screenY);
-    api.invoke('window-set-bounds', { width: newWidth, height: newHeight });
+  if (isDragging) {
+    const dx = e.screenX - dragStartX;
+    const dy = e.screenY - dragStartY;
+    bounds.x = dragStartBoundsX + dx;
+    bounds.y = dragStartBoundsY + dy;
+    updatePositions();
+  } else if (isResizing) {
+    const dx = e.screenX - resizeStartX;
+    const dy = e.screenY - resizeStartY;
+    bounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
+    bounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
+    updatePositions();
   }
 });
 
 document.addEventListener('mouseup', () => {
-  isResizing = false;
+  if (isDragging) {
+    isDragging = false;
+    navbar.style.cursor = 'grab';
+  }
+  if (isResizing) {
+    isResizing = false;
+  }
 });
 
 // --- State display ---
@@ -89,13 +193,10 @@ function updateState() {
 }
 
 // --- Show / Hide navbar ---
-// The full-width navbar is shown by:
+// The navbar is shown by:
 //   1. Cmd+L (published from main process via before-input-event on guest/host webContents)
-//   2. Hovering near the top of the window (trigger zone)
+//   2. Hovering near the top of the webview (trigger zone)
 // It is hidden by clicking outside, pressing Escape, or moving mouse away (hover mode).
-//
-// When visible, the <webview> element shifts down (via .navbar-active class) so the
-// Electron composited webview layer doesn't paint over the navbar.
 
 let hideTimer = null;
 let showSource = null; // 'hover' or 'shortcut' — determines dismiss behavior
@@ -107,7 +208,6 @@ function show(opts) {
   }
   const wasHidden = !navbar.classList.contains('visible');
   navbar.classList.add('visible');
-  webview.classList.add('navbar-active');
   if (opts?.source) showSource = opts.source;
   if (wasHidden) {
     updateState();
@@ -125,12 +225,13 @@ function show(opts) {
 }
 
 function hide() {
+  // Don't hide while dragging
+  if (isDragging) return;
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;
   }
   navbar.classList.remove('visible');
-  webview.classList.remove('navbar-active');
   window.getSelection().removeAllRanges();
   showSource = null;
   DEBUG && console.log('[page] Navbar hidden');
@@ -152,7 +253,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // --- Hover trigger zone ---
-// Mouse entering the thin strip at the top of the window shows the navbar.
+// Mouse entering the area above the webview shows the navbar.
 // Moving away from both the trigger zone AND the navbar hides it (with a small delay).
 
 function scheduleHide() {
@@ -452,4 +553,4 @@ async function initModeContext() {
 // Initialize mode context
 initModeContext();
 
-DEBUG && console.log('[page] Container initialized for:', targetUrl);
+DEBUG && console.log('[page] Canvas container initialized for:', targetUrl);

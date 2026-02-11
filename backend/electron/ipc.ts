@@ -1844,24 +1844,32 @@ export function registerWindowHandlers(): void {
     // Check if this is a web page that will use the transparent canvas
     const isWebPage = url.startsWith('http://') || url.startsWith('https://');
 
+    // Determine if this web page should use the fullscreen transparent canvas model.
+    // Canvas pages get a fullscreen transparent BrowserWindow where all UI elements
+    // (webview, navbar, resize handle) are positioned via JS on an invisible surface.
+    // Non-canvas web pages (modals, quick-views, overlays) load their URL directly.
+    const isModalOrQuickView = options.modal === true || options.overlay === true;
+    const hasNonContentRole = options.role && !['content', 'child-content'].includes(options.role as string);
+    const useCanvas = isWebPage && !isModalOrQuickView && !hasNonContentRole;
+
     // Use profile-specific session for isolation
     const profileSession = getProfileSession();
 
     // Prepare browser window options
     const winOptions: Electron.BrowserWindowConstructorOptions = {
-      frame: isWebPage ? false : frameDefault, // Web pages use transparent canvas, no frame
+      frame: isWebPage ? false : frameDefault, // Web pages are always frameless
       ...options,
       width: parseInt(options.width) || APP_DEF_WIDTH,
       height: parseInt(options.height) || APP_DEF_HEIGHT,
       show: isHeadless() ? false : options.show !== false,
-      // Web pages use transparent fullscreen canvas
-      transparent: isWebPage ? true : (options.transparent || false),
-      backgroundColor: (isWebPage || options.transparent) ? undefined : getSystemThemeBackgroundColor(),
+      // Only canvas pages need transparency (for the invisible positioning surface)
+      transparent: useCanvas ? true : (options.transparent || false),
+      backgroundColor: (useCanvas || options.transparent) ? undefined : getSystemThemeBackgroundColor(),
       webPreferences: {
         ...options.webPreferences,
         preload: getPreloadPath(),
         session: profileSession,
-        webviewTag: true // Enable webview for peek://page container
+        webviewTag: useCanvas ? true : (options.webPreferences?.webviewTag || false),
       }
     };
 
@@ -1956,10 +1964,11 @@ export function registerWindowHandlers(): void {
     });
 
     try {
-      // Route http/https URLs through peek://page container
-      // This allows IZUI to manage web pages uniformly
+      // Route canvas web pages through peek://page container.
+      // Canvas pages use a fullscreen transparent window where all UI elements
+      // are positioned via JS. Non-canvas web pages (modals, slides) load directly.
       let loadUrl = url;
-      if (isWebPage) {
+      if (useCanvas) {
         // Pass position/size to the page container so it can position the webview
         // Use the calculated center position (set above) as default
         const pageParams = new URLSearchParams({
@@ -1971,6 +1980,18 @@ export function registerWindowHandlers(): void {
         });
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
+
+        // Set up fullscreen transparent canvas — size the window to cover the display
+        // so the page container JS can position elements anywhere on screen
+        if (!isHeadless()) {
+          const display = screen.getDisplayNearestPoint({ x: winOptions.x ?? 0, y: winOptions.y ?? 0 });
+          const { width: sw, height: sh } = display.workAreaSize;
+          const { x: dx, y: dy } = display.workArea;
+          win.setSize(sw, sh);
+          win.setPosition(dx, dy);
+          win.setBackgroundColor('#00000000');
+          DEBUG && console.log('Canvas setup: display', display.id, 'at', dx, dy, 'size', sw, sh);
+        }
       }
 
       // Add to window manager with modal parameter
@@ -2145,7 +2166,8 @@ export function registerWindowHandlers(): void {
       //
       // Also adds Cmd+L interception on guest webContents for the floating navbar.
       // (Keystrokes inside the webview never reach the host's before-input-event.)
-      if (url.startsWith('http://') || url.startsWith('https://')) {
+      // Only canvas pages have a <webview> guest — set up popup/Cmd+L handlers
+      if (useCanvas) {
         win.webContents.on('did-attach-webview', (_event, guestWebContents) => {
           console.log(`[webview-popup] Guest webContents attached to window ${win.id}, adding setWindowOpenHandler + Cmd+L`);
 
@@ -2218,7 +2240,7 @@ export function registerWindowHandlers(): void {
                   // Use profile-specific session for isolation
                   const profileSession = getProfileSession();
 
-                  // Create the new BrowserWindow (page container)
+                  // Create the new BrowserWindow (page container) with fullscreen canvas
                   const popupWin = new BrowserWindow({
                     frame: false,
                     width: 1024,
@@ -2233,6 +2255,16 @@ export function registerWindowHandlers(): void {
                       webviewTag: true,
                     },
                   });
+
+                  // Set up fullscreen transparent canvas for the popup
+                  if (!isHeadless()) {
+                    const popupDisplay = screen.getDisplayNearestPoint({ x: parentBounds.x + 30, y: parentBounds.y + 30 });
+                    const { width: psw, height: psh } = popupDisplay.workAreaSize;
+                    const { x: pdx, y: pdy } = popupDisplay.workArea;
+                    popupWin.setSize(psw, psh);
+                    popupWin.setPosition(pdx, pdy);
+                    popupWin.setBackgroundColor('#00000000');
+                  }
 
                   // Register in window manager with proper IZUI role
                   const popupParams: Record<string, unknown> = {
@@ -2295,7 +2327,7 @@ export function registerWindowHandlers(): void {
       // The primary Cmd+L handler is on the webview guest (added via did-attach-webview above).
       // This host-level handler fires when the page container's own DOM has focus (rare,
       // but possible before the webview loads or if the user clicks outside the webview).
-      if (url.startsWith('http://') || url.startsWith('https://')) {
+      if (useCanvas) {
         win.webContents.on('before-input-event', (event, input) => {
           if (input.type !== 'keyDown' || !input.meta) return;
           if (input.key === 'l') {

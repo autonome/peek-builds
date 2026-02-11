@@ -205,6 +205,22 @@ Commands live in `extensions/cmd/commands/` and are loaded by the cmd panel.
   - Transient state propagates to child windows (e.g., cmd → overlay)
   - Use `api.izui.isTransient()` to query current session state
 
+### Page View Canvas Architecture
+
+**DO NOT REPLACE this architecture.** It was accidentally destroyed on Feb 8 2025 (commit `nnpvvvvk`) when a coordinate-mapping bug in slides was "fixed" by removing the entire canvas model. The real fix was to exclude slides from the canvas path via `useCanvas`. This section documents the restored architecture.
+
+Web pages opened as content or child-content use a **fullscreen transparent canvas**:
+
+1. **Backend** (`ipc.ts`): A `useCanvas` flag determines whether a web page gets the canvas treatment. Canvas pages (`useCanvas = true`) are content/child-content web pages that are not modals, overlays, or quick-views. Non-canvas web pages (slides, modals) load their URL directly in a positioned BrowserWindow.
+
+2. **Fullscreen transparent BrowserWindow**: The canvas window is sized to cover the entire display work area at position (0,0) via `screen.getDisplayNearestPoint()`. Background color is `#00000000` (fully transparent). This creates an invisible surface for positioning UI elements.
+
+3. **JS positioning** (`page.js`): All elements (`<webview>`, navbar, trigger zone, resize handle, mode indicator) are `position: absolute` siblings with NO CSS top/left/right/bottom. JS `updatePositions()` sets inline styles based on a `bounds` object `{x, y, width, height}` parsed from URL params.
+
+4. **Custom drag/resize**: Dragging the navbar updates `bounds.x`/`bounds.y`. Resizing via the corner handle updates `bounds.width`/`bounds.height`. Both call `updatePositions()`. No `-webkit-app-region: drag` — the navbar uses a custom mousedown handler.
+
+5. **Navbar**: Sits ABOVE the webview with an 8px gap. Shown by Cmd+L or hovering the trigger zone. Has rounded corners and grab cursor.
+
 ### Data Storage
 
 **Settings Storage (localStorage)**:

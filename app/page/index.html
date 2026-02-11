@@ -20,35 +20,23 @@
     }
 
     /*
-     * Webview fills the entire window.
-     * When the navbar is visible, the webview shifts down via .navbar-active
-     * to avoid the Electron <webview> layer rendering over the navbar.
+     * Webview — positioned by JS via updatePositions() on the transparent canvas.
+     * No explicit top/left/right/bottom — JS sets these based on bounds.
      */
     webview {
       position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
       border: none;
       border-radius: 10px;
       overflow: hidden;
       -webkit-mask-image: -webkit-radial-gradient(white, white);
-      transition: top 0.15s ease;
-    }
-
-    /* Push webview down when navbar is active so it doesn't cover the navbar */
-    webview.navbar-active {
-      top: 36px;
     }
 
     /*
-     * Navbar — full-width bar at the top of the window.
-     *
-     * Shown via Cmd+L or hovering near the top of the window.
-     * Same width as the page, no floating bubble effect.
-     * Draggable via -webkit-app-region: drag.
+     * Navbar — positioned by JS via updatePositions() ABOVE the webview with a gap.
+     * Dragging is handled by custom JS (moves bounds), not -webkit-app-region.
      */
     .navbar {
       position: absolute;
-      top: 0; left: 0; right: 0;
       height: 36px;
       display: none;
       align-items: center;
@@ -61,7 +49,8 @@
       font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
       font-size: 15px;
       border: none;
-      -webkit-app-region: drag;
+      border-radius: 10px;
+      cursor: grab;
       user-select: none;
       -webkit-user-select: none;
       z-index: 100;
@@ -72,7 +61,6 @@
     }
 
     .nav-btn {
-      -webkit-app-region: no-drag;
       background: none;
       border: none;
       color: var(--theme-text-secondary, #bbb);
@@ -104,7 +92,6 @@
     }
 
     .url-text {
-      -webkit-app-region: no-drag;
       flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -122,10 +109,9 @@
       background: var(--theme-bg, rgba(128, 128, 128, 0.18));
     }
 
-    /* Trigger zone at top of window — hover here to reveal the navbar */
+    /* Trigger zone — positioned by JS via updatePositions() above the navbar area */
     .trigger-zone {
       position: absolute;
-      top: 0; left: 0; right: 0;
       height: 50px;
       z-index: 50;
     }
