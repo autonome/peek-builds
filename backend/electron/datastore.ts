@@ -2259,6 +2259,14 @@ export function updateItem(itemId: string, options: ItemOptions): boolean {
     updates.push('archived = ?');
     values.push(options.archived);
   }
+  if (options.title !== undefined) {
+    updates.push('title = ?');
+    values.push(options.title);
+  }
+  if (options.favicon !== undefined) {
+    updates.push('favicon = ?');
+    values.push(options.favicon);
+  }
 
   if (updates.length === 0) return false;
 
@@ -2271,6 +2279,27 @@ export function updateItem(itemId: string, options: ItemOptions): boolean {
   ).run(...values);
 
   return result.changes > 0;
+}
+
+/**
+ * Update the title of a URL item if it's currently empty or "Loading..."
+ * Used by page.js when the real page title becomes available.
+ */
+export function updateItemTitle(url: string, title: string): boolean {
+  const normalizedUri = normalizeUrl(url);
+  const d = getDb();
+  const existing = d.prepare(
+    'SELECT id, title FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
+  ).get('url', normalizedUri) as { id: string; title: string } | undefined;
+
+  if (!existing) return false;
+
+  if (!existing.title || existing.title === 'Loading...') {
+    d.prepare('UPDATE items SET title = ?, updatedAt = ? WHERE id = ?')
+      .run(title, Date.now(), existing.id);
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -2660,7 +2689,7 @@ export function trackNavigation(uri: string, options: {
     const values: unknown[] = [];
 
     if (options.title) {
-      updates.push('title = CASE WHEN title = \'\' OR title IS NULL THEN ? ELSE title END');
+      updates.push('title = CASE WHEN title = \'\' OR title IS NULL OR title = \'Loading...\' THEN ? ELSE title END');
       values.push(options.title);
     }
     if (options.favicon) {

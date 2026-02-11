@@ -536,6 +536,16 @@ api.datastore = {
     return ipcRenderer.invoke('datastore-track-navigation', { uri, options });
   },
 
+  // Update title for a URL item (if currently empty or "Loading...")
+  updateItemTitle: (url, title) => {
+    return ipcRenderer.invoke('datastore-update-item-title', { url, title });
+  },
+
+  // Extract page content from a live webContents by URL
+  extractPageContent: (url) => {
+    return ipcRenderer.invoke('extract-page-content', { url });
+  },
+
   // Item event operations (series & feeds)
   addItemEvent: (itemId, options = {}) => {
     return ipcRenderer.invoke('datastore-add-item-event', { itemId, options });

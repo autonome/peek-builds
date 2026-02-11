@@ -10,7 +10,7 @@
 
 import { extractRegexEntities } from './extractors/regex.js';
 import { extractMicroformatEntities } from './extractors/microformats.js';
-import { extractStructuredDataEntities } from './extractors/structured-data.js';
+import { extractStructuredDataEntities, extractPageMetadata } from './extractors/structured-data.js';
 import { processEntities } from './entity-matcher.js';
 import { getEntities, getObservations } from './entity-store.js';
 
@@ -39,7 +39,7 @@ async function getPageContent(url) {
   // Request page content extraction via IPC
   // The main process has access to webContents and can run executeJavaScript
   try {
-    const result = await api.ipc.invoke('extract-page-content', { url });
+    const result = await api.datastore.extractPageContent(url);
     if (result && result.success) {
       return result.data;
     }
@@ -68,6 +68,48 @@ async function getPageContent(url) {
   }
 }
 
+// ==================== URL Item Enrichment ====================
+
+/**
+ * Enrich a URL item with page metadata (OG tags, title, etc.)
+ * @param {string} url - Page URL
+ * @param {Object} pageMetadata - Extracted metadata from extractPageMetadata()
+ */
+async function enrichUrlItem(url, pageMetadata) {
+  try {
+    const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
+    if (!items.success || !items.data) return;
+
+    const item = items.data.find(i => i.content === url);
+    if (!item) return;
+
+    // Update title if empty or "Loading..."
+    if (pageMetadata.title && (!item.title || item.title === 'Loading...')) {
+      await api.datastore.updateItemTitle(url, pageMetadata.title);
+    }
+
+    // Update metadata with _og data (skip if already enriched)
+    const existingMeta = item.metadata ? JSON.parse(item.metadata) : {};
+    if (existingMeta._og) return;
+
+    const enrichedMeta = {
+      ...existingMeta,
+      _og: {
+        title: pageMetadata.title || '',
+        description: pageMetadata.description || '',
+        image: pageMetadata.ogImage || '',
+        siteName: pageMetadata.siteName || '',
+        type: pageMetadata.ogType || '',
+        extractedAt: Date.now()
+      }
+    };
+
+    await api.datastore.updateItem(item.id, { metadata: JSON.stringify(enrichedMeta) });
+  } catch (err) {
+    console.warn('[entities] Failed to enrich URL item:', err.message);
+  }
+}
+
 // ==================== Extraction Pipeline ====================
 
 /**
@@ -88,6 +130,16 @@ async function extractEntities(url, title = '') {
   const html = content.html || '';
   const text = content.text || '';
   const pageTitle = title || content.title || '';
+
+  // Enrich the URL item with page metadata (OG tags, etc.)
+  try {
+    const pageMetadata = extractPageMetadata(html, url);
+    if (pageMetadata) {
+      await enrichUrlItem(url, pageMetadata);
+    }
+  } catch (err) {
+    console.warn('[entities] Page metadata enrichment failed:', err.message);
+  }
 
   // Run all extractors in parallel
   const [regexEntities, microformatEntities, structuredDataEntities] = await Promise.all([

@@ -5,7 +5,7 @@
  * Handlers are thin wrappers that delegate to backend functions.
  */
 
-import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell } from 'electron';
+import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell, webContents } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -25,6 +25,7 @@ import {
   addItem,
   getItem,
   updateItem,
+  updateItemTitle,
   deleteItem,
   hardDeleteItem,
   queryItems,
@@ -688,6 +689,16 @@ export function registerDatastoreHandlers(): void {
     }
   });
 
+  ipcMain.handle('datastore-update-item-title', async (ev, data) => {
+    try {
+      const result = updateItemTitle(data.url, data.title);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   ipcMain.handle('datastore-query-items', async (ev, data = {}) => {
     try {
       const result = queryItems(data.filter);
@@ -908,6 +919,41 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-count-item-events', async (ev, data) => {
     try {
       const result = countItemEvents(data.itemId, data.filter);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Extract page content from a live webContents by URL
+  ipcMain.handle('extract-page-content', async (ev, data) => {
+    try {
+      const { url } = data;
+      if (!url) return { success: false, error: 'URL required' };
+
+      const allContents = webContents.getAllWebContents();
+      const target = allContents.find(wc => {
+        try {
+          const wcUrl = wc.getURL();
+          return wcUrl === url || normalizeUrl(wcUrl) === normalizeUrl(url);
+        } catch { return false; }
+      });
+
+      if (!target) {
+        return { success: false, error: 'No webContents found for URL' };
+      }
+
+      const result = await target.executeJavaScript(`
+        (function() {
+          return {
+            html: document.documentElement.outerHTML,
+            text: document.body ? document.body.innerText.slice(0, 50000) : '',
+            title: document.title || ''
+          };
+        })();
+      `);
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2250,7 +2296,7 @@ export function registerWindowHandlers(): void {
             source: options.trackingSource || options.feature || 'window',
             sourceId: options.trackingSourceId || '',
             windowType: options.modal ? 'modal' : 'main',
-            title: options.title || win.getTitle() || '',
+            title: options.title || (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
           });
           if (trackResult.created) {
             publish('system', PubSubScopes.GLOBAL, 'item:created', {
@@ -2277,7 +2323,7 @@ export function registerWindowHandlers(): void {
             source: 'navigation',
             sourceId: '',
             windowType: options.modal ? 'modal' : 'main',
-            title: win.getTitle() || '',
+            title: (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
           });
           if (navTrack.created) {
             publish('system', PubSubScopes.GLOBAL, 'item:created', {

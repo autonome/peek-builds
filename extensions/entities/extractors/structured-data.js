@@ -318,3 +318,43 @@ function getMetaContent(doc, key) {
   );
   return meta ? meta.getAttribute('content') : '';
 }
+
+/**
+ * Extract page-level metadata (OG tags, title, description, favicon)
+ * for enriching URL items. Separate from entity extraction.
+ * @param {string} html - HTML content of the page
+ * @param {string} url - Source URL for resolving relative URLs
+ * @returns {Object|null} Page metadata or null if nothing useful found
+ */
+export function extractPageMetadata(html, url) {
+  if (!html || typeof html !== 'string') return null;
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const metadata = {};
+
+    // Helper to get meta content
+    const getMeta = (name) => {
+      const el = doc.querySelector(`meta[property="${name}"], meta[name="${name}"]`);
+      return el ? el.getAttribute('content')?.trim() : '';
+    };
+
+    metadata.title = getMeta('og:title') || doc.querySelector('title')?.textContent?.trim() || '';
+    metadata.description = getMeta('og:description') || getMeta('description') || '';
+    metadata.ogImage = getMeta('og:image') || '';
+    metadata.siteName = getMeta('og:site_name') || '';
+    metadata.ogType = getMeta('og:type') || '';
+
+    // Favicon
+    const iconLink = doc.querySelector('link[rel="icon"], link[rel="shortcut icon"]');
+    if (iconLink) {
+      const href = iconLink.getAttribute('href');
+      if (href) {
+        try { metadata.favicon = new URL(href, url).toString(); } catch { metadata.favicon = href; }
+      }
+    }
+
+    return (metadata.title || metadata.description || metadata.ogImage) ? metadata : null;
+  } catch { return null; }
+}

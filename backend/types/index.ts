@@ -199,6 +199,8 @@ export interface ItemOptions {
   syncId?: string;
   starred?: number;
   archived?: number;
+  title?: string;
+  favicon?: string;
 }
 
 export interface ItemFilter {

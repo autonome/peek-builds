@@ -431,7 +431,13 @@ api.escape.onEscape(() => {
 // --- Webview events ---
 
 webview.addEventListener('page-title-updated', (e) => {
-  document.title = e.title || targetUrl;
+  const newTitle = e.title || targetUrl;
+  document.title = newTitle;
+
+  if (newTitle && newTitle !== 'Loading...') {
+    api.datastore.updateItemTitle(webview.getURL() || targetUrl, newTitle)
+      .catch(err => console.error('[page] Failed to update title:', err));
+  }
 });
 
 webview.addEventListener('did-navigate', async (e) => {
