@@ -2142,9 +2142,21 @@ export function registerWindowHandlers(): void {
       // NOT the host's. We use did-attach-webview to intercept when the guest attaches
       // and set up a setWindowOpenHandler that routes popups through Peek's window system
       // instead of letting Electron create raw default BrowserWindows.
+      //
+      // Also adds Cmd+L interception on guest webContents for the floating navbar.
+      // (Keystrokes inside the webview never reach the host's before-input-event.)
       if (url.startsWith('http://') || url.startsWith('https://')) {
         win.webContents.on('did-attach-webview', (_event, guestWebContents) => {
-          console.log(`[webview-popup] Guest webContents attached to window ${win.id}, adding setWindowOpenHandler`);
+          console.log(`[webview-popup] Guest webContents attached to window ${win.id}, adding setWindowOpenHandler + Cmd+L`);
+
+          // Cmd+L inside the webview guest: show the floating navbar
+          guestWebContents.on('before-input-event', (event, input) => {
+            if (input.type !== 'keyDown' || !input.meta) return;
+            if (input.key === 'l') {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: win.id });
+              event.preventDefault();
+            }
+          });
 
           guestWebContents.setWindowOpenHandler(({ url: popupUrl }) => {
             if (popupUrl.startsWith('http://') || popupUrl.startsWith('https://')) {
@@ -2279,13 +2291,14 @@ export function registerWindowHandlers(): void {
       // Add escape key handler to all windows
       addEscHandler(win);
 
-      // Add Cmd+L shortcut for web pages to show nav bar
-      // Web pages are now loaded inside peek://page container which handles nav
+      // Add Cmd+L shortcut on the HOST webContents as a fallback.
+      // The primary Cmd+L handler is on the webview guest (added via did-attach-webview above).
+      // This host-level handler fires when the page container's own DOM has focus (rare,
+      // but possible before the webview loads or if the user clicks outside the webview).
       if (url.startsWith('http://') || url.startsWith('https://')) {
         win.webContents.on('before-input-event', (event, input) => {
           if (input.type !== 'keyDown' || !input.meta) return;
           if (input.key === 'l') {
-            // Show the page container's nav bar
             publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: win.id });
             event.preventDefault();
           }

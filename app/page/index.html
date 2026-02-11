@@ -29,7 +29,16 @@
       -webkit-mask-image: -webkit-radial-gradient(white, white);
     }
 
-    /* Floating navbar - command-palette style overlay, NOT embedded */
+    /*
+     * FLOATING NAVBAR — DO NOT ADD AN INLINE/EMBEDDED NAVBAR
+     *
+     * The navbar is a FLOATING overlay shown via Cmd+L or hover trigger.
+     * It is NOT an embedded bar at the top of the page.
+     * It does NOT use -webkit-app-region: drag.
+     *
+     * Any inline/embedded navbar was deliberately removed.
+     * Do not re-add it under any circumstances without explicit user approval.
+     */
     .navbar {
       position: fixed;
       top: 40px;

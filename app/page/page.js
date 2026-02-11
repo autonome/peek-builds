@@ -6,6 +6,15 @@
  * - Floating navbar overlay (Cmd+L to show, Escape/click-outside to dismiss)
  *   NOT embedded in window chrome — floats over content like a command palette
  * - Resize via IPC to resize the BrowserWindow
+ *
+ * FLOATING NAVBAR — DO NOT ADD AN INLINE/EMBEDDED NAVBAR
+ *
+ * The navbar is a FLOATING overlay shown via Cmd+L or hover trigger.
+ * It is NOT an embedded bar at the top of the page.
+ * It does NOT use -webkit-app-region: drag.
+ *
+ * Any inline/embedded navbar was deliberately removed.
+ * Do not re-add it under any circumstances without explicit user approval.
  */
 
 import api from '../api.js';
@@ -58,7 +67,7 @@ async function initWebview() {
 // Start initialization
 initWebview();
 
-// --- Resize via IPC (drag on navbar handled natively by -webkit-app-region: drag) ---
+// --- Resize via IPC ---
 
 let isResizing = false;
 
@@ -125,7 +134,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Cmd+L: show floating navbar with URL focus
-api.subscribe('page:show-navbar', () => show({ focusUrl: true }), api.scopes.WINDOW);
+// Published from main process with GLOBAL scope (both host and webview guest fire this)
+api.subscribe('page:show-navbar', () => show({ focusUrl: true }), api.scopes.GLOBAL);
 
 // --- Nav button actions ---
 
