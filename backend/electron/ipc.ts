@@ -164,6 +164,11 @@ import {
 } from './session-partition.js';
 
 import {
+  saveSessionSnapshot,
+  restoreSessionSnapshot,
+} from './session.js';
+
+import {
   getIzuiCoordinator,
 } from './izui-state.js';
 
@@ -4272,6 +4277,41 @@ export function registerWebExtensionHandlers(): void {
   DEBUG && console.log('[ipc] Web extension handlers registered');
 }
 
+// ============================================================================
+// Session Handlers (manual save/restore from renderer)
+// ============================================================================
+
+function registerSessionHandlers(): void {
+  // Manual session save
+  ipcMain.handle('session-save', async () => {
+    try {
+      saveSessionSnapshot('manual');
+      return { success: true, message: 'Session saved' };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Manual session restore (restores on top of existing windows)
+  ipcMain.handle('session-restore', async () => {
+    try {
+      const prefs = getPrefs();
+      const result = await restoreSessionSnapshot(prefs);
+      return {
+        success: true,
+        message: `Restored ${result.restored} of ${result.total} window(s)`,
+        ...result,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  DEBUG && console.log('[ipc] Session handlers registered');
+}
+
 /**
  * Register all IPC handlers
  */
@@ -4286,5 +4326,6 @@ export function registerAllHandlers(onQuit: () => void): void {
   registerModesHandlers();
   registerContextHandlers();
   registerWebExtensionHandlers();
+  registerSessionHandlers();
   registerMiscHandlers(onQuit);
 }

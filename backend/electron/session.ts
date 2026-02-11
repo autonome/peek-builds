@@ -3,6 +3,7 @@
  *
  * Phase 1: Save session snapshot on quit.
  * Phase 2: Restore session snapshot on startup.
+ * Phase 3: Periodic autosave timer + manual save/restore commands.
  *
  * Captures all visible user windows and writes to extension_settings
  * using synchronous better-sqlite3 APIs (safe for before-quit handler).
@@ -13,7 +14,7 @@ import { BrowserWindow, screen } from 'electron';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow } from './main.js';
 import { publish, scopes as PubSubScopes, getSystemAddress } from './pubsub.js';
-import { DEBUG } from './config.js';
+import { DEBUG, isTestProfile } from './config.js';
 
 export interface WindowContext {
   mode: string | null;
@@ -96,6 +97,9 @@ function sanitizeParams(params: Record<string, unknown>): Record<string, unknown
  * Uses better-sqlite3 synchronous APIs via getDb().
  */
 export function saveSessionSnapshot(reason: SessionSnapshot['reason']): void {
+  // Skip save in test environments
+  if (isTestProfile()) return;
+
   DEBUG && console.log(`[session] Saving session snapshot (reason: ${reason})`);
 
   let db;
@@ -233,6 +237,8 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason']): void {
  * before the next save, we know it wasn't clean.
  */
 export function markSessionDirty(): void {
+  if (isTestProfile()) return;
+
   let db;
   try {
     db = getDb();
@@ -294,6 +300,12 @@ function isPointOnScreen(x: number, y: number): boolean {
  */
 export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Promise<{ restored: number; failed: number; total: number }> {
   const result = { restored: 0, failed: 0, total: 0 };
+
+  // Skip restore in test environments
+  if (isTestProfile()) {
+    DEBUG && console.log('[session] Skipping session restore in test profile');
+    return result;
+  }
 
   // Check restoreSession pref
   if (prefs.restoreSession === false) {
@@ -489,4 +501,59 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
 
   DEBUG && console.log(`[session] Restore complete: ${result.restored}/${result.total} windows restored, ${result.failed} failed`);
   return result;
+}
+
+// ============================================================================
+// Phase 3: Autosave Timer
+// ============================================================================
+
+let _autosaveTimer: ReturnType<typeof setInterval> | null = null;
+let _autosaveIntervalMinutes = 0;
+
+/**
+ * Start or restart the periodic autosave timer.
+ *
+ * @param intervalMinutes - Interval in minutes (0 = disabled)
+ */
+export function startAutosaveTimer(intervalMinutes: number): void {
+  // Stop existing timer first
+  stopAutosaveTimer();
+
+  _autosaveIntervalMinutes = intervalMinutes;
+
+  if (intervalMinutes <= 0) {
+    DEBUG && console.log('[session] Autosave disabled (interval=0)');
+    return;
+  }
+
+  const intervalMs = intervalMinutes * 60 * 1000;
+  _autosaveTimer = setInterval(() => {
+    DEBUG && console.log('[session] Autosave timer fired');
+    saveSessionSnapshot('autosave');
+  }, intervalMs);
+
+  DEBUG && console.log(`[session] Autosave timer started: every ${intervalMinutes} minute(s)`);
+}
+
+/**
+ * Stop the periodic autosave timer.
+ * Called during quit cleanup, before the final save.
+ */
+export function stopAutosaveTimer(): void {
+  if (_autosaveTimer !== null) {
+    clearInterval(_autosaveTimer);
+    _autosaveTimer = null;
+    DEBUG && console.log('[session] Autosave timer stopped');
+  }
+}
+
+/**
+ * Update the autosave interval if it has changed.
+ * Called when prefs change to restart the timer with the new interval.
+ */
+export function updateAutosaveInterval(intervalMinutes: number): void {
+  if (intervalMinutes !== _autosaveIntervalMinutes) {
+    DEBUG && console.log(`[session] Autosave interval changed: ${_autosaveIntervalMinutes} -> ${intervalMinutes}`);
+    startAutosaveTimer(intervalMinutes);
+  }
 }

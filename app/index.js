@@ -417,6 +417,32 @@ const registerExtensionCommands = () => {
     }
   });
 
+  // ---- Session Commands ----
+
+  api.commands.register({
+    name: 'save session',
+    description: 'Save current session snapshot',
+    execute: async () => {
+      const result = await api.invoke('session-save');
+      if (result && result.success) {
+        return { output: result.message, mimeType: 'text/plain' };
+      }
+      return { output: `Failed to save session: ${result?.error || 'unknown error'}`, mimeType: 'text/plain' };
+    }
+  });
+
+  api.commands.register({
+    name: 'restore previous session',
+    description: 'Restore windows from the last saved session',
+    execute: async () => {
+      const result = await api.invoke('session-restore');
+      if (result && result.success) {
+        return { output: result.message, mimeType: 'text/plain' };
+      }
+      return { output: `Failed to restore session: ${result?.error || 'unknown error'}`, mimeType: 'text/plain' };
+    }
+  });
+
   // ---- App Control Commands ----
 
   api.commands.register({

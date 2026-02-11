@@ -88,7 +88,7 @@ import {
 import {
   initSessionPartition,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, markSessionDirty } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval } from './session.js';
 
 // Catch unhandled errors and promise rejections without showing alert dialogs
 unhandled({
@@ -272,6 +272,7 @@ app.on('before-quit', () => {
   if (_beforeQuitCleanupDone) return;
   _beforeQuitCleanupDone = true;
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
+  try { stopAutosaveTimer(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutosaveTimer error:', e); }
   try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }
   try { cleanupDevExtensions(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevExtensions error:', e); }
   try { cleanupAdblocker(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupAdblocker error:', e); }
@@ -571,6 +572,18 @@ const onReady = async () => {
           _sessionRestorePending = false;
         }
       }
+
+      // Start periodic autosave timer (Phase 3)
+      const autosaveInterval = (typeof prefsMsg.prefs.sessionAutosaveInterval === 'number')
+        ? prefsMsg.prefs.sessionAutosaveInterval
+        : 5;
+      startAutosaveTimer(autosaveInterval);
+    } else {
+      // Extensions already loaded — this is a pref change, update autosave interval if changed
+      const autosaveInterval = (typeof prefsMsg.prefs.sessionAutosaveInterval === 'number')
+        ? prefsMsg.prefs.sessionAutosaveInterval
+        : 5;
+      updateAutosaveInterval(autosaveInterval);
     }
   });
 
