@@ -158,13 +158,21 @@ const commandDefinitions = [
 let registeredShortcut = null;
 let registeredCommands = [];
 
+const LOCAL_HUD_SHORTCUT = 'CommandOrControl+H';
+
 const initShortcut = () => {
-  const shortcut = 'Command+Shift+H';
+  const shortcut = 'Option+H';
   api.shortcuts.register(shortcut, async () => {
     await toggleHud();
   }, { global: true });
   registeredShortcut = shortcut;
-  console.log('[ext:hud] Registered shortcut:', shortcut);
+
+  // Local shortcut (Cmd+H) — works when a Peek window is focused
+  api.shortcuts.register(LOCAL_HUD_SHORTCUT, async () => {
+    await toggleHud();
+  });
+
+  console.log('[ext:hud] Registered shortcuts:', shortcut, '(global),', LOCAL_HUD_SHORTCUT, '(local)');
 };
 
 const initCommands = async () => {
@@ -225,6 +233,7 @@ const uninit = () => {
     api.shortcuts.unregister(registeredShortcut, { global: true });
     registeredShortcut = null;
   }
+  api.shortcuts.unregister(LOCAL_HUD_SHORTCUT);
   uninitCommands();
   closeHud();
 };

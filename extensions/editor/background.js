@@ -70,8 +70,11 @@ const extension = {
     // Query in case cmd is already ready
     api.publish('cmd:query', {}, api.scopes.GLOBAL);
 
-    // Register global shortcut Option+e
-    api.shortcuts.register('Option+e', () => openEditor());
+    // Register global shortcut Option+E (works when Peek is not focused)
+    api.shortcuts.register('Option+e', () => openEditor(), { global: true });
+
+    // Register local shortcut Cmd+E (works when a Peek window is focused)
+    api.shortcuts.register('CommandOrControl+E', () => openEditor());
 
     // Subscribe to editor:open — open editor with optional content or itemId
     api.subscribe('editor:open', (msg) => {
@@ -102,7 +105,8 @@ const extension = {
 
     if (hasPeekAPI) {
       api.commands.unregister('open editor');
-      api.shortcuts.unregister('Option+e');
+      api.shortcuts.unregister('Option+e', { global: true });
+      api.shortcuts.unregister('CommandOrControl+E');
     }
   }
 };

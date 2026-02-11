@@ -17,7 +17,7 @@ const prefsSchema = {
     "shortcutKey": {
       "description": "App keyboard shortcut to load settings",
       "type": "string",
-      "default": "CommandOrControl+Shift+,"
+      "default": "CommandOrControl+,"
     },
     "height": {
       "description": "User-set or -defined height of Settings page",
@@ -45,9 +45,9 @@ const prefsSchema = {
       "default": false
     },
     "quitShortcut": {
-      "description": "Global keyboard shortcut to quit the app",
+      "description": "Keyboard shortcut to quit the app",
       "type": "string",
-      "default": "Option+q"
+      "default": "CommandOrControl+Q"
     },
     "backupDir": {
       "description": "Directory for daily database backups. Leave empty to disable automatic backups.",
@@ -126,8 +126,8 @@ const storageKeys = {
 // defaults for user-modifiable preferences or data
 const defaults = {
   prefs: {
-    shortcutKey: 'Option+,',
-    quitShortcut: 'Option+q',
+    shortcutKey: 'CommandOrControl+,',
+    quitShortcut: 'CommandOrControl+Q',
     height: 850,
     width: 800,
     startupFeature: 'peek://app/settings/settings.html',

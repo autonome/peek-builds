@@ -360,8 +360,8 @@ const extension = {
 
     api.publish('cmd:query', {}, api.scopes.GLOBAL);
 
-    // Register global shortcut
-    api.shortcuts.register('Option+f', openFeedsUI, { global: true });
+    // Register global shortcut (Option+Shift+F to avoid conflict with localsearch's Option+F)
+    api.shortcuts.register('Option+Shift+F', openFeedsUI, { global: true });
 
     // Start polling timer
     pollTimer = setInterval(pollAllFeeds, POLL_INTERVAL_MS);
@@ -397,7 +397,7 @@ const extension = {
       pollTimer = null;
     }
 
-    api.shortcuts.unregister('Option+f', { global: true });
+    api.shortcuts.unregister('Option+Shift+F', { global: true });
     api.commands.unregister('feeds');
     api.commands.unregister('feeds:subscribe');
     api.commands.unregister('feeds:refresh');

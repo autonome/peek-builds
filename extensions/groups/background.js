@@ -385,12 +385,18 @@ let dynamicGroupCommands = [];
 
 let registeredShortcut = null;
 let registeredCommands = [];
+const LOCAL_SHORTCUT = 'CommandOrControl+G';
 
 const initShortcut = (shortcut) => {
   api.shortcuts.register(shortcut, () => {
     openGroupsWindow();
   }, { global: true });
   registeredShortcut = shortcut;
+
+  // Local shortcut (Cmd+G) — works when a Peek window is focused
+  api.shortcuts.register(LOCAL_SHORTCUT, () => {
+    openGroupsWindow();
+  });
 };
 
 /**
@@ -541,6 +547,7 @@ const uninit = () => {
     api.shortcuts.unregister(registeredShortcut, { global: true });
     registeredShortcut = null;
   }
+  api.shortcuts.unregister(LOCAL_SHORTCUT);
   uninitCommands();
 };
 

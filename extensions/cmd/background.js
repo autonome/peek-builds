@@ -313,19 +313,27 @@ const openPanelWindow = (prefs) => {
 };
 
 /**
- * Register the global shortcut
+ * Register shortcuts: global (Option+Space) and local (Cmd+K)
  */
+const LOCAL_SHORTCUT = 'CommandOrControl+K';
+
 const initShortcut = (prefs) => {
   if (registeredShortcut) {
     api.shortcuts.unregister(registeredShortcut, { global: true });
   }
+  api.shortcuts.unregister(LOCAL_SHORTCUT);
 
   registeredShortcut = prefs.shortcutKey;
   api.shortcuts.register(prefs.shortcutKey, () => {
     openPanelWindow(prefs);
   }, { global: true });
 
-  log('ext:cmd', 'Registered shortcut:', prefs.shortcutKey);
+  // Local shortcut (Cmd+K) — works when a Peek window is focused
+  api.shortcuts.register(LOCAL_SHORTCUT, () => {
+    openPanelWindow(prefs);
+  });
+
+  log('ext:cmd', 'Registered shortcuts:', prefs.shortcutKey, '(global),', LOCAL_SHORTCUT, '(local)');
 };
 
 /**
@@ -338,6 +346,7 @@ const uninit = () => {
     api.shortcuts.unregister(registeredShortcut, { global: true });
     registeredShortcut = null;
   }
+  api.shortcuts.unregister(LOCAL_SHORTCUT);
 
   // Note: We don't clear the command registry here because other extensions
   // may still be running. The registry will be rebuilt on next init.
@@ -349,11 +358,12 @@ const uninit = () => {
 const reinit = async () => {
   log('ext:cmd', 'reinit');
 
-  // Unregister old shortcut
+  // Unregister old shortcuts
   if (registeredShortcut) {
     api.shortcuts.unregister(registeredShortcut, { global: true });
     registeredShortcut = null;
   }
+  api.shortcuts.unregister(LOCAL_SHORTCUT);
 
   // Load new settings and re-register
   currentSettings = await loadSettings();

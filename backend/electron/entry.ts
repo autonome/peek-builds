@@ -132,7 +132,7 @@ setPreloadPath(preloadPath);
 
 const strings = {
   defaults: {
-    quitShortcut: 'Option+q'
+    quitShortcut: 'CommandOrControl+Q'
   },
   topics: {
     prefs: 'topic:core:prefs'
