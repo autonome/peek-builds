@@ -392,6 +392,7 @@ peek-card[selected] {
   padding: 16px 0;
   border-bottom: 1px solid var(--base02);
   margin-bottom: 20px;
+  flex-shrink: 0;
 }
 
 .detail-favicon {
@@ -430,6 +431,7 @@ peek-card[selected] {
   display: flex;
   gap: 8px;
   margin-bottom: 20px;
+  flex-shrink: 0;
 }
 
 .detail-actions:empty {
@@ -450,6 +452,7 @@ peek-card[selected] {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .detail-editor-header .detail-label {
@@ -521,6 +524,7 @@ peek-card[selected] {
 /* Detail sections (tags) */
 .detail-section {
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .detail-label {
