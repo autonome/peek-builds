@@ -488,6 +488,7 @@ peek-card[selected] {
   display: flex;
   flex-direction: column;
   flex: 1;
+  position: relative;
 }
 
 .detail-editor-container .cm-editor {
@@ -501,24 +502,19 @@ peek-card[selected] {
   flex: 1;
 }
 
-/* Vim status line below embedded editor */
+/* Vim status line overlays the bottom of the editor */
 .detail-editor-status-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
   border-radius: 0 0 8px 8px;
   overflow: hidden;
-  flex-shrink: 0;
+  z-index: 5;
 }
 
 .detail-editor-status-line .vim-status-line {
   border-radius: 0 0 8px 8px;
-}
-
-/* When vim status line is active, flatten bottom corners of the editor */
-.detail-editor-container.has-vim-status {
-  border-radius: 8px 8px 0 0;
-}
-
-.detail-editor-container.has-vim-status .cm-editor {
-  border-radius: 8px 8px 0 0;
 }
 
 /* Detail sections (tags) */
