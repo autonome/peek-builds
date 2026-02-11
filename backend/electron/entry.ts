@@ -5,7 +5,7 @@
  * All Electron-specific code lives here.
  */
 
-import { app, globalShortcut } from 'electron';
+import { app, globalShortcut, ipcMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -50,6 +50,8 @@ import {
   // IPC
   registerAllHandlers,
   restoreSavedTheme,
+  // Database
+  getDb,
   // Config
   WEB_CORE_ADDRESS,
   SETTINGS_ADDRESS,
@@ -86,7 +88,7 @@ import {
 import {
   initSessionPartition,
 } from './session-partition.js';
-import { saveSessionSnapshot } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, markSessionDirty } from './session.js';
 
 // Catch unhandled errors and promise rejections without showing alert dialogs
 unhandled({
@@ -334,6 +336,48 @@ const onReady = async () => {
   // Initialize backend (database, protocol handler, pubsub broadcaster)
   await initialize();
 
+  // Mark session as dirty for crash detection (before restore)
+  markSessionDirty();
+
+  // Check if session restore has a valid snapshot waiting.
+  // This flag tells the core app to skip the startup feature (settings window)
+  // when there are windows to restore.
+  let _sessionRestorePending = false;
+  try {
+    const db = getDb();
+    const snapshotRow = db.prepare(
+      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'snapshot'`
+    ).get() as { value: string } | undefined;
+    if (snapshotRow?.value) {
+      const snapshot = JSON.parse(snapshotRow.value);
+      if (snapshot.version === 1 && snapshot.windows && snapshot.windows.length > 0) {
+        // Also check metadata for crash detection
+        let skipDueToCrash = false;
+        const metaRow = db.prepare(
+          `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+        ).get() as { value: string } | undefined;
+        if (metaRow?.value) {
+          const meta = JSON.parse(metaRow.value);
+          if (meta.cleanShutdown === false && (meta.crashCount ?? 0) > 3) {
+            skipDueToCrash = true;
+          }
+        }
+        if (!skipDueToCrash) {
+          _sessionRestorePending = true;
+          DEBUG && console.log(`[session] Valid snapshot found with ${snapshot.windows.length} window(s), restore pending`);
+        }
+      }
+    }
+  } catch (err) {
+    DEBUG && console.log('[session] Failed to pre-check snapshot:', err);
+  }
+
+  // IPC handler for core app to check if session restore will happen
+  // (used to skip the startup feature when restore is pending)
+  ipcMain.handle('session-restore-pending', () => {
+    return _sessionRestorePending;
+  });
+
   // Initialize session partitioning for profile isolation
   // This must happen early, before any sessions are used
   initSessionPartition(PROFILE, defaultUserDataPath);
@@ -511,6 +555,22 @@ const onReady = async () => {
       const extTime = Date.now() - extStart;
       const totalTime = Date.now() - ((global as Record<string, unknown>).__startupStart as number);
       DEBUG && console.log(`[startup] main: ${extStart - ((global as Record<string, unknown>).__startupStart as number)}ms, extensions: ${extTime}ms, total: ${totalTime}ms`);
+
+      // Restore session after extensions are loaded
+      if (_sessionRestorePending) {
+        try {
+          const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs);
+          DEBUG && console.log(`[session] Restore result:`, restoreResult);
+          if (restoreResult.restored === 0) {
+            // If nothing was actually restored, clear the pending flag
+            // so future startup feature checks don't think restore happened
+            _sessionRestorePending = false;
+          }
+        } catch (err) {
+          console.error('[session] Session restore failed:', err);
+          _sessionRestorePending = false;
+        }
+      }
     }
   });
 

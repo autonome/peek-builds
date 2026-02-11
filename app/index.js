@@ -511,25 +511,42 @@ const init = async () => {
     }
   });
 
-  // Open startup feature (settings by default, or user-configured feature)
+  // Check if session restore is pending — if so, skip the startup feature
+  // since restored windows will replace the default startup window
+  let sessionRestorePending = false;
   try {
-    const startupUrl = p.startupFeature || settingsAddress;
-    log('core', 'Opening startup feature:', startupUrl);
-
-    if (startupUrl === settingsAddress) {
-      await openSettingsWindow(p);
-    } else {
-      // Open the configured startup feature as a workspace
-      await windowManager.createWindow(startupUrl, {
-        key: startupUrl,
-        role: 'workspace',
-        transparent: true,
-        height: p.height || 600,
-        width: p.width || 800
-      });
+    if (p.restoreSession !== false) {
+      sessionRestorePending = await api.invoke('session-restore-pending');
+      if (sessionRestorePending) {
+        log('core', 'Session restore pending, skipping startup feature');
+      }
     }
-  } catch (error) {
-    log.error('core', 'Error opening startup feature:', error);
+  } catch (err) {
+    log('core', 'Failed to check session restore status:', err);
+  }
+
+  // Open startup feature (settings by default, or user-configured feature)
+  // Skip if session restore is pending (restored windows replace the startup window)
+  if (!sessionRestorePending) {
+    try {
+      const startupUrl = p.startupFeature || settingsAddress;
+      log('core', 'Opening startup feature:', startupUrl);
+
+      if (startupUrl === settingsAddress) {
+        await openSettingsWindow(p);
+      } else {
+        // Open the configured startup feature as a workspace
+        await windowManager.createWindow(startupUrl, {
+          key: startupUrl,
+          role: 'workspace',
+          transparent: true,
+          height: p.height || 600,
+          width: p.width || 800
+        });
+      }
+    } catch (error) {
+      log.error('core', 'Error opening startup feature:', error);
+    }
   }
 
   // Feature enable/disable handler
