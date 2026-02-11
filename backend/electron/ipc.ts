@@ -2331,8 +2331,7 @@ export function registerWindowHandlers(): void {
       }
 
       // Update item titles when the page finishes loading (non-canvas web pages).
-      // Canvas pages handle this via webview page-title-updated in page.js,
-      // but we also handle it on the guest webContents below via did-attach-webview.
+      // Canvas pages have a guest webContents handler below via did-attach-webview.
       // Non-canvas pages (modals, slides, quick-views) load directly in the BrowserWindow.
       if (isWebPage && !useCanvas && !url.startsWith('peek://')) {
         win.webContents.on('page-title-updated', (_event: Electron.Event, title: string) => {

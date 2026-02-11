@@ -993,7 +993,8 @@ export function createBackgroundWindow(): BrowserWindow {
           // Set initial mode based on URL
           updateModeForNavigation(newWin.id, details.url);
 
-          // Update item title when page finishes loading (background child windows)
+          // Update item title when page finishes loading (background child windows).
+          // Without this, titles stay empty or "Loading..." in history.
           if (details.url.startsWith('http://') || details.url.startsWith('https://')) {
             newWin.webContents.on('page-title-updated', (_event: Electron.Event, title: string) => {
               if (title && title !== 'Loading...') {

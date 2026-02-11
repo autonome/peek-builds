@@ -2294,15 +2294,15 @@ export function updateItemTitle(url: string, title: string): boolean {
     'SELECT id, title FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
   ).get('url', normalizedUri) as { id: string; title: string } | undefined;
 
-  // Phase 2: If no match, try with raw URL (handles cases where normalizeUrl behaves differently)
+  // Phase 2: If no match, try with raw URL (handles cases where normalizeUrl differs)
   if (!existing && url !== normalizedUri) {
     existing = d.prepare(
       'SELECT id, title FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
     ).get('url', url) as { id: string; title: string } | undefined;
   }
 
-  // Phase 3: If still no match, try domain-based lookup for the most recent matching item.
-  // This handles redirect scenarios (e.g., http://example.com → https://www.example.com/)
+  // Phase 3: If still no match, try domain-based lookup for the most recent item
+  // missing a title. Handles redirect scenarios (http->https, www->non-www).
   if (!existing) {
     try {
       const parsed = new URL(url);
@@ -2312,7 +2312,7 @@ export function updateItemTitle(url: string, title: string): boolean {
          AND (title = '' OR title IS NULL OR title = 'Loading...')
          ORDER BY updatedAt DESC LIMIT 1`
       ).get('url', domain) as { id: string; title: string } | undefined;
-    } catch { /* invalid URL, skip */ }
+    } catch { /* invalid URL, skip phase 3 */ }
   }
 
   if (!existing) return false;

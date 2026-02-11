@@ -341,10 +341,10 @@ const extension = {
       }
     }, api.scopes.GLOBAL);
 
-    // Listen for page content ready events (fires when page title is set,
-    // meaning the page has loaded enough for content extraction).
-    // This catches pages that already exist in history (no item:created fires)
-    // and provides a more reliable signal than the 2s delay after item:created.
+    // Listen for page content ready events from the main process.
+    // Fires when page-title-updated occurs, meaning the page has loaded
+    // enough for content extraction. This catches pages that already exist
+    // in history (no item:created) and provides a reliable extraction signal.
     api.subscribe('page:content-ready', (msg) => {
       if (msg.url && msg.url.startsWith('http')) {
         handlePageLoad({ content: msg.url, title: msg.title || '' });
