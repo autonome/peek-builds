@@ -4,41 +4,6 @@
 
 // ==================== Datastore Entity Types ====================
 
-export interface Address {
-  id: string;
-  uri: string;
-  protocol: string;
-  domain: string;
-  path: string;
-  title: string;
-  mimeType: string;
-  favicon: string;
-  description: string;
-  tags: string;
-  metadata: string;
-  createdAt: number;
-  updatedAt: number;
-  lastVisitAt: number;
-  visitCount: number;
-  starred: number;
-  archived: number;
-}
-
-export interface Visit {
-  id: string;
-  addressId: string;
-  timestamp: number;
-  duration: number;
-  source: string;
-  sourceId: string;
-  windowType: string;
-  metadata: string;
-  scrollDepth: number;
-  interacted: number;
-  prevId: string | null;
-  nextId: string | null;
-}
-
 export interface Content {
   id: string;
   title: string;
@@ -74,14 +39,7 @@ export interface Tag {
   frecencyScore: number;
 }
 
-export interface AddressTag {
-  id: string;
-  addressId: string;
-  tagId: string;
-  createdAt: number;
-}
-
-// ==================== Item Types (for mobile-style lightweight content) ====================
+// ==================== Item Types ====================
 
 // Unified types across all platforms (mobile, desktop, server)
 // - url: Saved URLs/bookmarks
@@ -207,23 +165,6 @@ export interface DatastoreStats {
 
 // ==================== Filter Types ====================
 
-export interface AddressFilter {
-  domain?: string;
-  protocol?: string;
-  starred?: number;
-  tag?: string;
-  sortBy?: 'lastVisit' | 'visitCount' | 'created';
-  limit?: number;
-}
-
-export interface VisitFilter {
-  addressId?: string;
-  source?: string;
-  since?: number;
-  until?: number;
-  limit?: number;
-}
-
 export interface ContentFilter {
   contentType?: string;
   mimeType?: string;
@@ -232,33 +173,6 @@ export interface ContentFilter {
   tag?: string;
   sortBy?: 'updated' | 'created';
   limit?: number;
-}
-
-export interface AddressOptions {
-  protocol?: string;
-  domain?: string;
-  path?: string;
-  title?: string;
-  mimeType?: string;
-  favicon?: string;
-  description?: string;
-  tags?: string;
-  metadata?: string;
-  lastVisitAt?: number;
-  visitCount?: number;
-  starred?: number;
-  archived?: number;
-}
-
-export interface VisitOptions {
-  timestamp?: number;
-  duration?: number;
-  source?: string;
-  sourceId?: string;
-  windowType?: string;
-  metadata?: string;
-  scrollDepth?: number;
-  interacted?: number;
 }
 
 export interface ContentOptions {
@@ -350,11 +264,8 @@ export interface ItemEventOptions {
 // ==================== Table Names ====================
 
 export type TableName =
-  | 'addresses'
-  | 'visits'
   | 'content'
   | 'tags'
-  | 'address_tags'
   | 'blobs'
   | 'scripts_data'
   | 'feeds'
@@ -370,11 +281,8 @@ export type TableName =
   | 'settings';
 
 export const tableNames: TableName[] = [
-  'addresses',
-  'visits',
   'content',
   'tags',
-  'address_tags',
   'blobs',
   'scripts_data',
   'feeds',

@@ -11,17 +11,10 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type {
   TableName,
-  Address,
-  Visit,
   Content,
   Tag,
-  AddressTag,
   DatastoreStats,
-  AddressFilter,
-  VisitFilter,
   ContentFilter,
-  AddressOptions,
-  VisitOptions,
   ContentOptions,
   Item,
   ItemTag,
@@ -53,49 +46,10 @@ const REQUIRED_SYNC_COLUMNS: Record<string, string[]> = SCHEMA.validation.requir
 let syncDisabledDueToVersionMismatch = false;
 
 // SQL Schema
+// NOTE: addresses, visits, and address_tags tables have been removed.
+// Data has been migrated to items/item_visits/item_tags.
+// Existing databases will have these tables dropped by dropLegacyAddressTables().
 const createTableStatements = `
-  CREATE TABLE IF NOT EXISTS addresses (
-    id TEXT PRIMARY KEY,
-    uri TEXT NOT NULL,
-    protocol TEXT DEFAULT 'https',
-    domain TEXT,
-    path TEXT DEFAULT '',
-    title TEXT DEFAULT '',
-    mimeType TEXT DEFAULT 'text/html',
-    favicon TEXT DEFAULT '',
-    description TEXT DEFAULT '',
-    tags TEXT DEFAULT '',
-    metadata TEXT DEFAULT '{}',
-    createdAt INTEGER,
-    updatedAt INTEGER,
-    lastVisitAt INTEGER DEFAULT 0,
-    visitCount INTEGER DEFAULT 0,
-    starred INTEGER DEFAULT 0,
-    archived INTEGER DEFAULT 0
-  );
-  CREATE INDEX IF NOT EXISTS idx_addresses_uri ON addresses(uri);
-  CREATE INDEX IF NOT EXISTS idx_addresses_domain ON addresses(domain);
-  CREATE INDEX IF NOT EXISTS idx_addresses_protocol ON addresses(protocol);
-  CREATE INDEX IF NOT EXISTS idx_addresses_lastVisitAt ON addresses(lastVisitAt);
-  CREATE INDEX IF NOT EXISTS idx_addresses_visitCount ON addresses(visitCount);
-  CREATE INDEX IF NOT EXISTS idx_addresses_starred ON addresses(starred);
-
-  CREATE TABLE IF NOT EXISTS visits (
-    id TEXT PRIMARY KEY,
-    addressId TEXT,
-    timestamp INTEGER,
-    duration INTEGER DEFAULT 0,
-    source TEXT DEFAULT 'direct',
-    sourceId TEXT DEFAULT '',
-    windowType TEXT DEFAULT 'main',
-    metadata TEXT DEFAULT '{}',
-    scrollDepth INTEGER DEFAULT 0,
-    interacted INTEGER DEFAULT 0
-  );
-  CREATE INDEX IF NOT EXISTS idx_visits_addressId ON visits(addressId);
-  CREATE INDEX IF NOT EXISTS idx_visits_timestamp ON visits(timestamp);
-  CREATE INDEX IF NOT EXISTS idx_visits_source ON visits(source);
-
   CREATE TABLE IF NOT EXISTS content (
     id TEXT PRIMARY KEY,
     title TEXT DEFAULT 'Untitled',
@@ -138,16 +92,6 @@ const createTableStatements = `
   CREATE INDEX IF NOT EXISTS idx_tags_slug ON tags(slug);
   CREATE INDEX IF NOT EXISTS idx_tags_parentId ON tags(parentId);
   CREATE INDEX IF NOT EXISTS idx_tags_frecencyScore ON tags(frecencyScore);
-
-  CREATE TABLE IF NOT EXISTS address_tags (
-    id TEXT PRIMARY KEY,
-    addressId TEXT NOT NULL,
-    tagId TEXT NOT NULL,
-    createdAt INTEGER
-  );
-  CREATE INDEX IF NOT EXISTS idx_address_tags_addressId ON address_tags(addressId);
-  CREATE INDEX IF NOT EXISTS idx_address_tags_tagId ON address_tags(tagId);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_address_tags_unique ON address_tags(addressId, tagId);
 
   CREATE TABLE IF NOT EXISTS blobs (
     id TEXT PRIMARY KEY,
@@ -423,6 +367,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateTagsLastUsedColumn();
   migrateContextHistory();
   migrateEntityType();
+  dropLegacyAddressTables();
 
   // Validate schema against canonical definition
   validateSyncSchema();
@@ -601,7 +546,7 @@ function migrateTinyBaseData(): void {
 function migrateSyncColumns(): void {
   if (!db) return;
 
-  const tablesToMigrate = ['addresses', 'content', 'tags', 'items'];
+  const tablesToMigrate = ['content', 'tags', 'items'];
 
   for (const table of tablesToMigrate) {
     // Check if syncId column already exists
@@ -783,6 +728,22 @@ function migrateItemVisitColumns(): void {
   }
 }
 
+// Legacy types used only by migration functions (tables are dropped after migration)
+interface LegacyAddress {
+  id: string; uri: string; protocol: string; domain: string; path: string;
+  title: string; mimeType: string; favicon: string; description: string;
+  tags: string; metadata: string; createdAt: number; updatedAt: number;
+  lastVisitAt: number; visitCount: number; starred: number; archived: number;
+}
+interface LegacyVisit {
+  id: string; addressId: string; timestamp: number; duration: number;
+  source: string; sourceId: string; windowType: string; metadata: string;
+  scrollDepth: number; interacted: number; prevId: string | null; nextId: string | null;
+}
+interface LegacyAddressTag {
+  id: string; addressId: string; tagId: string; createdAt: number;
+}
+
 /**
  * Migrate tagged addresses from addresses/address_tags to items/item_tags
  * This ensures old tagged data is visible in the new Tags UI
@@ -799,11 +760,18 @@ function migrateAddressesToItems(): void {
     return;
   }
 
+  // Skip if legacy tables don't exist (fresh install)
+  const addressesExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='addresses'`).get();
+  if (!addressesExists) {
+    db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+    return;
+  }
+
   // Get all addresses that have tags
   const taggedAddresses = db.prepare(`
     SELECT DISTINCT a.* FROM addresses a
     INNER JOIN address_tags at ON a.id = at.addressId
-  `).all() as Address[];
+  `).all() as LegacyAddress[];
 
   if (taggedAddresses.length === 0) {
     // Mark as complete even if no data to migrate
@@ -866,9 +834,9 @@ function migrateAddressesToItems(): void {
     }
 
     // Copy tag associations
-    const addressTags = db.prepare('SELECT * FROM address_tags WHERE addressId = ?').all(addr.id) as AddressTag[];
+    const addrTags = db.prepare('SELECT * FROM address_tags WHERE addressId = ?').all(addr.id) as LegacyAddressTag[];
 
-    for (const at of addressTags) {
+    for (const at of addrTags) {
       // Check if item-tag link already exists
       const existingLink = db.prepare('SELECT * FROM item_tags WHERE itemId = ? AND tagId = ?').get(itemId, at.tagId);
       if (!existingLink) {
@@ -893,6 +861,10 @@ function migrateAddressesToItems(): void {
  */
 function migrateVisitChaining(): void {
   if (!db) return;
+
+  // Skip if legacy visits table doesn't exist (fresh install)
+  const visitsExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='visits'`).get();
+  if (!visitsExists) return;
 
   const columns = db.prepare(`PRAGMA table_info(visits)`).all() as { name: string }[];
   const hasPrevId = columns.some(col => col.name === 'prevId');
@@ -1089,8 +1061,15 @@ function migrateAllAddressesToItems(): void {
     return;
   }
 
+  // Skip if legacy tables don't exist (fresh install)
+  const addressesExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='addresses'`).get();
+  if (!addressesExists) {
+    db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+    return;
+  }
+
   // Get ALL addresses (not just tagged ones)
-  const allAddresses = db.prepare('SELECT * FROM addresses').all() as Address[];
+  const allAddresses = db.prepare('SELECT * FROM addresses').all() as LegacyAddress[];
 
   if (allAddresses.length === 0) {
     db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
@@ -1212,8 +1191,8 @@ function migrateAllAddressesToItems(): void {
       createdCount++;
 
       // Copy tag associations from address_tags to item_tags
-      const addressTags = db.prepare('SELECT * FROM address_tags WHERE addressId = ?').all(addr.id) as AddressTag[];
-      for (const at of addressTags) {
+      const addrTags = db.prepare('SELECT * FROM address_tags WHERE addressId = ?').all(addr.id) as LegacyAddressTag[];
+      for (const at of addrTags) {
         const existingLink = db.prepare('SELECT * FROM item_tags WHERE itemId = ? AND tagId = ?').get(itemId, at.tagId);
         if (!existingLink) {
           const linkId = generateId('item_tag');
@@ -1253,6 +1232,13 @@ function migrateVisitsToItemVisits(): void {
     return;
   }
 
+  // Skip if legacy tables don't exist (fresh install)
+  const visitsExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='visits'`).get();
+  if (!visitsExists) {
+    db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+    return;
+  }
+
   // Load address → item mapping
   const mapRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('address_to_item_map') as { value: string } | undefined;
   if (!mapRow) {
@@ -1264,7 +1250,7 @@ function migrateVisitsToItemVisits(): void {
   const addressToItemMap: Record<string, string> = JSON.parse(mapRow.value);
 
   // Get all visits
-  const allVisits = db.prepare('SELECT * FROM visits ORDER BY timestamp ASC').all() as Visit[];
+  const allVisits = db.prepare('SELECT * FROM visits ORDER BY timestamp ASC').all() as LegacyVisit[];
 
   if (allVisits.length === 0) {
     db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
@@ -1529,6 +1515,34 @@ function migrateEntityType(): void {
       WHERE content LIKE 'http%'`);
   } catch (error) {
     DEBUG && console.log('main', `Entity indexes:`, (error as Error).message);
+  }
+}
+
+/**
+ * Drop legacy address/visit/address_tags tables.
+ * Data was already migrated to items/item_visits/item_tags by earlier migrations.
+ */
+function dropLegacyAddressTables(): void {
+  if (!db) return;
+
+  // Check if addresses table still exists
+  const addressesExists = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='addresses'`
+  ).get();
+
+  if (!addressesExists) return;
+
+  DEBUG && console.log('main', 'Dropping legacy addresses/visits/address_tags tables');
+
+  try {
+    db.exec(`
+      DROP TABLE IF EXISTS address_tags;
+      DROP TABLE IF EXISTS visits;
+      DROP TABLE IF EXISTS addresses;
+    `);
+    DEBUG && console.log('main', 'Legacy tables dropped successfully');
+  } catch (error) {
+    console.error('Failed to drop legacy tables:', error);
   }
 }
 
@@ -1913,199 +1927,11 @@ export function isSyncDisabledDueToVersion(): boolean {
   return syncDisabledDueToVersionMismatch;
 }
 
-// ==================== Address Operations ====================
-
-export function addAddress(uri: string, options: AddressOptions = {}): { id: string } {
-  const normalizedUri = normalizeUrl(uri);
-  const parsed = parseUrl(normalizedUri);
-  const addressId = generateId('addr');
-  const timestamp = now();
-
-  getDb().prepare(`
-    INSERT INTO addresses (id, uri, protocol, domain, path, title, mimeType, favicon, description, tags, metadata, createdAt, updatedAt, lastVisitAt, visitCount, starred, archived)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    addressId,
-    normalizedUri,
-    options.protocol || parsed.protocol,
-    options.domain || parsed.domain,
-    options.path || parsed.path,
-    options.title || '',
-    options.mimeType || 'text/html',
-    options.favicon || '',
-    options.description || '',
-    options.tags || '',
-    options.metadata || '{}',
-    timestamp,
-    timestamp,
-    options.lastVisitAt || 0,
-    options.visitCount || 0,
-    options.starred || 0,
-    options.archived || 0
-  );
-
-  return { id: addressId };
-}
-
-export function getAddress(id: string): Address | undefined {
-  return getDb().prepare('SELECT * FROM addresses WHERE id = ?').get(id) as Address | undefined;
-}
-
-export function updateAddress(id: string, updates: Partial<Address>): Address | undefined {
-  const existing = getAddress(id);
-  if (!existing) return undefined;
-
-  const updated = { ...existing, ...updates, updatedAt: now() };
-  const columns = Object.keys(updated).filter(k => k !== 'id');
-  const setClause = columns.map(col => `${col} = ?`).join(', ');
-  const values = columns.map(col => updated[col as keyof Address]);
-
-  getDb().prepare(`UPDATE addresses SET ${setClause} WHERE id = ?`).run(...values, id);
-  return updated as Address;
-}
-
-export function queryAddresses(filter: AddressFilter = {}): Address[] {
-  let sql = 'SELECT * FROM addresses WHERE 1=1';
-  const params: (string | number)[] = [];
-
-  if (filter.domain) {
-    sql += ' AND domain = ?';
-    params.push(filter.domain);
-  }
-  if (filter.protocol) {
-    sql += ' AND protocol = ?';
-    params.push(filter.protocol);
-  }
-  if (filter.starred !== undefined) {
-    sql += ' AND starred = ?';
-    params.push(filter.starred);
-  }
-  if (filter.tag) {
-    sql += ' AND tags LIKE ?';
-    params.push(`%${filter.tag}%`);
-  }
-
-  const sortMap: Record<string, string> = {
-    lastVisit: 'lastVisitAt DESC',
-    visitCount: 'visitCount DESC',
-    created: 'createdAt DESC'
-  };
-  sql += ` ORDER BY ${sortMap[filter.sortBy || ''] || 'updatedAt DESC'}`;
-
-  if (filter.limit) {
-    sql += ' LIMIT ?';
-    params.push(filter.limit);
-  }
-
-  return getDb().prepare(sql).all(...params) as Address[];
-}
-
-// ==================== Visit Operations ====================
-
-export function addVisit(addressId: string, options: VisitOptions = {}): { id: string } {
-  const visitId = generateId('visit');
-  const timestamp = now();
-  const d = getDb();
-
-  // Find the most recent visit for chaining
-  const prevVisit = d.prepare('SELECT id FROM visits ORDER BY timestamp DESC LIMIT 1').get() as { id: string } | undefined;
-  const prevId = prevVisit ? prevVisit.id : null;
-
-  d.prepare(`
-    INSERT INTO visits (id, addressId, timestamp, duration, source, sourceId, windowType, metadata, scrollDepth, interacted, prevId, nextId)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-  `).run(
-    visitId,
-    addressId,
-    options.timestamp || timestamp,
-    options.duration || 0,
-    options.source || 'direct',
-    options.sourceId || '',
-    options.windowType || 'main',
-    options.metadata || '{}',
-    options.scrollDepth || 0,
-    options.interacted || 0,
-    prevId
-  );
-
-  // Update nextId on the previous visit
-  if (prevId) {
-    d.prepare('UPDATE visits SET nextId = ? WHERE id = ?').run(visitId, prevId);
-  }
-
-  // Update address visit stats
-  d.prepare(`
-    UPDATE addresses SET lastVisitAt = ?, visitCount = visitCount + 1, updatedAt = ?
-    WHERE id = ?
-  `).run(timestamp, timestamp, addressId);
-
-  return { id: visitId };
-}
-
-export function queryVisits(filter: VisitFilter = {}): Visit[] {
-  let sql = 'SELECT * FROM visits WHERE 1=1';
-  const params: (string | number)[] = [];
-
-  if (filter.addressId) {
-    sql += ' AND addressId = ?';
-    params.push(filter.addressId);
-  }
-  if (filter.source) {
-    sql += ' AND source = ?';
-    params.push(filter.source);
-  }
-  if (filter.since) {
-    sql += ' AND timestamp >= ?';
-    params.push(filter.since);
-  }
-  if (filter.until) {
-    sql += ' AND timestamp <= ?';
-    params.push(filter.until);
-  }
-
-  sql += ' ORDER BY timestamp DESC';
-
-  if (filter.limit) {
-    sql += ' LIMIT ?';
-    params.push(filter.limit);
-  }
-
-  return getDb().prepare(sql).all(...params) as Visit[];
-}
-
-// ==================== History Operations ====================
-
-export interface HistoryFilter {
-  since?: number;
-  until?: number;
-  source?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export interface HistoryEntry {
-  id: string;
-  addressId: string;
-  timestamp: number;
-  duration: number;
-  source: string;
-  sourceId: string;
-  windowType: string;
-  metadata: string;
-  scrollDepth: number;
-  interacted: number;
-  prevId: string | null;
-  nextId: string | null;
-  uri: string;
-  title: string;
-  domain: string;
-  protocol: string;
-  favicon: string;
-}
+// ==================== Window Load Tracking (delegates to items system) ====================
 
 /**
- * Track a window load: creates/updates item + records visit via trackNavigation,
- * AND maintains legacy address/visit tables for backward compat.
+ * Track a window load: delegates to trackNavigation for the items system.
+ * Kept as a convenience wrapper with backward-compatible return shape.
  */
 export function trackWindowLoad(uri: string, options: {
   source?: string;
@@ -2113,7 +1939,6 @@ export function trackWindowLoad(uri: string, options: {
   windowType?: string;
   title?: string;
 } = {}): { visitId: string; addressId: string; itemId: string; created: boolean } {
-  // Delegate entirely to trackNavigation (items system)
   const navResult = trackNavigation(uri, {
     source: options.source,
     sourceId: options.sourceId,
@@ -2121,47 +1946,7 @@ export function trackWindowLoad(uri: string, options: {
     title: options.title,
   });
 
-  // Return backward-compatible shape (addressId = itemId for legacy callers)
   return { visitId: navResult.visitId, addressId: navResult.itemId, itemId: navResult.itemId, created: navResult.created };
-}
-
-/**
- * Get history entries (visits joined with addresses) with filtering
- */
-export function getHistory(filter: HistoryFilter = {}): HistoryEntry[] {
-  let sql = `
-    SELECT v.*, a.uri, a.title, a.domain, a.protocol, a.favicon
-    FROM visits v
-    LEFT JOIN addresses a ON v.addressId = a.id
-    WHERE 1=1
-  `;
-  const params: (string | number)[] = [];
-
-  if (filter.since) {
-    sql += ' AND v.timestamp >= ?';
-    params.push(filter.since);
-  }
-  if (filter.until) {
-    sql += ' AND v.timestamp <= ?';
-    params.push(filter.until);
-  }
-  if (filter.source) {
-    sql += ' AND v.source = ?';
-    params.push(filter.source);
-  }
-
-  sql += ' ORDER BY v.timestamp DESC';
-
-  if (filter.limit) {
-    sql += ' LIMIT ?';
-    params.push(filter.limit);
-  }
-  if (filter.offset) {
-    sql += ' OFFSET ?';
-    params.push(filter.offset);
-  }
-
-  return getDb().prepare(sql).all(...params) as HistoryEntry[];
 }
 
 // ==================== Content Operations ====================
@@ -2256,35 +2041,6 @@ export function getOrCreateTag(name: string): { tag: Tag; created: boolean } {
   return { tag: newTag, created: true };
 }
 
-export function tagAddress(addressId: string, tagId: string): { link: AddressTag; alreadyExists: boolean } {
-  const timestamp = now();
-
-  const existingLink = getDb().prepare('SELECT * FROM address_tags WHERE addressId = ? AND tagId = ?').get(addressId, tagId) as AddressTag | undefined;
-  if (existingLink) {
-    return { link: existingLink, alreadyExists: true };
-  }
-
-  const linkId = generateId('address_tag');
-  getDb().prepare('INSERT INTO address_tags (id, addressId, tagId, createdAt) VALUES (?, ?, ?, ?)').run(linkId, addressId, tagId, timestamp);
-
-  // Update tag frequency and frecency
-  const tag = getDb().prepare('SELECT * FROM tags WHERE id = ?').get(tagId) as Tag | undefined;
-  if (tag) {
-    const newFrequency = (tag.frequency || 0) + 1;
-    const frecencyScore = calculateFrecency(newFrequency, timestamp);
-    getDb().prepare('UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?')
-      .run(newFrequency, timestamp, frecencyScore, timestamp, tagId);
-  }
-
-  const newLink = getDb().prepare('SELECT * FROM address_tags WHERE id = ?').get(linkId) as AddressTag;
-  return { link: newLink, alreadyExists: false };
-}
-
-export function untagAddress(addressId: string, tagId: string): boolean {
-  const result = getDb().prepare('DELETE FROM address_tags WHERE addressId = ? AND tagId = ?').run(addressId, tagId);
-  return result.changes > 0;
-}
-
 export function getTagsByFrecency(domain?: string): Tag[] {
   let tags = getDb().prepare('SELECT * FROM tags').all() as Tag[];
 
@@ -2312,31 +2068,6 @@ export function getTagsByFrecency(domain?: string): Tag[] {
 
   tags.sort((a, b) => b.frecencyScore - a.frecencyScore);
   return tags;
-}
-
-export function getAddressTags(addressId: string): Tag[] {
-  return getDb().prepare(`
-    SELECT t.* FROM tags t
-    JOIN address_tags at ON t.id = at.tagId
-    WHERE at.addressId = ?
-  `).all(addressId) as Tag[];
-}
-
-export function getAddressesByTag(tagId: string): Address[] {
-  return getDb().prepare(`
-    SELECT a.* FROM addresses a
-    JOIN address_tags at ON a.id = at.addressId
-    WHERE at.tagId = ?
-  `).all(tagId) as Address[];
-}
-
-export function getUntaggedAddresses(): Address[] {
-  return getDb().prepare(`
-    SELECT a.* FROM addresses a
-    LEFT JOIN address_tags at ON a.id = at.addressId
-    WHERE at.id IS NULL
-    ORDER BY a.visitCount DESC
-  `).all() as Address[];
 }
 
 // ==================== Generic Table Operations ====================
@@ -2385,9 +2116,9 @@ export function getStats(): DatastoreStats {
   };
 
   return {
-    totalAddresses: safeCount('SELECT COUNT(*) as count FROM addresses'),
-    totalVisits: safeCount('SELECT COUNT(*) as count FROM visits'),
-    avgVisitDuration: safeAvg('SELECT AVG(duration) as avg FROM visits'),
+    totalAddresses: safeCount('SELECT COUNT(*) as count FROM items WHERE type = \'url\' AND deletedAt = 0'),
+    totalVisits: safeCount('SELECT COUNT(*) as count FROM item_visits'),
+    avgVisitDuration: safeAvg('SELECT AVG(duration) as avg FROM item_visits'),
     totalContent: safeCount('SELECT COUNT(*) as count FROM content'),
     syncedContent: safeCount('SELECT COUNT(*) as count FROM content WHERE synced = 1'),
     totalItems: safeCount('SELECT COUNT(*) as count FROM items'),
@@ -3130,69 +2861,4 @@ export function countItemEvents(itemId: string, filter: { since?: number; until?
   ).get(...values) as { count: number };
 
   return result.count;
-}
-
-/**
- * Backward compatibility: query addresses and transform to Address shape.
- * This wraps queryItems for code that still uses the old address API.
- */
-export function queryAddressesCompat(filter: AddressFilter = {}): Address[] {
-  // Map address filter to item filter
-  const itemFilter: ItemFilter = {
-    type: 'url',
-  };
-
-  if (filter.starred !== undefined) {
-    itemFilter.starred = filter.starred;
-  }
-  if (filter.domain) {
-    itemFilter.domain = filter.domain;
-  }
-  if (filter.limit) {
-    itemFilter.limit = filter.limit;
-  }
-
-  // Map sortBy
-  switch (filter.sortBy) {
-    case 'lastVisit':
-      itemFilter.sortBy = 'lastVisit';
-      break;
-    case 'visitCount':
-      itemFilter.sortBy = 'visitCount';
-      break;
-    case 'created':
-    default:
-      itemFilter.sortBy = 'created';
-  }
-
-  const items = queryItems(itemFilter);
-
-  // Transform items to Address shape
-  return items.map(item => {
-    const parsed = parseUrl(item.content || '');
-    let metadata: Record<string, unknown> = {};
-    try {
-      metadata = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata || {};
-    } catch { /* ignore */ }
-
-    return {
-      id: item.id,
-      uri: item.content || '',
-      protocol: parsed.protocol,
-      domain: item.domain || parsed.domain,
-      path: parsed.path,
-      title: item.title || (metadata.title as string) || '',
-      mimeType: item.mimeType || 'text/html',
-      favicon: item.favicon || (metadata.favicon as string) || '',
-      description: (metadata.description as string) || '',
-      tags: '',
-      metadata: item.metadata,
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-      lastVisitAt: item.lastVisitAt,
-      visitCount: item.visitCount,
-      starred: item.starred,
-      archived: item.archived,
-    };
-  });
 }

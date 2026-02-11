@@ -10,22 +10,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
-  // Datastore operations (legacy — still used by some codepaths)
-  addAddress,
-  getAddress,
-  updateAddress,
-  queryAddresses,
-  addVisit,
-  queryVisits,
+  // Datastore operations
   addContent,
   queryContent,
   getOrCreateTag,
-  tagAddress,
-  untagAddress,
   getTagsByFrecency,
-  getAddressTags,
-  getAddressesByTag,
-  getUntaggedAddresses,
   getTable,
   setRow,
   getRow,
@@ -43,7 +32,7 @@ import {
   untagItem,
   getItemTags,
   getItemsByTag,
-  // Item visit operations (URL history unification)
+  // Item visit operations
   recordItemVisit,
   getItemVisits,
   queryItemVisits,
@@ -59,7 +48,6 @@ import {
   countItemEvents,
   // History operations
   trackWindowLoad,
-  getHistory,
   normalizeUrl,
   // Context operations
   addContextEntry,

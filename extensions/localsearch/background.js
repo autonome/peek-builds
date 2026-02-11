@@ -1,9 +1,9 @@
 /**
- * Search Extension Background Script
+ * Local Search Extension Background Script
  *
- * Unified search across items, history, tags, and groups.
+ * Search across local items, tags, and history.
  *
- * Runs in isolated extension process (peek://ext/search/background.html)
+ * Runs in isolated extension process (peek://ext/localsearch/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
 
@@ -12,10 +12,10 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 const api = window.app;
 const debug = api.debug;
 
-console.log('[ext:search] background', labels.name);
+console.log('[ext:localsearch] background', labels.name);
 
-// Extension content is served from peek://ext/search/
-const address = 'peek://ext/search/home.html';
+// Extension content is served from peek://ext/localsearch/
+const address = 'peek://ext/localsearch/home.html';
 
 // In-memory settings cache (loaded from datastore on init)
 let currentSettings = {
@@ -47,7 +47,7 @@ const loadSettings = async () => {
 const saveSettings = async (settings) => {
   const result = await api.settings.set(settings);
   if (!result.success) {
-    console.error('[ext:search] Failed to save settings:', result.error);
+    console.error('[ext:localsearch] Failed to save settings:', result.error);
   }
 };
 
@@ -71,9 +71,9 @@ const openSearchWindow = async () => {
     };
 
     const window = await api.window.open(address, params);
-    debug && console.log('[ext:search] Search window opened:', window);
+    debug && console.log('[ext:localsearch] Search window opened:', window);
   } catch (error) {
-    console.error('[ext:search] Failed to open search window:', error);
+    console.error('[ext:localsearch] Failed to open search window:', error);
   } finally {
     isOpeningSearch = false;
   }
@@ -83,10 +83,10 @@ const openSearchWindow = async () => {
 
 const commandDefinitions = [
   {
-    name: 'search',
-    description: 'Open unified search',
+    name: 'localsearch',
+    description: 'Search local items, tags, and history',
     execute: async (ctx) => {
-      console.log('[ext:search] Opening search window');
+      console.log('[ext:localsearch] Opening search window');
       openSearchWindow();
     }
   }
@@ -106,7 +106,7 @@ const initCommands = () => {
     api.commands.register(cmd);
     registeredCommands.push(cmd.name);
   });
-  console.log('[ext:search] Registered commands:', registeredCommands);
+  console.log('[ext:localsearch] Registered commands:', registeredCommands);
 };
 
 const uninitCommands = () => {
@@ -114,11 +114,11 @@ const uninitCommands = () => {
     api.commands.unregister(name);
   });
   registeredCommands = [];
-  console.log('[ext:search] Unregistered commands');
+  console.log('[ext:localsearch] Unregistered commands');
 };
 
 const init = async () => {
-  console.log('[ext:search] init');
+  console.log('[ext:localsearch] init');
 
   // Load settings from datastore
   currentSettings = await loadSettings();
@@ -134,8 +134,8 @@ const init = async () => {
   api.publish('cmd:query', {}, api.scopes.GLOBAL);
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
-  api.subscribe('search:settings-changed', async () => {
-    console.log('[ext:search] settings changed, reinitializing');
+  api.subscribe('localsearch:settings-changed', async () => {
+    console.log('[ext:localsearch] settings changed, reinitializing');
     uninit();
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
@@ -143,8 +143,8 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Listen for settings updates from Settings UI
-  api.subscribe('search:settings-update', async (msg) => {
-    console.log('[ext:search] settings-update received:', msg);
+  api.subscribe('localsearch:settings-update', async (msg) => {
+    console.log('[ext:localsearch] settings-update received:', msg);
 
     try {
       if (msg.data) {
@@ -164,15 +164,15 @@ const init = async () => {
       initShortcut(currentSettings.prefs.shortcutKey);
       initCommands();
 
-      api.publish('search:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.publish('localsearch:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
-      console.error('[ext:search] settings-update error:', err);
+      console.error('[ext:localsearch] settings-update error:', err);
     }
   }, api.scopes.GLOBAL);
 };
 
 const uninit = () => {
-  console.log('[ext:search] uninit');
+  console.log('[ext:localsearch] uninit');
   if (registeredShortcut) {
     api.shortcuts.unregister(registeredShortcut, { global: true });
     registeredShortcut = null;

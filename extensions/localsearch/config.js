@@ -1,21 +1,21 @@
-const id = 'search';
+const id = 'localsearch';
 
 const labels = {
-  name: 'Search',
+  name: 'Local Search',
   prefs: {
-    shortcutKey: 'Search shortcut',
+    shortcutKey: 'Local search shortcut',
   }
 };
 
 const prefsSchema = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "peek.search.prefs.schema.json",
-  "title": "Search preferences",
-  "description": "Peek app Search user preferences",
+  "$id": "peek.localsearch.prefs.schema.json",
+  "title": "Local Search preferences",
+  "description": "Peek app Local Search user preferences",
   "type": "object",
   "properties": {
     "shortcutKey": {
-      "description": "Global OS hotkey to open search window",
+      "description": "Global OS hotkey to open local search window",
       "type": "string",
       "default": "Option+f"
     },

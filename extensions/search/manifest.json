@@ -1,9 +1,0 @@
-{
-  "id": "search",
-  "shortname": "search",
-  "name": "Search",
-  "description": "Unified search across items, history, tags, and groups",
-  "version": "1.0.0",
-  "background": "background.html",
-  "builtin": false
-}

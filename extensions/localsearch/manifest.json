@@ -1,0 +1,9 @@
+{
+  "id": "localsearch",
+  "shortname": "localsearch",
+  "name": "Local Search",
+  "description": "Search across local items, tags, and history",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": false
+}

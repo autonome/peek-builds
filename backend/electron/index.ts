@@ -36,25 +36,12 @@ export {
 
 // Datastore operations
 export {
-  // Addresses
-  addAddress,
-  getAddress,
-  updateAddress,
-  queryAddresses,
-  // Visits
-  addVisit,
-  queryVisits,
   // Content
   addContent,
   queryContent,
   // Tags
   getOrCreateTag,
-  tagAddress,
-  untagAddress,
   getTagsByFrecency,
-  getAddressTags,
-  getAddressesByTag,
-  getUntaggedAddresses,
   // Generic
   getTable,
   setRow,
@@ -63,20 +50,21 @@ export {
 
 // Re-export shared data types
 export type {
-  Address,
-  Visit,
   Content,
   Tag,
-  AddressTag,
+  Item,
+  ItemTag,
+  ItemType,
+  ItemOptions,
+  ItemFilter,
+  ItemVisit,
+  ItemVisitFilter,
+  ItemVisitOptions,
   Extension,
   ExtensionSetting,
   DatastoreStats,
   TableName,
-  AddressFilter,
-  VisitFilter,
   ContentFilter,
-  AddressOptions,
-  VisitOptions,
   ContentOptions,
   BackupConfig,
   BackupResult,
