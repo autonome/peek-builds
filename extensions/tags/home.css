@@ -383,6 +383,7 @@ peek-card[selected] {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .detail-header {
@@ -443,8 +444,8 @@ peek-card[selected] {
   margin-bottom: 20px;
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
+  max-height: 60vh;
 }
 
 .detail-editor-header {
@@ -484,10 +485,9 @@ peek-card[selected] {
 .detail-editor-container {
   border-radius: 8px;
   overflow: hidden;
-  min-height: 200px;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
-  flex: 1;
 }
 
 .detail-editor-container .cm-editor {

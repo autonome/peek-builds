@@ -289,10 +289,14 @@ const setupEventListeners = () => {
       const updatedItem = state.items.find(i => i.id === state.editingItem.id);
       if (updatedItem) {
         state.editingItem = updatedItem;
-        // Only refresh tags, not the editor content
+        // Only refresh tags and title, not the editor content
         const tags = state.itemTags.get(updatedItem.id) || [];
         renderCurrentTags(tags);
         renderAvailableTags(tags);
+        // Update the detail title display
+        const { title } = getItemDisplayInfo(updatedItem);
+        const titleEl = detailView.querySelector('.detail-title');
+        if (titleEl) titleEl.textContent = title;
       } else {
         // Item was deleted, go back to list
         showList();
@@ -340,6 +344,11 @@ const setupEventListeners = () => {
     // Optimistic local update - remove deleted item from state
     state.items = state.items.filter(i => i.id !== msg.itemId);
     state.itemTags.delete(msg.itemId);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('item:updated', (msg) => {
+    debug && console.log('[tags] item:updated event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
@@ -845,7 +854,7 @@ const getItemDisplayInfo = (item) => {
       subtitle = item.content;
       faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
     } else if (itemType === 'text') {
-      title = item.content.substring(0, 100) + (item.content.length > 100 ? '...' : '');
+      title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
       if (noteUrl) {
         subtitle = noteUrl;
         faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔗</text></svg>';
@@ -961,6 +970,16 @@ const updateEditorSaveStatus = () => {
 };
 
 /**
+ * Extract a title from the first line of content.
+ * Strips leading markdown heading markers (e.g., "# Title" -> "Title").
+ */
+const extractTitleFromContent = (content) => {
+  if (!content) return '';
+  const firstLine = content.split('\n')[0].trim();
+  return firstLine.replace(/^#+\s*/, '');
+};
+
+/**
  * Perform autosave of the embedded editor content to the datastore
  */
 const performEditorAutosave = async (content) => {
@@ -970,16 +989,26 @@ const performEditorAutosave = async (content) => {
   updateEditorSaveStatus();
 
   try {
-    const result = await api.datastore.updateItem(state.editingItem.id, { content });
+    // Extract title from first line and save alongside content
+    const title = extractTitleFromContent(content);
+    const result = await api.datastore.updateItem(state.editingItem.id, { content, title });
     if (result.success) {
       editorSaveStatus = 'saved';
-      debug && console.log('[tags] Editor autosaved item:', state.editingItem.id);
+      debug && console.log('[tags] Editor autosaved item:', state.editingItem.id, 'title:', title);
 
       // Update local item state so list view reflects changes
       state.editingItem.content = content;
+      state.editingItem.title = title;
       const idx = state.items.findIndex(i => i.id === state.editingItem.id);
       if (idx >= 0) {
         state.items[idx].content = content;
+        state.items[idx].title = title;
+      }
+
+      // Update the detail view title display
+      const titleEl = document.querySelector('.detail-title');
+      if (titleEl) {
+        titleEl.textContent = title || content.substring(0, 100) || 'Untitled';
       }
 
       // Publish change event for other extensions

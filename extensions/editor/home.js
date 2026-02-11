@@ -168,11 +168,13 @@ const init = async () => {
   const fileParam = params.get('file');
   const itemIdParam = params.get('itemId');
 
-  let initialContent = SAMPLE_CONTENT;
+  let initialContent = '';
+  let hasExplicitSource = false;
 
   // If content provided via URL param, use it
   if (contentParam) {
     initialContent = contentParam;
+    hasExplicitSource = true;
   }
 
   // If file path provided, try to load it
@@ -181,6 +183,7 @@ const init = async () => {
       const result = await api.fs.readFile(fileParam);
       if (result.success) {
         initialContent = result.data;
+        hasExplicitSource = true;
       }
     } catch (err) {
       debug && console.log('[editor] Failed to load file:', err);
@@ -194,6 +197,7 @@ const init = async () => {
       if (result.success && result.data) {
         initialContent = result.data.content || '';
         currentItemId = itemIdParam;
+        hasExplicitSource = true;
         debug && console.log('[editor] Loaded item from datastore:', itemIdParam);
 
         // Set context to editor mode
@@ -205,6 +209,40 @@ const init = async () => {
       }
     } catch (err) {
       console.error('[editor] Failed to load item:', err);
+    }
+  }
+
+  // No explicit source — create a new blank note item in the datastore
+  // so autosave works from the start
+  if (!hasExplicitSource && !currentItemId && api?.datastore?.addItem) {
+    try {
+      const result = await api.datastore.addItem('text', { content: '' });
+      if (result.success && result.data) {
+        currentItemId = result.data.id;
+        debug && console.log('[editor] Created new blank note item:', currentItemId);
+
+        // Tag with 'note' and 'from:cmd'
+        if (api?.datastore?.getOrCreateTag && api?.datastore?.tagItem) {
+          for (const tagName of ['note', 'from:cmd']) {
+            const tagResult = await api.datastore.getOrCreateTag(tagName);
+            if (tagResult.success) {
+              await api.datastore.tagItem(currentItemId, tagResult.data.tag.id);
+            }
+          }
+        }
+
+        // Notify that a new item was created
+        if (api?.publish) {
+          api.publish('editor:changed', { action: 'add', itemId: currentItemId }, api.scopes.GLOBAL);
+        }
+
+        // Set context to editor mode
+        if (api?.context?.setMode) {
+          api.context.setMode('editor', { metadata: { itemId: currentItemId } });
+        }
+      }
+    } catch (err) {
+      debug && console.log('[editor] Failed to create blank note item:', err);
     }
   }
 
@@ -278,6 +316,17 @@ const updateSaveStatusUI = () => {
 };
 
 /**
+ * Extract a title from the first line of content.
+ * Strips leading markdown heading markers (e.g., "# Title" -> "Title").
+ */
+const extractTitleFromContent = (content) => {
+  if (!content) return '';
+  const firstLine = content.split('\n')[0].trim();
+  // Strip leading markdown heading markers
+  return firstLine.replace(/^#+\s*/, '');
+};
+
+/**
  * Perform autosave to datastore
  */
 const performAutosave = async (content) => {
@@ -289,10 +338,12 @@ const performAutosave = async (content) => {
   updateSaveStatusUI();
 
   try {
-    const result = await api.datastore.updateItem(currentItemId, { content });
+    // Extract title from first line and save alongside content
+    const title = extractTitleFromContent(content);
+    const result = await api.datastore.updateItem(currentItemId, { content, title });
     if (result.success) {
       saveStatus = 'saved';
-      debug && console.log('[editor] Autosaved item:', currentItemId);
+      debug && console.log('[editor] Autosaved item:', currentItemId, 'title:', title);
 
       // Publish change event
       if (api?.publish) {
