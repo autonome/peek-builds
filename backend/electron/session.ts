@@ -4,13 +4,14 @@
  * Phase 1: Save session snapshot on quit.
  * Phase 2: Restore session snapshot on startup.
  * Phase 3: Periodic autosave timer + manual save/restore commands.
+ * Phase 4: Crash recovery dialog, snapshot validation, error handling.
  *
  * Captures all visible user windows and writes to extension_settings
  * using synchronous better-sqlite3 APIs (safe for before-quit handler).
  * On startup, reads the snapshot and recreates windows.
  */
 
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, dialog, screen } from 'electron';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow } from './main.js';
 import { publish, scopes as PubSubScopes, getSystemAddress } from './pubsub.js';
@@ -277,6 +278,55 @@ export function markSessionDirty(): void {
 }
 
 /**
+ * Validate that a window descriptor has the required fields for restore.
+ * Returns false if the descriptor is invalid and should be skipped.
+ */
+function isValidDescriptor(descriptor: WindowDescriptor): boolean {
+  // Must have a URL
+  if (!descriptor.url || typeof descriptor.url !== 'string' || descriptor.url.trim() === '') {
+    return false;
+  }
+
+  // Skip localhost/127.0.0.1 URLs — these are ephemeral dev servers that won't be running
+  try {
+    const parsed = new URL(descriptor.url);
+    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+      return false;
+    }
+  } catch {
+    // If URL can't be parsed, skip it
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Show crash recovery dialog and return whether the user wants to restore.
+ * Returns true if restore should proceed, false to start fresh.
+ */
+async function showCrashRecoveryDialog(crashCount: number): Promise<boolean> {
+  // Too many crashes — skip restore automatically
+  if (crashCount > 3) {
+    console.warn(`[session] ${crashCount} consecutive crashes detected. Starting fresh to avoid further issues.`);
+    return false;
+  }
+
+  // Show dialog asking user what to do
+  const result = await dialog.showMessageBox({
+    type: 'question',
+    title: 'Restore Previous Session?',
+    message: "Peek didn't shut down cleanly last time. Would you like to restore your previous session?",
+    buttons: ['Restore Session', 'Start Fresh'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  // Button index 0 = "Restore Session", 1 = "Start Fresh"
+  return result.response === 0;
+}
+
+/**
  * Check if a point falls within any active display.
  */
 function isPointOnScreen(x: number, y: number): boolean {
@@ -321,7 +371,7 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
     return result;
   }
 
-  // Check crash detection — skip restore if too many consecutive crashes
+  // Check crash detection — show dialog or skip restore
   try {
     const metaRow = db.prepare(
       `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
@@ -329,9 +379,13 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
 
     if (metaRow?.value) {
       const metadata: Partial<SessionMetadata> = JSON.parse(metaRow.value);
-      if (metadata.cleanShutdown === false && (metadata.crashCount ?? 0) > 3) {
-        console.warn(`[session] Skipping restore: ${metadata.crashCount} consecutive crashes detected`);
-        return result;
+      if (metadata.cleanShutdown === false) {
+        const crashCount = metadata.crashCount ?? 0;
+        const shouldRestore = await showCrashRecoveryDialog(crashCount);
+        if (!shouldRestore) {
+          DEBUG && console.log('[session] User chose to start fresh (or too many crashes)');
+          return result;
+        }
       }
     }
   } catch {
@@ -368,7 +422,25 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
     return result;
   }
 
-  result.total = snapshot.windows.length;
+  // Validate individual window descriptors — filter out invalid/stale entries
+  const validWindows = snapshot.windows.filter((descriptor) => {
+    if (!isValidDescriptor(descriptor)) {
+      DEBUG && console.log(`[session] Skipping invalid/stale window: ${descriptor.url || '(empty)'}`);
+      return false;
+    }
+    return true;
+  });
+
+  if (validWindows.length === 0) {
+    DEBUG && console.log('[session] No valid windows to restore after validation');
+    return result;
+  }
+
+  if (validWindows.length < snapshot.windows.length) {
+    DEBUG && console.log(`[session] Filtered ${snapshot.windows.length - validWindows.length} invalid window(s)`);
+  }
+
+  result.total = validWindows.length;
   DEBUG && console.log(`[session] Restoring ${result.total} window(s) from snapshot`);
 
   // Wait for background window to be ready (needed for IPC)
@@ -379,7 +451,7 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
   }
 
   // Sort windows by zOrder (higher zOrder = later in stack = opened later)
-  const sortedWindows = [...snapshot.windows].sort((a, b) => b.zOrder - a.zOrder);
+  const sortedWindows = [...validWindows].sort((a, b) => b.zOrder - a.zOrder);
 
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
@@ -466,6 +538,20 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
     }
   }
 
+  // Check for partial restore — warn if majority of windows failed
+  if (result.failed > 0 && result.total > 2 && result.failed > result.total / 2) {
+    console.warn(`[session] Partial restore: ${result.failed}/${result.total} windows failed`);
+    try {
+      publish(getSystemAddress(), PubSubScopes.GLOBAL, 'session:restore-partial', {
+        restored: result.restored,
+        failed: result.failed,
+        total: result.total,
+      });
+    } catch {
+      // Non-critical
+    }
+  }
+
   // Publish session:restored event
   try {
     publish(getSystemAddress(), PubSubScopes.GLOBAL, 'session:restored', {
@@ -477,7 +563,7 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
     // Non-critical
   }
 
-  // Update session metadata with restore info
+  // Update session metadata with restore info and reset crashCount
   try {
     const metaRow = db.prepare(
       `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
@@ -490,6 +576,8 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
 
     metadata.lastRestoreAt = Date.now();
     metadata.restoreCount = (metadata.restoreCount ?? 0) + 1;
+    // Reset crash count after successful restore
+    metadata.crashCount = 0;
 
     db.prepare(`
       INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
@@ -516,6 +604,8 @@ let _autosaveIntervalMinutes = 0;
  * @param intervalMinutes - Interval in minutes (0 = disabled)
  */
 export function startAutosaveTimer(intervalMinutes: number): void {
+  if (isTestProfile()) return;
+
   // Stop existing timer first
   stopAutosaveTimer();
 
