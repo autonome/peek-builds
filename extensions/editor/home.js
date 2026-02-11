@@ -11,6 +11,7 @@
  */
 
 import { EditorLayout } from './editor-layout.js';
+import { getCM, Vim } from './codemirror.js';
 
 const api = window.app;
 const debug = api?.debug;
@@ -260,8 +261,37 @@ const init = async () => {
   }
 
   // Set up escape handler
+  //
+  // Vim mode ESC cascade:
+  //   1. ESC in vim insert/visual mode -> exits to vim normal mode
+  //      (preload intercepts ESC via before-input-event so CodeMirror's vim
+  //      extension never sees the DOM keydown — we must forward it here)
+  //   2. ESC in vim normal mode (or non-vim) + focus mode -> exits focus mode
+  //   3. ESC otherwise -> not handled (backend decides: close window, etc.)
   if (api?.escape) {
     api.escape.onEscape(() => {
+      // If vim mode is enabled, check if vim is in insert/visual mode.
+      // The preload intercepts ESC via before-input-event and calls
+      // e.preventDefault(), so the DOM keydown never reaches CodeMirror.
+      // We must programmatically send <Esc> to vim here.
+      if (editorLayout?.vimMode && editorLayout?.cmEditor) {
+        try {
+          const cm = getCM(editorLayout.cmEditor);
+          if (cm && cm.state && cm.state.vim) {
+            const vimState = cm.state.vim;
+            if (vimState.insertMode || vimState.visualMode) {
+              debug && console.log('[editor:esc] Vim in insert/visual mode, sending <Esc> to vim');
+              Vim.handleKey(cm, '<Esc>');
+              return { handled: true };
+            }
+            // In normal mode, fall through to focus mode check / close
+            debug && console.log('[editor:esc] Vim in normal mode, checking focus mode');
+          }
+        } catch (e) {
+          debug && console.log('[editor:esc] Could not check vim state:', e);
+        }
+      }
+
       if (editorLayout?.isInFocusMode()) {
         editorLayout.exitFocusMode();
         return { handled: true };

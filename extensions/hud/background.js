@@ -93,6 +93,7 @@ const openHud = async () => {
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
+    focusable: false,
     resizable: false,
     frame: false,
     escapeMode: 'ignore',
