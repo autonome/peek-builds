@@ -9,7 +9,7 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme } from 'ele
 import path from 'node:path';
 import fs from 'node:fs';
 
-import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateModeForNavigation } from './datastore.js';
+import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateModeForNavigation } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath } from './protocol.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions } from './extensions.js';
 import { initTray } from './tray.js';
@@ -984,7 +984,7 @@ export function createBackgroundWindow(): BrowserWindow {
               source: (featuresMap.trackingSource as string) || 'background',
               sourceId: (featuresMap.trackingSourceId as string) || '',
               windowType: featuresMap.modal ? 'modal' : 'main',
-              title: newWin.getTitle() || '',
+              title: (newWin.getTitle() !== 'Loading...' ? newWin.getTitle() : '') || '',
             });
           } catch (e) {
             DEBUG && console.log('Failed to track background child window load:', e);
@@ -992,6 +992,19 @@ export function createBackgroundWindow(): BrowserWindow {
 
           // Set initial mode based on URL
           updateModeForNavigation(newWin.id, details.url);
+
+          // Update item title when page finishes loading (background child windows)
+          if (details.url.startsWith('http://') || details.url.startsWith('https://')) {
+            newWin.webContents.on('page-title-updated', (_event: Electron.Event, title: string) => {
+              if (title && title !== 'Loading...') {
+                try {
+                  updateItemTitle(newWin.webContents.getURL() || details.url, title);
+                } catch (e) {
+                  DEBUG && console.log('Failed to update title from page-title-updated:', e);
+                }
+              }
+            });
+          }
 
           // Track in-page navigation within this window
           newWin.webContents.on('did-navigate', (_event: Electron.Event, navUrl: string) => {
@@ -1003,7 +1016,7 @@ export function createBackgroundWindow(): BrowserWindow {
                 source: 'navigation',
                 sourceId: '',
                 windowType: featuresMap.modal ? 'modal' : 'main',
-                title: newWin.getTitle() || '',
+                title: (newWin.getTitle() !== 'Loading...' ? newWin.getTitle() : '') || '',
               });
             } catch (e) {
               DEBUG && console.log('Failed to track did-navigate:', e);

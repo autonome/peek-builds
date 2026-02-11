@@ -932,13 +932,54 @@ export function registerDatastoreHandlers(): void {
       const { url } = data;
       if (!url) return { success: false, error: 'URL required' };
 
+      const normalizedTarget = normalizeUrl(url);
       const allContents = webContents.getAllWebContents();
-      const target = allContents.find(wc => {
+
+      // Phase 1: Exact match (direct URL or normalized URL)
+      let target = allContents.find(wc => {
         try {
           const wcUrl = wc.getURL();
-          return wcUrl === url || normalizeUrl(wcUrl) === normalizeUrl(url);
+          if (!wcUrl || wcUrl.startsWith('peek://') || wcUrl === 'about:blank') return false;
+          return wcUrl === url || normalizeUrl(wcUrl) === normalizedTarget;
         } catch { return false; }
       });
+
+      // Phase 2: If no exact match, try matching by origin+pathname (ignoring query/hash)
+      // This handles cases where the page redirected or query params changed
+      if (!target) {
+        try {
+          const targetParsed = new URL(url);
+          const targetOriginPath = targetParsed.origin + targetParsed.pathname;
+          target = allContents.find(wc => {
+            try {
+              const wcUrl = wc.getURL();
+              if (!wcUrl || wcUrl.startsWith('peek://') || wcUrl === 'about:blank') return false;
+              const wcParsed = new URL(wcUrl);
+              return wcParsed.origin + wcParsed.pathname === targetOriginPath;
+            } catch { return false; }
+          });
+        } catch { /* invalid URL, skip phase 2 */ }
+      }
+
+      // Phase 3: If still no match, try matching by domain (for redirects like http->https, www->non-www)
+      if (!target) {
+        try {
+          const targetDomain = new URL(url).hostname.replace(/^www\./, '');
+          // Find any http/https webContents with matching base domain
+          const candidates = allContents.filter(wc => {
+            try {
+              const wcUrl = wc.getURL();
+              if (!wcUrl || !wcUrl.startsWith('http')) return false;
+              const wcDomain = new URL(wcUrl).hostname.replace(/^www\./, '');
+              return wcDomain === targetDomain;
+            } catch { return false; }
+          });
+          // Pick the most recently created one (likely the active page)
+          if (candidates.length === 1) {
+            target = candidates[0];
+          }
+        } catch { /* invalid URL, skip phase 3 */ }
+      }
 
       if (!target) {
         return { success: false, error: 'No webContents found for URL' };
@@ -2289,6 +2330,29 @@ export function registerWindowHandlers(): void {
         });
       }
 
+      // Update item titles when the page finishes loading (non-canvas web pages).
+      // Canvas pages handle this via webview page-title-updated in page.js,
+      // but we also handle it on the guest webContents below via did-attach-webview.
+      // Non-canvas pages (modals, slides, quick-views) load directly in the BrowserWindow.
+      if (isWebPage && !useCanvas && !url.startsWith('peek://')) {
+        win.webContents.on('page-title-updated', (_event: Electron.Event, title: string) => {
+          if (title && title !== 'Loading...') {
+            const pageUrl = win.webContents.getURL() || url;
+            try {
+              updateItemTitle(pageUrl, title);
+            } catch (e) {
+              DEBUG && console.log('Failed to update title from page-title-updated:', e);
+            }
+            // Notify extensions that page content is available for extraction
+            publish('system', PubSubScopes.GLOBAL, 'page:content-ready', {
+              url: pageUrl,
+              title,
+              windowId: win.id,
+            });
+          }
+        });
+      }
+
       // Track this load in history (skip internal peek:// URLs)
       if (!url.startsWith('peek://')) {
         try {
@@ -2357,6 +2421,29 @@ export function registerWindowHandlers(): void {
             if (input.key === 'l') {
               publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: win.id });
               event.preventDefault();
+            }
+          });
+
+          // Update item title when webview guest page title changes.
+          // This is the main-process counterpart to page.js's page-title-updated handler.
+          // Runs in main process for reliability — handles title updates even if page.js
+          // has timing issues with the IPC call.
+          guestWebContents.on('page-title-updated', (_event: Electron.Event, title: string) => {
+            if (title && title !== 'Loading...') {
+              const guestUrl = guestWebContents.getURL();
+              if (guestUrl && guestUrl.startsWith('http')) {
+                try {
+                  updateItemTitle(guestUrl, title);
+                } catch (e) {
+                  DEBUG && console.log('Failed to update title from guest page-title-updated:', e);
+                }
+                // Notify extensions that page content is available for extraction
+                publish('system', PubSubScopes.GLOBAL, 'page:content-ready', {
+                  url: guestUrl,
+                  title,
+                  windowId: win.id,
+                });
+              }
             }
           });
 

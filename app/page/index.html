@@ -116,35 +116,31 @@
       z-index: 50;
     }
 
-    /* Resize handle — larger hit area for easier grabbing */
+    /* Resize handles — invisible 24x24 hit targets at corners */
     .resize-handle {
       position: absolute;
       width: 24px;
       height: 24px;
-      right: 0;
-      bottom: 0;
-      cursor: se-resize;
       z-index: 10;
       /* Prevent pointer capture from being interrupted */
       touch-action: none;
     }
 
-    /* Visual resize grip indicator (three diagonal lines) */
-    .resize-handle::after {
-      content: '';
+    .resize-handle[data-dir="se"] { cursor: se-resize; }
+    .resize-handle[data-dir="sw"] { cursor: sw-resize; }
+    .resize-handle[data-dir="ne"] { cursor: ne-resize; }
+    .resize-handle[data-dir="nw"] { cursor: nw-resize; }
+
+    /* Drag overlay — covers webview during hold-to-drag */
+    .drag-overlay {
       position: absolute;
-      right: 4px;
-      bottom: 4px;
-      width: 10px;
-      height: 10px;
-      border-right: 2px solid rgba(128, 128, 128, 0.5);
-      border-bottom: 2px solid rgba(128, 128, 128, 0.5);
-      border-radius: 0 0 2px 0;
+      z-index: 5;
+      pointer-events: none;
     }
 
-    .resize-handle:hover::after {
-      border-right-color: rgba(128, 128, 128, 0.8);
-      border-bottom-color: rgba(128, 128, 128, 0.8);
+    .drag-overlay.active {
+      pointer-events: all;
+      cursor: grabbing;
     }
 
     /* Mode indicator - subtle corner badge */
@@ -209,7 +205,13 @@
     <span class="url-text" id="url-text"></span>
   </div>
   <webview id="content" allowpopups></webview>
-  <div class="resize-handle" id="resize-handle"></div>
+  <div class="drag-overlay" id="drag-overlay"></div>
+  <div class="resize-handle" id="resize-se" data-dir="se"></div>
+  <div class="resize-handle" id="resize-sw" data-dir="sw"></div>
+  <div class="resize-handle" id="resize-ne" data-dir="ne"></div>
+  <div class="resize-handle" id="resize-nw" data-dir="nw"></div>
+  <div class="resize-handle" id="resize-nav-ne" data-dir="ne"></div>
+  <div class="resize-handle" id="resize-nav-nw" data-dir="nw"></div>
   <script type="module" src="page.js"></script>
 </body>
 </html>

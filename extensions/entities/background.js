@@ -326,6 +326,16 @@ const extension = {
       }
     }, api.scopes.GLOBAL);
 
+    // Listen for page content ready events (fires when page title is set,
+    // meaning the page has loaded enough for content extraction).
+    // This catches pages that already exist in history (no item:created fires)
+    // and provides a more reliable signal than the 2s delay after item:created.
+    api.subscribe('page:content-ready', (msg) => {
+      if (msg.url && msg.url.startsWith('http')) {
+        handlePageLoad({ content: msg.url, title: msg.title || '' });
+      }
+    }, api.scopes.GLOBAL);
+
     // Listen for manual extraction requests via pubsub
     api.subscribe('entities:extract', async (msg) => {
       if (msg.url) {

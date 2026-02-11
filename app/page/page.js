@@ -51,7 +51,15 @@ let bounds = {
 const navbar = document.getElementById('navbar');
 const triggerZone = document.getElementById('trigger-zone');
 const webview = document.getElementById('content');
-const resizeHandle = document.getElementById('resize-handle');
+const dragOverlay = document.getElementById('drag-overlay');
+const resizeHandles = {
+  se: document.getElementById('resize-se'),
+  sw: document.getElementById('resize-sw'),
+  ne: document.getElementById('resize-ne'),
+  nw: document.getElementById('resize-nw'),
+  navNe: document.getElementById('resize-nav-ne'),
+  navNw: document.getElementById('resize-nav-nw'),
+};
 const btnBack = document.getElementById('btn-back');
 const btnForward = document.getElementById('btn-forward');
 const btnReload = document.getElementById('btn-reload');
@@ -69,6 +77,12 @@ function updatePositions() {
   webview.style.width = `${width}px`;
   webview.style.height = `${height}px`;
 
+  // Drag overlay — covers webview area exactly (for hold-to-drag from webview)
+  dragOverlay.style.left = `${x}px`;
+  dragOverlay.style.top = `${y}px`;
+  dragOverlay.style.width = `${width}px`;
+  dragOverlay.style.height = `${height}px`;
+
   // Navbar — above the webview with a gap
   const navbarTop = Math.max(0, y - NAVBAR_GAP - NAVBAR_HEIGHT);
   navbar.style.left = `${x}px`;
@@ -81,9 +95,27 @@ function updatePositions() {
   triggerZone.style.top = `${triggerTop}px`;
   triggerZone.style.width = `${width}px`;
 
-  // Resize handle — bottom-right corner of the webview (24x24)
-  resizeHandle.style.left = `${x + width - 24}px`;
-  resizeHandle.style.top = `${y + height - 24}px`;
+  // Resize handles — all four corners of the webview (24x24)
+  resizeHandles.se.style.left = `${x + width - 24}px`;
+  resizeHandles.se.style.top = `${y + height - 24}px`;
+
+  resizeHandles.sw.style.left = `${x}px`;
+  resizeHandles.sw.style.top = `${y + height - 24}px`;
+
+  resizeHandles.ne.style.left = `${x + width - 24}px`;
+  resizeHandles.ne.style.top = `${y}px`;
+
+  resizeHandles.nw.style.left = `${x}px`;
+  resizeHandles.nw.style.top = `${y}px`;
+
+  // Navbar corner resize handles — only visible when navbar is shown
+  const navVisible = navbar.classList.contains('visible');
+  resizeHandles.navNe.style.display = navVisible ? '' : 'none';
+  resizeHandles.navNw.style.display = navVisible ? '' : 'none';
+  resizeHandles.navNe.style.left = `${x + width - 24}px`;
+  resizeHandles.navNe.style.top = `${navbarTop}px`;
+  resizeHandles.navNw.style.left = `${x}px`;
+  resizeHandles.navNw.style.top = `${navbarTop}px`;
 
   // Mode indicator — top-right corner of the webview
   if (modeIndicator) {
@@ -132,7 +164,8 @@ let dragStartBoundsX = 0;
 let dragStartBoundsY = 0;
 
 // Hold-to-drag state
-const DRAG_HOLD_THRESHOLD = 150; // ms before hold-drag activates
+const DRAG_HOLD_THRESHOLD = 150; // ms before hold-drag activates (transparent canvas)
+const WEBVIEW_DRAG_HOLD_THRESHOLD = 300; // ms for webview content (longer to avoid interfering with clicks)
 let holdDragTimer = null;
 let holdDragPending = false;
 let holdDragStartScreenX = 0;
@@ -153,6 +186,8 @@ function cancelHoldDrag() {
     holdDragTimer = null;
   }
   holdDragPending = false;
+  // Deactivate the drag overlay if it was activated
+  dragOverlay.classList.remove('active');
 }
 
 // Instant drag on navbar background (excluding buttons and URL text)
@@ -163,7 +198,7 @@ navbar.addEventListener('mousedown', (e) => {
   e.preventDefault();
 });
 
-// Hold-to-drag from anywhere on the document
+// Hold-to-drag from anywhere on the document (transparent canvas areas)
 document.addEventListener('mousedown', (e) => {
   // Skip if resize handle was clicked
   if (e.target.closest('.resize-handle')) return;
@@ -189,59 +224,173 @@ document.addEventListener('mouseup', () => {
   cancelHoldDrag();
 });
 
-// --- Custom resize (resize handle) ---
+// --- Webview hold-to-drag via injected long-press detector + overlay ---
+// The webview is a separate Electron process; mouse events inside it don't propagate
+// to the host document. We solve this by:
+// 1. Injecting a long-press detector into the guest page via executeJavaScript on dom-ready
+// 2. The guest script sends a message via console.log('__PEEK_DRAG__:screenX:screenY')
+// 3. The host listens for console-message events on the <webview> element
+// 4. On receiving the signal, the host activates the drag overlay and starts dragging
+// The overlay (pointer-events:all when active) captures all subsequent mouse events.
+
+const WEBVIEW_LONG_PRESS_JS = `
+(function() {
+  // Guard against re-injection
+  if (window.__peekLongPressInstalled) return;
+  window.__peekLongPressInstalled = true;
+
+  let timer = null;
+  let startX = 0;
+  let startY = 0;
+
+  function cancel() {
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  document.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    startX = e.screenX;
+    startY = e.screenY;
+    cancel();
+    timer = setTimeout(function() {
+      // Signal the host via console.log (host listens for console-message)
+      console.log('__PEEK_DRAG__:' + e.screenX + ':' + e.screenY);
+      timer = null;
+    }, ${WEBVIEW_DRAG_HOLD_THRESHOLD});
+  }, true);
+
+  document.addEventListener('mousemove', function(e) {
+    if (!timer) return;
+    // Cancel if moved more than 5px (user is selecting text, not holding)
+    if (Math.abs(e.screenX - startX) > 5 || Math.abs(e.screenY - startY) > 5) {
+      cancel();
+    }
+  }, true);
+
+  document.addEventListener('mouseup', function() { cancel(); }, true);
+  document.addEventListener('scroll', function() { cancel(); }, true);
+  // Also cancel on context menu (right-click)
+  document.addEventListener('contextmenu', function() { cancel(); }, true);
+})();
+`;
+
+// Listen for the long-press signal from the guest page
+webview.addEventListener('console-message', (e) => {
+  if (typeof e.message !== 'string' || !e.message.startsWith('__PEEK_DRAG__:')) return;
+  const parts = e.message.split(':');
+  const screenX = parseFloat(parts[1]);
+  const screenY = parseFloat(parts[2]);
+  if (isNaN(screenX) || isNaN(screenY)) return;
+
+  // Activate the overlay so it captures all subsequent mouse events for the drag
+  dragOverlay.classList.add('active');
+  startDrag(screenX, screenY);
+  DEBUG && console.log('[page] Webview long-press drag started at', screenX, screenY);
+});
+
+// Inject the long-press detector into the guest page on every navigation
+webview.addEventListener('dom-ready', () => {
+  webview.executeJavaScript(WEBVIEW_LONG_PRESS_JS).catch(err => {
+    DEBUG && console.log('[page] Failed to inject long-press detector:', err.message);
+  });
+});
+
+// The drag overlay captures mousemove/mouseup once active (handled by shared drag listeners below)
+// On mouseup during drag, deactivate the overlay
+dragOverlay.addEventListener('mouseup', () => {
+  dragOverlay.classList.remove('active');
+});
+
+// --- Custom resize (all corner handles) ---
 // Uses pointer capture to keep receiving events even if cursor leaves the window.
+// Each direction (se, sw, ne, nw) adjusts different edges of the bounds.
 
 let isResizing = false;
+let resizeDir = null;
 let resizeStartX = 0;
 let resizeStartY = 0;
 let resizeStartWidth = 0;
 let resizeStartHeight = 0;
+let resizeStartBoundsX = 0;
+let resizeStartBoundsY = 0;
+let activeResizeHandle = null;
 
-resizeHandle.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
-  isResizing = true;
-  resizeStartX = e.screenX;
-  resizeStartY = e.screenY;
-  resizeStartWidth = bounds.width;
-  resizeStartHeight = bounds.height;
-  document.body.style.cursor = 'se-resize';
-  // Capture pointer so events continue even if cursor leaves the window
-  resizeHandle.setPointerCapture(e.pointerId);
-  e.preventDefault();
-  e.stopPropagation();
-});
+function initResizeHandle(handle) {
+  if (!handle) return;
 
-resizeHandle.addEventListener('pointermove', (e) => {
-  if (!isResizing) return;
-  // Safety: if no button is held, cancel resize
-  if (e.buttons === 0) {
-    cancelResize();
-    return;
-  }
-  const dx = e.screenX - resizeStartX;
-  const dy = e.screenY - resizeStartY;
-  bounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
-  bounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
-  updatePositions();
-});
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    isResizing = true;
+    resizeDir = handle.dataset.dir;
+    resizeStartX = e.screenX;
+    resizeStartY = e.screenY;
+    resizeStartWidth = bounds.width;
+    resizeStartHeight = bounds.height;
+    resizeStartBoundsX = bounds.x;
+    resizeStartBoundsY = bounds.y;
+    activeResizeHandle = handle;
+    document.body.style.cursor = `${resizeDir}-resize`;
+    handle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  });
 
-resizeHandle.addEventListener('pointerup', (e) => {
-  if (isResizing) {
-    cancelResize();
-    resizeHandle.releasePointerCapture(e.pointerId);
-  }
-});
+  handle.addEventListener('pointermove', (e) => {
+    if (!isResizing || activeResizeHandle !== handle) return;
+    if (e.buttons === 0) {
+      cancelResize();
+      return;
+    }
+    const dx = e.screenX - resizeStartX;
+    const dy = e.screenY - resizeStartY;
 
-// Also release on pointer cancel (e.g., system interruption)
-resizeHandle.addEventListener('pointercancel', (e) => {
-  if (isResizing) {
-    cancelResize();
-  }
-});
+    // Apply resize based on direction
+    if (resizeDir === 'se') {
+      bounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
+      bounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
+    } else if (resizeDir === 'sw') {
+      const newWidth = Math.max(MIN_WIDTH, resizeStartWidth - dx);
+      bounds.x = resizeStartBoundsX + (resizeStartWidth - newWidth);
+      bounds.width = newWidth;
+      bounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
+    } else if (resizeDir === 'ne') {
+      bounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
+      const newHeight = Math.max(MIN_HEIGHT, resizeStartHeight - dy);
+      bounds.y = resizeStartBoundsY + (resizeStartHeight - newHeight);
+      bounds.height = newHeight;
+    } else if (resizeDir === 'nw') {
+      const newWidth = Math.max(MIN_WIDTH, resizeStartWidth - dx);
+      bounds.x = resizeStartBoundsX + (resizeStartWidth - newWidth);
+      bounds.width = newWidth;
+      const newHeight = Math.max(MIN_HEIGHT, resizeStartHeight - dy);
+      bounds.y = resizeStartBoundsY + (resizeStartHeight - newHeight);
+      bounds.height = newHeight;
+    }
+
+    updatePositions();
+  });
+
+  handle.addEventListener('pointerup', (e) => {
+    if (isResizing && activeResizeHandle === handle) {
+      cancelResize();
+      handle.releasePointerCapture(e.pointerId);
+    }
+  });
+
+  handle.addEventListener('pointercancel', () => {
+    if (isResizing && activeResizeHandle === handle) {
+      cancelResize();
+    }
+  });
+}
+
+// Initialize all resize handles
+Object.values(resizeHandles).forEach(initResizeHandle);
 
 function cancelResize() {
   isResizing = false;
+  resizeDir = null;
+  activeResizeHandle = null;
   document.body.style.cursor = '';
 }
 
@@ -251,6 +400,7 @@ document.addEventListener('mousemove', (e) => {
   // Safety: if no button is held during drag, cancel it
   if (isDragging && e.buttons === 0) {
     isDragging = false;
+    dragOverlay.classList.remove('active');
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
     return;
@@ -268,6 +418,7 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', () => {
   if (isDragging) {
     isDragging = false;
+    dragOverlay.classList.remove('active');
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
   }
@@ -298,6 +449,7 @@ function show(opts) {
   navbar.classList.add('visible');
   if (opts?.source) showSource = opts.source;
   if (wasHidden) {
+    updatePositions(); // Show navbar corner resize handles
     updateState();
     DEBUG && console.log('[page] Navbar shown, source:', showSource);
   }
@@ -320,6 +472,7 @@ function hide() {
     hideTimer = null;
   }
   navbar.classList.remove('visible');
+  updatePositions(); // Hide navbar corner resize handles
   window.getSelection().removeAllRanges();
   showSource = null;
   DEBUG && console.log('[page] Navbar hidden');
@@ -327,7 +480,7 @@ function hide() {
 
 // Dismiss on click outside the navbar
 document.addEventListener('mousedown', (e) => {
-  if (navbar.classList.contains('visible') && !navbar.contains(e.target) && e.target !== triggerZone) {
+  if (navbar.classList.contains('visible') && !navbar.contains(e.target) && e.target !== triggerZone && !e.target.closest('.resize-handle')) {
     hide();
   }
 });

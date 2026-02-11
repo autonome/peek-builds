@@ -2288,9 +2288,32 @@ export function updateItem(itemId: string, options: ItemOptions): boolean {
 export function updateItemTitle(url: string, title: string): boolean {
   const normalizedUri = normalizeUrl(url);
   const d = getDb();
-  const existing = d.prepare(
+
+  // Phase 1: Try exact normalized URL match
+  let existing = d.prepare(
     'SELECT id, title FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
   ).get('url', normalizedUri) as { id: string; title: string } | undefined;
+
+  // Phase 2: If no match, try with raw URL (handles cases where normalizeUrl behaves differently)
+  if (!existing && url !== normalizedUri) {
+    existing = d.prepare(
+      'SELECT id, title FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
+    ).get('url', url) as { id: string; title: string } | undefined;
+  }
+
+  // Phase 3: If still no match, try domain-based lookup for the most recent matching item.
+  // This handles redirect scenarios (e.g., http://example.com → https://www.example.com/)
+  if (!existing) {
+    try {
+      const parsed = new URL(url);
+      const domain = parsed.hostname;
+      existing = d.prepare(
+        `SELECT id, title FROM items WHERE type = ? AND domain = ? AND deletedAt = 0
+         AND (title = '' OR title IS NULL OR title = 'Loading...')
+         ORDER BY updatedAt DESC LIMIT 1`
+      ).get('url', domain) as { id: string; title: string } | undefined;
+    } catch { /* invalid URL, skip */ }
+  }
 
   if (!existing) return false;
 
