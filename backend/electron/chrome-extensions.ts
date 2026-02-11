@@ -318,6 +318,9 @@ export function getChromeExtensions(): Array<{
   description: string;
   enabled: boolean;
   loaded: boolean;
+  path: string;
+  hasOptionsPage: boolean;
+  attribution?: string;
 }> {
   const result: Array<{
     id: string;
@@ -326,12 +329,26 @@ export function getChromeExtensions(): Array<{
     description: string;
     enabled: boolean;
     loaded: boolean;
+    path: string;
+    hasOptionsPage: boolean;
+    attribution?: string;
   }> = [];
 
   for (const [extId, extInfo] of discoveredExtensions) {
     const setting = getExtensionSetting(extId);
     const enabled = setting ? setting.enabled : true;
     const loaded = loadedExtensions.has(extId);
+    const hasOptionsPage = !!(extInfo.manifest.options_ui?.page || extInfo.manifest.options_page);
+
+    // Build attribution from manifest metadata
+    let attribution: string | undefined;
+    const manifest = extInfo.manifest as ChromeManifest & { author?: string; homepage_url?: string };
+    if (manifest.author || manifest.homepage_url) {
+      const parts: string[] = [];
+      if (manifest.author) parts.push(manifest.author);
+      if (manifest.homepage_url) parts.push(manifest.homepage_url);
+      attribution = parts.join(' - ');
+    }
 
     result.push({
       id: extId,
@@ -340,6 +357,9 @@ export function getChromeExtensions(): Array<{
       description: extInfo.description,
       enabled,
       loaded,
+      path: extInfo.path,
+      hasOptionsPage,
+      attribution,
     });
   }
 

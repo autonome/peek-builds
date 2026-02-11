@@ -528,26 +528,25 @@ const renderThemesSettings = async () => {
   return container;
 };
 
-// Render privacy & web extensions settings (adblocker + bundled chrome extensions)
+// Render extensions settings (bundled webextensions: ad blocker, consent-o-matic, etc.)
 const renderPrivacySettings = async () => {
   const container = document.createElement('div');
 
-  // ========== Ad Blocker Section ==========
-  const adBlockerSection = document.createElement('div');
-  adBlockerSection.className = 'form-section';
+  const extSection = document.createElement('div');
+  extSection.className = 'form-section';
 
-  const adBlockerTitle = document.createElement('h3');
-  adBlockerTitle.className = 'form-section-title';
-  adBlockerTitle.textContent = 'Ad Blocker';
-  adBlockerSection.appendChild(adBlockerTitle);
+  const extSectionTitle = document.createElement('h3');
+  extSectionTitle.className = 'form-section-title';
+  extSectionTitle.textContent = 'Bundled Web Extensions';
+  extSection.appendChild(extSectionTitle);
 
-  const adBlockerDesc = document.createElement('p');
-  adBlockerDesc.className = 'help-text';
-  adBlockerDesc.style.marginBottom = '12px';
-  adBlockerDesc.textContent = 'Block ads and trackers for faster, cleaner browsing. Powered by EasyList and EasyPrivacy filter lists.';
-  adBlockerSection.appendChild(adBlockerDesc);
+  const extSectionDesc = document.createElement('p');
+  extSectionDesc.className = 'help-text';
+  extSectionDesc.style.marginBottom = '16px';
+  extSectionDesc.textContent = 'Web extensions bundled with Peek. These run in isolated processes for security.';
+  extSection.appendChild(extSectionDesc);
 
-  // Load adblocker status
+  // ========== Ghostery Ad Blocker ==========
   let adBlockerEnabled = true;
   let blockedCount = 0;
 
@@ -561,153 +560,232 @@ const renderPrivacySettings = async () => {
     console.error('[settings] Failed to load adblocker status:', err);
   }
 
-  // Stats display
-  const statsDiv = document.createElement('div');
-  statsDiv.className = 'help-text';
-  statsDiv.style.marginBottom = '12px';
-  statsDiv.innerHTML = `<strong>${blockedCount.toLocaleString()}</strong> requests blocked this session`;
-  adBlockerSection.appendChild(statsDiv);
+  const adBlockerCard = document.createElement('div');
+  adBlockerCard.className = 'item-card no-collapse';
 
-  // Toggle checkbox
-  const adBlockerToggle = createCheckbox('Enable Ad Blocker', adBlockerEnabled, async (newVal) => {
+  const adBlockerHeader = document.createElement('div');
+  adBlockerHeader.className = 'item-card-header';
+
+  // Left side: checkbox + name
+  const adBlockerLeft = document.createElement('div');
+  adBlockerLeft.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+
+  const adBlockerCheckbox = document.createElement('input');
+  adBlockerCheckbox.type = 'checkbox';
+  adBlockerCheckbox.checked = adBlockerEnabled;
+  adBlockerCheckbox.style.cssText = 'width: 16px; height: 16px; cursor: pointer;';
+  adBlockerCheckbox.addEventListener('change', async (e) => {
     try {
-      if (newVal) {
+      if (e.target.checked) {
         await api.adblocker.enable();
       } else {
         await api.adblocker.disable();
       }
     } catch (err) {
       console.error('[settings] Failed to toggle adblocker:', err);
+      e.target.checked = !e.target.checked;
     }
   });
-  adBlockerSection.appendChild(adBlockerToggle);
+  adBlockerLeft.appendChild(adBlockerCheckbox);
 
-  container.appendChild(adBlockerSection);
+  const adBlockerTitle = document.createElement('div');
+  adBlockerTitle.className = 'item-card-title';
+  adBlockerTitle.style.margin = '0';
 
-  // ========== Bundled Extensions Section ==========
-  const chromeExtSection = document.createElement('div');
-  chromeExtSection.className = 'form-section';
-  chromeExtSection.style.marginTop = '24px';
+  const adBlockerName = document.createElement('span');
+  adBlockerName.textContent = 'Ghostery Ad Blocker';
+  adBlockerTitle.appendChild(adBlockerName);
 
-  const chromeExtTitle = document.createElement('h3');
-  chromeExtTitle.className = 'form-section-title';
-  chromeExtTitle.textContent = 'Bundled Extensions';
-  chromeExtSection.appendChild(chromeExtTitle);
+  const adBlockerSourceLink = document.createElement('a');
+  adBlockerSourceLink.href = 'https://github.com/ghostery/adblocker';
+  adBlockerSourceLink.target = '_blank';
+  adBlockerSourceLink.textContent = 'source';
+  adBlockerSourceLink.style.cssText = 'margin-left: 8px; font-size: 11px; color: var(--text-muted); text-decoration: none; font-weight: 400;';
+  adBlockerSourceLink.addEventListener('mouseenter', () => { adBlockerSourceLink.style.color = 'var(--text-primary)'; });
+  adBlockerSourceLink.addEventListener('mouseleave', () => { adBlockerSourceLink.style.color = 'var(--text-muted)'; });
+  adBlockerTitle.appendChild(adBlockerSourceLink);
 
-  const chromeExtDesc = document.createElement('p');
-  chromeExtDesc.className = 'help-text';
-  chromeExtDesc.style.marginBottom = '12px';
-  chromeExtDesc.textContent = 'Chrome extensions bundled with Peek. These run in isolated processes for security.';
-  chromeExtSection.appendChild(chromeExtDesc);
+  adBlockerLeft.appendChild(adBlockerTitle);
+  adBlockerHeader.appendChild(adBlockerLeft);
+  adBlockerCard.appendChild(adBlockerHeader);
 
-  // Load chrome extensions list
-  const extListDiv = document.createElement('div');
-  extListDiv.className = 'extension-list';
+  // Body
+  const adBlockerBody = document.createElement('div');
+  adBlockerBody.className = 'item-card-body';
 
-  const refreshExtList = async () => {
-    extListDiv.innerHTML = '';
+  const adBlockerDesc = document.createElement('div');
+  adBlockerDesc.className = 'help-text';
+  adBlockerDesc.style.marginBottom = '4px';
+  adBlockerDesc.textContent = 'Block ads and trackers for faster, cleaner browsing.';
+  adBlockerBody.appendChild(adBlockerDesc);
 
-    try {
-      const result = await api.chromeExtensions.list();
-      if (result.success && result.data && result.data.length > 0) {
-        for (const ext of result.data) {
-          const extItem = document.createElement('div');
-          extItem.className = 'form-group-inline';
-          extItem.style.padding = '8px 0';
-          extItem.style.borderBottom = '1px solid var(--border-color, #333)';
+  const adBlockerStats = document.createElement('div');
+  adBlockerStats.className = 'help-text';
+  adBlockerStats.style.marginBottom = '4px';
+  adBlockerStats.innerHTML = `<strong>${blockedCount.toLocaleString()}</strong> requests blocked this session`;
+  adBlockerBody.appendChild(adBlockerStats);
 
-          const extInfo = document.createElement('div');
-          extInfo.style.flex = '1';
+  const adBlockerAttr = document.createElement('div');
+  adBlockerAttr.className = 'help-text';
+  adBlockerAttr.style.fontSize = '11px';
+  adBlockerAttr.innerHTML = 'Powered by <a href="https://github.com/ghostery/adblocker" target="_blank" style="color: var(--text-muted);">@ghostery/adblocker</a> (MPL-2.0). Filter lists: <a href="https://easylist.to/" target="_blank" style="color: var(--text-muted);">EasyList</a> and <a href="https://easylist.to/easylist/easyprivacy.txt" target="_blank" style="color: var(--text-muted);">EasyPrivacy</a>.';
+  adBlockerBody.appendChild(adBlockerAttr);
 
-          const extName = document.createElement('div');
-          extName.style.fontWeight = 'bold';
-          extName.textContent = ext.name;
-          extInfo.appendChild(extName);
+  adBlockerCard.appendChild(adBlockerBody);
+  extSection.appendChild(adBlockerCard);
 
-          if (ext.description) {
-            const extDescText = document.createElement('div');
-            extDescText.className = 'help-text';
-            extDescText.style.fontSize = '12px';
-            extDescText.textContent = ext.description;
-            extInfo.appendChild(extDescText);
+  // ========== Bundled Chrome Extensions ==========
+  try {
+    const result = await api.chromeExtensions.list();
+    if (result.success && result.data && result.data.length > 0) {
+      // Also fetch UI entries to know which extensions have options pages
+      let uiEntries = [];
+      try {
+        const uiResult = await api.chromeExtensions.getUiEntries();
+        if (uiResult.success && uiResult.data) {
+          uiEntries = uiResult.data;
+        }
+      } catch (err) {
+        console.error('[settings] Failed to load chrome extension UI entries:', err);
+      }
+
+      for (const ext of result.data) {
+        const card = document.createElement('div');
+        card.className = 'item-card no-collapse';
+
+        const header = document.createElement('div');
+        header.className = 'item-card-header';
+
+        // Left side: checkbox + name + source link
+        const leftSide = document.createElement('div');
+        leftSide.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = ext.enabled;
+        checkbox.style.cssText = 'width: 16px; height: 16px; cursor: pointer;';
+        checkbox.addEventListener('change', async (e) => {
+          try {
+            if (e.target.checked) {
+              await api.chromeExtensions.enable(ext.id);
+            } else {
+              await api.chromeExtensions.disable(ext.id);
+            }
+          } catch (err) {
+            console.error('[settings] Failed to toggle chrome extension:', err);
+            e.target.checked = !e.target.checked;
           }
+        });
+        leftSide.appendChild(checkbox);
 
-          const extVersion = document.createElement('div');
-          extVersion.className = 'help-text';
-          extVersion.style.fontSize = '11px';
-          extVersion.textContent = `v${ext.version}`;
-          extInfo.appendChild(extVersion);
+        const cardTitle = document.createElement('div');
+        cardTitle.className = 'item-card-title';
+        cardTitle.style.margin = '0';
 
-          extItem.appendChild(extInfo);
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = ext.name;
+        cardTitle.appendChild(nameSpan);
 
-          // Toggle
-          const toggleWrapper = document.createElement('div');
-          toggleWrapper.className = 'checkbox-wrapper';
+        if (ext.version) {
+          const versionSpan = document.createElement('span');
+          versionSpan.style.cssText = 'margin-left: 8px; font-size: 11px; color: var(--text-tertiary); font-weight: 400;';
+          versionSpan.textContent = `v${ext.version}`;
+          cardTitle.appendChild(versionSpan);
+        }
 
-          const toggle = document.createElement('input');
-          toggle.type = 'checkbox';
-          toggle.checked = ext.enabled;
-          toggle.addEventListener('change', async (e) => {
+        // Source code link (path to extension directory)
+        if (ext.path) {
+          const sourceLink = document.createElement('span');
+          sourceLink.textContent = 'source';
+          sourceLink.title = ext.path;
+          sourceLink.style.cssText = 'margin-left: 8px; font-size: 11px; color: var(--text-muted); font-weight: 400; cursor: help; border-bottom: 1px dotted var(--text-muted);';
+          cardTitle.appendChild(sourceLink);
+        }
+
+        leftSide.appendChild(cardTitle);
+        header.appendChild(leftSide);
+
+        // Right side: Options button
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display: flex; gap: 8px; align-items: center;';
+
+        // Options button if extension has an options page
+        const hasOptions = ext.hasOptionsPage || uiEntries.some(e => e.extensionId === ext.id && e.type === 'options');
+        if (hasOptions && ext.enabled) {
+          const optionsBtn = document.createElement('button');
+          optionsBtn.textContent = 'Options';
+          optionsBtn.style.cssText = `
+            padding: 4px 8px;
+            font-size: 11px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-primary);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+          `;
+          optionsBtn.addEventListener('mouseenter', () => {
+            optionsBtn.style.background = 'var(--bg-hover)';
+          });
+          optionsBtn.addEventListener('mouseleave', () => {
+            optionsBtn.style.background = 'var(--bg-tertiary)';
+          });
+          optionsBtn.addEventListener('click', async () => {
             try {
-              if (e.target.checked) {
-                await api.chromeExtensions.enable(ext.id);
-              } else {
-                await api.chromeExtensions.disable(ext.id);
-              }
+              await api.chromeExtensions.openPage(ext.id, 'options');
             } catch (err) {
-              console.error('[settings] Failed to toggle chrome extension:', err);
-              // Revert toggle
-              e.target.checked = !e.target.checked;
+              console.error('[settings] Failed to open extension options:', err);
             }
           });
-
-          toggleWrapper.appendChild(toggle);
-          extItem.appendChild(toggleWrapper);
-
-          extListDiv.appendChild(extItem);
+          actions.appendChild(optionsBtn);
         }
-      } else {
-        const noExt = document.createElement('p');
-        noExt.className = 'help-text';
-        noExt.textContent = 'No bundled extensions installed. Add unpacked extensions to resources/chrome-extensions/';
-        extListDiv.appendChild(noExt);
+
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        // Body: description + attribution
+        const body = document.createElement('div');
+        body.className = 'item-card-body';
+
+        if (ext.description) {
+          const desc = document.createElement('div');
+          desc.className = 'help-text';
+          desc.style.marginBottom = '4px';
+          desc.textContent = ext.description;
+          body.appendChild(desc);
+        }
+
+        // Inline attribution
+        if (ext.attribution) {
+          const attrDiv = document.createElement('div');
+          attrDiv.className = 'help-text';
+          attrDiv.style.fontSize = '11px';
+          // Check if attribution contains a URL and make it a link
+          const urlMatch = ext.attribution.match(/(https?:\/\/[^\s]+)/);
+          if (urlMatch) {
+            const beforeUrl = ext.attribution.substring(0, ext.attribution.indexOf(urlMatch[1]));
+            const url = urlMatch[1];
+            const afterUrl = ext.attribution.substring(ext.attribution.indexOf(urlMatch[1]) + urlMatch[1].length);
+            attrDiv.innerHTML = `${beforeUrl}<a href="${url}" target="_blank" style="color: var(--text-muted);">${url}</a>${afterUrl}`;
+          } else {
+            attrDiv.textContent = ext.attribution;
+          }
+          body.appendChild(attrDiv);
+        }
+
+        card.appendChild(body);
+        extSection.appendChild(card);
       }
-    } catch (err) {
-      console.error('[settings] Failed to load chrome extensions:', err);
-      const errorMsg = document.createElement('p');
-      errorMsg.className = 'help-text';
-      errorMsg.style.color = 'var(--error-color, #f44)';
-      errorMsg.textContent = 'Failed to load extensions: ' + err.message;
-      extListDiv.appendChild(errorMsg);
     }
-  };
+  } catch (err) {
+    console.error('[settings] Failed to load chrome extensions:', err);
+    const errorMsg = document.createElement('p');
+    errorMsg.className = 'help-text';
+    errorMsg.style.color = 'var(--error-color, #f44)';
+    errorMsg.textContent = 'Failed to load extensions: ' + err.message;
+    extSection.appendChild(errorMsg);
+  }
 
-  await refreshExtList();
-  chromeExtSection.appendChild(extListDiv);
-
-  container.appendChild(chromeExtSection);
-
-  // ========== Attribution Section ==========
-  const attrSection = document.createElement('div');
-  attrSection.className = 'form-section';
-  attrSection.style.marginTop = '24px';
-
-  const attrTitle = document.createElement('h3');
-  attrTitle.className = 'form-section-title';
-  attrTitle.textContent = 'Attribution';
-  attrSection.appendChild(attrTitle);
-
-  const attrText = document.createElement('p');
-  attrText.className = 'help-text';
-  attrText.innerHTML = `
-    Ad blocking powered by <a href="https://github.com/ghostery/adblocker" target="_blank" style="color: var(--link-color, #88f);">@ghostery/adblocker</a> (MPL-2.0).<br>
-    Filter lists: <a href="https://easylist.to/" target="_blank" style="color: var(--link-color, #88f);">EasyList</a> and <a href="https://easylist.to/easylist/easyprivacy.txt" target="_blank" style="color: var(--link-color, #88f);">EasyPrivacy</a>.<br><br>
-    Cookie consent handling by <a href="https://github.com/cavi-au/Consent-O-Matic" target="_blank" style="color: var(--link-color, #88f);">Consent-O-Matic</a> (MIT).<br>
-    Developed by Janus Bager Kristensen and Rolf Bagge, <a href="https://cavi.au.dk/" target="_blank" style="color: var(--link-color, #88f);">CAVI</a> - Center for Advanced Visualization and Interaction, Aarhus University.
-  `;
-  attrSection.appendChild(attrText);
-
-  container.appendChild(attrSection);
+  container.appendChild(extSection);
 
   return container;
 };
@@ -1162,7 +1240,7 @@ const renderSyncSettings = async () => {
   return container;
 };
 
-// Render extensions settings
+// Render features settings (Peek's own extensions: cmd, groups, peeks, slides, windows)
 const renderExtensionsSettings = async () => {
   const container = document.createElement('div');
 
@@ -1172,7 +1250,7 @@ const renderExtensionsSettings = async () => {
   addSection.style.marginBottom = '24px';
 
   const addBtn = document.createElement('button');
-  addBtn.textContent = '+ Add Extension';
+  addBtn.textContent = '+ Add Feature';
   addBtn.style.cssText = `
     padding: 10px 16px;
     font-size: 13px;
@@ -1197,7 +1275,7 @@ const renderExtensionsSettings = async () => {
       // Open folder picker
       const pickResult = await api.extensions.pickFolder();
       if (!pickResult.success || pickResult.canceled) {
-        addBtn.textContent = '+ Add Extension';
+        addBtn.textContent = '+ Add Feature';
         addBtn.disabled = false;
         return;
       }
@@ -1224,14 +1302,14 @@ const renderExtensionsSettings = async () => {
 
         // Refresh the list
         setTimeout(() => {
-          addBtn.textContent = '+ Add Extension';
+          addBtn.textContent = '+ Add Feature';
           addBtn.disabled = false;
           refreshExtensionsList();
         }, 1500);
       } else {
         addBtn.textContent = `Error: ${addResult.error}`;
         setTimeout(() => {
-          addBtn.textContent = '+ Add Extension';
+          addBtn.textContent = '+ Add Feature';
           addBtn.disabled = false;
         }, 3000);
       }
@@ -1239,7 +1317,7 @@ const renderExtensionsSettings = async () => {
       console.error('Add extension error:', err);
       addBtn.textContent = 'Error adding extension';
       setTimeout(() => {
-        addBtn.textContent = '+ Add Extension';
+        addBtn.textContent = '+ Add Feature';
         addBtn.disabled = false;
       }, 2000);
     }
@@ -1363,7 +1441,7 @@ const renderExtensionsSettings = async () => {
       if (allExtensions.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'help-text';
-        empty.textContent = 'No extensions installed. Click "Add Extension" to install one.';
+        empty.textContent = 'No features installed. Click "Add Feature" to install one.';
         listContainer.appendChild(empty);
         return;
       }
@@ -1373,7 +1451,7 @@ const renderExtensionsSettings = async () => {
 
       const title = document.createElement('h3');
       title.className = 'form-section-title';
-      title.textContent = 'Installed Extensions';
+      title.textContent = 'Installed Features';
       extSection.appendChild(title);
 
       allExtensions.forEach(ext => {
@@ -2390,22 +2468,22 @@ const init = async () => {
     }
   });
 
-  // Add Extensions management section (must be created before loading extension settings)
+  // Add Features management section (Peek extensions like peeks, slides, groups)
   const extNav = document.createElement('a');
   extNav.className = 'nav-item';
-  extNav.textContent = 'Extensions';
+  extNav.textContent = 'Features';
   extNav.dataset.section = 'extensions';
   extNav.addEventListener('click', () => showSection('extensions'));
   sidebarNav.appendChild(extNav);
 
-  // Create extensions section with async content
+  // Create features section with async content
   const extSection = document.createElement('div');
   extSection.className = 'section';
   extSection.id = 'section-extensions';
 
   const extTitle = document.createElement('h2');
   extTitle.className = 'section-title';
-  extTitle.textContent = 'Extensions';
+  extTitle.textContent = 'Features';
   extSection.appendChild(extTitle);
 
   // Load extensions content async
@@ -2492,25 +2570,25 @@ const init = async () => {
     }
   }, api.scopes.GLOBAL);
 
-  // Add Privacy section (adblocker + bundled chrome extensions)
+  // Add Extensions section (bundled webextensions: ad blocker, consent-o-matic, etc.)
   const privacyNav = document.createElement('a');
   privacyNav.className = 'nav-item';
-  privacyNav.textContent = 'Privacy';
+  privacyNav.textContent = 'Extensions';
   privacyNav.dataset.section = 'privacy';
   privacyNav.addEventListener('click', () => showSection('privacy'));
   sidebarNav.appendChild(privacyNav);
 
-  // Create privacy section with async content
+  // Create extensions (webextensions) section with async content
   const privacySection = document.createElement('div');
   privacySection.className = 'section';
   privacySection.id = 'section-privacy';
 
   const privacyTitle = document.createElement('h2');
   privacyTitle.className = 'section-title';
-  privacyTitle.textContent = 'Privacy';
+  privacyTitle.textContent = 'Extensions';
   privacySection.appendChild(privacyTitle);
 
-  // Load privacy content async
+  // Load extensions content async
   renderPrivacySettings().then(content => {
     privacySection.appendChild(content);
   });

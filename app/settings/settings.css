@@ -273,6 +273,15 @@ body {
   content: '\25B6 ';
 }
 
+.item-card.no-collapse .item-card-title::before {
+  content: none;
+}
+
+.item-card.no-collapse .item-card-header {
+  cursor: default;
+  margin-bottom: 8px;
+}
+
 .item-card-body .form-group {
   margin-bottom: 16px;
 }
