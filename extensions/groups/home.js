@@ -338,15 +338,48 @@ const loadTags = async () => {
 };
 
 /**
+ * Normalize a URL for deduplication comparison
+ */
+const normalizeUrlForCompare = (url) => {
+  try {
+    const u = new URL(url);
+    let normalized = u.protocol + '//' + u.hostname.toLowerCase();
+    if (u.port && u.port !== '80' && u.port !== '443') normalized += ':' + u.port;
+    let path = u.pathname;
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    normalized += path + u.search + u.hash;
+    return normalized;
+  } catch {
+    return url;
+  }
+};
+
+/**
+ * Deduplicate items by URL content, keeping the most recently updated one
+ */
+const deduplicateByUrl = (items) => {
+  const seen = new Map();
+  for (const item of items) {
+    const normalized = normalizeUrlForCompare(item.content);
+    const existing = seen.get(normalized);
+    if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+      seen.set(normalized, item);
+    }
+  }
+  return Array.from(seen.values());
+};
+
+/**
  * Load URL items for a specific tag (only http/https URLs)
  */
 const loadAddressesForTag = async (tagId) => {
   const result = await api.datastore.getItemsByTag(tagId);
   if (result.success) {
-    // Only include http/https URL items
-    state.addresses = result.data.filter(item =>
+    // Only include http/https URL items, deduplicated by URL
+    const urlItems = result.data.filter(item =>
       item.type === 'url' && isWebUrl(item.content)
     );
+    state.addresses = deduplicateByUrl(urlItems);
     debug && console.log('Loaded URL items for tag:', state.addresses.length);
   } else {
     console.error('Failed to load addresses:', result.error);

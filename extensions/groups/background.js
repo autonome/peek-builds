@@ -240,7 +240,7 @@ const openGroup = async (groupName) => {
   }
 
   // Filter to items with URLs (explicit URL items + text items containing URLs)
-  const urlItems = itemsResult.data
+  const allUrlItems = itemsResult.data
     .map(item => {
       if (item.type === 'url') return { ...item, _openUrl: item.content };
       if (item.type === 'text' && item.content) {
@@ -253,6 +253,16 @@ const openGroup = async (groupName) => {
       return null;
     })
     .filter(Boolean);
+
+  // Deduplicate by normalized URL to avoid opening the same page twice
+  const seenUrls = new Set();
+  const urlItems = allUrlItems.filter(item => {
+    const normalized = normalizeUrlForCompare(item._openUrl);
+    if (seenUrls.has(normalized)) return false;
+    seenUrls.add(normalized);
+    return true;
+  });
+
   if (urlItems.length === 0) {
     console.log('[ext:groups] No URLs in group:', groupName);
     return { success: false, error: 'Group is empty' };

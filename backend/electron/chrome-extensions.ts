@@ -11,7 +11,7 @@
  * - Compatible with electron-chrome-extensions for enhanced API support
  */
 
-import { session, Extension, BrowserWindow } from 'electron';
+import { session, Extension, BrowserWindow, nativeTheme } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -496,11 +496,16 @@ export function openChromeExtensionPage(
   // Use profile-specific session so the extension page has access to chrome.* APIs
   const profileSession = getProfileSession();
 
+  // Use dark background when system is in dark mode for proper Peek styling
+  const backgroundColor = nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#ffffff';
+
   const win = new BrowserWindow({
     width: entry.width,
     height: entry.height,
     title: entry.title,
     show: true,
+    backgroundColor,
+    titleBarStyle: 'hiddenInset',
     webPreferences: {
       session: profileSession,
       // No preload — these are chrome extension pages, they use chrome.* APIs
