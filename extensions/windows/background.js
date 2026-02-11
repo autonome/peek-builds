@@ -114,13 +114,8 @@ const init = async () => {
 
   initShortcut(currentSettings.prefs.shortcutKey);
 
-  // Wait for cmd:ready before registering commands
-  api.subscribe('cmd:ready', () => {
-    initCommands();
-  }, api.scopes.GLOBAL);
-
-  // Query in case cmd is already ready
-  api.publish('cmd:query', {}, api.scopes.GLOBAL);
+  // Register commands directly (cmd loads first with its subscribers ready)
+  initCommands();
 };
 
 const uninit = () => {

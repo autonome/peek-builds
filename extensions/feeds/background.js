@@ -353,12 +353,8 @@ const extension = {
   init() {
     console.log('[feeds] Initializing...');
 
-    // Wait for cmd:ready before registering commands
-    api.subscribe('cmd:ready', () => {
-      this.registerCommands();
-    }, api.scopes.GLOBAL);
-
-    api.publish('cmd:query', {}, api.scopes.GLOBAL);
+    // Register commands directly (cmd loads first with its subscribers ready)
+    this.registerCommands();
 
     // Register global shortcut (Option+Shift+F to avoid conflict with localsearch's Option+F)
     api.shortcuts.register('Option+Shift+F', openFeedsUI, { global: true });

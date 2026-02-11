@@ -142,13 +142,8 @@ const extension = {
       return;
     }
 
-    // Wait for cmd:ready before registering commands
-    api.subscribe('cmd:ready', () => {
-      this.registerCommands();
-    }, api.scopes.GLOBAL);
-
-    // Query in case cmd is already ready
-    api.publish('cmd:query', {}, api.scopes.GLOBAL);
+    // Register commands directly (cmd loads first with its subscribers ready)
+    this.registerCommands();
 
     // Note: No global shortcut - use the cmd palette to access this extension
     // (avoids conflicts with other extensions like groups which uses Option+g)

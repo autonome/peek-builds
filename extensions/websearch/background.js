@@ -649,13 +649,8 @@ const init = async () => {
   // Load custom engines from datastore
   await loadEngines();
 
-  // Wait for cmd:ready before registering commands
-  api.subscribe('cmd:ready', () => {
-    initCommands();
-  }, api.scopes.GLOBAL);
-
-  // Query in case cmd is already ready
-  api.publish('cmd:query', {}, api.scopes.GLOBAL);
+  // Register commands directly (cmd loads first with its subscribers ready)
+  initCommands();
 
   // Listen for page load events for OpenSearch discovery
   api.subscribe('page:loaded', handlePageLoaded, api.scopes.GLOBAL);

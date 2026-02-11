@@ -233,13 +233,8 @@ const init = async () => {
   currentSettings = await loadSettings();
   console.log('[ext:scripts] Loaded', currentSettings.scripts.length, 'scripts');
 
-  // Wait for cmd:ready before registering commands
-  api.subscribe('cmd:ready', () => {
-    registerCommands();
-  }, api.scopes.GLOBAL);
-
-  // Query in case cmd is already ready
-  api.publish('cmd:query', {}, api.scopes.GLOBAL);
+  // Register commands directly (cmd loads first with its subscribers ready)
+  registerCommands();
 
   // Register global shortcut Command+Shift+S
   api.shortcuts.register('Command+Shift+S', () => openScriptsManager());

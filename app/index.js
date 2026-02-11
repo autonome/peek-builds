@@ -582,13 +582,8 @@ const init = async () => {
   // It receives the 'core:ready' signal and calls loadEnabledExtensions()
   log('core', 'Core features initialized. Extensions loaded by main process.');
 
-  // Register extension dev commands - wait for cmd:ready
-  api.subscribe('cmd:ready', () => {
-    registerExtensionCommands();
-  }, api.scopes.GLOBAL);
-
-  // Query in case cmd is already ready
-  api.publish('cmd:query', {}, api.scopes.GLOBAL);
+  // Register extension commands directly (cmd loads first with its subscribers ready)
+  registerExtensionCommands();
 };
 
 window.addEventListener('load', () => {

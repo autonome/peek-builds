@@ -326,13 +326,8 @@ const extension = {
   init() {
     console.log('[entities] Initializing...');
 
-    // Wait for cmd:ready before registering commands
-    api.subscribe('cmd:ready', () => {
-      this.registerCommands();
-    }, api.scopes.GLOBAL);
-
-    // Query in case cmd is already ready
-    api.publish('cmd:query', {}, api.scopes.GLOBAL);
+    // Register commands directly (cmd loads first with its subscribers ready)
+    this.registerCommands();
 
     // Listen for page loads (item:created events for URL items)
     api.subscribe('item:created', (msg) => {

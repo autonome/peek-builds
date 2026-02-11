@@ -252,13 +252,8 @@ const uninitCommands = () => {
 const init = async () => {
   console.log('[ext:files] init');
 
-  // Wait for cmd:ready before registering commands
-  api.subscribe('cmd:ready', () => {
-    initCommands();
-  }, api.scopes.GLOBAL);
-
-  // Query in case cmd is already ready (it usually is since cmd loads first)
-  api.publish('cmd:query', {}, api.scopes.GLOBAL);
+  // Register commands directly (cmd loads first with its subscribers ready)
+  initCommands();
 };
 
 const uninit = () => {

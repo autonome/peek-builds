@@ -129,24 +129,8 @@ const init = async () => {
 
   initShortcut(currentSettings.prefs.shortcutKey);
 
-  // Wait for cmd:ready before registering commands
-  let commandsRegistered = false;
-  api.subscribe('cmd:ready', () => {
-    if (!commandsRegistered) {
-      commandsRegistered = true;
-      initCommands();
-    }
-  }, api.scopes.GLOBAL);
-
-  // Query in case cmd is already ready, with retries.
-  // The cmd:query -> cmd:ready roundtrip crosses multiple IPC boundaries
-  // (iframe -> main -> cmd iframe -> main -> localsearch iframe) and can be lost.
-  const retryCmdQuery = (attempt) => {
-    if (commandsRegistered || attempt >= 5) return;
-    api.publish('cmd:query', {}, api.scopes.GLOBAL);
-    setTimeout(() => retryCmdQuery(attempt + 1), 500);
-  };
-  retryCmdQuery(0);
+  // Register commands directly (cmd loads first with its subscribers ready)
+  initCommands();
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
   api.subscribe('localsearch:settings-changed', async () => {

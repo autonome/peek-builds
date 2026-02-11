@@ -200,24 +200,8 @@ const init = async () => {
   // Register shortcut
   initShortcut();
 
-  // Wait for cmd:ready before registering commands
-  let commandsRegistered = false;
-  api.subscribe('cmd:ready', () => {
-    if (!commandsRegistered) {
-      commandsRegistered = true;
-      initCommands();
-    }
-  }, api.scopes.GLOBAL);
-
-  // Query in case cmd is already ready, with retries.
-  // The cmd:query → cmd:ready roundtrip crosses multiple IPC boundaries
-  // (iframe → main → cmd iframe → main → hud iframe) and can be lost.
-  const retryCmdQuery = (attempt) => {
-    if (commandsRegistered || attempt >= 5) return;
-    api.publish('cmd:query', {}, api.scopes.GLOBAL);
-    setTimeout(() => retryCmdQuery(attempt + 1), 500);
-  };
-  retryCmdQuery(0);
+  // Register commands directly (cmd loads first with its subscribers ready)
+  initCommands();
 
   // Open HUD if it was enabled
   if (hudEnabled) {

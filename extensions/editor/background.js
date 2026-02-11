@@ -62,13 +62,8 @@ const extension = {
       return;
     }
 
-    // Wait for cmd:ready before registering commands
-    api.subscribe('cmd:ready', () => {
-      this.registerCommands();
-    }, api.scopes.GLOBAL);
-
-    // Query in case cmd is already ready
-    api.publish('cmd:query', {}, api.scopes.GLOBAL);
+    // Register commands directly (cmd loads first with its subscribers ready)
+    this.registerCommands();
 
     // Register global shortcut Option+E (works when Peek is not focused)
     api.shortcuts.register('Option+e', () => openEditor(), { global: true });

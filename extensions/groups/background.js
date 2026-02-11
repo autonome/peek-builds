@@ -474,10 +474,8 @@ const init = async () => {
 
   initShortcut(currentSettings.prefs.shortcutKey);
 
-  // Wait for cmd:ready before registering commands
-  api.subscribe('cmd:ready', () => {
-    initCommands();
-  }, api.scopes.GLOBAL);
+  // Register commands directly (cmd loads first with its subscribers ready)
+  initCommands();
 
   // Listen for window close events to cleanup group mode
   api.subscribe('window:closed', async (msg) => {
@@ -492,9 +490,6 @@ const init = async () => {
       groupsWindowId = null;
     }
   }, api.scopes.GLOBAL);
-
-  // Query in case cmd is already ready (it usually is since cmd loads first)
-  api.publish('cmd:query', {}, api.scopes.GLOBAL);
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
   api.subscribe('groups:settings-changed', async () => {

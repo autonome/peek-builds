@@ -1125,13 +1125,12 @@ api.restart = () => {
 
 // Command registration API for extensions
 // Commands API
-// Extensions should wait for cmd:ready before registering commands.
-// The cmd extension is loaded first and publishes cmd:ready when initialized.
+// The cmd extension is loaded first and its cmd:register-batch subscriber is set up synchronously.
+// Extensions can call api.commands.register() directly in their init().
 
 api.commands = {
   /**
    * Register a command with the cmd palette
-   * IMPORTANT: Extensions should wait for cmd:ready before calling this.
    * @param {Object} command - Command object with:
    *   - name: string (required)
    *   - description: string (optional)

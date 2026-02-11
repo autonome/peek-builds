@@ -6,8 +6,6 @@
  * Implements the PROVIDER pattern for extension-to-extension APIs:
  * - Owns the command registry
  * - Subscribes to cmd:register, cmd:unregister for command management
- * - Subscribes to cmd:query for late-arriving consumers
- * - Publishes cmd:ready when fully initialized
  *
  * Runs in isolated extension process (peek://ext/cmd/background.html)
  */
@@ -180,7 +178,6 @@ const isCacheValid = (cache, appVersion, extensionVersions) => {
  * Other extensions (consumers) communicate via pubsub:
  * - cmd:register - Consumer registers a command
  * - cmd:unregister - Consumer unregisters a command
- * - cmd:query - Consumer checks if cmd is ready (for late arrivals)
  * - cmd:query-commands - Panel queries for all registered commands
  */
 const initCommandRegistry = () => {
@@ -231,13 +228,6 @@ const initCommandRegistry = () => {
   api.subscribe('cmd:unregister', (msg) => {
     log('ext:cmd', 'cmd:unregister received:', msg.name);
     commandRegistry.delete(msg.name);
-  }, api.scopes.GLOBAL);
-
-  // Handle queries from late-arriving consumers
-  // Re-publish ready signal so they know we're available
-  api.subscribe('cmd:query', () => {
-    log('ext:cmd', 'cmd:query received, re-publishing ready');
-    api.publish('cmd:ready', { id: 'cmd' }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   // Handle command list queries from the panel
@@ -505,10 +495,6 @@ const init = async () => {
     }
   }, api.scopes.GLOBAL);
 
-  // 6. LAST: Publish ready signal (PROVIDER PATTERN)
-  // This tells all waiting consumers that cmd is ready to receive registrations
-  log('ext:cmd', 'Publishing cmd:ready');
-  api.publish('cmd:ready', { id: 'cmd' }, api.scopes.GLOBAL);
 };
 
 export default {
