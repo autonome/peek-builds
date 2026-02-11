@@ -430,23 +430,64 @@ peek-card[selected] {
   display: none;
 }
 
-/* Detail content section (for text items) */
-.detail-content-section {
+/* Embedded editor section (for text items) */
+.detail-editor-section {
   margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
 }
 
-.detail-content-text {
+.detail-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.detail-editor-header .detail-label {
+  margin-bottom: 0;
+}
+
+.detail-save-status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  user-select: none;
+  transition: color 0.2s, background 0.2s;
+}
+
+.detail-save-status-saved {
+  color: var(--base0B);
+}
+
+.detail-save-status-saving {
+  color: var(--base0A);
+}
+
+.detail-save-status-unsaved {
+  color: var(--base08);
   background: var(--base01);
-  border: 1px solid var(--base02);
+}
+
+.detail-editor-container {
   border-radius: 8px;
-  padding: 14px;
-  font-size: 14px;
-  color: var(--base05);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 300px;
-  overflow-y: auto;
-  line-height: 1.6;
+  overflow: hidden;
+  min-height: 200px;
+  max-height: 50vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-editor-container .cm-editor {
+  height: 100%;
+  min-height: 200px;
+  max-height: 50vh;
+  border-radius: 8px;
+}
+
+.detail-editor-container .cm-scroller {
+  overflow: auto;
 }
 
 /* Detail sections (tags) */

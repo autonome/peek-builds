@@ -8,7 +8,10 @@
  * - Content search across items (URLs, titles, text) with tag combo filtering
  * - Selected tags pinned to top of sidebar with visual distinction
  * - Inline detail view (no modal/dialog) with proper ESC navigation
+ * - Embedded CodeMirror editor for inline text editing
  */
+
+import * as CodeMirror from 'peek://extensions/editor/codemirror.js';
 
 const api = window.app;
 const debug = api?.debug;
@@ -85,6 +88,12 @@ let state = {
 
 // Expose state for debugging
 window._tagsState = state;
+
+// Embedded editor state
+let embeddedEditor = null;  // CodeMirror EditorView instance
+let editorSaveTimer = null;
+let editorSaveStatus = 'saved'; // 'saved' | 'saving' | 'unsaved'
+const EDITOR_AUTOSAVE_DELAY_MS = 1500;
 
 // DOM elements
 let searchInput;
@@ -183,6 +192,11 @@ const handleEscape = () => {
 
   // If in detail view, navigate back to list
   if (state.currentView === VIEW_DETAIL) {
+    // If editor has unsaved changes, flush them before leaving
+    if (embeddedEditor && editorSaveStatus === 'unsaved') {
+      const content = CodeMirror.getContent(embeddedEditor);
+      performEditorAutosave(content);
+    }
     // Use setTimeout to ensure handler returns before DOM work starts
     setTimeout(() => {
       showList();
@@ -232,11 +246,15 @@ const setupEventListeners = () => {
     if (state.currentView === VIEW_LIST) {
       render();
     } else if (state.currentView === VIEW_DETAIL && state.editingItem) {
-      // Refresh detail view with updated data
+      // Refresh detail view with updated data, but don't re-create the editor
+      // if the user is actively editing (the editor manages its own content)
       const updatedItem = state.items.find(i => i.id === state.editingItem.id);
       if (updatedItem) {
         state.editingItem = updatedItem;
-        showDetailView(updatedItem);
+        // Only refresh tags, not the editor content
+        const tags = state.itemTags.get(updatedItem.id) || [];
+        renderCurrentTags(tags);
+        renderAvailableTags(tags);
       } else {
         // Item was deleted, go back to list
         showList();
@@ -338,6 +356,7 @@ const setupEventListeners = () => {
  */
 const handleKeydown = (e) => {
   // If in detail view, don't process grid navigation
+  // (especially important when embedded editor is focused)
   if (state.currentView === VIEW_DETAIL) {
     return;
   }
@@ -459,6 +478,9 @@ const activateSelected = () => {
 const showList = () => {
   state.currentView = VIEW_LIST;
   state.editingItem = null;
+
+  // Clean up embedded editor before switching views
+  destroyEmbeddedEditor();
 
   cardsContainer.style.display = '';
   detailView.style.display = 'none';
@@ -853,6 +875,129 @@ const createItemCard = (item) => {
 };
 
 /**
+ * Update the save status indicator in the detail editor
+ */
+const updateEditorSaveStatus = () => {
+  const statusEl = document.querySelector('.detail-save-status');
+  if (!statusEl) return;
+
+  statusEl.className = `detail-save-status detail-save-status-${editorSaveStatus}`;
+  switch (editorSaveStatus) {
+    case 'saved':
+      statusEl.textContent = 'Saved';
+      break;
+    case 'saving':
+      statusEl.textContent = 'Saving...';
+      break;
+    case 'unsaved':
+      statusEl.textContent = 'Unsaved';
+      break;
+  }
+};
+
+/**
+ * Perform autosave of the embedded editor content to the datastore
+ */
+const performEditorAutosave = async (content) => {
+  if (!state.editingItem || !api?.datastore?.updateItem) return;
+
+  editorSaveStatus = 'saving';
+  updateEditorSaveStatus();
+
+  try {
+    const result = await api.datastore.updateItem(state.editingItem.id, { content });
+    if (result.success) {
+      editorSaveStatus = 'saved';
+      debug && console.log('[tags] Editor autosaved item:', state.editingItem.id);
+
+      // Update local item state so list view reflects changes
+      state.editingItem.content = content;
+      const idx = state.items.findIndex(i => i.id === state.editingItem.id);
+      if (idx >= 0) {
+        state.items[idx].content = content;
+      }
+
+      // Publish change event for other extensions
+      if (api?.publish) {
+        api.publish('editor:changed', { action: 'update', itemId: state.editingItem.id }, api.scopes.GLOBAL);
+      }
+    } else {
+      console.error('[tags] Editor autosave failed:', result.error);
+      editorSaveStatus = 'unsaved';
+    }
+  } catch (err) {
+    console.error('[tags] Editor autosave error:', err);
+    editorSaveStatus = 'unsaved';
+  }
+
+  updateEditorSaveStatus();
+};
+
+/**
+ * Schedule an autosave with debouncing for the embedded editor
+ */
+const scheduleEditorAutosave = (content) => {
+  editorSaveStatus = 'unsaved';
+  updateEditorSaveStatus();
+
+  if (editorSaveTimer) {
+    clearTimeout(editorSaveTimer);
+  }
+
+  editorSaveTimer = setTimeout(() => {
+    performEditorAutosave(content);
+  }, EDITOR_AUTOSAVE_DELAY_MS);
+};
+
+/**
+ * Create the embedded CodeMirror editor for a text item
+ */
+const createEmbeddedEditor = (item) => {
+  destroyEmbeddedEditor();
+
+  const container = document.querySelector('.detail-editor-container');
+  if (!container) return;
+
+  // Clear the container
+  container.innerHTML = '';
+
+  embeddedEditor = CodeMirror.createEditor({
+    parent: container,
+    content: item.content || '',
+    vimMode: false,
+    showLineNumbers: true,
+    onChange: (content) => {
+      scheduleEditorAutosave(content);
+    },
+  });
+
+  editorSaveStatus = 'saved';
+  updateEditorSaveStatus();
+
+  // Focus the editor after a short delay to let layout settle
+  setTimeout(() => {
+    if (embeddedEditor) CodeMirror.focus(embeddedEditor);
+  }, 100);
+};
+
+/**
+ * Destroy the embedded CodeMirror editor instance and clean up
+ */
+const destroyEmbeddedEditor = () => {
+  if (editorSaveTimer) {
+    clearTimeout(editorSaveTimer);
+    editorSaveTimer = null;
+  }
+
+  if (embeddedEditor) {
+    CodeMirror.destroy(embeddedEditor);
+    embeddedEditor = null;
+  }
+
+  editorSaveStatus = 'saved';
+};
+
+/**
  * Show the inline detail view for an item (replaces card grid)
  */
 const showDetailView = (item) => {
@@ -891,30 +1036,13 @@ const showDetailView = (item) => {
     actionsEl.appendChild(openPageBtn);
   }
 
+  // Show embedded editor for text items
+  const editorSection = detailView.querySelector('.detail-editor-section');
   if (itemType === 'text') {
-    const editBtn = document.createElement('peek-button');
-    editBtn.variant = 'ghost';
-    editBtn.size = 'sm';
-    editBtn.innerHTML = `
-      <svg slot="prefix" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-      </svg>
-      Edit in Editor
-    `;
-    editBtn.addEventListener('click', () => {
-      api.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
-    });
-    actionsEl.appendChild(editBtn);
-  }
-
-  // Show content section for text items
-  const contentSection = detailView.querySelector('.detail-content-section');
-  if (itemType === 'text' && item.content) {
-    contentSection.style.display = '';
-    detailView.querySelector('.detail-content-text').textContent = item.content;
+    editorSection.style.display = '';
+    createEmbeddedEditor(item);
   } else {
-    contentSection.style.display = 'none';
+    editorSection.style.display = 'none';
   }
 
   // Render current tags

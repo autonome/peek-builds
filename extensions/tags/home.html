@@ -18,7 +18,30 @@
         "lit-element": "peek://node_modules/lit-element/lit-element.js",
         "lit-element/": "peek://node_modules/lit-element/",
         "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
-        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/",
+        "@codemirror/state": "peek://node_modules/@codemirror/state/dist/index.js",
+        "@codemirror/view": "peek://node_modules/@codemirror/view/dist/index.js",
+        "@codemirror/commands": "peek://node_modules/@codemirror/commands/dist/index.js",
+        "@codemirror/language": "peek://node_modules/@codemirror/language/dist/index.js",
+        "@codemirror/autocomplete": "peek://node_modules/@codemirror/autocomplete/dist/index.js",
+        "@codemirror/lang-markdown": "peek://node_modules/@codemirror/lang-markdown/dist/index.js",
+        "@codemirror/lang-html": "peek://node_modules/@codemirror/lang-html/dist/index.js",
+        "@codemirror/lang-css": "peek://node_modules/@codemirror/lang-css/dist/index.js",
+        "@codemirror/lang-javascript": "peek://node_modules/@codemirror/lang-javascript/dist/index.js",
+        "@codemirror/theme-one-dark": "peek://node_modules/@codemirror/theme-one-dark/dist/index.js",
+        "@codemirror/search": "peek://node_modules/@codemirror/search/dist/index.js",
+        "@replit/codemirror-vim": "peek://node_modules/@replit/codemirror-vim/dist/index.js",
+        "@lezer/common": "peek://node_modules/@lezer/common/dist/index.js",
+        "@lezer/highlight": "peek://node_modules/@lezer/highlight/dist/index.js",
+        "@lezer/lr": "peek://node_modules/@lezer/lr/dist/index.js",
+        "@lezer/markdown": "peek://node_modules/@lezer/markdown/dist/index.js",
+        "@lezer/html": "peek://node_modules/@lezer/html/dist/index.js",
+        "@lezer/css": "peek://node_modules/@lezer/css/dist/index.js",
+        "@lezer/javascript": "peek://node_modules/@lezer/javascript/dist/index.js",
+        "crelt": "peek://node_modules/crelt/index.js",
+        "style-mod": "peek://node_modules/style-mod/src/style-mod.js",
+        "w3c-keyname": "peek://node_modules/w3c-keyname/index.js",
+        "@marijn/find-cluster-break": "peek://node_modules/@marijn/find-cluster-break/src/index.js"
       }
     }
     </script>
@@ -110,9 +133,12 @@
 
           <div class="detail-actions"></div>
 
-          <div class="detail-content-section" style="display: none;">
-            <label class="detail-label">Content</label>
-            <div class="detail-content-text"></div>
+          <div class="detail-editor-section" style="display: none;">
+            <div class="detail-editor-header">
+              <label class="detail-label">Content</label>
+              <span class="detail-save-status"></span>
+            </div>
+            <div class="detail-editor-container"></div>
           </div>
 
           <div class="detail-section">
