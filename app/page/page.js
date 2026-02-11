@@ -153,7 +153,7 @@ async function initWebview() {
 
   // Load the target URL
   webview.src = targetUrl;
-  urlText.textContent = targetUrl;
+  urlText.value = targetUrl;
 }
 
 // Start initialization
@@ -463,11 +463,8 @@ function show(opts) {
   }
   if (opts?.focusUrl) {
     requestAnimationFrame(() => {
-      const range = document.createRange();
-      range.selectNodeContents(urlText);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
+      urlText.focus();
+      urlText.select();
     });
   }
 }
@@ -481,7 +478,7 @@ function hide() {
   }
   navbar.classList.remove('visible');
   updatePositions(); // Hide navbar corner resize handles
-  window.getSelection().removeAllRanges();
+  urlText.blur();
   showSource = null;
   DEBUG && console.log('[page] Navbar hidden');
 }
@@ -542,6 +539,30 @@ navbar.addEventListener('mouseleave', () => {
 // Published from main process with GLOBAL scope (both host and webview guest fire this)
 api.subscribe('page:show-navbar', () => show({ focusUrl: true, source: 'shortcut' }), api.scopes.GLOBAL);
 
+// Cmd+R: reload the webview
+api.subscribe('page:reload', () => {
+  DEBUG && console.log('[page] Cmd+R: reloading webview');
+  webview.reload();
+}, api.scopes.GLOBAL);
+
+// Cmd+[ / Cmd+Left: go back
+api.subscribe('page:go-back', () => {
+  if (webview.canGoBack()) {
+    DEBUG && console.log('[page] Cmd+[: going back');
+    webview.goBack();
+    updateState();
+  }
+}, api.scopes.GLOBAL);
+
+// Cmd+] / Cmd+Right: go forward
+api.subscribe('page:go-forward', () => {
+  if (webview.canGoForward()) {
+    DEBUG && console.log('[page] Cmd+]: going forward');
+    webview.goForward();
+    updateState();
+  }
+}, api.scopes.GLOBAL);
+
 // --- Nav button actions ---
 
 btnBack.addEventListener('click', (e) => {
@@ -565,14 +586,54 @@ btnReload.addEventListener('click', (e) => {
   webview.reload();
 });
 
-// URL text click-to-select
-urlText.addEventListener('click', (e) => {
+// --- URL field: navigate on Enter ---
+
+/**
+ * Normalize user input into a navigable URL.
+ * If it looks like a URL (has a dot, or starts with a protocol), use it directly.
+ * Otherwise prefix with https://.
+ */
+function normalizeUrl(input) {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  // Already has a protocol
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  // Looks like a domain (contains a dot and no spaces)
+  if (trimmed.includes('.') && !trimmed.includes(' ')) return 'https://' + trimmed;
+  // Fallback: prefix with https://
+  return 'https://' + trimmed;
+}
+
+urlText.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const url = normalizeUrl(urlText.value);
+    if (url) {
+      DEBUG && console.log('[page] Navigating to:', url);
+      webview.loadURL(url);
+      urlText.value = url;
+      urlText.blur();
+      hide();
+    }
+  }
+  // Escape while editing the URL field: restore current URL and hide navbar
+  if (e.key === 'Escape') {
+    urlText.value = webview.getURL() || targetUrl;
+    urlText.blur();
+    hide();
+    e.stopPropagation();
+  }
+});
+
+// Prevent mousedown on URL field from triggering navbar drag
+urlText.addEventListener('mousedown', (e) => {
   e.stopPropagation();
-  const range = document.createRange();
-  range.selectNodeContents(urlText);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
+});
+
+// Select all on focus (clicking the field)
+urlText.addEventListener('focus', () => {
+  // Defer so the click doesn't immediately deselect
+  requestAnimationFrame(() => urlText.select());
 });
 
 // --- Escape handling ---
@@ -603,7 +664,7 @@ webview.addEventListener('page-title-updated', (e) => {
 
 webview.addEventListener('did-navigate', async (e) => {
   DEBUG && console.log('[page] did-navigate:', e.url);
-  urlText.textContent = e.url;
+  urlText.value = e.url;
   updateState();
 
   try {
@@ -618,7 +679,7 @@ webview.addEventListener('did-navigate', async (e) => {
 
 webview.addEventListener('did-navigate-in-page', (e) => {
   if (e.isMainFrame) {
-    urlText.textContent = e.url;
+    urlText.value = e.url;
     updateState();
   }
 });

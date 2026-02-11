@@ -98,15 +98,23 @@
       white-space: nowrap;
       color: var(--theme-text-secondary, #aaa);
       font-size: 14px;
+      font-family: inherit;
       padding: 6px 10px;
       border-radius: 6px;
       background: var(--theme-bg-tertiary, rgba(128, 128, 128, 0.1));
+      border: none;
+      outline: none;
       cursor: text;
       min-width: 0;
     }
 
     .url-text:hover {
       background: var(--theme-bg, rgba(128, 128, 128, 0.18));
+    }
+
+    .url-text:focus {
+      background: var(--theme-bg, rgba(128, 128, 128, 0.22));
+      color: var(--theme-text, #e0e0e0);
     }
 
     /* Trigger zone — positioned by JS via updatePositions() above the navbar area */
@@ -344,7 +352,7 @@
     <button class="nav-btn" id="btn-back" title="Back (Cmd+[)">&#8592;</button>
     <button class="nav-btn" id="btn-forward" title="Forward (Cmd+])">&#8594;</button>
     <button class="nav-btn" id="btn-reload" title="Reload (Cmd+R)">&#8635;</button>
-    <span class="url-text" id="url-text"></span>
+    <input type="text" class="url-text" id="url-text" spellcheck="false" autocomplete="off">
   </div>
   <webview id="content" allowpopups></webview>
   <div class="drag-overlay" id="drag-overlay"></div>
