@@ -1607,6 +1607,20 @@ api.settings = {
       return Promise.resolve({ success: false, error: 'Not an extension context' });
     }
     return ipcRenderer.invoke('extension-settings-set-key', { extId, key, value });
+  },
+
+  /**
+   * Read a single setting key from another extension (read-only)
+   * Allows extensions to share preferences (e.g., tags reading editor's vim mode)
+   * @param {string} extId - Target extension ID
+   * @param {string} key - Setting key (e.g., 'prefs')
+   * @returns {Promise<{success: boolean, data?: any, error?: string}>}
+   */
+  getExtKey: (extId, key) => {
+    if (!extId || !key) {
+      return Promise.resolve({ success: false, error: 'extId and key are required' });
+    }
+    return ipcRenderer.invoke('extension-settings-get-key', { extId, key });
   }
 };
 

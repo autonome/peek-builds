@@ -12,6 +12,7 @@
  */
 
 import * as CodeMirror from 'peek://extensions/editor/codemirror.js';
+const { getCM, Vim } = CodeMirror;
 
 const api = window.app;
 const debug = api?.debug;
@@ -94,6 +95,9 @@ let embeddedEditor = null;  // CodeMirror EditorView instance
 let editorSaveTimer = null;
 let editorSaveStatus = 'saved'; // 'saved' | 'saving' | 'unsaved'
 const EDITOR_AUTOSAVE_DELAY_MS = 1500;
+
+// Vim mode preference (read from editor extension's settings)
+let editorVimMode = false;
 
 // DOM elements
 let searchInput;
@@ -186,9 +190,41 @@ const loadTags = async () => {
  * Internal ESC handler for tags navigation (following groups pattern).
  * Returns { handled: true } if we navigated internally.
  * Returns { handled: false } if at root (list view) and window should close.
+ *
+ * Vim mode ESC cascade:
+ *   1. ESC in vim insert mode -> exits to vim normal mode (handled here, not by CodeMirror
+ *      because the preload intercepts ESC before the DOM keydown event fires)
+ *   2. ESC in vim normal mode -> exits detail view back to tags list
+ *   3. ESC in tags list -> closes window
+ *
+ * Without vim mode:
+ *   1. ESC in editor -> exits detail view
+ *   2. ESC in tags list -> closes window
  */
 const handleEscape = () => {
   console.log('[tags:esc] handleEscape called, view:', state.currentView, 'searchQuery:', state.searchQuery);
+
+  // If in detail view with embedded editor and vim mode is enabled,
+  // check if vim is in insert mode. If so, exit insert mode instead
+  // of navigating away. The preload intercepts ESC via before-input-event
+  // so CodeMirror's vim extension never sees it — we must handle it here.
+  if (state.currentView === VIEW_DETAIL && embeddedEditor && editorVimMode) {
+    try {
+      const cm = getCM(embeddedEditor);
+      if (cm && cm.state && cm.state.vim) {
+        const vimState = cm.state.vim;
+        if (vimState.insertMode || vimState.visualMode) {
+          console.log('[tags:esc] Vim in insert/visual mode, sending <Esc> to vim');
+          Vim.handleKey(cm, '<Esc>');
+          return { handled: true };
+        }
+        // In normal mode, fall through to exit detail view
+        console.log('[tags:esc] Vim in normal mode, will exit detail view');
+      }
+    } catch (e) {
+      console.log('[tags:esc] Could not check vim state:', e);
+    }
+  }
 
   // If in detail view, navigate back to list
   if (state.currentView === VIEW_DETAIL) {
@@ -348,6 +384,18 @@ const setupEventListeners = () => {
   // Register escape handler (following groups pattern - extracted function, not inline)
   if (api.escape) {
     api.escape.onEscape(handleEscape);
+  }
+
+  // Listen for editor settings changes to live-reload vim mode on embedded editor
+  if (api?.subscribe) {
+    api.subscribe('editor:settings-changed', async () => {
+      debug && console.log('[tags] Editor settings changed, reloading vim mode');
+      await loadEditorVimPreference();
+      if (embeddedEditor) {
+        CodeMirror.setVimMode(embeddedEditor, editorVimMode);
+        debug && console.log('[tags] Updated embedded editor vimMode:', editorVimMode);
+      }
+    }, api.scopes.GLOBAL);
   }
 };
 
@@ -950,9 +998,29 @@ const scheduleEditorAutosave = (content) => {
 };
 
 /**
+ * Load vim mode preference from the editor extension's settings.
+ * Uses the cross-extension settings read API (api.settings.getExtKey).
+ */
+const loadEditorVimPreference = async () => {
+  try {
+    if (api?.settings?.getExtKey) {
+      const result = await api.settings.getExtKey('editor', 'prefs');
+      if (result.success && result.data && typeof result.data === 'object') {
+        editorVimMode = !!result.data.vimMode;
+        debug && console.log('[tags] Loaded editor vimMode preference:', editorVimMode);
+      } else {
+        debug && console.log('[tags] No editor prefs found, using default vimMode:', editorVimMode);
+      }
+    }
+  } catch (err) {
+    debug && console.log('[tags] Failed to load editor vim preference:', err);
+  }
+};
+
+/**
  * Create the embedded CodeMirror editor for a text item
  */
-const createEmbeddedEditor = (item) => {
+const createEmbeddedEditor = async (item) => {
   destroyEmbeddedEditor();
 
   const container = document.querySelector('.detail-editor-container');
@@ -961,10 +1029,13 @@ const createEmbeddedEditor = (item) => {
   // Clear the container
   container.innerHTML = '';
 
+  // Load vim mode preference from editor extension before creating editor
+  await loadEditorVimPreference();
+
   embeddedEditor = CodeMirror.createEditor({
     parent: container,
     content: item.content || '',
-    vimMode: false,
+    vimMode: editorVimMode,
     showLineNumbers: true,
     onChange: (content) => {
       scheduleEditorAutosave(content);

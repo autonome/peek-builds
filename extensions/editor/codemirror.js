@@ -720,4 +720,4 @@ export function destroy(view) {
   view.destroy();
 }
 
-export { EditorView, EditorState };
+export { EditorView, EditorState, getCM, Vim };
