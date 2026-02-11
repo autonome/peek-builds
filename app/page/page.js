@@ -6,8 +6,8 @@
  * are position:absolute siblings, positioned by JS via updatePositions() using
  * a `bounds` object. The navbar sits ABOVE the webview with an 8px gap.
  *
- * - Custom drag: mousedown on navbar moves bounds
- * - Custom resize: mousedown on resize handle changes bounds size
+ * - Custom drag: instant on navbar background, hold-150ms-to-drag anywhere else
+ * - Custom resize: pointer-captured resize handle (robust even if cursor leaves window)
  * - Hover trigger zone above navbar reveals/hides navbar
  * - Cmd+L shows navbar with URL focus
  */
@@ -81,9 +81,9 @@ function updatePositions() {
   triggerZone.style.top = `${triggerTop}px`;
   triggerZone.style.width = `${width}px`;
 
-  // Resize handle — bottom-right corner of the webview
-  resizeHandle.style.left = `${x + width - 16}px`;
-  resizeHandle.style.top = `${y + height - 16}px`;
+  // Resize handle — bottom-right corner of the webview (24x24)
+  resizeHandle.style.left = `${x + width - 24}px`;
+  resizeHandle.style.top = `${y + height - 24}px`;
 
   // Mode indicator — top-right corner of the webview
   if (modeIndicator) {
@@ -119,7 +119,11 @@ async function initWebview() {
 // Start initialization
 initWebview();
 
-// --- Custom drag (navbar) ---
+// --- Custom drag ---
+// Two modes:
+//   1. Navbar background: instant drag (no hold delay) — primary purpose of navbar
+//   2. Anywhere else (webview, buttons, url text, empty space): hold ~150ms then drag
+// A quick click (<150ms) on non-navbar areas passes through to the underlying element.
 
 let isDragging = false;
 let dragStartX = 0;
@@ -127,19 +131,66 @@ let dragStartY = 0;
 let dragStartBoundsX = 0;
 let dragStartBoundsY = 0;
 
-navbar.addEventListener('mousedown', (e) => {
-  // Don't start drag on buttons or URL text
-  if (e.target.closest('.nav-btn') || e.target.closest('.url-text')) return;
+// Hold-to-drag state
+const DRAG_HOLD_THRESHOLD = 150; // ms before hold-drag activates
+let holdDragTimer = null;
+let holdDragPending = false;
+let holdDragStartScreenX = 0;
+let holdDragStartScreenY = 0;
+
+function startDrag(screenX, screenY) {
   isDragging = true;
-  dragStartX = e.screenX;
-  dragStartY = e.screenY;
+  dragStartX = screenX;
+  dragStartY = screenY;
   dragStartBoundsX = bounds.x;
   dragStartBoundsY = bounds.y;
+  document.body.style.cursor = 'grabbing';
+}
+
+function cancelHoldDrag() {
+  if (holdDragTimer) {
+    clearTimeout(holdDragTimer);
+    holdDragTimer = null;
+  }
+  holdDragPending = false;
+}
+
+// Instant drag on navbar background (excluding buttons and URL text)
+navbar.addEventListener('mousedown', (e) => {
+  if (e.target.closest('.nav-btn') || e.target.closest('.url-text')) return;
+  startDrag(e.screenX, e.screenY);
   navbar.style.cursor = 'grabbing';
   e.preventDefault();
 });
 
+// Hold-to-drag from anywhere on the document
+document.addEventListener('mousedown', (e) => {
+  // Skip if resize handle was clicked
+  if (e.target.closest('.resize-handle')) return;
+  // Skip if already dragging (navbar instant drag handled above)
+  if (isDragging) return;
+  // Only primary button
+  if (e.button !== 0) return;
+
+  holdDragPending = true;
+  holdDragStartScreenX = e.screenX;
+  holdDragStartScreenY = e.screenY;
+
+  holdDragTimer = setTimeout(() => {
+    if (holdDragPending) {
+      startDrag(holdDragStartScreenX, holdDragStartScreenY);
+      holdDragPending = false;
+    }
+  }, DRAG_HOLD_THRESHOLD);
+});
+
+// Cancel hold-drag on mouseup before threshold
+document.addEventListener('mouseup', () => {
+  cancelHoldDrag();
+});
+
 // --- Custom resize (resize handle) ---
+// Uses pointer capture to keep receiving events even if cursor leaves the window.
 
 let isResizing = false;
 let resizeStartX = 0;
@@ -147,30 +198,69 @@ let resizeStartY = 0;
 let resizeStartWidth = 0;
 let resizeStartHeight = 0;
 
-resizeHandle.addEventListener('mousedown', (e) => {
+resizeHandle.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
   isResizing = true;
   resizeStartX = e.screenX;
   resizeStartY = e.screenY;
   resizeStartWidth = bounds.width;
   resizeStartHeight = bounds.height;
+  document.body.style.cursor = 'se-resize';
+  // Capture pointer so events continue even if cursor leaves the window
+  resizeHandle.setPointerCapture(e.pointerId);
   e.preventDefault();
   e.stopPropagation();
 });
 
-// --- Shared mousemove/mouseup for drag and resize ---
+resizeHandle.addEventListener('pointermove', (e) => {
+  if (!isResizing) return;
+  // Safety: if no button is held, cancel resize
+  if (e.buttons === 0) {
+    cancelResize();
+    return;
+  }
+  const dx = e.screenX - resizeStartX;
+  const dy = e.screenY - resizeStartY;
+  bounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
+  bounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
+  updatePositions();
+});
+
+resizeHandle.addEventListener('pointerup', (e) => {
+  if (isResizing) {
+    cancelResize();
+    resizeHandle.releasePointerCapture(e.pointerId);
+  }
+});
+
+// Also release on pointer cancel (e.g., system interruption)
+resizeHandle.addEventListener('pointercancel', (e) => {
+  if (isResizing) {
+    cancelResize();
+  }
+});
+
+function cancelResize() {
+  isResizing = false;
+  document.body.style.cursor = '';
+}
+
+// --- Shared mousemove/mouseup for drag ---
 
 document.addEventListener('mousemove', (e) => {
+  // Safety: if no button is held during drag, cancel it
+  if (isDragging && e.buttons === 0) {
+    isDragging = false;
+    document.body.style.cursor = '';
+    navbar.style.cursor = 'grab';
+    return;
+  }
+
   if (isDragging) {
     const dx = e.screenX - dragStartX;
     const dy = e.screenY - dragStartY;
     bounds.x = dragStartBoundsX + dx;
     bounds.y = dragStartBoundsY + dy;
-    updatePositions();
-  } else if (isResizing) {
-    const dx = e.screenX - resizeStartX;
-    const dy = e.screenY - resizeStartY;
-    bounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
-    bounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
     updatePositions();
   }
 });
@@ -178,10 +268,8 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', () => {
   if (isDragging) {
     isDragging = false;
+    document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
-  }
-  if (isResizing) {
-    isResizing = false;
   }
 });
 
@@ -225,8 +313,8 @@ function show(opts) {
 }
 
 function hide() {
-  // Don't hide while dragging
-  if (isDragging) return;
+  // Don't hide while dragging or about to drag
+  if (isDragging || holdDragPending) return;
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;

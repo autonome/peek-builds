@@ -116,15 +116,35 @@
       z-index: 50;
     }
 
-    /* Resize handle */
+    /* Resize handle — larger hit area for easier grabbing */
     .resize-handle {
       position: absolute;
-      width: 16px;
-      height: 16px;
+      width: 24px;
+      height: 24px;
       right: 0;
       bottom: 0;
       cursor: se-resize;
       z-index: 10;
+      /* Prevent pointer capture from being interrupted */
+      touch-action: none;
+    }
+
+    /* Visual resize grip indicator (three diagonal lines) */
+    .resize-handle::after {
+      content: '';
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      width: 10px;
+      height: 10px;
+      border-right: 2px solid rgba(128, 128, 128, 0.5);
+      border-bottom: 2px solid rgba(128, 128, 128, 0.5);
+      border-radius: 0 0 2px 0;
+    }
+
+    .resize-handle:hover::after {
+      border-right-color: rgba(128, 128, 128, 0.8);
+      border-bottom-color: rgba(128, 128, 128, 0.8);
     }
 
     /* Mode indicator - subtle corner badge */
