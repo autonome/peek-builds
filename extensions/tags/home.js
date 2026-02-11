@@ -101,11 +101,26 @@ const EDITOR_AUTOSAVE_DELAY_MS = 1500;
 // Vim mode preference (read from editor extension's settings)
 let editorVimMode = false;
 
+// View preferences (persisted)
+let viewPrefs = {
+  viewMode: 'columns',
+  sortBy: 'modified',
+  sortDirection: 'desc'
+};
+
+const SORT_OPTIONS = [
+  { value: 'name', label: 'Name' },
+  { value: 'created', label: 'Date Created' },
+  { value: 'modified', label: 'Date Modified' },
+  { value: 'type', label: 'Type' }
+];
+
 // DOM elements
 let searchInput;
 let cardsContainer;
 let tagList;
 let detailView;
+let gridToolbar;
 
 /**
  * Initialize the UI
@@ -118,6 +133,13 @@ const init = async () => {
   cardsContainer = document.querySelector('.cards');
   tagList = document.querySelector('.tag-list');
   detailView = document.querySelector('.detail-view');
+  gridToolbar = document.querySelector('.grid-toolbar');
+
+  // Load view preferences
+  await loadViewPrefs();
+
+  // Set up toolbar
+  setupToolbar();
 
   // Load data
   await loadData();
@@ -271,6 +293,97 @@ const handleEscape = () => {
   // Nothing to clear, let window close
   console.log('[tags:esc] At root (VIEW_LIST), returning handled: false');
   return { handled: false };
+};
+
+/**
+ * Load persisted view preferences
+ */
+const loadViewPrefs = async () => {
+  try {
+    if (api?.settings?.getKey) {
+      const result = await api.settings.getKey('viewPrefs');
+      if (result.success && result.data) {
+        viewPrefs = { ...viewPrefs, ...result.data };
+        debug && console.log('[tags] Loaded viewPrefs:', viewPrefs);
+      }
+    }
+  } catch (err) {
+    debug && console.log('[tags] Failed to load viewPrefs:', err);
+  }
+};
+
+/**
+ * Save view preferences
+ */
+const saveViewPrefs = async () => {
+  try {
+    if (api?.settings?.setKey) {
+      await api.settings.setKey('viewPrefs', viewPrefs);
+    }
+  } catch (err) {
+    debug && console.log('[tags] Failed to save viewPrefs:', err);
+  }
+};
+
+/**
+ * Set up grid toolbar events and state
+ */
+const setupToolbar = () => {
+  if (!gridToolbar) return;
+
+  gridToolbar.sortOptions = SORT_OPTIONS;
+  gridToolbar.sortBy = viewPrefs.sortBy;
+  gridToolbar.sortDirection = viewPrefs.sortDirection;
+  gridToolbar.viewMode = viewPrefs.viewMode;
+  cardsContainer.viewMode = viewPrefs.viewMode;
+
+  gridToolbar.addEventListener('sort-change', (e) => {
+    viewPrefs.sortBy = e.detail.sortBy;
+    viewPrefs.sortDirection = e.detail.sortDirection;
+    saveViewPrefs();
+    renderCards();
+  });
+
+  gridToolbar.addEventListener('view-mode-change', (e) => {
+    viewPrefs.viewMode = e.detail.mode;
+    cardsContainer.viewMode = e.detail.mode;
+    saveViewPrefs();
+    renderCards();
+  });
+};
+
+/**
+ * Sort items by current view preferences
+ */
+const sortItems = (items) => {
+  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
+
+  return items.sort((a, b) => {
+    switch (viewPrefs.sortBy) {
+      case 'name': {
+        const nameA = (a.title || a.content || '').toLowerCase();
+        const nameB = (b.title || b.content || '').toLowerCase();
+        return dir * nameA.localeCompare(nameB);
+      }
+      case 'created': {
+        const ca = a.createdAt || 0;
+        const cb = b.createdAt || 0;
+        return dir * (ca - cb);
+      }
+      case 'modified': {
+        const ma = a.updatedAt || a.createdAt || 0;
+        const mb = b.updatedAt || b.createdAt || 0;
+        return dir * (ma - mb);
+      }
+      case 'type': {
+        const typeA = (a.type || 'url').toLowerCase();
+        const typeB = (b.type || 'url').toLowerCase();
+        return dir * typeA.localeCompare(typeB);
+      }
+      default:
+        return 0;
+    }
+  });
 };
 
 /**
@@ -810,7 +923,7 @@ const renderTagSidebar = () => {
  * Render item cards
  */
 const renderCards = () => {
-  const items = getFilteredItems();
+  let items = getFilteredItems();
 
   if (items.length === 0) {
     const message = state.searchQuery
@@ -821,6 +934,9 @@ const renderCards = () => {
     cardsContainer.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
+
+  // Apply sorting
+  items = sortItems(items);
 
   cardsContainer.innerHTML = '';
 

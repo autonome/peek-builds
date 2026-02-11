@@ -40,6 +40,17 @@ peek-input.search-input::part(input) {
   font-size: 15px;
 }
 
+/* Grid toolbar */
+peek-grid-toolbar.grid-toolbar {
+  padding: 0 24px;
+  --theme-bg-secondary: var(--base01);
+  --theme-border: var(--base02);
+  --theme-text: var(--base05);
+  --theme-text-muted: var(--base04);
+  --theme-bg-tertiary: var(--base02);
+  --theme-accent: var(--base0D);
+}
+
 /* Cards container - peek-grid handles layout */
 .cards {
   padding: 24px;
@@ -90,6 +101,16 @@ peek-card[selected]:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* List view mode - remove max-width constraint */
+peek-grid.cards[view-mode="list"] peek-card {
+  max-width: none;
+}
+
+/* Masonry view - remove max-width constraint */
+peek-grid.cards[view-mode="masonry"] peek-card {
+  max-width: none;
 }
 
 /* Empty state */

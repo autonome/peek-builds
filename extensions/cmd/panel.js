@@ -297,6 +297,102 @@ function isCommandAvailable(cmd) {
   return cmd.modes.includes(currentMajorMode);
 }
 
+// ===== Custom Drag Handler =====
+// Native -webkit-app-region: drag is unreliable on transparent frameless panel
+// windows (especially macOS type:'panel' with modal blur). Use a custom drag
+// handler that moves the window via IPC, similar to how page.js handles dragging.
+
+let dragState = null; // { windowId, startScreenX, startScreenY, startPosX, startPosY }
+
+/**
+ * Check if an element is interactive (should not trigger drag)
+ */
+function isDragInteractive(el) {
+  if (!el) return false;
+  const tag = el.tagName?.toLowerCase();
+  if (['input', 'textarea', 'button', 'a', 'select', 'label'].includes(tag)) return true;
+  if (el.isContentEditable) return true;
+  if (el.hasAttribute('data-no-drag')) return true;
+  if (el.closest('[data-no-drag]')) return true;
+  return false;
+}
+
+/**
+ * Initialize custom window drag from the center-wrapper (command bar area)
+ */
+async function initDrag() {
+  const centerWrapper = document.querySelector('.center-wrapper');
+  if (!centerWrapper) return;
+
+  let windowId = null;
+
+  // Get window ID once at init
+  try {
+    windowId = await api.window.getWindowId();
+    log('cmd:panel', 'Drag: got window ID', windowId);
+  } catch (err) {
+    log.error('cmd:panel', 'Drag: failed to get window ID', err);
+    return;
+  }
+
+  centerWrapper.addEventListener('mousedown', async (e) => {
+    // Only left click, skip interactive elements
+    if (e.button !== 0) return;
+    if (isDragInteractive(e.target)) return;
+
+    try {
+      const pos = await api.window.getPosition();
+      if (!pos.success) return;
+
+      dragState = {
+        windowId,
+        startScreenX: e.screenX,
+        startScreenY: e.screenY,
+        startPosX: pos.x,
+        startPosY: pos.y
+      };
+
+      document.body.style.cursor = 'grabbing';
+      e.preventDefault();
+    } catch (err) {
+      log.error('cmd:panel', 'Drag: failed to get position', err);
+    }
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragState) return;
+
+    // Safety: cancel if no button held
+    if (e.buttons === 0) {
+      dragState = null;
+      document.body.style.cursor = '';
+      return;
+    }
+
+    const dx = e.screenX - dragState.startScreenX;
+    const dy = e.screenY - dragState.startScreenY;
+    const newX = dragState.startPosX + dx;
+    const newY = dragState.startPosY + dy;
+
+    api.window.move(dragState.windowId, newX, newY);
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (dragState) {
+      dragState = null;
+      document.body.style.cursor = '';
+    }
+  });
+
+  // Also add cursor hint on center-wrapper for discoverability
+  centerWrapper.style.cursor = 'grab';
+
+  log('cmd:panel', 'Custom drag handler initialized');
+}
+
+// Initialize drag handler
+initDrag();
+
 // Window sizing constants
 const COLLAPSED_HEIGHT = 60;  // Just the command bar
 const EXPANDED_HEIGHT = 400;  // With results/preview

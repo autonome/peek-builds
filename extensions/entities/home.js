@@ -11,6 +11,20 @@ const api = window.app;
 let currentTypeFilter = '';
 let currentSearch = '';
 
+// View preferences (persisted)
+let viewPrefs = {
+  viewMode: 'columns',
+  sortBy: 'name',
+  sortDirection: 'asc'
+};
+
+const SORT_OPTIONS = [
+  { value: 'name', label: 'Name' },
+  { value: 'type', label: 'Type' },
+  { value: 'confidence', label: 'Confidence' },
+  { value: 'date', label: 'Date' }
+];
+
 // Type icons mapping
 const TYPE_ICONS = {
   person: '\u{1F464}',       // bust in silhouette
@@ -25,6 +39,92 @@ const TYPE_ICONS = {
   price: '\u{1F4B0}',        // money bag
   tracking_number: '\u{1F4E6}' // package
 };
+
+// ==================== View Preferences ====================
+
+async function loadViewPrefs() {
+  try {
+    if (api?.settings?.getKey) {
+      const result = await api.settings.getKey('viewPrefs');
+      if (result.success && result.data) {
+        viewPrefs = { ...viewPrefs, ...result.data };
+      }
+    }
+  } catch (err) {
+    // ignore
+  }
+}
+
+async function saveViewPrefs() {
+  try {
+    if (api?.settings?.setKey) {
+      await api.settings.setKey('viewPrefs', viewPrefs);
+    }
+  } catch (err) {
+    // ignore
+  }
+}
+
+function sortEntities(entities) {
+  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
+  return entities.sort((a, b) => {
+    let metaA = {};
+    let metaB = {};
+    try { metaA = JSON.parse(a.metadata || '{}'); } catch {}
+    try { metaB = JSON.parse(b.metadata || '{}'); } catch {}
+
+    switch (viewPrefs.sortBy) {
+      case 'name': {
+        const na = (a.content || a.name || '').toLowerCase();
+        const nb = (b.content || b.name || '').toLowerCase();
+        return dir * na.localeCompare(nb);
+      }
+      case 'type': {
+        const ta = (metaA.entityType || '').toLowerCase();
+        const tb = (metaB.entityType || '').toLowerCase();
+        return dir * ta.localeCompare(tb);
+      }
+      case 'confidence': {
+        const ca = metaA.confidence || 0;
+        const cb = metaB.confidence || 0;
+        return dir * (ca - cb);
+      }
+      case 'date': {
+        const da = a.createdAt || 0;
+        const db = b.createdAt || 0;
+        return dir * (da - db);
+      }
+      default:
+        return 0;
+    }
+  });
+}
+
+function setupToolbar() {
+  const toolbar = document.getElementById('gridToolbar');
+  const grid = document.getElementById('entityGrid');
+  if (!toolbar) return;
+
+  toolbar.sortOptions = SORT_OPTIONS;
+  toolbar.sortBy = viewPrefs.sortBy;
+  toolbar.sortDirection = viewPrefs.sortDirection;
+  toolbar.viewMode = viewPrefs.viewMode;
+  grid.viewMode = viewPrefs.viewMode;
+
+  toolbar.addEventListener('sort-change', (e) => {
+    viewPrefs.sortBy = e.detail.sortBy;
+    viewPrefs.sortDirection = e.detail.sortDirection;
+    saveViewPrefs();
+    renderEntities();
+  });
+
+  toolbar.addEventListener('view-mode-change', (e) => {
+    viewPrefs.viewMode = e.detail.mode;
+    grid.viewMode = e.detail.mode;
+    saveViewPrefs();
+    renderEntities();
+  });
+}
 
 // ==================== Rendering ====================
 
@@ -63,6 +163,9 @@ async function renderEntities() {
   if (existingEmpty) existingEmpty.remove();
 
   grid.innerHTML = '';
+
+  // Apply sorting
+  sortEntities(entities);
 
   for (const entity of entities) {
     let meta = {};
@@ -217,6 +320,8 @@ function formatDate(timestamp) {
 // ==================== Init ====================
 
 async function init() {
+  await loadViewPrefs();
+  setupToolbar();
   await renderEntities();
 }
 

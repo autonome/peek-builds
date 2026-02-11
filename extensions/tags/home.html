@@ -53,6 +53,7 @@
       import 'peek://app/components/peek-input.js';
       import 'peek://app/components/peek-button.js';
       import 'peek://app/components/peek-button-group.js';
+      import 'peek://app/components/peek-grid-toolbar.js';
     </script>
   </head>
   <body>
@@ -118,6 +119,9 @@
       </aside>
 
       <main class="items-container">
+        <!-- Grid toolbar -->
+        <peek-grid-toolbar class="grid-toolbar" view-mode="columns"></peek-grid-toolbar>
+
         <!-- Card grid view (list) -->
         <peek-grid class="cards" min-item-width="280" gap="12"></peek-grid>
 

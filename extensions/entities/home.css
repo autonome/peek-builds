@@ -96,6 +96,17 @@ peek-input.search-input {
   --peek-input-height: 40px;
 }
 
+/* Grid toolbar */
+peek-grid-toolbar.grid-toolbar {
+  margin-bottom: 8px;
+  --theme-bg-secondary: var(--base01);
+  --theme-border: var(--base02);
+  --theme-text: var(--base05);
+  --theme-text-muted: var(--base04);
+  --theme-bg-tertiary: var(--base02);
+  --theme-accent: var(--base0D);
+}
+
 /* Content */
 .content {
   flex: 1;
@@ -203,6 +214,16 @@ peek-card[selected] {
   align-items: center;
   font-size: 11px;
   color: var(--base03);
+}
+
+/* List view mode */
+peek-grid[view-mode="list"] peek-card {
+  max-width: none;
+}
+
+/* Masonry view */
+peek-grid[view-mode="masonry"] peek-card {
+  max-width: none;
 }
 
 /* Empty state */

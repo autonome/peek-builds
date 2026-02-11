@@ -256,6 +256,17 @@ peek-input.search-input {
   flex-direction: column;
 }
 
+/* Grid toolbar */
+peek-grid-toolbar.grid-toolbar {
+  margin-bottom: 8px;
+  --theme-bg-secondary: var(--base01);
+  --theme-border: var(--base02);
+  --theme-text: var(--base05);
+  --theme-text-muted: var(--base04);
+  --theme-bg-tertiary: var(--base02);
+  --theme-accent: var(--base0D);
+}
+
 /* Cards grid - peek-grid custom properties */
 peek-grid.cards {
   --peek-grid-min-item-width: 280px;
@@ -341,6 +352,20 @@ peek-card[selected] {
 .card-meta {
   font-size: 11px;
   color: var(--base03);
+}
+
+/* List view mode - full width cards */
+peek-grid.cards[view-mode="list"] peek-card {
+  max-width: none;
+}
+
+peek-grid.cards[view-mode="list"] .card-header {
+  flex-direction: row;
+}
+
+/* Masonry view adjustments */
+peek-grid.cards[view-mode="masonry"] peek-card {
+  max-width: none;
 }
 
 /* Empty state */

@@ -19,7 +19,6 @@
         font-family: var(--theme-font-sans);
         color: white;
         overflow: hidden;
-        -webkit-app-region: drag;
         display: flex;
         flex-direction: column;
       }
@@ -459,7 +458,7 @@
     </div>
 
     <div class="center-wrapper">
-      <div id="mode-indicator" class="mode-indicator" title="Click to cycle modes">
+      <div id="mode-indicator" class="mode-indicator" data-no-drag title="Click to cycle modes">
         <span class="mode-label">default</span>
       </div>
       <div class="command-display">

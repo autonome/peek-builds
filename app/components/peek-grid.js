@@ -12,6 +12,7 @@
  * @prop {string} align - Item alignment: 'start' | 'center' | 'end' | 'stretch'
  * @prop {boolean} dense - Enable dense packing algorithm
  * @prop {boolean} overlay - Optimize spacing for overlay contexts
+ * @prop {string} viewMode - Layout mode: 'columns' | 'list' | 'masonry'
  *
  * @slot - Default slot for grid items
  *
@@ -39,7 +40,8 @@ export class PeekGrid extends PeekElement {
     columns: { type: Number },
     align: { type: String, reflect: true },
     dense: { type: Boolean },
-    overlay: { type: Boolean, reflect: true }
+    overlay: { type: Boolean, reflect: true },
+    viewMode: { type: String, attribute: 'view-mode', reflect: true }
   };
 
   static styles = [
@@ -74,6 +76,23 @@ export class PeekGrid extends PeekElement {
       ::slotted(*) {
         min-width: 0; /* Prevent overflow */
       }
+
+      /* List view mode - single column */
+      :host([view-mode="list"]) .grid {
+        grid-template-columns: 1fr;
+      }
+
+      /* Masonry view mode - CSS columns layout */
+      :host([view-mode="masonry"]) .grid {
+        display: block;
+        columns: var(--_masonry-columns, 3);
+        column-gap: var(--_grid-gap);
+      }
+
+      :host([view-mode="masonry"]) ::slotted(*) {
+        break-inside: avoid;
+        margin-bottom: var(--_grid-gap);
+      }
     `
   ];
 
@@ -85,6 +104,31 @@ export class PeekGrid extends PeekElement {
     this.align = 'stretch';
     this.dense = false;
     this.overlay = false;
+    this.viewMode = 'columns';
+    this._resizeObserver = null;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._resizeObserver = new ResizeObserver(() => {
+      if (this.viewMode === 'masonry') {
+        this.requestUpdate();
+      }
+    });
+    this._resizeObserver.observe(this);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
+    }
+  }
+
+  _getMasonryColumns() {
+    const width = this.clientWidth || 300;
+    return Math.max(1, Math.floor(width / this.minItemWidth));
   }
 
   _getGridColumns() {
@@ -108,6 +152,7 @@ export class PeekGrid extends PeekElement {
   render() {
     const gridColumns = this._getGridColumns();
     const alignItems = this._getAlignValue();
+    const masonryColumns = this.viewMode === 'masonry' ? this._getMasonryColumns() : 3;
 
     return html`
       <div
@@ -117,6 +162,7 @@ export class PeekGrid extends PeekElement {
           --_grid-columns: ${gridColumns};
           --_grid-gap: ${this.gap}px;
           --_grid-align: ${alignItems};
+          --_masonry-columns: ${masonryColumns};
         "
       >
         <slot></slot>

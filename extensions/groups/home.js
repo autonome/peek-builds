@@ -44,6 +44,25 @@ const UNTAGGED_GROUP = {
   isSpecial: true
 };
 
+// View preferences (persisted)
+let viewPrefs = {
+  viewMode: 'columns',
+  sortBy: 'name',
+  sortDirection: 'asc'
+};
+
+const SORT_OPTIONS_GROUPS = [
+  { value: 'name', label: 'Name' },
+  { value: 'count', label: 'Count' },
+  { value: 'recent', label: 'Recent' }
+];
+
+const SORT_OPTIONS_ADDRESSES = [
+  { value: 'name', label: 'Name' },
+  { value: 'count', label: 'Visits' },
+  { value: 'recent', label: 'Recent' }
+];
+
 let state = {
   view: VIEW_GROUPS,
   tags: [],
@@ -208,12 +227,137 @@ const handleKeydown = (e) => {
   }
 };
 
+/**
+ * Load persisted view preferences
+ */
+const loadViewPrefs = async () => {
+  try {
+    if (api?.settings?.getKey) {
+      const result = await api.settings.getKey('viewPrefs');
+      if (result.success && result.data) {
+        viewPrefs = { ...viewPrefs, ...result.data };
+        debug && console.log('[groups] Loaded viewPrefs:', viewPrefs);
+      }
+    }
+  } catch (err) {
+    debug && console.log('[groups] Failed to load viewPrefs:', err);
+  }
+};
+
+/**
+ * Save view preferences
+ */
+const saveViewPrefs = async () => {
+  try {
+    if (api?.settings?.setKey) {
+      await api.settings.setKey('viewPrefs', viewPrefs);
+    }
+  } catch (err) {
+    debug && console.log('[groups] Failed to save viewPrefs:', err);
+  }
+};
+
+/**
+ * Set up grid toolbar events and state
+ */
+const setupToolbar = () => {
+  const toolbar = document.querySelector('.grid-toolbar');
+  const container = document.querySelector('.cards');
+  if (!toolbar) return;
+
+  toolbar.sortOptions = SORT_OPTIONS_GROUPS;
+  toolbar.sortBy = viewPrefs.sortBy;
+  toolbar.sortDirection = viewPrefs.sortDirection;
+  toolbar.viewMode = viewPrefs.viewMode;
+  container.viewMode = viewPrefs.viewMode;
+
+  toolbar.addEventListener('sort-change', (e) => {
+    viewPrefs.sortBy = e.detail.sortBy;
+    viewPrefs.sortDirection = e.detail.sortDirection;
+    saveViewPrefs();
+    renderCurrentView();
+  });
+
+  toolbar.addEventListener('view-mode-change', (e) => {
+    viewPrefs.viewMode = e.detail.mode;
+    container.viewMode = e.detail.mode;
+    saveViewPrefs();
+    renderCurrentView();
+  });
+};
+
+/**
+ * Update toolbar sort options based on current view
+ */
+const updateToolbarSortOptions = () => {
+  const toolbar = document.querySelector('.grid-toolbar');
+  if (!toolbar) return;
+  toolbar.sortOptions = state.view === VIEW_GROUPS ? SORT_OPTIONS_GROUPS : SORT_OPTIONS_ADDRESSES;
+};
+
+/**
+ * Sort groups by current view preferences
+ */
+const sortGroups = (groups) => {
+  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
+  return groups.sort((a, b) => {
+    switch (viewPrefs.sortBy) {
+      case 'name':
+        return dir * (a.name || '').localeCompare(b.name || '');
+      case 'count': {
+        const ca = a.isSpecial ? (a.frequency || 0) : (a.addressCount || 0);
+        const cb = b.isSpecial ? (b.frequency || 0) : (b.addressCount || 0);
+        return dir * (ca - cb);
+      }
+      case 'recent': {
+        const ra = a.updatedAt || a.createdAt || 0;
+        const rb = b.updatedAt || b.createdAt || 0;
+        return dir * (ra - rb);
+      }
+      default:
+        return 0;
+    }
+  });
+};
+
+/**
+ * Sort addresses by current view preferences
+ */
+const sortAddresses = (addresses) => {
+  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
+  return addresses.sort((a, b) => {
+    switch (viewPrefs.sortBy) {
+      case 'name': {
+        const na = (a.title || a.uri || a.content || '').toLowerCase();
+        const nb = (b.title || b.uri || b.content || '').toLowerCase();
+        return dir * na.localeCompare(nb);
+      }
+      case 'count': {
+        const ca = a.visitCount || 0;
+        const cb = b.visitCount || 0;
+        return dir * (ca - cb);
+      }
+      case 'recent': {
+        const ra = a.updatedAt || a.createdAt || 0;
+        const rb = b.updatedAt || b.createdAt || 0;
+        return dir * (ra - rb);
+      }
+      default:
+        return 0;
+    }
+  });
+};
+
 const init = async () => {
   debug && console.log('Groups init');
 
   // Register escape handler for internal navigation
   // Backend handles parent centering, child tracking, and focus restoration
   api.escape.onEscape(handleEscape);
+
+  // Load view preferences and set up toolbar
+  await loadViewPrefs();
+  setupToolbar();
 
   // Load tags from datastore
   await loadTags();
@@ -448,6 +592,7 @@ window.showGroups = showGroups;
 const renderGroups = () => {
   const container = document.querySelector('.cards');
   container.innerHTML = '';
+  updateToolbarSortOptions();
 
   // Build list of all groups (untagged first if it has items)
   let allGroups = [];
@@ -460,7 +605,7 @@ const renderGroups = () => {
   allGroups = allGroups.concat(nonEmptyTags);
 
   // Apply search filter
-  const filteredGroups = filterGroups(allGroups);
+  let filteredGroups = filterGroups(allGroups);
 
   if (filteredGroups.length === 0) {
     const message = state.searchQuery
@@ -469,6 +614,9 @@ const renderGroups = () => {
     container.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
+
+  // Apply sorting
+  filteredGroups = sortGroups(filteredGroups);
 
   filteredGroups.forEach(tag => {
     const card = createGroupCard(tag);
@@ -539,9 +687,10 @@ const showAddresses = async (tag) => {
 const renderAddresses = () => {
   const container = document.querySelector('.cards');
   container.innerHTML = '';
+  updateToolbarSortOptions();
 
   // Apply search filter
-  const filteredAddresses = filterAddresses(state.addresses);
+  let filteredAddresses = filterAddresses(state.addresses);
 
   if (filteredAddresses.length === 0) {
     const message = state.searchQuery
@@ -550,6 +699,9 @@ const renderAddresses = () => {
     container.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
+
+  // Apply sorting
+  filteredAddresses = sortAddresses(filteredAddresses);
 
   filteredAddresses.forEach(address => {
     const card = createAddressCard(address);

@@ -30,6 +30,7 @@
       import 'peek://app/components/peek-input.js';
       import 'peek://app/components/peek-button.js';
       import 'peek://app/components/peek-button-group.js';
+      import 'peek://app/components/peek-grid-toolbar.js';
     </script>
   </head>
   <body>
@@ -62,6 +63,7 @@
     </div>
 
     <div class="content">
+      <peek-grid-toolbar class="grid-toolbar" id="gridToolbar" view-mode="columns"></peek-grid-toolbar>
       <peek-grid id="entityGrid" min-item-width="280" gap="12"></peek-grid>
     </div>
 

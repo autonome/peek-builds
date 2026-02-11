@@ -8,6 +8,18 @@
 const api = window.app;
 const debug = api.debug;
 
+// View preferences (persisted)
+let viewPrefs = {
+  viewMode: 'columns',
+  sortBy: 'title',
+  sortDirection: 'asc'
+};
+
+const SORT_OPTIONS = [
+  { value: 'title', label: 'Title' },
+  { value: 'url', label: 'URL' }
+];
+
 let state = {
   windows: [],
   selectedIndex: 0,
@@ -208,7 +220,7 @@ const renderWindows = () => {
   const container = document.querySelector('peek-grid.cards');
   container.innerHTML = '';
 
-  const filteredWindows = filterWindows(state.windows);
+  let filteredWindows = filterWindows(state.windows);
 
   if (filteredWindows.length === 0) {
     const message = state.searchQuery
@@ -220,6 +232,9 @@ const renderWindows = () => {
     container.appendChild(emptyState);
     return;
   }
+
+  // Apply sorting
+  filteredWindows = sortWindows(filteredWindows);
 
   filteredWindows.forEach(win => {
     const card = createWindowCard(win);
@@ -287,8 +302,94 @@ const createWindowCard = (win) => {
   return card;
 };
 
+/**
+ * Load persisted view preferences
+ */
+const loadViewPrefs = async () => {
+  try {
+    if (api?.settings?.getKey) {
+      const result = await api.settings.getKey('viewPrefs');
+      if (result.success && result.data) {
+        viewPrefs = { ...viewPrefs, ...result.data };
+        debug && console.log('[windows] Loaded viewPrefs:', viewPrefs);
+      }
+    }
+  } catch (err) {
+    debug && console.log('[windows] Failed to load viewPrefs:', err);
+  }
+};
+
+/**
+ * Save view preferences
+ */
+const saveViewPrefs = async () => {
+  try {
+    if (api?.settings?.setKey) {
+      await api.settings.setKey('viewPrefs', viewPrefs);
+    }
+  } catch (err) {
+    debug && console.log('[windows] Failed to save viewPrefs:', err);
+  }
+};
+
+/**
+ * Sort windows by current view preferences
+ */
+const sortWindows = (windows) => {
+  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
+  return windows.sort((a, b) => {
+    switch (viewPrefs.sortBy) {
+      case 'title': {
+        const ta = (a.title || '').toLowerCase();
+        const tb = (b.title || '').toLowerCase();
+        return dir * ta.localeCompare(tb);
+      }
+      case 'url': {
+        const ua = (a.url || '').toLowerCase();
+        const ub = (b.url || '').toLowerCase();
+        return dir * ua.localeCompare(ub);
+      }
+      default:
+        return 0;
+    }
+  });
+};
+
+/**
+ * Set up grid toolbar events and state
+ */
+const setupToolbar = () => {
+  const toolbar = document.querySelector('.grid-toolbar');
+  const container = document.querySelector('peek-grid.cards');
+  if (!toolbar) return;
+
+  toolbar.sortOptions = SORT_OPTIONS;
+  toolbar.sortBy = viewPrefs.sortBy;
+  toolbar.sortDirection = viewPrefs.sortDirection;
+  toolbar.viewMode = viewPrefs.viewMode;
+  container.viewMode = viewPrefs.viewMode;
+
+  toolbar.addEventListener('sort-change', (e) => {
+    viewPrefs.sortBy = e.detail.sortBy;
+    viewPrefs.sortDirection = e.detail.sortDirection;
+    saveViewPrefs();
+    renderWindows();
+  });
+
+  toolbar.addEventListener('view-mode-change', (e) => {
+    viewPrefs.viewMode = e.detail.mode;
+    container.viewMode = e.detail.mode;
+    saveViewPrefs();
+    renderWindows();
+  });
+};
+
 const init = async () => {
   debug && console.log('[windows] init');
+
+  // Load view preferences and set up toolbar
+  await loadViewPrefs();
+  setupToolbar();
 
   // Load windows
   await loadWindows();

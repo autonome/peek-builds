@@ -102,6 +102,7 @@ export { PeekSwitch } from './peek-switch.js';
 export { PeekDrawer } from './peek-drawer.js';
 export { PeekTooltip } from './peek-tooltip.js';
 export { PeekButtonGroup, PeekButtonGroupItem } from './peek-button-group.js';
+export { PeekGridToolbar } from './peek-grid-toolbar.js';
 
 // Side-effect imports to register all components
 import './peek-button.js';
@@ -120,3 +121,4 @@ import './peek-switch.js';
 import './peek-drawer.js';
 import './peek-tooltip.js';
 import './peek-button-group.js';
+import './peek-grid-toolbar.js';
