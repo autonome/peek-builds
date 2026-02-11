@@ -1279,9 +1279,50 @@ api.commands = {
   },
 
   /**
+   * List all registered commands from the cmd extension
+   * Queries via pubsub cmd:query-commands and returns the result
+   * @returns {Promise<{success: boolean, data?: Array<{name: string, description: string, source: string, scope?: string, modes?: string[]}>, error?: string}>}
+   */
+  list: () => {
+    return new Promise((resolve) => {
+      const responseTopic = `cmd:query-commands-response:${rndm()}`;
+
+      const handler = (ev, msg) => {
+        ipcRenderer.removeListener(responseTopic, handler);
+        const commands = msg.commands || [];
+        resolve({ success: true, data: commands });
+      };
+
+      // Subscribe to the unique response topic
+      ipcRenderer.send('subscribe', {
+        source: sourceAddress,
+        scope: 3,
+        topic: 'cmd:query-commands-response',
+        replyTopic: responseTopic
+      });
+      ipcRenderer.on(responseTopic, handler);
+
+      // Publish query request
+      ipcRenderer.send('publish', {
+        source: sourceAddress,
+        scope: 3,
+        topic: 'cmd:query-commands',
+        data: {}
+      });
+
+      // Timeout after 3 seconds
+      setTimeout(() => {
+        ipcRenderer.removeListener(responseTopic, handler);
+        resolve({ success: false, data: [], error: 'Timeout querying commands' });
+      }, 3000);
+    });
+  },
+
+  /**
    * Get all registered commands
    * Note: Commands are owned by cmd extension - use pubsub cmd:query-commands
    * @returns {Promise<Array>} Empty array - use pubsub directly
+   * @deprecated Use commands.list() instead
    */
   getAll: async () => {
     // Commands are queried via pubsub cmd:query-commands
