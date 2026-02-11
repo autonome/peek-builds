@@ -582,8 +582,13 @@ const init = async () => {
   // It receives the 'core:ready' signal and calls loadEnabledExtensions()
   log('core', 'Core features initialized. Extensions loaded by main process.');
 
-  // Register extension commands directly (cmd loads first with its subscribers ready)
-  registerExtensionCommands();
+  // Register extension commands after all extensions (including cmd) are loaded.
+  // cmd:register-batch is fire-and-forget via pubsub — if cmd's subscriber isn't
+  // ready when the message is published, it's lost. ext:all-loaded guarantees cmd
+  // has initialized its subscriber via initCommandRegistry().
+  api.subscribe('ext:all-loaded', () => {
+    registerExtensionCommands();
+  }, api.scopes.GLOBAL);
 };
 
 window.addEventListener('load', () => {

@@ -233,7 +233,7 @@ const init = async () => {
   currentSettings = await loadSettings();
   console.log('[ext:scripts] Loaded', currentSettings.scripts.length, 'scripts');
 
-  // Register commands directly (cmd loads first with its subscribers ready)
+  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   registerCommands();
 
   // Register global shortcut Command+Shift+S

@@ -127,15 +127,17 @@ test.describe('Web Search Extension @desktop', () => {
     const engines = await sharedBgWindow.evaluate(async () => {
       return new Promise<any[]>((resolve) => {
         const app = (window as any).app;
-        const unsub = app.subscribe('websearch:engines-list', (msg: any) => {
-          unsub();
+        let resolved = false;
+        app.subscribe('websearch:engines-list', (msg: any) => {
+          if (resolved) return;
+          resolved = true;
           resolve(msg.engines || []);
         }, app.scopes.GLOBAL);
 
         app.publish('websearch:engine-request', { action: 'list' }, app.scopes.GLOBAL);
 
         // Timeout fallback
-        setTimeout(() => resolve([]), 5000);
+        setTimeout(() => { if (!resolved) { resolved = true; resolve([]); } }, 5000);
       });
     });
 
@@ -153,8 +155,10 @@ test.describe('Web Search Extension @desktop', () => {
     const engineData = await sharedBgWindow.evaluate(async () => {
       return new Promise<any>((resolve) => {
         const app = (window as any).app;
-        const unsub = app.subscribe('websearch:engines-list', (msg: any) => {
-          unsub();
+        let resolved = false;
+        app.subscribe('websearch:engines-list', (msg: any) => {
+          if (resolved) return;
+          resolved = true;
           const google = (msg.engines || []).find((e: any) => e.id === 'google');
           if (google) {
             // Manually construct a search URL to verify the template
@@ -171,7 +175,7 @@ test.describe('Web Search Extension @desktop', () => {
         }, app.scopes.GLOBAL);
 
         app.publish('websearch:engine-request', { action: 'list' }, app.scopes.GLOBAL);
-        setTimeout(() => resolve(null), 5000);
+        setTimeout(() => { if (!resolved) { resolved = true; resolve(null); } }, 5000);
       });
     });
 
@@ -243,13 +247,15 @@ test.describe('Web Search Extension @desktop', () => {
     const defaultEngine = await sharedBgWindow.evaluate(async () => {
       return new Promise<string>((resolve) => {
         const app = (window as any).app;
-        const unsub = app.subscribe('websearch:engines-list', (msg: any) => {
-          unsub();
+        let resolved = false;
+        app.subscribe('websearch:engines-list', (msg: any) => {
+          if (resolved) return;
+          resolved = true;
           resolve(msg.defaultEngineId || '');
         }, app.scopes.GLOBAL);
 
         app.publish('websearch:engine-request', { action: 'list' }, app.scopes.GLOBAL);
-        setTimeout(() => resolve(''), 5000);
+        setTimeout(() => { if (!resolved) { resolved = true; resolve(''); } }, 5000);
       });
     });
 

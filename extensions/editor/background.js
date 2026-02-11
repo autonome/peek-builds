@@ -62,7 +62,7 @@ const extension = {
       return;
     }
 
-    // Register commands directly (cmd loads first with its subscribers ready)
+    // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 
     // Register global shortcut Option+E (works when Peek is not focused)

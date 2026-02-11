@@ -353,7 +353,7 @@ const extension = {
   init() {
     console.log('[feeds] Initializing...');
 
-    // Register commands directly (cmd loads first with its subscribers ready)
+    // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 
     // Register global shortcut (Option+Shift+F to avoid conflict with localsearch's Option+F)

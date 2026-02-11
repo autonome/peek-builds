@@ -649,7 +649,7 @@ const init = async () => {
   // Load custom engines from datastore
   await loadEngines();
 
-  // Register commands directly (cmd loads first with its subscribers ready)
+  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 
   // Listen for page load events for OpenSearch discovery

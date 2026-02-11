@@ -274,16 +274,21 @@ export async function waitForPubsubEvent(
   return bgWindow.evaluate(
     async ([event, timeoutMs]) => {
       return new Promise((resolve, reject) => {
+        let resolved = false;
         const t = setTimeout(() => {
-          reject(new Error(`Event ${event} not received within ${timeoutMs}ms`));
+          if (!resolved) {
+            resolved = true;
+            reject(new Error(`Event ${event} not received within ${timeoutMs}ms`));
+          }
         }, timeoutMs);
 
         const api = (window as unknown as WindowWithApp).app;
-        const unsub = api.subscribe(
+        api.subscribe(
           event,
           (msg: unknown) => {
+            if (resolved) return;
+            resolved = true;
             clearTimeout(t);
-            unsub();
             resolve(msg);
           },
           api.scopes.GLOBAL
@@ -315,10 +320,12 @@ export async function waitForCommand(
     const found = await bgWindow.evaluate(async (cmd) => {
       const api = (window as unknown as WindowWithApp).app;
       return new Promise((resolve) => {
-        const unsub = api.subscribe(
+        let resolved = false;
+        api.subscribe(
           'cmd:query-commands-response',
           (msg: unknown) => {
-            unsub();
+            if (resolved) return;
+            resolved = true;
             const response = msg as QueryCommandsResponse;
             resolve(response.commands?.some((c) => c.name === cmd) || false);
           },
@@ -326,7 +333,7 @@ export async function waitForCommand(
         );
 
         api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
-        setTimeout(() => resolve(false), 500);
+        setTimeout(() => { if (!resolved) { resolved = true; resolve(false); } }, 500);
       });
     }, commandName);
     if (found) return;
@@ -350,10 +357,12 @@ export async function queryCommandsWithRetry(
 
       const queryCommands = () =>
         new Promise<CommandInfo[] | null>((resolve) => {
-          const unsub = api.subscribe(
+          let resolved = false;
+          api.subscribe(
             'cmd:query-commands-response',
             (msg: unknown) => {
-              unsub();
+              if (resolved) return;
+              resolved = true;
               const response = msg as QueryCommandsResponse;
               resolve((response.commands as CommandInfo[]) || []);
             },
@@ -361,7 +370,7 @@ export async function queryCommandsWithRetry(
           );
 
           api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
-          setTimeout(() => resolve(null), 1000);
+          setTimeout(() => { if (!resolved) { resolved = true; resolve(null); } }, 1000);
         });
 
       // Retry loop inside evaluate to keep subscriptions in same JS context

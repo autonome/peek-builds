@@ -142,7 +142,7 @@ const extension = {
       return;
     }
 
-    // Register commands directly (cmd loads first with its subscribers ready)
+    // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 
     // Note: No global shortcut - use the cmd palette to access this extension

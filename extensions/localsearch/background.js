@@ -106,10 +106,9 @@ const initCommands = () => {
     api.commands.register(cmd);
     registeredCommands.push(cmd.name);
   });
-  // Flush immediately to ensure batch reaches cmd extension
-  if (api.commands.flush) {
-    api.commands.flush();
-  }
+  // Note: Do NOT call api.commands.flush() here — the 16ms debounce in preload
+  // ensures cmd's subscriber has time to be ready before the batch is sent.
+  // Flushing immediately can race with cmd's initialization.
   console.log('[ext:localsearch] Registered commands:', registeredCommands);
 };
 
@@ -129,7 +128,7 @@ const init = async () => {
 
   initShortcut(currentSettings.prefs.shortcutKey);
 
-  // Register commands directly (cmd loads first with its subscribers ready)
+  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)

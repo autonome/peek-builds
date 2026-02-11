@@ -326,7 +326,7 @@ const extension = {
   init() {
     console.log('[entities] Initializing...');
 
-    // Register commands directly (cmd loads first with its subscribers ready)
+    // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 
     // Listen for page loads (item:created events for URL items)

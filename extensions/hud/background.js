@@ -200,7 +200,7 @@ const init = async () => {
   // Register shortcut
   initShortcut();
 
-  // Register commands directly (cmd loads first with its subscribers ready)
+  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 
   // Open HUD if it was enabled

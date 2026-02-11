@@ -474,7 +474,7 @@ const init = async () => {
 
   initShortcut(currentSettings.prefs.shortcutKey);
 
-  // Register commands directly (cmd loads first with its subscribers ready)
+  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 
   // Listen for window close events to cleanup group mode

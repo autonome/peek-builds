@@ -170,7 +170,7 @@ const uninitCommands = () => {
 const init = async () => {
   console.log('[ext:page] init');
 
-  // Register commands directly (cmd loads first with its subscribers ready)
+  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 };
 

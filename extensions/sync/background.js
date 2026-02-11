@@ -97,7 +97,7 @@ const uninitCommands = () => {
 const init = () => {
   console.log('[ext:sync] init');
 
-  // Register commands directly (cmd loads first with its subscribers ready)
+  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 };
 
