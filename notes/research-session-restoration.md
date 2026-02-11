@@ -2,7 +2,9 @@
 
 ## Executive Summary
 
-This document outlines a comprehensive architecture for saving and restoring complete application state across Peek restarts, including open windows (URLs, positions, sizes), groups state, active pages/tabs, peek configurations, and extension-specific UI state. The system leverages Peek's existing datastore infrastructure with new session state persistence tables and coordination mechanisms.
+This document outlines the architecture for saving and restoring complete application state across Peek restarts, including open windows (URLs, positions, sizes), context/mode state, IZUI session state, extension-specific UI state, and groups. The design leverages Peek's existing infrastructure — the `items` table, `extension_settings` table, `context_history` table, IZUI state coordinator, and window registry — to minimize new schema additions while providing a robust session restore experience.
+
+**Updated**: 2026-02-11 — reflects unified items table, context/modes API, IZUI state system, and existing window bounds persistence.
 
 ---
 
@@ -11,445 +13,453 @@ This document outlines a comprehensive architecture for saving and restoring com
 ### 1.1 Existing State Persistence
 
 **Currently Persisted:**
-- **Extension Settings** (`extension_settings` table): Key-value storage per extension via `api.settings.get()/set()`
-- **Context History** (`context_history` table): Time-series window context tracking (mode, metadata, timestamps)
-- **Chromium Session**: Browser cookies/cache/localStorage via profile-specific sessions
-- **Active Theme**: Theme preference persisted via `setActiveThemeId()`
+- **Extension Settings** (`extension_settings` table): Key-value storage per extension via `api.settings.get()/set()/getKey()/setKey()`
+- **Context History** (`context_history` table): Time-series window context tracking (key, value, metadata, windowId, source, timestamp, prevEntryId)
+- **Items** (`items` table): Unified data with types: `url`, `text`, `tagset`, `image`, `series`, `feed`, `entity` — replaces legacy addresses/visits
+- **Item Visits** (`item_visits` table): Visit tracking with chaining (prevId/nextId), source, duration, scroll depth
+- **Window Bounds Persistence** (ALREADY IMPLEMENTED): Per-key window position/size saved to `extension_settings` when `persistWindowState` pref is enabled or `persistState: true` is passed in window open options. Uses `window_state:{key}` row IDs in `extension_settings` with `extensionId: 'window_state'`.
+- **Chromium Session**: Browser cookies/cache/localStorage via profile-specific session partitions
+- **Active Theme**: Theme preference persisted via `setActiveThemeId()` in `extension_settings`
+- **Dark Mode**: 3-tier setting (`off`/`system`/`force`) persisted in `extension_settings` under `core`/`darkMode`
+- **Item Groups** (`item_groups` + `item_group_members` tables): Named groups with member items and positions
 
 **NOT Currently Persisted:**
-- Open window list with URLs, positions, and sizes
+- Open window list with URLs and which windows should reopen on restart
+- Window relationships (parent/child, opener)
+- IZUI session state (transient/active/overlay)
+- Which extension windows were running (beyond the always-loaded builtins)
+- Navigation history per window (back/forward stacks beyond what `item_visits` chaining captures)
+- Scroll positions within web content
 - Window focus state and z-order
-- Window relationships (parent/child modals)
-- Extension session contexts (active peeks, active groups)
-- Navigation history per window (back/forward stacks)
-- Scroll positions within content
+- Context key/values for specific windows at shutdown time (context_history records history, but there is no "current snapshot for all windows at quit time")
 
-### 1.2 Window Lifecycle
+### 1.2 Window Lifecycle (Current)
 
 **Current Flow:**
-1. Background window created and extensions load
-2. User opens windows via shortcuts/commands → stored in in-memory `windowRegistry` only
-3. On app quit: `before-quit` handler runs cleanup, `windowRegistry` discarded
-4. **Gap**: No save point before shutdown
+1. Background window created, extensions load via pubsub `topic:core:prefs`
+2. User opens windows via shortcuts/commands/extensions → stored in in-memory `windowRegistry` (Map of windowId -> {source, params})
+3. Window bounds optionally auto-saved on move/resize (debounced 500ms) if window has a `key` and persistence is enabled
+4. On app quit: `before-quit` handler runs cleanup, publishes `app:shutdown` via pubsub, closes database, `windowRegistry` discarded
+5. **Gap**: No snapshot of open windows (URLs, keys, context) is taken before shutdown. Only individually keyed window bounds survive.
 
-### 1.3 Extension State Management
+### 1.3 What's Already Working
 
-**Current Pattern:**
-- Extensions load settings on init: `await api.settings.get()`
-- Extensions save changes individually: `await api.settings.set()`
-- No coordinated shutdown sequence
-- No recovery for partially-saved state
+The `persistWindowState` pref (default: `false`) and per-window `persistState` option already handle **individual window bounds restoration**. When a window with a `key` is reopened (e.g., the groups extension always opens its window with the same key), it restores to its last saved position/size. This means:
+
+- **Phase 1 of the original plan (window bounds) is partially done.** The missing piece is knowing *which* windows to reopen, not *where* to put them.
+- The `extension_settings` table is already being used as a general-purpose persistence store (theme, dark mode, window states, per-extension settings).
+
+### 1.4 APIs Available for Session Restore
+
+| API | Location | Relevance |
+|-----|----------|-----------|
+| `api.context.get/set/watch` | preload.js | Track mode, group membership, custom context per window |
+| `api.context.getMode/setMode/watchMode` | preload.js | Convenience methods for the `mode` context key |
+| `api.context.getSnapshot(timestamp, keys)` | preload.js | Point-in-time context state (useful for save) |
+| `api.context.getWindowsWithValue(key, value)` | preload.js | Find windows in a specific mode/group |
+| `api.izui.getState/isTransient/getEffectiveMode` | preload.js | IZUI session state (idle/transient/active/overlay) |
+| `api.window.list({includeInternal})` | preload.js | Enumerate all open windows with URLs, titles, params |
+| `api.window.getBounds(id)` | preload.js | Get window position/size |
+| `api.window.open(url, options)` | preload.js | Open window with key, bounds, mode, modal, overlay, etc. |
+| `api.settings.get/set/getKey/setKey` | preload.js | Extension-scoped settings persistence |
+| `api.commands.register/list` | preload.js | Command system for session management commands |
+| `api.publish/subscribe` | preload.js | PubSub for coordinated shutdown/restore events |
+| `getAllWindows()` | main.ts | Main-process access to windowRegistry |
+| `getRow/setRow('extension_settings', ...)` | datastore.ts | Direct DB access for session snapshots |
+| `addContextEntry/getContextSnapshot` | datastore.ts | Context history read/write from main process |
+
+### 1.5 Existing Shutdown Sequence
+
+The current `before-quit` handler in `entry.ts`:
+```
+1. cleanupDevExtensions()
+2. cleanupAdblocker()
+3. stopHotReload()
+4. shutdown() → publishes 'app:shutdown' pubsub + closeDatabase()
+```
+
+There is already an `app:shutdown` pubsub event published during quit. Extensions could listen for this, but currently none do. The database is closed immediately after the event is published, so extensions have no time to save state via async IPC. This is the key coordination gap.
 
 ---
 
-## 2. Proposed Architecture
+## 2. Revised Architecture
 
-### 2.1 Core Components
+### 2.1 Core Insight: Reuse Existing Tables
 
-**1. Session State Manager** (`backend/electron/session.ts`)
-- Coordinates session save/restore
-- Manages autosave timer
-- Handles version compatibility
-- Implements recovery logic
+The original design proposed 4 new tables (`session_state`, `window_sessions`, `extension_session_state`, `session_metadata`). Given the existing infrastructure, we can achieve the same goals with fewer additions:
 
-**2. New Database Tables**
-- `session_state`: Complete session snapshots (versioned)
-- `window_sessions`: Per-window metadata
-- `extension_session_state`: Extension-specific state
-- `session_metadata`: Restore tracking & crash detection
+| Original Table | Revised Approach |
+|---------------|-----------------|
+| `session_state` | Single row in `extension_settings` under `extensionId: 'session'`, `key: 'snapshot'` — JSON blob |
+| `window_sessions` | Embedded in the session snapshot JSON (array of window descriptors) |
+| `extension_session_state` | Extensions already save their own state via `api.settings.set()`. Session restore just needs to reopen windows — extension state is already persisted. |
+| `session_metadata` | Single row in `extension_settings` under `extensionId: 'session'`, `key: 'metadata'` |
 
-**3. Enhanced Shutdown Sequence**
-- New pubsub event: `app:before-shutdown`
-- Extensions get 500ms to save state
-- Window state captured
-- Session snapshot created before exit
+**New table needed: NONE.** The `extension_settings` table can store everything with the `extensionId: 'session'` namespace.
 
-**4. Startup Restore Phase**
-- Runs after extensions load
-- Validates session compatibility
-- Restores windows with error recovery
-- Handles crash detection
+### 2.2 Session Snapshot Format
 
-### 2.2 Database Schema
+Stored as JSON in `extension_settings` with `extensionId: 'session'`, `key: 'snapshot'`:
 
-**`session_state` table:**
-```sql
-id TEXT PRIMARY KEY              -- UUID
-profileId TEXT NOT NULL          -- Profile folder
-name TEXT                        -- 'autosave', 'before-quit', or user-provided
-state TEXT NOT NULL             -- JSON blob of session state
-version INTEGER NOT NULL         -- Schema version for compatibility
-appVersion TEXT                  -- App version that created this
-createdAt INTEGER NOT NULL       -- When snapshot taken
-restoredAt INTEGER              -- When/if restored (NULL if never)
-metadata TEXT DEFAULT '{}'       -- Crash/recovery metadata
+```json
+{
+  "version": 1,
+  "appVersion": "0.1.0",
+  "createdAt": 1707500000000,
+  "reason": "before-quit",
+  "izuiState": "active",
+  "windows": [
+    {
+      "url": "https://github.com",
+      "key": "page-github-com",
+      "title": "GitHub",
+      "source": "peek://app/background.html",
+      "bounds": { "x": 100, "y": 100, "width": 1200, "height": 800 },
+      "params": {
+        "canvas": true,
+        "escapeMode": "navigate",
+        "keepLive": true,
+        "modal": false
+      },
+      "context": {
+        "mode": "page"
+      },
+      "zOrder": 0,
+      "focused": false
+    },
+    {
+      "url": "peek://groups/index.html",
+      "key": "groups-main",
+      "title": "Groups",
+      "source": "peek://ext/groups/background.js",
+      "bounds": { "x": 300, "y": 200, "width": 900, "height": 600 },
+      "params": {
+        "escapeMode": "navigate"
+      },
+      "context": {
+        "mode": "group",
+        "groupId": "abc-123",
+        "groupName": "Research"
+      },
+      "zOrder": 1,
+      "focused": true
+    }
+  ]
+}
 ```
 
-**`window_sessions` table:**
-```sql
-id TEXT PRIMARY KEY
-sessionId TEXT NOT NULL FK
-windowId INTEGER
-address TEXT NOT NULL            -- URL
-title TEXT                       -- Page title
-width, height INTEGER
-x, y INTEGER
-zOrder INTEGER                   -- Stacking order
-visible INTEGER (0/1)
-modal INTEGER (0/1)
-parentWindowId INTEGER           -- For child windows
-params TEXT DEFAULT '{}'         -- Full BrowserWindow params
-contextState TEXT               -- JSON of window context
+### 2.3 Session Metadata Format
+
+Stored in `extension_settings` with `extensionId: 'session'`, `key: 'metadata'`:
+
+```json
+{
+  "lastSnapshotAt": 1707500000000,
+  "lastRestoreAt": 1707500100000,
+  "restoreCount": 5,
+  "cleanShutdown": true
+}
 ```
 
-**`extension_session_state` table:**
-```sql
-id TEXT PRIMARY KEY
-sessionId TEXT NOT NULL FK
-extensionId TEXT NOT NULL
-state TEXT NOT NULL              -- JSON blob (extension-specific)
-version INTEGER                  -- Extension schema version
-```
-
-**`session_metadata` table:**
-```sql
-profileId TEXT PRIMARY KEY       -- One row per profile
-lastSessionId TEXT FK
-lastRestoreAt INTEGER
-restoreCount INTEGER DEFAULT 0
-crashCount INTEGER DEFAULT 0
-cleanShutdown INTEGER DEFAULT 1  -- 0 if unclean exit detected
-```
-
-### 2.3 Save Phase
+### 2.4 Save Phase
 
 **Triggers:**
-1. **Autosave**: Every 5 minutes (if enabled)
-2. **Before Shutdown**: On `app.on('before-quit')`
-3. **Manual Snapshot**: Via Settings UI
+1. **Before Shutdown**: In the `before-quit` handler, *before* database close
+2. **Autosave**: Optional periodic save (if enabled via pref)
+3. **Manual**: Via command palette ("Save Session")
 
-**Save Algorithm:**
+**Save Algorithm (main process):**
 
 ```
-1. Gather all visible windows from windowRegistry
-2. Get bounds/visibility/focus state for each
-3. Publish 'app:before-shutdown' pubsub event
-4. Wait 500ms for extensions to save state
-5. Query all extension_settings entries
-6. Capture per-window context state
-7. Create session JSON blob
-8. Insert into session_state table
-9. Create corresponding window_sessions entries
-10. Insert extension_session_state entries
-11. Update session_metadata
-12. Cleanup old autosaves (keep last 3)
+1. Set cleanShutdown = false in session metadata
+2. Iterate getAllWindows() from windowRegistry
+3. For each window (skip background, extension-host, modal, destroyed):
+   a. Get BrowserWindow bounds via win.getBounds()
+   b. Get URL (extract real URL from peek://app/page containers)
+   c. Get params from windowRegistry entry
+   d. Query context_history for latest context values for this windowId
+   e. Build window descriptor
+4. Build session snapshot JSON
+5. Write to extension_settings: setRow('extension_settings', 'session:snapshot', ...)
+6. Set cleanShutdown = true in session metadata
+7. Proceed with shutdown (close database, quit)
 ```
 
-**Critical Path:**
-- Triggered in `before-quit` handler to ensure capture before windows close
-- Timeout if extensions don't respond (500ms max wait)
-- Continues even if extension state save fails
+**Critical implementation detail**: The save must happen synchronously in the `before-quit` handler, before `shutdown()` closes the database. Since `better-sqlite3` is synchronous, this is straightforward — no async coordination needed. The save function runs entirely in the main process using `getAllWindows()` and `BrowserWindow` APIs. No IPC round-trips to renderer processes required.
 
-### 2.4 Restore Phase
+### 2.5 Restore Phase
 
-**Triggered:** App startup, after extensions loaded
+**Triggered:** App startup, after extensions are loaded (after the `topic:core:prefs` subscription fires and `loadExtensions()` completes in `entry.ts`)
 
 **Algorithm:**
 
 ```
-1. Check session_metadata for crash detection
-2. If cleanShutdown=0, show "Recover from crash?" dialog
-3. Load last session (or selected snapshot)
-4. Validate session version compatibility
+1. Check session metadata: was cleanShutdown true?
+2. If cleanShutdown = false:
+   a. If crashCount > 3, skip restore (clean start)
+   b. Otherwise, increment crashCount, offer recovery dialog
+3. Load session snapshot from extension_settings
+4. Validate snapshot version compatibility
 5. Sort windows by zOrder
-6. For each window:
-   a. Validate URL accessibility
-   b. Restore with saved params + bounds
-   c. Handle restore failures gracefully (skip window)
-   d. Restore context state (mode, group, etc.)
-7. Restore focused window
-8. Send 'session:restore' event to each extension
-9. Update session_metadata: restoreCount++, cleanShutdown=1
-10. Return restore report (restored/failed/skipped counts)
+6. For each window descriptor:
+   a. Validate URL is reasonable (has protocol, not empty)
+   b. Validate bounds are within current display(s)
+   c. Call the window-open IPC path with saved params + bounds
+   d. Set context (mode, group) after window is ready
+   e. Handle errors: skip window, continue with rest
+7. Focus the window that was focused at save time
+8. Publish 'session:restored' pubsub event
+9. Update metadata: restoreCount++, cleanShutdown = true, crashCount = 0
 ```
 
-**Error Recovery:**
-- Invalid URLs: Warn and skip (don't fail entire restore)
-- Bounds out-of-display: Move to center of primary display
-- Missing extension: Skip that extension's state
-- Corrupted JSON: Try previous session, else clean start
+### 2.6 Integration with Existing `persistWindowState`
 
-### 2.5 User Controls
+The existing window bounds persistence and session restore complement each other:
 
-**Settings UI Section:**
+- **`persistWindowState`** = "remember where I put this window" (per-key, survives across sessions)
+- **Session restore** = "reopen the windows I had open" (per-session, knows which windows to create)
 
-```
-Session Management
-├─ [x] Restore session on startup
-├─ [x] Autosave session (interval: [___] minutes)
-├─ [Save Current Session...] button
-│   └─ Session name: [Research Project ________]
-│       [Create Snapshot] button
-├─ [Restore from Snapshot...] button
-│   └─ List of named sessions with dates
-├─ [Clear all session data] button (with confirmation)
-└─ Privacy
-   ├─ [ ] Privacy mode (don't save any URLs)
-   ├─ [ ] Skip private/incognito windows
-   └─ URL patterns to exclude: [_________________________]
-```
+On restore, the flow is:
+1. Session restore creates windows with the bounds from the snapshot
+2. If a window has a `key` and `persistWindowState` is enabled, the existing persistence code may override the session bounds with more recent saved bounds
+3. This is actually desirable — if the user moved a window after the last autosave, the per-key bounds are more current
 
-**Settings Keys** (stored in extension_settings):
+### 2.7 User Controls
+
+**New prefs in `config.js` prefsSchema:**
 ```javascript
-session:restore_enabled = true
-session:autosave_enabled = true
-session:autosave_interval = 300000  // milliseconds
-session:privacy_mode = false
-session:save_private_windows = false
-session:url_patterns_to_skip = ['https://bank\..*', ...]
+"restoreSession": {
+  "description": "Restore open windows when app restarts",
+  "type": "boolean",
+  "default": false
+},
+"sessionAutosave": {
+  "description": "Periodically save session state (interval in minutes, 0 = disabled)",
+  "type": "integer",
+  "default": 0
+}
 ```
 
-### 2.6 Privacy and Security
+**Command Palette Commands:**
+- `Save Session` — manual snapshot
+- `Restore Previous Session` — restore last snapshot (if current session is empty)
+
+**Settings keys** (stored via extension_settings, extensionId: 'session'):
+```
+session:snapshot     — latest session snapshot JSON
+session:metadata     — session metadata JSON
+session:autosave     — last autosave snapshot (separate from before-quit)
+```
+
+### 2.8 Privacy and Security
 
 **Privacy Considerations:**
 
 1. **Sensitive URLs** (banking, healthcare)
-   - Privacy Mode setting: skip all window content
-   - URL pattern blacklist: regex-based exclusion
-   - User informed in settings that auth cookies auto-restore
+   - Session snapshots only store URLs — no page content, no auth tokens
+   - URLs are already stored in the `items` table via history tracking, so session restore adds minimal new privacy exposure
+   - Future: URL pattern exclusion list (regex-based, stored in session prefs)
 
-2. **Incognito Windows**
-   - Track window.webPreferences.sandbox flag
-   - Skip restoring private windows on next launch
-   - Option: `session:save_private_windows` setting
+2. **Privacy Mode**
+   - Future enhancement: `session:privacy_mode` setting to disable URL recording in snapshots
+   - When enabled, session snapshots would only record extension windows (peek:// URLs), not web pages
 
-3. **Expiration**
-   - Optional: auto-delete sessions older than N days
-   - Setting: `session:expires_after` (0=never)
+3. **Storage**
+   - Session snapshots are small (a few KB for typical sessions)
+   - Keep only last snapshot + last autosave (2 rows total)
+   - No separate cleanup needed — `setRow` overwrites existing rows
 
 ---
 
 ## 3. Implementation Phases
 
-### Phase 1: Core Tables & Save (Week 1)
-- Add `session_state`, `window_sessions`, `extension_session_state`, `session_metadata` tables
-- Implement `backend/electron/session.ts` with `saveSession()` function
-- Add `before-quit` handler in `entry.ts`
-- IPC handlers for session operations
-- Unit tests for save logic
+### Phase 1: Save on Quit (small, focused)
+- Add `saveSessionSnapshot()` function in a new `backend/electron/session.ts`
+- Call it from the `before-quit` handler in `entry.ts`, before `shutdown()`
+- Iterate `getAllWindows()`, build snapshot, write to `extension_settings`
+- Add `restoreSession` and `sessionAutosave` prefs to `config.js`
+- No new tables needed
+- **Tests**: Unit test for snapshot serialization, integration test for save-on-quit
 
-### Phase 2: Shutdown Coordination (Week 2)
-- Implement `app:before-shutdown` pubsub event
-- Autosave timer in background window
-- Extension lifecycle hooks documentation
-- Integration tests for shutdown sequence
+### Phase 2: Restore on Startup
+- Add `restoreSessionSnapshot()` function in `session.ts`
+- Call it after extensions are loaded (in the `subscribe(prefs)` handler in `entry.ts`)
+- Restore windows via the existing `window-open` IPC handler path
+- Set context/mode for restored windows
+- Handle crash detection via `cleanShutdown` flag in metadata
+- **Tests**: Integration test for full save-quit-restart-restore cycle
 
-### Phase 3: Restore on Startup (Week 3)
-- Implement `restoreSession()` function
-- Add restore phase to app startup
-- Error recovery for invalid URLs, missing windows
-- Crash detection and recovery dialog
-- Integration tests
+### Phase 3: Autosave + Commands
+- Add periodic autosave timer (configurable interval, disabled by default)
+- Register `Save Session` and `Restore Previous Session` commands
+- Expose session management in Settings UI
+- **Tests**: Timer-based autosave, command execution
 
-### Phase 4: Settings UI (Week 4)
-- Add Session Settings section to settings.js
-- "Save Current Session" dialog
-- "Restore from Snapshot" UI with list
-- Privacy settings controls
-- E2E tests for settings persistence
+### Phase 4: Context and Group Restoration
+- Save per-window context state (mode, groupId, groupName) in snapshot
+- Restore context after window creation via `addContextEntry()`
+- Restore group window associations
+- Integrate with IZUI state: don't restore into transient mode
+- **Tests**: Mode and group state preservation
 
-### Phase 5: Error Handling (Week 5)
-- Crash detection via `cleanShutdown` flag
-- Corrupted session fallback (try previous version)
-- Session cleanup job (keep last N autosaves)
-- Recovery mode (if >50% restore fails, show offer for clean start)
-
-### Phase 6: Extension Integration (Week 6)
-- Document `app:before-shutdown` for extensions
-- Update peeks extension: save active peek state
-- Update groups extension: save active group context
-- Update slides extension: save slide state
-- Tests for multi-extension state coordination
+### Phase 5: Error Handling and Edge Cases
+- Crash detection: `cleanShutdown` flag, crash count, recovery dialog
+- Display change handling: validate bounds against current display geometry
+- Stale URL handling: skip windows that fail to load
+- Recovery mode: if >50% of windows fail to restore, offer clean start
+- **Tests**: Crash recovery, bounds validation, partial restore
 
 ---
 
 ## 4. Extension Integration
 
-### 4.1 Extension Shutdown Hook
+### 4.1 Shutdown Coordination
 
-Extensions receive this event ~500ms before app quit:
+Extensions already save their own state via `api.settings.set()` during normal operation. The session restore system does NOT need to coordinate extension state saves at shutdown — it only needs to know which windows to reopen.
+
+However, for extensions that maintain ephemeral in-memory state (e.g., active peek targets, unsaved editor content), a shutdown notification is valuable:
 
 ```javascript
 // In extension background script
-api.subscribe('app:before-shutdown', async (evt) => {
-  // Save extension state
-  const state = {
-    prefs: currentSettings.prefs,
-    items: currentSettings.items,
-    activeItem: currentActiveItem
-  };
-
-  await api.settings.set(state);
-  // Extension should complete within ~400ms
+api.subscribe('app:shutdown', async (evt) => {
+  // Save any ephemeral state before quit
+  // NOTE: This event is already published by the main process.
+  // The window for async saves is limited — synchronous saves via
+  // api.settings.setKey() are preferred.
+  await api.settings.setKey('lastSessionState', {
+    activePeekTarget: currentTarget,
+    unsavedContent: getUnsavedContent()
+  });
 });
 ```
 
-### 4.2 Session Restore Hook
+**Important**: The current `app:shutdown` event fires right before `closeDatabase()`, so there is a race condition for async saves. Phase 1 should insert the session save *before* the shutdown event, so the session is captured even if extension saves fail.
 
-Sent to extension after app starts (if restoring):
+### 4.2 Restore Notification
+
+After session restore completes:
 
 ```javascript
-api.subscribe('session:restore', (evt) => {
-  const { version, data } = evt.state;
-  if (version === 1) {
-    // Restore from v1 format
-    currentSettings = data;
-    reInitializeUI();
-  }
+api.subscribe('session:restored', (evt) => {
+  const { windowCount, restoredCount, failedCount } = evt;
+  // Extension can re-initialize based on restored windows
 });
 ```
 
-### 4.3 Example: Peeks Extension
+### 4.3 Example: Groups Extension
 
-**Before shutdown:**
-```javascript
-// Save current peek configurations
-await api.settings.set({
-  prefs: { shortcutKeyPrefix: 'Option+' },
-  items: [
-    { enabled: true, keyNum: 0, address: 'https://github.com' },
-    { enabled: true, keyNum: 1, address: 'https://news.ycombinator.com' }
-  ]
-});
-```
+Groups already persist their configuration via `api.settings.set()`. Session restore would:
+1. Reopen the groups window with its saved `key` (bounds restored by existing `persistWindowState`)
+2. Set context: `mode: 'group'`, `groupId: 'abc-123'`
+3. The groups extension reads its settings on load and picks up where it left off
 
-**On restore:**
-```javascript
-api.subscribe('session:restore', (evt) => {
-  const { items } = evt.state.data;
-  // Re-initialize shortcuts with restored peek items
-  initItems(currentSettings.prefs, items);
-});
-```
+No special integration needed — groups already persist correctly.
 
 ---
 
 ## 5. Challenges and Solutions
 
-### 5.1 URL Validity
-**Challenge:** Saved URLs may become invalid (deleted peeks, localhost, etc.)
+### 5.1 Canvas Page URL Extraction
+**Challenge:** Web pages are wrapped in `peek://app/page/index.html?url=...` containers. The session must save the actual URL, not the container URL.
 
-**Solution:**
-- Implement `isUrlAccessible()` to validate protocol handlers
-- Skip invalid URLs with warning (don't fail entire restore)
-- Offer user choice: delete from session or retry
+**Solution:** Already handled — the `window-list` IPC handler extracts real URLs from page containers. The save function should use the same logic.
 
-### 5.2 Window Geometry
-**Challenge:** Saved position may be off-screen if displays changed
+### 5.2 Window Geometry on Display Change
+**Challenge:** Saved position may be off-screen if displays changed between sessions.
 
-**Solution:**
-- Validate bounds against current display on restore
-- If out-of-bounds, move to center of primary display
-- Store display info in metadata for debugging
+**Solution:** On restore, validate bounds against `screen.getAllDisplays()`. If no display contains the window center point, reposition to center of primary display. This mirrors the existing logic in `window-open` that centers windows.
 
-### 5.3 Crash Detection
-**Challenge:** How to detect unclean exits?
+### 5.3 Database Availability at Shutdown
+**Challenge:** The `before-quit` handler must save before `closeDatabase()`.
 
-**Solution:**
-- `session_metadata.cleanShutdown` flag (set to 1 before quit)
-- On startup, if 0: show crash recovery dialog
-- After 3+ crashes, disable auto-restore
+**Solution:** Insert `saveSessionSnapshot()` call before `shutdown()` in the `before-quit` handler. Since `better-sqlite3` is synchronous, the save completes instantly.
 
-### 5.4 Extension Version Mismatch
-**Challenge:** Extension state saved with v1, app now has v2
+### 5.4 Extension Windows vs User Windows
+**Challenge:** Extension background windows (peek://ext/groups/background.js) should not be restored as visible windows.
 
-**Solution:**
-- Extensions declare compatible state versions
-- Session includes extension version info
-- Run migration if version < current
-- Skip if version > current
+**Solution:** Filter windows in the save phase. Only save windows that:
+- Are visible (`win.isVisible()`)
+- Are not the background window (`peek://app/background.html`)
+- Are not the extension host (`peek://app/extension-host.html`)
+- Are not modal (transient UI)
 
-### 5.5 Large Session State
-**Challenge:** Session snapshots could get large
+### 5.5 IZUI State on Restore
+**Challenge:** Should restored sessions start in active or transient mode?
 
-**Solution:**
-- Compress if >100KB
-- Keep only last 3 autosaves
-- Limit to 50MB per session
-- Don't save if >100MB
+**Solution:** Always restore into active mode. The user explicitly launched the app (or it auto-launched), so they expect to see their windows. The IZUI coordinator will naturally evaluate the entry mode based on app focus state.
 
-### 5.6 Parent Window Closure
-**Challenge:** Modal child window persists after parent closes
+### 5.6 Startup Feature Conflict
+**Challenge:** The `startupFeature` pref opens a window on startup (default: settings page). Session restore would also open windows.
 
-**Solution:**
-- Restore parent before children (track parentWindowId)
-- If parent restore fails, skip orphaned children
-- Offer user choice: adopt to primary window
+**Solution:** If session restore is enabled and a snapshot exists, skip the `startupFeature`. If no snapshot or restore is disabled, fall back to `startupFeature`.
 
 ---
 
 ## 6. Testing Strategy
 
 ### Unit Tests
-- Session save/restore with 1-5 windows
-- Context state preservation
-- Extension state merging
-- Version compatibility
-- URL validation
-- Corrupted session recovery
+- Session snapshot serialization/deserialization
+- Window filtering (skip background, extension-host, modal)
+- URL extraction from canvas containers
+- Bounds validation against display geometry
+- Crash detection logic (cleanShutdown flag)
 
 ### Integration Tests
-- Full lifecycle: save → quit → restart → restore
-- Multi-extension coordination during shutdown
-- Autosave timer (mocked)
-- Privacy settings enforcement
-- Crash detection
-- Settings persistence
+- Full lifecycle: open windows → quit → restart → windows restored
+- Window bounds preserved across save/restore
+- Context/mode state preserved across save/restore
+- Extension settings survive restart (already works, validate)
+- Crash detection when cleanShutdown is false
 
 ### E2E Tests (Playwright)
-- Open 5 windows, save, restart → all restored
-- Graceful quit saves session
-- Force-quit triggers crash recovery
-- Named snapshot restore works
-- Privacy mode hides URLs
-- Extension state survives restart
+- Open 3 windows, quit, restart → all 3 restored with correct URLs
+- Move window, quit, restart → position preserved
+- Enable session restore pref, verify it takes effect
+- Force-quit → crash recovery dialog shown
+- Autosave creates periodic snapshots
 
 ### Manual Testing
-- Open windows, quit with Cmd+Q, restart → verify restored
-- Set custom window size/position → verify bounds preserved
-- Open peek (Option+0), save, restart → peek restored
-- Kill app with force-quit → crash dialog shown
-- Enable privacy mode, open github.com, restart → URL not in DB
-- Wait 2+ minutes with autosave enabled → verify multiple autosaves created
+- Open windows, Cmd+Q, restart → verify restored
+- Set custom window position/size → verify bounds preserved
+- Open peek (Option+0), save, restart → peek extension reloads correctly
+- Kill app with Activity Monitor → crash dialog shown
+- Wait for autosave interval → verify snapshot exists in DB
 
 ---
 
 ## 7. API Reference
 
-### IPC Handlers
+### IPC Handlers (new)
 
 ```typescript
-// Renderer → Main
-'session:save'                    // { reason, name? }
-'session:restore'                 // { sessionId? }
-'session:list'                    // {} → SessionMetadata[]
-'session:delete'                  // { sessionId }
-'session:get-settings'            // {}
-'session:update-settings'         // { restoreEnabled, autosaveEnabled, ... }
+// Main process functions (not IPC - called directly from before-quit)
+saveSessionSnapshot(reason: string): void    // Synchronous, called in before-quit
+restoreSessionSnapshot(): Promise<RestoreResult>  // Async, called after extensions load
 
-// Main → Renderer (pubsub)
-'app:before-shutdown'             // { reason: string }
-'session:restore-complete'        // { restored, failed, skipped }
+// IPC handlers (for renderer-initiated actions)
+'session:save'              // { reason: 'manual' | 'autosave' }
+'session:get-snapshot'      // {} → SessionSnapshot | null
+'session:get-metadata'      // {} → SessionMetadata
 ```
 
-### Extension API
+### PubSub Events
+
+```typescript
+// Already exists:
+'app:shutdown'              // Published before database close
+
+// New:
+'session:restored'          // { windowCount, restoredCount, failedCount }
+```
+
+### Extension API (via preload.js)
 
 ```javascript
-// Listen for shutdown
-window.app.subscribe('app:before-shutdown', async (evt) => { ... });
+// Subscribe to shutdown (already possible via existing pubsub)
+app.subscribe('app:shutdown', async (evt) => { ... });
 
-// Listen for restore
-window.app.subscribe('session:restore', (evt) => { ... });
+// Subscribe to restore completion (new)
+app.subscribe('session:restored', (evt) => { ... });
 ```
 
 ---
@@ -458,42 +468,51 @@ window.app.subscribe('session:restore', (evt) => { ... });
 
 1. **Correctness**: 100% of test scenarios pass
 2. **Completeness**: >95% of windows successfully restore
-3. **Performance**: Save <2s, restore <5s
-4. **Storage**: Session DB stays <100MB
-5. **Privacy**: Privacy mode hides all URLs
-6. **Recovery**: Crash recovery works >95%
+3. **Performance**: Save <100ms (synchronous SQLite), restore <3s
+4. **Storage**: Session snapshot <50KB for typical usage (JSON in one row)
+5. **Privacy**: No page content stored, only URLs (already in items table)
+6. **Recovery**: Crash recovery works >95% of the time
 
 ---
 
 ## 9. Future Enhancements
 
-1. Incremental snapshots (save only diffs)
-2. Cloud sync of sessions across devices
-3. Session merging (combine multiple sessions)
-4. Time-travel history of past sessions
-5. Mobile → desktop session sync
-6. Pre-defined session templates
-7. Collaborative session sharing
+1. Named session snapshots (save/restore specific sessions)
+2. Session history (keep last N snapshots for time-travel)
+3. Cloud sync of sessions across devices (via existing sync infrastructure)
+4. Tab groups / workspaces (save different window sets for different tasks)
+5. Per-window scroll position restoration (requires webview integration)
+6. Import/export sessions (JSON file)
+
+---
+
+## 10. Key Differences from Original Design
+
+| Aspect | Original (Feb 9) | Revised (Feb 11) |
+|--------|------------------|-------------------|
+| New tables | 4 (`session_state`, `window_sessions`, `extension_session_state`, `session_metadata`) | 0 — uses existing `extension_settings` |
+| Extension state coordination | Complex shutdown handshake with 500ms timeout | Not needed — extensions already persist via `api.settings` |
+| Window bounds | New implementation needed | Already implemented via `persistWindowState` pref |
+| Schema references | Legacy `addresses`/`visits` tables | Unified `items`/`item_visits` tables |
+| Context tracking | Not mentioned | Leverages existing `context_history` table and context API |
+| IZUI integration | Not mentioned | Restore respects IZUI state model |
+| Implementation complexity | 6 phases over 6 weeks | 5 phases, first 2 much smaller due to existing infrastructure |
+| IPC naming | `session:save`, `session:restore`, etc. | Minimal IPC — main save is synchronous in before-quit |
 
 ---
 
 ## Conclusion
 
-This comprehensive session tracking system builds on Peek's existing datastore and extension architecture. Key innovations:
+The revised design dramatically simplifies session restoration by building on infrastructure that was added since the original document was written. The unified items table, context history system, IZUI state coordinator, and existing window bounds persistence mean that session restore is primarily about answering one question: "which windows were open?"
 
-1. **Coordinated Shutdown**: `app:before-shutdown` event ensures all extensions save atomically
-2. **Graceful Degradation**: Invalid windows skipped, other windows still restored
-3. **Crash Recovery**: Detects unclean exits and offers recovery
-4. **Privacy-First**: Settings for URL patterns, privacy mode, incognito handling
-5. **Extension Agnostic**: Each extension manages own state format/versioning
-
-The phased implementation prioritizes core functionality first, with error handling and advanced features following. By leveraging the existing context_history table and extension_settings infrastructure, implementation effort is minimized while providing a browser-like session restore experience tailored to Peek's multi-window, multi-extension architecture.
+The answer is captured as a small JSON snapshot in the existing `extension_settings` table during the synchronous `before-quit` handler. No new tables, no complex async coordination, no extension handshake protocols. Extensions already persist their own state — session restore just needs to reopen their windows.
 
 ---
 
 ## Meta
 
-- **Author**: Exploration Agent
-- **Date**: 2026-02-09
-- **Status**: Design/Planning Phase
-- **Related**: Window management, extension lifecycle, datastore architecture
+- **Author**: Exploration Agent (original), updated by research agent
+- **Created**: 2026-02-09
+- **Updated**: 2026-02-11
+- **Status**: Design/Planning Phase — revised to reflect current codebase
+- **Related**: Window management, IZUI state, context API, extension lifecycle, datastore architecture
