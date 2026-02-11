@@ -34,40 +34,34 @@
       transition: top 0.15s ease;
     }
 
-    /* Push webview down when navbar is active so it doesn't cover the floating bar */
+    /* Push webview down when navbar is active so it doesn't cover the navbar */
     webview.navbar-active {
-      top: 90px;
-      border-radius: 0 0 10px 10px;
+      top: 36px;
     }
 
     /*
-     * FLOATING NAVBAR — NOT an inline/embedded bar.
+     * Navbar — full-width bar at the top of the window.
      *
      * Shown via Cmd+L or hovering near the top of the window.
-     * Centered, floating above content with shadow.
-     * Does NOT use -webkit-app-region: drag.
+     * Same width as the page, no floating bubble effect.
+     * Draggable via -webkit-app-region: drag.
      */
     .navbar {
-      position: fixed;
-      top: 40px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: min(90%, 600px);
-      height: 40px;
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 36px;
       display: none;
       align-items: center;
       gap: 8px;
       padding: 0 12px;
-      background: var(--theme-bg-secondary, rgba(30, 30, 30, 0.95));
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      background: var(--theme-bg-secondary, rgba(30, 30, 30, 0.92));
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       color: var(--theme-text, #e0e0e0);
       font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
       font-size: 15px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 10px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
-      -webkit-app-region: no-drag;
+      border: none;
+      -webkit-app-region: drag;
       user-select: none;
       -webkit-user-select: none;
       z-index: 100;
@@ -128,11 +122,11 @@
       background: var(--theme-bg, rgba(128, 128, 128, 0.18));
     }
 
-    /* Trigger zone at top of window — hover here to reveal the floating navbar */
+    /* Trigger zone at top of window — hover here to reveal the navbar */
     .trigger-zone {
       position: absolute;
       top: 0; left: 0; right: 0;
-      height: 12px;
+      height: 50px;
       z-index: 50;
     }
 

@@ -3,9 +3,9 @@
  *
  * Content-sized BrowserWindow with:
  * - Webview filling the entire window
- * - Floating navbar overlay (Cmd+L or hover near top to show, Escape/click-outside to dismiss)
- *   NOT embedded in window chrome — floats over content like a command palette
+ * - Full-width navbar at the top (Cmd+L or hover near top to show, Escape/click-outside to dismiss)
  * - When shown, the webview shifts down so the Electron <webview> layer doesn't cover the navbar
+ * - Drag via -webkit-app-region: drag on the navbar
  * - Resize via IPC to resize the BrowserWindow
  */
 
@@ -89,13 +89,13 @@ function updateState() {
 }
 
 // --- Show / Hide navbar ---
-// The floating navbar is shown by:
+// The full-width navbar is shown by:
 //   1. Cmd+L (published from main process via before-input-event on guest/host webContents)
 //   2. Hovering near the top of the window (trigger zone)
 // It is hidden by clicking outside, pressing Escape, or moving mouse away (hover mode).
 //
 // When visible, the <webview> element shifts down (via .navbar-active class) so the
-// Electron composited webview layer doesn't paint over the floating navbar.
+// Electron composited webview layer doesn't paint over the navbar.
 
 let hideTimer = null;
 let showSource = null; // 'hover' or 'shortcut' — determines dismiss behavior
@@ -188,7 +188,7 @@ navbar.addEventListener('mouseleave', () => {
   if (showSource === 'hover') scheduleHide();
 });
 
-// Cmd+L: show floating navbar with URL focus
+// Cmd+L: show navbar with URL focus
 // Published from main process with GLOBAL scope (both host and webview guest fire this)
 api.subscribe('page:show-navbar', () => show({ focusUrl: true, source: 'shortcut' }), api.scopes.GLOBAL);
 
