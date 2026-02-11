@@ -60,6 +60,7 @@ import {
   // History operations
   trackWindowLoad,
   getHistory,
+  normalizeUrl,
   // Context operations
   addContextEntry,
   getContextEntry,
@@ -289,13 +290,14 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-add-address', async (ev, data) => {
     try {
       const opts = data.options || {};
+      const normalizedUri = normalizeUrl(data.uri);
       const metadata: Record<string, unknown> = {};
       if (opts.title) metadata.title = opts.title;
       if (opts.description) metadata.description = opts.description;
       if (opts.favicon) metadata.favicon = opts.favicon;
 
       const result = addItem('url', {
-        content: data.uri,
+        content: normalizedUri,
         mimeType: opts.mimeType || 'text/html',
         metadata: JSON.stringify(metadata),
         starred: opts.starred || 0,
@@ -310,7 +312,7 @@ export function registerDatastoreHandlers(): void {
       publish('system', PubSubScopes.GLOBAL, 'item:created', {
         itemId: result.id,
         itemType: 'url',
-        content: data.uri
+        content: normalizedUri
       });
 
       return { success: true, data: result, id: result.id };

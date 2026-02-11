@@ -1063,21 +1063,21 @@ test.describe('Data Persistence @desktop', () => {
     const parsedPeeksPrefs = JSON.parse(peeksPrefs.value);
     expect(parsedPeeksPrefs.shortcutKeyPrefix).toBe('Option+');
 
-    // --- Verify Addresses and Tags ---
-    const tableResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.getTable('addresses');
+    // --- Verify Items (addresses are now stored as URL items) ---
+    const itemsResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.queryItems({ type: 'url' });
     });
-    expect(tableResult.success).toBe(true);
+    expect(itemsResult.success).toBe(true);
 
-    const addresses = Object.values(tableResult.data) as any[];
-    expect(addresses.length).toBeGreaterThanOrEqual(2);
+    const items = itemsResult.data;
+    expect(items.length).toBeGreaterThanOrEqual(2);
 
-    const persistedAddr1 = addresses.find((a: any) =>
-      a.uri === 'https://persist-test-1.example.com' ||
-      a.uri?.includes('persist-test-1')
+    const persistedItem1 = items.find((a: any) =>
+      a.content === 'https://persist-test-1.example.com/' ||
+      a.content?.includes('persist-test-1')
     );
-    expect(persistedAddr1).toBeTruthy();
-    expect(persistedAddr1.title).toBe('Persist Test 1');
+    expect(persistedItem1).toBeTruthy();
+    expect(persistedItem1.title).toBe('Persist Test 1');
 
     const tagsResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.getTagsByFrecency(10);
