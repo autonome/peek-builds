@@ -231,12 +231,12 @@ On restore, the flow is:
 "restoreSession": {
   "description": "Restore open windows when app restarts",
   "type": "boolean",
-  "default": false
+  "default": true
 },
-"sessionAutosave": {
+"sessionAutosaveInterval": {
   "description": "Periodically save session state (interval in minutes, 0 = disabled)",
   "type": "integer",
-  "default": 0
+  "default": 5
 }
 ```
 
@@ -273,41 +273,36 @@ session:autosave     — last autosave snapshot (separate from before-quit)
 
 ## 3. Implementation Phases
 
-### Phase 1: Save on Quit (small, focused)
+### Phase 1: Save on Quit
 - Add `saveSessionSnapshot()` function in a new `backend/electron/session.ts`
 - Call it from the `before-quit` handler in `entry.ts`, before `shutdown()`
 - Iterate `getAllWindows()`, build snapshot, write to `extension_settings`
-- Add `restoreSession` and `sessionAutosave` prefs to `config.js`
+- Add `restoreSession` and `sessionAutosaveInterval` prefs to `config.js`
 - No new tables needed
 - **Tests**: Unit test for snapshot serialization, integration test for save-on-quit
 
-### Phase 2: Restore on Startup
+### Phase 2: Restore on Startup (includes context, groups, bounds validation)
 - Add `restoreSessionSnapshot()` function in `session.ts`
 - Call it after extensions are loaded (in the `subscribe(prefs)` handler in `entry.ts`)
 - Restore windows via the existing `window-open` IPC handler path
-- Set context/mode for restored windows
+- **Context/group restoration**: Save per-window context state (mode, groupId, groupName) in snapshot. Restore context after window creation via `addContextEntry()`. Restore group window associations. Integrate with IZUI state: always restore into active mode.
+- **Bounds validation**: On restore, validate saved bounds against `screen.getAllDisplays()`. If window center point is not within any active display, discard saved position (keep saved size), let fallback centering handle placement.
 - Handle crash detection via `cleanShutdown` flag in metadata
-- **Tests**: Integration test for full save-quit-restart-restore cycle
+- If `startupFeature` pref is set and session restore is enabled with a valid snapshot, skip `startupFeature`
+- **Tests**: Integration test for full save-quit-restart-restore cycle, mode/group state preservation, bounds validation
 
 ### Phase 3: Autosave + Commands
-- Add periodic autosave timer (configurable interval, disabled by default)
+- Add periodic autosave timer (default: 5 minutes, configurable via `sessionAutosaveInterval` pref)
+- Autosave enabled by default — best mitigation against unforeseen shutdowns (SIGKILL, power loss, crash)
 - Register `Save Session` and `Restore Previous Session` commands
 - Expose session management in Settings UI
 - **Tests**: Timer-based autosave, command execution
 
-### Phase 4: Context and Group Restoration
-- Save per-window context state (mode, groupId, groupName) in snapshot
-- Restore context after window creation via `addContextEntry()`
-- Restore group window associations
-- Integrate with IZUI state: don't restore into transient mode
-- **Tests**: Mode and group state preservation
-
-### Phase 5: Error Handling and Edge Cases
+### Phase 4: Error Handling and Edge Cases
 - Crash detection: `cleanShutdown` flag, crash count, recovery dialog
-- Display change handling: validate bounds against current display geometry
 - Stale URL handling: skip windows that fail to load
 - Recovery mode: if >50% of windows fail to restore, offer clean start
-- **Tests**: Crash recovery, bounds validation, partial restore
+- **Tests**: Crash recovery, partial restore
 
 ---
 

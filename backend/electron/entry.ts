@@ -86,6 +86,7 @@ import {
 import {
   initSessionPartition,
 } from './session-partition.js';
+import { saveSessionSnapshot } from './session.js';
 
 // Catch unhandled errors and promise rejections without showing alert dialogs
 unhandled({
@@ -269,6 +270,7 @@ app.on('before-quit', () => {
   if (_beforeQuitCleanupDone) return;
   _beforeQuitCleanupDone = true;
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
+  try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }
   try { cleanupDevExtensions(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevExtensions error:', e); }
   try { cleanupAdblocker(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupAdblocker error:', e); }
   try { stopHotReload(); } catch (e) { DEBUG && console.error('[lifecycle] stopHotReload error:', e); }

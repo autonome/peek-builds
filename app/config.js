@@ -64,6 +64,16 @@ const prefsSchema = {
       "type": "boolean",
       "default": false
     },
+    "restoreSession": {
+      "description": "Restore open windows when app restarts",
+      "type": "boolean",
+      "default": true
+    },
+    "sessionAutosaveInterval": {
+      "description": "Periodically save session state (interval in minutes, 0 = disabled)",
+      "type": "integer",
+      "default": 5
+    },
   },
   "required": [ "shortcutKey", "startupFeature", "enableTrayIcon", "showInDockAndSwitcher", "quitShortcut" ]
 };
@@ -135,7 +145,9 @@ const defaults = {
     showInDockAndSwitcher: true,
     backupDir: '',
     hideTitleBar: true,
-    persistWindowState: false
+    persistWindowState: false,
+    restoreSession: true,
+    sessionAutosaveInterval: 5
   },
   items: [
     { id: '82de735f-a4b7-4fe6-a458-ec29939ae00d',
