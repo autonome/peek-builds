@@ -6,7 +6,7 @@
   "author": "dietrich ayala",
   "license": "MIT",
   "engines": {
-    "node": ">=24.0.0"
+    "node": "24.11.1"
   },
   "type": "module",
   "repository": {
@@ -21,7 +21,7 @@
     "agent-setup": "git -C .agent-workflow pull 2>/dev/null || git clone https://tangled.sh/burrito.space/multi-agent-workflow .agent-workflow && echo 'Agent workflow updated!'",
     "//-- Development (BACKEND=electron|tauri, defaults to electron) --//": "",
     "dev": "[ \"${BACKEND:-}\" = \"tauri\" ] && yarn dev:tauri || yarn dev:electron",
-    "dev:electron": "./scripts/timed.sh sh -c 'yarn build && DEBUG=1 electron .'",
+    "dev:electron": "./scripts/timed.sh sh -c 'yarn check:native && yarn build && DEBUG=1 electron .'",
     "dev:tauri": "./scripts/timed.sh sh -c 'cd backend/tauri/src-tauri && cargo run'",
     "dev:hot": "yarn build && nodemon --exec 'yarn build && DEBUG=1 electron .'",
     "//-- Production --//": "",
