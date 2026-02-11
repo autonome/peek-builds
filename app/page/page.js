@@ -65,6 +65,7 @@ const btnForward = document.getElementById('btn-forward');
 const btnReload = document.getElementById('btn-reload');
 const urlText = document.getElementById('url-text');
 const modeIndicator = document.getElementById('mode-indicator');
+const widgetContainer = document.getElementById('widget-container');
 
 // --- Position all elements based on bounds ---
 
@@ -121,6 +122,13 @@ function updatePositions() {
   if (modeIndicator) {
     modeIndicator.style.left = `${x + width - 120}px`;
     modeIndicator.style.top = `${y + 8}px`;
+  }
+
+  // Widget container — right side of the webview with a gap
+  if (widgetContainer) {
+    const widgetGap = 12;
+    widgetContainer.style.left = `${x + width + widgetGap}px`;
+    widgetContainer.style.top = `${y}px`;
   }
 }
 
@@ -843,5 +851,195 @@ async function initModeContext() {
 
 // Initialize mode context
 initModeContext();
+
+// --- Widget system ---
+// Widgets are small UI panels that appear on the transparent canvas to the right
+// of the webview. Each widget is a position:absolute div inside the widget container,
+// positioned by updatePositions(). Widgets can be added, removed, and updated via API.
+
+const widgets = new Map(); // id -> { element, timers }
+
+/**
+ * Add a widget panel to the right side of the page.
+ * @param {string} id - Unique widget identifier
+ * @param {object} opts - Widget options
+ * @param {string} opts.title - Widget header title
+ * @param {string|HTMLElement} opts.content - HTML string or DOM element for widget body
+ * @param {number} [opts.autoDismiss] - Auto-dismiss after N milliseconds (0 = no auto-dismiss)
+ * @param {function} [opts.onClose] - Callback when widget is closed
+ * @returns {object} Widget handle with { element, close() }
+ */
+function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
+  // Remove existing widget with same id
+  if (widgets.has(id)) {
+    removeWidget(id);
+  }
+
+  const el = document.createElement('div');
+  el.className = 'widget';
+  el.dataset.widgetId = id;
+
+  // Header with title and close button
+  const header = document.createElement('div');
+  header.className = 'widget-header';
+
+  const titleEl = document.createElement('span');
+  titleEl.className = 'widget-title';
+  titleEl.textContent = title || '';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'widget-close';
+  closeBtn.textContent = '\u00D7'; // multiplication sign (x)
+  closeBtn.title = 'Dismiss';
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeWidget(id);
+  });
+
+  header.appendChild(titleEl);
+  header.appendChild(closeBtn);
+  el.appendChild(header);
+
+  // Body
+  const body = document.createElement('div');
+  body.className = 'widget-body';
+  if (typeof content === 'string') {
+    body.innerHTML = content;
+  } else if (content instanceof HTMLElement) {
+    body.appendChild(content);
+  }
+  el.appendChild(body);
+
+  widgetContainer.appendChild(el);
+
+  const timers = [];
+
+  // Animate in on next frame
+  requestAnimationFrame(() => {
+    el.classList.add('visible');
+  });
+
+  // Auto-dismiss
+  if (autoDismiss > 0) {
+    const timer = setTimeout(() => {
+      removeWidget(id);
+    }, autoDismiss);
+    timers.push(timer);
+  }
+
+  const handle = {
+    element: el,
+    body,
+    timers,
+    onClose,
+    close: () => removeWidget(id),
+  };
+
+  widgets.set(id, handle);
+
+  DEBUG && console.log('[page] Widget added:', id, title);
+  return handle;
+}
+
+/**
+ * Remove a widget by id with a fade-out animation.
+ * @param {string} id - Widget identifier
+ */
+function removeWidget(id) {
+  const handle = widgets.get(id);
+  if (!handle) return;
+
+  // Clear any pending timers
+  for (const timer of handle.timers) {
+    clearTimeout(timer);
+  }
+
+  // Animate out
+  handle.element.classList.remove('visible');
+  handle.element.classList.add('hiding');
+
+  setTimeout(() => {
+    handle.element.remove();
+  }, 300); // Match transition duration
+
+  if (handle.onClose) {
+    try { handle.onClose(); } catch (e) { /* ignore */ }
+  }
+
+  widgets.delete(id);
+  DEBUG && console.log('[page] Widget removed:', id);
+}
+
+/**
+ * Update a widget's content.
+ * @param {string} id - Widget identifier
+ * @param {object} opts - Update options
+ * @param {string|HTMLElement} [opts.content] - New content for widget body
+ * @param {string} [opts.title] - New title
+ */
+function updateWidget(id, { content, title } = {}) {
+  const handle = widgets.get(id);
+  if (!handle) return;
+
+  if (title !== undefined) {
+    const titleEl = handle.element.querySelector('.widget-title');
+    if (titleEl) titleEl.textContent = title;
+  }
+
+  if (content !== undefined) {
+    if (typeof content === 'string') {
+      handle.body.innerHTML = content;
+    } else if (content instanceof HTMLElement) {
+      handle.body.innerHTML = '';
+      handle.body.appendChild(content);
+    }
+  }
+
+  DEBUG && console.log('[page] Widget updated:', id);
+}
+
+// --- OpenSearch discovery widget ---
+// When the websearch extension discovers an OpenSearch engine, show a temporary
+// notification widget on the right side of the page.
+
+api.subscribe('websearch:engine-discovered', (msg) => {
+  if (!msg || !msg.engine) return;
+
+  const { engine } = msg;
+  const widgetId = `opensearch-${engine.id}`;
+
+  DEBUG && console.log('[page] OpenSearch engine discovered:', engine.name);
+
+  // Build the widget content
+  const contentEl = document.createElement('div');
+
+  // Engine info row
+  const infoRow = document.createElement('div');
+  infoRow.className = 'widget-engine-found';
+
+  const iconSpan = document.createElement('span');
+  iconSpan.className = 'widget-engine-icon';
+  iconSpan.textContent = '\uD83D\uDD0D'; // magnifying glass emoji
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'widget-engine-name';
+  nameSpan.textContent = engine.name;
+
+  infoRow.appendChild(iconSpan);
+  infoRow.appendChild(nameSpan);
+  contentEl.appendChild(infoRow);
+
+  // Action button - already added by the extension background, show confirmation
+  const actionBtn = document.createElement('button');
+  actionBtn.className = 'widget-action-btn confirmed';
+  actionBtn.textContent = '\u2713 Added to search engines';
+  contentEl.appendChild(actionBtn);
+
+  addWidget(widgetId, {
+    title: 'Search engine found',
+    content: contentEl,
+    autoDismiss: 8000,
+  });
+}, api.scopes.GLOBAL);
 
 DEBUG && console.log('[page] Canvas container initialized for:', targetUrl);

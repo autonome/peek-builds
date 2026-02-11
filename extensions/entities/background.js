@@ -80,7 +80,22 @@ async function enrichUrlItem(url, pageMetadata) {
     const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
     if (!items.success || !items.data) return;
 
-    const item = items.data.find(i => i.content === url);
+    // Match by exact URL or by normalized form (content is stored normalized)
+    // Also try stripping/adding trailing slash for root paths
+    const urlVariants = new Set([url]);
+    try {
+      const parsed = new URL(url);
+      urlVariants.add(parsed.toString()); // canonical form
+      if (parsed.pathname === '/') {
+        // Try with and without trailing slash
+        const withSlash = parsed.origin + '/' + parsed.search + parsed.hash;
+        const withoutSlash = parsed.origin + parsed.search + parsed.hash;
+        urlVariants.add(withSlash);
+        urlVariants.add(withoutSlash);
+      }
+    } catch { /* invalid URL */ }
+
+    const item = items.data.find(i => urlVariants.has(i.content));
     if (!item) return;
 
     // Update title if empty or "Loading..."

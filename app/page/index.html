@@ -189,6 +189,148 @@
     .mode-indicator[data-mode="group"] .group-name {
       display: inline;
     }
+
+    /* --- Widget system --- */
+
+    .widget-container {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 150;
+      pointer-events: none; /* Container itself is transparent to clicks */
+    }
+
+    .widget {
+      pointer-events: auto;
+      background: var(--theme-bg-secondary, rgba(30, 30, 30, 0.92));
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      color: var(--theme-text, #e0e0e0);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+      font-size: 13px;
+      border-radius: 10px;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateX(8px);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      max-width: 280px;
+      min-width: 200px;
+    }
+
+    .widget.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .widget.hiding {
+      opacity: 0;
+      transform: translateX(8px);
+    }
+
+    .widget-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .widget-title {
+      flex: 1;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--theme-text-secondary, #aaa);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .widget-close {
+      background: none;
+      border: none;
+      color: var(--theme-text-muted, #666);
+      font-size: 14px;
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      flex-shrink: 0;
+      line-height: 1;
+      transition: background 0.1s, color 0.1s;
+    }
+
+    .widget-close:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.12));
+      color: var(--theme-text, #fff);
+    }
+
+    .widget-body {
+      padding: 0 10px 10px 10px;
+    }
+
+    /* OpenSearch discovery widget specific styles */
+
+    .widget-engine-found {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .widget-engine-icon {
+      font-size: 16px;
+      flex-shrink: 0;
+      width: 20px;
+      text-align: center;
+    }
+
+    .widget-engine-name {
+      font-size: 13px;
+      color: var(--theme-text, #e0e0e0);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .widget-action-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
+      border: none;
+      color: var(--theme-text-secondary, #bbb);
+      font-size: 12px;
+      font-family: inherit;
+      padding: 5px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s;
+      width: 100%;
+      justify-content: center;
+    }
+
+    .widget-action-btn:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18));
+      color: var(--theme-text, #fff);
+    }
+
+    .widget-action-btn.confirmed {
+      color: #6dca6d;
+      cursor: default;
+    }
+
+    .widget-action-btn.confirmed:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
+      color: #6dca6d;
+    }
   </style>
 </head>
 <body data-no-drag>
@@ -212,6 +354,7 @@
   <div class="resize-handle" id="resize-nw" data-dir="nw"></div>
   <div class="resize-handle" id="resize-nav-ne" data-dir="ne"></div>
   <div class="resize-handle" id="resize-nav-nw" data-dir="nw"></div>
+  <div class="widget-container" id="widget-container"></div>
   <script type="module" src="page.js"></script>
 </body>
 </html>
