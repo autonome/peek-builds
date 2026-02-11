@@ -205,28 +205,42 @@ const api: Api = {
   // ==================== Datastore ====================
 
   datastore: {
+    // Address API methods — redirected to items system
     addAddress: async (uri: string, options: Record<string, unknown> = {}) => {
-      return invoke('datastore_add_address', { uri, options });
+      const metadata: Record<string, unknown> = {};
+      if (options.title) metadata.title = options.title;
+      if (options.description) metadata.description = options.description;
+      if (options.favicon) metadata.favicon = options.favicon;
+      return invoke('datastore_add_item', {
+        type: 'url',
+        options: {
+          content: uri,
+          mimeType: options.mimeType || 'text/html',
+          metadata: JSON.stringify(metadata),
+          starred: options.starred || 0,
+          archived: options.archived || 0,
+        }
+      });
     },
 
     getAddress: async (id: string) => {
-      return invoke('datastore_get_address', { id });
+      return invoke('datastore_get_item', { id });
     },
 
     updateAddress: async (id: string, updates: Record<string, unknown>) => {
-      return invoke('datastore_update_address', { id, updates });
+      return invoke('datastore_update_item', { id, options: updates });
     },
 
     queryAddresses: async (filter: Record<string, unknown> = {}) => {
-      return invoke('datastore_query_addresses', { filter });
+      return invoke('datastore_query_items', { filter: { ...filter, type: 'url' } });
     },
 
-    addVisit: async (addressId: string, options: Record<string, unknown> = {}) => {
-      return invoke('datastore_add_visit', { addressId, options });
+    addVisit: async (_addressId: string, _options: Record<string, unknown> = {}) => {
+      return { success: true, data: { id: 'noop' } };
     },
 
-    queryVisits: async (filter: Record<string, unknown> = {}) => {
-      return invoke('datastore_query_visits', { filter });
+    queryVisits: async (_filter: Record<string, unknown> = {}) => {
+      return { success: true, data: [] };
     },
 
     getOrCreateTag: async (name: string) => {
@@ -234,15 +248,15 @@ const api: Api = {
     },
 
     tagAddress: async (addressId: string, tagId: string) => {
-      return invoke('datastore_tag_address', { addressId, tagId });
+      return invoke('datastore_tag_item', { itemId: addressId, tagId });
     },
 
     untagAddress: async (addressId: string, tagId: string) => {
-      return invoke('datastore_untag_address', { addressId, tagId });
+      return invoke('datastore_untag_item', { itemId: addressId, tagId });
     },
 
     getAddressTags: async (addressId: string) => {
-      return invoke('datastore_get_address_tags', { addressId });
+      return invoke('datastore_get_item_tags', { itemId: addressId });
     },
 
     getTable: async (tableName: string) => {

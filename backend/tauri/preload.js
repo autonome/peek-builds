@@ -321,12 +321,34 @@
   // ==================== Datastore ====================
 
   api.datastore = {
-    addAddress: (uri, options) => invoke('datastore_add_address', { uri, options }),
-    getAddress: (id) => invoke('datastore_get_address', { id }),
-    updateAddress: (id, updates) => invoke('datastore_update_address', { id, updates }),
-    queryAddresses: (filter) => invoke('datastore_query_addresses', { filter }),
-    addVisit: (addressId, options) => invoke('datastore_add_visit', { addressId, options }),
-    queryVisits: (filter) => invoke('datastore_query_visits', { filter }),
+    // Address API methods — redirected to items system for backward compatibility
+    addAddress: (uri, options = {}) => {
+      const metadata = {};
+      if (options.title) metadata.title = options.title;
+      if (options.description) metadata.description = options.description;
+      if (options.favicon) metadata.favicon = options.favicon;
+      return invoke('datastore_add_item', {
+        type: 'url',
+        options: {
+          content: uri,
+          mimeType: options.mimeType || 'text/html',
+          metadata: JSON.stringify(metadata),
+          starred: options.starred || 0,
+          archived: options.archived || 0,
+        }
+      });
+    },
+    getAddress: (id) => invoke('datastore_get_item', { id }),
+    updateAddress: (id, updates) => invoke('datastore_update_item', { id, options: updates }),
+    queryAddresses: (filter = {}) => invoke('datastore_query_items', { filter: { ...filter, type: 'url' } }),
+    addVisit: (addressId, options) => {
+      // No-op: visits are now tracked via item_visits through trackNavigation
+      return Promise.resolve({ success: true, data: { id: 'noop' } });
+    },
+    queryVisits: (filter) => {
+      // No-op: visits are now in item_visits
+      return Promise.resolve({ success: true, data: [] });
+    },
     addContent: (options) => invoke('datastore_add_content', { options }),
     queryContent: (filter) => invoke('datastore_query_content', { filter }),
     getTable: (tableName) => {
@@ -352,14 +374,18 @@
     setRow: (tableName, rowId, rowData) => invoke('datastore_set_row', { tableName, rowId, rowData }),
     getStats: () => invoke('datastore_get_stats', {}),
     getOrCreateTag: (name) => invoke('datastore_get_or_create_tag', { name }),
-    tagAddress: (addressId, tagId) => invoke('datastore_tag_address', { addressId, tagId }),
-    untagAddress: (addressId, tagId) => invoke('datastore_untag_address', { addressId, tagId }),
+    // Tag-address redirected to tag-item
+    tagAddress: (addressId, tagId) => invoke('datastore_tag_item', { itemId: addressId, tagId }),
+    untagAddress: (addressId, tagId) => invoke('datastore_untag_item', { itemId: addressId, tagId }),
     getTagsByFrecency: (limit) => invoke('datastore_get_tags_by_frecency', { limit }),
-    getAddressTags: (addressId) => invoke('datastore_get_address_tags', { addressId }),
-    getAddressesByTag: (tagId) => invoke('datastore_get_addresses_by_tag', { tagId }),
-    getUntaggedAddresses: (limit) => invoke('datastore_get_untagged_addresses', { limit }),
+    getAddressTags: (addressId) => invoke('datastore_get_item_tags', { itemId: addressId }),
+    getAddressesByTag: (tagId) => invoke('datastore_get_items_by_tag', { tagId }),
+    getUntaggedAddresses: (limit) => {
+      // No direct equivalent; return empty for now
+      return Promise.resolve({ success: true, data: [] });
+    },
 
-    // Item operations (mobile-style lightweight content: notes, tagsets, images)
+    // Item operations (unified content system)
     addItem: (type, options = {}) => invoke('datastore_add_item', { type, options }),
     getItem: (id) => invoke('datastore_get_item', { id }),
     updateItem: (id, options) => invoke('datastore_update_item', { id, options }),
