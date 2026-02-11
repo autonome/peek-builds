@@ -281,6 +281,17 @@ app.on('before-quit', () => {
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
 });
 
+// Handle SIGINT/SIGTERM (e.g. Ctrl+C in terminal) — save session before exit.
+// Electron's before-quit does NOT fire on signal kills.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    DEBUG && console.log(`[lifecycle] ${signal}: saving session before exit`);
+    try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] signal saveSessionSnapshot error:', e); }
+    try { shutdown(); } catch (e) { /* ignore */ }
+    process.exit(0);
+  });
+}
+
 /**
  * Register command palette entries for chrome extension UI pages.
  * Called after chrome extensions are loaded so we know which ones
