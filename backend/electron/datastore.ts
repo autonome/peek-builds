@@ -2294,13 +2294,13 @@ export function getTagsByFrecency(domain?: string): Tag[] {
     frecencyScore: calculateFrecency(tag.frequency || 0, tag.lastUsed || 0)
   }));
 
-  // If domain provided, boost tags used on same-domain addresses
+  // If domain provided, boost tags used on same-domain items
   if (domain) {
     const domainTagIds = new Set(
       (getDb().prepare(`
-        SELECT DISTINCT at.tagId FROM address_tags at
-        JOIN addresses a ON at.addressId = a.id
-        WHERE a.domain = ?
+        SELECT DISTINCT it.tagId FROM item_tags it
+        JOIN items i ON it.itemId = i.id
+        WHERE i.domain = ? AND i.deletedAt = 0
       `).all(domain) as { tagId: string }[]).map(row => row.tagId)
     );
 

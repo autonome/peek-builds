@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
-  // Datastore operations
+  // Datastore operations (legacy — still used by some codepaths)
   addAddress,
   getAddress,
   updateAddress,
@@ -69,6 +69,8 @@ import {
   getWindowsWithContextValue,
   getWindowsMatchingContext,
 } from './datastore.js';
+
+import type { Item } from '../types/index.js';
 
 import {
   loadExtensionManifest,
@@ -245,13 +247,73 @@ function trackVisibleWindowFocus(win: BrowserWindow): void {
 }
 
 /**
+ * Convert an Item to an Address-like shape for backward compatibility.
+ * Callers that expect Address objects (with uri, protocol, etc.) will
+ * get a compatible structure from the items table.
+ */
+function itemToAddress(item: Item): Record<string, unknown> {
+  let protocol = '';
+  let path = '';
+  try {
+    const url = new URL(String(item.content || ''));
+    protocol = url.protocol.replace(':', '');
+    path = url.pathname;
+  } catch { /* not a valid URL */ }
+
+  return {
+    id: item.id,
+    uri: item.content || '',
+    protocol,
+    domain: item.domain || '',
+    path,
+    title: item.title || '',
+    mimeType: item.mimeType || 'text/html',
+    favicon: item.favicon || '',
+    description: '',
+    tags: '',
+    metadata: item.metadata || '{}',
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    lastVisitAt: item.lastVisitAt || 0,
+    visitCount: item.visitCount || 0,
+    starred: item.starred || 0,
+    archived: item.archived || 0,
+  };
+}
+
+/**
  * Register datastore IPC handlers
  */
 export function registerDatastoreHandlers(): void {
+  // Address IPC handlers — redirected to items system for backward compatibility
   ipcMain.handle('datastore-add-address', async (ev, data) => {
     try {
-      const result = addAddress(data.uri, data.options);
-      return { success: true, data: result };
+      const opts = data.options || {};
+      const metadata: Record<string, unknown> = {};
+      if (opts.title) metadata.title = opts.title;
+      if (opts.description) metadata.description = opts.description;
+      if (opts.favicon) metadata.favicon = opts.favicon;
+
+      const result = addItem('url', {
+        content: data.uri,
+        mimeType: opts.mimeType || 'text/html',
+        metadata: JSON.stringify(metadata),
+        starred: opts.starred || 0,
+        archived: opts.archived || 0,
+      });
+      // Set title/favicon/domain columns directly (addItem only sets title from metadata.title and domain from URL)
+      if (opts.favicon) {
+        getDb().prepare('UPDATE items SET favicon = ? WHERE id = ?').run(opts.favicon, result.id);
+      }
+
+      // Emit item:created event for consistency
+      publish('system', PubSubScopes.GLOBAL, 'item:created', {
+        itemId: result.id,
+        itemType: 'url',
+        content: data.uri
+      });
+
+      return { success: true, data: result, id: result.id };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -260,8 +322,10 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-get-address', async (ev, data) => {
     try {
-      const result = getAddress(data.id);
-      return { success: true, data: result };
+      const item = getItem(data.id);
+      if (!item) return { success: true, data: undefined };
+      // Transform item to address-like shape
+      return { success: true, data: itemToAddress(item) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -270,8 +334,25 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-update-address', async (ev, data) => {
     try {
-      const result = updateAddress(data.id, data.updates);
-      return { success: true, data: result };
+      const updates = data.updates || {};
+      const itemOpts: Record<string, unknown> = {};
+      if (updates.metadata !== undefined) itemOpts.metadata = updates.metadata;
+      if (updates.starred !== undefined) itemOpts.starred = updates.starred;
+      if (updates.archived !== undefined) itemOpts.archived = updates.archived;
+      if (updates.mimeType !== undefined) itemOpts.mimeType = updates.mimeType;
+      if (updates.uri !== undefined) itemOpts.content = updates.uri;
+
+      updateItem(data.id, itemOpts);
+      // Update title/favicon directly if provided
+      if (updates.title !== undefined) {
+        getDb().prepare('UPDATE items SET title = ?, updatedAt = ? WHERE id = ?').run(updates.title, Date.now(), data.id);
+      }
+      if (updates.favicon !== undefined) {
+        getDb().prepare('UPDATE items SET favicon = ?, updatedAt = ? WHERE id = ?').run(updates.favicon, Date.now(), data.id);
+      }
+
+      const updated = getItem(data.id);
+      return { success: true, data: updated ? itemToAddress(updated) : undefined };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -280,8 +361,16 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-query-addresses', async (ev, data) => {
     try {
-      const result = queryAddresses(data.filter);
-      return { success: true, data: result };
+      const filter = data.filter || {};
+      const itemFilter: Record<string, unknown> = { type: 'url' };
+      if (filter.domain) itemFilter.domain = filter.domain;
+      if (filter.starred !== undefined) itemFilter.starred = filter.starred;
+      if (filter.sortBy) itemFilter.sortBy = filter.sortBy;
+      if (filter.limit) itemFilter.limit = filter.limit;
+      if (filter.search) itemFilter.search = filter.search;
+
+      const items = queryItems(itemFilter);
+      return { success: true, data: items.map(itemToAddress) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -290,8 +379,14 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-add-visit', async (ev, data) => {
     try {
-      const result = addVisit(data.addressId, data.options);
-      return { success: true, data: result };
+      const opts = data.options || {};
+      const result = recordItemVisit(data.addressId, {
+        source: opts.source || 'direct',
+        sourceId: opts.sourceId || '',
+        windowType: opts.windowType || 'main',
+        interacted: opts.interacted || 0,
+      });
+      return { success: true, data: result, id: result.id };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -300,8 +395,18 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-query-visits', async (ev, data) => {
     try {
-      const result = queryVisits(data.filter);
-      return { success: true, data: result };
+      const filter = data.filter || {};
+      const itemFilter: Record<string, unknown> = {};
+      if (filter.addressId) itemFilter.itemId = filter.addressId;
+      if (filter.source) itemFilter.source = filter.source;
+      if (filter.since) itemFilter.since = filter.since;
+      if (filter.until) itemFilter.until = filter.until;
+      if (filter.limit) itemFilter.limit = filter.limit;
+
+      const visits = queryItemVisits(itemFilter);
+      // Map itemId to addressId for backward compat
+      const mapped = visits.map(v => ({ ...v, addressId: v.itemId }));
+      return { success: true, data: mapped };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -404,20 +509,26 @@ export function registerDatastoreHandlers(): void {
     }
   });
 
+  // Tag-address handlers — redirected to item tagging
   ipcMain.handle('datastore-tag-address', async (ev, data) => {
     try {
-      const result = tagAddress(data.addressId, data.tagId);
+      const result = tagItem(data.addressId, data.tagId);
 
-      // Emit event if this is a new link (not already tagged)
+      // Emit events for backward compat
       if (!result.alreadyExists) {
-        // Fetch tag name for event payload
         const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(data.tagId) as { name: string } | undefined;
+        // Emit both old and new event names
         publish('system', PubSubScopes.GLOBAL, 'tag:address-added', {
           tagId: data.tagId,
           tagName: tag?.name,
           addressId: data.addressId
         });
-        if (DEBUG) console.log('[ipc] tag:address-added', data.tagId, data.addressId);
+        publish('system', PubSubScopes.GLOBAL, 'tag:item-added', {
+          tagId: data.tagId,
+          tagName: tag?.name,
+          itemId: data.addressId
+        });
+        if (DEBUG) console.log('[ipc] tag:address-added (redirected to tagItem)', data.tagId, data.addressId);
       }
 
       return { success: true, data: result };
@@ -429,19 +540,22 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-untag-address', async (ev, data) => {
     try {
-      // Fetch tag name before untagging (need it for event payload)
       const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(data.tagId) as { name: string } | undefined;
 
-      const result = untagAddress(data.addressId, data.tagId);
+      const result = untagItem(data.addressId, data.tagId);
 
-      // Emit event if the untag actually removed something
       if (result) {
         publish('system', PubSubScopes.GLOBAL, 'tag:address-removed', {
           tagId: data.tagId,
           tagName: tag?.name,
           addressId: data.addressId
         });
-        if (DEBUG) console.log('[ipc] tag:address-removed', data.tagId, data.addressId);
+        publish('system', PubSubScopes.GLOBAL, 'tag:item-removed', {
+          tagId: data.tagId,
+          tagName: tag?.name,
+          itemId: data.addressId
+        });
+        if (DEBUG) console.log('[ipc] tag:address-removed (redirected to untagItem)', data.tagId, data.addressId);
       }
 
       return { success: true, data: result };
@@ -461,9 +575,10 @@ export function registerDatastoreHandlers(): void {
     }
   });
 
+  // Address-tag query handlers — redirected to item tagging
   ipcMain.handle('datastore-get-address-tags', async (ev, data) => {
     try {
-      const result = getAddressTags(data.addressId);
+      const result = getItemTags(data.addressId);
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -473,8 +588,8 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-get-addresses-by-tag', async (ev, data) => {
     try {
-      const result = getAddressesByTag(data.tagId);
-      return { success: true, data: result };
+      const items = getItemsByTag(data.tagId);
+      return { success: true, data: items.map(itemToAddress) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -483,8 +598,14 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-get-untagged-addresses', async (ev, data) => {
     try {
-      const result = getUntaggedAddresses();
-      return { success: true, data: result };
+      // Query URL items that have no tags
+      const items = getDb().prepare(`
+        SELECT i.* FROM items i
+        LEFT JOIN item_tags it ON i.id = it.itemId
+        WHERE i.type = 'url' AND i.deletedAt = 0 AND it.id IS NULL
+        ORDER BY i.visitCount DESC
+      `).all() as import('../types/index.js').Item[];
+      return { success: true, data: items.map(itemToAddress) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -657,11 +778,25 @@ export function registerDatastoreHandlers(): void {
     }
   });
 
-  // History operations (visits joined with addresses)
+  // History operations — redirected to item_visits system
   ipcMain.handle('datastore-get-history', async (ev, data = {}) => {
     try {
-      const result = getHistory(data.filter);
-      return { success: true, data: result };
+      const filter = data.filter || {};
+      const visits = queryItemVisits(filter);
+      // Enrich with item data to match HistoryEntry shape
+      const enriched = visits.map(v => {
+        const item = getItem(v.itemId);
+        return {
+          ...v,
+          addressId: v.itemId,
+          uri: item?.content || '',
+          title: item?.title || '',
+          domain: item?.domain || '',
+          protocol: '',
+          favicon: item?.favicon || '',
+        };
+      });
+      return { success: true, data: enriched };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
