@@ -339,15 +339,15 @@ const registerExtensionCommands = () => {
       if (!result.success) {
         return { output: `Failed: ${result.error}`, mimeType: 'text/plain' };
       }
-      // Save to address metadata
+      // Save to item metadata
       const url = window.location.href;
       if (url && !url.startsWith('peek://')) {
-        const addrs = await api.datastore.queryAddresses({});
-        const addr = addrs.data?.find(a => a.uri === url);
-        if (addr) {
-          const metadata = JSON.parse(addr.metadata || '{}');
+        const items = await api.datastore.queryItems({ type: 'url' });
+        const item = items.data?.find(a => a.content === url);
+        if (item) {
+          const metadata = JSON.parse(item.metadata || '{}');
           metadata.colorScheme = 'light';
-          await api.datastore.updateAddress(addr.id, { metadata: JSON.stringify(metadata) });
+          await api.datastore.updateItem(item.id, { metadata: JSON.stringify(metadata) });
           return { output: 'Light mode saved for this URL', mimeType: 'text/plain' };
         }
       }
@@ -363,15 +363,15 @@ const registerExtensionCommands = () => {
       if (!result.success) {
         return { output: `Failed: ${result.error}`, mimeType: 'text/plain' };
       }
-      // Save to address metadata
+      // Save to item metadata
       const url = window.location.href;
       if (url && !url.startsWith('peek://')) {
-        const addrs = await api.datastore.queryAddresses({});
-        const addr = addrs.data?.find(a => a.uri === url);
-        if (addr) {
-          const metadata = JSON.parse(addr.metadata || '{}');
+        const items = await api.datastore.queryItems({ type: 'url' });
+        const item = items.data?.find(a => a.content === url);
+        if (item) {
+          const metadata = JSON.parse(item.metadata || '{}');
           metadata.colorScheme = 'dark';
-          await api.datastore.updateAddress(addr.id, { metadata: JSON.stringify(metadata) });
+          await api.datastore.updateItem(item.id, { metadata: JSON.stringify(metadata) });
           return { output: 'Dark mode saved for this URL', mimeType: 'text/plain' };
         }
       }

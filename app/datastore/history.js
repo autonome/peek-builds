@@ -1,88 +1,41 @@
 // Navigation history tracking helper
+// Uses the unified items/item_visits system
 import api from '../api.js';
 
-// Normalize URL by ensuring root paths have trailing slash
-// Matches normalization in main process
-const normalizeUrl = (uri) => {
-  try {
-    const url = new URL(uri);
-    if (!url.pathname || url.pathname === '') {
-      url.pathname = '/';
-    }
-    return url.toString();
-  } catch (error) {
-    return uri;
-  }
-};
-
 /**
- * Track a navigation event
+ * Track a navigation event using the unified trackNavigation API.
+ * This delegates to the backend's trackNavigation() which finds or creates
+ * an item for the URL and records a visit in item_visits.
  * @param {string} uri - The URL navigated to
  * @param {Object} options - Navigation options
  * @param {string} options.source - Source of navigation (peek, slide, direct, etc.)
  * @param {string} options.sourceId - ID of the source feature
  * @param {string} options.windowType - Type of window (modal, persistent, main)
- * @param {number} options.duration - Time spent on page in ms
- * @param {Object} options.metadata - Additional metadata
+ * @param {string} options.title - Page title
  */
 export const trackNavigation = async (uri, options = {}) => {
   try {
-    // Normalize URI for consistent lookups
-    const normalizedUri = normalizeUrl(uri);
-
-    // Get or create address
-    let addressId;
-    const addressesResult = await api.datastore.queryAddresses({});
-    if (!addressesResult.success) {
-      console.error('Failed to query addresses:', addressesResult.error);
-      return null;
-    }
-
-    const addresses = addressesResult.data;
-    const existing = addresses.find(addr => addr.uri === normalizedUri);
-
-    if (existing) {
-      addressId = existing.id;
-    } else {
-      // Create new address (using normalized URI)
-      const addResult = await api.datastore.addAddress(normalizedUri, {
-        title: options.title || '',
-        mimeType: options.mimeType || 'text/html'
-      });
-
-      if (!addResult.success) {
-        console.error('Failed to add address:', addResult.error);
-        return null;
-      }
-
-      addressId = addResult.id;
-      console.log('Created new address:', addressId, normalizedUri);
-    }
-
-    // Add visit
-    const visitResult = await api.datastore.addVisit(addressId, {
+    const result = await api.datastore.trackNavigation(uri, {
       source: options.source || 'direct',
       sourceId: options.sourceId || '',
       windowType: options.windowType || 'main',
-      duration: options.duration || 0,
-      metadata: JSON.stringify(options.metadata || {}),
-      scrollDepth: options.scrollDepth || 0,
-      interacted: options.interacted || 0
+      title: options.title || '',
     });
 
-    if (!visitResult.success) {
-      console.error('Failed to add visit:', visitResult.error);
+    if (!result.success) {
+      console.error('Failed to track navigation:', result.error);
       return null;
     }
 
+    const data = result.data;
     console.log('Tracked navigation:', {
-      visitId: visitResult.id,
-      addressId,
-      uri: normalizedUri,
+      visitId: data.visitId,
+      itemId: data.itemId,
+      uri,
       source: options.source
     });
 
-    return { visitId: visitResult.id, addressId };
+    return { visitId: data.visitId, itemId: data.itemId, addressId: data.itemId };
   } catch (error) {
     console.error('Error tracking navigation:', error);
     return null;
@@ -90,26 +43,35 @@ export const trackNavigation = async (uri, options = {}) => {
 };
 
 /**
- * Get navigation history
+ * Get navigation history using item_visits
  * @param {Object} filter - Query filter options
- * @returns {Array} Array of visit records with address details
+ * @returns {Array} Array of visit records with item details
  */
 export const getHistory = async (filter = {}) => {
   try {
-    const visitsResult = await api.datastore.queryVisits(filter);
+    const visitsResult = await api.datastore.queryItemVisits(filter);
     if (!visitsResult.success) {
-      console.error('Failed to query visits:', visitsResult.error);
+      console.error('Failed to query item visits:', visitsResult.error);
       return [];
     }
 
     const visits = visitsResult.data;
 
-    // Enrich with address details
+    // Enrich with item details
     const enriched = await Promise.all(visits.map(async visit => {
-      const addressResult = await api.datastore.getAddress(visit.addressId);
+      const itemResult = await api.datastore.getItem(visit.itemId);
+      const item = itemResult.success ? itemResult.data : null;
       return {
         ...visit,
-        address: addressResult.success ? addressResult.data : null
+        // Provide backward-compatible address-like shape
+        address: item ? {
+          id: item.id,
+          uri: item.content,
+          title: item.title,
+          domain: item.domain,
+          favicon: item.favicon,
+          mimeType: item.mimeType,
+        } : null
       };
     }));
 
@@ -121,39 +83,41 @@ export const getHistory = async (filter = {}) => {
 };
 
 /**
- * Get recent addresses sorted by visit frequency
+ * Get URL items sorted by visit frequency
  * @param {number} limit - Number of results to return
- * @returns {Array} Array of addresses with visit counts
+ * @returns {Array} Array of items with visit counts
  */
 export const getFrequentAddresses = async (limit = 10) => {
   try {
-    const result = await api.datastore.queryAddresses({
+    const result = await api.datastore.queryItems({
+      type: 'url',
       sortBy: 'visitCount',
       limit
     });
 
     return result.success ? result.data : [];
   } catch (error) {
-    console.error('Error getting frequent addresses:', error);
+    console.error('Error getting frequent URLs:', error);
     return [];
   }
 };
 
 /**
- * Get recently visited addresses
+ * Get recently visited URL items
  * @param {number} limit - Number of results to return
- * @returns {Array} Array of addresses sorted by last visit
+ * @returns {Array} Array of items sorted by last visit
  */
 export const getRecentAddresses = async (limit = 10) => {
   try {
-    const result = await api.datastore.queryAddresses({
+    const result = await api.datastore.queryItems({
+      type: 'url',
       sortBy: 'lastVisit',
       limit
     });
 
     return result.success ? result.data : [];
   } catch (error) {
-    console.error('Error getting recent addresses:', error);
+    console.error('Error getting recent URLs:', error);
     return [];
   }
 };
