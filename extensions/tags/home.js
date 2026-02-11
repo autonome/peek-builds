@@ -395,13 +395,19 @@ const setupEventListeners = () => {
       await loadEditorVimPreference();
       if (embeddedEditor) {
         CodeMirror.setVimMode(embeddedEditor, editorVimMode);
-        // Show/hide status line based on vim mode
+        // Show/hide status line and update container class based on vim mode
+        const editorContainer = document.querySelector('.detail-editor-container');
+        const statusLineEl = document.querySelector('.detail-editor-status-line');
         if (embeddedStatusLine) {
           if (editorVimMode) {
             embeddedStatusLine.show();
             embeddedStatusLine.updateMode('normal');
+            if (statusLineEl) statusLineEl.style.display = '';
+            if (editorContainer) editorContainer.classList.add('vim-active');
           } else {
             embeddedStatusLine.hide();
+            if (statusLineEl) statusLineEl.style.display = 'none';
+            if (editorContainer) editorContainer.classList.remove('vim-active');
           }
         }
         debug && console.log('[tags] Updated embedded editor vimMode:', editorVimMode);
@@ -1050,8 +1056,11 @@ const createEmbeddedEditor = async (item) => {
 
   // Create status line (vim status bar)
   embeddedStatusLine = new StatusLine({ container: statusLineContainer });
-  if (!editorVimMode) {
+  if (editorVimMode) {
+    container.classList.add('vim-active');
+  } else {
     embeddedStatusLine.hide();
+    statusLineContainer.style.display = 'none';
   }
 
   embeddedEditor = CodeMirror.createEditor({

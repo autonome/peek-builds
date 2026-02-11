@@ -488,13 +488,26 @@ peek-card[selected] {
   display: flex;
   flex-direction: column;
   flex: 1;
-  position: relative;
 }
 
 .detail-editor-container .cm-editor {
+  order: 1;
   flex: 1;
   min-height: 0;
   border-radius: 8px;
+}
+
+/* When vim status bar is active, flatten the editor's bottom corners
+   so it connects seamlessly with the status bar below. */
+.detail-editor-container.vim-active .cm-editor {
+  border-radius: 8px 8px 0 0;
+  border-bottom: none;
+}
+
+/* Remove focus ring/border highlight from embedded editor — the vim status
+   bar sits outside the cm-editor boundary so a highlight looks disjointed. */
+.detail-editor-container .cm-editor.cm-focused {
+  border-color: var(--base02);
 }
 
 .detail-editor-container .cm-scroller {
@@ -502,19 +515,22 @@ peek-card[selected] {
   flex: 1;
 }
 
-/* Vim status line overlays the bottom of the editor */
+/* Vim status line sits below the editor as a continuous part of the container.
+   Uses the same border/background treatment as the cm-editor so they look unified.
+   order: 2 ensures it renders below the editor (which is inserted after it in the DOM). */
 .detail-editor-status-line {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  order: 2;
+  border: 1px solid var(--base02);
+  border-top: none;
   border-radius: 0 0 8px 8px;
   overflow: hidden;
+  background: var(--base00);
   z-index: 5;
 }
 
 .detail-editor-status-line .vim-status-line {
   border-radius: 0 0 8px 8px;
+  border-top: 1px solid var(--base02);
 }
 
 /* Detail sections (tags) */
