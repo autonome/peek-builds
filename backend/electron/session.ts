@@ -647,3 +647,32 @@ export function updateAutosaveInterval(intervalMinutes: number): void {
     startAutosaveTimer(intervalMinutes);
   }
 }
+
+/**
+ * Get info about the saved session snapshot without restoring it.
+ * Returns null if no valid snapshot exists.
+ */
+export function getSessionSnapshotInfo(): { windowCount: number; savedAt: number; reason: string } | null {
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'snapshot'`
+    ).get() as { value: string } | undefined;
+
+    if (!row?.value) return null;
+
+    const snapshot: SessionSnapshot = JSON.parse(row.value);
+    if (snapshot.version !== 1 || !snapshot.windows?.length) return null;
+
+    const validCount = snapshot.windows.filter(d => isValidDescriptor(d)).length;
+    if (validCount === 0) return null;
+
+    return {
+      windowCount: validCount,
+      savedAt: snapshot.createdAt,
+      reason: snapshot.reason,
+    };
+  } catch {
+    return null;
+  }
+}

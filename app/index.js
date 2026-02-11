@@ -435,7 +435,7 @@ const registerExtensionCommands = () => {
     name: 'restore previous session',
     description: 'Restore windows from the last saved session',
     execute: async () => {
-      const result = await api.invoke('session-restore');
+      const result = await api.invoke('session-restore-interactive');
       if (result && result.success) {
         return { output: result.message, mimeType: 'text/plain' };
       }

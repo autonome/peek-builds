@@ -166,6 +166,7 @@ import {
 import {
   saveSessionSnapshot,
   restoreSessionSnapshot,
+  getSessionSnapshotInfo,
 } from './session.js';
 
 import {
@@ -4293,6 +4294,18 @@ function registerSessionHandlers(): void {
     }
   });
 
+  // Get snapshot info (window count) without restoring
+  ipcMain.handle('session-get-snapshot-info', () => {
+    try {
+      const info = getSessionSnapshotInfo();
+      if (!info) return { success: true, data: null };
+      return { success: true, data: info };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   // Manual session restore (restores on top of existing windows)
   ipcMain.handle('session-restore', async () => {
     try {
@@ -4301,6 +4314,41 @@ function registerSessionHandlers(): void {
       return {
         success: true,
         message: `Restored ${result.restored} of ${result.total} window(s)`,
+        ...result,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Interactive session restore — shows confirmation dialog before restoring
+  ipcMain.handle('session-restore-interactive', async () => {
+    try {
+      const info = getSessionSnapshotInfo();
+      if (!info) {
+        return { success: true, message: 'No saved session to restore', cancelled: false, restored: 0 };
+      }
+
+      const { response } = await dialog.showMessageBox({
+        type: 'question',
+        title: 'Restore Previous Session',
+        message: `Restore ${info.windowCount} window${info.windowCount === 1 ? '' : 's'} from your previous session?\n\nThese will open alongside your current windows.`,
+        buttons: ['Restore', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+
+      if (response !== 0) {
+        return { success: true, message: 'Restore cancelled', cancelled: true, restored: 0 };
+      }
+
+      const prefs = getPrefs();
+      const result = await restoreSessionSnapshot(prefs);
+      return {
+        success: true,
+        message: `Restored ${result.restored} of ${result.total} window(s)`,
+        cancelled: false,
         ...result,
       };
     } catch (error) {
