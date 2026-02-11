@@ -350,67 +350,111 @@ peek-card[selected] {
   font-size: 14px;
 }
 
-/* Modal overlay */
-/* Modal - peek-dialog handles overlay and structure */
-peek-dialog#editModal {
-  --peek-dialog-bg: var(--base00);
-  --peek-dialog-overlay-bg: rgba(0, 0, 0, 0.5);
-}
-
-.modal-body {
-  padding: 20px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-/* Modal item info */
-.modal-item-info {
+/* Card open button - opens URL in webview */
+.card-open-btn {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  background: var(--base01);
-  border-radius: 8px;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--base02);
+  border: 1px solid var(--base03);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.card-open-btn:hover {
+  background: var(--base0D);
+  border-color: var(--base0D);
+  color: var(--base00);
+}
+
+/* ==================== Inline Detail View ==================== */
+
+.detail-view {
+  padding: 0;
+}
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--base02);
   margin-bottom: 20px;
 }
 
-.modal-favicon {
-  width: 32px;
-  height: 32px;
-  border-radius: 4px;
+.detail-favicon {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
   background: var(--base02);
   object-fit: contain;
+  flex-shrink: 0;
 }
 
-.modal-item-details {
+.detail-header-info {
   flex: 1;
   min-width: 0;
 }
 
-.modal-item-title {
-  font-size: 14px;
-  font-weight: 500;
+.detail-title {
+  font-size: 16px;
+  font-weight: 600;
   color: var(--base05);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
+  line-height: 1.4;
 }
 
-.modal-item-url {
-  font-size: 12px;
+.detail-url {
+  font-size: 13px;
   color: var(--base04);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
-/* Edit sections */
-.edit-section {
+/* Detail actions row */
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.detail-actions:empty {
+  display: none;
+}
+
+/* Detail content section (for text items) */
+.detail-content-section {
+  margin-bottom: 20px;
+}
+
+.detail-content-text {
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 8px;
+  padding: 14px;
+  font-size: 14px;
+  color: var(--base05);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  line-height: 1.6;
+}
+
+/* Detail sections (tags) */
+.detail-section {
   margin-bottom: 16px;
 }
 
-.edit-label {
+.detail-label {
   display: block;
   font-size: 12px;
   font-weight: 600;
@@ -528,54 +572,4 @@ peek-dialog#editModal {
 .available-tag.already-added {
   opacity: 0.5;
   cursor: default;
-}
-
-
-/* Card open button - opens URL in webview */
-.card-open-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: var(--base02);
-  border: 1px solid var(--base03);
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--base04);
-  flex-shrink: 0;
-  transition: all 0.15s;
-  padding: 0;
-}
-
-.card-open-btn:hover {
-  background: var(--base0D);
-  border-color: var(--base0D);
-  color: var(--base00);
-}
-
-/* Modal open page button */
-.modal-open-page-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--base0D);
-  border: none;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--base00);
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: all 0.15s;
-}
-
-.modal-open-page-btn:hover {
-  filter: brightness(1.1);
-}
-
-.modal-open-page-btn svg {
-  flex-shrink: 0;
 }

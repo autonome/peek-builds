@@ -30,7 +30,6 @@
       import 'peek://app/components/peek-input.js';
       import 'peek://app/components/peek-button.js';
       import 'peek://app/components/peek-button-group.js';
-      import 'peek://app/components/peek-dialog.js';
     </script>
   </head>
   <body>
@@ -96,49 +95,46 @@
       </aside>
 
       <main class="items-container">
+        <!-- Card grid view (list) -->
         <peek-grid class="cards" min-item-width="280" gap="12"></peek-grid>
+
+        <!-- Inline detail view (replaces card grid when an item is selected) -->
+        <div class="detail-view" style="display: none;">
+          <div class="detail-header">
+            <img class="detail-favicon" src="" alt="">
+            <div class="detail-header-info">
+              <div class="detail-title"></div>
+              <div class="detail-url"></div>
+            </div>
+          </div>
+
+          <div class="detail-actions"></div>
+
+          <div class="detail-content-section" style="display: none;">
+            <label class="detail-label">Content</label>
+            <div class="detail-content-text"></div>
+          </div>
+
+          <div class="detail-section">
+            <label class="detail-label">Current Tags</label>
+            <div class="current-tags"></div>
+          </div>
+
+          <div class="detail-section">
+            <label class="detail-label">Add Tag</label>
+            <div class="new-tag-row">
+              <peek-input class="new-tag-input" placeholder="Enter new tag..."></peek-input>
+              <peek-button class="add-tag-btn" variant="primary" size="sm">Add</peek-button>
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <label class="detail-label">Available Tags</label>
+            <div class="available-tags"></div>
+          </div>
+        </div>
       </main>
     </div>
-
-    <!-- Edit Modal -->
-    <peek-dialog id="editModal" size="md" close-on-backdrop close-on-escape>
-      <span slot="header">Edit Tags</span>
-      <div class="modal-body">
-        <div class="modal-item-info">
-          <img class="modal-favicon" src="" alt="">
-          <div class="modal-item-details">
-            <div class="modal-item-title"></div>
-            <div class="modal-item-url"></div>
-          </div>
-          <peek-button class="modal-open-page-btn" variant="ghost" size="sm" style="display: none;" title="Open page">
-            <svg slot="prefix" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-              <polyline points="15 3 21 3 21 9"></polyline>
-              <line x1="10" y1="14" x2="21" y2="3"></line>
-            </svg>
-            Open Page
-          </peek-button>
-        </div>
-
-        <div class="edit-section">
-          <label class="edit-label">Current Tags</label>
-          <div class="current-tags"></div>
-        </div>
-
-        <div class="edit-section">
-          <label class="edit-label">Add Tag</label>
-          <div class="new-tag-row">
-            <peek-input class="new-tag-input" placeholder="Enter new tag..."></peek-input>
-            <peek-button class="add-tag-btn" variant="primary" size="sm">Add</peek-button>
-          </div>
-        </div>
-
-        <div class="edit-section">
-          <label class="edit-label">Available Tags</label>
-          <div class="available-tags"></div>
-        </div>
-      </div>
-    </peek-dialog>
 
     <script type="module" src="home.js"></script>
   </body>

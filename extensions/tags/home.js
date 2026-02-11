@@ -7,10 +7,15 @@
  * - Tag editing on items (add/remove tags)
  * - Content search across items (URLs, titles, text) with tag combo filtering
  * - Selected tags pinned to top of sidebar with visual distinction
+ * - Inline detail view (no modal/dialog) with proper ESC navigation
  */
 
 const api = window.app;
 const debug = api?.debug;
+
+// View states (following groups pattern)
+const VIEW_LIST = 'list';
+const VIEW_DETAIL = 'detail';
 
 /**
  * Extract the first URL from a text string.
@@ -67,14 +72,15 @@ const debounce = (fn, ms) => {
 
 // State
 let state = {
-  activeFilter: 'all',  // 'all' | 'page' | 'text' | 'tagset' | 'image'
-  activeTags: [],       // Array of tag objects for filtering (AND logic)
-  items: [],            // All addresses
-  tags: [],             // All tags sorted by frecency
-  itemTags: new Map(),  // Map of addressId -> [tags]
+  currentView: VIEW_LIST,   // 'list' | 'detail'
+  activeFilter: 'all',      // 'all' | 'page' | 'text' | 'tagset' | 'image'
+  activeTags: [],            // Array of tag objects for filtering (AND logic)
+  items: [],                 // All addresses
+  tags: [],                  // All tags sorted by frecency
+  itemTags: new Map(),       // Map of addressId -> [tags]
   selectedIndex: 0,
   searchQuery: '',
-  editingItem: null     // Item being edited in modal
+  editingItem: null          // Item being viewed in detail
 };
 
 // Expose state for debugging
@@ -84,7 +90,7 @@ window._tagsState = state;
 let searchInput;
 let cardsContainer;
 let tagList;
-let modalOverlay;
+let detailView;
 
 /**
  * Initialize the UI
@@ -96,7 +102,7 @@ const init = async () => {
   searchInput = document.querySelector('.search-input');
   cardsContainer = document.querySelector('.cards');
   tagList = document.querySelector('.tag-list');
-  modalOverlay = document.getElementById('editModal');
+  detailView = document.querySelector('.detail-view');
 
   // Load data
   await loadData();
@@ -168,6 +174,54 @@ const loadTags = async () => {
 };
 
 /**
+ * Internal ESC handler for tags navigation (following groups pattern).
+ * Returns { handled: true } if we navigated internally.
+ * Returns { handled: false } if at root (list view) and window should close.
+ */
+const handleEscape = () => {
+  console.log('[tags:esc] handleEscape called, view:', state.currentView, 'searchQuery:', state.searchQuery);
+
+  // If in detail view, navigate back to list
+  if (state.currentView === VIEW_DETAIL) {
+    // Use setTimeout to ensure handler returns before DOM work starts
+    setTimeout(() => {
+      showList();
+    }, 0);
+    console.log('[tags:esc] VIEW_DETAIL -> navigating to list, returning handled: true');
+    return { handled: true };
+  }
+
+  // If search has content, clear it
+  if (state.searchQuery) {
+    state.searchQuery = '';
+    searchInput.value = '';
+    render();
+    console.log('[tags:esc] Cleared search, returning handled: true');
+    return { handled: true };
+  }
+
+  // If tag filter is active, clear it
+  if (state.activeTags.length > 0) {
+    clearTagFilter();
+    console.log('[tags:esc] Cleared tag filter, returning handled: true');
+    return { handled: true };
+  }
+
+  // If type filter is active, clear it
+  if (state.activeFilter !== 'all') {
+    state.activeFilter = 'all';
+    state.selectedIndex = 0;
+    render();
+    console.log('[tags:esc] Cleared type filter, returning handled: true');
+    return { handled: true };
+  }
+
+  // Nothing to clear, let window close
+  console.log('[tags:esc] At root (VIEW_LIST), returning handled: false');
+  return { handled: false };
+};
+
+/**
  * Set up all event listeners
  */
 const setupEventListeners = () => {
@@ -175,7 +229,19 @@ const setupEventListeners = () => {
   const debouncedRefresh = debounce(async () => {
     debug && console.log('[tags] debounced refresh triggered');
     await loadData();
-    render();
+    if (state.currentView === VIEW_LIST) {
+      render();
+    } else if (state.currentView === VIEW_DETAIL && state.editingItem) {
+      // Refresh detail view with updated data
+      const updatedItem = state.items.find(i => i.id === state.editingItem.id);
+      if (updatedItem) {
+        state.editingItem = updatedItem;
+        showDetailView(updatedItem);
+      } else {
+        // Item was deleted, go back to list
+        showList();
+      }
+    }
   }, 150);
 
   // Subscribe to tag events for reactive updates
@@ -242,10 +308,7 @@ const setupEventListeners = () => {
     });
   });
 
-  // Modal close - peek-dialog handles close-on-backdrop; ESC is handled by the preload escape system
-  modalOverlay.addEventListener('close', closeModal);
-
-  // New tag input
+  // New tag input in detail view
   const newTagInput = document.querySelector('.new-tag-input');
   const addTagBtn = document.querySelector('.add-tag-btn');
 
@@ -264,47 +327,9 @@ const setupEventListeners = () => {
   // Keyboard navigation
   document.addEventListener('keydown', handleKeydown);
 
-  // Escape handling
+  // Register escape handler (following groups pattern - extracted function, not inline)
   if (api.escape) {
-    api.escape.onEscape(() => {
-      // If the detail modal is open (or was just closed by the preload escape system),
-      // treat ESC as "go back to tags list" rather than closing the window.
-      // The preload closes peek-dialog elements before this callback fires,
-      // so we check state.editingItem to know a modal was just dismissed.
-      if (state.editingItem) {
-        state.editingItem = null;
-        // Ensure the dialog is closed (preload may have already closed it)
-        if (modalOverlay.open) {
-          modalOverlay.close();
-        }
-        return { handled: true };
-      }
-
-      // If search has content, clear it
-      if (state.searchQuery) {
-        state.searchQuery = '';
-        searchInput.value = '';
-        render();
-        return { handled: true };
-      }
-
-      // If tag filter is active, clear it
-      if (state.activeTags.length > 0) {
-        clearTagFilter();
-        return { handled: true };
-      }
-
-      // If type filter is active, clear it
-      if (state.activeFilter !== 'all') {
-        state.activeFilter = 'all';
-        state.selectedIndex = 0;
-        render();
-        return { handled: true };
-      }
-
-      // Nothing to clear, let window close
-      return { handled: false };
-    });
+    api.escape.onEscape(handleEscape);
   }
 };
 
@@ -312,10 +337,8 @@ const setupEventListeners = () => {
  * Handle keyboard navigation
  */
 const handleKeydown = (e) => {
-  // If modal is open, let the keydown be absorbed (don't process navigation keys).
-  // ESC closing of dialogs is handled by the preload escape system which intercepts
-  // ESC on keyDown via before-input-event before DOM dispatch reaches here.
-  if (modalOverlay.open) {
+  // If in detail view, don't process grid navigation
+  if (state.currentView === VIEW_DETAIL) {
     return;
   }
 
@@ -429,6 +452,22 @@ const activateSelected = () => {
     selected.click();
   }
 };
+
+/**
+ * Show the list view (card grid), hide detail view
+ */
+const showList = () => {
+  state.currentView = VIEW_LIST;
+  state.editingItem = null;
+
+  cardsContainer.style.display = '';
+  detailView.style.display = 'none';
+
+  render();
+};
+
+// Expose for testing (Playwright escape doesn't trigger Electron before-input-event)
+window.showList = showList;
 
 /**
  * Update filter button counts
@@ -699,31 +738,21 @@ const renderCards = () => {
 };
 
 /**
- * Create a card element for an item
+ * Compute display properties for an item (shared by card and detail view)
  */
-const createItemCard = (item) => {
-  const card = document.createElement('peek-card');
-  card.interactive = true;
-  card.dataset.itemId = item.id;
-
+const getItemDisplayInfo = (item) => {
   const tags = state.itemTags.get(item.id) || [];
-
-  // Handle both old address schema and new item schema
   const isAddress = !!item.uri;
   const itemType = item.type || 'url';
-
-  // For text items, check if content contains a URL
   const noteUrl = (itemType === 'text') ? extractUrl(item.content) : null;
 
   let title, subtitle, faviconUrl;
 
   if (isAddress) {
-    // Old address schema
     title = item.title || item.uri;
     subtitle = item.uri;
     faviconUrl = item.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
   } else {
-    // New item schema
     if (itemType === 'url') {
       title = item.content;
       subtitle = item.content;
@@ -731,7 +760,6 @@ const createItemCard = (item) => {
     } else if (itemType === 'text') {
       title = item.content.substring(0, 100) + (item.content.length > 100 ? '...' : '');
       if (noteUrl) {
-        // Note contains a URL - show the URL as subtitle and use a link icon
         subtitle = noteUrl;
         faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔗</text></svg>';
       } else {
@@ -749,8 +777,22 @@ const createItemCard = (item) => {
     }
   }
 
-  // Build the open button for items with URLs (both url type and notes with URLs)
   const itemUrl = isAddress ? item.uri : (itemType === 'url') ? item.content : noteUrl;
+
+  return { tags, isAddress, itemType, noteUrl, title, subtitle, faviconUrl, itemUrl };
+};
+
+/**
+ * Create a card element for an item
+ */
+const createItemCard = (item) => {
+  const card = document.createElement('peek-card');
+  card.interactive = true;
+  card.dataset.itemId = item.id;
+
+  const { tags, itemUrl, title, subtitle, faviconUrl } = getItemDisplayInfo(item);
+
+  // Build the open button for items with URLs (both url type and notes with URLs)
   const openBtnHtml = itemUrl
     ? `<button class="card-open-btn" data-url="${escapeHtml(itemUrl)}" title="Open page">` +
       `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
@@ -784,7 +826,7 @@ const createItemCard = (item) => {
     });
   }
 
-  // Click on card to open edit modal
+  // Click on card to open inline detail view
   card.addEventListener('click', (e) => {
     // If clicking a tag, add it to filter (toggle behavior)
     if (e.target.classList.contains('card-tag')) {
@@ -803,130 +845,76 @@ const createItemCard = (item) => {
       return;
     }
 
-    // Open edit modal
-    openEditModal(item);
+    // Show inline detail view
+    showDetailView(item);
   });
 
   return card;
 };
 
 /**
- * Open the edit modal for an item
+ * Show the inline detail view for an item (replaces card grid)
  */
-const openEditModal = (item) => {
+const showDetailView = (item) => {
+  state.currentView = VIEW_DETAIL;
   state.editingItem = item;
 
-  const modal = modalOverlay;
-  const tags = state.itemTags.get(item.id) || [];
+  const { tags, itemType, itemUrl, title, subtitle, faviconUrl } = getItemDisplayInfo(item);
 
-  // Handle both old address schema and new item schema
-  const isAddress = !!item.uri;
-  const itemType = item.type || 'url';
+  // Hide card grid, show detail view
+  cardsContainer.style.display = 'none';
+  detailView.style.display = '';
 
-  // For text items, check if content contains a URL
-  const noteUrl = (itemType === 'text') ? extractUrl(item.content) : null;
-
-  let title, subtitle, faviconUrl;
-
-  if (isAddress) {
-    // Old address schema
-    title = item.title || item.uri;
-    subtitle = item.uri;
-    faviconUrl = item.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-  } else {
-    // New item schema
-    if (itemType === 'url') {
-      title = item.content;
-      subtitle = item.content;
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-    } else if (itemType === 'text') {
-      title = item.content || '';
-      if (noteUrl) {
-        subtitle = noteUrl;
-        faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔗</text></svg>';
-      } else {
-        subtitle = 'Text';
-        faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📝</text></svg>';
-      }
-    } else if (itemType === 'tagset') {
-      title = 'Tag Set';
-      subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏷️</text></svg>';
-    } else if (itemType === 'image') {
-      title = item.content || 'Image';
-      subtitle = 'Image';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🖼️</text></svg>';
-    }
-  }
-
-  // Set item info
-  modal.querySelector('.modal-favicon').src = faviconUrl;
-  const titleEl = modal.querySelector('.modal-item-title');
+  // Set header info
+  detailView.querySelector('.detail-favicon').src = faviconUrl;
+  const titleEl = detailView.querySelector('.detail-title');
   titleEl.textContent = title;
-  // For text items, make the title scrollable to show full content
-  if (itemType === 'text') {
-    titleEl.style.maxHeight = '200px';
-    titleEl.style.overflowY = 'auto';
-    titleEl.style.whiteSpace = 'pre-wrap';
-    titleEl.style.wordBreak = 'break-word';
-  } else {
-    titleEl.style.maxHeight = '';
-    titleEl.style.overflowY = '';
-    titleEl.style.whiteSpace = '';
-    titleEl.style.wordBreak = '';
-  }
-  modal.querySelector('.modal-item-url').textContent = subtitle;
+  detailView.querySelector('.detail-url').textContent = subtitle;
 
-  // Show or hide the "Open Page" button based on whether item has a URL
-  const openPageBtn = modal.querySelector('.modal-open-page-btn');
-  const itemUrl = isAddress ? item.uri : (itemType === 'url' ? item.content : noteUrl);
-  if (openPageBtn) {
-    if (itemUrl) {
-      openPageBtn.style.display = 'flex';
-      openPageBtn.dataset.url = itemUrl;
-      // Clone to remove old listeners, then add fresh listener
-      const newBtn = openPageBtn.cloneNode(true);
-      openPageBtn.parentNode.replaceChild(newBtn, openPageBtn);
-      newBtn.addEventListener('click', () => {
-        openItemUrl(newBtn.dataset.url);
-        closeModal();
-      });
-    } else {
-      openPageBtn.style.display = 'none';
-    }
+  // Build actions row
+  const actionsEl = detailView.querySelector('.detail-actions');
+  actionsEl.innerHTML = '';
+
+  if (itemUrl) {
+    const openPageBtn = document.createElement('peek-button');
+    openPageBtn.variant = 'primary';
+    openPageBtn.size = 'sm';
+    openPageBtn.innerHTML = `
+      <svg slot="prefix" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+        <polyline points="15 3 21 3 21 9"></polyline>
+        <line x1="10" y1="14" x2="21" y2="3"></line>
+      </svg>
+      Open Page
+    `;
+    openPageBtn.addEventListener('click', () => openItemUrl(itemUrl));
+    actionsEl.appendChild(openPageBtn);
   }
 
-  // Show or hide "Edit in Editor" button for text items
-  let editInEditorBtn = modal.querySelector('.modal-edit-editor-btn');
   if (itemType === 'text') {
-    if (!editInEditorBtn) {
-      // Create the button on first use
-      editInEditorBtn = document.createElement('peek-button');
-      editInEditorBtn.className = 'modal-edit-editor-btn';
-      editInEditorBtn.variant = 'ghost';
-      editInEditorBtn.size = 'sm';
-      editInEditorBtn.title = 'Edit in Editor';
-      editInEditorBtn.innerHTML = `
-        <svg slot="prefix" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-        </svg>
-        Edit in Editor
-      `;
-      // Insert after the Open Page button's parent area
-      const itemInfoEl = modal.querySelector('.modal-item-info');
-      itemInfoEl.appendChild(editInEditorBtn);
-    }
-    editInEditorBtn.style.display = 'flex';
-    // Clone to remove old listeners
-    const newEditBtn = editInEditorBtn.cloneNode(true);
-    editInEditorBtn.parentNode.replaceChild(newEditBtn, editInEditorBtn);
-    newEditBtn.addEventListener('click', () => {
+    const editBtn = document.createElement('peek-button');
+    editBtn.variant = 'ghost';
+    editBtn.size = 'sm';
+    editBtn.innerHTML = `
+      <svg slot="prefix" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+      </svg>
+      Edit in Editor
+    `;
+    editBtn.addEventListener('click', () => {
       api.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
-      closeModal();
     });
-  } else if (editInEditorBtn) {
-    editInEditorBtn.style.display = 'none';
+    actionsEl.appendChild(editBtn);
+  }
+
+  // Show content section for text items
+  const contentSection = detailView.querySelector('.detail-content-section');
+  if (itemType === 'text' && item.content) {
+    contentSection.style.display = '';
+    detailView.querySelector('.detail-content-text').textContent = item.content;
+  } else {
+    contentSection.style.display = 'none';
   }
 
   // Render current tags
@@ -937,21 +925,10 @@ const openEditModal = (item) => {
 
   // Clear new tag input
   document.querySelector('.new-tag-input').value = '';
-
-  // Show modal
-  modalOverlay.showModal();
 };
 
 /**
- * Close the edit modal
- */
-const closeModal = () => {
-  modalOverlay.close();
-  state.editingItem = null;
-};
-
-/**
- * Render current tags in modal
+ * Render current tags in detail view
  */
 const renderCurrentTags = (tags) => {
   const container = document.querySelector('.current-tags');
@@ -978,7 +955,7 @@ const renderCurrentTags = (tags) => {
 };
 
 /**
- * Render available tags in modal
+ * Render available tags in detail view
  */
 const renderAvailableTags = (currentTags) => {
   const container = document.querySelector('.available-tags');
@@ -1021,12 +998,9 @@ const addTag = async (tag) => {
       state.itemTags.set(state.editingItem.id, tags);
     }
 
-    // Re-render modal
+    // Re-render detail view tags
     renderCurrentTags(tags);
     renderAvailableTags(tags);
-
-    // Re-render cards to show updated tags
-    renderCards();
   } else {
     console.error('[tags] Failed to add tag:', result.error);
   }
@@ -1045,12 +1019,11 @@ const removeTag = async (tag) => {
     tags = tags.filter(t => t.id !== tag.id);
     state.itemTags.set(state.editingItem.id, tags);
 
-    // Re-render modal
+    // Re-render detail view tags
     renderCurrentTags(tags);
     renderAvailableTags(tags);
 
-    // Re-render cards and sidebar
-    renderCards();
+    // Re-render sidebar
     renderTagSidebar();
   } else {
     console.error('[tags] Failed to remove tag:', result.error);
