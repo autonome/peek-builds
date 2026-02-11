@@ -3,7 +3,8 @@
 <!--
 @marss
 title: Peek Changelog
-link: https://peekclient.com/changelog
+link: https://tangled.org/burrito.space/peek
+feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 

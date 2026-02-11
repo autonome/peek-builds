@@ -106,6 +106,10 @@ const initCommands = () => {
     api.commands.register(cmd);
     registeredCommands.push(cmd.name);
   });
+  // Flush immediately to ensure batch reaches cmd extension
+  if (api.commands.flush) {
+    api.commands.flush();
+  }
   console.log('[ext:localsearch] Registered commands:', registeredCommands);
 };
 
@@ -126,12 +130,23 @@ const init = async () => {
   initShortcut(currentSettings.prefs.shortcutKey);
 
   // Wait for cmd:ready before registering commands
+  let commandsRegistered = false;
   api.subscribe('cmd:ready', () => {
-    initCommands();
+    if (!commandsRegistered) {
+      commandsRegistered = true;
+      initCommands();
+    }
   }, api.scopes.GLOBAL);
 
-  // Query in case cmd is already ready (it usually is since cmd loads first)
-  api.publish('cmd:query', {}, api.scopes.GLOBAL);
+  // Query in case cmd is already ready, with retries.
+  // The cmd:query -> cmd:ready roundtrip crosses multiple IPC boundaries
+  // (iframe -> main -> cmd iframe -> main -> localsearch iframe) and can be lost.
+  const retryCmdQuery = (attempt) => {
+    if (commandsRegistered || attempt >= 5) return;
+    api.publish('cmd:query', {}, api.scopes.GLOBAL);
+    setTimeout(() => retryCmdQuery(attempt + 1), 500);
+  };
+  retryCmdQuery(0);
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
   api.subscribe('localsearch:settings-changed', async () => {

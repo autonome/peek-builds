@@ -51,7 +51,7 @@ let extensionHostWindow: BrowserWindow | null = null;
 
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
-const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'peeks', 'slides', 'windows'];
+const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'localsearch', 'peeks', 'slides', 'websearch', 'windows'];
 
 // Dev extensions loaded via --load-extension CLI flag
 // These are transient (not persisted) and always have devtools open

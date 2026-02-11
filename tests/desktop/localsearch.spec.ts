@@ -166,7 +166,19 @@ test.describe('Local Search Extension @desktop', () => {
     const searchWindow = await sharedApp.getWindow('ext/localsearch/home.html', 5000);
     await searchWindow.waitForSelector('#search-input', { timeout: 5000 });
 
-    // Empty state should be visible with no query
+    // Clear any previous search (window may be reused from earlier tests)
+    await searchWindow.evaluate(() => {
+      const input = document.getElementById('search-input') as any;
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    // Wait for empty state to become visible after clearing
+    await searchWindow.waitForFunction(() => {
+      const empty = document.getElementById('empty-state');
+      return empty && getComputedStyle(empty).display !== 'none';
+    }, { timeout: 5000 });
+
     const emptyVisible = await searchWindow.evaluate(() => {
       const empty = document.getElementById('empty-state');
       return empty && getComputedStyle(empty).display !== 'none';

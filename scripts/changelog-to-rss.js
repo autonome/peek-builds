@@ -135,7 +135,8 @@ function generateRss(meta, items) {
 `;
 
   if (meta.link) {
-    xml += `    <atom:link href="${escapeXml(meta.link + '/feed.xml')}" rel="self" type="application/rss+xml"/>\n`;
+    const feedUrl = meta.feedUrl || (meta.link ? meta.link + '/feed.xml' : '');
+    xml += `    <atom:link href="${escapeXml(feedUrl)}" rel="self" type="application/rss+xml"/>\n`;
   }
   if (meta.language) {
     xml += `    <language>${escapeXml(meta.language)}</language>\n`;

@@ -2,15 +2,94 @@
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>Peek Changelog</title>
-    <link>https://peekclient.com/changelog</link>
+    <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 10 Feb 2026 16:12:11 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 11 Feb 2026 20:57:01 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
-    <atom:link href="https://peekclient.com/changelog/feed.xml" rel="self" type="application/rss+xml"/>
+    <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-02-11</title>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-11</guid>
+      <pubDate>Wed, 11 Feb 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Desktop - New Extensions<br>
+<ul><li>feat(websearch): implement web search extension with OpenSearch discovery and suggestions (bf488889)</li><br>
+<li style="margin-left:1em">Search from command palette with live suggestions from multiple engines</li><br>
+<li style="margin-left:1em">Auto-discovers OpenSearch endpoints on visited pages</li><br>
+<li style="margin-left:1em">Widget notification in page view when OpenSearch engine found</li><br>
+<li>feat(search): implement unified search extension (4b95973d)</li><br>
+<li>feat(pagestream): implement vertical history stream extension (35f9afcc)</li><br>
+</ul><br>
+Desktop - History Unification<br>
+<ul><li>refactor(history): unify address/visit system into items table (6 phases) (475e97fe..6f90f258)</li><br>
+<li style="margin-left:1em">Phase 1-2: Remove dual-write, redirect renderer address APIs to items</li><br>
+<li style="margin-left:1em">Phase 3-4: IPC compatibility layer, update tests and URL normalization</li><br>
+<li style="margin-left:1em">Phase 5-6: Update Tauri backend, remove legacy address/visit code and types</li><br>
+</ul><br>
+Desktop - Dark Mode<br>
+<ul><li>feat(darkmode): implement 3-tier dark mode system for web pages (ef242dde)</li><br>
+<li style="margin-left:1em">Tier 1 (System): Sets prefers-color-scheme: dark for all webviews</li><br>
+<li style="margin-left:1em">Tier 2 (Force): Chromium WebContentsForceDark with CIELAB inversion</li><br>
+<li style="margin-left:1em">Settings UI with Off/System/Force selector</li><br>
+</ul><br>
+Desktop - Page View & Navigation<br>
+<ul><li>feat(page): add browser navigation hotkeys and editable URL bar (52a99ec7)</li><br>
+<li style="margin-left:1em">Cmd+R reload, Cmd+[/] back/forward, Cmd+L to edit URL</li><br>
+<li>feat(page): add widget system with OpenSearch discovery notification (ce5ae4bb)</li><br>
+<li>fix(page): improve drag-from-anywhere with long-press detection and all-corner resize (d135cfa6)</li><br>
+<li>fix(page): apply background detection to non-canvas web pages (e1ac7b6f)</li><br>
+<li>fix(nav): restore full-width navbar — remove floating bubble design (7769f1e1)</li><br>
+<li>fix(titles): fix Loading... title bug, add page content extraction and URL metadata enrichment (61ca6f00)</li><br>
+<li style="margin-left:1em">Filter "Loading..." from stored titles across all code paths</li><br>
+<li style="margin-left:1em">Add extract-page-content IPC handler for live page HTML extraction</li><br>
+<li style="margin-left:1em">URL item metadata enrichment with OG tags, description, favicon</li><br>
+</ul><br>
+Desktop - Tags & Editor<br>
+<ul><li>feat(tags): embed editor in detail pane for inline note editing (a575013e)</li><br>
+<li style="margin-left:1em">Replace modal with inline detail view, ESC navigation between list and detail</li><br>
+<li style="margin-left:1em">Vim status/command bar overlaid on editor, respects vim mode preference</li><br>
+<li>feat(tags): add content search with tag combo filtering, pin selected tags in sidebar (d005d3dd)</li><br>
+<li>fix(editor,tags): fix note command blank editor, tags reactivity, and editor height (cb4d5e10)</li><br>
+<li style="margin-left:1em">New notes create datastore items immediately for autosave</li><br>
+<li style="margin-left:1em">Tags UI subscribes to item:updated events for live reactivity</li><br>
+<li>fix(editor): forward ESC to vim in insert/visual mode before IZUI handles it (7b866e87)</li><br>
+<li>fix(tags): editor layout, vim status bar positioning, and focus ring cleanup (08483e4e, 3100ec71, 3a072f24)</li><br>
+</ul><br>
+Desktop - Shortcuts & Commands<br>
+<ul><li>feat(shortcuts): implement dual hotkey registration — local Cmd+ alongside global Opt+ (545e95b4)</li><br>
+<li style="margin-left:1em">Cmd+K (palette), Cmd+E (editor), Cmd+T (tags), Cmd+G (groups), Cmd+H (HUD)</li><br>
+<li style="margin-left:1em">Fix: Cmd+Q quit, Cmd+, settings (were incorrectly using Opt+)</li><br>
+<li>feat(api): implement commands.list() to query registered commands via pubsub (696c7859)</li><br>
+<li>fix(cmd): fix frecency/adaptive sorting in command palette (2f6da3fd)</li><br>
+<li style="margin-left:1em">Unified weighted ranking combining adaptive score and frecency</li><br>
+<li style="margin-left:1em">Cross-query adaptive feedback for substring matches</li><br>
+</ul><br>
+Desktop - Settings & Extensions<br>
+<ul><li>fix(settings): rework extensions settings — rename sections, unify layout, add options buttons (cb540409)</li><br>
+<li style="margin-left:1em">Rename: Features (Peek extensions) vs Extensions (bundled webextensions)</li><br>
+<li style="margin-left:1em">Options button for extensions with options pages</li><br>
+<li>fix(settings): dynamically list all builtin extensions in Features section (90fe93d0)</li><br>
+<li>feat(chrome-ext): generic settings/UI system for bundled Chrome extensions (edbf5169)</li><br>
+<li>feat(adblocker): migrate from @cliqz/adblocker-electron to @ghostery/adblocker-electron (93b44561)</li><br>
+</ul><br>
+Desktop - Fixes<br>
+<ul><li>fix(windows): HUD focus stealing, chrome ext options styling, duplicate group cards (47686da7)</li><br>
+<li>fix(groups): prevent duplicate windows/URLs, fix race conditions and title resolution (20cb9956)</li><br>
+<li>fix(hud): resolve extension disabled by settings key collision (671df42e)</li><br>
+<li>fix(context): resolve window ID from caller when null, set mode before loadURL (c1d77f28)</li><br>
+<li>fix(entities): align UI with groups/tags component and theme patterns (c5df43bc)</li><br>
+<li>fix(scripts): align UI with groups/tags component and theme patterns (50c639ff)</li><br>
+<li>fix(editor): use extension settings API for vim mode, audit localStorage usage (3962110b)</li><br>
+<li>fix(build): pin Node version to 24.11.1 to match Electron 40 (96c05941)</li><br>
+</ul><br>
+Testing<br>
+<ul><li>test(history): add unified URL/history tests for unification refactor (d3ac05f7)</li><br>
+<li>test(entities): add comprehensive test data for entity recognition (d710d039)</li></ul></p>]]></description>
+    </item>
     <item>
       <title>2026-02-09</title>
-      <link>https://peekclient.com/changelog</link>
-      <guid isPermaLink="false">https://peekclient.com/changelog#2026-02-09</guid>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-09</guid>
       <pubDate>Mon, 09 Feb 2026 12:00:00 GMT</pubDate>
       <description><![CDATA[<p>Desktop - IZUI Role-Based Redesign<br>
 <ul><li>feat(izui): systemic ESC handling, peek-component migrations, HUD test fixes (21d59cc0)</li><br>
@@ -89,8 +168,8 @@ Testing<br>
     </item>
     <item>
       <title>2026-02-02</title>
-      <link>https://peekclient.com/changelog</link>
-      <guid isPermaLink="false">https://peekclient.com/changelog#2026-02-02</guid>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-02</guid>
       <pubDate>Mon, 02 Feb 2026 12:00:00 GMT</pubDate>
       <description><![CDATA[<p>Desktop - IZUI (Inverted Zooming User Interface)<br>
 <ul><li>feat(izui): implement IZUI state machine for transient vs active window behavior (457ce41d)</li><br>
@@ -234,8 +313,8 @@ Code Cleanup<br>
     </item>
     <item>
       <title>2026-01-26</title>
-      <link>https://peekclient.com/changelog</link>
-      <guid isPermaLink="false">https://peekclient.com/changelog#2026-01-26</guid>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-01-26</guid>
       <pubDate>Mon, 26 Jan 2026 12:00:00 GMT</pubDate>
       <description><![CDATA[<p>Server<br>
 <ul><li>feat(server): add single-user mode support (no auth required for solo use)</li><br>
@@ -315,8 +394,8 @@ Developer Tooling<br>
     </item>
     <item>
       <title>2026-01-19</title>
-      <link>https://peekclient.com/changelog</link>
-      <guid isPermaLink="false">https://peekclient.com/changelog#2026-01-19</guid>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-01-19</guid>
       <pubDate>Mon, 19 Jan 2026 12:00:00 GMT</pubDate>
       <description><![CDATA[<p><ul><li>[x][desktop] history & addressability: track peek:// loads, all window/webview loads, in-page navigation, JS window.open child windows (mkylrnxy)</li><br>
 <li>[x][desktop] history chaining: prevId/nextId columns on visits table with migration backfill (mkylrnxy)</li><br>
@@ -399,8 +478,8 @@ Developer Tooling<br>
     </item>
     <item>
       <title>2026-01-12</title>
-      <link>https://peekclient.com/changelog</link>
-      <guid isPermaLink="false">https://peekclient.com/changelog#2026-01-12</guid>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-01-12</guid>
       <pubDate>Mon, 12 Jan 2026 12:00:00 GMT</pubDate>
       <description><![CDATA[<p><ul><li>[x][desktop] settings UI for sync (vyvorvtq)</li><br>
 <li>[x][desktop] test sync and package (ssxzpoxo)</li><br>
