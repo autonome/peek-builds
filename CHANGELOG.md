@@ -12,6 +12,82 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-11
+
+Desktop - New Extensions
+- [x] feat(websearch): implement web search extension with OpenSearch discovery and suggestions (bf488889)
+  - Search from command palette with live suggestions from multiple engines
+  - Auto-discovers OpenSearch endpoints on visited pages
+  - Widget notification in page view when OpenSearch engine found
+- [x] feat(search): implement unified search extension (4b95973d)
+- [x] feat(pagestream): implement vertical history stream extension (35f9afcc)
+
+Desktop - History Unification
+- [x] refactor(history): unify address/visit system into items table (6 phases) (475e97fe..6f90f258)
+  - Phase 1-2: Remove dual-write, redirect renderer address APIs to items
+  - Phase 3-4: IPC compatibility layer, update tests and URL normalization
+  - Phase 5-6: Update Tauri backend, remove legacy address/visit code and types
+
+Desktop - Dark Mode
+- [x] feat(darkmode): implement 3-tier dark mode system for web pages (ef242dde)
+  - Tier 1 (System): Sets prefers-color-scheme: dark for all webviews
+  - Tier 2 (Force): Chromium WebContentsForceDark with CIELAB inversion
+  - Settings UI with Off/System/Force selector
+
+Desktop - Page View & Navigation
+- [x] feat(page): add browser navigation hotkeys and editable URL bar (52a99ec7)
+  - Cmd+R reload, Cmd+[/] back/forward, Cmd+L to edit URL
+- [x] feat(page): add widget system with OpenSearch discovery notification (ce5ae4bb)
+- [x] fix(page): improve drag-from-anywhere with long-press detection and all-corner resize (d135cfa6)
+- [x] fix(page): apply background detection to non-canvas web pages (e1ac7b6f)
+- [x] fix(nav): restore full-width navbar — remove floating bubble design (7769f1e1)
+- [x] fix(titles): fix Loading... title bug, add page content extraction and URL metadata enrichment (61ca6f00)
+  - Filter "Loading..." from stored titles across all code paths
+  - Add extract-page-content IPC handler for live page HTML extraction
+  - URL item metadata enrichment with OG tags, description, favicon
+
+Desktop - Tags & Editor
+- [x] feat(tags): embed editor in detail pane for inline note editing (a575013e)
+  - Replace modal with inline detail view, ESC navigation between list and detail
+  - Vim status/command bar overlaid on editor, respects vim mode preference
+- [x] feat(tags): add content search with tag combo filtering, pin selected tags in sidebar (d005d3dd)
+- [x] fix(editor,tags): fix note command blank editor, tags reactivity, and editor height (cb4d5e10)
+  - New notes create datastore items immediately for autosave
+  - Tags UI subscribes to item:updated events for live reactivity
+- [x] fix(editor): forward ESC to vim in insert/visual mode before IZUI handles it (7b866e87)
+- [x] fix(tags): editor layout, vim status bar positioning, and focus ring cleanup (08483e4e, 3100ec71, 3a072f24)
+
+Desktop - Shortcuts & Commands
+- [x] feat(shortcuts): implement dual hotkey registration — local Cmd+ alongside global Opt+ (545e95b4)
+  - Cmd+K (palette), Cmd+E (editor), Cmd+T (tags), Cmd+G (groups), Cmd+H (HUD)
+  - Fix: Cmd+Q quit, Cmd+, settings (were incorrectly using Opt+)
+- [x] feat(api): implement commands.list() to query registered commands via pubsub (696c7859)
+- [x] fix(cmd): fix frecency/adaptive sorting in command palette (2f6da3fd)
+  - Unified weighted ranking combining adaptive score and frecency
+  - Cross-query adaptive feedback for substring matches
+
+Desktop - Settings & Extensions
+- [x] fix(settings): rework extensions settings — rename sections, unify layout, add options buttons (cb540409)
+  - Rename: Features (Peek extensions) vs Extensions (bundled webextensions)
+  - Options button for extensions with options pages
+- [x] fix(settings): dynamically list all builtin extensions in Features section (90fe93d0)
+- [x] feat(chrome-ext): generic settings/UI system for bundled Chrome extensions (edbf5169)
+- [x] feat(adblocker): migrate from @cliqz/adblocker-electron to @ghostery/adblocker-electron (93b44561)
+
+Desktop - Fixes
+- [x] fix(windows): HUD focus stealing, chrome ext options styling, duplicate group cards (47686da7)
+- [x] fix(groups): prevent duplicate windows/URLs, fix race conditions and title resolution (20cb9956)
+- [x] fix(hud): resolve extension disabled by settings key collision (671df42e)
+- [x] fix(context): resolve window ID from caller when null, set mode before loadURL (c1d77f28)
+- [x] fix(entities): align UI with groups/tags component and theme patterns (c5df43bc)
+- [x] fix(scripts): align UI with groups/tags component and theme patterns (50c639ff)
+- [x] fix(editor): use extension settings API for vim mode, audit localStorage usage (3962110b)
+- [x] fix(build): pin Node version to 24.11.1 to match Electron 40 (96c05941)
+
+Testing
+- [x] test(history): add unified URL/history tests for unification refactor (d3ac05f7)
+- [x] test(entities): add comprehensive test data for entity recognition (d710d039)
+
 ## 2026-02-09
 
 Desktop - IZUI Role-Based Redesign
