@@ -2039,15 +2039,6 @@ export function addVisit(addressId: string, options: VisitOptions = {}): { id: s
     WHERE id = ?
   `).run(timestamp, timestamp, addressId);
 
-  // Also update any items with matching URL content
-  const address = getAddress(addressId);
-  if (address && address.uri) {
-    d.prepare(`
-      UPDATE items SET lastVisitAt = ?, visitCount = visitCount + 1, updatedAt = ?
-      WHERE type = 'url' AND content = ? AND deletedAt = 0
-    `).run(timestamp, timestamp, address.uri);
-  }
-
   return { id: visitId };
 }
 
@@ -2122,7 +2113,7 @@ export function trackWindowLoad(uri: string, options: {
   windowType?: string;
   title?: string;
 } = {}): { visitId: string; addressId: string; itemId: string; created: boolean } {
-  // Track in items table (used by cmd history) via trackNavigation
+  // Delegate entirely to trackNavigation (items system)
   const navResult = trackNavigation(uri, {
     source: options.source,
     sourceId: options.sourceId,
@@ -2130,28 +2121,8 @@ export function trackWindowLoad(uri: string, options: {
     title: options.title,
   });
 
-  // Also maintain legacy addresses/visits tables
-  const normalizedUri = normalizeUrl(uri);
-  const existing = getDb().prepare('SELECT id FROM addresses WHERE uri = ?').get(normalizedUri) as { id: string } | undefined;
-
-  let addressId: string;
-  if (existing) {
-    addressId = existing.id;
-    if (options.title) {
-      getDb().prepare('UPDATE addresses SET title = ?, updatedAt = ? WHERE id = ? AND (title = \'\' OR title IS NULL)').run(options.title, now(), addressId);
-    }
-  } else {
-    const result = addAddress(uri, { title: options.title || '' });
-    addressId = result.id;
-  }
-
-  const visit = addVisit(addressId, {
-    source: options.source || 'window',
-    sourceId: options.sourceId || '',
-    windowType: options.windowType || 'main',
-  });
-
-  return { visitId: visit.id, addressId, itemId: navResult.itemId, created: navResult.created };
+  // Return backward-compatible shape (addressId = itemId for legacy callers)
+  return { visitId: navResult.visitId, addressId: navResult.itemId, itemId: navResult.itemId, created: navResult.created };
 }
 
 /**
@@ -3005,17 +2976,6 @@ export function trackNavigation(uri: string, options: {
     windowType: options.windowType || 'main',
     interacted: options.interacted || 0,
   });
-
-  // Also track in legacy visits table for backward compatibility
-  // (This ensures old code that queries addresses/visits still works)
-  const addressResult = d.prepare('SELECT id FROM addresses WHERE uri = ?').get(normalizedUri) as { id: string } | undefined;
-  if (addressResult) {
-    addVisit(addressResult.id, {
-      source: options.source || 'window',
-      sourceId: options.sourceId || '',
-      windowType: options.windowType || 'main',
-    });
-  }
 
   return { visitId: visit.id, itemId, created };
 }
