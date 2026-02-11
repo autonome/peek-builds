@@ -12,6 +12,7 @@
  */
 
 import * as CodeMirror from 'peek://extensions/editor/codemirror.js';
+import { StatusLine } from 'peek://extensions/editor/status-line.js';
 const { getCM, Vim } = CodeMirror;
 
 const api = window.app;
@@ -92,6 +93,7 @@ window._tagsState = state;
 
 // Embedded editor state
 let embeddedEditor = null;  // CodeMirror EditorView instance
+let embeddedStatusLine = null;  // StatusLine instance for vim status bar
 let editorSaveTimer = null;
 let editorSaveStatus = 'saved'; // 'saved' | 'saving' | 'unsaved'
 const EDITOR_AUTOSAVE_DELAY_MS = 1500;
@@ -393,6 +395,18 @@ const setupEventListeners = () => {
       await loadEditorVimPreference();
       if (embeddedEditor) {
         CodeMirror.setVimMode(embeddedEditor, editorVimMode);
+        // Show/hide status line based on vim mode
+        if (embeddedStatusLine) {
+          const editorContainer = document.querySelector('.detail-editor-container');
+          if (editorVimMode) {
+            embeddedStatusLine.show();
+            embeddedStatusLine.updateMode('normal');
+            editorContainer?.classList.add('has-vim-status');
+          } else {
+            embeddedStatusLine.hide();
+            editorContainer?.classList.remove('has-vim-status');
+          }
+        }
         debug && console.log('[tags] Updated embedded editor vimMode:', editorVimMode);
       }
     }, api.scopes.GLOBAL);
@@ -1032,6 +1046,19 @@ const createEmbeddedEditor = async (item) => {
   // Load vim mode preference from editor extension before creating editor
   await loadEditorVimPreference();
 
+  // Create status line container below the editor
+  const statusLineContainer = document.createElement('div');
+  statusLineContainer.className = 'detail-editor-status-line';
+  container.after(statusLineContainer);
+
+  // Create status line (vim status bar)
+  embeddedStatusLine = new StatusLine({ container: statusLineContainer });
+  if (editorVimMode) {
+    container.classList.add('has-vim-status');
+  } else {
+    embeddedStatusLine.hide();
+  }
+
   embeddedEditor = CodeMirror.createEditor({
     parent: container,
     content: item.content || '',
@@ -1039,6 +1066,16 @@ const createEmbeddedEditor = async (item) => {
     showLineNumbers: true,
     onChange: (content) => {
       scheduleEditorAutosave(content);
+    },
+    onSelectionChange: (line, col) => {
+      if (embeddedStatusLine) {
+        embeddedStatusLine.updatePosition(line, col);
+      }
+    },
+    onVimModeChange: (mode) => {
+      if (embeddedStatusLine && editorVimMode) {
+        embeddedStatusLine.updateMode(mode);
+      }
     },
   });
 
@@ -1058,6 +1095,17 @@ const destroyEmbeddedEditor = () => {
   if (editorSaveTimer) {
     clearTimeout(editorSaveTimer);
     editorSaveTimer = null;
+  }
+
+  if (embeddedStatusLine) {
+    embeddedStatusLine.destroy();
+    embeddedStatusLine = null;
+  }
+
+  // Remove the status line container element if it exists
+  const statusLineEl = document.querySelector('.detail-editor-status-line');
+  if (statusLineEl) {
+    statusLineEl.remove();
   }
 
   if (embeddedEditor) {

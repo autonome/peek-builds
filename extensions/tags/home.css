@@ -490,6 +490,25 @@ peek-card[selected] {
   overflow: auto;
 }
 
+/* Vim status line below embedded editor */
+.detail-editor-status-line {
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+}
+
+.detail-editor-status-line .vim-status-line {
+  border-radius: 0 0 8px 8px;
+}
+
+/* When vim status line is active, flatten bottom corners of the editor */
+.detail-editor-container.has-vim-status {
+  border-radius: 8px 8px 0 0;
+}
+
+.detail-editor-container.has-vim-status .cm-editor {
+  border-radius: 8px 8px 0 0;
+}
+
 /* Detail sections (tags) */
 .detail-section {
   margin-bottom: 16px;
