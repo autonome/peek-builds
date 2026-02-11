@@ -41,19 +41,16 @@ const loadAdaptiveData = async () => {
 
 /**
  * Save adaptive data to extension settings
+ * Uses setKey to write each key independently, avoiding read-modify-write races
  */
 const saveAdaptiveData = async (feedback, counts) => {
   adaptiveDataCache = { feedback, counts };
 
-  // Get current settings and merge
-  const result = await api.settings.get();
-  const currentData = result.success && result.data ? result.data : {};
-
-  await api.settings.set({
-    ...currentData,
-    [STORAGE_KEY_FEEDBACK]: feedback,
-    [STORAGE_KEY_COUNTS]: counts
-  });
+  // Write each key independently to avoid overwriting other settings
+  await Promise.all([
+    api.settings.setKey(STORAGE_KEY_FEEDBACK, feedback),
+    api.settings.setKey(STORAGE_KEY_COUNTS, counts)
+  ]);
 };
 
 // Initialize with empty data - will be loaded asynchronously
@@ -1373,10 +1370,11 @@ function findMatchingCommands(text) {
     }
   }
 
-  // Sort by:
+  // Sort by combined ranking score:
   // 1. Exact match with parameters (highest priority)
-  // 2. Adaptive score
-  // 3. Match count (frecency)
+  // 2. Combined score: adaptive score (query-specific) + frecency (global usage)
+  //    This ensures frequently-used commands rank high even when the specific
+  //    query has no adaptive data (e.g., user types "ta" but usually types "tags")
   matches.sort(function(a, b) {
     // If we have parameters, prioritize exact command match
     if (hasParameters) {
@@ -1386,19 +1384,21 @@ function findMatchingCommands(text) {
       if (bExact && !aExact) return 1;
     }
 
-    // Then compare adaptive scores for this typed string
+    // Combined ranking: adaptive score (0-1) weighted heavily + frecency score (0-1)
+    // Adaptive score is query-specific (e.g., "ta" -> "open tags")
+    // Frecency score is global (total selections of this command)
     const aAdaptive = getAdaptiveScore(commandPart, a);
     const bAdaptive = getAdaptiveScore(commandPart, b);
+    const aFrecency = getFrecencyScore(a);
+    const bFrecency = getFrecencyScore(b);
 
-    // If there's a significant difference in adaptive scores, use that
-    if (Math.abs(aAdaptive - bAdaptive) > 0.01) {
-      return bAdaptive - aAdaptive;
-    }
+    // Weight adaptive 3x more than frecency when adaptive data exists,
+    // but frecency still contributes so heavily-used commands rank well
+    // even without adaptive data for this specific query
+    const aScore = (aAdaptive * 3) + aFrecency;
+    const bScore = (bAdaptive * 3) + bFrecency;
 
-    // Otherwise fall back to match count (frecency)
-    const aCount = state.matchCounts[a] || 0;
-    const bCount = state.matchCounts[b] || 0;
-    return bCount - aCount;
+    return bScore - aScore;
   });
 
   return matches;
@@ -1408,6 +1408,13 @@ function findMatchingCommands(text) {
  * Updates the adaptive feedback for a typed string -> command selection
  * Uses asymptotic scoring: score = count / (count + k)
  * This creates ever-strengthening reinforcement based on user decisions
+ *
+ * Records feedback for:
+ * 1. The exact typed string (full weight)
+ * 2. Prefixes of the typed string (half weight) - helps with partial typing
+ * 3. Substrings of the command name that could be search queries (quarter weight)
+ *    - e.g., selecting "open tags" also creates entries for "ta", "tag", "tags"
+ *    - This ensures the command ranks well when searched by any matching substring
  */
 function updateAdaptiveFeedback(typed, name) {
   // Initialize feedback for this typed string if needed
@@ -1435,6 +1442,34 @@ function updateAdaptiveFeedback(typed, name) {
     state.adaptiveFeedback[prefix][name] += 0.5;
   }
 
+  // Record feedback for substrings of the command name that could be typed
+  // as search queries. This covers the case where a user always types "open"
+  // to reach "open tags" but sometimes types "ta" instead - the command
+  // should rank high for both queries.
+  const lowerName = name.toLowerCase();
+  const lowerTyped = typed.toLowerCase();
+  const words = lowerName.split(/[\s-]+/); // Split on spaces and hyphens
+
+  for (const word of words) {
+    // Skip words that are the same as or prefix of the typed text (already covered above)
+    if (lowerTyped.startsWith(word) || word.startsWith(lowerTyped)) {
+      continue;
+    }
+
+    // Generate substrings of this word (min length 2 to avoid single chars)
+    for (let len = 2; len <= word.length; len++) {
+      const sub = word.substring(0, len);
+      if (!state.adaptiveFeedback[sub]) {
+        state.adaptiveFeedback[sub] = {};
+      }
+      if (!state.adaptiveFeedback[sub][name]) {
+        state.adaptiveFeedback[sub][name] = 0;
+      }
+      // Quarter weight for command name substrings
+      state.adaptiveFeedback[sub][name] += 0.25;
+    }
+  }
+
   // Persist to storage
   saveAdaptiveData(state.adaptiveFeedback, state.matchCounts);
 }
@@ -1451,6 +1486,18 @@ function getAdaptiveScore(typed, name) {
     return 0;
   }
   const count = feedback[name];
+  return count / (count + k);
+}
+
+/**
+ * Gets the frecency score for a command based on total selection count
+ * Uses the same asymptotic formula as adaptive scoring
+ * Returns 0-1 where higher is better
+ */
+function getFrecencyScore(name) {
+  const k = 10; // Higher k so frecency grows more slowly (needs more uses to saturate)
+  const count = state.matchCounts[name] || 0;
+  if (count === 0) return 0;
   return count / (count + k);
 }
 
