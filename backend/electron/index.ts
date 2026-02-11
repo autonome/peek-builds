@@ -193,6 +193,8 @@ export {
   registerMiscHandlers,
   registerAllHandlers,
   restoreSavedTheme,
+  getDarkModeSetting,
+  applyDarkModeSetting,
 } from './ipc.js';
 
 // Window helpers

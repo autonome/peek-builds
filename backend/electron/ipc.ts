@@ -1768,6 +1768,94 @@ export function registerThemeHandlers(): void {
 // Keep old function name for compatibility but call new one
 export function registerDarkModeHandlers(): void {
   registerThemeHandlers();
+  registerDarkModeSettingHandlers();
+}
+
+/**
+ * Dark mode setting storage key
+ */
+const DARK_MODE_KEY = 'darkMode';
+
+/**
+ * Get the dark mode setting from datastore
+ * Returns 'off' | 'system' | 'force', defaults to 'system'
+ */
+export function getDarkModeSetting(): string {
+  return getThemeSetting(DARK_MODE_KEY) || 'system';
+}
+
+/**
+ * Set the dark mode setting in datastore
+ */
+function setDarkModeSetting(value: string): void {
+  setThemeSetting(DARK_MODE_KEY, value);
+}
+
+/**
+ * Apply dark mode setting to nativeTheme
+ * Tier 1: When 'system' or 'force', set nativeTheme.themeSource = 'dark'
+ * so prefers-color-scheme: dark is true for all webviews.
+ * When 'off', respect the color scheme theme setting.
+ */
+export function applyDarkModeSetting(mode: string): void {
+  if (mode === 'off') {
+    // Respect the user's color scheme theme setting
+    const colorScheme = getThemeSetting(THEME_COLOR_SCHEME_KEY) || 'system';
+    nativeTheme.themeSource = colorScheme as 'system' | 'light' | 'dark';
+  } else {
+    // 'system' or 'force': set nativeTheme to dark
+    // This makes prefers-color-scheme: dark true for all webviews
+    nativeTheme.themeSource = 'dark';
+  }
+}
+
+/**
+ * Register dark mode setting IPC handlers
+ */
+function registerDarkModeSettingHandlers(): void {
+  // Get current dark mode setting
+  ipcMain.handle('darkMode:get', () => {
+    const mode = getDarkModeSetting();
+    return {
+      success: true,
+      data: {
+        mode,
+        // Tier 2 (WebContentsForceDark) requires app restart to take effect
+        tier2Active: app.commandLine.hasSwitch('enable-features') &&
+          (app.commandLine.getSwitchValue('enable-features') || '').includes('WebContentsForceDark'),
+      }
+    };
+  });
+
+  // Set dark mode setting
+  ipcMain.handle('darkMode:set', (_ev, mode: string) => {
+    if (!['off', 'system', 'force'].includes(mode)) {
+      return { success: false, error: 'Invalid dark mode value. Must be "off", "system", or "force".' };
+    }
+
+    const previousMode = getDarkModeSetting();
+    setDarkModeSetting(mode);
+
+    // Apply Tier 1 immediately (nativeTheme)
+    applyDarkModeSetting(mode);
+
+    // Check if Tier 2 change requires restart
+    const tier2Changed = (previousMode === 'force') !== (mode === 'force');
+
+    // Broadcast change to all windows
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      win.webContents.send('darkMode:changed', { mode });
+    }
+
+    return {
+      success: true,
+      data: {
+        mode,
+        restartRequired: tier2Changed,
+      }
+    };
+  });
 }
 
 /**

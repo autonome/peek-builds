@@ -836,6 +836,45 @@ api.profiles = {
   }
 };
 
+// ========== Dark Mode API ==========
+
+/**
+ * Dark Mode API - 3-tier dark mode system for web pages
+ *
+ * Tier 1 (system): Sets prefers-color-scheme: dark — sites with dark mode support switch automatically
+ * Tier 2 (force): Chromium WebContentsForceDark — CIELAB-based inversion for all sites
+ * Tier 3 (per-site): Dark Reader injection — TODO, not yet implemented
+ */
+api.darkMode = {
+  /**
+   * Get current dark mode setting
+   * @returns {Promise<{success: boolean, data?: {mode: string, tier2Active: boolean}}>}
+   */
+  get: () => {
+    return ipcRenderer.invoke('darkMode:get');
+  },
+
+  /**
+   * Set dark mode setting
+   * @param {string} mode - 'off' | 'system' | 'force'
+   * @returns {Promise<{success: boolean, data?: {mode: string, restartRequired: boolean}, error?: string}>}
+   */
+  set: (mode) => {
+    return ipcRenderer.invoke('darkMode:set', mode);
+  },
+
+  /**
+   * Listen for dark mode changes
+   * @param {function} callback - Called with { mode: string }
+   * @returns {function} Unsubscribe function
+   */
+  onChange: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('darkMode:changed', handler);
+    return () => ipcRenderer.removeListener('darkMode:changed', handler);
+  },
+};
+
 // ========== Bundled Web Extensions API ==========
 
 /**

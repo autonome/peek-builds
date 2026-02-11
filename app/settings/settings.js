@@ -712,6 +712,140 @@ const renderPrivacySettings = async () => {
   return container;
 };
 
+// Render dark mode settings for web pages
+const renderDarkModeSettings = async () => {
+  const container = document.createElement('div');
+
+  // Description
+  const desc = document.createElement('p');
+  desc.className = 'help-text';
+  desc.style.marginBottom = '16px';
+  desc.textContent = 'Control how dark mode is applied to web pages loaded in Peek.';
+  container.appendChild(desc);
+
+  // Load current setting
+  let currentMode = 'system';
+  let tier2Active = false;
+
+  try {
+    const result = await api.darkMode.get();
+    if (result.success && result.data) {
+      currentMode = result.data.mode;
+      tier2Active = result.data.tier2Active;
+    }
+  } catch (err) {
+    console.error('[settings] Failed to load dark mode setting:', err);
+  }
+
+  // Mode selector (button group like color scheme)
+  const modeSection = document.createElement('div');
+  modeSection.className = 'form-section';
+
+  const modeTitle = document.createElement('h3');
+  modeTitle.className = 'form-section-title';
+  modeTitle.textContent = 'Dark Mode for Web Pages';
+  modeSection.appendChild(modeTitle);
+
+  const modeGroup = document.createElement('div');
+  modeGroup.style.cssText = 'display: flex; gap: 8px;';
+
+  const modes = [
+    { value: 'off', label: 'Off', desc: 'Pages render as-is' },
+    { value: 'system', label: 'System', desc: 'Sites that support dark mode will use it' },
+    { value: 'force', label: 'Force', desc: 'Force dark mode on all sites' },
+  ];
+
+  // Restart notice (hidden by default)
+  const restartNotice = document.createElement('div');
+  restartNotice.className = 'help-text';
+  restartNotice.style.cssText = 'margin-top: 8px; color: var(--base09); display: none;';
+  restartNotice.textContent = 'Restart required for this change to take full effect.';
+
+  const updateButtons = (activeValue) => {
+    modeGroup.querySelectorAll('button').forEach(btn => {
+      const isActive = btn.dataset.mode === activeValue;
+      btn.style.background = isActive ? 'var(--base0D)' : 'var(--bg-tertiary)';
+      btn.style.borderColor = isActive ? 'var(--base0D)' : 'var(--base03)';
+      btn.style.color = isActive ? 'white' : 'var(--text-primary)';
+      btn.style.fontWeight = isActive ? '600' : '400';
+    });
+  };
+
+  modes.forEach(mode => {
+    const btn = document.createElement('button');
+    btn.textContent = mode.label;
+    btn.dataset.mode = mode.value;
+    const isActive = currentMode === mode.value;
+    btn.style.cssText = `
+      padding: 8px 16px;
+      font-size: 13px;
+      background: ${isActive ? 'var(--base0D)' : 'var(--bg-tertiary)'};
+      border: 2px solid ${isActive ? 'var(--base0D)' : 'var(--base03)'};
+      border-radius: 6px;
+      color: ${isActive ? 'white' : 'var(--text-primary)'};
+      cursor: pointer;
+      flex: 1;
+      font-weight: ${isActive ? '600' : '400'};
+    `;
+    btn.addEventListener('click', async () => {
+      try {
+        const result = await api.darkMode.set(mode.value);
+        if (result.success) {
+          currentMode = mode.value;
+          updateButtons(mode.value);
+          // Update description
+          modeDesc.textContent = modes.find(m => m.value === mode.value)?.desc || '';
+          // Show restart notice if Tier 2 changed
+          if (result.data?.restartRequired) {
+            restartNotice.style.display = 'block';
+          } else {
+            restartNotice.style.display = 'none';
+          }
+        }
+      } catch (err) {
+        console.error('[settings] Failed to set dark mode:', err);
+      }
+    });
+    modeGroup.appendChild(btn);
+  });
+
+  modeSection.appendChild(modeGroup);
+
+  // Current mode description
+  const modeDesc = document.createElement('div');
+  modeDesc.className = 'help-text';
+  modeDesc.style.marginTop = '8px';
+  modeDesc.textContent = modes.find(m => m.value === currentMode)?.desc || '';
+  modeSection.appendChild(modeDesc);
+
+  modeSection.appendChild(restartNotice);
+
+  container.appendChild(modeSection);
+
+  // Tier explanation
+  const tierSection = document.createElement('div');
+  tierSection.className = 'form-section';
+  tierSection.style.marginTop = '24px';
+
+  const tierTitle = document.createElement('h3');
+  tierTitle.className = 'form-section-title';
+  tierTitle.textContent = 'How It Works';
+  tierSection.appendChild(tierTitle);
+
+  const tierDesc = document.createElement('div');
+  tierDesc.className = 'help-text';
+  tierDesc.innerHTML = `
+    <p style="margin-bottom: 8px;"><strong>System</strong> sets <code>prefers-color-scheme: dark</code> so sites with built-in dark mode support switch automatically. Zero performance cost.</p>
+    <p style="margin-bottom: 8px;"><strong>Force</strong> additionally enables Chromium's auto-dark mode, which uses CIELAB-based color inversion in the rendering pipeline. This forces dark mode on all sites, including those without native support. Images are preserved. Changing this requires an app restart.</p>
+    <p><strong>Per-site dark mode</strong> (via Dark Reader) is planned for a future update.</p>
+  `;
+  tierSection.appendChild(tierDesc);
+
+  container.appendChild(tierSection);
+
+  return container;
+};
+
 // Render sync settings
 const renderSyncSettings = async () => {
   const container = document.createElement('div');
@@ -2383,7 +2517,32 @@ const init = async () => {
 
   contentArea.appendChild(privacySection);
 
-  // Add Sync management section (between Privacy and Themes)
+  // Add Dark Mode section (between Privacy and Sync)
+  const darkModeNav = document.createElement('a');
+  darkModeNav.className = 'nav-item';
+  darkModeNav.textContent = 'Dark Mode';
+  darkModeNav.dataset.section = 'dark-mode';
+  darkModeNav.addEventListener('click', () => showSection('dark-mode'));
+  sidebarNav.appendChild(darkModeNav);
+
+  // Create dark mode section with async content
+  const darkModeSection = document.createElement('div');
+  darkModeSection.className = 'section';
+  darkModeSection.id = 'section-dark-mode';
+
+  const darkModeTitle = document.createElement('h2');
+  darkModeTitle.className = 'section-title';
+  darkModeTitle.textContent = 'Dark Mode';
+  darkModeSection.appendChild(darkModeTitle);
+
+  // Load dark mode content async
+  renderDarkModeSettings().then(content => {
+    darkModeSection.appendChild(content);
+  });
+
+  contentArea.appendChild(darkModeSection);
+
+  // Add Sync management section (between Dark Mode and Themes)
   const syncNav = document.createElement('a');
   syncNav.className = 'nav-item';
   syncNav.textContent = 'Sync';

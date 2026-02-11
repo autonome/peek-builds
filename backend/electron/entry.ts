@@ -8,6 +8,7 @@
 import { app, globalShortcut } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import unhandled from 'electron-unhandled';
 
 // Import from local backend modules
@@ -531,6 +532,43 @@ const onReady = async () => {
 // macOS: handle open-url event (must be registered before app.whenReady)
 registerExternalUrlHandlers();
 
+// ***** Dark Mode (early read before app.ready) *****
+// Read dark mode setting from database before app.ready so we can:
+// 1. Set nativeTheme.themeSource (Tier 1)
+// 2. Apply WebContentsForceDark command-line switch (Tier 2, must be before app.ready)
+let _darkModeSetting = 'system'; // default
+const dbPath = path.join(profileDataPath, 'datastore.sqlite');
+if (fs.existsSync(dbPath)) {
+  try {
+    const earlyDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const row = earlyDb.prepare(
+      "SELECT value FROM extension_settings WHERE extensionId = 'core' AND key = 'darkMode'"
+    ).get() as { value: string } | undefined;
+    if (row?.value) {
+      // Value is JSON-encoded (stored via setThemeSetting which JSON.stringify's)
+      try {
+        _darkModeSetting = JSON.parse(row.value);
+      } catch {
+        _darkModeSetting = row.value;
+      }
+    }
+    earlyDb.close();
+    DEBUG && console.log('[darkMode] Early read from db:', _darkModeSetting);
+  } catch (err) {
+    DEBUG && console.log('[darkMode] Early db read failed (using default):', err);
+  }
+}
+
+// Tier 2: Apply WebContentsForceDark command-line switch for 'force' mode
+// This must be set before app.ready. Uses CIELAB-based inversion and skips images.
+if (_darkModeSetting === 'force') {
+  app.commandLine.appendSwitch(
+    'enable-features',
+    'WebContentsForceDark:inversion_method/cielab_based/image_behavior/none'
+  );
+  DEBUG && console.log('[darkMode] Tier 2: WebContentsForceDark enabled via command-line switch');
+}
+
 // Configure app before ready (registers protocol scheme, sets theme)
 configure({
   rootDir: ROOT_DIR,
@@ -538,7 +576,8 @@ configure({
   userDataPath: defaultUserDataPath,
   profile: PROFILE,
   isDev: DEBUG,
-  isTest: PROFILE.startsWith('test')
+  isTest: PROFILE.startsWith('test'),
+  darkMode: _darkModeSetting,
 });
 
 // Register window-all-closed handler
