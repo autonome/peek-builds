@@ -2109,6 +2109,52 @@ export function registerWindowHandlers(): void {
       // Load the URL AFTER mode/context is set, so page.js can read inherited mode
       await win.loadURL(loadUrl);
 
+      // Background detection for non-canvas web pages (slides, modals, quick-views).
+      // Canvas pages get this via the webview dom-ready handler in page.js.
+      // Non-canvas pages load directly in the BrowserWindow, so we detect here.
+      // Without this, pages that don't set a background show dark text on a dark
+      // BrowserWindow backgroundColor — unreadable in dark mode.
+      if (isWebPage && !useCanvas) {
+        win.webContents.on('dom-ready', async () => {
+          try {
+            const needsBackground = await win.webContents.executeJavaScript(`
+              (function() {
+                function isTransparentColor(color) {
+                  if (!color) return true;
+                  if (color === 'transparent') return true;
+                  if (color === 'rgba(0, 0, 0, 0)') return true;
+                  var rgbaMatch = color.match(/rgba\\s*\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*([\\d.]+)\\s*\\)/);
+                  if (rgbaMatch && parseFloat(rgbaMatch[1]) === 0) return true;
+                  return false;
+                }
+                function hasBackground(el) {
+                  if (!el) return false;
+                  var style = window.getComputedStyle(el);
+                  var bgColor = style.backgroundColor;
+                  var hasColor = !isTransparentColor(bgColor);
+                  var bgImage = style.backgroundImage;
+                  var hasImage = bgImage && bgImage !== 'none';
+                  return hasColor || hasImage;
+                }
+                var html = document.documentElement;
+                var body = document.body;
+                return !(hasBackground(html) || hasBackground(body));
+              })();
+            `);
+            if (needsBackground) {
+              await win.webContents.executeJavaScript(`
+                document.documentElement.style.backgroundColor = '#ffffff';
+              `);
+              DEBUG && console.log('[non-canvas-bg] No background detected, set default white for window:', win.id);
+            } else {
+              DEBUG && console.log('[non-canvas-bg] Page has background, skipping default for window:', win.id);
+            }
+          } catch (err) {
+            console.error('[non-canvas-bg] Failed to check/set background:', err);
+          }
+        });
+      }
+
       // Track this load in history (skip internal peek:// URLs)
       if (!url.startsWith('peek://')) {
         try {
