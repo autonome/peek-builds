@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>Web Search</title>
+    <link rel="stylesheet" type="text/css" href="home.css">
+
+    <!-- Import map for resolving bare module specifiers -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <!-- Import peek-components -->
+    <script type="module">
+      import 'peek://app/components/peek-input.js';
+    </script>
+  </head>
+  <body>
+    <div class="search-container">
+      <div class="engine-indicator" id="engine-indicator">
+        <img id="engine-icon" class="engine-icon" src="" alt="">
+        <span id="engine-name" class="engine-name"></span>
+      </div>
+      <peek-input
+        id="search-input"
+        class="search-input"
+        placeholder="Search the web..."
+        type="search"
+        autofocus
+      ></peek-input>
+    </div>
+
+    <div id="suggestions" class="suggestions"></div>
+
+    <div id="empty-state" class="empty-state">
+      Type to search the web. Press Enter to search, or select a suggestion.
+    </div>
+
+    <div id="engine-list" class="engine-list"></div>
+
+    <script type="module" src="home.js"></script>
+  </body>
+</html>

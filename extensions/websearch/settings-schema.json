@@ -1,0 +1,33 @@
+{
+  "prefs": {
+    "type": "object",
+    "properties": {
+      "defaultEngine": {
+        "type": "string",
+        "description": "ID of the default search engine",
+        "default": "duckduckgo"
+      },
+      "enableSuggestions": {
+        "type": "boolean",
+        "description": "Enable search suggestions from search engines",
+        "default": true
+      },
+      "enableAutoDiscovery": {
+        "type": "boolean",
+        "description": "Auto-discover search engines from visited websites via OpenSearch",
+        "default": true
+      }
+    }
+  },
+  "storageKeys": {
+    "PREFS": "prefs",
+    "ENGINES": "engines"
+  },
+  "defaults": {
+    "prefs": {
+      "defaultEngine": "duckduckgo",
+      "enableSuggestions": true,
+      "enableAutoDiscovery": true
+    }
+  }
+}
