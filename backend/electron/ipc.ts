@@ -4307,10 +4307,11 @@ function registerSessionHandlers(): void {
   });
 
   // Manual session restore (restores on top of existing windows)
+  // Skip crash dialog — user explicitly requested restore
   ipcMain.handle('session-restore', async () => {
     try {
       const prefs = getPrefs();
-      const result = await restoreSessionSnapshot(prefs);
+      const result = await restoreSessionSnapshot(prefs, { cleanShutdown: true, crashCount: 0 });
       return {
         success: true,
         message: `Restored ${result.restored} of ${result.total} window(s)`,
@@ -4323,6 +4324,7 @@ function registerSessionHandlers(): void {
   });
 
   // Interactive session restore — shows confirmation dialog before restoring
+  // Skip crash dialog — this handler shows its own confirmation dialog
   ipcMain.handle('session-restore-interactive', async () => {
     try {
       const info = getSessionSnapshotInfo();
@@ -4344,7 +4346,7 @@ function registerSessionHandlers(): void {
       }
 
       const prefs = getPrefs();
-      const result = await restoreSessionSnapshot(prefs);
+      const result = await restoreSessionSnapshot(prefs, { cleanShutdown: true, crashCount: 0 });
       return {
         success: true,
         message: `Restored ${result.restored} of ${result.total} window(s)`,

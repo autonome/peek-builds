@@ -88,7 +88,7 @@ import {
 import {
   initSessionPartition,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval } from './session.js';
 
 // Catch unhandled errors and promise rejections without showing alert dialogs
 unhandled({
@@ -281,14 +281,14 @@ app.on('before-quit', () => {
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
 });
 
-// Handle SIGINT/SIGTERM (e.g. Ctrl+C in terminal) — save session before exit.
-// Electron's before-quit does NOT fire on signal kills.
+// Handle SIGINT/SIGTERM (e.g. Ctrl+C in terminal).
+// Use app.quit() to trigger Electron's proper quit sequence (before-quit -> will-quit -> quit).
+// The before-quit handler above saves the session and cleans up resources.
+// Calling process.exit() directly would skip Electron's lifecycle events.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    DEBUG && console.log(`[lifecycle] ${signal}: saving session before exit`);
-    try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] signal saveSessionSnapshot error:', e); }
-    try { shutdown(); } catch (e) { /* ignore */ }
-    process.exit(0);
+    console.log(`[lifecycle] ${signal} received, triggering graceful quit`);
+    app.quit();
   });
 }
 
@@ -348,7 +348,13 @@ const onReady = async () => {
   // Initialize backend (database, protocol handler, pubsub broadcaster)
   await initialize();
 
-  // Mark session as dirty for crash detection (before restore)
+  // IMPORTANT: Read crash state BEFORE markSessionDirty() overwrites it.
+  // markSessionDirty sets cleanShutdown=false, so we must capture the true
+  // previous shutdown state first for the crash recovery dialog.
+  const _crashState = readSessionCrashState();
+  DEBUG && console.log('[session] Previous shutdown state:', _crashState);
+
+  // Now mark session as dirty for crash detection going forward
   markSessionDirty();
 
   // Check if session restore has a valid snapshot waiting.
@@ -363,17 +369,8 @@ const onReady = async () => {
     if (snapshotRow?.value) {
       const snapshot = JSON.parse(snapshotRow.value);
       if (snapshot.version === 1 && snapshot.windows && snapshot.windows.length > 0) {
-        // Also check metadata for crash detection
-        let skipDueToCrash = false;
-        const metaRow = db.prepare(
-          `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
-        ).get() as { value: string } | undefined;
-        if (metaRow?.value) {
-          const meta = JSON.parse(metaRow.value);
-          if (meta.cleanShutdown === false && (meta.crashCount ?? 0) > 3) {
-            skipDueToCrash = true;
-          }
-        }
+        // Check if too many consecutive crashes — skip restore to break crash loop
+        const skipDueToCrash = !_crashState.cleanShutdown && _crashState.crashCount > 3;
         if (!skipDueToCrash) {
           _sessionRestorePending = true;
           DEBUG && console.log(`[session] Valid snapshot found with ${snapshot.windows.length} window(s), restore pending`);
@@ -571,7 +568,7 @@ const onReady = async () => {
       // Restore session after extensions are loaded
       if (_sessionRestorePending) {
         try {
-          const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs);
+          const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs, _crashState);
           DEBUG && console.log(`[session] Restore result:`, restoreResult);
           if (restoreResult.restored === 0) {
             // If nothing was actually restored, clear the pending flag

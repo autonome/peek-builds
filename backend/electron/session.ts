@@ -348,7 +348,35 @@ function isPointOnScreen(x: number, y: number): boolean {
  *
  * Returns counts of restored/failed/total windows.
  */
-export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Promise<{ restored: number; failed: number; total: number }> {
+/**
+ * Read session metadata to determine crash state BEFORE markSessionDirty() is called.
+ * This captures the true previous shutdown state before it gets overwritten.
+ * Returns { cleanShutdown, crashCount } for use by restoreSessionSnapshot.
+ */
+export function readSessionCrashState(): { cleanShutdown: boolean; crashCount: number } {
+  try {
+    const db = getDb();
+    const metaRow = db.prepare(
+      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+    ).get() as { value: string } | undefined;
+
+    if (metaRow?.value) {
+      const metadata = JSON.parse(metaRow.value);
+      return {
+        cleanShutdown: metadata.cleanShutdown !== false, // default to true if missing
+        crashCount: metadata.crashCount ?? 0,
+      };
+    }
+  } catch {
+    // No metadata available
+  }
+  return { cleanShutdown: true, crashCount: 0 };
+}
+
+export async function restoreSessionSnapshot(
+  prefs: Record<string, unknown>,
+  crashState?: { cleanShutdown: boolean; crashCount: number }
+): Promise<{ restored: number; failed: number; total: number }> {
   const result = { restored: 0, failed: 0, total: 0 };
 
   // Skip restore in test environments
@@ -371,21 +399,34 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
     return result;
   }
 
-  // Check crash detection — show dialog or skip restore
+  // Check crash detection — show dialog or skip restore.
+  // Use the pre-read crashState (captured before markSessionDirty) if provided,
+  // otherwise fall back to reading current metadata (for manual restore calls).
   try {
-    const metaRow = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
-    ).get() as { value: string } | undefined;
+    let wasCleanShutdown = true;
+    let crashCount = 0;
 
-    if (metaRow?.value) {
-      const metadata: Partial<SessionMetadata> = JSON.parse(metaRow.value);
-      if (metadata.cleanShutdown === false) {
-        const crashCount = metadata.crashCount ?? 0;
-        const shouldRestore = await showCrashRecoveryDialog(crashCount);
-        if (!shouldRestore) {
-          DEBUG && console.log('[session] User chose to start fresh (or too many crashes)');
-          return result;
-        }
+    if (crashState) {
+      // Use pre-read state (startup path — read before markSessionDirty contaminated it)
+      wasCleanShutdown = crashState.cleanShutdown;
+      crashCount = crashState.crashCount;
+    } else {
+      // Fallback: read current metadata (manual restore path)
+      const metaRow = db.prepare(
+        `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+      ).get() as { value: string } | undefined;
+      if (metaRow?.value) {
+        const metadata: Partial<SessionMetadata> = JSON.parse(metaRow.value);
+        wasCleanShutdown = metadata.cleanShutdown !== false;
+        crashCount = metadata.crashCount ?? 0;
+      }
+    }
+
+    if (!wasCleanShutdown) {
+      const shouldRestore = await showCrashRecoveryDialog(crashCount);
+      if (!shouldRestore) {
+        DEBUG && console.log('[session] User chose to start fresh (or too many crashes)');
+        return result;
       }
     }
   } catch {
@@ -490,9 +531,11 @@ export async function restoreSessionSnapshot(prefs: Record<string, unknown>): Pr
       // ipcRenderer.invoke('window-open', ...) under the hood.
       // Note: source will be the background window's address, which is fine
       // for newly restored windows on startup.
+      DEBUG && console.log(`[session] Opening restored window: ${descriptor.url}`);
       const openResult = await bgWin.webContents.executeJavaScript(
         `window.app.window.open(${JSON.stringify(descriptor.url)}, ${JSON.stringify(options)})`
       );
+      DEBUG && console.log(`[session] Window open result:`, JSON.stringify(openResult));
 
       if (openResult && openResult.success && openResult.id) {
         result.restored++;
