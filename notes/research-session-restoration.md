@@ -516,3 +516,152 @@ The answer is captured as a small JSON snapshot in the existing `extension_setti
 - **Updated**: 2026-02-11
 - **Status**: Design/Planning Phase — revised to reflect current codebase
 - **Related**: Window management, IZUI state, context API, extension lifecycle, datastore architecture
+
+---
+
+## Display Change Handling
+
+### Current State
+
+There is **no display change handling** in the codebase. The `screen` module from Electron is imported in `backend/electron/ipc.ts` but only used for:
+
+1. `screen.getPrimaryDisplay()` — centering windows on the primary display when no position is specified (line 2105)
+2. `screen.getDisplayNearestPoint()` — sizing canvas pages to cover the correct display (line 2162), and sizing popup canvas windows (line 2536)
+
+No listeners are registered for display events (`display-added`, `display-removed`, `display-metrics-changed`). No bounds validation is performed when restoring persisted window state.
+
+### Impact Analysis
+
+When displays change (external monitor connected/disconnected, resolution change, etc.), the following problems occur:
+
+1. **Persisted window positions become stale**: Windows with `persistWindowState` enabled save their position (x, y, width, height) to `extension_settings` via debounced move/resize handlers (ipc.ts lines 2644-2673). When a display is removed and the user re-opens a window, the saved position may reference coordinates that are now off-screen. There is no bounds validation at restore time (ipc.ts lines 2066-2072 — saved x/y are applied directly to `winOptions` without checking if they fall within any active display).
+
+2. **Canvas pages break entirely**: Canvas (page) windows are sized to cover a full display using `screen.getDisplayNearestPoint()` (ipc.ts line 2162). If the display they were placed on is removed, the canvas window remains at the old size/position, which may be entirely off-screen. The canvas is not resized or repositioned to the remaining display.
+
+3. **Centered windows use stale display geometry**: The primary display fallback centering (ipc.ts lines 2104-2111) uses the primary display's work area at window creation time. If the primary display changes (e.g., external monitor was primary, now laptop is primary), new windows may be centered correctly but existing windows remain at their old positions.
+
+4. **The `center: true` option on cmd palette**: The command palette uses `center: true` (background.js line 274 of openPanelWindow), which centers on creation. Since the palette is `keepLive: true`, it is hidden rather than closed. When re-shown, it reappears at its last position — which could be off-screen if the display layout changed since it was first created.
+
+### Electron API Available
+
+Electron's `screen` module (EventEmitter) provides three relevant events:
+
+- **`display-added`** — `(event, newDisplay: Display)` — fired when a new display is connected
+- **`display-removed`** — `(event, oldDisplay: Display)` — fired when a display is disconnected
+- **`display-metrics-changed`** — `(event, display: Display, changedMetrics: string[])` — fired when bounds, workArea, scaleFactor, or rotation changes on a display. `changedMetrics` is an array of strings like `['bounds', 'workArea']`.
+
+Additional useful methods:
+- `screen.getAllDisplays()` — returns array of all connected Display objects
+- `screen.getDisplayNearestPoint({x, y})` — returns the display closest to a point
+- `screen.getPrimaryDisplay()` — returns the primary display
+
+The `Display` object contains: `id`, `bounds` (full screen rect), `workArea` (usable rect excluding taskbar/dock), `scaleFactor`, `rotation`, `size`, `workAreaSize`.
+
+Note: There was a historical Electron bug where `display-removed` and `display-metrics-changed` were not emitted reliably on some platforms (electron/electron#33414). This appears to be resolved in modern Electron versions (40.x as used in this project).
+
+### Recommendations
+
+#### 1. Add display change event listeners (Phase 1 — immediate value)
+
+Register listeners in `ipc.ts` (or a new `display.ts` module) after app is ready:
+
+```typescript
+screen.on('display-removed', (event, oldDisplay) => {
+  // Revalidate all visible windows
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || !win.isVisible()) continue;
+    ensureWindowOnScreen(win);
+  }
+});
+
+screen.on('display-metrics-changed', (event, display, changedMetrics) => {
+  if (changedMetrics.includes('bounds') || changedMetrics.includes('workArea')) {
+    // Resize canvas pages that cover this display
+    revalidateCanvasWindows(display);
+    // Revalidate other windows
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || !win.isVisible()) continue;
+      ensureWindowOnScreen(win);
+    }
+  }
+});
+```
+
+#### 2. Add bounds validation helper
+
+```typescript
+function ensureWindowOnScreen(win: BrowserWindow): void {
+  const bounds = win.getBounds();
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+
+  // Check if center point is within any display
+  const displays = screen.getAllDisplays();
+  const isOnScreen = displays.some(d => {
+    const wa = d.workArea;
+    return centerX >= wa.x && centerX < wa.x + wa.width &&
+           centerY >= wa.y && centerY < wa.y + wa.height;
+  });
+
+  if (!isOnScreen) {
+    // Move to center of nearest display (by distance from center point)
+    const nearest = screen.getDisplayNearestPoint({ x: centerX, y: centerY });
+    const wa = nearest.workArea;
+    const newX = Math.round(wa.x + (wa.width - bounds.width) / 2);
+    const newY = Math.round(wa.y + (wa.height - bounds.height) / 2);
+    win.setPosition(newX, newY);
+  }
+}
+```
+
+#### 3. Validate persisted window bounds on restore
+
+In the window-open handler (ipc.ts ~line 2066), after loading saved state, validate that the saved coordinates are within an active display before applying them:
+
+```typescript
+if (savedState) {
+  // Validate saved position is on a visible display
+  const centerX = (savedState.x ?? 0) + ((savedState.width ?? 0) / 2);
+  const centerY = (savedState.y ?? 0) + ((savedState.height ?? 0) / 2);
+  const displays = screen.getAllDisplays();
+  const isOnScreen = displays.some(d => {
+    const wa = d.workArea;
+    return centerX >= wa.x && centerX < wa.x + wa.width &&
+           centerY >= wa.y && centerY < wa.y + wa.height;
+  });
+
+  if (isOnScreen) {
+    // Apply saved state
+    if (savedState.x !== undefined) winOptions.x = savedState.x;
+    if (savedState.y !== undefined) winOptions.y = savedState.y;
+    if (savedState.width !== undefined) winOptions.width = savedState.width;
+    if (savedState.height !== undefined) winOptions.height = savedState.height;
+  } else {
+    // Discard saved position, keep saved size
+    if (savedState.width !== undefined) winOptions.width = savedState.width;
+    if (savedState.height !== undefined) winOptions.height = savedState.height;
+    // Window will be centered by the fallback logic below
+  }
+}
+```
+
+#### 4. Handle canvas page display changes
+
+Canvas pages sized to a specific display need special handling:
+
+- On `display-removed`: find canvas windows that were sized for the removed display, reattach them to the nearest remaining display (resize canvas to new display dimensions, offset the inner page bounds proportionally)
+- On `display-metrics-changed` with bounds/workArea changes: resize the canvas window to match the updated display dimensions
+- Publish a `display:changed` pubsub event so page.js can re-read display dimensions and adjust its internal bounds
+
+#### 5. Handle keepLive window repositioning
+
+For `keepLive` windows like the command palette that are hidden and re-shown:
+- On re-show (in `closeOrHideWindow`'s inverse — the show path), validate position before making the window visible
+- Or listen for `display-removed` and reposition hidden keepLive windows proactively
+
+#### Priority
+
+1. **Bounds validation on restore** (Recommendation 3) — highest impact, easiest to implement, prevents the most common user-facing issue
+2. **Display change event listeners** (Recommendations 1+2) — medium effort, handles the live unplug scenario
+3. **Canvas page display changes** (Recommendation 4) — most complex, requires coordination between main process and page.js renderer
+4. **keepLive window repositioning** (Recommendation 5) — low priority, edge case

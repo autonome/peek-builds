@@ -318,12 +318,10 @@ function isDragInteractive(el) {
 }
 
 /**
- * Initialize custom window drag from the center-wrapper (command bar area)
+ * Initialize custom window drag from visible UI areas (center-wrapper, chain indicator, etc.)
+ * Drag starts immediately on mousedown (no hold delay) for quick repositioning.
  */
 async function initDrag() {
-  const centerWrapper = document.querySelector('.center-wrapper');
-  if (!centerWrapper) return;
-
   let windowId = null;
 
   // Get window ID once at init
@@ -335,28 +333,39 @@ async function initDrag() {
     return;
   }
 
-  centerWrapper.addEventListener('mousedown', async (e) => {
+  // Drag starts on mousedown on any non-interactive visible element
+  document.addEventListener('mousedown', (e) => {
     // Only left click, skip interactive elements
     if (e.button !== 0) return;
     if (isDragInteractive(e.target)) return;
+    // Skip if clicking on transparent body background (not on a visible element)
+    // Only allow drag from visible UI containers
+    const visibleContainer = e.target.closest('.center-wrapper, #chain-indicator, #execution-state');
+    if (!visibleContainer) return;
 
-    try {
-      const pos = await api.window.getPosition();
+    // Prevent default immediately (before async call) to avoid text selection
+    e.preventDefault();
+
+    // Capture screen position synchronously
+    const startScreenX = e.screenX;
+    const startScreenY = e.screenY;
+
+    // Get window position async, then start drag
+    api.window.getPosition().then(pos => {
       if (!pos.success) return;
 
       dragState = {
         windowId,
-        startScreenX: e.screenX,
-        startScreenY: e.screenY,
+        startScreenX,
+        startScreenY,
         startPosX: pos.x,
         startPosY: pos.y
       };
 
       document.body.style.cursor = 'grabbing';
-      e.preventDefault();
-    } catch (err) {
+    }).catch(err => {
       log.error('cmd:panel', 'Drag: failed to get position', err);
-    }
+    });
   });
 
   document.addEventListener('mousemove', (e) => {
@@ -384,8 +393,11 @@ async function initDrag() {
     }
   });
 
-  // Also add cursor hint on center-wrapper for discoverability
-  centerWrapper.style.cursor = 'grab';
+  // Add cursor hint on the center-wrapper for discoverability
+  const centerWrapper = document.querySelector('.center-wrapper');
+  if (centerWrapper) {
+    centerWrapper.style.cursor = 'grab';
+  }
 
   log('cmd:panel', 'Custom drag handler initialized');
 }
