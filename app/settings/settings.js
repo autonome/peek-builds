@@ -1363,8 +1363,13 @@ const renderExtensionsSettings = async () => {
       // Build combined list
       const allExtensions = [];
 
-      // Get all builtin extension IDs from the loader
-      const builtinExtIds = ['cmd', 'groups', 'peeks', 'slides', 'windows'];
+      // Derive builtin extension IDs from running extensions
+      // All running extensions are discovered from the extensions/ directory or loaded externally.
+      // We treat any running extension as builtin if it's not in the external datastore.
+      const datastoreIds = new Set(datastoreExts.map(e => e.id));
+      const builtinExtIds = runningExts
+        .filter(e => !datastoreIds.has(e.id))
+        .map(e => e.id);
 
       // Add builtin extensions (whether running or not)
       builtinExtIds.forEach(extId => {
