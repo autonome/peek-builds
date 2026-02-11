@@ -252,6 +252,8 @@ peek-input.search-input {
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Cards grid - peek-grid custom properties */
@@ -377,6 +379,10 @@ peek-card[selected] {
 
 .detail-view {
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .detail-header {
@@ -435,6 +441,8 @@ peek-card[selected] {
   margin-bottom: 20px;
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .detail-editor-header {
@@ -474,26 +482,27 @@ peek-card[selected] {
   border-radius: 8px;
   overflow: hidden;
   min-height: 200px;
-  max-height: 50vh;
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .detail-editor-container .cm-editor {
-  height: 100%;
-  min-height: 200px;
-  max-height: 50vh;
+  flex: 1;
+  min-height: 0;
   border-radius: 8px;
 }
 
 .detail-editor-container .cm-scroller {
   overflow: auto;
+  flex: 1;
 }
 
 /* Vim status line below embedded editor */
 .detail-editor-status-line {
   border-radius: 0 0 8px 8px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .detail-editor-status-line .vim-status-line {

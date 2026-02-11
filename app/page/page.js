@@ -3,18 +3,10 @@
  *
  * Content-sized BrowserWindow with:
  * - Webview filling the entire window
- * - Floating navbar overlay (Cmd+L to show, Escape/click-outside to dismiss)
+ * - Floating navbar overlay (Cmd+L or hover near top to show, Escape/click-outside to dismiss)
  *   NOT embedded in window chrome — floats over content like a command palette
+ * - When shown, the webview shifts down so the Electron <webview> layer doesn't cover the navbar
  * - Resize via IPC to resize the BrowserWindow
- *
- * FLOATING NAVBAR — DO NOT ADD AN INLINE/EMBEDDED NAVBAR
- *
- * The navbar is a FLOATING overlay shown via Cmd+L or hover trigger.
- * It is NOT an embedded bar at the top of the page.
- * It does NOT use -webkit-app-region: drag.
- *
- * Any inline/embedded navbar was deliberately removed.
- * Do not re-add it under any circumstances without explicit user approval.
  */
 
 import api from '../api.js';
@@ -97,11 +89,30 @@ function updateState() {
 }
 
 // --- Show / Hide navbar ---
+// The floating navbar is shown by:
+//   1. Cmd+L (published from main process via before-input-event on guest/host webContents)
+//   2. Hovering near the top of the window (trigger zone)
+// It is hidden by clicking outside, pressing Escape, or moving mouse away (hover mode).
+//
+// When visible, the <webview> element shifts down (via .navbar-active class) so the
+// Electron composited webview layer doesn't paint over the floating navbar.
+
+let hideTimer = null;
+let showSource = null; // 'hover' or 'shortcut' — determines dismiss behavior
 
 function show(opts) {
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
   const wasHidden = !navbar.classList.contains('visible');
   navbar.classList.add('visible');
-  if (wasHidden) updateState();
+  webview.classList.add('navbar-active');
+  if (opts?.source) showSource = opts.source;
+  if (wasHidden) {
+    updateState();
+    DEBUG && console.log('[page] Navbar shown, source:', showSource);
+  }
   if (opts?.focusUrl) {
     requestAnimationFrame(() => {
       const range = document.createRange();
@@ -114,18 +125,25 @@ function show(opts) {
 }
 
 function hide() {
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
   navbar.classList.remove('visible');
+  webview.classList.remove('navbar-active');
   window.getSelection().removeAllRanges();
+  showSource = null;
+  DEBUG && console.log('[page] Navbar hidden');
 }
 
-// Floating navbar: shown on demand via Cmd+L only, dismissed by clicking outside or Escape
-// No trigger zone hover — the navbar is a floating overlay, not an embedded bar.
+// Dismiss on click outside the navbar
 document.addEventListener('mousedown', (e) => {
-  if (navbar.classList.contains('visible') && !navbar.contains(e.target)) {
+  if (navbar.classList.contains('visible') && !navbar.contains(e.target) && e.target !== triggerZone) {
     hide();
   }
 });
 
+// Dismiss on Escape
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && navbar.classList.contains('visible')) {
     hide();
@@ -133,9 +151,46 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// --- Hover trigger zone ---
+// Mouse entering the thin strip at the top of the window shows the navbar.
+// Moving away from both the trigger zone AND the navbar hides it (with a small delay).
+
+function scheduleHide() {
+  if (hideTimer) clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    // Only auto-hide if shown by hover (not by Cmd+L)
+    if (showSource === 'hover') {
+      hide();
+    }
+  }, 300);
+}
+
+function cancelHide() {
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+}
+
+triggerZone.addEventListener('mouseenter', () => {
+  show({ source: 'hover' });
+});
+
+triggerZone.addEventListener('mouseleave', () => {
+  if (showSource === 'hover') scheduleHide();
+});
+
+navbar.addEventListener('mouseenter', () => {
+  cancelHide();
+});
+
+navbar.addEventListener('mouseleave', () => {
+  if (showSource === 'hover') scheduleHide();
+});
+
 // Cmd+L: show floating navbar with URL focus
 // Published from main process with GLOBAL scope (both host and webview guest fire this)
-api.subscribe('page:show-navbar', () => show({ focusUrl: true }), api.scopes.GLOBAL);
+api.subscribe('page:show-navbar', () => show({ focusUrl: true, source: 'shortcut' }), api.scopes.GLOBAL);
 
 // --- Nav button actions ---
 

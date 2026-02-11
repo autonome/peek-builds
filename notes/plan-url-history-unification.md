@@ -1,6 +1,20 @@
 # Implementation Plan: URL/History Unification
 
-## 1. Current State Audit
+## Status: COMPLETED (Feb 11, 2026)
+
+All 6 phases implemented and committed:
+- `475e97fe` Phase 1: Remove dual-write
+- `f8beaef1` Phase 2: Redirect renderer address API calls to items
+- `67483a8a` Phase 3: IPC compatibility layer
+- `bca71da1` Phase 4: Update tests
+- `7ee8e9cb` Phase 5: Update Tauri backend
+- `6f90f258` Phase 6: Cleanup — drop tables, remove dead code and types
+
+Results: 231 unit tests pass, 155 electron tests pass (0 regressions). Actual effort: ~2-3 hours, not 4 weeks — data migration was already done by existing migrations.
+
+---
+
+## 1. Current State Audit (pre-implementation)
 
 The codebase has two parallel data models that have been partially unified through migrations already applied.
 

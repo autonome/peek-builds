@@ -1,15 +1,35 @@
 # Research: URL/History Unification Architecture for Peek
 
-## Executive Summary
+## Status: COMPLETED (Feb 11, 2026)
 
-The desktop app has **two parallel data models** that need unification:
+The unification has been implemented across 6 phases. The legacy `addresses`/`visits`/`address_tags` tables have been dropped. All code now uses the unified `items`/`item_visits`/`item_tags` system.
+
+See `notes/plan-url-history-unification.md` for the implementation plan that was executed.
+
+### What was done:
+- Phase 1: Removed dual-write between address and item systems
+- Phase 2: Redirected renderer address API calls to items
+- Phase 3: IPC compatibility layer (address handlers → item functions)
+- Phase 4: Updated tests
+- Phase 5: Updated Tauri backend
+- Phase 6: Dropped legacy tables, removed dead code and types
+
+### Key outcome:
+- Actual effort: ~2-3 hours (not 4 weeks) — data migration was already done by existing migrations
+- 231 unit tests pass, 155 electron tests pass
+- Legacy tables dropped via `dropLegacyAddressTables()` migration
+- IPC backward compat layer retained (address channel names redirect to item functions)
+
+---
+
+## Original Research (for historical reference)
+
+The desktop app had **two parallel data models** that needed unification:
 
 1. **Addresses/Visits** - History tracking, frecency, revisit counting (not synced)
 2. **Items** - User curation, sync, annotations (url, text, tagset, image types)
 
 **Core insight**: Adopt a unified "everything is an item" model that merges both systems, enabling full sync, consistent frecency scoring, and advanced features (groups, addressing, chaining).
-
-**Effort estimate**: ~4 weeks mid-term refactor that unblocks numerous TODO items.
 
 ---
 

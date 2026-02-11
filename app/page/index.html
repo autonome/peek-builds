@@ -19,7 +19,11 @@
       background: transparent;
     }
 
-    /* Webview fills the entire window */
+    /*
+     * Webview fills the entire window.
+     * When the navbar is visible, the webview shifts down via .navbar-active
+     * to avoid the Electron <webview> layer rendering over the navbar.
+     */
     webview {
       position: absolute;
       top: 0; left: 0; right: 0; bottom: 0;
@@ -27,17 +31,21 @@
       border-radius: 10px;
       overflow: hidden;
       -webkit-mask-image: -webkit-radial-gradient(white, white);
+      transition: top 0.15s ease;
+    }
+
+    /* Push webview down when navbar is active so it doesn't cover the floating bar */
+    webview.navbar-active {
+      top: 90px;
+      border-radius: 0 0 10px 10px;
     }
 
     /*
-     * FLOATING NAVBAR — DO NOT ADD AN INLINE/EMBEDDED NAVBAR
+     * FLOATING NAVBAR — NOT an inline/embedded bar.
      *
-     * The navbar is a FLOATING overlay shown via Cmd+L or hover trigger.
-     * It is NOT an embedded bar at the top of the page.
-     * It does NOT use -webkit-app-region: drag.
-     *
-     * Any inline/embedded navbar was deliberately removed.
-     * Do not re-add it under any circumstances without explicit user approval.
+     * Shown via Cmd+L or hovering near the top of the window.
+     * Centered, floating above content with shadow.
+     * Does NOT use -webkit-app-region: drag.
      */
     .navbar {
       position: fixed;
@@ -120,9 +128,12 @@
       background: var(--theme-bg, rgba(128, 128, 128, 0.18));
     }
 
-    /* Trigger zone hidden — navbar is shown on demand via Cmd+L only */
+    /* Trigger zone at top of window — hover here to reveal the floating navbar */
     .trigger-zone {
-      display: none;
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 12px;
+      z-index: 50;
     }
 
     /* Resize handle */
