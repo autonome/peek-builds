@@ -536,6 +536,50 @@ webview.addEventListener('dom-ready', async () => {
   }
 });
 
+// --- OpenSearch discovery & page:loaded event ---
+// After DOM is ready, detect OpenSearch <link> tags and publish page:loaded for extensions
+
+webview.addEventListener('did-finish-load', async () => {
+  const pageUrl = webview.getURL();
+  if (!pageUrl) return;
+
+  // Only process http/https pages
+  if (!pageUrl.startsWith('http://') && !pageUrl.startsWith('https://')) return;
+
+  let opensearchUrl = null;
+
+  try {
+    // Detect OpenSearch description link in the page
+    const detectedUrl = await webview.executeJavaScript(`
+      (function() {
+        const link = document.querySelector('link[rel="search"][type="application/opensearchdescription+xml"]');
+        return link ? link.href : null;
+      })();
+    `);
+
+    if (detectedUrl) {
+      // Resolve relative URLs against the page URL
+      try {
+        opensearchUrl = new URL(detectedUrl, pageUrl).href;
+      } catch (e) {
+        // Invalid URL, skip
+      }
+    }
+  } catch (err) {
+    DEBUG && console.log('[page] OpenSearch detection failed:', err.message);
+  }
+
+  // Publish page:loaded event for extensions (e.g., websearch OpenSearch discovery)
+  const pageTitle = document.title || webview.getTitle() || '';
+  api.publish('page:loaded', {
+    url: pageUrl,
+    title: pageTitle,
+    opensearchUrl
+  }, api.scopes.GLOBAL);
+
+  DEBUG && console.log('[page] page:loaded published:', pageUrl, opensearchUrl ? `(OpenSearch: ${opensearchUrl})` : '');
+});
+
 // --- Commands ---
 
 api.commands.register({
