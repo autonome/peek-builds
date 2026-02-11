@@ -267,9 +267,18 @@ const setupEventListeners = () => {
   // Escape handling
   if (api.escape) {
     api.escape.onEscape(() => {
-      // Dialog closing is handled automatically by the preload escape system.
-      // When ESC is pressed, the preload detects open peek-dialog elements and
-      // closes them before this callback is reached. No per-extension workaround needed.
+      // If the detail modal is open (or was just closed by the preload escape system),
+      // treat ESC as "go back to tags list" rather than closing the window.
+      // The preload closes peek-dialog elements before this callback fires,
+      // so we check state.editingItem to know a modal was just dismissed.
+      if (state.editingItem) {
+        state.editingItem = null;
+        // Ensure the dialog is closed (preload may have already closed it)
+        if (modalOverlay.open) {
+          modalOverlay.close();
+        }
+        return { handled: true };
+      }
 
       // If search has content, clear it
       if (state.searchQuery) {
@@ -831,7 +840,7 @@ const openEditModal = (item) => {
       subtitle = item.content;
       faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
     } else if (itemType === 'text') {
-      title = item.content.substring(0, 100) + (item.content.length > 100 ? '...' : '');
+      title = item.content || '';
       if (noteUrl) {
         subtitle = noteUrl;
         faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔗</text></svg>';
@@ -852,7 +861,20 @@ const openEditModal = (item) => {
 
   // Set item info
   modal.querySelector('.modal-favicon').src = faviconUrl;
-  modal.querySelector('.modal-item-title').textContent = title;
+  const titleEl = modal.querySelector('.modal-item-title');
+  titleEl.textContent = title;
+  // For text items, make the title scrollable to show full content
+  if (itemType === 'text') {
+    titleEl.style.maxHeight = '200px';
+    titleEl.style.overflowY = 'auto';
+    titleEl.style.whiteSpace = 'pre-wrap';
+    titleEl.style.wordBreak = 'break-word';
+  } else {
+    titleEl.style.maxHeight = '';
+    titleEl.style.overflowY = '';
+    titleEl.style.whiteSpace = '';
+    titleEl.style.wordBreak = '';
+  }
   modal.querySelector('.modal-item-url').textContent = subtitle;
 
   // Show or hide the "Open Page" button based on whether item has a URL
@@ -872,6 +894,39 @@ const openEditModal = (item) => {
     } else {
       openPageBtn.style.display = 'none';
     }
+  }
+
+  // Show or hide "Edit in Editor" button for text items
+  let editInEditorBtn = modal.querySelector('.modal-edit-editor-btn');
+  if (itemType === 'text') {
+    if (!editInEditorBtn) {
+      // Create the button on first use
+      editInEditorBtn = document.createElement('peek-button');
+      editInEditorBtn.className = 'modal-edit-editor-btn';
+      editInEditorBtn.variant = 'ghost';
+      editInEditorBtn.size = 'sm';
+      editInEditorBtn.title = 'Edit in Editor';
+      editInEditorBtn.innerHTML = `
+        <svg slot="prefix" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+        </svg>
+        Edit in Editor
+      `;
+      // Insert after the Open Page button's parent area
+      const itemInfoEl = modal.querySelector('.modal-item-info');
+      itemInfoEl.appendChild(editInEditorBtn);
+    }
+    editInEditorBtn.style.display = 'flex';
+    // Clone to remove old listeners
+    const newEditBtn = editInEditorBtn.cloneNode(true);
+    editInEditorBtn.parentNode.replaceChild(newEditBtn, editInEditorBtn);
+    newEditBtn.addEventListener('click', () => {
+      api.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
+      closeModal();
+    });
+  } else if (editInEditorBtn) {
+    editInEditorBtn.style.display = 'none';
   }
 
   // Render current tags

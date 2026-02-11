@@ -138,7 +138,15 @@ const commands = [
           const preview = (note.content || '').substring(0, 50) + (note.content?.length > 50 ? '...' : '');
           console.log(`${i + 1}. ${preview}`);
         });
-        return { success: true, data: notes };
+        return {
+          success: true,
+          message: `${notes.length} note${notes.length !== 1 ? 's' : ''} found`,
+          output: {
+            data: notes,
+            mimeType: 'item',
+            title: 'Recent notes'
+          }
+        };
       }
     }
   }

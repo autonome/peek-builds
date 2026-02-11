@@ -88,6 +88,12 @@ const extension = {
       openEditor(Object.keys(params).length > 0 ? params : undefined);
     }, api.scopes.GLOBAL);
 
+    // Subscribe to editor:add — open a new blank editor document
+    api.subscribe('editor:add', (msg) => {
+      console.log('[editor] editor:add received:', msg);
+      openEditor(); // No params = blank document
+    }, api.scopes.GLOBAL);
+
     console.log('[editor] Extension loaded');
   },
 
