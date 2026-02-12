@@ -395,9 +395,8 @@ describe('Session Integration Tests', () => {
   // ========================================================================
   // isValidDescriptor tests
   //
-  // BUG #4 THIS CATCHES: localhost URLs were incorrectly filtered out.
-  // The old code had a localhost filter that broke dev workflows.
-  // Now fixed — localhost URLs should be accepted.
+  // Validates that descriptors with empty/missing URLs are rejected,
+  // and all other URLs (any protocol, any host) are accepted.
   // ========================================================================
 
   describe('isValidDescriptor', () => {
@@ -421,19 +420,12 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'peek://app/settings' })), true);
     });
 
-    it('accepts localhost URLs (BUG #4 — previously filtered out)', () => {
-      // BUG #4: The old code filtered localhost URLs, which broke dev server windows.
-      // This test ensures localhost URLs are valid for restore.
-      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://localhost:3000' })), true,
-        'localhost URLs must be accepted — filtering them was BUG #4');
+    it('accepts localhost URLs', () => {
+      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://localhost:3000' })), true);
     });
 
-    it('accepts localhost with paths', () => {
-      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://localhost:5173/app' })), true);
-    });
-
-    it('accepts 127.0.0.1 URLs', () => {
-      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://127.0.0.1:8080' })), true);
+    it('accepts http URLs', () => {
+      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://example.com/page' })), true);
     });
 
     it('accepts file:// URLs', () => {
@@ -1168,8 +1160,7 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(validWindows.length, 3, 'Should have 3 valid windows');
       assert.strictEqual(validWindows[0].url, 'https://valid1.com');
       assert.strictEqual(validWindows[1].url, 'https://valid2.com');
-      assert.strictEqual(validWindows[2].url, 'http://localhost:3000',
-        'localhost URLs should be valid (BUG #4)');
+      assert.strictEqual(validWindows[2].url, 'http://localhost:3000');
     });
 
     it('empty snapshot returns no windows to restore — triggers startup feature', () => {
