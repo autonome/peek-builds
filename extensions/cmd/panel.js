@@ -639,6 +639,36 @@ function handleSpecialKey(e) {
       state.typed = '';
       updateCommandUI();
       updateResultsUI();
+    } else if (trimmedText) {
+      // No matching command and not a URL — treat as a web search query.
+      // Use the websearch extension's "web search" command if available,
+      // otherwise fall back to pubsub.
+      log('cmd:panel', 'No command match, performing web search for:', trimmedText);
+
+      const webSearchCmd = state.commands['web search'];
+      if (webSearchCmd) {
+        state.lastExecuted = 'web search';
+        updateMatchCount('web search');
+
+        execute('web search', 'web search ' + trimmedText);
+      } else {
+        // Fallback: publish search request directly via pubsub
+        log('cmd:panel', 'web search command not found, using pubsub fallback');
+        api.publish('cmd:execute:web search', {
+          typed: trimmedText,
+          name: 'web search',
+          params: [trimmedText],
+          search: trimmedText,
+          expectResult: false
+        }, api.scopes.GLOBAL);
+        setTimeout(shutdown, 100);
+      }
+
+      // Clear input and UI
+      commandInput.value = '';
+      state.typed = '';
+      updateCommandUI();
+      updateResultsUI();
     }
     return;
   }
