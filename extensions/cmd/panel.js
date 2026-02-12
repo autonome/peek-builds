@@ -1381,6 +1381,9 @@ function findMatchingCommands(text) {
   const commandPart = text.split(' ')[0];
   const hasParameters = text.includes(' ');
 
+  const lowerCommandPart = commandPart.toLowerCase();
+  const lowerText = text.toLowerCase();
+
   log('cmd:panel', 'Command part:', commandPart, 'Has parameters:', hasParameters);
 
   // Iterate over all commands, searching for matches
@@ -1397,8 +1400,9 @@ function findMatchingCommands(text) {
     // 2. command name is at beginning of typed string (for commands with parameters)
     log('cmd:panel', 'testing option...', name);
 
-    const matchesCommand = name.toLowerCase().indexOf(commandPart.toLowerCase()) !== -1;
-    const isCommandWithParams = hasParameters && text.toLowerCase().startsWith(name.toLowerCase() + ' ');
+    const lowerName = name.toLowerCase();
+    const matchesCommand = lowerName.indexOf(lowerCommandPart) !== -1;
+    const isCommandWithParams = hasParameters && lowerText.startsWith(lowerName + ' ');
 
     if (matchesCommand || isCommandWithParams) {
       matches.push(name);
@@ -1410,11 +1414,15 @@ function findMatchingCommands(text) {
   // 2. Combined score: adaptive score (query-specific) + frecency (global usage)
   //    This ensures frequently-used commands rank high even when the specific
   //    query has no adaptive data (e.g., user types "ta" but usually types "tags")
+  // 3. Tiebreaker: prefix match preferred, then shorter name, then alphabetical
   matches.sort(function(a, b) {
+    const aLower = a.toLowerCase();
+    const bLower = b.toLowerCase();
+
     // If we have parameters, prioritize exact command match
     if (hasParameters) {
-      const aExact = a.toLowerCase() === commandPart.toLowerCase();
-      const bExact = b.toLowerCase() === commandPart.toLowerCase();
+      const aExact = aLower === lowerCommandPart;
+      const bExact = bLower === lowerCommandPart;
       if (aExact && !bExact) return -1;
       if (bExact && !aExact) return 1;
     }
@@ -1433,7 +1441,26 @@ function findMatchingCommands(text) {
     const aScore = (aAdaptive * 3) + aFrecency;
     const bScore = (bAdaptive * 3) + bFrecency;
 
-    return bScore - aScore;
+    if (bScore !== aScore) {
+      return bScore - aScore;
+    }
+
+    // Tiebreaker when scores are equal:
+    // 1. Prefer prefix matches (command starts with typed text) over substring matches
+    //    This makes the inline autocomplete ghost text more natural (e.g., "ta" -> "tag"
+    //    rather than "ta" -> "open tags" which shifts the cursor position)
+    const aPrefix = aLower.startsWith(lowerCommandPart);
+    const bPrefix = bLower.startsWith(lowerCommandPart);
+    if (aPrefix && !bPrefix) return -1;
+    if (bPrefix && !aPrefix) return 1;
+
+    // 2. Prefer shorter command names (more specific match)
+    if (a.length !== b.length) {
+      return a.length - b.length;
+    }
+
+    // 3. Alphabetical for full determinism
+    return a.localeCompare(b);
   });
 
   return matches;
