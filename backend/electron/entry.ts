@@ -284,13 +284,17 @@ app.on('before-quit', () => {
 // Handle SIGINT/SIGTERM (e.g. Ctrl+C in terminal).
 // app.quit() is async and won't complete before yarn kills the process,
 // so we save synchronously (better-sqlite3) then exit immediately.
+// Both signals are treated as clean shutdowns because they are intentional:
+// - SIGINT = user pressed Ctrl+C (deliberate quit)
+// - SIGTERM = system shutdown or process manager stop (graceful termination)
+// Crash recovery should only trigger when the process dies WITHOUT a signal
+// handler running (kill -9, segfault, OOM), in which case markSessionDirty's
+// cleanShutdown=false persists because no save ever overwrites it.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     console.log(`[lifecycle] ${signal} received, saving session`);
     try { stopAutosaveTimer(); } catch { /* ignore */ }
-    // Save snapshot but mark as NOT clean shutdown so the user gets
-    // the crash recovery prompt on next startup (SIGINT = interrupted).
-    try { saveSessionSnapshot('before-quit', { cleanShutdown: false }); } catch (e) { console.error('[lifecycle] signal save error:', e); }
+    try { saveSessionSnapshot('before-quit'); } catch (e) { console.error('[lifecycle] signal save error:', e); }
     try { shutdown(); } catch { /* ignore */ }
     process.exit(0);
   });
