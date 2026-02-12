@@ -36,6 +36,7 @@ const loadAdaptiveData = async () => {
   } else {
     adaptiveDataCache = { feedback: {}, counts: {} };
   }
+  log('cmd:panel', 'loadAdaptiveData: loaded', Object.keys(adaptiveDataCache.feedback).length, 'feedback entries,', Object.keys(adaptiveDataCache.counts).length, 'count entries');
   return adaptiveDataCache;
 };
 
@@ -61,6 +62,7 @@ let state = {
   matchCounts: {}, // match counts - selectedcommand:numberofselections
   adaptiveFeedback: {}, // adaptive matching - typed -> { command: count, ... }
   typed: '', // text typed by user so far, if any
+  originalTyped: '', // original text before Tab completion (for adaptive feedback)
   lastExecuted: '', // text last typed by user when last they hit return
 
   // UI visibility state
@@ -339,6 +341,8 @@ async function render() {
   // Add event listeners to the input
   commandInput.addEventListener('input', () => {
     state.typed = commandInput.value;
+    // Track original typed text for adaptive feedback (before Tab may overwrite it)
+    state.originalTyped = commandInput.value;
     // Reset showResults when user types (they'll press down to see results)
     state.showResults = false;
 
@@ -407,6 +411,13 @@ async function render() {
       modeWasSet = false;
       // Load current command context (mode, target window)
       await loadCommandContext();
+      // Reload adaptive data from storage (may have been updated by other processes)
+      adaptiveDataCache = null;
+      loadAdaptiveData().then(data => {
+        state.adaptiveFeedback = data.feedback;
+        state.matchCounts = data.counts;
+        log('cmd:panel', 'Reloaded adaptive data on panel show');
+      });
     }
   });
 
@@ -476,6 +487,17 @@ function handleSpecialKey(e) {
       return;
     }
 
+
+    // Clear text first, then close (IZUI-style: escape content before container)
+    if (commandInput.value) {
+      commandInput.value = '';
+      state.typed = '';
+      state.matches = [];
+      state.matchIndex = 0;
+      updateCommandUI();
+      updateResultsUI();
+      return;
+    }
     shutdown();
     return;
   }
@@ -523,7 +545,8 @@ function handleSpecialKey(e) {
       const typedText = commandInput.value;
 
       // Store command name for history and adaptive feedback
-      const commandPart = typedText.split(' ')[0];
+      // Use originalTyped (pre-Tab text) for adaptive feedback so "ta" -> "open tags" is recorded
+      const commandPart = (state.originalTyped || typedText).split(' ')[0];
       state.lastExecuted = name;
       updateMatchCount(name);
       updateAdaptiveFeedback(commandPart, name);
@@ -632,8 +655,12 @@ function handleSpecialKey(e) {
                             currentValue.startsWith(currentMatch + ' ');
 
     if (alreadyCompleted && state.matches.length > 1) {
-      // Cycle to next match
-      state.matchIndex = (state.matchIndex + 1) % state.matches.length;
+      // Cycle forward (Tab) or backward (Shift-Tab)
+      if (e.shiftKey) {
+        state.matchIndex = (state.matchIndex - 1 + state.matches.length) % state.matches.length;
+      } else {
+        state.matchIndex = (state.matchIndex + 1) % state.matches.length;
+      }
     }
     // else: first completion, stay on current matchIndex
 
@@ -1468,6 +1495,8 @@ function findMatchingCommands(text) {
     const aScore = (aAdaptive * 3) + aFrecency;
     const bScore = (bAdaptive * 3) + bFrecency;
 
+    log('cmd:panel', 'sort score', commandPart, a, 'adaptive:'+aAdaptive, 'frecency:'+aFrecency, 'total:'+aScore, 'vs', b, 'adaptive:'+bAdaptive, 'frecency:'+bFrecency, 'total:'+bScore);
+
     if (bScore !== aScore) {
       return bScore - aScore;
     }
@@ -1507,6 +1536,7 @@ function findMatchingCommands(text) {
  */
 function updateAdaptiveFeedback(typed, name) {
   // Initialize feedback for this typed string if needed
+  log('cmd:panel', 'updateAdaptiveFeedback', typed, '->', name, 'current feedback:', JSON.stringify(state.adaptiveFeedback[typed] || {}));
   if (!state.adaptiveFeedback[typed]) {
     state.adaptiveFeedback[typed] = {};
   }
@@ -1802,7 +1832,7 @@ function updateResultsUI() {
       execute(match, state.typed);
       state.lastExecuted = match;
       updateMatchCount(match);
-      updateAdaptiveFeedback(state.typed.split(' ')[0], match);
+      updateAdaptiveFeedback((state.originalTyped || state.typed).split(' ')[0], match);
       document.getElementById('command-input').value = '';
       state.typed = '';
       updateCommandUI();
