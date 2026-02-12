@@ -26,8 +26,8 @@ function openEditor(params) {
     api.window.open(url, {
       role: 'workspace',
       key: 'editor-home',
-      width: 1200,
-      height: 800,
+      width: 800,
+      height: 1000,
       title: 'Editor'
     });
   } else {

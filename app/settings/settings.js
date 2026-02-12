@@ -20,6 +20,7 @@ const createInput = (label, value, onChange, options = {}) => {
   input.type = options.type || 'text';
   input.value = value || '';
   input.disabled = options.disabled || false;
+  if (options.placeholder) input.placeholder = options.placeholder;
 
   if (options.type === 'number') {
     if (options.step) input.step = options.step;
@@ -154,10 +155,19 @@ const renderCoreSettings = async () => {
         prefsSection.appendChild(input);
       } else {
         const input = createInput(displayLabel, v, (newVal) => {
-          prefs[k] = newVal;
+          // If cleared to empty and there's a default, reset to default
+          if (newVal === '' && s.default) {
+            prefs[k] = s.default;
+            // Update the input field to show the default
+            const inputEl = input.querySelector('input');
+            if (inputEl) inputEl.value = s.default;
+          } else {
+            prefs[k] = newVal;
+          }
           save();
         }, {
-          helpText: s.description
+          helpText: s.description,
+          placeholder: s.default || ''
         });
         prefsSection.appendChild(input);
       }
@@ -2477,7 +2487,7 @@ const renderDatastoreSettings = async () => {
   container.appendChild(statsSection);
 
   // Table browser
-  const tables = ['items', 'item_visits', 'item_tags', 'content', 'tags', 'blobs', 'scripts_data', 'feeds', 'extensions', 'extension_settings', 'themes', 'settings'];
+  const tables = ['items', 'item_visits', 'item_tags', 'content', 'tags', 'blobs', 'scripts_data', 'feeds', 'extensions', 'extension_settings', 'settings'];
 
   const tableSection = document.createElement('div');
   tableSection.className = 'form-section';

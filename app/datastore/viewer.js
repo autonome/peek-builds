@@ -5,7 +5,7 @@ console.log('datastore viewer loading');
 
 // No IZUI init needed — backend handles parent tracking and focus restoration via roles.
 
-const tables = ['addresses', 'visits', 'content', 'tags', 'blobs', 'scripts_data', 'feeds'];
+const tables = ['items', 'item_visits', 'item_tags', 'content', 'tags', 'blobs', 'scripts_data', 'feeds', 'extensions', 'extension_settings', 'settings'];
 
 let currentTable = null;
 let datastoreApi = null;
