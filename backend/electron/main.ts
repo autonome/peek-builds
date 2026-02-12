@@ -70,15 +70,9 @@ const windowRegistry = new Map<number, {
 export function configure(cfg: AppConfig): void {
   config = cfg;
 
-  // Tier 1 dark mode: Set nativeTheme based on dark mode setting
-  // 'off' = respect system theme, 'system'/'force' = force dark for prefers-color-scheme
+  // Tier 1 dark mode: 'force' = always dark, 'off'/'system' = respect OS preference
   const darkMode = cfg.darkMode || 'system';
-  if (darkMode === 'off') {
-    nativeTheme.themeSource = 'system';
-  } else {
-    // 'system' or 'force': make prefers-color-scheme: dark true for all webviews
-    nativeTheme.themeSource = 'dark';
-  }
+  nativeTheme.themeSource = (darkMode === 'force') ? 'dark' : 'system';
 
   // Register custom protocol scheme (must be before app.ready)
   registerScheme();

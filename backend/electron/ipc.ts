@@ -1886,20 +1886,11 @@ function setDarkModeSetting(value: string): void {
 
 /**
  * Apply dark mode setting to nativeTheme
- * Tier 1: When 'system' or 'force', set nativeTheme.themeSource = 'dark'
- * so prefers-color-scheme: dark is true for all webviews.
- * When 'off', respect the color scheme theme setting.
+ * Tier 1: 'force' = always report dark to webviews
+ * 'off' or 'system' = respect OS color scheme preference
  */
 export function applyDarkModeSetting(mode: string): void {
-  if (mode === 'off') {
-    // Respect the user's color scheme theme setting
-    const colorScheme = getThemeSetting(THEME_COLOR_SCHEME_KEY) || 'system';
-    nativeTheme.themeSource = colorScheme as 'system' | 'light' | 'dark';
-  } else {
-    // 'system' or 'force': set nativeTheme to dark
-    // This makes prefers-color-scheme: dark true for all webviews
-    nativeTheme.themeSource = 'dark';
-  }
+  nativeTheme.themeSource = (mode === 'force') ? 'dark' : 'system';
 }
 
 /**
@@ -2132,6 +2123,23 @@ export function registerWindowHandlers(): void {
       }
     }
 
+    // For canvas pages, adjust window bounds BEFORE creation to include margins
+    // and trigger zone. This prevents a visual flash where the window appears at
+    // the webview coordinates then jumps to the correct position.
+    if (useCanvas && !isHeadless()) {
+      const CANVAS_MARGIN = 8;
+      const CANVAS_TRIGGER_ZONE = 8;
+      // winOptions.x/y/width/height are currently the webview screen coordinates
+      const wvX = winOptions.x as number;
+      const wvY = winOptions.y as number;
+      const wvW = winOptions.width as number;
+      const wvH = winOptions.height as number;
+      winOptions.x = wvX - CANVAS_MARGIN;
+      winOptions.y = wvY - CANVAS_TRIGGER_ZONE;
+      winOptions.width = wvW + CANVAS_MARGIN * 2;
+      winOptions.height = wvH + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN;
+    }
+
     DEBUG && console.log('Creating window with options:', winOptions);
 
     // Create new window
@@ -2152,9 +2160,9 @@ export function registerWindowHandlers(): void {
       // The window moves/resizes via setBounds() IPC calls from the renderer.
       let loadUrl = url;
       if (useCanvas) {
-        // Margins: 8px on each side for resize handles, 30px top for trigger zone
+        // Margins: 8px on each side for resize handles, 8px top for trigger zone
         const MARGIN = 8;
-        const TRIGGER_ZONE_HEIGHT = 30;
+        const TRIGGER_ZONE_HEIGHT = 8;
 
         const webviewX = parseInt(String(winOptions.x ?? 100));
         const webviewY = parseInt(String(winOptions.y ?? 100));
@@ -2172,16 +2180,11 @@ export function registerWindowHandlers(): void {
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
 
-        // Size the BrowserWindow to tightly wrap the webview + margins
+        // Window bounds were already set correctly before creation (to avoid flash).
+        // Just set the transparent background.
         if (!isHeadless()) {
-          const winX = webviewX - MARGIN;
-          const winY = webviewY - TRIGGER_ZONE_HEIGHT;
-          const winW = webviewW + MARGIN * 2;
-          const winH = webviewH + TRIGGER_ZONE_HEIGHT + MARGIN;
-          win.setBounds({ x: winX, y: winY, width: winW, height: winH });
           win.setBackgroundColor('#00000000');
-          DEBUG && console.log('Minimal page host: win bounds', { x: winX, y: winY, width: winW, height: winH },
-            'webview bounds', { x: webviewX, y: webviewY, width: webviewW, height: webviewH });
+          DEBUG && console.log('Minimal page host: webview bounds', { x: webviewX, y: webviewY, width: webviewW, height: webviewH });
         }
       }
 

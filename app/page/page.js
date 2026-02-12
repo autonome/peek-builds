@@ -27,7 +27,7 @@ const NAVBAR_GAP = 8;
 const MIN_WIDTH = 200;
 const MIN_HEIGHT = 150;
 const MARGIN = 8;                // Resize handle margin on each side
-const TRIGGER_ZONE_HEIGHT = 30;  // Transparent strip above webview for hover trigger
+const TRIGGER_ZONE_HEIGHT = 8;   // Transparent strip above webview for hover trigger
 
 // --- Parse URL parameters ---
 // URL params represent the webview's position in screen coordinates
@@ -359,6 +359,7 @@ webview.addEventListener('console-message', (e) => {
   if (isNaN(screenX) || isNaN(screenY)) return;
 
   dragOverlay.classList.add('active');
+  pageMouseButtonDown = true;  // Webview mousedown doesn't bubble to document, set manually
   startDrag(screenX, screenY);
   DEBUG && console.log('[page] Webview long-press drag started at', screenX, screenY);
 });
