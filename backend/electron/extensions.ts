@@ -90,6 +90,9 @@ export function loadExtensionManifest(extPath: string): ExtensionManifest | null
         manifest.schemas = { prefs: schema.prefs, item: schema.item };
         manifest.storageKeys = schema.storageKeys;
         manifest.defaults = schema.defaults;
+        if (schema.labels) {
+          manifest.labels = schema.labels;
+        }
       }
     }
 

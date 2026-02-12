@@ -1771,18 +1771,27 @@ const renderFeatureSettings = async (feature) => {
 
     const pProps = schemas.prefs.properties;
 
+    // Helper: convert camelCase to human-readable label (e.g., "enableSuggestions" -> "Enable suggestions")
+    const camelToLabel = (str) => {
+      const result = str.replace(/([A-Z])/g, ' $1').toLowerCase();
+      return result.charAt(0).toUpperCase() + result.slice(1);
+    };
+
     Object.keys(pProps).forEach(k => {
       const s = pProps[k];
       const v = (prefs && prefs.hasOwnProperty(k)) ? prefs[k] : s.default;
+      const displayLabel = (labels.prefs && labels.prefs[k]) || camelToLabel(k);
 
       if (s.type === 'boolean') {
-        const checkbox = createCheckbox(k, v, (newVal) => {
+        const checkbox = createCheckbox(displayLabel, v, (newVal) => {
           prefs[k] = newVal;
           save();
+        }, {
+          helpText: s.description
         });
         prefsSection.appendChild(checkbox);
       } else if (s.type === 'integer' || s.type === 'number') {
-        const input = createInput(k, v, (newVal) => {
+        const input = createInput(displayLabel, v, (newVal) => {
           prefs[k] = newVal;
           save();
         }, {
@@ -1792,7 +1801,7 @@ const renderFeatureSettings = async (feature) => {
         });
         prefsSection.appendChild(input);
       } else {
-        const input = createInput(k, v, (newVal) => {
+        const input = createInput(displayLabel, v, (newVal) => {
           prefs[k] = newVal;
           save();
         }, {
@@ -2419,6 +2428,376 @@ const showEnableSyncDialog = async (profile, parentContainer) => {
   apiKeyInput.focus();
 };
 
+// Render datastore settings (inline pane instead of separate window)
+const renderDatastoreSettings = async () => {
+  const container = document.createElement('div');
+
+  // Overview stats
+  const statsSection = document.createElement('div');
+  statsSection.className = 'form-section';
+
+  const statsTitle = document.createElement('h3');
+  statsTitle.className = 'form-section-title';
+  statsTitle.textContent = 'Overview';
+  statsSection.appendChild(statsTitle);
+
+  const statsGrid = document.createElement('div');
+  statsGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 16px; margin-bottom: 16px;';
+
+  // Load stats
+  let stats = {};
+  try {
+    const result = await api.datastore.getStats();
+    if (result && result.success && result.data) {
+      stats = result.data;
+    }
+  } catch (e) {
+    console.error('[settings] Error getting datastore stats:', e);
+  }
+
+  const statItems = [
+    { label: 'Items', value: stats.totalItems || 0 },
+    { label: 'Addresses', value: stats.totalAddresses || 0 },
+    { label: 'Visits', value: stats.totalVisits || 0 },
+    { label: 'Tags', value: stats.totalTags || 0 },
+    { label: 'Content', value: stats.totalContent || 0 },
+  ];
+
+  statItems.forEach(({ label, value }) => {
+    const stat = document.createElement('div');
+    stat.style.cssText = 'text-align: center; padding: 16px; background: var(--bg-tertiary); border-radius: 6px;';
+    stat.innerHTML = `
+      <div style="font-size: 24px; font-weight: 600; color: var(--text-primary);">${value}</div>
+      <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${label}</div>
+    `;
+    statsGrid.appendChild(stat);
+  });
+
+  statsSection.appendChild(statsGrid);
+  container.appendChild(statsSection);
+
+  // Table browser
+  const tables = ['items', 'item_visits', 'item_tags', 'content', 'tags', 'blobs', 'scripts_data', 'feeds', 'extensions', 'extension_settings', 'themes', 'settings'];
+
+  const tableSection = document.createElement('div');
+  tableSection.className = 'form-section';
+  tableSection.style.marginTop = '24px';
+
+  const tableTitle = document.createElement('h3');
+  tableTitle.className = 'form-section-title';
+  tableTitle.textContent = 'Tables';
+  tableSection.appendChild(tableTitle);
+
+  const tableList = document.createElement('div');
+  tableList.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;';
+
+  const tableDataContainer = document.createElement('div');
+  tableDataContainer.style.cssText = 'margin-top: 16px; max-height: 400px; overflow: auto; border: 1px solid var(--border-primary); border-radius: 6px;';
+
+  // Load counts for each table
+  for (const tableName of tables) {
+    const btn = document.createElement('button');
+    btn.style.cssText = `
+      padding: 6px 12px;
+      font-size: 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-primary);
+      border-radius: 4px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    `;
+
+    let count = 0;
+    try {
+      const result = await api.datastore.getTable(tableName);
+      if (result && result.success && result.data) {
+        count = Object.keys(result.data).length;
+      }
+    } catch (e) {
+      // table may not exist
+    }
+
+    btn.textContent = `${tableName} (${count})`;
+    btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
+    btn.addEventListener('mouseleave', () => { if (!btn.classList.contains('active-table')) btn.style.background = 'var(--bg-tertiary)'; });
+
+    btn.addEventListener('click', async () => {
+      // Update active state
+      tableList.querySelectorAll('button').forEach(b => {
+        b.classList.remove('active-table');
+        b.style.background = 'var(--bg-tertiary)';
+        b.style.borderColor = 'var(--border-primary)';
+        b.style.color = 'var(--text-secondary)';
+      });
+      btn.classList.add('active-table');
+      btn.style.background = 'var(--base0D)';
+      btn.style.borderColor = 'var(--base0D)';
+      btn.style.color = 'white';
+
+      // Load table data
+      tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Loading...</div>';
+      try {
+        const result = await api.datastore.getTable(tableName);
+        if (result && result.success && result.data) {
+          const rows = Object.entries(result.data);
+          if (rows.length === 0) {
+            tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Table is empty.</div>';
+            return;
+          }
+
+          const columns = ['id', ...Object.keys(rows[0][1]).filter(c => c !== 'id')];
+          let html = '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">';
+          html += '<thead><tr>';
+          columns.forEach(col => {
+            html += `<th style="text-align: left; padding: 8px 10px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary); font-weight: 600; color: var(--text-primary); position: sticky; top: 0;">${col}</th>`;
+          });
+          html += '</tr></thead><tbody>';
+
+          rows.slice(0, 100).forEach(([id, row]) => {
+            html += '<tr>';
+            columns.forEach(col => {
+              const value = col === 'id' ? id : row[col];
+              let display = value === null || value === undefined ? '-' : String(value);
+              if (display.length > 80) display = display.substring(0, 80) + '...';
+              html += `<td style="padding: 6px 10px; border-bottom: 1px solid var(--border-light, var(--border-primary)); color: var(--text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${display}">${display}</td>`;
+            });
+            html += '</tr>';
+          });
+
+          if (rows.length > 100) {
+            html += `<tr><td colspan="${columns.length}" style="padding: 8px 10px; color: var(--text-muted); text-align: center;">Showing first 100 of ${rows.length} rows</td></tr>`;
+          }
+
+          html += '</tbody></table>';
+          tableDataContainer.innerHTML = html;
+        } else {
+          tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Failed to load table data.</div>';
+        }
+      } catch (e) {
+        tableDataContainer.innerHTML = `<div style="padding: 16px; color: var(--error-text, #dc2626);">Error: ${e.message}</div>`;
+      }
+    });
+
+    tableList.appendChild(btn);
+  }
+
+  tableSection.appendChild(tableList);
+  tableSection.appendChild(tableDataContainer);
+  container.appendChild(tableSection);
+
+  // Refresh button
+  const refreshSection = document.createElement('div');
+  refreshSection.className = 'form-section';
+  refreshSection.style.marginTop = '24px';
+
+  const refreshBtn = document.createElement('button');
+  refreshBtn.textContent = 'Refresh All';
+  refreshBtn.style.cssText = `
+    padding: 8px 16px;
+    font-size: 13px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    color: var(--text-primary);
+    cursor: pointer;
+  `;
+  refreshBtn.addEventListener('click', async () => {
+    refreshBtn.textContent = 'Refreshing...';
+    refreshBtn.disabled = true;
+    // Re-render the entire section
+    const newContent = await renderDatastoreSettings();
+    container.replaceWith(newContent);
+  });
+  refreshSection.appendChild(refreshBtn);
+  container.appendChild(refreshSection);
+
+  return container;
+};
+
+// Render diagnostics settings (inline pane instead of separate window)
+const renderDiagnosticsSettings = async () => {
+  const container = document.createElement('div');
+
+  const desc = document.createElement('p');
+  desc.className = 'help-text';
+  desc.style.marginBottom = '16px';
+  desc.textContent = 'Inspect localStorage and datastore contents for debugging.';
+  container.appendChild(desc);
+
+  // Button row
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;';
+
+  const outputArea = document.createElement('pre');
+  outputArea.style.cssText = 'background: var(--bg-tertiary); padding: 16px; border-radius: 6px; overflow: auto; max-height: 500px; font-size: 12px; font-family: monospace; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;';
+  outputArea.textContent = 'Click a button above to inspect data.';
+
+  const makeBtn = (text, fn) => {
+    const btn = document.createElement('button');
+    btn.textContent = text;
+    btn.style.cssText = `
+      padding: 8px 16px;
+      font-size: 13px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-primary);
+      border-radius: 6px;
+      color: var(--text-primary);
+      cursor: pointer;
+    `;
+    btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--bg-tertiary)'; });
+    btn.addEventListener('click', fn);
+    return btn;
+  };
+
+  // Dump localStorage
+  btnRow.appendChild(makeBtn('Dump localStorage', () => {
+    const items = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      const value = localStorage.getItem(key);
+      items.push({ key, value });
+    }
+    items.sort((a, b) => a.key.localeCompare(b.key));
+
+    let text = `localStorage: ${items.length} items\n\n`;
+    items.forEach(item => {
+      let displayValue = item.value;
+      try {
+        const parsed = JSON.parse(item.value);
+        displayValue = JSON.stringify(parsed, null, 2);
+      } catch {}
+      text += `${item.key}:\n  ${displayValue}\n\n`;
+    });
+    outputArea.textContent = text;
+  }));
+
+  // Dump extension_settings
+  btnRow.appendChild(makeBtn('Dump extension_settings', async () => {
+    try {
+      const result = await api.datastore.getTable('extension_settings');
+      if (result.success) {
+        const data = result.data || {};
+        const entries = Object.entries(data);
+        let text = `extension_settings: ${entries.length} rows\n\n`;
+        entries.forEach(([rowId, row]) => {
+          let displayValue = row.value;
+          try {
+            displayValue = JSON.stringify(JSON.parse(row.value), null, 2);
+          } catch {}
+          text += `${rowId} (${row.extensionId}:${row.key}):\n  ${displayValue}\n\n`;
+        });
+        outputArea.textContent = text;
+      } else {
+        outputArea.textContent = `Error: ${result.error}`;
+      }
+    } catch (err) {
+      outputArea.textContent = `Error: ${err.message}`;
+    }
+  }));
+
+  // Copy results
+  btnRow.appendChild(makeBtn('Copy Results', () => {
+    navigator.clipboard.writeText(outputArea.textContent).then(() => {
+      const origText = outputArea.textContent;
+      outputArea.textContent = 'Copied to clipboard!';
+      setTimeout(() => { outputArea.textContent = origText; }, 1000);
+    });
+  }));
+
+  container.appendChild(btnRow);
+
+  // Backup tools section
+  const backupSection = document.createElement('div');
+  backupSection.className = 'form-section';
+  backupSection.style.marginTop = '24px';
+
+  const backupTitle = document.createElement('h3');
+  backupTitle.className = 'form-section-title';
+  backupTitle.textContent = 'Backup Tools';
+  backupSection.appendChild(backupTitle);
+
+  const backupDesc = document.createElement('p');
+  backupDesc.className = 'help-text';
+  backupDesc.style.marginBottom = '12px';
+  backupDesc.textContent = 'Create and manage database backups.';
+  backupSection.appendChild(backupDesc);
+
+  const backupBtnRow = document.createElement('div');
+  backupBtnRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;';
+
+  const backupOutput = document.createElement('div');
+  backupOutput.style.cssText = 'padding: 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 12px; font-family: monospace; color: var(--text-secondary); white-space: pre-wrap;';
+  backupOutput.textContent = '';
+
+  backupBtnRow.appendChild(makeBtn('Backup Now', async () => {
+    backupOutput.textContent = 'Creating backup...';
+    try {
+      const result = await api.invoke('backup-create');
+      backupOutput.textContent = result.success
+        ? `Backup created:\n${result.path}`
+        : `Failed: ${result.error}`;
+    } catch (err) {
+      backupOutput.textContent = `Error: ${err.message}`;
+    }
+  }));
+
+  backupBtnRow.appendChild(makeBtn('List Backups', async () => {
+    backupOutput.textContent = 'Loading...';
+    try {
+      const result = await api.invoke('backup-list');
+      if (result.success) {
+        const { backups, backupDir } = result.data;
+        if (!backupDir) {
+          backupOutput.textContent = 'Backup directory not configured.\nSet it in Core settings.';
+          return;
+        }
+        if (backups.length === 0) {
+          backupOutput.textContent = `No backups found in:\n${backupDir}`;
+          return;
+        }
+        let text = `Backup directory: ${backupDir}\n${backups.length} backup(s):\n\n`;
+        backups.forEach((b, i) => {
+          const size = b.size > 1024 * 1024 ? `${(b.size / (1024 * 1024)).toFixed(2)} MB` : `${(b.size / 1024).toFixed(1)} KB`;
+          text += `${i + 1}. ${b.name}  (${size}, ${new Date(b.date).toLocaleString()})\n`;
+        });
+        backupOutput.textContent = text;
+      } else {
+        backupOutput.textContent = `Failed: ${result.error}`;
+      }
+    } catch (err) {
+      backupOutput.textContent = `Error: ${err.message}`;
+    }
+  }));
+
+  backupBtnRow.appendChild(makeBtn('Open Backup Folder', async () => {
+    try {
+      const configResult = await api.invoke('backup-get-config');
+      if (!configResult.success) {
+        backupOutput.textContent = `Error: ${configResult.error}`;
+        return;
+      }
+      const backupDir = configResult.data.backupDir;
+      if (!backupDir) {
+        backupOutput.textContent = 'Backup directory not configured.\nSet it in Core settings.';
+        return;
+      }
+      await api.invoke('shell-open-path', { path: backupDir });
+      backupOutput.textContent = `Opened: ${backupDir}`;
+    } catch (err) {
+      backupOutput.textContent = `Error: ${err.message}`;
+    }
+  }));
+
+  backupSection.appendChild(backupBtnRow);
+  backupSection.appendChild(backupOutput);
+  container.appendChild(backupSection);
+
+  container.appendChild(outputArea);
+
+  return container;
+};
+
 // Initialize
 const init = async () => {
   const sidebarNav = document.getElementById('sidebarNav');
@@ -2529,7 +2908,7 @@ const init = async () => {
           // Construct feature-like object from manifest
           const feature = {
             id: ext.manifest.id,
-            labels: { name: ext.manifest.name },
+            labels: { name: ext.manifest.name, ...(ext.manifest.labels || {}) },
             schemas: ext.manifest.schemas,
             storageKeys: ext.manifest.storageKeys || { PREFS: 'prefs', ITEMS: 'items' },
             defaults: ext.manifest.defaults || {}
@@ -2710,35 +3089,51 @@ const init = async () => {
 
   contentArea.appendChild(themesSection);
 
-  // Add Datastore link
+  // Add Datastore section (inline pane)
   const datastoreNav = document.createElement('a');
   datastoreNav.className = 'nav-item';
   datastoreNav.textContent = 'Datastore';
-  datastoreNav.style.cursor = 'pointer';
-  datastoreNav.addEventListener('click', () => {
-    api.window.open('peek://app/datastore/viewer.html', {
-      role: 'utility',
-      width: 900,
-      height: 600,
-      key: 'datastore-viewer'
-    });
-  });
+  datastoreNav.dataset.section = 'datastore';
+  datastoreNav.addEventListener('click', () => showSection('datastore'));
   sidebarNav.appendChild(datastoreNav);
 
-  // Add Diagnostic link
+  const datastoreSection = document.createElement('div');
+  datastoreSection.className = 'section';
+  datastoreSection.id = 'section-datastore';
+
+  const datastoreSectionTitle = document.createElement('h2');
+  datastoreSectionTitle.className = 'section-title';
+  datastoreSectionTitle.textContent = 'Datastore';
+  datastoreSection.appendChild(datastoreSectionTitle);
+
+  renderDatastoreSettings().then(content => {
+    datastoreSection.appendChild(content);
+  });
+
+  contentArea.appendChild(datastoreSection);
+
+  // Add Diagnostics section (inline pane)
   const diagnosticNav = document.createElement('a');
   diagnosticNav.className = 'nav-item';
-  diagnosticNav.textContent = 'Diagnostic';
-  diagnosticNav.style.cursor = 'pointer';
-  diagnosticNav.addEventListener('click', () => {
-    api.window.open('peek://app/diagnostic.html', {
-      role: 'utility',
-      width: 900,
-      height: 700,
-      key: 'diagnostic-tool'
-    });
-  });
+  diagnosticNav.textContent = 'Diagnostics';
+  diagnosticNav.dataset.section = 'diagnostics';
+  diagnosticNav.addEventListener('click', () => showSection('diagnostics'));
   sidebarNav.appendChild(diagnosticNav);
+
+  const diagnosticsSection = document.createElement('div');
+  diagnosticsSection.className = 'section';
+  diagnosticsSection.id = 'section-diagnostics';
+
+  const diagnosticsSectionTitle = document.createElement('h2');
+  diagnosticsSectionTitle.className = 'section-title';
+  diagnosticsSectionTitle.textContent = 'Diagnostics';
+  diagnosticsSection.appendChild(diagnosticsSectionTitle);
+
+  renderDiagnosticsSettings().then(content => {
+    diagnosticsSection.appendChild(content);
+  });
+
+  contentArea.appendChild(diagnosticsSection);
 
   // Add Quit button at the very bottom
   const quitBtn = document.createElement('button');
