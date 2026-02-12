@@ -2124,19 +2124,23 @@ window.addEventListener('load', () => {
 //   - Window ID is fetched once at init (it never changes).
 //   - Window position is fetched eagerly on mousedown (overlaps with the hold
 //     timer) so dragging starts instantly when the timer fires.
-//   - Hold delay is 150ms — short enough to feel responsive, long enough to
+//   - Hold delay is 150ms -- short enough to feel responsive, long enough to
 //     avoid triggering on normal clicks.
-//   - Movement threshold is 5px — if the mouse moves more than this during
+//   - Movement threshold is 5px -- if the mouse moves more than this during
 //     the hold period, the drag is cancelled (the user is clicking, not holding).
 //   - Text selection takes priority: if a selection appears during hold/drag,
 //     the drag is cancelled.
-//   - Only actively-focused text inputs/textareas block drag. Buttons, links,
-//     labels, and other elements all support long-press drag — the 150ms delay
-//     prevents interference with normal clicks.
+//   - Only blocks drag when mousedown target IS a focused text input/textarea
+//     or contentEditable. Other elements (buttons, links, labels, etc.) all
+//     support long-press drag -- even in windows with focused inputs (like cmd).
 //   - Elements with data-no-drag attribute (or ancestors with it) never trigger drag.
 //   - Button state is tracked via mousedown/mouseup rather than relying on
 //     e.buttons during mousemove, which can report stale values during fast
 //     cursor movement (known Chromium/Electron issue).
+//   - Click suppression: when a drag occurs, the subsequent click event on the
+//     original mousedown target is suppressed to prevent accidental activation.
+//   - Window-level event listeners with capture ensure events aren't lost during
+//     fast cursor movement that escapes element boundaries.
 // ============================================================================
 (function initWindowDrag() {
   const HOLD_DELAY = 150; // ms before drag starts
@@ -2149,21 +2153,22 @@ window.addEventListener('load', () => {
   let cachedWindowId = null; // fetched once at init
   let pendingPosPromise = null; // position fetch started eagerly on mousedown
   let mouseButtonDown = false; // track button state ourselves for reliability
+  let suppressNextClick = false; // suppress click after drag to prevent activation
 
-  // Only block drag on actively-focused text inputs/textareas and contentEditable.
-  // Everything else (buttons, links, labels, etc.) supports long-press drag —
-  // the 150ms hold delay prevents interference with normal clicks on those elements.
-  const isActiveTextInput = (el) => {
-    if (!el) return false;
+  // Only block drag when the mousedown target IS a focused text input/textarea
+  // or contentEditable. This is checked against the mousedown target element,
+  // NOT document.activeElement -- so clicking empty space in a window that has
+  // a focused input (like the cmd palette) still allows drag.
+  const shouldBlockDrag = (target) => {
+    if (!target) return false;
     // Check for data-no-drag on element or ancestors
-    if (el.hasAttribute && el.hasAttribute('data-no-drag')) return true;
-    if (el.closest && el.closest('[data-no-drag]')) return true;
-    // Only block on focused text inputs/textareas that the user is editing
-    const tag = el.tagName?.toLowerCase();
-    const isFocusedTextInput = (tag === 'input' || tag === 'textarea') && el === document.activeElement;
-    if (isFocusedTextInput) return true;
+    if (target.hasAttribute && target.hasAttribute('data-no-drag')) return true;
+    if (target.closest && target.closest('[data-no-drag]')) return true;
+    // Only block when target itself is a focused text input/textarea
+    const tag = target.tagName?.toLowerCase();
+    if ((tag === 'input' || tag === 'textarea') && target === document.activeElement) return true;
     // Block on contentEditable elements that are focused
-    if (el.isContentEditable && el.closest('[contenteditable]')?.contains(document.activeElement)) return true;
+    if (target.isContentEditable) return true;
     return false;
   };
 
@@ -2185,6 +2190,7 @@ window.addEventListener('load', () => {
     cancelHold();
     if (isDragging) {
       isDragging = false;
+      suppressNextClick = true; // suppress the click that follows mouseup
       document.body.style.cursor = '';
       document.body.classList.remove('is-dragging');
     }
@@ -2197,8 +2203,8 @@ window.addEventListener('load', () => {
     // Only left click
     if (e.button !== 0) return;
     mouseButtonDown = true;
-    // Don't initiate drag from actively-focused text inputs
-    if (isActiveTextInput(e.target)) return;
+    // Don't initiate drag from actively-focused text inputs (checked against target)
+    if (shouldBlockDrag(e.target)) return;
     // If we don't have a window ID yet, can't drag
     if (!cachedWindowId) return;
 
@@ -2293,6 +2299,17 @@ window.addEventListener('load', () => {
     endDrag();
   };
 
+  // Suppress click events that fire after a drag to prevent accidental
+  // activation of buttons/links/tags that were under the initial mousedown.
+  const onClickCapture = (e) => {
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      DEBUG && console.log('[preload] Suppressed post-drag click on', e.target?.tagName);
+    }
+  };
+
   // Also end drag if window loses focus
   const onBlur = () => {
     mouseButtonDown = false;
@@ -2308,10 +2325,17 @@ window.addEventListener('load', () => {
       DEBUG && console.error('[preload] Failed to get window ID for drag:', err);
     }
 
+    // Use window-level listeners with capture for mousemove/mouseup to ensure
+    // events aren't lost during fast cursor movement that escapes elements.
+    // mousedown stays on document (we need the target element).
     document.addEventListener('mousedown', onMouseDown, true);
-    document.addEventListener('mousemove', onMouseMove, true);
-    document.addEventListener('mouseup', onMouseUp, true);
+    window.addEventListener('mousemove', onMouseMove, true);
+    window.addEventListener('mouseup', onMouseUp, true);
     window.addEventListener('blur', onBlur);
+
+    // Click suppression: capture phase, highest priority -- prevents clicks
+    // that fire after a drag from activating buttons/tags/links.
+    document.addEventListener('click', onClickCapture, true);
 
     DEBUG && console.log('[preload] Window drag initialized, windowId:', cachedWindowId);
   };
