@@ -553,7 +553,7 @@ const init = async () => {
 
   // Open startup feature (settings by default, or user-configured feature)
   // Skip if session restore is pending (restored windows replace the startup window)
-  if (!sessionRestorePending) {
+  const openStartupFeature = async () => {
     try {
       const startupUrl = p.startupFeature || settingsAddress;
       log('core', 'Opening startup feature:', startupUrl);
@@ -561,7 +561,6 @@ const init = async () => {
       if (startupUrl === settingsAddress) {
         await openSettingsWindow(p);
       } else {
-        // Open the configured startup feature as a workspace
         await windowManager.createWindow(startupUrl, {
           key: startupUrl,
           role: 'workspace',
@@ -573,7 +572,18 @@ const init = async () => {
     } catch (error) {
       log.error('core', 'Error opening startup feature:', error);
     }
+  };
+
+  if (!sessionRestorePending) {
+    await openStartupFeature();
   }
+
+  // If session restore was pending but nothing was restored (user declined,
+  // snapshot was empty, or restore failed), open the startup feature.
+  api.subscribe('session:open-startup', () => {
+    log('core', 'Session restore declined/failed, opening startup feature');
+    openStartupFeature();
+  }, api.scopes.GLOBAL);
 
   // Feature enable/disable handler
   // Extensions are now managed by main process ExtensionManager via IPC

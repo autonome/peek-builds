@@ -573,13 +573,16 @@ const onReady = async () => {
           const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs, _crashState);
           DEBUG && console.log(`[session] Restore result:`, restoreResult);
           if (restoreResult.restored === 0) {
-            // If nothing was actually restored, clear the pending flag
-            // so future startup feature checks don't think restore happened
             _sessionRestorePending = false;
+            // Nothing restored (user declined, or snapshot was empty).
+            // The startup feature was suppressed, so open it now.
+            DEBUG && console.log('[session] No windows restored, opening startup feature');
+            publish(systemAddress, scopes.GLOBAL, 'session:open-startup', {});
           }
         } catch (err) {
           console.error('[session] Session restore failed:', err);
           _sessionRestorePending = false;
+          publish(systemAddress, scopes.GLOBAL, 'session:open-startup', {});
         }
       }
 
