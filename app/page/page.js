@@ -578,12 +578,23 @@ document.addEventListener('keydown', (e) => {
 
 // --- Hover trigger zone ---
 
+let lastMouseY = 0;
+document.addEventListener('mousemove', (e) => { lastMouseY = e.clientY; }, true);
+
 function scheduleHide() {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
-    if (showSource === 'hover') {
-      hide();
+    if (showSource !== 'hover') return;
+    // If cursor is still in the navbar+trigger area, don't hide.
+    // This prevents the hide→contract→re-trigger→show bounce when cursor
+    // crosses the boundary between navbar and webview.
+    const navBottom = navbarExpanded ? (NAVBAR_HEIGHT + NAVBAR_GAP + TRIGGER_ZONE_HEIGHT) : TRIGGER_ZONE_HEIGHT;
+    if (lastMouseY < navBottom) {
+      // Cursor still near top — reschedule instead of hiding
+      scheduleHide();
+      return;
     }
+    hide();
   }, 300);
 }
 
