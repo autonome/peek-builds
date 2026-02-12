@@ -3572,6 +3572,101 @@ export function registerMiscHandlers(onQuit: () => void): void {
     }
   });
 
+  // File open dialog - shows native open dialog, reads file, returns content + metadata
+  ipcMain.handle('file-open-dialog', async (ev) => {
+    try {
+      // Get the sender's window to parent the dialog
+      const senderWindow = BrowserWindow.fromWebContents(ev.sender);
+
+      const result = await dialog.showOpenDialog(senderWindow!, {
+        properties: ['openFile'],
+        filters: [
+          { name: 'All Files', extensions: ['*'] },
+          { name: 'Text Files', extensions: ['txt', 'md', 'json', 'html', 'csv', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log'] },
+          { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'rtf'] },
+        ]
+      });
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+
+      const filePath = result.filePaths[0];
+      const stats = fs.statSync(filePath);
+      const fileName = path.basename(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+
+      // MIME type detection from extension
+      const extToMime: Record<string, string> = {
+        '.md': 'text/markdown',
+        '.markdown': 'text/markdown',
+        '.txt': 'text/plain',
+        '.text': 'text/plain',
+        '.json': 'application/json',
+        '.html': 'text/html',
+        '.htm': 'text/html',
+        '.csv': 'text/csv',
+        '.xml': 'application/xml',
+        '.yaml': 'text/yaml',
+        '.yml': 'text/yaml',
+        '.toml': 'text/plain',
+        '.ini': 'text/plain',
+        '.cfg': 'text/plain',
+        '.log': 'text/plain',
+        '.js': 'text/javascript',
+        '.ts': 'text/typescript',
+        '.css': 'text/css',
+        '.py': 'text/x-python',
+        '.rb': 'text/x-ruby',
+        '.sh': 'text/x-shellscript',
+        '.bash': 'text/x-shellscript',
+        '.zsh': 'text/x-shellscript',
+        '.c': 'text/x-c',
+        '.cpp': 'text/x-c++',
+        '.h': 'text/x-c',
+        '.java': 'text/x-java',
+        '.go': 'text/x-go',
+        '.rs': 'text/x-rust',
+        '.swift': 'text/x-swift',
+        '.svg': 'image/svg+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.pdf': 'application/pdf',
+      };
+
+      const mimeType = extToMime[ext] || 'application/octet-stream';
+
+      // Only read text files (don't try to read binary files as UTF-8)
+      const isText = mimeType.startsWith('text/') ||
+                     mimeType === 'application/json' ||
+                     mimeType === 'application/xml' ||
+                     mimeType === 'image/svg+xml';
+
+      let content: string | null = null;
+      if (isText) {
+        content = fs.readFileSync(filePath, 'utf-8');
+      }
+
+      return {
+        success: true,
+        data: {
+          name: fileName,
+          path: filePath,
+          size: stats.size,
+          mimeType,
+          content,
+          isText
+        }
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   // App info handler - returns app version and other metadata
   ipcMain.handle('app-info', async () => {
     return {

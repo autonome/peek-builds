@@ -102,9 +102,106 @@ function generateFilename(mimeType, title) {
   return `export-${timestamp}.${ext}`;
 }
 
+/**
+ * Get MIME type from file extension
+ */
+function getMimeFromExtension(filename) {
+  const ext = (filename || '').split('.').pop()?.toLowerCase();
+  const extToMime = {
+    'md': 'text/markdown',
+    'markdown': 'text/markdown',
+    'txt': 'text/plain',
+    'json': 'application/json',
+    'html': 'text/html',
+    'htm': 'text/html',
+    'csv': 'text/csv',
+    'xml': 'application/xml',
+    'yaml': 'text/yaml',
+    'yml': 'text/yaml',
+    'js': 'text/javascript',
+    'ts': 'text/typescript',
+    'css': 'text/css',
+    'py': 'text/x-python',
+    'rb': 'text/x-ruby',
+    'sh': 'text/x-shellscript',
+    'c': 'text/x-c',
+    'cpp': 'text/x-c++',
+    'h': 'text/x-c',
+    'java': 'text/x-java',
+    'go': 'text/x-go',
+    'rs': 'text/x-rust',
+    'swift': 'text/x-swift',
+    'svg': 'image/svg+xml'
+  };
+  return extToMime[ext] || 'text/plain';
+}
+
 // ===== Command definitions =====
 
 const commandDefinitions = [
+  // ===== Open File Command =====
+  {
+    name: 'open file',
+    description: 'Open a file from disk (native file picker)',
+    accepts: [],
+    produces: ['text/plain', 'text/markdown', 'text/html', 'text/csv', 'application/json'],
+
+    execute: async (ctx) => {
+      console.log('[open file] execute:', ctx);
+
+      try {
+        const result = await api.files.open();
+
+        if (!result.success) {
+          if (result.canceled) {
+            console.log('[open file] User cancelled file picker');
+            return { success: true, message: 'File picker cancelled' };
+          }
+          return { success: false, error: result.error || 'Failed to open file' };
+        }
+
+        const file = result.data;
+        console.log('[open file] Opened:', file.name, file.mimeType, file.size, 'bytes');
+
+        // If the file is not text, we can't chain it
+        if (!file.isText || file.content === null) {
+          return {
+            success: false,
+            error: `Cannot read binary file: ${file.name} (${file.mimeType})`
+          };
+        }
+
+        // Determine the best chainable MIME type
+        // Use the detected MIME type if it's a text type, otherwise fallback to text/plain
+        let chainMimeType = file.mimeType;
+        if (!chainMimeType.startsWith('text/') &&
+            chainMimeType !== 'application/json' &&
+            chainMimeType !== 'application/xml' &&
+            chainMimeType !== 'image/svg+xml') {
+          chainMimeType = 'text/plain';
+        }
+
+        const sizeLabel = file.size < 1024
+          ? `${file.size} B`
+          : file.size < 1024 * 1024
+            ? `${(file.size / 1024).toFixed(1)} KB`
+            : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+
+        return {
+          success: true,
+          output: {
+            data: file.content,
+            mimeType: chainMimeType,
+            title: `${file.name} (${sizeLabel})`
+          }
+        };
+      } catch (err) {
+        console.error('[open file] Error:', err);
+        return { success: false, error: err.message };
+      }
+    }
+  },
+
   {
     name: 'csv',
     description: 'Convert JSON to CSV format',

@@ -37,6 +37,20 @@ const detectType = (text) => {
 };
 
 /**
+ * Extract inline hashtags from text content.
+ * Matches #word patterns but not pure tagset input (which is handled separately).
+ * Returns array of tag names (without # prefix).
+ */
+const extractInlineHashtags = (text) => {
+  if (!text) return [];
+  // Match #word patterns (word = letters, numbers, underscores, hyphens, colons)
+  // Must be preceded by start-of-string or whitespace to avoid matching mid-word hashes
+  const matches = text.match(/(?:^|\s)#([^\s#]+)/g);
+  if (!matches) return [];
+  return matches.map(m => m.trim().slice(1)); // Remove leading whitespace and #
+};
+
+/**
  * Save input to the datastore, auto-detecting type
  */
 const saveItem = async (input) => {
@@ -61,6 +75,18 @@ const saveItem = async (input) => {
       const tagResult = await api.datastore.getOrCreateTag(tagName);
       if (tagResult.success) {
         await api.datastore.tagItem(itemId, tagResult.data.tag.id);
+      }
+    }
+
+    // Extract inline hashtags from the note text and associate them
+    const inlineTags = extractInlineHashtags(input);
+    if (inlineTags.length > 0) {
+      console.log('[note] Extracted inline hashtags:', inlineTags);
+      for (const hashtagName of inlineTags) {
+        const tagResult = await api.datastore.getOrCreateTag(hashtagName);
+        if (tagResult.success) {
+          await api.datastore.tagItem(itemId, tagResult.data.tag.id);
+        }
       }
     }
   }

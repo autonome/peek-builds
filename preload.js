@@ -2062,6 +2062,14 @@ api.files = {
       filename: options.filename,
       mimeType: options.mimeType
     });
+  },
+
+  /**
+   * Show native open dialog, read file, and return content + metadata
+   * @returns {Promise<{success: boolean, canceled?: boolean, data?: {name: string, path: string, size: number, mimeType: string, content: string|null, isText: boolean}, error?: string}>}
+   */
+  open: () => {
+    return ipcRenderer.invoke('file-open-dialog');
   }
 };
 
