@@ -177,7 +177,8 @@ body {
   border-color: var(--theme-accent);
 }
 
-.form-group input:disabled {
+.form-group input:disabled,
+.form-group select:disabled {
   background: var(--input-disabled-bg);
   color: var(--input-disabled-text);
   cursor: not-allowed;

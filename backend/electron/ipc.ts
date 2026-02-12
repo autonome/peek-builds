@@ -5,7 +5,7 @@
  * Handlers are thin wrappers that delegate to backend functions.
  */
 
-import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell, webContents } from 'electron';
+import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell, webContents, net } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -3580,6 +3580,47 @@ export function registerMiscHandlers(onQuit: () => void): void {
       }
       await shell.openPath(pathToOpen);
       return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Net fetch handler - proxies HTTP requests through main process to bypass CORS
+  // Used by extensions that need to fetch from external APIs (e.g., search suggestions)
+  ipcMain.handle('net-fetch', async (_ev, data: { url: string; options?: { method?: string; headers?: Record<string, string>; timeout?: number } }) => {
+    try {
+      const { url, options = {} } = data;
+
+      // Only allow http/https URLs
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        return { success: false, error: 'Only http/https URLs are allowed' };
+      }
+
+      const controller = new AbortController();
+      const timeout = options.timeout || 5000;
+      const timer = setTimeout(() => controller.abort(), timeout);
+
+      try {
+        const response = await net.fetch(url, {
+          method: options.method || 'GET',
+          headers: options.headers || {},
+          signal: controller.signal,
+        });
+
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
+        }
+
+        const text = await response.text();
+        return { success: true, data: text, status: response.status };
+      } catch (fetchErr) {
+        clearTimeout(timer);
+        const fetchMessage = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        return { success: false, error: fetchMessage };
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

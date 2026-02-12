@@ -80,6 +80,44 @@ const createCheckbox = (label, value, onChange, options = {}) => {
   return group;
 };
 
+// Helper: Create select dropdown
+const createSelect = (label, value, options, onChange, extraOptions = {}) => {
+  const group = document.createElement('div');
+  group.className = 'form-group';
+
+  const labelEl = document.createElement('label');
+  labelEl.textContent = label;
+
+  const select = document.createElement('select');
+  select.disabled = extraOptions.disabled || false;
+
+  options.forEach(opt => {
+    const optionEl = document.createElement('option');
+    optionEl.value = opt.value;
+    optionEl.textContent = opt.label;
+    if (opt.value === value) {
+      optionEl.selected = true;
+    }
+    select.appendChild(optionEl);
+  });
+
+  select.addEventListener('change', (e) => {
+    onChange(e.target.value);
+  });
+
+  group.appendChild(labelEl);
+  group.appendChild(select);
+
+  if (extraOptions.helpText) {
+    const help = document.createElement('div');
+    help.className = 'help-text';
+    help.textContent = extraOptions.helpText;
+    group.appendChild(help);
+  }
+
+  return group;
+};
+
 // Create a settings section (supports async contentFn)
 const createSection = async (sectionId, title, contentFn) => {
   const section = document.createElement('div');
@@ -1744,8 +1782,9 @@ const renderExtensionsSettings = async () => {
 const renderFeatureSettings = async (feature) => {
   const { id, labels, schemas, storageKeys, defaults } = feature;
 
-  // Use extension shortname for datastore key (e.g., 'peeks', 'slides', 'groups')
-  const extId = labels.name.toLowerCase();
+  // Use extension shortname for datastore key (e.g., 'peeks', 'slides', 'websearch')
+  // This must match what api.settings uses (derived from peek://ext/{shortname}/... URL)
+  const extId = feature.shortname || labels.name.toLowerCase();
 
   // Load from datastore
   const store = await createDatastoreStore(extId, defaults);
@@ -1756,7 +1795,8 @@ const renderFeatureSettings = async (feature) => {
   const container = document.createElement('div');
 
   // Topic for notifying feature of settings changes (e.g., 'peeks:settings-changed')
-  const settingsChangedTopic = `${labels.name.toLowerCase()}:settings-changed`;
+  // Use extId (shortname) so the topic matches what extensions subscribe to
+  const settingsChangedTopic = `${extId}:settings-changed`;
 
   const save = async () => {
     // Save to datastore
@@ -1810,6 +1850,19 @@ const renderFeatureSettings = async (feature) => {
           helpText: s.description
         });
         prefsSection.appendChild(input);
+      } else if (s.enum && Array.isArray(s.enum)) {
+        // Render as select dropdown when enum values are specified
+        const selectOptions = s.enum.map(val => ({
+          value: val,
+          label: (s.enumLabels && s.enumLabels[val]) || val
+        }));
+        const select = createSelect(displayLabel, v, selectOptions, (newVal) => {
+          prefs[k] = newVal;
+          save();
+        }, {
+          helpText: s.description
+        });
+        prefsSection.appendChild(select);
       } else {
         const input = createInput(displayLabel, v, (newVal) => {
           prefs[k] = newVal;
@@ -2916,8 +2969,10 @@ const init = async () => {
           addedExtensions.add(extName);
 
           // Construct feature-like object from manifest
+          // shortname is the datastore namespace (must match what api.settings uses via URL path)
           const feature = {
             id: ext.manifest.id,
+            shortname: ext.manifest.shortname || ext.id || ext.manifest.id,
             labels: { name: ext.manifest.name, ...(ext.manifest.labels || {}) },
             schemas: ext.manifest.schemas,
             storageKeys: ext.manifest.storageKeys || { PREFS: 'prefs', ITEMS: 'items' },

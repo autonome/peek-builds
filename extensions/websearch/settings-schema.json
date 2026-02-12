@@ -11,8 +11,16 @@
     "properties": {
       "defaultEngine": {
         "type": "string",
-        "description": "ID of the default search engine",
-        "default": "duckduckgo"
+        "description": "Choose which search engine to use by default",
+        "default": "duckduckgo",
+        "enum": ["google", "duckduckgo", "bing", "wikipedia", "kagi"],
+        "enumLabels": {
+          "google": "Google",
+          "duckduckgo": "DuckDuckGo",
+          "bing": "Bing",
+          "wikipedia": "Wikipedia",
+          "kagi": "Kagi"
+        }
       },
       "enableSuggestions": {
         "type": "boolean",

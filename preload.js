@@ -1713,6 +1713,20 @@ api.settings = {
   }
 };
 
+// Net fetch API - proxies HTTP requests through main process to bypass CORS
+// Useful for extensions that need to fetch from external APIs
+api.net = {
+  /**
+   * Fetch a URL through the main process (bypasses CORS restrictions)
+   * @param {string} url - URL to fetch (http/https only)
+   * @param {object} options - Fetch options (method, headers, timeout)
+   * @returns {Promise<{success: boolean, data?: string, status?: number, error?: string}>}
+   */
+  fetch: (url, options = {}) => {
+    return ipcRenderer.invoke('net-fetch', { url, options });
+  }
+};
+
 // Escape handling API
 // For windows with escapeMode: 'navigate' or 'auto'
 // Callback should return { handled: true } if escape was handled internally
