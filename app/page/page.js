@@ -23,7 +23,7 @@ const DEBUG = true;
 
 // --- Constants ---
 const NAVBAR_HEIGHT = 36;
-const NAVBAR_GAP = 8;
+const NAVBAR_GAP = 0; // trigger zone serves as the visual gap
 const MIN_WIDTH = 200;
 const MIN_HEIGHT = 150;
 const MARGIN = 8;                // Resize handle margin on each side
@@ -528,10 +528,11 @@ function show(opts) {
   navbar.classList.add('visible');
   if (opts?.source) showSource = opts.source;
   if (wasHidden) {
-    // Expand window upward for navbar
+    // Expand window upward for navbar — set bounds FIRST so there's room,
+    // then reposition elements within the enlarged window (avoids visual jump)
     navbarExpanded = true;
-    updatePositions();
     setWindowBoundsImmediate(computeWindowBounds(screenBounds, navbarExpanded));
+    updatePositions();
     updateState();
     DEBUG && console.log('[page] Navbar shown, source:', showSource);
   }
@@ -550,7 +551,8 @@ function hide() {
     hideTimer = null;
   }
   navbar.classList.remove('visible');
-  // Contract window back down
+  // Contract window back down — reposition elements FIRST (move webview up),
+  // then shrink the window (removes the now-empty space at top)
   navbarExpanded = false;
   updatePositions();
   setWindowBoundsImmediate(computeWindowBounds(screenBounds, navbarExpanded));
