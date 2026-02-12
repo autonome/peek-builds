@@ -287,17 +287,6 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
     return false;
   }
 
-  // Skip localhost/127.0.0.1 URLs — these are ephemeral dev servers that won't be running
-  try {
-    const parsed = new URL(descriptor.url);
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-      return false;
-    }
-  } catch {
-    // If URL can't be parsed, skip it
-    return false;
-  }
-
   return true;
 }
 
