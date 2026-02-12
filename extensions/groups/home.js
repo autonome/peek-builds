@@ -168,6 +168,12 @@ const handleKeydown = (e) => {
   const isSearchFocused = document.activeElement === searchInput ||
     (searchInput && searchInput.shadowRoot?.activeElement);
 
+  // Check if the create-group input is focused — if so, let all keys through
+  const newGroupInput = document.querySelector('peek-input.new-group-input');
+  const isNewGroupFocused = document.activeElement === newGroupInput ||
+    (newGroupInput && newGroupInput.shadowRoot?.activeElement);
+  if (isNewGroupFocused) return;
+
   // Focus search with / or Cmd+F
   if ((e.key === '/' || (e.key === 'f' && (e.metaKey || e.ctrlKey))) && !isSearchFocused) {
     e.preventDefault();

@@ -22,6 +22,9 @@ const debug = api?.debug;
 const VIEW_LIST = 'list';
 const VIEW_DETAIL = 'detail';
 
+// Fallback favicon for broken/missing images (globe emoji as SVG data URI)
+const FALLBACK_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
+
 /**
  * Extract the first URL from a text string.
  * @param {string} text - The text to search for URLs
@@ -1016,7 +1019,7 @@ const createItemCard = (item) => {
 
   card.innerHTML = `
     <div class="card-header">
-      <img class="card-favicon" src="${escapeHtml(faviconUrl)}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>'">
+      <img class="card-favicon" alt="">
       <div class="card-content">
         <div class="card-title">${escapeHtml(title)}</div>
         <div class="card-url">${escapeHtml(subtitle)}</div>
@@ -1027,6 +1030,13 @@ const createItemCard = (item) => {
       ${tags.map(tag => `<span class="card-tag" data-tag-id="${tag.id}">${escapeHtml(tag.name)}</span>`).join('')}
     </div>
   `;
+
+  // Set favicon src via DOM property to avoid escapeHtml breaking SVG data URIs
+  const faviconImg = card.querySelector('.card-favicon');
+  if (faviconImg) {
+    faviconImg.src = faviconUrl;
+    faviconImg.onerror = () => { faviconImg.src = FALLBACK_FAVICON; faviconImg.onerror = null; };
+  }
 
   // Click handler for the open button - opens the URL as a web page
   const openBtn = card.querySelector('.card-open-btn');

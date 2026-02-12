@@ -221,6 +221,15 @@ const commands = [
           // Return the saved item through the connector pattern
           // Panel will handle editor:changed notification and routing
           const typeLabel = type === 'url' ? 'URL' : type === 'tagset' ? 'Tagset' : 'Note';
+
+          // Tagsets should not open in the editor — just confirm and close
+          if (type === 'tagset') {
+            return {
+              success: true,
+              message: `${typeLabel} saved: ${ctx.search}`
+            };
+          }
+
           return {
             success: true,
             message: `${typeLabel} saved`,
