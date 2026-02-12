@@ -111,6 +111,67 @@ const getNotes = async (limit = 20) => {
   return notes;
 };
 
+/**
+ * Parse tag names from parameter string.
+ * Accepts "#todo #today" or "todo today" syntax.
+ * @param {string} text - Parameter text
+ * @returns {string[]} Array of tag names (without # prefix)
+ */
+const parseTagParams = (text) => {
+  if (!text || !text.trim()) return [];
+  return text.trim().split(/\s+/).map(t => t.startsWith('#') ? t.slice(1) : t).filter(t => t.length > 0);
+};
+
+/**
+ * Get notes filtered by tags (items that have ALL specified tags)
+ * @param {string[]} tagNames - Tag names to filter by
+ * @param {number} limit - Max results
+ * @returns {Promise<{notes: Array, tagNames: string[]}>} Matching notes with their tags attached
+ */
+const getNotesByTags = async (tagNames, limit = 50) => {
+  // Resolve tag names to tag IDs
+  const tagIds = [];
+  for (const name of tagNames) {
+    const tagResult = await api.datastore.getOrCreateTag(name);
+    if (tagResult.success && tagResult.data.tag) {
+      tagIds.push(tagResult.data.tag.id);
+    }
+  }
+
+  if (tagIds.length === 0) {
+    return { notes: [], tagNames };
+  }
+
+  // Get items for the first tag, then intersect with other tags
+  const firstTagItems = await api.datastore.getItemsByTag(tagIds[0]);
+  if (!firstTagItems.success || !firstTagItems.data) {
+    return { notes: [], tagNames };
+  }
+
+  // Filter to text items only
+  let candidates = firstTagItems.data.filter(item => item.type === 'text');
+
+  // Intersect with remaining tags
+  for (let i = 1; i < tagIds.length; i++) {
+    const tagItems = await api.datastore.getItemsByTag(tagIds[i]);
+    if (!tagItems.success || !tagItems.data) {
+      return { notes: [], tagNames };
+    }
+    const tagItemIds = new Set(tagItems.data.map(item => item.id));
+    candidates = candidates.filter(item => tagItemIds.has(item.id));
+  }
+
+  // Attach tags to each note for downstream use
+  const notesWithTags = [];
+  for (const item of candidates.slice(0, limit)) {
+    const tagsResult = await api.datastore.getItemTags(item.id);
+    item._tags = tagsResult.success ? tagsResult.data.map(t => t.name) : [];
+    notesWithTags.push(item);
+  }
+
+  return { notes: notesWithTags, tagNames };
+};
+
 // Commands
 const commands = [
   {
@@ -183,6 +244,58 @@ const commands = [
           }
         };
       }
+    }
+  },
+  {
+    name: 'list notes',
+    description: 'List notes filtered by tags (e.g. list notes #todo #today)',
+    produces: ['application/json'],
+
+    async execute(ctx) {
+      const tagNames = parseTagParams(ctx.search);
+
+      if (tagNames.length === 0) {
+        // No tags specified - return all notes
+        const notes = await getNotes(50);
+        if (notes.length === 0) {
+          return { success: false, message: 'No notes found' };
+        }
+
+        // Attach tags to each note
+        for (const note of notes) {
+          const tagsResult = await api.datastore.getItemTags(note.id);
+          note._tags = tagsResult.success ? tagsResult.data.map(t => t.name) : [];
+        }
+
+        return {
+          success: true,
+          output: {
+            data: notes,
+            mimeType: 'application/json',
+            title: `All notes (${notes.length})`
+          }
+        };
+      }
+
+      // Filter by specified tags
+      const { notes, tagNames: resolvedTags } = await getNotesByTags(tagNames);
+
+      if (notes.length === 0) {
+        const tagStr = resolvedTags.map(t => '#' + t).join(' ');
+        return { success: false, message: `No notes found with tags: ${tagStr}` };
+      }
+
+      const tagStr = resolvedTags.map(t => '#' + t).join(' ');
+      console.log(`[list notes] Found ${notes.length} notes with tags: ${tagStr}`);
+
+      return {
+        success: true,
+        output: {
+          data: notes,
+          mimeType: 'application/json',
+          title: `Notes: ${tagStr} (${notes.length})`
+        }
+      };
     }
   }
 ];

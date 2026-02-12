@@ -2126,18 +2126,22 @@ export function registerWindowHandlers(): void {
     // For canvas pages, adjust window bounds BEFORE creation to include margins
     // and trigger zone. This prevents a visual flash where the window appears at
     // the webview coordinates then jumps to the correct position.
+    // Save the original webview screen coordinates for URL params.
+    let canvasWebviewBounds: { x: number; y: number; width: number; height: number } | null = null;
     if (useCanvas && !isHeadless()) {
       const CANVAS_MARGIN = 8;
       const CANVAS_TRIGGER_ZONE = 8;
       // winOptions.x/y/width/height are currently the webview screen coordinates
-      const wvX = winOptions.x as number;
-      const wvY = winOptions.y as number;
-      const wvW = winOptions.width as number;
-      const wvH = winOptions.height as number;
-      winOptions.x = wvX - CANVAS_MARGIN;
-      winOptions.y = wvY - CANVAS_TRIGGER_ZONE;
-      winOptions.width = wvW + CANVAS_MARGIN * 2;
-      winOptions.height = wvH + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN;
+      canvasWebviewBounds = {
+        x: winOptions.x as number,
+        y: winOptions.y as number,
+        width: winOptions.width as number,
+        height: winOptions.height as number,
+      };
+      winOptions.x = canvasWebviewBounds.x - CANVAS_MARGIN;
+      winOptions.y = canvasWebviewBounds.y - CANVAS_TRIGGER_ZONE;
+      winOptions.width = canvasWebviewBounds.width + CANVAS_MARGIN * 2;
+      winOptions.height = canvasWebviewBounds.height + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN;
     }
 
     DEBUG && console.log('Creating window with options:', winOptions);
@@ -2160,14 +2164,11 @@ export function registerWindowHandlers(): void {
       // The window moves/resizes via setBounds() IPC calls from the renderer.
       let loadUrl = url;
       if (useCanvas) {
-        // Margins: 8px on each side for resize handles, 8px top for trigger zone
-        const MARGIN = 8;
-        const TRIGGER_ZONE_HEIGHT = 8;
-
-        const webviewX = parseInt(String(winOptions.x ?? 100));
-        const webviewY = parseInt(String(winOptions.y ?? 100));
-        const webviewW = parseInt(String(winOptions.width ?? APP_DEF_WIDTH));
-        const webviewH = parseInt(String(winOptions.height ?? APP_DEF_HEIGHT));
+        // Use saved webview coordinates (before window bounds were adjusted for margins)
+        const webviewX = canvasWebviewBounds?.x ?? parseInt(String(options.x ?? 100));
+        const webviewY = canvasWebviewBounds?.y ?? parseInt(String(options.y ?? 100));
+        const webviewW = canvasWebviewBounds?.width ?? (parseInt(options.width) || APP_DEF_WIDTH);
+        const webviewH = canvasWebviewBounds?.height ?? (parseInt(options.height) || APP_DEF_HEIGHT);
 
         // Pass screen coordinates of the webview in URL params (for session save/restore)
         const pageParams = new URLSearchParams({
