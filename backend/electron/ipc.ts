@@ -2043,9 +2043,10 @@ export function registerWindowHandlers(): void {
       width: parseInt(options.width) || APP_DEF_WIDTH,
       height: parseInt(options.height) || APP_DEF_HEIGHT,
       show: isHeadless() ? false : options.show !== false,
-      // Only canvas pages need transparency (for the invisible positioning surface)
+      // Canvas pages: transparent minimal window, no shadow, no OS resize (we handle it via setBounds)
       transparent: useCanvas ? true : (options.transparent || false),
       backgroundColor: (useCanvas || options.transparent) ? undefined : getSystemThemeBackgroundColor(),
+      ...(useCanvas ? { hasShadow: false, resizable: false } : {}),
       webPreferences: {
         ...options.webPreferences,
         preload: getPreloadPath(),
@@ -2146,32 +2147,41 @@ export function registerWindowHandlers(): void {
 
     try {
       // Route canvas web pages through peek://page container.
-      // Canvas pages use a fullscreen transparent window where all UI elements
-      // are positioned via JS. Non-canvas web pages (modals, slides) load directly.
+      // Minimal page host: a tight-fitting transparent BrowserWindow that wraps
+      // the webview content plus small margins for resize handles and a trigger zone.
+      // The window moves/resizes via setBounds() IPC calls from the renderer.
       let loadUrl = url;
       if (useCanvas) {
-        // Pass position/size to the page container so it can position the webview
-        // Use the calculated center position (set above) as default
+        // Margins: 8px on each side for resize handles, 30px top for trigger zone
+        const MARGIN = 8;
+        const TRIGGER_ZONE_HEIGHT = 30;
+
+        const webviewX = parseInt(String(winOptions.x ?? 100));
+        const webviewY = parseInt(String(winOptions.y ?? 100));
+        const webviewW = parseInt(String(winOptions.width ?? APP_DEF_WIDTH));
+        const webviewH = parseInt(String(winOptions.height ?? APP_DEF_HEIGHT));
+
+        // Pass screen coordinates of the webview in URL params (for session save/restore)
         const pageParams = new URLSearchParams({
           url: url,
-          x: String(winOptions.x ?? 100),
-          y: String(winOptions.y ?? 100),
-          width: String(winOptions.width ?? APP_DEF_WIDTH),
-          height: String(winOptions.height ?? APP_DEF_HEIGHT),
+          x: String(webviewX),
+          y: String(webviewY),
+          width: String(webviewW),
+          height: String(webviewH),
         });
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
 
-        // Set up fullscreen transparent canvas — size the window to cover the display
-        // so the page container JS can position elements anywhere on screen
+        // Size the BrowserWindow to tightly wrap the webview + margins
         if (!isHeadless()) {
-          const display = screen.getDisplayNearestPoint({ x: winOptions.x ?? 0, y: winOptions.y ?? 0 });
-          const { width: sw, height: sh } = display.workAreaSize;
-          const { x: dx, y: dy } = display.workArea;
-          win.setSize(sw, sh);
-          win.setPosition(dx, dy);
+          const winX = webviewX - MARGIN;
+          const winY = webviewY - TRIGGER_ZONE_HEIGHT;
+          const winW = webviewW + MARGIN * 2;
+          const winH = webviewH + TRIGGER_ZONE_HEIGHT + MARGIN;
+          win.setBounds({ x: winX, y: winY, width: winW, height: winH });
           win.setBackgroundColor('#00000000');
-          DEBUG && console.log('Canvas setup: display', display.id, 'at', dx, dy, 'size', sw, sh);
+          DEBUG && console.log('Minimal page host: win bounds', { x: winX, y: winY, width: winW, height: winH },
+            'webview bounds', { x: webviewX, y: webviewY, width: webviewW, height: webviewH });
         }
       }
 

@@ -333,6 +333,9 @@ api.window = {
       id
     });
   },
+  setBounds: (bounds) => {
+    return ipcRenderer.invoke('window-set-bounds', bounds);
+  },
   setIgnoreMouseEvents: (id, ignore, forward = false) => {
     DEBUG && console.log('window.setIgnoreMouseEvents', id, ignore, forward);
     return ipcRenderer.invoke('window-set-ignore-mouse-events', {

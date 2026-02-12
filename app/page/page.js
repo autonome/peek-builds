@@ -1,15 +1,20 @@
 /**
- * peek://page - Fullscreen transparent canvas container for web content
+ * peek://page - Minimal page host window for web content
  *
- * Architecture: A fullscreen transparent BrowserWindow covers the entire display.
- * All UI elements (webview, navbar, trigger zone, resize handle, mode indicator)
- * are position:absolute siblings, positioned by JS via updatePositions() using
- * a `bounds` object. The navbar sits ABOVE the webview with an 8px gap.
+ * Architecture: A tight-fitting transparent BrowserWindow wraps the webview
+ * content plus margins for resize handles and a trigger zone. All UI elements
+ * are positioned relative to the window origin (0,0). Moving the page moves
+ * the BrowserWindow via setBounds() IPC. Resizing changes both window and
+ * element sizes.
+ *
+ * The URL params (x, y, width, height) store screen coordinates of the webview
+ * for session save/restore. Internally, elements use window-relative positions.
  *
  * - Custom drag: instant on navbar background, hold-150ms-to-drag anywhere else
  * - Custom resize: pointer-captured resize handle (robust even if cursor leaves window)
- * - Hover trigger zone above navbar reveals/hides navbar
+ * - Hover trigger zone above webview reveals/hides navbar
  * - Cmd+L shows navbar with URL focus
+ * - Navbar show/hide expands/contracts the window via setBounds()
  */
 
 import api from '../api.js';
@@ -21,8 +26,11 @@ const NAVBAR_HEIGHT = 36;
 const NAVBAR_GAP = 8;
 const MIN_WIDTH = 200;
 const MIN_HEIGHT = 150;
+const MARGIN = 8;                // Resize handle margin on each side
+const TRIGGER_ZONE_HEIGHT = 30;  // Transparent strip above webview for hover trigger
 
 // --- Parse URL parameters ---
+// URL params represent the webview's position in screen coordinates
 const params = new URLSearchParams(window.location.search);
 const targetUrl = params.get('url');
 const initialX = parseInt(params.get('x')) || 100;
@@ -38,14 +46,18 @@ if (!targetUrl) {
 
 DEBUG && console.log('[page] Loading:', targetUrl, 'at', initialX, initialY, initialWidth, initialHeight);
 
-// --- Bounds state ---
-// All positioning is derived from this single object
-let bounds = {
+// --- Screen bounds state ---
+// screenBounds tracks where the webview appears on screen (for URL params / session save)
+// Window-relative positions are computed from these + the known margins
+let screenBounds = {
   x: initialX,
   y: initialY,
   width: initialWidth,
   height: initialHeight,
 };
+
+// Track whether the navbar is currently expanding the window
+let navbarExpanded = false;
 
 // --- DOM elements ---
 const navbar = document.getElementById('navbar');
@@ -67,86 +79,141 @@ const urlText = document.getElementById('url-text');
 const modeIndicator = document.getElementById('mode-indicator');
 const widgetContainer = document.getElementById('widget-container');
 
-// --- Position all elements based on bounds ---
+// --- Window bounds computation ---
+// Computes the BrowserWindow bounds from the webview screen position
+
+function computeWindowBounds(sb, navExpanded) {
+  // Base: webview + margins for resize handles
+  let winX = sb.x - MARGIN;
+  let winY = sb.y - TRIGGER_ZONE_HEIGHT;
+  let winW = sb.width + MARGIN * 2;
+  let winH = sb.height + TRIGGER_ZONE_HEIGHT + MARGIN;
+
+  if (navExpanded) {
+    // Expand upward for navbar + gap
+    winY -= (NAVBAR_HEIGHT + NAVBAR_GAP);
+    winH += (NAVBAR_HEIGHT + NAVBAR_GAP);
+  }
+
+  return { x: Math.round(winX), y: Math.round(winY), width: Math.round(winW), height: Math.round(winH) };
+}
+
+// --- Position all elements relative to the window ---
 
 function updateUrlParams() {
-  // Keep the URL search params in sync with current bounds so that
+  // Keep the URL search params in sync with current screen bounds so that
   // session save (extractCanvasBounds) reads the latest position/size.
-  // Uses replaceState to avoid reloading the page or adding history entries.
   try {
     const url = new URL(window.location.href);
-    url.searchParams.set('x', String(bounds.x));
-    url.searchParams.set('y', String(bounds.y));
-    url.searchParams.set('width', String(bounds.width));
-    url.searchParams.set('height', String(bounds.height));
+    url.searchParams.set('x', String(Math.round(screenBounds.x)));
+    url.searchParams.set('y', String(Math.round(screenBounds.y)));
+    url.searchParams.set('width', String(Math.round(screenBounds.width)));
+    url.searchParams.set('height', String(Math.round(screenBounds.height)));
     history.replaceState(null, '', url.toString());
   } catch (e) {
-    // Non-critical — session restore will fall back to initial position
     DEBUG && console.log('[page] Failed to update URL params:', e);
   }
 }
 
 function updatePositions() {
-  const { x, y, width, height } = bounds;
+  // All positions are relative to the window origin (0, 0)
+  // The window layout from top to bottom:
+  //   [navbar area - only when expanded] (NAVBAR_HEIGHT + NAVBAR_GAP)
+  //   [trigger zone] (TRIGGER_ZONE_HEIGHT)
+  //   [webview] (screenBounds.height)
+  //   [bottom margin] (MARGIN)
+  // Left/right margins: MARGIN on each side
 
-  // Webview — the main content area
-  webview.style.left = `${x}px`;
-  webview.style.top = `${y}px`;
-  webview.style.width = `${width}px`;
-  webview.style.height = `${height}px`;
+  const navVisible = navbar.classList.contains('visible');
+  const navOffset = navbarExpanded ? (NAVBAR_HEIGHT + NAVBAR_GAP) : 0;
 
-  // Drag overlay — covers webview area exactly (for hold-to-drag from webview)
-  dragOverlay.style.left = `${x}px`;
-  dragOverlay.style.top = `${y}px`;
-  dragOverlay.style.width = `${width}px`;
-  dragOverlay.style.height = `${height}px`;
+  // Webview — positioned after trigger zone (and navbar area if expanded)
+  const webviewLeft = MARGIN;
+  const webviewTop = navOffset + TRIGGER_ZONE_HEIGHT;
+  const webviewWidth = screenBounds.width;
+  const webviewHeight = screenBounds.height;
 
-  // Navbar — above the webview with a gap
-  const navbarTop = Math.max(0, y - NAVBAR_GAP - NAVBAR_HEIGHT);
-  navbar.style.left = `${x}px`;
-  navbar.style.top = `${navbarTop}px`;
-  navbar.style.width = `${width}px`;
+  webview.style.left = `${webviewLeft}px`;
+  webview.style.top = `${webviewTop}px`;
+  webview.style.width = `${webviewWidth}px`;
+  webview.style.height = `${webviewHeight}px`;
 
-  // Trigger zone — covers the area above the webview where hover reveals the navbar
-  const triggerTop = Math.max(0, navbarTop - 14);
-  triggerZone.style.left = `${x}px`;
-  triggerZone.style.top = `${triggerTop}px`;
-  triggerZone.style.width = `${width}px`;
+  // Drag overlay — covers webview area exactly
+  dragOverlay.style.left = `${webviewLeft}px`;
+  dragOverlay.style.top = `${webviewTop}px`;
+  dragOverlay.style.width = `${webviewWidth}px`;
+  dragOverlay.style.height = `${webviewHeight}px`;
+
+  // Navbar — above the webview with a gap, only when expanded
+  if (navbarExpanded) {
+    navbar.style.left = `${MARGIN}px`;
+    navbar.style.top = `0px`;
+    navbar.style.width = `${webviewWidth}px`;
+  }
+
+  // Trigger zone — in the space between navbar (or top of window) and webview
+  triggerZone.style.left = `${MARGIN}px`;
+  triggerZone.style.top = `${navOffset}px`;
+  triggerZone.style.width = `${webviewWidth}px`;
+  triggerZone.style.height = `${TRIGGER_ZONE_HEIGHT}px`;
 
   // Resize handles — all four corners of the webview (24x24)
-  resizeHandles.se.style.left = `${x + width - 24}px`;
-  resizeHandles.se.style.top = `${y + height - 24}px`;
+  resizeHandles.se.style.left = `${webviewLeft + webviewWidth - 24}px`;
+  resizeHandles.se.style.top = `${webviewTop + webviewHeight - 24}px`;
 
-  resizeHandles.sw.style.left = `${x}px`;
-  resizeHandles.sw.style.top = `${y + height - 24}px`;
+  resizeHandles.sw.style.left = `${webviewLeft}px`;
+  resizeHandles.sw.style.top = `${webviewTop + webviewHeight - 24}px`;
 
-  resizeHandles.ne.style.left = `${x + width - 24}px`;
-  resizeHandles.ne.style.top = `${y}px`;
+  resizeHandles.ne.style.left = `${webviewLeft + webviewWidth - 24}px`;
+  resizeHandles.ne.style.top = `${webviewTop}px`;
 
-  resizeHandles.nw.style.left = `${x}px`;
-  resizeHandles.nw.style.top = `${y}px`;
+  resizeHandles.nw.style.left = `${webviewLeft}px`;
+  resizeHandles.nw.style.top = `${webviewTop}px`;
 
   // Navbar corner resize handles — only visible when navbar is shown
-  const navVisible = navbar.classList.contains('visible');
   resizeHandles.navNe.style.display = navVisible ? '' : 'none';
   resizeHandles.navNw.style.display = navVisible ? '' : 'none';
-  resizeHandles.navNe.style.left = `${x + width - 24}px`;
-  resizeHandles.navNe.style.top = `${navbarTop}px`;
-  resizeHandles.navNw.style.left = `${x}px`;
-  resizeHandles.navNw.style.top = `${navbarTop}px`;
+  if (navVisible && navbarExpanded) {
+    resizeHandles.navNe.style.left = `${MARGIN + webviewWidth - 24}px`;
+    resizeHandles.navNe.style.top = `0px`;
+    resizeHandles.navNw.style.left = `${MARGIN}px`;
+    resizeHandles.navNw.style.top = `0px`;
+  }
 
   // Mode indicator — top-right corner of the webview
   if (modeIndicator) {
-    modeIndicator.style.left = `${x + width - 120}px`;
-    modeIndicator.style.top = `${y + 8}px`;
+    modeIndicator.style.left = `${webviewLeft + webviewWidth - 120}px`;
+    modeIndicator.style.top = `${webviewTop + 8}px`;
   }
 
   // Widget container — right side of the webview with a gap
   if (widgetContainer) {
     const widgetGap = 12;
-    widgetContainer.style.left = `${x + width + widgetGap}px`;
-    widgetContainer.style.top = `${y}px`;
+    widgetContainer.style.left = `${webviewLeft + webviewWidth + widgetGap}px`;
+    widgetContainer.style.top = `${webviewTop}px`;
   }
+}
+
+// --- Set window bounds via IPC ---
+
+let pendingBoundsUpdate = null;
+
+function setWindowBounds(bounds) {
+  // Throttle to ~60fps using requestAnimationFrame
+  if (pendingBoundsUpdate) return;
+  pendingBoundsUpdate = requestAnimationFrame(() => {
+    pendingBoundsUpdate = null;
+    api.window.setBounds(bounds);
+  });
+}
+
+function setWindowBoundsImmediate(bounds) {
+  // For immediate updates (navbar show/hide) - bypass throttle
+  if (pendingBoundsUpdate) {
+    cancelAnimationFrame(pendingBoundsUpdate);
+    pendingBoundsUpdate = null;
+  }
+  api.window.setBounds(bounds);
 }
 
 // Initial positioning
@@ -156,7 +223,6 @@ updatePositions();
 
 async function initWebview() {
   try {
-    // Get the partition string for the current profile
     const result = await api.profiles.getPartition();
     if (result.success && result.data?.partition) {
       webview.partition = result.data.partition;
@@ -168,30 +234,28 @@ async function initWebview() {
     console.error('[page] Failed to get partition:', err);
   }
 
-  // Load the target URL
   webview.src = targetUrl;
   urlText.value = targetUrl;
 }
 
-// Start initialization
 initWebview();
 
 // --- Custom drag ---
 // Two modes:
-//   1. Navbar background: instant drag (no hold delay) — primary purpose of navbar
-//   2. Anywhere else (webview, buttons, url text, empty space): hold ~150ms then drag
-// A quick click (<150ms) on non-navbar areas passes through to the underlying element.
+//   1. Navbar background: instant drag (no hold delay)
+//   2. Anywhere else: hold ~150ms then drag
+// Drag now moves the BrowserWindow itself via setBounds() IPC.
 
 let isDragging = false;
-let dragStartX = 0;
-let dragStartY = 0;
+let dragStartScreenX = 0;
+let dragStartScreenY = 0;
 let dragStartBoundsX = 0;
 let dragStartBoundsY = 0;
-let pageMouseButtonDown = false; // track button state ourselves for reliability
+let pageMouseButtonDown = false;
 
 // Hold-to-drag state
-const DRAG_HOLD_THRESHOLD = 150; // ms before hold-drag activates (transparent canvas)
-const WEBVIEW_DRAG_HOLD_THRESHOLD = 300; // ms for webview content (longer to avoid interfering with clicks)
+const DRAG_HOLD_THRESHOLD = 150;
+const WEBVIEW_DRAG_HOLD_THRESHOLD = 300;
 let holdDragTimer = null;
 let holdDragPending = false;
 let holdDragStartScreenX = 0;
@@ -199,10 +263,10 @@ let holdDragStartScreenY = 0;
 
 function startDrag(screenX, screenY) {
   isDragging = true;
-  dragStartX = screenX;
-  dragStartY = screenY;
-  dragStartBoundsX = bounds.x;
-  dragStartBoundsY = bounds.y;
+  dragStartScreenX = screenX;
+  dragStartScreenY = screenY;
+  dragStartBoundsX = screenBounds.x;
+  dragStartBoundsY = screenBounds.y;
   document.body.style.cursor = 'grabbing';
 }
 
@@ -212,7 +276,6 @@ function cancelHoldDrag() {
     holdDragTimer = null;
   }
   holdDragPending = false;
-  // Deactivate the drag overlay if it was activated
   dragOverlay.classList.remove('active');
 }
 
@@ -225,13 +288,10 @@ navbar.addEventListener('mousedown', (e) => {
   e.preventDefault();
 });
 
-// Hold-to-drag from anywhere on the document (transparent canvas areas)
+// Hold-to-drag from anywhere on the document
 document.addEventListener('mousedown', (e) => {
-  // Skip if resize handle was clicked
   if (e.target.closest('.resize-handle')) return;
-  // Skip if already dragging (navbar instant drag handled above)
   if (isDragging) return;
-  // Only primary button
   if (e.button !== 0) return;
   pageMouseButtonDown = true;
 
@@ -247,24 +307,15 @@ document.addEventListener('mousedown', (e) => {
   }, DRAG_HOLD_THRESHOLD);
 });
 
-// Cancel hold-drag on mouseup before threshold
 document.addEventListener('mouseup', () => {
   pageMouseButtonDown = false;
   cancelHoldDrag();
 });
 
 // --- Webview hold-to-drag via injected long-press detector + overlay ---
-// The webview is a separate Electron process; mouse events inside it don't propagate
-// to the host document. We solve this by:
-// 1. Injecting a long-press detector into the guest page via executeJavaScript on dom-ready
-// 2. The guest script sends a message via console.log('__PEEK_DRAG__:screenX:screenY')
-// 3. The host listens for console-message events on the <webview> element
-// 4. On receiving the signal, the host activates the drag overlay and starts dragging
-// The overlay (pointer-events:all when active) captures all subsequent mouse events.
 
 const WEBVIEW_LONG_PRESS_JS = `
 (function() {
-  // Guard against re-injection
   if (window.__peekLongPressInstalled) return;
   window.__peekLongPressInstalled = true;
 
@@ -282,7 +333,6 @@ const WEBVIEW_LONG_PRESS_JS = `
     startY = e.screenY;
     cancel();
     timer = setTimeout(function() {
-      // Signal the host via console.log (host listens for console-message)
       console.log('__PEEK_DRAG__:' + e.screenX + ':' + e.screenY);
       timer = null;
     }, ${WEBVIEW_DRAG_HOLD_THRESHOLD});
@@ -290,7 +340,6 @@ const WEBVIEW_LONG_PRESS_JS = `
 
   document.addEventListener('mousemove', function(e) {
     if (!timer) return;
-    // Cancel if moved more than 5px (user is selecting text, not holding)
     if (Math.abs(e.screenX - startX) > 5 || Math.abs(e.screenY - startY) > 5) {
       cancel();
     }
@@ -298,12 +347,10 @@ const WEBVIEW_LONG_PRESS_JS = `
 
   document.addEventListener('mouseup', function() { cancel(); }, true);
   document.addEventListener('scroll', function() { cancel(); }, true);
-  // Also cancel on context menu (right-click)
   document.addEventListener('contextmenu', function() { cancel(); }, true);
 })();
 `;
 
-// Listen for the long-press signal from the guest page
 webview.addEventListener('console-message', (e) => {
   if (typeof e.message !== 'string' || !e.message.startsWith('__PEEK_DRAG__:')) return;
   const parts = e.message.split(':');
@@ -311,28 +358,24 @@ webview.addEventListener('console-message', (e) => {
   const screenY = parseFloat(parts[2]);
   if (isNaN(screenX) || isNaN(screenY)) return;
 
-  // Activate the overlay so it captures all subsequent mouse events for the drag
   dragOverlay.classList.add('active');
   startDrag(screenX, screenY);
   DEBUG && console.log('[page] Webview long-press drag started at', screenX, screenY);
 });
 
-// Inject the long-press detector into the guest page on every navigation
 webview.addEventListener('dom-ready', () => {
   webview.executeJavaScript(WEBVIEW_LONG_PRESS_JS).catch(err => {
     DEBUG && console.log('[page] Failed to inject long-press detector:', err.message);
   });
 });
 
-// The drag overlay captures mousemove/mouseup once active (handled by shared drag listeners below)
-// On mouseup during drag, deactivate the overlay
 dragOverlay.addEventListener('mouseup', () => {
   dragOverlay.classList.remove('active');
 });
 
 // --- Custom resize (all corner handles) ---
-// Uses pointer capture to keep receiving events even if cursor leaves the window.
-// Each direction (se, sw, ne, nw) adjusts different edges of the bounds.
+// Uses pointer capture. On each pointermove, calls setBounds() to resize the
+// BrowserWindow AND updates element positions within the window.
 
 let isResizing = false;
 let resizeDir = null;
@@ -353,10 +396,10 @@ function initResizeHandle(handle) {
     resizeDir = handle.dataset.dir;
     resizeStartX = e.screenX;
     resizeStartY = e.screenY;
-    resizeStartWidth = bounds.width;
-    resizeStartHeight = bounds.height;
-    resizeStartBoundsX = bounds.x;
-    resizeStartBoundsY = bounds.y;
+    resizeStartWidth = screenBounds.width;
+    resizeStartHeight = screenBounds.height;
+    resizeStartBoundsX = screenBounds.x;
+    resizeStartBoundsY = screenBounds.y;
     activeResizeHandle = handle;
     document.body.style.cursor = `${resizeDir}-resize`;
     handle.setPointerCapture(e.pointerId);
@@ -373,30 +416,32 @@ function initResizeHandle(handle) {
     const dx = e.screenX - resizeStartX;
     const dy = e.screenY - resizeStartY;
 
-    // Apply resize based on direction
+    // Apply resize based on direction (update screen bounds)
     if (resizeDir === 'se') {
-      bounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
-      bounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
+      screenBounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
+      screenBounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
     } else if (resizeDir === 'sw') {
       const newWidth = Math.max(MIN_WIDTH, resizeStartWidth - dx);
-      bounds.x = resizeStartBoundsX + (resizeStartWidth - newWidth);
-      bounds.width = newWidth;
-      bounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
+      screenBounds.x = resizeStartBoundsX + (resizeStartWidth - newWidth);
+      screenBounds.width = newWidth;
+      screenBounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
     } else if (resizeDir === 'ne') {
-      bounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
+      screenBounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
       const newHeight = Math.max(MIN_HEIGHT, resizeStartHeight - dy);
-      bounds.y = resizeStartBoundsY + (resizeStartHeight - newHeight);
-      bounds.height = newHeight;
+      screenBounds.y = resizeStartBoundsY + (resizeStartHeight - newHeight);
+      screenBounds.height = newHeight;
     } else if (resizeDir === 'nw') {
       const newWidth = Math.max(MIN_WIDTH, resizeStartWidth - dx);
-      bounds.x = resizeStartBoundsX + (resizeStartWidth - newWidth);
-      bounds.width = newWidth;
+      screenBounds.x = resizeStartBoundsX + (resizeStartWidth - newWidth);
+      screenBounds.width = newWidth;
       const newHeight = Math.max(MIN_HEIGHT, resizeStartHeight - dy);
-      bounds.y = resizeStartBoundsY + (resizeStartHeight - newHeight);
-      bounds.height = newHeight;
+      screenBounds.y = resizeStartBoundsY + (resizeStartHeight - newHeight);
+      screenBounds.height = newHeight;
     }
 
+    // Update both window bounds and element positions
     updatePositions();
+    setWindowBounds(computeWindowBounds(screenBounds, navbarExpanded));
   });
 
   handle.addEventListener('pointerup', (e) => {
@@ -413,7 +458,6 @@ function initResizeHandle(handle) {
   });
 }
 
-// Initialize all resize handles
 Object.values(resizeHandles).forEach(initResizeHandle);
 
 function cancelResize() {
@@ -422,34 +466,31 @@ function cancelResize() {
   resizeDir = null;
   activeResizeHandle = null;
   document.body.style.cursor = '';
-  // Persist updated bounds to URL params for session save
   if (wasResizing) {
     updateUrlParams();
   }
 }
 
 // --- Shared mousemove/mouseup for drag ---
+// Drag now moves the BrowserWindow via setBounds() IPC
 
 document.addEventListener('mousemove', (e) => {
-  // Safety: if no button is held during drag, cancel it.
-  // Use our tracked pageMouseButtonDown rather than e.buttons which can report
-  // stale values (0) during fast cursor movements due to Chromium event coalescing.
   if (isDragging && !pageMouseButtonDown) {
     isDragging = false;
     dragOverlay.classList.remove('active');
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
-    // Persist updated bounds to URL params for session save
     updateUrlParams();
     return;
   }
 
   if (isDragging) {
-    const dx = e.screenX - dragStartX;
-    const dy = e.screenY - dragStartY;
-    bounds.x = dragStartBoundsX + dx;
-    bounds.y = dragStartBoundsY + dy;
-    updatePositions();
+    const dx = e.screenX - dragStartScreenX;
+    const dy = e.screenY - dragStartScreenY;
+    screenBounds.x = dragStartBoundsX + dx;
+    screenBounds.y = dragStartBoundsY + dy;
+    // Move the window — element positions within the window stay the same
+    setWindowBounds(computeWindowBounds(screenBounds, navbarExpanded));
   }
 });
 
@@ -459,7 +500,6 @@ document.addEventListener('mouseup', () => {
     dragOverlay.classList.remove('active');
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
-    // Persist updated bounds to URL params for session save
     updateUrlParams();
   }
 });
@@ -472,13 +512,11 @@ function updateState() {
 }
 
 // --- Show / Hide navbar ---
-// The navbar is shown by:
-//   1. Cmd+L (published from main process via before-input-event on guest/host webContents)
-//   2. Hovering near the top of the webview (trigger zone)
-// It is hidden by clicking outside, pressing Escape, or moving mouse away (hover mode).
+// When the navbar becomes visible, the window must expand upward to accommodate it.
+// When it hides, the window contracts back down.
 
 let hideTimer = null;
-let showSource = null; // 'hover' or 'shortcut' — determines dismiss behavior
+let showSource = null; // 'hover' or 'shortcut'
 
 function show(opts) {
   if (hideTimer) {
@@ -489,7 +527,10 @@ function show(opts) {
   navbar.classList.add('visible');
   if (opts?.source) showSource = opts.source;
   if (wasHidden) {
-    updatePositions(); // Show navbar corner resize handles
+    // Expand window upward for navbar
+    navbarExpanded = true;
+    updatePositions();
+    setWindowBoundsImmediate(computeWindowBounds(screenBounds, navbarExpanded));
     updateState();
     DEBUG && console.log('[page] Navbar shown, source:', showSource);
   }
@@ -502,14 +543,16 @@ function show(opts) {
 }
 
 function hide() {
-  // Don't hide while dragging or about to drag
   if (isDragging || holdDragPending) return;
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;
   }
   navbar.classList.remove('visible');
-  updatePositions(); // Hide navbar corner resize handles
+  // Contract window back down
+  navbarExpanded = false;
+  updatePositions();
+  setWindowBoundsImmediate(computeWindowBounds(screenBounds, navbarExpanded));
   urlText.blur();
   showSource = null;
   DEBUG && console.log('[page] Navbar hidden');
@@ -531,13 +574,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 // --- Hover trigger zone ---
-// Mouse entering the area above the webview shows the navbar.
-// Moving away from both the trigger zone AND the navbar hides it (with a small delay).
 
 function scheduleHide() {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
-    // Only auto-hide if shown by hover (not by Cmd+L)
     if (showSource === 'hover') {
       hide();
     }
@@ -568,7 +608,6 @@ navbar.addEventListener('mouseleave', () => {
 });
 
 // Cmd+L: show navbar with URL focus
-// Published from main process with GLOBAL scope (both host and webview guest fire this)
 api.subscribe('page:show-navbar', () => show({ focusUrl: true, source: 'shortcut' }), api.scopes.GLOBAL);
 
 // Cmd+R: reload the webview
@@ -620,19 +659,11 @@ btnReload.addEventListener('click', (e) => {
 
 // --- URL field: navigate on Enter ---
 
-/**
- * Normalize user input into a navigable URL.
- * If it looks like a URL (has a dot, or starts with a protocol), use it directly.
- * Otherwise prefix with https://.
- */
 function normalizeUrl(input) {
   const trimmed = input.trim();
   if (!trimmed) return null;
-  // Already has a protocol
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  // Looks like a domain (contains a dot and no spaces)
   if (trimmed.includes('.') && !trimmed.includes(' ')) return 'https://' + trimmed;
-  // Fallback: prefix with https://
   return 'https://' + trimmed;
 }
 
@@ -648,7 +679,6 @@ urlText.addEventListener('keydown', (e) => {
       hide();
     }
   }
-  // Escape while editing the URL field: restore current URL and hide navbar
   if (e.key === 'Escape') {
     urlText.value = webview.getURL() || targetUrl;
     urlText.blur();
@@ -657,21 +687,16 @@ urlText.addEventListener('keydown', (e) => {
   }
 });
 
-// Prevent mousedown on URL field from triggering navbar drag
 urlText.addEventListener('mousedown', (e) => {
   e.stopPropagation();
 });
 
-// Select all on focus (clicking the field)
 urlText.addEventListener('focus', () => {
-  // Defer so the click doesn't immediately deselect
   requestAnimationFrame(() => urlText.select());
 });
 
 // --- Escape handling ---
 
-// Register escape handler for internal navigation (back in webview history)
-// The backend determines close policy based on the window's role.
 api.escape.onEscape(() => {
   if (webview.canGoBack()) {
     DEBUG && console.log('[page] ESC: webview going back');
@@ -716,67 +741,44 @@ webview.addEventListener('did-navigate-in-page', (e) => {
   }
 });
 
-// NOTE: The 'new-window' webview event was removed in Electron 22.
-// Popups from webview guests (window.open / target="_blank") are now handled
-// by setWindowOpenHandler on the guest webContents, attached via
-// did-attach-webview in backend/electron/ipc.ts.
-
 webview.addEventListener('did-fail-load', (e) => {
   if (e.errorCode === -3) return;
   console.error('[page] Load failed:', e.errorCode, e.errorDescription);
 });
 
 // Set default background color on webview content if the page doesn't set one
-// This prevents white-text-on-transparent issues for pages that assume a background
 webview.addEventListener('dom-ready', async () => {
   try {
-    // Detection script that thoroughly checks for any background
     const detectionJs = `
       (function() {
-        // Check if a color value represents "no background"
         function isTransparentColor(color) {
           if (!color) return true;
           if (color === 'transparent') return true;
           if (color === 'rgba(0, 0, 0, 0)') return true;
-          // Handle any rgba with alpha = 0
           const rgbaMatch = color.match(/rgba\\s*\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*([\\d.]+)\\s*\\)/);
           if (rgbaMatch && parseFloat(rgbaMatch[1]) === 0) return true;
           return false;
         }
 
-        // Check if an element has a background set (color or image)
         function hasBackground(el) {
           if (!el) return false;
           const style = window.getComputedStyle(el);
-
-          // Check background-color
           const bgColor = style.backgroundColor;
           const hasColor = !isTransparentColor(bgColor);
-
-          // Check background-image (includes gradients)
           const bgImage = style.backgroundImage;
           const hasImage = bgImage && bgImage !== 'none';
-
           return hasColor || hasImage;
         }
 
-        // Check both html and body elements
         const html = document.documentElement;
         const body = document.body;
-
-        const htmlHasBg = hasBackground(html);
-        const bodyHasBg = hasBackground(body);
-
-        // If either has a background, we don't need to set one
-        return !(htmlHasBg || bodyHasBg);
+        return !(hasBackground(html) || hasBackground(body));
       })();
     `;
 
-    // Run detection in page context
     const needsBackground = await webview.executeJavaScript(detectionJs);
 
     if (needsBackground) {
-      // Simple fix: set white background
       const defaultBg = '#ffffff';
       await webview.executeJavaScript(`
         document.documentElement.style.backgroundColor = '${defaultBg}';
@@ -791,19 +793,15 @@ webview.addEventListener('dom-ready', async () => {
 });
 
 // --- OpenSearch discovery & page:loaded event ---
-// After DOM is ready, detect OpenSearch <link> tags and publish page:loaded for extensions
 
 webview.addEventListener('did-finish-load', async () => {
   const pageUrl = webview.getURL();
   if (!pageUrl) return;
-
-  // Only process http/https pages
   if (!pageUrl.startsWith('http://') && !pageUrl.startsWith('https://')) return;
 
   let opensearchUrl = null;
 
   try {
-    // Detect OpenSearch description link in the page
     const detectedUrl = await webview.executeJavaScript(`
       (function() {
         const link = document.querySelector('link[rel="search"][type="application/opensearchdescription+xml"]');
@@ -812,7 +810,6 @@ webview.addEventListener('did-finish-load', async () => {
     `);
 
     if (detectedUrl) {
-      // Resolve relative URLs against the page URL
       try {
         opensearchUrl = new URL(detectedUrl, pageUrl).href;
       } catch (e) {
@@ -823,7 +820,6 @@ webview.addEventListener('did-finish-load', async () => {
     DEBUG && console.log('[page] OpenSearch detection failed:', err.message);
   }
 
-  // Publish page:loaded event for extensions (e.g., websearch OpenSearch discovery)
   const pageTitle = document.title || webview.getTitle() || '';
   api.publish('page:loaded', {
     url: pageUrl,
@@ -864,9 +860,6 @@ api.commands.register({
 let currentMode = 'page';
 let currentModeMetadata = {};
 
-/**
- * Update the mode indicator display
- */
 function updateModeIndicator() {
   if (!modeIndicator) return;
 
@@ -879,7 +872,6 @@ function updateModeIndicator() {
     label.textContent = currentMode;
   }
 
-  // Show group name when in group mode
   if (groupName) {
     if (currentMode === 'group' && currentModeMetadata.groupName) {
       groupName.textContent = currentModeMetadata.groupName;
@@ -892,20 +884,14 @@ function updateModeIndicator() {
   DEBUG && console.log('[page] Mode indicator updated:', currentMode, currentModeMetadata);
 }
 
-/**
- * Initialize mode context on page load
- */
 async function initModeContext() {
   try {
-    // Check if we inherited group mode from opener BEFORE setting page mode
     const existingMode = await api.context.get('mode');
     if (existingMode.success && existingMode.data && existingMode.data.value === 'group') {
-      // Window inherited group mode from opener - preserve it
       currentMode = 'group';
       currentModeMetadata = existingMode.data.metadata || {};
       DEBUG && console.log('[page] Inherited group mode, preserving:', currentModeMetadata);
     } else {
-      // No inherited group mode - set page mode as before
       const result = await api.context.setMode('page', {
         metadata: {
           url: targetUrl,
@@ -920,7 +906,6 @@ async function initModeContext() {
       }
     }
 
-    // Read back the current mode
     const modeResult = await api.context.get('mode');
     if (modeResult.success && modeResult.data) {
       currentMode = modeResult.data.value || 'page';
@@ -928,7 +913,6 @@ async function initModeContext() {
       updateModeIndicator();
     }
 
-    // Watch for mode changes
     api.context.watchMode((mode, entry) => {
       if (mode) {
         currentMode = mode;
@@ -942,28 +926,13 @@ async function initModeContext() {
   }
 }
 
-// Initialize mode context
 initModeContext();
 
 // --- Widget system ---
-// Widgets are small UI panels that appear on the transparent canvas to the right
-// of the webview. Each widget is a position:absolute div inside the widget container,
-// positioned by updatePositions(). Widgets can be added, removed, and updated via API.
 
-const widgets = new Map(); // id -> { element, timers }
+const widgets = new Map();
 
-/**
- * Add a widget panel to the right side of the page.
- * @param {string} id - Unique widget identifier
- * @param {object} opts - Widget options
- * @param {string} opts.title - Widget header title
- * @param {string|HTMLElement} opts.content - HTML string or DOM element for widget body
- * @param {number} [opts.autoDismiss] - Auto-dismiss after N milliseconds (0 = no auto-dismiss)
- * @param {function} [opts.onClose] - Callback when widget is closed
- * @returns {object} Widget handle with { element, close() }
- */
 function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
-  // Remove existing widget with same id
   if (widgets.has(id)) {
     removeWidget(id);
   }
@@ -972,7 +941,6 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
   el.className = 'widget';
   el.dataset.widgetId = id;
 
-  // Header with title and close button
   const header = document.createElement('div');
   header.className = 'widget-header';
 
@@ -982,7 +950,7 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'widget-close';
-  closeBtn.textContent = '\u00D7'; // multiplication sign (x)
+  closeBtn.textContent = '\u00D7';
   closeBtn.title = 'Dismiss';
   closeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -993,7 +961,6 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
   header.appendChild(closeBtn);
   el.appendChild(header);
 
-  // Body
   const body = document.createElement('div');
   body.className = 'widget-body';
   if (typeof content === 'string') {
@@ -1007,12 +974,10 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
 
   const timers = [];
 
-  // Animate in on next frame
   requestAnimationFrame(() => {
     el.classList.add('visible');
   });
 
-  // Auto-dismiss
   if (autoDismiss > 0) {
     const timer = setTimeout(() => {
       removeWidget(id);
@@ -1034,26 +999,20 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
   return handle;
 }
 
-/**
- * Remove a widget by id with a fade-out animation.
- * @param {string} id - Widget identifier
- */
 function removeWidget(id) {
   const handle = widgets.get(id);
   if (!handle) return;
 
-  // Clear any pending timers
   for (const timer of handle.timers) {
     clearTimeout(timer);
   }
 
-  // Animate out
   handle.element.classList.remove('visible');
   handle.element.classList.add('hiding');
 
   setTimeout(() => {
     handle.element.remove();
-  }, 300); // Match transition duration
+  }, 300);
 
   if (handle.onClose) {
     try { handle.onClose(); } catch (e) { /* ignore */ }
@@ -1063,13 +1022,6 @@ function removeWidget(id) {
   DEBUG && console.log('[page] Widget removed:', id);
 }
 
-/**
- * Update a widget's content.
- * @param {string} id - Widget identifier
- * @param {object} opts - Update options
- * @param {string|HTMLElement} [opts.content] - New content for widget body
- * @param {string} [opts.title] - New title
- */
 function updateWidget(id, { content, title } = {}) {
   const handle = widgets.get(id);
   if (!handle) return;
@@ -1092,8 +1044,6 @@ function updateWidget(id, { content, title } = {}) {
 }
 
 // --- OpenSearch discovery widget ---
-// When the websearch extension discovers an OpenSearch engine, show a temporary
-// notification widget on the right side of the page.
 
 api.subscribe('websearch:engine-discovered', (msg) => {
   if (!msg || !msg.engine) return;
@@ -1103,16 +1053,14 @@ api.subscribe('websearch:engine-discovered', (msg) => {
 
   DEBUG && console.log('[page] OpenSearch engine discovered:', engine.name);
 
-  // Build the widget content
   const contentEl = document.createElement('div');
 
-  // Engine info row
   const infoRow = document.createElement('div');
   infoRow.className = 'widget-engine-found';
 
   const iconSpan = document.createElement('span');
   iconSpan.className = 'widget-engine-icon';
-  iconSpan.textContent = '\uD83D\uDD0D'; // magnifying glass emoji
+  iconSpan.textContent = '\uD83D\uDD0D';
 
   const nameSpan = document.createElement('span');
   nameSpan.className = 'widget-engine-name';
@@ -1122,7 +1070,6 @@ api.subscribe('websearch:engine-discovered', (msg) => {
   infoRow.appendChild(nameSpan);
   contentEl.appendChild(infoRow);
 
-  // Action button - already added by the extension background, show confirmation
   const actionBtn = document.createElement('button');
   actionBtn.className = 'widget-action-btn confirmed';
   actionBtn.textContent = '\u2713 Added to search engines';
@@ -1135,4 +1082,4 @@ api.subscribe('websearch:engine-discovered', (msg) => {
   });
 }, api.scopes.GLOBAL);
 
-DEBUG && console.log('[page] Canvas container initialized for:', targetUrl);
+DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);

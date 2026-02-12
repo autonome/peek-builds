@@ -20,8 +20,8 @@
     }
 
     /*
-     * Webview — positioned by JS via updatePositions() on the transparent canvas.
-     * No explicit top/left/right/bottom — JS sets these based on bounds.
+     * Webview — positioned by JS via updatePositions() relative to window origin.
+     * The window is a tight-fitting BrowserWindow, not fullscreen.
      */
     webview {
       position: absolute;
@@ -32,8 +32,9 @@
     }
 
     /*
-     * Navbar — positioned by JS via updatePositions() ABOVE the webview with a gap.
-     * Dragging is handled by custom JS (moves bounds), not -webkit-app-region.
+     * Navbar — positioned by JS at top of window when visible.
+     * Window expands upward via setBounds() to accommodate it.
+     * Dragging is handled by custom JS (moves window), not -webkit-app-region.
      */
     .navbar {
       position: absolute;
@@ -117,10 +118,10 @@
       color: var(--theme-text, #e0e0e0);
     }
 
-    /* Trigger zone — positioned by JS via updatePositions() above the navbar area */
+    /* Trigger zone — transparent strip above webview, always part of window.
+     * Height is set by JS (TRIGGER_ZONE_HEIGHT). Hover reveals the navbar. */
     .trigger-zone {
       position: absolute;
-      height: 50px;
       z-index: 50;
     }
 
