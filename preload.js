@@ -2088,18 +2088,36 @@ window.addEventListener('load', () => {
 });
 
 // ============================================================================
-// Click-and-hold window dragging
-// Allows dragging frameless windows by holding mouse down anywhere (~300ms)
+// Click-and-hold window dragging (unified, application-wide)
+//
+// Provides drag-to-move for all frameless windows. Hold the mouse button down
+// for a short delay, then drag to move the window. Works in every window that
+// doesn't opt out via `data-no-drag` on <body> (e.g., peek://page which has
+// its own canvas-based drag system).
+//
+// Design decisions:
+//   - Window ID is fetched once at init (it never changes).
+//   - Window position is fetched eagerly on mousedown (overlaps with the hold
+//     timer) so dragging starts instantly when the timer fires.
+//   - Hold delay is 150ms — short enough to feel responsive, long enough to
+//     avoid triggering on normal clicks.
+//   - Movement threshold is 5px — if the mouse moves more than this during
+//     the hold period, the drag is cancelled (the user is clicking, not holding).
+//   - Text selection takes priority: if a selection appears during hold/drag,
+//     the drag is cancelled.
+//   - Interactive elements (inputs, buttons, links, contentEditable, elements
+//     with data-no-drag attribute) never trigger drag.
 // ============================================================================
 (function initWindowDrag() {
-  const HOLD_DELAY = 300; // ms before drag starts
+  const HOLD_DELAY = 150; // ms before drag starts
   const MOVE_THRESHOLD = 5; // px - cancel hold if mouse moves more than this
 
   let isDragging = false;
   let holdTimer = null;
-  let startMouse = null;
-  let startWindowPos = null;
-  let windowId = null;
+  let startMouse = null; // { x, y } screen coords at mousedown
+  let startWindowPos = null; // { x, y } window position at mousedown
+  let cachedWindowId = null; // fetched once at init
+  let pendingPosPromise = null; // position fetch started eagerly on mousedown
 
   // Elements that should not trigger drag
   const isInteractive = (el) => {
@@ -2109,14 +2127,13 @@ window.addEventListener('load', () => {
     if (el.isContentEditable) return true;
     if (el.hasAttribute('data-no-drag')) return true;
     if (el.closest('[data-no-drag]')) return true;
-    // Check for -webkit-app-region: no-drag
-    try {
-      const style = getComputedStyle(el);
-      if (style.webkitAppRegion === 'no-drag') return true;
-    } catch (e) {
-      // Ignore errors from pseudo-elements
-    }
     return false;
+  };
+
+  // Check if text is being selected
+  const hasTextSelection = () => {
+    const selection = window.getSelection();
+    return selection && selection.toString().length > 0;
   };
 
   const cancelHold = () => {
@@ -2124,6 +2141,7 @@ window.addEventListener('load', () => {
       clearTimeout(holdTimer);
       holdTimer = null;
     }
+    pendingPosPromise = null;
   };
 
   const endDrag = () => {
@@ -2135,45 +2153,57 @@ window.addEventListener('load', () => {
     }
     startMouse = null;
     startWindowPos = null;
-    windowId = null;
+    pendingPosPromise = null;
   };
 
-  const onMouseDown = async (e) => {
+  const onMouseDown = (e) => {
     // Only left click, not on interactive elements
     if (e.button !== 0) return;
     if (isInteractive(e.target)) return;
+    // If we don't have a window ID yet, can't drag
+    if (!cachedWindowId) return;
 
+    // Capture screen position synchronously
     startMouse = { x: e.screenX, y: e.screenY };
+    startWindowPos = null;
+
+    // Start fetching window position eagerly (overlaps with hold timer)
+    // so when the timer fires we already have the position.
+    pendingPosPromise = ipcRenderer.invoke('window-get-position', { id: cachedWindowId })
+      .catch(() => null);
 
     holdTimer = setTimeout(async () => {
+      holdTimer = null;
       try {
         // If text was selected during hold period, don't start drag
         if (hasTextSelection()) {
           startMouse = null;
+          pendingPosPromise = null;
           return;
         }
 
-        // Get window ID and position (use ipcRenderer directly since we're in preload)
-        windowId = await ipcRenderer.invoke('get-window-id');
-        if (!windowId) return;
+        // If mouse position was cleared (e.g., by movement threshold), bail
+        if (!startMouse) {
+          pendingPosPromise = null;
+          return;
+        }
 
-        const pos = await ipcRenderer.invoke('window-get-position', { id: windowId });
-        if (!pos.success) return;
+        // Await the eagerly-started position fetch
+        const pos = await pendingPosPromise;
+        pendingPosPromise = null;
+        if (!pos || !pos.success) return;
+
+        // Double-check: mouse may have been released during the await
+        if (!startMouse) return;
 
         startWindowPos = { x: pos.x, y: pos.y };
         isDragging = true;
         document.body.style.cursor = 'grabbing';
         document.body.classList.add('is-dragging');
       } catch (err) {
-        DEBUG && console.error('Failed to start drag:', err);
+        DEBUG && console.error('[preload] Failed to start drag:', err);
       }
     }, HOLD_DELAY);
-  };
-
-  // Check if text is being selected
-  const hasTextSelection = () => {
-    const selection = window.getSelection();
-    return selection && selection.toString().length > 0;
   };
 
   const onMouseMove = (e) => {
@@ -2195,6 +2225,12 @@ window.addEventListener('load', () => {
       return;
     }
 
+    // Safety: cancel if no button held
+    if (e.buttons === 0) {
+      endDrag();
+      return;
+    }
+
     // If text got selected somehow during drag, end drag and let selection win
     if (hasTextSelection()) {
       endDrag();
@@ -2207,7 +2243,7 @@ window.addEventListener('load', () => {
     const newX = startWindowPos.x + deltaX;
     const newY = startWindowPos.y + deltaY;
 
-    ipcRenderer.invoke('window-move', { id: windowId, x: newX, y: newY });
+    ipcRenderer.invoke('window-move', { id: cachedWindowId, x: newX, y: newY });
   };
 
   const onMouseUp = () => {
@@ -2220,13 +2256,20 @@ window.addEventListener('load', () => {
   };
 
   // Initialize on DOMContentLoaded
-  const init = () => {
-    document.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+  const init = async () => {
+    // Fetch and cache window ID once (it never changes)
+    try {
+      cachedWindowId = await ipcRenderer.invoke('get-window-id');
+    } catch (err) {
+      DEBUG && console.error('[preload] Failed to get window ID for drag:', err);
+    }
+
+    document.addEventListener('mousedown', onMouseDown, true);
+    document.addEventListener('mousemove', onMouseMove, true);
+    document.addEventListener('mouseup', onMouseUp, true);
     window.addEventListener('blur', onBlur);
 
-    DEBUG && console.log('[preload] Window drag initialized');
+    DEBUG && console.log('[preload] Window drag initialized, windowId:', cachedWindowId);
   };
 
   if (document.readyState === 'loading') {
