@@ -348,6 +348,63 @@ const sortAddresses = (addresses) => {
   });
 };
 
+/**
+ * Set up create group UI (button, form, submit/cancel)
+ */
+const setupCreateGroup = () => {
+  const createBtn = document.querySelector('.create-group-btn');
+  const form = document.querySelector('.create-group-form');
+  const newGroupInput = document.querySelector('.new-group-input');
+  const cancelBtn = document.querySelector('.create-group-cancel');
+  const submitBtn = document.querySelector('.create-group-submit');
+
+  if (!createBtn || !form) return;
+
+  const showForm = () => {
+    form.style.display = '';
+    newGroupInput.value = '';
+    setTimeout(() => newGroupInput.focus(), 50);
+  };
+
+  const hideForm = () => {
+    form.style.display = 'none';
+    newGroupInput.value = '';
+  };
+
+  const submitGroup = async () => {
+    const name = (newGroupInput.value || '').trim();
+    if (!name) return;
+
+    try {
+      const result = await api.datastore.getOrCreateTag(name);
+      if (result.success) {
+        debug && console.log('[groups] Created new group (tag):', name, result.data);
+        hideForm();
+        // Refresh groups list
+        await loadTags();
+        renderGroups();
+      } else {
+        console.error('[groups] Failed to create group:', result.error);
+      }
+    } catch (err) {
+      console.error('[groups] Error creating group:', err);
+    }
+  };
+
+  createBtn.addEventListener('click', showForm);
+  cancelBtn.addEventListener('click', hideForm);
+  submitBtn.addEventListener('click', submitGroup);
+  newGroupInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitGroup();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      hideForm();
+    }
+  });
+};
+
 const init = async () => {
   debug && console.log('Groups init');
 
@@ -420,6 +477,9 @@ const init = async () => {
     debug && console.log('[groups] item:deleted event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
+
+  // Set up create group UI
+  setupCreateGroup();
 
   // Show groups view
   showGroups();

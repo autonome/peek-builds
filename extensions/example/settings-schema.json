@@ -1,4 +1,11 @@
 {
+  "labels": {
+    "prefs": {
+      "greeting": "Greeting message",
+      "galleryColumns": "Gallery columns",
+      "showMetadata": "Show metadata"
+    }
+  },
   "prefs": {
     "type": "object",
     "properties": {

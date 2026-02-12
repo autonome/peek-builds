@@ -124,7 +124,7 @@ function sanitizeParams(params: Record<string, unknown>): Record<string, unknown
  * MUST be synchronous — runs in the before-quit handler before closeDatabase().
  * Uses better-sqlite3 synchronous APIs via getDb().
  */
-export function saveSessionSnapshot(reason: SessionSnapshot['reason']): void {
+export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { cleanShutdown?: boolean }): void {
   // Skip save in test environments
   if (isTestProfile()) return;
 
@@ -244,11 +244,13 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason']): void {
     }
 
     // Write metadata with cleanShutdown flag
+    // Default to true (normal quit), but SIGINT/SIGTERM pass false
+    // so the user gets the crash recovery prompt on next startup.
     const metadata: SessionMetadata = {
       lastSaveReason: reason,
       lastSaveAt: Date.now(),
       windowCount: windowDescriptors.length,
-      cleanShutdown: true,
+      cleanShutdown: opts?.cleanShutdown !== false,
       crashCount: existingMetadata.crashCount ?? 0,
       lastRestoreAt: existingMetadata.lastRestoreAt,
       restoreCount: existingMetadata.restoreCount,

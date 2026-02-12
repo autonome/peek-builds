@@ -2,11 +2,28 @@
  * Note command - saves items to the datastore with smart type detection
  *
  * If input is a URL → saves as url item
+ * If input is hashtags (#foo #bar) → saves as tagset item with those tags
  * If input is text → saves as text item tagged with 'note' and 'from:cmd'
  */
 import api from 'peek://app/api.js';
 
 const NOTE_TAGS = ['note', 'from:cmd'];
+
+/**
+ * Check if input is a tagset (hashtag syntax like "#foo #bar").
+ * Returns the parsed tag names if it is a tagset, or null otherwise.
+ */
+const parseTagset = (text) => {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return null;
+  // Split on whitespace and check that every token starts with #
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length === 0) return null;
+  const allHashtags = tokens.every(t => /^#[^\s#]+$/.test(t));
+  if (!allHashtags) return null;
+  // Strip the # prefix from each tag name
+  return tokens.map(t => t.slice(1));
+};
 
 /**
  * Detect item type from input
@@ -15,6 +32,7 @@ const detectType = (text) => {
   const trimmed = (text || '').trim();
   if (!trimmed) return null;
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return 'url';
+  if (parseTagset(trimmed)) return 'tagset';
   return 'text';
 };
 
@@ -25,7 +43,9 @@ const saveItem = async (input) => {
   const type = detectType(input);
   if (!type) throw new Error('No input provided');
 
-  const opts = { content: input };
+  // For tagsets, store the tag names as comma-separated content
+  const tagNames = type === 'tagset' ? parseTagset(input) : null;
+  const opts = { content: type === 'tagset' ? tagNames.join(', ') : input };
   if (type === 'url') opts.url = input;
 
   const result = await api.datastore.addItem(type, opts);
@@ -42,6 +62,20 @@ const saveItem = async (input) => {
       if (tagResult.success) {
         await api.datastore.tagItem(itemId, tagResult.data.tag.id);
       }
+    }
+  }
+
+  // For tagsets, add each parsed tag and the 'from:cmd' origin tag
+  if (type === 'tagset' && tagNames) {
+    for (const tagName of tagNames) {
+      const tagResult = await api.datastore.getOrCreateTag(tagName);
+      if (tagResult.success) {
+        await api.datastore.tagItem(itemId, tagResult.data.tag.id);
+      }
+    }
+    const fromCmdResult = await api.datastore.getOrCreateTag('from:cmd');
+    if (fromCmdResult.success) {
+      await api.datastore.tagItem(itemId, fromCmdResult.data.tag.id);
     }
   }
 
@@ -94,13 +128,14 @@ const commands = [
 
           // Return the saved item through the connector pattern
           // Panel will handle editor:changed notification and routing
+          const typeLabel = type === 'url' ? 'URL' : type === 'tagset' ? 'Tagset' : 'Note';
           return {
             success: true,
-            message: `${type === 'url' ? 'URL' : 'Note'} saved`,
+            message: `${typeLabel} saved`,
             output: {
               data: { id: itemId, type, content: ctx.search },
               mimeType: 'item',
-              title: type === 'url' ? 'Saved URL' : 'Saved note',
+              title: `Saved ${typeLabel.toLowerCase()}`,
               // Flag to indicate this is a newly created item (for editor:changed)
               isNew: true
             }

@@ -69,6 +69,23 @@ const widgetContainer = document.getElementById('widget-container');
 
 // --- Position all elements based on bounds ---
 
+function updateUrlParams() {
+  // Keep the URL search params in sync with current bounds so that
+  // session save (extractCanvasBounds) reads the latest position/size.
+  // Uses replaceState to avoid reloading the page or adding history entries.
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('x', String(bounds.x));
+    url.searchParams.set('y', String(bounds.y));
+    url.searchParams.set('width', String(bounds.width));
+    url.searchParams.set('height', String(bounds.height));
+    history.replaceState(null, '', url.toString());
+  } catch (e) {
+    // Non-critical — session restore will fall back to initial position
+    DEBUG && console.log('[page] Failed to update URL params:', e);
+  }
+}
+
 function updatePositions() {
   const { x, y, width, height } = bounds;
 
@@ -170,6 +187,7 @@ let dragStartX = 0;
 let dragStartY = 0;
 let dragStartBoundsX = 0;
 let dragStartBoundsY = 0;
+let pageMouseButtonDown = false; // track button state ourselves for reliability
 
 // Hold-to-drag state
 const DRAG_HOLD_THRESHOLD = 150; // ms before hold-drag activates (transparent canvas)
@@ -201,6 +219,7 @@ function cancelHoldDrag() {
 // Instant drag on navbar background (excluding buttons and URL text)
 navbar.addEventListener('mousedown', (e) => {
   if (e.target.closest('.nav-btn') || e.target.closest('.url-text')) return;
+  pageMouseButtonDown = true;
   startDrag(e.screenX, e.screenY);
   navbar.style.cursor = 'grabbing';
   e.preventDefault();
@@ -214,6 +233,7 @@ document.addEventListener('mousedown', (e) => {
   if (isDragging) return;
   // Only primary button
   if (e.button !== 0) return;
+  pageMouseButtonDown = true;
 
   holdDragPending = true;
   holdDragStartScreenX = e.screenX;
@@ -229,6 +249,7 @@ document.addEventListener('mousedown', (e) => {
 
 // Cancel hold-drag on mouseup before threshold
 document.addEventListener('mouseup', () => {
+  pageMouseButtonDown = false;
   cancelHoldDrag();
 });
 
@@ -396,21 +417,30 @@ function initResizeHandle(handle) {
 Object.values(resizeHandles).forEach(initResizeHandle);
 
 function cancelResize() {
+  const wasResizing = isResizing;
   isResizing = false;
   resizeDir = null;
   activeResizeHandle = null;
   document.body.style.cursor = '';
+  // Persist updated bounds to URL params for session save
+  if (wasResizing) {
+    updateUrlParams();
+  }
 }
 
 // --- Shared mousemove/mouseup for drag ---
 
 document.addEventListener('mousemove', (e) => {
-  // Safety: if no button is held during drag, cancel it
-  if (isDragging && e.buttons === 0) {
+  // Safety: if no button is held during drag, cancel it.
+  // Use our tracked pageMouseButtonDown rather than e.buttons which can report
+  // stale values (0) during fast cursor movements due to Chromium event coalescing.
+  if (isDragging && !pageMouseButtonDown) {
     isDragging = false;
     dragOverlay.classList.remove('active');
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
+    // Persist updated bounds to URL params for session save
+    updateUrlParams();
     return;
   }
 
@@ -429,6 +459,8 @@ document.addEventListener('mouseup', () => {
     dragOverlay.classList.remove('active');
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
+    // Persist updated bounds to URL params for session save
+    updateUrlParams();
   }
 });
 
@@ -1102,5 +1134,127 @@ api.subscribe('websearch:engine-discovered', (msg) => {
     autoDismiss: 8000,
   });
 }, api.scopes.GLOBAL);
+
+// --- Click-through on transparent background ---
+// The canvas page is a fullscreen transparent BrowserWindow. Clicks on the
+// transparent background (areas outside the webview, navbar, resize handles,
+// and widgets) should pass through to windows behind it.
+//
+// Strategy:
+// 1. Set setIgnoreMouseEvents(true, { forward: true }) — OS passes through
+//    clicks on transparent pixels, but still forwards mouse events to renderer
+// 2. Track mouse position via forwarded events to detect when cursor enters
+//    a content element (webview, navbar, resize handles, widgets)
+// 3. When cursor is over content, call setIgnoreMouseEvents(false) to receive events
+// 4. When cursor leaves content, call setIgnoreMouseEvents(true, { forward: true })
+
+(async function initClickThrough() {
+  let windowId;
+  try {
+    windowId = await api.window.getWindowId();
+    if (!windowId) {
+      DEBUG && console.log('[page] No window ID for click-through');
+      return;
+    }
+  } catch (err) {
+    console.error('[page] Failed to get window ID for click-through:', err);
+    return;
+  }
+
+  let ignoring = false;
+
+  function setIgnore(ignore) {
+    if (ignore === ignoring) return;
+    ignoring = ignore;
+    api.window.setIgnoreMouseEvents(windowId, ignore, ignore);
+  }
+
+  // Start with click-through enabled (transparent areas pass through)
+  setIgnore(true);
+
+  // Check if a point is over any content element
+  function isOverContent(clientX, clientY) {
+    const { x, y, width, height } = bounds;
+
+    // Check webview area
+    if (clientX >= x && clientX <= x + width && clientY >= y && clientY <= y + height) {
+      return true;
+    }
+
+    // Check navbar (when visible)
+    if (navbar.classList.contains('visible')) {
+      const navRect = navbar.getBoundingClientRect();
+      if (clientX >= navRect.left && clientX <= navRect.right &&
+          clientY >= navRect.top && clientY <= navRect.bottom) {
+        return true;
+      }
+    }
+
+    // Check trigger zone (always active for hover-to-show navbar)
+    const triggerRect = triggerZone.getBoundingClientRect();
+    if (clientX >= triggerRect.left && clientX <= triggerRect.right &&
+        clientY >= triggerRect.top && clientY <= triggerRect.bottom) {
+      return true;
+    }
+
+    // Check resize handles
+    for (const handle of Object.values(resizeHandles)) {
+      if (!handle || handle.style.display === 'none') continue;
+      const rect = handle.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0 &&
+          clientX >= rect.left && clientX <= rect.right &&
+          clientY >= rect.top && clientY <= rect.bottom) {
+        return true;
+      }
+    }
+
+    // Check widget container children
+    if (widgetContainer) {
+      const widgetEls = widgetContainer.querySelectorAll('.widget');
+      for (const w of widgetEls) {
+        const rect = w.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 &&
+            clientX >= rect.left && clientX <= rect.right &&
+            clientY >= rect.top && clientY <= rect.bottom) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  // Listen for mouse events to toggle click-through.
+  // When ignoreMouseEvents is true with forward: true, mouse events are still
+  // delivered to the renderer (but clicks pass through at the OS level).
+  // We use mousemove to detect transitions between content and transparent areas.
+  document.addEventListener('mousemove', (e) => {
+    const overContent = isOverContent(e.clientX, e.clientY);
+    if (overContent && ignoring) {
+      // Cursor entered content area — start receiving events
+      setIgnore(false);
+    } else if (!overContent && !ignoring) {
+      // Cursor left content area — pass through clicks again
+      // But only if not dragging or resizing (those need continued event capture)
+      if (!isDragging && !isResizing) {
+        setIgnore(true);
+      }
+    }
+  });
+
+  // When drag or resize ends, re-evaluate click-through state
+  document.addEventListener('mouseup', () => {
+    // After drag/resize ends, schedule a re-check on next frame
+    requestAnimationFrame(() => {
+      if (!isDragging && !isResizing && !ignoring) {
+        // Re-enable click-through — the next mousemove will toggle it off
+        // if cursor is still over content
+        setIgnore(true);
+      }
+    });
+  });
+
+  DEBUG && console.log('[page] Click-through initialized for transparent background');
+})();
 
 DEBUG && console.log('[page] Canvas container initialized for:', targetUrl);

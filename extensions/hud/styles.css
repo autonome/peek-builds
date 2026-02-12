@@ -16,7 +16,7 @@ html {
 
 html, body {
   width: 100%;
-  height: 100%;
+  height: auto;
   overflow: hidden;
   background: transparent;
   -webkit-app-region: drag;
@@ -24,13 +24,12 @@ html, body {
 
 #hud-container {
   width: 100%;
-  height: 100%;
   padding: 12px;
-  background: var(--base00);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-radius: 8px;
-  border: 1px solid var(--base02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--base05);
   font-size: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -40,7 +39,7 @@ html, body {
 .hud-section {
   margin-bottom: 10px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--base02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .hud-section:last-child {

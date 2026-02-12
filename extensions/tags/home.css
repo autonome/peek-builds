@@ -284,8 +284,6 @@ peek-card {
 
 peek-card[selected] {
   --peek-card-bg: var(--base02);
-  outline: 2px solid var(--base0D);
-  outline-offset: -2px;
 }
 
 /* Card slotted content - styles for elements inside peek-card slots */

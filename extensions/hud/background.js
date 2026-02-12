@@ -16,6 +16,7 @@ const STORAGE_KEY = 'hud_enabled';
 // Track HUD state
 let hudEnabled = false;
 let hudWindowId = null;
+let appFocused = true; // assume focused at startup
 
 /**
  * Load HUD enabled state from extension settings API, fallback to localStorage cache
@@ -87,7 +88,7 @@ const openHud = async () => {
   const params = {
     key: HUD_ADDRESS,
     width: 300,
-    height: 200,
+    height: 400,
     x: 20,
     y: 20,
     transparent: true,
@@ -110,6 +111,32 @@ const openHud = async () => {
     }
   } catch (error) {
     console.error('[ext:hud] Error opening HUD:', error);
+  }
+};
+
+/**
+ * Show the HUD window (make visible without creating)
+ */
+const showHud = async () => {
+  if (hudWindowId) {
+    const exists = await api.window.exists(hudWindowId);
+    if (exists.success && exists.data) {
+      await api.window.show(hudWindowId);
+      console.log('[ext:hud] HUD shown (app focused)');
+    }
+  }
+};
+
+/**
+ * Hide the HUD window (make invisible without destroying)
+ */
+const hideHud = async () => {
+  if (hudWindowId) {
+    const exists = await api.window.exists(hudWindowId);
+    if (exists.success && exists.data) {
+      await api.window.hide(hudWindowId);
+      console.log('[ext:hud] HUD hidden (app blurred)');
+    }
   }
 };
 
@@ -202,6 +229,19 @@ const init = async () => {
 
   // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
+
+  // Subscribe to app focus changes — hide HUD when app loses focus, show when regained
+  api.subscribe('app:focus-changed', async (msg) => {
+    appFocused = !!msg.focused;
+    console.log('[ext:hud] App focus changed:', appFocused);
+    if (hudEnabled && hudWindowId) {
+      if (appFocused) {
+        await showHud();
+      } else {
+        await hideHud();
+      }
+    }
+  }, api.scopes.GLOBAL);
 
   // Open HUD if it was enabled
   if (hudEnabled) {

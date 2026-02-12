@@ -22,6 +22,22 @@ let currentIzuiState = 'idle';
 let currentWindowInfo = null;
 let windowCount = 0;
 
+// Auto-resize window to fit content
+let resizeTimer = null;
+const autoResizeWindow = () => {
+  // Debounce to avoid excessive resize calls
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const container = document.getElementById('hud-container');
+    if (!container) return;
+    // Measure the actual rendered height of the container content
+    const contentHeight = container.scrollHeight + 2; // +2 for border
+    const contentWidth = 300;
+    api.window.resize(contentWidth, contentHeight);
+    debug && console.log('[hud] Auto-resized window to:', contentWidth, contentHeight);
+  }, 50);
+};
+
 /**
  * Update mode display
  */
@@ -92,6 +108,7 @@ const updateStatsDisplay = () => {
   parts.push(`${windowCount} window${windowCount !== 1 ? 's' : ''}`);
 
   statsValue.textContent = parts.join(' • ');
+  autoResizeWindow();
 
   debug && console.log('[hud] Updated stats display:', windowCount);
 };
@@ -188,6 +205,9 @@ const init = async () => {
 
   // Initial data fetch
   await refreshAll();
+
+  // Auto-resize window to fit initial content
+  autoResizeWindow();
 
   // Watch for mode changes
   api.context.watchMode((mode, entry) => {

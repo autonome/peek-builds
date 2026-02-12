@@ -2105,8 +2105,13 @@ window.addEventListener('load', () => {
 //     the hold period, the drag is cancelled (the user is clicking, not holding).
 //   - Text selection takes priority: if a selection appears during hold/drag,
 //     the drag is cancelled.
-//   - Interactive elements (inputs, buttons, links, contentEditable, elements
-//     with data-no-drag attribute) never trigger drag.
+//   - Only actively-focused text inputs/textareas block drag. Buttons, links,
+//     labels, and other elements all support long-press drag — the 150ms delay
+//     prevents interference with normal clicks.
+//   - Elements with data-no-drag attribute (or ancestors with it) never trigger drag.
+//   - Button state is tracked via mousedown/mouseup rather than relying on
+//     e.buttons during mousemove, which can report stale values during fast
+//     cursor movement (known Chromium/Electron issue).
 // ============================================================================
 (function initWindowDrag() {
   const HOLD_DELAY = 150; // ms before drag starts
@@ -2118,15 +2123,22 @@ window.addEventListener('load', () => {
   let startWindowPos = null; // { x, y } window position at mousedown
   let cachedWindowId = null; // fetched once at init
   let pendingPosPromise = null; // position fetch started eagerly on mousedown
+  let mouseButtonDown = false; // track button state ourselves for reliability
 
-  // Elements that should not trigger drag
-  const isInteractive = (el) => {
+  // Only block drag on actively-focused text inputs/textareas and contentEditable.
+  // Everything else (buttons, links, labels, etc.) supports long-press drag —
+  // the 150ms hold delay prevents interference with normal clicks on those elements.
+  const isActiveTextInput = (el) => {
     if (!el) return false;
+    // Check for data-no-drag on element or ancestors
+    if (el.hasAttribute && el.hasAttribute('data-no-drag')) return true;
+    if (el.closest && el.closest('[data-no-drag]')) return true;
+    // Only block on focused text inputs/textareas that the user is editing
     const tag = el.tagName?.toLowerCase();
-    if (['input', 'textarea', 'button', 'a', 'select', 'label'].includes(tag)) return true;
-    if (el.isContentEditable) return true;
-    if (el.hasAttribute('data-no-drag')) return true;
-    if (el.closest('[data-no-drag]')) return true;
+    const isFocusedTextInput = (tag === 'input' || tag === 'textarea') && el === document.activeElement;
+    if (isFocusedTextInput) return true;
+    // Block on contentEditable elements that are focused
+    if (el.isContentEditable && el.closest('[contenteditable]')?.contains(document.activeElement)) return true;
     return false;
   };
 
@@ -2157,9 +2169,11 @@ window.addEventListener('load', () => {
   };
 
   const onMouseDown = (e) => {
-    // Only left click, not on interactive elements
+    // Only left click
     if (e.button !== 0) return;
-    if (isInteractive(e.target)) return;
+    mouseButtonDown = true;
+    // Don't initiate drag from actively-focused text inputs
+    if (isActiveTextInput(e.target)) return;
     // If we don't have a window ID yet, can't drag
     if (!cachedWindowId) return;
 
@@ -2194,7 +2208,7 @@ window.addEventListener('load', () => {
         if (!pos || !pos.success) return;
 
         // Double-check: mouse may have been released during the await
-        if (!startMouse) return;
+        if (!startMouse || !mouseButtonDown) return;
 
         startWindowPos = { x: pos.x, y: pos.y };
         isDragging = true;
@@ -2218,15 +2232,16 @@ window.addEventListener('load', () => {
         startMouse = null;
       }
       // Cancel hold if text selection starts
-      if (hasTextSelection()) {
+      if (startMouse && hasTextSelection()) {
         cancelHold();
         startMouse = null;
       }
       return;
     }
 
-    // Safety: cancel if no button held
-    if (e.buttons === 0) {
+    // Safety: cancel if no button held (use our tracked state, not e.buttons
+    // which can report 0 during fast movements due to Chromium event coalescing)
+    if (!mouseButtonDown) {
       endDrag();
       return;
     }
@@ -2246,12 +2261,16 @@ window.addEventListener('load', () => {
     ipcRenderer.invoke('window-move', { id: cachedWindowId, x: newX, y: newY });
   };
 
-  const onMouseUp = () => {
+  const onMouseUp = (e) => {
+    if (e.button === 0) {
+      mouseButtonDown = false;
+    }
     endDrag();
   };
 
   // Also end drag if window loses focus
   const onBlur = () => {
+    mouseButtonDown = false;
     endDrag();
   };
 

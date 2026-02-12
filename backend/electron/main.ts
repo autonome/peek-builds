@@ -148,12 +148,16 @@ export async function initialize(): Promise<void> {
   // When Peek is in the background, windows opened are "transient."
   app.on('browser-window-focus', () => {
     getIzuiCoordinator().setAppFocused(true);
+    // Notify extensions (e.g. HUD) that the app is focused
+    publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
   });
   app.on('browser-window-blur', () => {
     // Only mark unfocused if NO window has focus (user switched to another app).
     // During window switches within Peek, one window blurs before another focuses.
     if (!BrowserWindow.getFocusedWindow()) {
       getIzuiCoordinator().setAppFocused(false);
+      // Notify extensions (e.g. HUD) that the app lost focus
+      publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
     }
   });
 
@@ -1215,13 +1219,12 @@ export function requestSingleInstance(): boolean {
 export function quitApp(): void {
   DEBUG && console.log('quitApp');
 
-  // Publish shutdown event and close database
-  shutdown();
-
-  // Give windows a moment to clean up before forcing quit
-  setTimeout(() => {
-    app.quit();
-  }, 100);
+  // Don't call shutdown() here — let the before-quit handler in entry.ts
+  // handle the full cleanup sequence: saveSessionSnapshot() then shutdown().
+  // Calling shutdown() here closes the database BEFORE before-quit fires,
+  // which prevents the session snapshot from being saved with cleanShutdown=true,
+  // causing a false crash recovery prompt on next startup.
+  app.quit();
 }
 
 // Re-export commonly used functions

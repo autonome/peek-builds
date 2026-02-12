@@ -1,4 +1,11 @@
 {
+  "labels": {
+    "prefs": {
+      "defaultEngine": "Default search engine",
+      "enableSuggestions": "Enable search suggestions",
+      "enableAutoDiscovery": "Auto-discover search engines"
+    }
+  },
   "prefs": {
     "type": "object",
     "properties": {

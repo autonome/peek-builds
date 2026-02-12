@@ -288,7 +288,9 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     console.log(`[lifecycle] ${signal} received, saving session`);
     try { stopAutosaveTimer(); } catch { /* ignore */ }
-    try { saveSessionSnapshot('before-quit'); } catch (e) { console.error('[lifecycle] signal save error:', e); }
+    // Save snapshot but mark as NOT clean shutdown so the user gets
+    // the crash recovery prompt on next startup (SIGINT = interrupted).
+    try { saveSessionSnapshot('before-quit', { cleanShutdown: false }); } catch (e) { console.error('[lifecycle] signal save error:', e); }
     try { shutdown(); } catch { /* ignore */ }
     process.exit(0);
   });
