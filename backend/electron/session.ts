@@ -179,6 +179,11 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       continue;
     }
 
+    // Skip utility windows (e.g. HUD) — extensions manage these themselves
+    if (winData.params.role === 'utility') {
+      continue;
+    }
+
     // Extract real URL from page containers
     const realUrl = extractRealUrl(url);
 

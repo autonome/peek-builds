@@ -32,7 +32,7 @@ const autoResizeWindow = () => {
     if (!container) return;
     // Measure the actual rendered height of the container content
     const contentHeight = container.scrollHeight + 2; // +2 for border
-    const contentWidth = 300;
+    const contentWidth = 240;
     api.window.resize(contentWidth, contentHeight);
     debug && console.log('[hud] Auto-resized window to:', contentWidth, contentHeight);
   }, 50);

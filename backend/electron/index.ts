@@ -287,3 +287,9 @@ export {
   isPartitionInitialized,
   getPartitionInfo,
 } from './session-partition.js';
+
+// Display change watcher
+export {
+  initDisplayWatcher,
+  cleanupDisplayWatcher,
+} from './display-watcher.js';

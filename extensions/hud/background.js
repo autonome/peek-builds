@@ -87,8 +87,8 @@ const openHud = async () => {
 
   const params = {
     key: HUD_ADDRESS,
-    width: 300,
-    height: 400,
+    width: 240,
+    height: 300,
     x: 20,
     y: 20,
     transparent: true,

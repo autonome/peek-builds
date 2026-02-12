@@ -21,12 +21,14 @@ Status of each item from the original list:
 - [x] HUD expand vertically to show content — FIXED, retest below
 
 ## Session Restore
-- [ ] `yarn start` → open web pages → move/resize them → Ctrl+C → `yarn start` — restore prompt, correct positions
-  - RETEST: fixed page.js to update URL params after drag/resize via history.replaceState()
-- [ ] Cmd+Q quit → restart — should NOT show restore prompt (clean shutdown)
-  - RETEST: fixed quitApp() to not call shutdown() before app.quit(), so before-quit handler can write cleanShutdown:true
-- [ ] Ctrl+C quit → restart — SHOULD show restore prompt (unclean shutdown)
-  - RETEST: SIGINT now passes cleanShutdown:false
+- [ ] `yarn start` → open web pages → move/resize them → Ctrl+C → `yarn start` — silently restores, correct positions
+  - RETEST: fixed page.js URL params, crash dialog now requires crashCount > 0 (single unclean shutdown silently restores)
+- [ ] Cmd+Q quit → restart — silently restores (clean shutdown, no dialog)
+  - RETEST: fixed quitApp() to not call shutdown() before app.quit()
+- [ ] Ctrl+C quit → restart — silently restores (single unclean shutdown, no dialog)
+  - RETEST: changed crash dialog condition to require crashCount > 0
+- [ ] Session restore doesn't duplicate HUD/utility windows (no double dock bounce)
+  - RETEST: utility-role windows skipped during session save
 - [ ] cmd → "save session" → cmd → "restore previous session" — confirmation dialog, restores
   - this is the manual save/restore command (separate from auto-restore on startup)
 
@@ -41,8 +43,10 @@ Status of each item from the original list:
   - RETEST: same fix
 - [ ] Fast cursor movement during drag doesn't drop the drag
   - RETEST: replaced e.buttons check with explicit mouseButtonDown boolean tracking
-- [ ] Page host: click on transparent background passes through to windows behind
-  - RETEST: BROKEN — setIgnoreMouseEvents brings unrelated windows into focus, needs rework
+- [ ] Page host: minimal window, no click-through needed (transparent area eliminated)
+  - RETEST: replaced fullscreen transparent window with tight-fitting minimal window
+- [ ] Page host: navbar show/hide doesn't cause webview jump
+  - RETEST: window always includes navbar space, show/hide is CSS-only (no setBounds)
 
 ## Command Palette
 - [ ] Type "ta" — ghost text shows "tag" (prefix match on fresh/equal scores)
@@ -69,10 +73,10 @@ Status of each item from the original list:
 ## HUD
 - [ ] HUD only visible when Peek is focused, hides when switching to other app
   - RETEST: added app:focus-changed events, HUD subscribes to show/hide
-- [ ] HUD is semi-transparent (content behind visible)
-  - RETEST: background rgba(0,0,0,0.65) with backdrop blur
+- [ ] HUD is subtle/unobtrusive (50% opacity bg, muted text, no colored modes)
+  - RETEST: toned down from 65% to 50% opacity, removed mode/IZUI colors, muted text
 - [ ] HUD expands vertically to show all stats content
-  - RETEST: auto-resize via scrollHeight measurement, default 400px
+  - RETEST: auto-resize via scrollHeight measurement, narrower 240px window
 
 ## Smoke Tests
 - [ ] Groups: create new group via "+" button
@@ -83,3 +87,15 @@ Status of each item from the original list:
   - RETEST: removed redundant outline CSS
 - [ ] Editor: opens in portrait/document orientation (800x1000)
   - RETEST: changed default from 1200x800 to 800x1000
+
+## New Features (since Round 1)
+- [ ] Dark mode: web pages respect OS color scheme (not forced dark)
+  - FIX: nativeTheme.themeSource only set to 'dark' for 'force' mode, 'system' for everything else
+- [ ] cmd chaining: `list notes #tag` → `markdown` → `download` or `save as note`
+  - NEW: full pipeline with produces/accepts MIME types
+- [ ] cmd: `open file` — native file picker, MIME detection, chaining support
+  - NEW: opens file dialog, detects MIME, chains to markdown/download
+- [ ] Note inline hashtags: `#foo #bar` in note text creates tag associations
+  - FIX: extractInlineHashtags() scans text content for hashtag patterns
+- [ ] Display switching: windows reposition proportionally when changing displays
+  - IN PROGRESS: agent working on screen.on('display-*') handlers

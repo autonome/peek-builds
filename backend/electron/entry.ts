@@ -89,6 +89,7 @@ import {
   initSessionPartition,
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval } from './session.js';
+import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 
 // Catch unhandled errors and promise rejections without showing alert dialogs
 unhandled({
@@ -273,6 +274,7 @@ app.on('before-quit', () => {
   _beforeQuitCleanupDone = true;
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
   try { stopAutosaveTimer(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutosaveTimer error:', e); }
+  try { cleanupDisplayWatcher(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDisplayWatcher error:', e); }
   try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }
   try { cleanupDevExtensions(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevExtensions error:', e); }
   try { cleanupAdblocker(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupAdblocker error:', e); }
@@ -358,6 +360,9 @@ const onReady = async () => {
 
   // Initialize backend (database, protocol handler, pubsub broadcaster)
   await initialize();
+
+  // Initialize display change watcher (repositions windows when monitors change)
+  initDisplayWatcher();
 
   // IMPORTANT: Read crash state BEFORE markSessionDirty() overwrites it.
   // markSessionDirty sets cleanShutdown=false, so we must capture the true
