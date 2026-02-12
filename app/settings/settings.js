@@ -69,6 +69,13 @@ const createCheckbox = (label, value, onChange, options = {}) => {
   group.appendChild(labelEl);
   group.appendChild(wrapper);
 
+  if (options.helpText) {
+    const help = document.createElement('div');
+    help.className = 'help-text';
+    help.textContent = options.helpText;
+    group.appendChild(help);
+  }
+
   return group;
 };
 

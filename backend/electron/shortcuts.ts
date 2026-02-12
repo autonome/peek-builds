@@ -195,12 +195,18 @@ export function unregisterGlobalShortcut(shortcut: string): Error | undefined {
     return undefined;
   }
 
-  if (!globalShortcut.isRegistered(shortcut)) {
-    console.error('Unable to unregister shortcut because not registered:', shortcut);
-    return new Error(`Shortcut not registered: ${shortcut}`);
+  // Check our internal map first — if we never tracked this shortcut, skip silently.
+  // During shutdown, uninit() can be called multiple times (shutdown is published from
+  // both quitApp and before-quit), so the second call finds the shortcut already removed.
+  if (!globalShortcuts.has(shortcut)) {
+    DEBUG && console.log('unregisterGlobalShortcut: not in our map, skipping:', shortcut);
+    return undefined;
   }
 
-  globalShortcut.unregister(shortcut);
+  if (globalShortcut.isRegistered(shortcut)) {
+    globalShortcut.unregister(shortcut);
+  }
+
   globalShortcuts.delete(shortcut);
   return undefined;
 }
