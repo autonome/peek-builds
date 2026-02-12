@@ -99,14 +99,14 @@ test.describe('Web Search Extension @desktop', () => {
     expect(hasCommands).toBe(true);
   });
 
-  test('per-engine commands are registered (google, ddg, bing, wiki)', async () => {
+  test('per-engine commands are registered (google, ddg, bing, wiki, kagi)', async () => {
     const engineCommands = await sharedBgWindow.evaluate(async () => {
       const start = Date.now();
       while (Date.now() - start < 5000) {
         const result = await (window as any).app.commands.list();
         if (result.success && result.data) {
           const names = result.data.map((c: { name: string }) => c.name);
-          const expected = ['google', 'ddg', 'bing', 'wiki'];
+          const expected = ['google', 'ddg', 'bing', 'wiki', 'kagi'];
           const found = expected.filter(e => names.includes(e));
           if (found.length === expected.length) {
             return found;
@@ -120,6 +120,7 @@ test.describe('Web Search Extension @desktop', () => {
     expect(engineCommands).toContain('ddg');
     expect(engineCommands).toContain('bing');
     expect(engineCommands).toContain('wiki');
+    expect(engineCommands).toContain('kagi');
   });
 
   test('built-in engines are available via settings', async () => {
@@ -141,13 +142,14 @@ test.describe('Web Search Extension @desktop', () => {
       });
     });
 
-    expect(engines.length).toBeGreaterThanOrEqual(4);
+    expect(engines.length).toBeGreaterThanOrEqual(5);
 
     const ids = engines.map((e: any) => e.id);
     expect(ids).toContain('google');
     expect(ids).toContain('duckduckgo');
     expect(ids).toContain('bing');
     expect(ids).toContain('wikipedia');
+    expect(ids).toContain('kagi');
   });
 
   test('search URL construction works correctly', async () => {

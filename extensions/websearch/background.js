@@ -2,10 +2,10 @@
  * Web Search Extension Background Script
  *
  * Provides web search from the command palette:
- * - Built-in engines: Google, DuckDuckGo, Bing, Wikipedia
+ * - Built-in engines: Google, DuckDuckGo, Bing, Wikipedia, Kagi
  * - OpenSearch discovery from visited pages
  * - Search suggestions with debounce and caching
- * - Per-engine commands (/google, /ddg, /bing, /wiki)
+ * - Per-engine commands (/google, /ddg, /bing, /wiki, /kagi)
  * - A general "web search" command with engine selection
  *
  * Runs in isolated extension process (peek://ext/websearch/background.html)

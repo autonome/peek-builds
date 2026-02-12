@@ -100,6 +100,17 @@ const builtinEngines = [
     iconUrl: 'https://en.wikipedia.org/favicon.ico',
     isBuiltIn: true,
     enabled: true,
+  },
+  {
+    id: 'kagi',
+    name: 'Kagi',
+    shortName: 'kagi',
+    description: 'Kagi premium search',
+    searchUrl: 'https://kagi.com/search?q={searchTerms}',
+    suggestUrl: 'https://kagi.com/api/autosuggest?q={searchTerms}',
+    iconUrl: 'https://kagi.com/favicon.ico',
+    isBuiltIn: true,
+    enabled: true,
   }
 ];
 
