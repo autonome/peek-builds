@@ -445,7 +445,11 @@ export async function restoreSessionSnapshot(
       }
     }
 
-    if (!wasCleanShutdown) {
+    DEBUG && console.log(`[session] Crash state: wasCleanShutdown=${wasCleanShutdown}, crashCount=${crashCount}`);
+    if (!wasCleanShutdown && crashCount > 0) {
+      // Only show crash dialog after repeated crashes (crashCount > 0).
+      // A single unclean shutdown (e.g. Ctrl+C via yarn, power loss) just
+      // silently restores — the crash dialog is for crash loops.
       const shouldRestore = await showCrashRecoveryDialog(crashCount);
       if (!shouldRestore) {
         DEBUG && console.log('[session] User chose to start fresh (or too many crashes)');

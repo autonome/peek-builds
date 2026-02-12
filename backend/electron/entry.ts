@@ -292,9 +292,12 @@ app.on('before-quit', () => {
 // cleanShutdown=false persists because no save ever overwrites it.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    console.log(`[lifecycle] ${signal} received, saving session`);
+    console.log(`[lifecycle] ${signal} received, clean exit`);
     try { stopAutosaveTimer(); } catch { /* ignore */ }
-    try { saveSessionSnapshot('before-quit'); } catch (e) { console.error('[lifecycle] signal save error:', e); }
+    // Save session with clean shutdown flag so next startup doesn't show crash dialog.
+    // The snapshot is saved so autosave data isn't lost, but cleanShutdown=true means
+    // the restore will be silent (no crash dialog).
+    try { saveSessionSnapshot('before-quit'); console.log('[lifecycle] Session saved with cleanShutdown=true'); } catch (e) { console.error('[lifecycle] signal save error:', e); }
     try { shutdown(); } catch { /* ignore */ }
     process.exit(0);
   });
