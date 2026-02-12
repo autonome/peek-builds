@@ -2131,6 +2131,7 @@ export function registerWindowHandlers(): void {
     if (useCanvas && !isHeadless()) {
       const CANVAS_MARGIN = 8;
       const CANVAS_TRIGGER_ZONE = 8;
+      const CANVAS_NAVBAR_HEIGHT = 36; // Always reserve space for navbar (avoids resize jumps)
       // winOptions.x/y/width/height are currently the webview screen coordinates
       canvasWebviewBounds = {
         x: winOptions.x as number,
@@ -2139,9 +2140,9 @@ export function registerWindowHandlers(): void {
         height: winOptions.height as number,
       };
       winOptions.x = canvasWebviewBounds.x - CANVAS_MARGIN;
-      winOptions.y = canvasWebviewBounds.y - CANVAS_TRIGGER_ZONE;
+      winOptions.y = canvasWebviewBounds.y - CANVAS_TRIGGER_ZONE - CANVAS_NAVBAR_HEIGHT;
       winOptions.width = canvasWebviewBounds.width + CANVAS_MARGIN * 2;
-      winOptions.height = canvasWebviewBounds.height + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN;
+      winOptions.height = canvasWebviewBounds.height + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN + CANVAS_NAVBAR_HEIGHT;
     }
 
     DEBUG && console.log('Creating window with options:', winOptions);

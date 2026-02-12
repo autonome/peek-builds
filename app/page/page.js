@@ -14,7 +14,7 @@
  * - Custom resize: pointer-captured resize handle (robust even if cursor leaves window)
  * - Hover trigger zone above webview reveals/hides navbar
  * - Cmd+L shows navbar with URL focus
- * - Navbar show/hide expands/contracts the window via setBounds()
+ * - Navbar show/hide is CSS-only (window always includes navbar space)
  */
 
 import api from '../api.js';
@@ -56,8 +56,8 @@ let screenBounds = {
   height: initialHeight,
 };
 
-// Track whether the navbar is currently expanding the window
-let navbarExpanded = false;
+// NOTE: The window always includes navbar space (NAVBAR_HEIGHT) to avoid
+// visual jumps on show/hide. Navbar visibility is CSS-only — no window resize.
 
 // --- DOM elements ---
 const navbar = document.getElementById('navbar');
@@ -82,18 +82,13 @@ const widgetContainer = document.getElementById('widget-container');
 // --- Window bounds computation ---
 // Computes the BrowserWindow bounds from the webview screen position
 
-function computeWindowBounds(sb, navExpanded) {
-  // Base: webview + margins for resize handles
-  let winX = sb.x - MARGIN;
-  let winY = sb.y - TRIGGER_ZONE_HEIGHT;
-  let winW = sb.width + MARGIN * 2;
-  let winH = sb.height + TRIGGER_ZONE_HEIGHT + MARGIN;
-
-  if (navExpanded) {
-    // Expand upward for navbar + gap
-    winY -= (NAVBAR_HEIGHT + NAVBAR_GAP);
-    winH += (NAVBAR_HEIGHT + NAVBAR_GAP);
-  }
+function computeWindowBounds(sb) {
+  // Window always includes space for navbar + trigger zone + margins.
+  // Navbar visibility is CSS-only — window size stays constant.
+  const winX = sb.x - MARGIN;
+  const winY = sb.y - TRIGGER_ZONE_HEIGHT - (NAVBAR_HEIGHT + NAVBAR_GAP);
+  const winW = sb.width + MARGIN * 2;
+  const winH = sb.height + TRIGGER_ZONE_HEIGHT + MARGIN + (NAVBAR_HEIGHT + NAVBAR_GAP);
 
   return { x: Math.round(winX), y: Math.round(winY), width: Math.round(winW), height: Math.round(winH) };
 }
@@ -117,17 +112,17 @@ function updateUrlParams() {
 
 function updatePositions() {
   // All positions are relative to the window origin (0, 0)
-  // The window layout from top to bottom:
-  //   [navbar area - only when expanded] (NAVBAR_HEIGHT + NAVBAR_GAP)
+  // The window layout from top to bottom (fixed — never changes):
+  //   [navbar area] (NAVBAR_HEIGHT + NAVBAR_GAP) — navbar shown/hidden via CSS
   //   [trigger zone] (TRIGGER_ZONE_HEIGHT)
   //   [webview] (screenBounds.height)
   //   [bottom margin] (MARGIN)
   // Left/right margins: MARGIN on each side
 
   const navVisible = navbar.classList.contains('visible');
-  const navOffset = navbarExpanded ? (NAVBAR_HEIGHT + NAVBAR_GAP) : 0;
+  const navOffset = NAVBAR_HEIGHT + NAVBAR_GAP;
 
-  // Webview — positioned after trigger zone (and navbar area if expanded)
+  // Webview — positioned after navbar area + trigger zone (fixed position)
   const webviewLeft = MARGIN;
   const webviewTop = navOffset + TRIGGER_ZONE_HEIGHT;
   const webviewWidth = screenBounds.width;
@@ -144,18 +139,18 @@ function updatePositions() {
   dragOverlay.style.width = `${webviewWidth}px`;
   dragOverlay.style.height = `${webviewHeight}px`;
 
-  // Navbar — above the webview with a gap, only when expanded
-  if (navbarExpanded) {
-    navbar.style.left = `${MARGIN}px`;
-    navbar.style.top = `0px`;
-    navbar.style.width = `${webviewWidth}px`;
-  }
+  // Navbar — always positioned at the top of the window
+  navbar.style.left = `${MARGIN}px`;
+  navbar.style.top = `0px`;
+  navbar.style.width = `${webviewWidth}px`;
 
-  // Trigger zone — in the space between navbar (or top of window) and webview
+  // Trigger zone — covers the area above the webview.
+  // When navbar is hidden, it spans the full top area (navbar space + gap) for hover detection.
+  // When navbar is visible, it just covers the small gap between navbar and webview.
   triggerZone.style.left = `${MARGIN}px`;
-  triggerZone.style.top = `${navOffset}px`;
+  triggerZone.style.top = navVisible ? `${navOffset}px` : '0px';
   triggerZone.style.width = `${webviewWidth}px`;
-  triggerZone.style.height = `${TRIGGER_ZONE_HEIGHT}px`;
+  triggerZone.style.height = navVisible ? `${TRIGGER_ZONE_HEIGHT}px` : `${navOffset + TRIGGER_ZONE_HEIGHT}px`;
 
   // Resize handles — all four corners of the webview (24x24)
   resizeHandles.se.style.left = `${webviewLeft + webviewWidth - 24}px`;
@@ -173,7 +168,7 @@ function updatePositions() {
   // Navbar corner resize handles — only visible when navbar is shown
   resizeHandles.navNe.style.display = navVisible ? '' : 'none';
   resizeHandles.navNw.style.display = navVisible ? '' : 'none';
-  if (navVisible && navbarExpanded) {
+  if (navVisible) {
     resizeHandles.navNe.style.left = `${MARGIN + webviewWidth - 24}px`;
     resizeHandles.navNe.style.top = `0px`;
     resizeHandles.navNw.style.left = `${MARGIN}px`;
@@ -207,14 +202,6 @@ function setWindowBounds(bounds) {
   });
 }
 
-function setWindowBoundsImmediate(bounds) {
-  // For immediate updates (navbar show/hide) - bypass throttle
-  if (pendingBoundsUpdate) {
-    cancelAnimationFrame(pendingBoundsUpdate);
-    pendingBoundsUpdate = null;
-  }
-  api.window.setBounds(bounds);
-}
 
 // Initial positioning
 updatePositions();
@@ -442,7 +429,7 @@ function initResizeHandle(handle) {
 
     // Update both window bounds and element positions
     updatePositions();
-    setWindowBounds(computeWindowBounds(screenBounds, navbarExpanded));
+    setWindowBounds(computeWindowBounds(screenBounds));
   });
 
   handle.addEventListener('pointerup', (e) => {
@@ -491,7 +478,7 @@ document.addEventListener('mousemove', (e) => {
     screenBounds.x = dragStartBoundsX + dx;
     screenBounds.y = dragStartBoundsY + dy;
     // Move the window — element positions within the window stay the same
-    setWindowBounds(computeWindowBounds(screenBounds, navbarExpanded));
+    setWindowBounds(computeWindowBounds(screenBounds));
   }
 });
 
@@ -528,10 +515,8 @@ function show(opts) {
   navbar.classList.add('visible');
   if (opts?.source) showSource = opts.source;
   if (wasHidden) {
-    // Expand window upward for navbar — set bounds FIRST so there's room,
-    // then reposition elements within the enlarged window (avoids visual jump)
-    navbarExpanded = true;
-    setWindowBoundsImmediate(computeWindowBounds(screenBounds, navbarExpanded));
+    // Window is already the right size (always includes navbar space).
+    // Just update trigger zone and resize handle visibility.
     updatePositions();
     updateState();
     DEBUG && console.log('[page] Navbar shown, source:', showSource);
@@ -551,11 +536,9 @@ function hide() {
     hideTimer = null;
   }
   navbar.classList.remove('visible');
-  // Contract window back down — reposition elements FIRST (move webview up),
-  // then shrink the window (removes the now-empty space at top)
-  navbarExpanded = false;
+  // Window stays the same size (always includes navbar space).
+  // Just update trigger zone and resize handle visibility.
   updatePositions();
-  setWindowBoundsImmediate(computeWindowBounds(screenBounds, navbarExpanded));
   urlText.blur();
   showSource = null;
   DEBUG && console.log('[page] Navbar hidden');
@@ -588,7 +571,7 @@ function scheduleHide() {
     // If cursor is still in the navbar+trigger area, don't hide.
     // This prevents the hide→contract→re-trigger→show bounce when cursor
     // crosses the boundary between navbar and webview.
-    const navBottom = navbarExpanded ? (NAVBAR_HEIGHT + NAVBAR_GAP + TRIGGER_ZONE_HEIGHT) : TRIGGER_ZONE_HEIGHT;
+    const navBottom = NAVBAR_HEIGHT + NAVBAR_GAP + TRIGGER_ZONE_HEIGHT;
     if (lastMouseY < navBottom) {
       // Cursor still near top — reschedule instead of hiding
       scheduleHide();
