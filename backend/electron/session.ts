@@ -72,6 +72,33 @@ function extractRealUrl(url: string): string {
 }
 
 /**
+ * Extract webview bounds from a canvas page container URL.
+ * Canvas pages encode the visible webview position/size in URL params.
+ * Returns null if the URL is not a canvas page or params are missing.
+ */
+function extractCanvasBounds(url: string): Electron.Rectangle | null {
+  if (!url.startsWith('peek://app/page')) return null;
+  try {
+    const parsed = new URL(url);
+    const x = parsed.searchParams.get('x');
+    const y = parsed.searchParams.get('y');
+    const width = parsed.searchParams.get('width');
+    const height = parsed.searchParams.get('height');
+    if (x && y && width && height) {
+      return {
+        x: parseInt(x, 10),
+        y: parseInt(y, 10),
+        width: parseInt(width, 10),
+        height: parseInt(height, 10),
+      };
+    }
+  } catch {
+    // If URL parsing fails, skip
+  }
+  return null;
+}
+
+/**
  * Sanitize params to only include serializable values.
  * Mirrors the logic in ipc.ts window-list handler.
  */
@@ -155,6 +182,11 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason']): void {
     // Extract real URL from page containers
     const realUrl = extractRealUrl(url);
 
+    // For canvas pages (web URLs in peek://app/page container), use the webview
+    // bounds from URL params, not the fullscreen transparent BrowserWindow bounds.
+    const canvasBounds = extractCanvasBounds(url);
+    const windowBounds = canvasBounds || win.getBounds();
+
     // Capture context state for this window
     let windowContext: WindowContext | undefined;
     try {
@@ -173,7 +205,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason']): void {
       url: realUrl,
       key: (winData.params.key as string) || undefined,
       title: win.getTitle(),
-      bounds: win.getBounds(),
+      bounds: windowBounds,
       source: winData.source,
       params: sanitizeParams(winData.params),
       zOrder: zOrderMap.get(id) ?? 0,

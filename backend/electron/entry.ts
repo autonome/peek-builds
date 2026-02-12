@@ -282,13 +282,15 @@ app.on('before-quit', () => {
 });
 
 // Handle SIGINT/SIGTERM (e.g. Ctrl+C in terminal).
-// Use app.quit() to trigger Electron's proper quit sequence (before-quit -> will-quit -> quit).
-// The before-quit handler above saves the session and cleans up resources.
-// Calling process.exit() directly would skip Electron's lifecycle events.
+// app.quit() is async and won't complete before yarn kills the process,
+// so we save synchronously (better-sqlite3) then exit immediately.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    console.log(`[lifecycle] ${signal} received, triggering graceful quit`);
-    app.quit();
+    console.log(`[lifecycle] ${signal} received, saving session`);
+    try { stopAutosaveTimer(); } catch { /* ignore */ }
+    try { saveSessionSnapshot('before-quit'); } catch (e) { console.error('[lifecycle] signal save error:', e); }
+    try { shutdown(); } catch { /* ignore */ }
+    process.exit(0);
   });
 }
 
