@@ -129,12 +129,17 @@ const parseTagParams = (text) => {
  * @returns {Promise<{notes: Array, tagNames: string[]}>} Matching notes with their tags attached
  */
 const getNotesByTags = async (tagNames, limit = 50) => {
-  // Resolve tag names to tag IDs
+  // Resolve tag names to tag IDs (read-only lookup, no creation)
+  const allTagsResult = await api.datastore.getTagsByFrecency();
+  if (!allTagsResult.success || !allTagsResult.data) {
+    return { notes: [], tagNames };
+  }
+
   const tagIds = [];
   for (const name of tagNames) {
-    const tagResult = await api.datastore.getOrCreateTag(name);
-    if (tagResult.success && tagResult.data.tag) {
-      tagIds.push(tagResult.data.tag.id);
+    const tag = allTagsResult.data.find(t => t.name.toLowerCase() === name.toLowerCase());
+    if (tag) {
+      tagIds.push(tag.id);
     }
   }
 

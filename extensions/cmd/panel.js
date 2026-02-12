@@ -1015,6 +1015,7 @@ function getRenderer(mimeType) {
     'application/json': renderJson,
     'text/csv': renderCsv,
     'text/plain': renderPlain,
+    'text/markdown': renderMarkdown,
     'text/html': renderHtml
   };
 
@@ -1093,6 +1094,32 @@ function renderCsv(data) {
     return `<tr>${cells}</tr>`;
   }).join('');
   return `<table class="preview-csv">${rows}</table>`;
+}
+
+function renderMarkdown(data) {
+  // Simple markdown-to-HTML rendering for preview
+  const text = String(data).slice(0, 4000);
+  const html = text
+    .split('\n')
+    .map(line => {
+      // Headings
+      if (line.startsWith('## ')) return `<h3>${escapeHtml(line.slice(3))}</h3>`;
+      if (line.startsWith('# ')) return `<h2>${escapeHtml(line.slice(2))}</h2>`;
+      // Horizontal rule
+      if (line.trim() === '---') return '<hr>';
+      // Bold/italic inline
+      let processed = escapeHtml(line);
+      processed = processed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      processed = processed.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      // List items
+      if (line.startsWith('- ')) return `<li>${processed.slice(2)}</li>`;
+      // Empty line
+      if (line.trim() === '') return '<br>';
+      // Default paragraph
+      return `<p>${processed}</p>`;
+    })
+    .join('\n');
+  return `<div class="preview-markdown">${html}</div>`;
 }
 
 function renderPlain(data) {
