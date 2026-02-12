@@ -132,15 +132,18 @@ const renderCoreSettings = async () => {
     Object.keys(pProps).forEach(k => {
       const s = pProps[k];
       const v = (prefs && prefs.hasOwnProperty(k)) ? prefs[k] : s.default;
+      const displayLabel = (labels.prefs && labels.prefs[k]) || k;
 
       if (s.type === 'boolean') {
-        const checkbox = createCheckbox(k, v, (newVal) => {
+        const checkbox = createCheckbox(displayLabel, v, (newVal) => {
           prefs[k] = newVal;
           save();
+        }, {
+          helpText: s.description
         });
         prefsSection.appendChild(checkbox);
       } else if (s.type === 'integer' || s.type === 'number') {
-        const input = createInput(k, v, (newVal) => {
+        const input = createInput(displayLabel, v, (newVal) => {
           prefs[k] = newVal;
           save();
         }, {
@@ -150,7 +153,7 @@ const renderCoreSettings = async () => {
         });
         prefsSection.appendChild(input);
       } else {
-        const input = createInput(k, v, (newVal) => {
+        const input = createInput(displayLabel, v, (newVal) => {
           prefs[k] = newVal;
           save();
         }, {

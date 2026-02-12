@@ -4,6 +4,15 @@ const labels = {
   name: 'Settings',
   prefs: {
     shortcutKey: 'Settings shortcut',
+    quitShortcut: 'Quit shortcut',
+    startupFeature: 'Startup feature',
+    showTrayIcon: 'Show tray icon',
+    showInDockAndSwitcher: 'Show in dock',
+    backupDir: 'Backup directory',
+    hideTitleBar: 'Hide title bars',
+    persistWindowState: 'Remember window positions',
+    restoreSession: 'Restore session on startup',
+    sessionAutosaveInterval: 'Autosave interval (minutes)',
   }
 };
 
@@ -42,7 +51,7 @@ const prefsSchema = {
     "showInDockAndSwitcher": {
       "description": "Always show in dock/app switcher, even when no windows are open. When disabled, dock icon only appears while windows are visible.",
       "type": "boolean",
-      "default": false
+      "default": true
     },
     "quitShortcut": {
       "description": "Keyboard shortcut to quit the app",
@@ -60,9 +69,9 @@ const prefsSchema = {
       "default": true
     },
     "persistWindowState": {
-      "description": "Remember window position and size for keyed windows across app restarts",
+      "description": "Remember window position and size across app restarts",
       "type": "boolean",
-      "default": false
+      "default": true
     },
     "restoreSession": {
       "description": "Restore open windows when app restarts",
@@ -145,7 +154,7 @@ const defaults = {
     showInDockAndSwitcher: true,
     backupDir: '',
     hideTitleBar: true,
-    persistWindowState: false,
+    persistWindowState: true,
     restoreSession: true,
     sessionAutosaveInterval: 5
   },
