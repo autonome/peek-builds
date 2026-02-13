@@ -140,20 +140,33 @@ export async function initialize(): Promise<void> {
   // Track OS-level app focus for IZUI transient detection.
   // When Peek is the active app, windows opened are "active."
   // When Peek is in the background, windows opened are "transient."
-  app.on('browser-window-focus', () => {
-    getIzuiCoordinator().setAppFocused(true);
-    // Notify extensions (e.g. HUD) that the app is focused
-    publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
-  });
-  app.on('browser-window-blur', () => {
-    // Only mark unfocused if NO window has focus (user switched to another app).
-    // During window switches within Peek, one window blurs before another focuses.
-    if (!BrowserWindow.getFocusedWindow()) {
+  if (process.platform === 'darwin') {
+    // macOS: use did-become-active / did-resign-active for reliable OS-level focus.
+    // browser-window-blur/focus are per-window and unreliable with utility windows
+    // (e.g. HUD with alwaysOnTop+focusable:false confuses getFocusedWindow()).
+    app.on('did-become-active', () => {
+      getIzuiCoordinator().setAppFocused(true);
+      publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
+    });
+    app.on('did-resign-active', () => {
       getIzuiCoordinator().setAppFocused(false);
-      // Notify extensions (e.g. HUD) that the app lost focus
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
-    }
-  });
+    });
+  } else {
+    // Non-macOS fallback: use browser-window-focus/blur with focused-window check
+    app.on('browser-window-focus', () => {
+      getIzuiCoordinator().setAppFocused(true);
+      publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
+    });
+    app.on('browser-window-blur', () => {
+      // Only mark unfocused if NO window has focus (user switched to another app).
+      // During window switches within Peek, one window blurs before another focuses.
+      if (!BrowserWindow.getFocusedWindow()) {
+        getIzuiCoordinator().setAppFocused(false);
+        publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
+      }
+    });
+  }
 
   // Track window events globally
   app.on('browser-window-created', (_, window) => {
