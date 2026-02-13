@@ -367,6 +367,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateTagsLastUsedColumn();
   migrateContextHistory();
   migrateEntityType();
+  migrateStandalonePriceEntities();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
@@ -1516,6 +1517,62 @@ function migrateEntityType(): void {
   } catch (error) {
     DEBUG && console.log('main', `Entity indexes:`, (error as Error).message);
   }
+}
+
+/**
+ * Remove standalone price entities that lack product context.
+ * Before the extractor was improved (2026-02-11), price entities were created
+ * without an attributes.product field, producing noisy standalone prices like "$9.99".
+ * The updated extractor always associates prices with a product name.
+ * This migration hard-deletes price entities missing the product attribute.
+ */
+function migrateStandalonePriceEntities(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'remove_standalone_price_entities_v1';
+
+  // Check if already migrated
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') {
+    DEBUG && console.log('main', 'Standalone price entity migration already complete');
+    return;
+  }
+
+  // Find all entity items where entityType is 'price' and attributes.product is missing
+  const priceEntities = db.prepare(`
+    SELECT id FROM items
+    WHERE type = 'entity'
+      AND deletedAt = 0
+      AND json_extract(metadata, '$.entityType') = 'price'
+      AND (json_extract(metadata, '$.attributes.product') IS NULL
+        OR json_extract(metadata, '$.attributes.product') = '')
+  `).all() as { id: string }[];
+
+  if (priceEntities.length === 0) {
+    db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+    DEBUG && console.log('main', 'No standalone price entities to remove');
+    return;
+  }
+
+  DEBUG && console.log('main', `Removing ${priceEntities.length} standalone price entities without product context`);
+
+  let removedCount = 0;
+  for (const entity of priceEntities) {
+    try {
+      // Delete associated item_events (observations)
+      db.prepare('DELETE FROM item_events WHERE itemId = ?').run(entity.id);
+      // Delete associated item_tags
+      db.prepare('DELETE FROM item_tags WHERE itemId = ?').run(entity.id);
+      // Hard-delete the item itself
+      db.prepare('DELETE FROM items WHERE id = ?').run(entity.id);
+      removedCount++;
+    } catch (error) {
+      console.error(`Failed to remove standalone price entity ${entity.id}:`, error);
+    }
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+  DEBUG && console.log('main', `Removed ${removedCount} standalone price entities`);
 }
 
 /**
