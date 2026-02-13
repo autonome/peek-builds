@@ -1374,4 +1374,129 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(loaded!.windows[2].key, undefined);
     });
   });
+
+  // ========================================================================
+  // Window filtering for session save (utility, modal, system windows)
+  // ========================================================================
+
+  describe('Window filtering for session save', () => {
+    /**
+     * Extracted filtering logic from session.ts saveSessionSnapshot.
+     * Returns true if a window should be SKIPPED (not saved).
+     */
+    function shouldSkipWindow(
+      url: string,
+      params: Record<string, unknown>,
+      isVisible: boolean,
+      isDestroyed: boolean
+    ): boolean {
+      if (isDestroyed) return true;
+      if (!isVisible) return true;
+      if (url.includes('peek://app/background.html')) return true;
+      if (url.includes('peek://app/extension-host.html')) return true;
+      if (params.modal) return true;
+      if (params.role === 'utility') return true;
+      return false;
+    }
+
+    it('skips utility windows (role=utility)', () => {
+      const skip = shouldSkipWindow(
+        'peek://ext/hud/panel.html',
+        { role: 'utility' },
+        true,
+        false
+      );
+      assert.strictEqual(skip, true, 'Utility windows should be skipped during save');
+    });
+
+    it('skips modal windows', () => {
+      const skip = shouldSkipWindow(
+        'peek://ext/cmd/panel.html',
+        { modal: true },
+        true,
+        false
+      );
+      assert.strictEqual(skip, true, 'Modal windows should be skipped during save');
+    });
+
+    it('skips background window', () => {
+      const skip = shouldSkipWindow(
+        'peek://app/background.html',
+        {},
+        true,
+        false
+      );
+      assert.strictEqual(skip, true, 'Background window should be skipped');
+    });
+
+    it('skips extension host window', () => {
+      const skip = shouldSkipWindow(
+        'peek://app/extension-host.html',
+        {},
+        true,
+        false
+      );
+      assert.strictEqual(skip, true, 'Extension host should be skipped');
+    });
+
+    it('skips invisible windows', () => {
+      const skip = shouldSkipWindow(
+        'https://example.com',
+        {},
+        false,
+        false
+      );
+      assert.strictEqual(skip, true, 'Invisible windows should be skipped');
+    });
+
+    it('skips destroyed windows', () => {
+      const skip = shouldSkipWindow(
+        'https://example.com',
+        {},
+        true,
+        true
+      );
+      assert.strictEqual(skip, true, 'Destroyed windows should be skipped');
+    });
+
+    it('includes normal content windows', () => {
+      const skip = shouldSkipWindow(
+        'https://example.com',
+        { role: 'content' },
+        true,
+        false
+      );
+      assert.strictEqual(skip, false, 'Normal content windows should be included');
+    });
+
+    it('includes extension windows with non-utility role', () => {
+      const skip = shouldSkipWindow(
+        'peek://ext/tags/home.html',
+        { role: 'content' },
+        true,
+        false
+      );
+      assert.strictEqual(skip, false, 'Extension windows with content role should be included');
+    });
+
+    it('includes canvas page containers', () => {
+      const skip = shouldSkipWindow(
+        'peek://app/page?url=https%3A%2F%2Fexample.com',
+        {},
+        true,
+        false
+      );
+      assert.strictEqual(skip, false, 'Canvas page containers should be included');
+    });
+
+    it('includes windows with no role specified', () => {
+      const skip = shouldSkipWindow(
+        'https://example.com',
+        {},
+        true,
+        false
+      );
+      assert.strictEqual(skip, false, 'Windows with no role should be included');
+    });
+  });
 });

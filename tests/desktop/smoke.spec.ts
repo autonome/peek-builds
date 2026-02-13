@@ -793,7 +793,7 @@ test.describe('External URL Opening @desktop', () => {
     }
   });
 
-  test('cmd panel does not treat non-URL text as URL', async () => {
+  test('cmd panel routes non-URL text to web search instead of opening as URL', async () => {
     await waitForExtensionsReady(sharedBgWindow, 15000);
 
     // Open cmd panel
@@ -813,33 +813,42 @@ test.describe('External URL Opening @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
-    // Get initial window list
-    const initialList = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.list();
-    });
-    const initialCount = initialList.windows?.length || 0;
-
     // Type non-URL text (no dots, no protocol)
     await cmdWindow.fill('input', 'notaurl');
     await cmdWindow.keyboard.press('Enter');
 
-    // Wait a moment
+    // Wait for web search to process
     await sleep(1000);
 
-    // Verify no new URL window was opened
+    // Verify non-URL text was routed to web search, NOT opened as a raw URL.
+    // The websearch extension handles non-URL text as a search query,
+    // opening a search engine URL (e.g., duckduckgo.com/?q=notaurl).
     const finalList = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
-    const finalCount = finalList.windows?.length || 0;
 
-    // Check that 'notaurl' was NOT opened as a URL
-    const notaurlWindow = finalList.windows?.find((w: any) =>
-      w.url && w.url.includes('notaurl')
+    // Should NOT be opened as a direct URL (http://notaurl or https://notaurl)
+    const directUrlWindow = finalList.windows?.find((w: any) =>
+      w.url === 'http://notaurl' || w.url === 'https://notaurl'
     );
-    expect(notaurlWindow).toBeFalsy();
+    expect(directUrlWindow).toBeFalsy();
 
-    // Window count should be same or less (cmd panel might close)
-    expect(finalCount).toBeLessThanOrEqual(initialCount);
+    // Should be opened as a web search (trackingSource: 'websearch')
+    const searchWindow = finalList.windows?.find((w: any) =>
+      w.url && w.url.includes('notaurl') && w.params?.trackingSource === 'websearch'
+    );
+    expect(searchWindow).toBeTruthy();
+
+    // Clean up: close the search window
+    if (searchWindow) {
+      await sharedBgWindow.evaluate(async (id: number) => {
+        try {
+          await (window as any).app.window.close(id);
+        } catch (e) {
+          // Already closed
+        }
+      }, searchWindow.id);
+    }
 
     // Close cmd panel if still open
     if (openResult.id) {
@@ -1884,10 +1893,10 @@ test.describe('Groups View @desktop', () => {
     );
 
     // Non-empty group should be shown
-    expect(groupCards.includes(nonEmptyTag.data.tag.id)).toBe(true);
+    expect(groupCards.includes(String(nonEmptyTag.data.tag.id))).toBe(true);
 
     // Empty group should NOT be shown
-    expect(groupCards.includes(emptyTag.data.tag.id)).toBe(false);
+    expect(groupCards.includes(String(emptyTag.data.tag.id))).toBe(false);
 
     // Clean up
     if (groupsResult.id) {
@@ -1937,8 +1946,7 @@ test.describe('Groups View @desktop', () => {
     // Wait for cards to render
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
 
-    // Check for Untagged group (has special ID __untagged__)
-    const untaggedCard = await groupsWindow.$('peek-card.group-card[data-tag-id="__untagged__"]');
+    const untaggedCard = await groupsWindow.waitForSelector('peek-card.group-card[data-tag-id="__untagged__"]', { timeout: 5000 }).catch(() => null);
     expect(untaggedCard).toBeTruthy();
 
     // Verify it shows the special-group class
