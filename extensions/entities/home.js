@@ -21,11 +21,12 @@ let selectedEntity = null; // Entity being viewed in detail
 // View preferences (persisted)
 let viewPrefs = {
   viewMode: 'columns',
-  sortBy: 'name',
-  sortDirection: 'asc'
+  sortBy: 'frequency',
+  sortDirection: 'desc'
 };
 
 const SORT_OPTIONS = [
+  { value: 'frequency', label: 'Frequency' },
   { value: 'name', label: 'Name' },
   { value: 'type', label: 'Type' },
   { value: 'confidence', label: 'Confidence' },
@@ -81,6 +82,13 @@ function sortEntities(entities) {
     try { metaB = JSON.parse(b.metadata || '{}'); } catch {}
 
     switch (viewPrefs.sortBy) {
+      case 'frequency': {
+        const fa = a.visitCount || 0;
+        const fb = b.visitCount || 0;
+        if (fa !== fb) return dir * (fa - fb);
+        // Tiebreak by frecencyScore
+        return dir * ((a.frecencyScore || 0) - (b.frecencyScore || 0));
+      }
       case 'name': {
         const na = (a.content || a.name || '').toLowerCase();
         const nb = (b.content || b.name || '').toLowerCase();
@@ -222,8 +230,10 @@ async function showDetailView(entity) {
 
   // Extraction info
   const infoEl = document.getElementById('detailExtractionInfo');
+  const detailPageCount = entity.visitCount || 0;
   infoEl.innerHTML = `
     <div class="detail-attr-row"><span class="detail-attr-label">Confidence</span><span class="detail-attr-value">${confidence}%</span></div>
+    <div class="detail-attr-row"><span class="detail-attr-label">Observed On</span><span class="detail-attr-value">${detailPageCount} page${detailPageCount !== 1 ? 's' : ''}</span></div>
     <div class="detail-attr-row"><span class="detail-attr-label">Extractor</span><span class="detail-attr-value">${escapeHtml(extractor)}</span></div>
     <div class="detail-attr-row"><span class="detail-attr-label">First Seen</span><span class="detail-attr-value">${entity.createdAt ? new Date(entity.createdAt).toLocaleString() : 'Unknown'}</span></div>
     <div class="detail-attr-row"><span class="detail-attr-label">Last Updated</span><span class="detail-attr-value">${entity.updatedAt ? new Date(entity.updatedAt).toLocaleString() : 'Unknown'}</span></div>
@@ -414,10 +424,14 @@ async function renderEntities() {
 
     const footerDiv = document.createElement('div');
     footerDiv.slot = 'footer';
+    const pageCount = entity.visitCount || 0;
+    const pageCountText = pageCount > 0 ? `Seen on ${pageCount} page${pageCount !== 1 ? 's' : ''}` : '';
+    const footerParts = [`${confidence}% confidence`];
+    if (pageCountText) footerParts.push(pageCountText);
+    footerParts.push(formatDate(entity.createdAt));
     footerDiv.innerHTML = `
       <div class="card-footer">
-        <span class="entity-confidence">${confidence}% confidence</span>
-        <span>${formatDate(entity.createdAt)}</span>
+        <span class="entity-confidence">${footerParts.filter(Boolean).join(' \u00B7 ')}</span>
       </div>
     `;
     card.appendChild(footerDiv);

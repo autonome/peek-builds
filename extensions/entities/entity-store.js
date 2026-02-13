@@ -91,6 +91,28 @@ export async function addObservation(entityId, observation) {
     })
   });
 
+  // Update entity item's visitCount, lastVisitAt, and frecencyScore
+  if (result.success && (!result.data || !result.data.deduplicated)) {
+    try {
+      const item = await api.datastore.getItem(entityId);
+      if (item.success && item.data) {
+        const newVisitCount = (item.data.visitCount || 0) + 1;
+        const nowMs = Date.now();
+        // Calculate frecency: frequency * 10 * decay (matches calculateFrecency in datastore.ts)
+        const daysSinceUse = 0; // just used now
+        const decayFactor = 1 / (1 + daysSinceUse / 7);
+        const frecencyScore = Math.round(newVisitCount * 10 * decayFactor);
+        await api.datastore.updateItem(entityId, {
+          visitCount: newVisitCount,
+          lastVisitAt: nowMs,
+          frecencyScore
+        });
+      }
+    } catch (err) {
+      console.warn('[entities:store] Failed to update entity frecency:', err.message);
+    }
+  }
+
   return result;
 }
 

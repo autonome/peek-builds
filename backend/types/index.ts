@@ -201,6 +201,9 @@ export interface ItemOptions {
   archived?: number;
   title?: string;
   favicon?: string;
+  visitCount?: number;
+  lastVisitAt?: number;
+  frecencyScore?: number;
 }
 
 export interface ItemFilter {

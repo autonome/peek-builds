@@ -79,6 +79,14 @@ function extractDateContext(text, matchIndex) {
   // Reject metadata-like prefixes (createdAt, updatedAt, publishedAt, etc.)
   if (/^(?:createdAt|updatedAt|modifiedAt|publishedAt|deletedAt|syncedAt|lastModified|timestamp|datetime|created|updated|modified|published|deleted)\s*$/i.test(cleaned)) return null;
 
+  // Reject filesystem/directory listing noise:
+  // - ends with "/" (directory name, e.g. "elephant/")
+  // - looks like a filename (word.ext)
+  // - single token without spaces (likely an identifier, not meaningful context)
+  if (/\/$/.test(cleaned)) return null;
+  if (/^[\w.-]+\.\w{1,5}$/.test(cleaned)) return null;
+  if (!/\s/.test(cleaned) && cleaned.length < 15) return null;
+
   // Take up to ~60 chars, trim to last word boundary
   let label = cleaned.slice(-60).trim();
   if (cleaned.length > 60) {
@@ -167,21 +175,27 @@ export function extractRegexEntities(text, url) {
     });
   }
 
-  // Extract phone numbers
+  // Extract phone numbers — require formatting (separators, parens, or + prefix).
+  // A bare sequence of digits is NOT a phone number.
   const phones = text.match(PHONE_RE) || [];
   const seenPhones = new Set();
   for (const phone of phones) {
-    const normalized = phone.replace(/[\s.\-()]/g, '');
+    const trimmed = phone.trim();
+    const digitsOnly = trimmed.replace(/\D/g, '');
     // Skip numbers that are too short (likely not phone numbers)
-    if (normalized.replace(/\D/g, '').length < 7) continue;
+    if (digitsOnly.length < 7) continue;
+    // Require at least one formatting character (dash, dot, space, paren, plus).
+    // Bare digit sequences like "2262633506" are not phone numbers.
+    if (/^\d+$/.test(trimmed)) continue;
+    const normalized = trimmed.replace(/[\s.\-()]/g, '');
     if (seenPhones.has(normalized)) continue;
     seenPhones.add(normalized);
     entities.push({
-      name: phone.trim(),
+      name: trimmed,
       entityType: 'phone',
       confidence: 0.85,
       extractor: 'regex',
-      attributes: { number: phone.trim() },
+      attributes: { number: trimmed },
       sourceUrl: url
     });
   }

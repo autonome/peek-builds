@@ -66,9 +66,13 @@ let _previousDisplays: DisplaySnapshot[] = [];
 /** Displaced windows awaiting restoration, keyed by BrowserWindow id */
 let _windowHomeDisplays: Map<number, WindowHomeDisplay> = new Map();
 
-/** Pre-debounce snapshot of window positions, captured immediately on display-removed.
- * macOS moves windows from disconnected displays BEFORE our debounced handler fires,
- * so we must capture window-to-display mappings eagerly. Maps windowId -> bounds. */
+/** Continuously-updated window positions. Updated on every window move/resize.
+ * Used by Phase 1 instead of pre-debounce capture, since macOS relocates windows
+ * BEFORE the display-removed event fires (pre-debounce capture is already too late). */
+let _trackedPositions: Map<number, { bounds: Electron.Rectangle; displaySnapshot: DisplaySnapshot }> = new Map();
+
+/** Pre-debounce snapshot of window positions — DEPRECATED, kept as fallback.
+ * macOS moves windows BEFORE the event fires, making this unreliable. */
 let _preDebounceWindowBounds: Map<number, Electron.Rectangle> | null = null;
 
 /** Debounce timer for display changes (macOS fires multiple events rapidly) */
@@ -354,9 +358,9 @@ function saveWindowHomeDisplay(
   };
 
   _windowHomeDisplays.set(win.id, homeDisplay);
-  DEBUG && console.log(
+  console.log(
     `[display-watcher] Saved home display for window ${win.id}: ` +
-    `display ${display.id} (${wa.width}x${wa.height}), ` +
+    `display ${display.id} (${wa.x},${wa.y} ${wa.width}x${wa.height}), ` +
     `rel center (${homeDisplay.relativePosition.centerX.toFixed(3)}, ${homeDisplay.relativePosition.centerY.toFixed(3)})`
   );
 }
@@ -385,12 +389,13 @@ function findMatchingNewDisplay(
       ? Math.abs(wa.height - home.resolution.height) / home.resolution.height
       : (wa.height === 0 ? 0 : 1);
 
+    console.log(
+      `[display-watcher] Resolution check: home (${home.resolution.width}x${home.resolution.height}) ` +
+      `vs display ${d.id} (${wa.width}x${wa.height}), ` +
+      `delta (${(widthRatio * 100).toFixed(1)}%, ${(heightRatio * 100).toFixed(1)}%) ` +
+      `${widthRatio <= tolerance && heightRatio <= tolerance ? 'MATCH' : 'no match'}`
+    );
     if (widthRatio <= tolerance && heightRatio <= tolerance) {
-      DEBUG && console.log(
-        `[display-watcher] Resolution match: home (${home.resolution.width}x${home.resolution.height}) ` +
-        `-> display ${d.id} (${wa.width}x${wa.height}), ` +
-        `delta (${(widthRatio * 100).toFixed(1)}%, ${(heightRatio * 100).toFixed(1)}%)`
-      );
       return d;
     }
   }
@@ -462,9 +467,10 @@ function handleDisplayChange(): void {
   const newDisplays = snapshotDisplays();
   const oldDisplays = _previousDisplays;
 
-  DEBUG && console.log(
+  console.log(
     `[display-watcher] Display change detected. ` +
-    `Old: ${oldDisplays.length} display(s), New: ${newDisplays.length} display(s)`
+    `Old: ${oldDisplays.length} display(s) [${oldDisplays.map(d => `${d.id}(${d.workArea.x},${d.workArea.y} ${d.workArea.width}x${d.workArea.height})`).join(', ')}], ` +
+    `New: ${newDisplays.length} display(s) [${newDisplays.map(d => `${d.id}(${d.workArea.x},${d.workArea.y} ${d.workArea.width}x${d.workArea.height})`).join(', ')}]`
   );
 
   // Build maps for quick lookup
@@ -496,9 +502,9 @@ function handleDisplayChange(): void {
     }
   }
 
-  DEBUG && console.log(
+  console.log(
     `[display-watcher] Removed: ${[...removedDisplayIds].join(", ") || "none"}, ` +
-    `Added: ${addedDisplays.map(d => d.id).join(", ") || "none"}, ` +
+    `Added: ${addedDisplays.map(d => `${d.id}(${d.workArea.x},${d.workArea.y} ${d.workArea.width}x${d.workArea.height})`).join(", ") || "none"}, ` +
     `Changed: ${[...changedDisplayIds].join(", ") || "none"}`
   );
 
@@ -522,42 +528,111 @@ function handleDisplayChange(): void {
       // Only save if we haven't already saved a home display for this window
       if (_windowHomeDisplays.has(win.id)) continue;
 
-      // Use pre-debounce bounds (captured before macOS moved windows) if available,
-      // otherwise fall back to current bounds (may already be post-relocation).
-      const bounds = _preDebounceWindowBounds?.get(win.id) ?? win.getBounds();
+      // Priority order for position data:
+      // 1. Continuously-tracked position (most reliable — captured before macOS moved anything)
+      // 2. Pre-debounce capture (unreliable — macOS already moved windows by this point)
+      // 3. Current bounds (worst — definitely post-relocation)
+      const tracked = _trackedPositions.get(win.id);
+      const preDebBounds = _preDebounceWindowBounds?.get(win.id);
+      const currentBounds = win.getBounds();
+      const bounds = tracked?.bounds ?? preDebBounds ?? currentBounds;
+      const source = tracked ? 'tracked' : preDebBounds ? 'preDeb' : 'current';
+
       const centerX = bounds.x + Math.round(bounds.width / 2);
       const centerY = bounds.y + Math.round(bounds.height / 2);
 
-      // Check if the window was on a removed display
-      const oldDisplay = findDisplayForPoint(oldDisplays, centerX, centerY);
+      // Use tracked display if available (already resolved), otherwise look up from old displays
+      let oldDisplay: DisplaySnapshot | null = null;
+      if (tracked && removedDisplayIds.has(tracked.displaySnapshot.id)) {
+        oldDisplay = tracked.displaySnapshot;
+      } else {
+        oldDisplay = findDisplayForPoint(oldDisplays, centerX, centerY);
+      }
+
+      console.log(
+        `[display-watcher] Phase 1 window ${win.id}: ` +
+        `source=${source}, bounds=(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}), ` +
+        `current=(${currentBounds.x},${currentBounds.y}), ` +
+        `oldDisplay=${oldDisplay ? `${oldDisplay.id}(removed=${removedDisplayIds.has(oldDisplay.id)})` : 'null'}`
+      );
       if (oldDisplay && removedDisplayIds.has(oldDisplay.id)) {
         saveWindowHomeDisplay(win, bounds, oldDisplay);
+        console.log(`[display-watcher] Phase 1 SAVED home for window ${win.id} on display ${oldDisplay.id}`);
       }
     }
 
-    DEBUG && console.log(
-      `[display-watcher] Phase 1: Saved ${_windowHomeDisplays.size} displaced window(s)` +
-      (_preDebounceWindowBounds ? ' (using pre-debounce bounds)' : ' (using current bounds)')
+    console.log(
+      `[display-watcher] Phase 1 SUMMARY: ${_windowHomeDisplays.size} displaced window(s)`
     );
+
+    // ==================================================================
+    // Phase 1b (Redistribute): Reposition displaced windows onto remaining
+    // displays using their TRACKED (real pre-disconnect) positions.
+    // macOS jams all windows into top-left of the laptop — override that
+    // with proper group-scaled redistribution preserving relative layout.
+    // ==================================================================
+    if (_windowHomeDisplays.size > 0 && newDisplays.length > 0) {
+      // Group displaced windows by their home display
+      const displaceGroups = new Map<number, WindowEntry[]>();
+      for (const [winId, home] of _windowHomeDisplays) {
+        const win = BrowserWindow.fromId(winId);
+        if (!win || win.isDestroyed()) continue;
+        const tracked = _trackedPositions.get(winId);
+        if (!tracked) continue;
+
+        if (!displaceGroups.has(home.displayId)) displaceGroups.set(home.displayId, []);
+        displaceGroups.get(home.displayId)!.push({ win, bounds: tracked.bounds });
+      }
+
+      for (const [displayId, entries] of displaceGroups) {
+        const oldDisp = oldById.get(displayId);
+        if (!oldDisp) continue;
+        const targetDisp = findBestNewDisplay(oldDisp, newDisplays);
+        console.log(
+          `[display-watcher] Phase 1b: redistributing ${entries.length} window(s) ` +
+          `from removed display ${displayId} -> display ${targetDisp.id} ` +
+          `(${targetDisp.workArea.width}x${targetDisp.workArea.height})`
+        );
+        repositionWindowGroup(entries, oldDisp, targetDisp);
+      }
+    }
   }
 
   // ========================================================================
   // Phase 2 (Restore): Restore displaced windows to matching new displays
   // ========================================================================
+  // Track windows handled by Phase 1b/2 so Phase 3 skips them
+  const handledWindows = new Set<number>();
+
+  // Mark Phase 1b windows as handled
+  if (removedDisplayIds.size > 0) {
+    for (const [winId] of _windowHomeDisplays) {
+      handledWindows.add(winId);
+    }
+  }
+
+  console.log(`[display-watcher] Phase 2: addedDisplays=${addedDisplays.length}, displacedWindows=${_windowHomeDisplays.size}`);
   if (addedDisplays.length > 0 && _windowHomeDisplays.size > 0) {
     const restoredWindowIds: number[] = [];
 
     for (const [winId, home] of _windowHomeDisplays) {
       const win = BrowserWindow.fromId(winId);
       if (!win || win.isDestroyed()) {
+        console.log(`[display-watcher] Phase 2 window ${winId}: destroyed/gone, cleaning up`);
         restoredWindowIds.push(winId); // Clean up stale entries
         continue;
       }
 
       const matchingDisplay = findMatchingNewDisplay(home, addedDisplays);
+      console.log(
+        `[display-watcher] Phase 2 window ${winId}: ` +
+        `home display=${home.displayId} (${home.resolution.width}x${home.resolution.height}), ` +
+        `match=${matchingDisplay ? `${matchingDisplay.id}(${matchingDisplay.workArea.width}x${matchingDisplay.workArea.height})` : 'NONE'}`
+      );
       if (matchingDisplay) {
         restoreWindowToHomeDisplay(win, home, matchingDisplay);
         restoredWindowIds.push(winId);
+        handledWindows.add(winId);
       }
     }
 
@@ -566,8 +641,8 @@ function handleDisplayChange(): void {
       _windowHomeDisplays.delete(id);
     }
 
-    DEBUG && console.log(
-      `[display-watcher] Phase 2: Restored ${restoredWindowIds.length} window(s), ` +
+    console.log(
+      `[display-watcher] Phase 2 SUMMARY: Restored ${restoredWindowIds.length} window(s), ` +
       `${_windowHomeDisplays.size} still displaced`
     );
   }
@@ -603,6 +678,14 @@ function handleDisplayChange(): void {
     // Skip the background window
     const entry = getWindowInfo(win.id);
     if (entry && entry.params.address === WEB_CORE_ADDRESS) continue;
+
+    // Skip windows already handled by Phase 1b (redistributed) or Phase 2 (restored) —
+    // their coordinates are correct for the new display layout, but would
+    // appear to be on a "changed" display when checked against oldDisplays.
+    if (handledWindows.has(win.id)) {
+      console.log(`[display-watcher] Phase 3: skipping window ${win.id} (handled by Phase 1b/2)`);
+      continue;
+    }
 
     const bounds = win.getBounds();
     const centerX = bounds.x + Math.round(bounds.width / 2);
@@ -696,7 +779,10 @@ function onDisplayChange(isRemoval = false): void {
   // so we need the pre-move positions to correctly identify which display each window was on.
   if (!_debounceTimer && isRemoval) {
     _preDebounceWindowBounds = captureWindowBounds();
-    DEBUG && console.log(`[display-watcher] Captured pre-debounce window bounds: ${_preDebounceWindowBounds.size} windows`);
+    console.log(`[display-watcher] Captured pre-debounce window bounds: ${_preDebounceWindowBounds.size} windows`);
+    for (const [id, b] of _preDebounceWindowBounds) {
+      console.log(`[display-watcher]   window ${id}: (${b.x},${b.y} ${b.width}x${b.height})`);
+    }
   }
 
   if (_debounceTimer) {
@@ -718,30 +804,63 @@ export function initDisplayWatcher(): void {
   // Take initial snapshot
   _previousDisplays = snapshotDisplays();
 
-  DEBUG && console.log(
+  console.log(
     `[display-watcher] Initialized with ${_previousDisplays.length} display(s): ` +
-    _previousDisplays.map(d => `${d.id} (${d.workArea.width}x${d.workArea.height})`).join(", ")
+    _previousDisplays.map(d => `${d.id} (${d.workArea.x},${d.workArea.y} ${d.workArea.width}x${d.workArea.height})`).join(", ")
   );
 
   // Listen for display changes
   screen.on('display-added', () => {
-    DEBUG && console.log("[display-watcher] display-added event");
+    console.log("[display-watcher] display-added event");
     onDisplayChange();
   });
 
   screen.on('display-removed', () => {
-    DEBUG && console.log("[display-watcher] display-removed event");
+    console.log("[display-watcher] display-removed event");
     onDisplayChange(/* isRemoval */ true);
   });
 
   screen.on('display-metrics-changed', (_event: Electron.Event, _display: Display, changedMetrics: string[]) => {
-    DEBUG && console.log("[display-watcher] display-metrics-changed event, metrics:", changedMetrics.join(", "));
+    console.log("[display-watcher] display-metrics-changed event, metrics:", changedMetrics.join(", "));
     // Only react to meaningful changes (bounds, workArea, scaleFactor)
     // Ignore rotation-only changes
     const meaningful = changedMetrics.some(m => ['bounds', 'workArea', 'scaleFactor'].includes(m));
     if (meaningful) {
       onDisplayChange();
     }
+  });
+}
+
+/**
+ * Start tracking a window's position for home display restoration.
+ * Call this after creating any visible window. Attaches move/resize
+ * listeners so we always know each window's true position and display,
+ * even if macOS relocates windows before the display-removed event fires.
+ */
+export function trackWindow(win: BrowserWindow): void {
+  const updateTracking = () => {
+    if (win.isDestroyed() || !win.isVisible()) return;
+    const bounds = win.getBounds();
+    const centerX = bounds.x + Math.round(bounds.width / 2);
+    const centerY = bounds.y + Math.round(bounds.height / 2);
+    // Use _previousDisplays (stable snapshot) to determine which display this window is on
+    const display = findDisplayForPoint(_previousDisplays, centerX, centerY);
+    if (display) {
+      _trackedPositions.set(win.id, { bounds: { ...bounds }, displaySnapshot: display });
+    }
+  };
+
+  // Save initial position
+  updateTracking();
+
+  // Update on moves — 'moved' fires at end of move on macOS
+  win.on('moved', updateTracking);
+  win.on('resize', updateTracking);
+
+  // Clean up on close
+  win.on('closed', () => {
+    _trackedPositions.delete(win.id);
+    _windowHomeDisplays.delete(win.id);
   });
 }
 

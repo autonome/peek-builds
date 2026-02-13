@@ -241,7 +241,7 @@ let dragStartBoundsY = 0;
 let pageMouseButtonDown = false;
 
 // Hold-to-drag state
-const DRAG_HOLD_THRESHOLD = 150;
+const DRAG_HOLD_THRESHOLD = 80;
 let holdDragTimer = null;
 let holdDragPending = false;
 let holdDragStartScreenX = 0;

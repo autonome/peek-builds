@@ -369,6 +369,8 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateEntityType();
   migrateStandalonePriceEntities();
   migrateStandaloneDateEntities();
+  migrateNoisyDateEntities();
+  migrateUnformattedPhoneEntities();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
@@ -1633,6 +1635,94 @@ function migrateStandaloneDateEntities(): void {
 }
 
 /**
+ * Remove noisy date entities whose context looks like filesystem/directory-listing noise.
+ * Catches: context ending with "/" (directory names), single-word short contexts (identifiers),
+ * and filenames (word.ext).
+ */
+function migrateNoisyDateEntities(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'remove_noisy_date_entities_v1';
+
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') return;
+
+  // Find date entities with context that looks like filesystem/directory noise
+  const noisyDates = db.prepare(`
+    SELECT id, json_extract(metadata, '$.attributes.context') as context FROM items
+    WHERE type = 'entity'
+      AND deletedAt = 0
+      AND json_extract(metadata, '$.entityType') = 'date'
+      AND json_extract(metadata, '$.attributes.context') IS NOT NULL
+  `).all() as { id: string; context: string }[];
+
+  let removedCount = 0;
+  for (const entity of noisyDates) {
+    const ctx = entity.context || '';
+    const isNoisy =
+      ctx.endsWith('/') ||                            // directory name
+      /^[\w.-]+\.\w{1,5}$/.test(ctx) ||              // filename
+      (!/\s/.test(ctx) && ctx.length < 15);           // short single token
+    if (!isNoisy) continue;
+
+    try {
+      db.prepare('DELETE FROM item_events WHERE itemId = ?').run(entity.id);
+      db.prepare('DELETE FROM item_tags WHERE itemId = ?').run(entity.id);
+      db.prepare('DELETE FROM items WHERE id = ?').run(entity.id);
+      removedCount++;
+    } catch (error) {
+      console.error(`Failed to remove noisy date entity ${entity.id}:`, error);
+    }
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+  if (removedCount > 0) {
+    console.log(`[datastore] Removed ${removedCount} noisy date entities (directory listings, filenames, etc.)`);
+  }
+}
+
+/**
+ * Remove phone entities that are bare digit sequences (no formatting).
+ * Real phone numbers have dashes, dots, spaces, parens, or + prefix.
+ */
+function migrateUnformattedPhoneEntities(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'remove_unformatted_phone_entities_v1';
+
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') return;
+
+  const phoneEntities = db.prepare(`
+    SELECT id, content FROM items
+    WHERE type = 'entity'
+      AND deletedAt = 0
+      AND json_extract(metadata, '$.entityType') = 'phone'
+  `).all() as { id: string; content: string }[];
+
+  let removedCount = 0;
+  for (const entity of phoneEntities) {
+    const name = entity.content || '';
+    // If the entity name is purely digits, it's not a real phone number
+    if (/^\d+$/.test(name.trim())) {
+      try {
+        db.prepare('DELETE FROM item_events WHERE itemId = ?').run(entity.id);
+        db.prepare('DELETE FROM item_tags WHERE itemId = ?').run(entity.id);
+        db.prepare('DELETE FROM items WHERE id = ?').run(entity.id);
+        removedCount++;
+      } catch (error) {
+        console.error(`Failed to remove unformatted phone entity ${entity.id}:`, error);
+      }
+    }
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+  if (removedCount > 0) {
+    console.log(`[datastore] Removed ${removedCount} unformatted phone entities (bare digit sequences)`);
+  }
+}
+
+/**
  * Drop legacy address/visit/address_tags tables.
  * Data was already migrated to items/item_visits/item_tags by earlier migrations.
  */
@@ -2380,6 +2470,18 @@ export function updateItem(itemId: string, options: ItemOptions): boolean {
   if (options.favicon !== undefined) {
     updates.push('favicon = ?');
     values.push(options.favicon);
+  }
+  if (options.visitCount !== undefined) {
+    updates.push('visitCount = ?');
+    values.push(options.visitCount);
+  }
+  if (options.lastVisitAt !== undefined) {
+    updates.push('lastVisitAt = ?');
+    values.push(options.lastVisitAt);
+  }
+  if (options.frecencyScore !== undefined) {
+    updates.push('frecencyScore = ?');
+    values.push(options.frecencyScore);
   }
 
   if (updates.length === 0) return false;

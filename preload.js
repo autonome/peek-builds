@@ -2142,7 +2142,7 @@ window.addEventListener('load', () => {
 //   - Comprehensive console.log('[DRAG]') breadcrumbs for diagnostics.
 // ============================================================================
 (function initWindowDrag() {
-  const HOLD_DELAY = 120; // ms before drag engages
+  const HOLD_DELAY = 80; // ms before drag engages
 
   // State
   let isDragging = false;
@@ -2210,6 +2210,8 @@ window.addEventListener('load', () => {
       suppressClick = true;
       document.body.style.cursor = '';
       document.body.classList.remove('is-dragging');
+      document.body.style.userSelect = '';
+      document.body.style.webkitUserSelect = '';
     }
     positionPromise = null;
     if (wasDragging) {
@@ -2282,6 +2284,11 @@ window.addEventListener('load', () => {
       isDragging = true;
       document.body.style.cursor = 'grabbing';
       document.body.classList.add('is-dragging');
+      // Clear any accidental text selection that formed during the hold period
+      // and suppress further selections while dragging
+      window.getSelection()?.removeAllRanges();
+      document.body.style.userSelect = 'none';
+      document.body.style.webkitUserSelect = 'none';
 
       console.log('[DRAG] ENGAGED origin=(' + dragOriginX + ',' + dragOriginY +
         ') window=(' + windowOriginX + ',' + windowOriginY + ')');
@@ -2296,12 +2303,6 @@ window.addEventListener('load', () => {
     lastScreenY = e.screenY;
 
     if (!isDragging) return;
-
-    // Cancel drag if text selection appeared
-    if (hasTextSelection()) {
-      endDrag('text selection during drag');
-      return;
-    }
 
     // Compute new window position
     const deltaX = e.screenX - dragOriginX;
@@ -2341,10 +2342,13 @@ window.addEventListener('load', () => {
     }
   };
 
-  /** End drag if window loses focus. */
+  /** End drag if window loses focus — but only cancel the hold timer, not an active drag.
+   * During fast dragging the cursor can momentarily leave the window, firing blur.
+   * An active drag should only end on mouseup. */
   const onBlur = () => {
-    mouseButtonDown = false;
-    endDrag('window blur');
+    cancelHold();
+    // Don't cancel an active drag on blur — the window is moving under the cursor
+    // and blur fires spuriously during fast drags. mouseup will end the drag.
   };
 
   // -------------------------------------------------------------------------

@@ -131,6 +131,8 @@ import {
   unregisterLocalShortcut,
 } from './shortcuts.js';
 
+import { trackWindow } from './display-watcher.js';
+
 import {
   publish,
   subscribe,
@@ -2155,6 +2157,9 @@ export function registerWindowHandlers(): void {
     // Create new window
     const win = new BrowserWindow(winOptions);
     { const actualBounds = win.getBounds(); console.log(`[window-open:actual] Window ${win.id} actual bounds after creation: (${actualBounds.x},${actualBounds.y}) ${actualBounds.width}x${actualBounds.height}`); }
+
+    // Track window position for display-watcher home display restoration
+    trackWindow(win);
 
     // Forward console logs from window to main process stdout (for debugging)
     win.webContents.on('console-message', (event) => {
