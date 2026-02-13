@@ -8,9 +8,15 @@
  * off-screen or bunched in corners. This module detects those cases and moves windows
  * to valid positions on the remaining/changed displays.
  *
- * Algorithm (group-based distance scaling):
+ * Algorithm (three-phase display change handling):
  * - Snapshot display layout at startup and after each change
- * - On display change, for each group of windows on a changed display:
+ * - Phase 1 (Save): When displays are removed, save "home display" info for displaced
+ *   windows (display ID, resolution, relative position within the workArea)
+ * - Phase 2 (Restore): When displays are added and there are displaced windows, try to
+ *   match each window's home display to a newly added display (by ID first, then by
+ *   resolution with 5% tolerance). Restore matched windows to their original positions.
+ * - Phase 3 (Reposition): For remaining windows on changed displays, use group-based
+ *   distance scaling:
  *   1. Find the bounding box of all window centers on the old display
  *   2. Calculate the center of that bounding box
  *   3. For each window, compute its offset from the bounding box center
@@ -42,8 +48,23 @@ interface WindowEntry {
   bounds: Electron.Rectangle;
 }
 
+/** Records a window's "home" display info when it gets displaced */
+interface WindowHomeDisplay {
+  displayId: number;
+  resolution: { width: number; height: number };
+  relativePosition: {
+    centerX: number; // 0-1 ratio within workArea width
+    centerY: number; // 0-1 ratio within workArea height
+    width: number;   // 0-1 ratio within workArea width
+    height: number;  // 0-1 ratio within workArea height
+  };
+}
+
 /** Last known display layout */
 let _previousDisplays: DisplaySnapshot[] = [];
+
+/** Displaced windows awaiting restoration, keyed by BrowserWindow id */
+let _windowHomeDisplays: Map<number, WindowHomeDisplay> = new Map();
 
 /** Debounce timer for display changes (macOS fires multiple events rapidly) */
 let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -261,15 +282,137 @@ function repositionWindowGroup(
       `[display ${oldDisplay.id} -> ${newDisplay.id}]`
     );
 
+    console.log(`[display-watcher] REPOSITIONING window ${win.id}: (${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}) -> (${newBounds.x},${newBounds.y} ${newBounds.width}x${newBounds.height})`);
     win.setBounds(newBounds);
   }
 }
 
 /**
+ * Save a window's home display info before it gets displaced.
+ * Captures the window's relative position within the display's workArea
+ * so it can be restored later if the same display reappears.
+ */
+function saveWindowHomeDisplay(
+  win: BrowserWindow,
+  bounds: Electron.Rectangle,
+  display: DisplaySnapshot
+): void {
+  const wa = display.workArea;
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+
+  const homeDisplay: WindowHomeDisplay = {
+    displayId: display.id,
+    resolution: { width: wa.width, height: wa.height },
+    relativePosition: {
+      centerX: wa.width > 0 ? (centerX - wa.x) / wa.width : 0.5,
+      centerY: wa.height > 0 ? (centerY - wa.y) / wa.height : 0.5,
+      width: wa.width > 0 ? bounds.width / wa.width : 0.5,
+      height: wa.height > 0 ? bounds.height / wa.height : 0.5,
+    },
+  };
+
+  _windowHomeDisplays.set(win.id, homeDisplay);
+  DEBUG && console.log(
+    `[display-watcher] Saved home display for window ${win.id}: ` +
+    `display ${display.id} (${wa.width}x${wa.height}), ` +
+    `rel center (${homeDisplay.relativePosition.centerX.toFixed(3)}, ${homeDisplay.relativePosition.centerY.toFixed(3)})`
+  );
+}
+
+/**
+ * Find a matching new display for a displaced window's home display.
+ * Matches by display ID first, then falls back to resolution matching
+ * within a 5% tolerance.
+ */
+function findMatchingNewDisplay(
+  home: WindowHomeDisplay,
+  addedDisplays: DisplaySnapshot[]
+): DisplaySnapshot | null {
+  // First try exact display ID match
+  const byId = addedDisplays.find(d => d.id === home.displayId);
+  if (byId) return byId;
+
+  // Fallback: match by resolution within 5% tolerance
+  const tolerance = 0.05;
+  for (const d of addedDisplays) {
+    const wa = d.workArea;
+    const widthRatio = home.resolution.width > 0
+      ? Math.abs(wa.width - home.resolution.width) / home.resolution.width
+      : (wa.width === 0 ? 0 : 1);
+    const heightRatio = home.resolution.height > 0
+      ? Math.abs(wa.height - home.resolution.height) / home.resolution.height
+      : (wa.height === 0 ? 0 : 1);
+
+    if (widthRatio <= tolerance && heightRatio <= tolerance) {
+      DEBUG && console.log(
+        `[display-watcher] Resolution match: home (${home.resolution.width}x${home.resolution.height}) ` +
+        `-> display ${d.id} (${wa.width}x${wa.height}), ` +
+        `delta (${(widthRatio * 100).toFixed(1)}%, ${(heightRatio * 100).toFixed(1)}%)`
+      );
+      return d;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Restore a window to its saved home display position.
+ * Places the window at the same relative position within the new display's workArea.
+ */
+function restoreWindowToHomeDisplay(
+  win: BrowserWindow,
+  home: WindowHomeDisplay,
+  display: DisplaySnapshot
+): void {
+  const wa = display.workArea;
+  const rel = home.relativePosition;
+
+  // Restore window dimensions from relative sizes
+  let newW = Math.round(rel.width * wa.width);
+  let newH = Math.round(rel.height * wa.height);
+
+  // Enforce minimum window size
+  newW = Math.max(newW, 200);
+  newH = Math.max(newH, 150);
+
+  // Cap to workArea size
+  newW = Math.min(newW, wa.width);
+  newH = Math.min(newH, wa.height);
+
+  // Restore center position from relative coordinates
+  const centerX = wa.x + rel.centerX * wa.width;
+  const centerY = wa.y + rel.centerY * wa.height;
+
+  // Convert center to top-left
+  let newX = Math.round(centerX - newW / 2);
+  let newY = Math.round(centerY - newH / 2);
+
+  // Clamp within workArea
+  newX = Math.max(wa.x, Math.min(newX, wa.x + wa.width - newW));
+  newY = Math.max(wa.y, Math.min(newY, wa.y + wa.height - newH));
+
+  const newBounds = { x: newX, y: newY, width: newW, height: newH };
+
+  DEBUG && console.log(
+    `[display-watcher] Restoring window ${win.id} to home display ${display.id}: ` +
+    `(${newBounds.x},${newBounds.y} ${newBounds.width}x${newBounds.height})`
+  );
+
+  console.log(`[display-watcher] RESTORING window ${win.id} to home display: (${newBounds.x},${newBounds.y} ${newBounds.width}x${newBounds.height})`);
+  win.setBounds(newBounds);
+}
+
+/**
  * Handle a display configuration change.
- * Checks all windows and repositions any that are off-screen or on a changed display.
+ * Three-phase approach:
+ *   Phase 1: Save home display info for windows on removed displays
+ *   Phase 2: Restore displaced windows to matching newly-added displays
+ *   Phase 3: Reposition remaining off-screen/resized windows (existing logic)
  */
 function handleDisplayChange(): void {
+  console.log(`[display-watcher] handleDisplayChange fired — checking for window repositioning`);
   const newDisplays = snapshotDisplays();
   const oldDisplays = _previousDisplays;
 
@@ -278,15 +421,17 @@ function handleDisplayChange(): void {
     `Old: ${oldDisplays.length} display(s), New: ${newDisplays.length} display(s)`
   );
 
-  // Build a map of new displays by ID for quick lookup
+  // Build maps for quick lookup
   const newById = new Map(newDisplays.map(d => [d.id, d]));
+  const oldById = new Map(oldDisplays.map(d => [d.id, d]));
 
-  // Determine which displays changed (removed, resized, or moved)
+  // Determine which displays were removed, added, or changed
+  const removedDisplayIds = new Set<number>();
   const changedDisplayIds = new Set<number>();
   for (const old of oldDisplays) {
     const cur = newById.get(old.id);
     if (!cur) {
-      // Display was removed
+      removedDisplayIds.add(old.id);
       changedDisplayIds.add(old.id);
     } else if (
       cur.workArea.x !== old.workArea.x ||
@@ -294,18 +439,97 @@ function handleDisplayChange(): void {
       cur.workArea.width !== old.workArea.width ||
       cur.workArea.height !== old.workArea.height
     ) {
-      // Display workArea changed (resolution, scaling, or dock/taskbar change)
       changedDisplayIds.add(old.id);
     }
   }
 
-  if (changedDisplayIds.size === 0) {
-    DEBUG && console.log("[display-watcher] No display workAreas changed, skipping repositioning");
+  const addedDisplays: DisplaySnapshot[] = [];
+  for (const d of newDisplays) {
+    if (!oldById.has(d.id)) {
+      addedDisplays.push(d);
+    }
+  }
+
+  DEBUG && console.log(
+    `[display-watcher] Removed: ${[...removedDisplayIds].join(", ") || "none"}, ` +
+    `Added: ${addedDisplays.map(d => d.id).join(", ") || "none"}, ` +
+    `Changed: ${[...changedDisplayIds].join(", ") || "none"}`
+  );
+
+  // ========================================================================
+  // Phase 1 (Save): Save home display info for windows on removed displays
+  // ========================================================================
+  if (removedDisplayIds.size > 0) {
+    const allWindows = BrowserWindow.getAllWindows();
+    for (const win of allWindows) {
+      if (win.isDestroyed()) continue;
+      if (!win.isVisible()) continue;
+
+      // Skip the background window
+      const entry = getWindowInfo(win.id);
+      if (entry && entry.params.address === WEB_CORE_ADDRESS) continue;
+
+      // Only save if we haven't already saved a home display for this window
+      if (_windowHomeDisplays.has(win.id)) continue;
+
+      const bounds = win.getBounds();
+      const centerX = bounds.x + Math.round(bounds.width / 2);
+      const centerY = bounds.y + Math.round(bounds.height / 2);
+
+      // Check if the window was on a removed display
+      const oldDisplay = findDisplayForPoint(oldDisplays, centerX, centerY);
+      if (oldDisplay && removedDisplayIds.has(oldDisplay.id)) {
+        saveWindowHomeDisplay(win, bounds, oldDisplay);
+      }
+    }
+
+    DEBUG && console.log(
+      `[display-watcher] Phase 1: Saved ${_windowHomeDisplays.size} displaced window(s)`
+    );
+  }
+
+  // ========================================================================
+  // Phase 2 (Restore): Restore displaced windows to matching new displays
+  // ========================================================================
+  if (addedDisplays.length > 0 && _windowHomeDisplays.size > 0) {
+    const restoredWindowIds: number[] = [];
+
+    for (const [winId, home] of _windowHomeDisplays) {
+      const win = BrowserWindow.fromId(winId);
+      if (!win || win.isDestroyed()) {
+        restoredWindowIds.push(winId); // Clean up stale entries
+        continue;
+      }
+
+      const matchingDisplay = findMatchingNewDisplay(home, addedDisplays);
+      if (matchingDisplay) {
+        restoreWindowToHomeDisplay(win, home, matchingDisplay);
+        restoredWindowIds.push(winId);
+      }
+    }
+
+    // Remove restored/stale entries from the map
+    for (const id of restoredWindowIds) {
+      _windowHomeDisplays.delete(id);
+    }
+
+    DEBUG && console.log(
+      `[display-watcher] Phase 2: Restored ${restoredWindowIds.length} window(s), ` +
+      `${_windowHomeDisplays.size} still displaced`
+    );
+  }
+
+  // ========================================================================
+  // Phase 3 (Reposition): Handle remaining off-screen/resized windows
+  // ========================================================================
+
+  if (changedDisplayIds.size === 0 && addedDisplays.length === 0) {
+    DEBUG && console.log("[display-watcher] Phase 3: No display workAreas changed, skipping repositioning");
     _previousDisplays = newDisplays;
     return;
   }
 
-  DEBUG && console.log(`[display-watcher] Changed display IDs: ${[...changedDisplayIds].join(", ")}`);
+  DEBUG && console.log(`[display-watcher] Phase 3: Changed display IDs: ${[...changedDisplayIds].join(", ")}`);
 
   // Collect windows that need repositioning, grouped by (oldDisplay -> newDisplay) transition
   // Key: "oldDisplayId->newDisplayId"
