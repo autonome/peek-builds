@@ -673,9 +673,8 @@ const renderGroups = () => {
     allGroups.push({ ...UNTAGGED_GROUP, frequency: state.untaggedCount });
   }
 
-  // Add non-empty tags
-  const nonEmptyTags = state.tags.filter(tag => tag.addressCount > 0);
-  allGroups = allGroups.concat(nonEmptyTags);
+  // Add all tags (including empty ones so newly created groups appear)
+  allGroups = allGroups.concat(state.tags);
 
   // Apply search filter
   let filteredGroups = filterGroups(allGroups);
