@@ -14,8 +14,9 @@ let _addCommand = null;
  * Get URL items sorted by most recent
  * Optionally filter by search term
  */
-const getHistory = async (searchTerm = '', limit = 20) => {
-  const result = await api.datastore.queryItems({ type: 'url' });
+const getHistory = async (searchTerm = '', limit = 200) => {
+  // Query by frecency so frequently-visited URLs rank highest
+  const result = await api.datastore.queryItems({ type: 'url', sortBy: 'frecency' });
   if (!result.success) return [];
 
   let items = result.data;
@@ -35,9 +36,6 @@ const getHistory = async (searchTerm = '', limit = 20) => {
       return url.includes(lower) || title.includes(lower);
     });
   }
-
-  // Sort by createdAt descending (most recent first)
-  items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   return items.slice(0, limit);
 };
@@ -136,9 +134,16 @@ const registerHistoryItem = (addCommand, item) => {
 export const initializeSources = async (addCommand) => {
   _addCommand = addCommand;
 
-  const history = await getHistory('', 50);
-  console.log('Adding history entries as commands:', history.length);
+  const history = await getHistory('', 200);
+  const mainLog = window.app?.log || console.log;
+  mainLog('[history] initializeSources: found', history.length, 'URL items');
+  if (history.length > 0) {
+    mainLog('[history] first 5 URLs:', history.slice(0, 5).map(i => i.content));
+  } else {
+    mainLog('[history] WARNING: no URL items in datastore — cmd palette will have no URL suggestions');
+  }
   history.forEach(item => registerHistoryItem(addCommand, item));
+  mainLog('[history] registered', history.length, 'URL commands');
 
   // Subscribe to new URL items so history commands stay fresh
   api.subscribe('item:created', (msg) => {

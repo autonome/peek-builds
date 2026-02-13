@@ -76,7 +76,7 @@ const getActiveWindow = async () => {
  * Find item record by URL content
  */
 const findItemByUrl = async (url) => {
-  const result = await api.datastore.queryItems({ type: 'url' });
+  const result = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
   if (!result.success) return null;
 
   return result.data.find(item => item.content === url) || null;

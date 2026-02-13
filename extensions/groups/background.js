@@ -155,7 +155,8 @@ const normalizeUrlForCompare = (url) => {
 };
 
 const getOrCreateUrlItem = async (url, title = '') => {
-  const result = await api.datastore.queryItems({ type: 'url' });
+  // Search narrows to matching URLs, then normalize-compare for exact match
+  const result = await api.datastore.queryItems({ type: 'url', search: url, limit: 10 });
   if (!result.success) return null;
 
   const normalizedUrl = normalizeUrlForCompare(url);

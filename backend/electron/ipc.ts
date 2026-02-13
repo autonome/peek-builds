@@ -3235,8 +3235,8 @@ export function registerWindowHandlers(): void {
 export function registerMiscHandlers(onQuit: () => void): void {
   // Renderer log forwarding - prints renderer console.log to terminal
   ipcMain.on(IPC_CHANNELS.RENDERER_LOG, (_ev, msg) => {
-    const shortSource = msg.source?.replace('peek://app/', '') || 'unknown';
-    DEBUG && console.log(`[${shortSource}]`, ...(msg.args || []));
+    const shortSource = msg.source?.replace('peek://app/', '').replace('peek://ext/', 'ext/') || 'unknown';
+    console.log(`[${shortSource}]`, ...(msg.args || []));
   });
 
   // Get current window ID (the window that sent the IPC message)

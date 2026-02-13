@@ -144,11 +144,11 @@ export async function initialize(): Promise<void> {
     // macOS: use did-become-active / did-resign-active for reliable OS-level focus.
     // browser-window-blur/focus are per-window and unreliable with utility windows
     // (e.g. HUD with alwaysOnTop+focusable:false confuses getFocusedWindow()).
-    app.on('did-become-active', () => {
+    (app as any).on('did-become-active', () => {
       getIzuiCoordinator().setAppFocused(true);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
     });
-    app.on('did-resign-active', () => {
+    (app as any).on('did-resign-active', () => {
       getIzuiCoordinator().setAppFocused(false);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
     });

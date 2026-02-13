@@ -342,7 +342,7 @@ const registerExtensionCommands = () => {
       // Save to item metadata
       const url = window.location.href;
       if (url && !url.startsWith('peek://')) {
-        const items = await api.datastore.queryItems({ type: 'url' });
+        const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
         const item = items.data?.find(a => a.content === url);
         if (item) {
           const metadata = JSON.parse(item.metadata || '{}');
@@ -366,7 +366,7 @@ const registerExtensionCommands = () => {
       // Save to item metadata
       const url = window.location.href;
       if (url && !url.startsWith('peek://')) {
-        const items = await api.datastore.queryItems({ type: 'url' });
+        const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
         const item = items.data?.find(a => a.content === url);
         if (item) {
           const metadata = JSON.parse(item.metadata || '{}');
