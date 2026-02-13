@@ -14,6 +14,7 @@
 import { BrowserWindow, dialog, screen } from 'electron';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow } from './main.js';
+import { suppressDisplayRepositioning } from "./display-watcher.js";
 import { publish, scopes as PubSubScopes, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
 
@@ -191,6 +192,8 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     // bounds from URL params, not the fullscreen transparent BrowserWindow bounds.
     const canvasBounds = extractCanvasBounds(url);
     const windowBounds = canvasBounds || win.getBounds();
+
+    console.log(`[session:save] Window ${id} "${win.getTitle()}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasBounds ? " [canvas]" : ""} url=${realUrl.substring(0, 80)}`);
 
     // Capture context state for this window
     let windowContext: WindowContext | undefined;
@@ -529,6 +532,13 @@ export async function restoreSessionSnapshot(
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
 
+  // Suppress display-watcher repositioning during restore.
+  // macOS can fire display-metrics-changed (workArea) when the app becomes active
+  // (e.g., dock visibility changes, menu bar adjustments). Without suppression,
+  // the display-watcher would reposition newly restored windows using proportional
+  // scaling, losing their exact saved positions (especially at screen edges).
+  suppressDisplayRepositioning(true);
+
   for (const descriptor of sortedWindows) {
     try {
       // Validate bounds: check if saved center point falls within any active display
@@ -547,6 +557,11 @@ export async function restoreSessionSnapshot(
       }
       // If not on screen, omit x/y and let window-open center it
 
+
+      console.log(`[session:restore] Window "${descriptor.url.substring(0, 80)}" saved bounds: (${descriptor.bounds.x},${descriptor.bounds.y}) ${descriptor.bounds.width}x${descriptor.bounds.height}, center=(${centerX},${centerY}), onScreen=${isPointOnScreen(centerX, centerY)}, boundsOptions: x=${boundsOptions.x} y=${boundsOptions.y}`);
+      if ("x" in descriptor.params || "y" in descriptor.params) {
+        console.log(`[session:restore] WARNING: descriptor.params contains position: x=${descriptor.params.x} y=${descriptor.params.y}`);
+      }
       // Build options from saved params, overlaying bounds
       const options: Record<string, unknown> = {
         ...descriptor.params,
@@ -613,6 +628,11 @@ export async function restoreSessionSnapshot(
     }
   }
 
+
+  // Re-enable display-watcher repositioning now that all windows are restored.
+  // This also refreshes the display snapshot so future display changes use
+  // the correct baseline (with restored windows in their final positions).
+  suppressDisplayRepositioning(false);
   // Check for partial restore — warn if majority of windows failed
   if (result.failed > 0 && result.total > 2 && result.failed > result.total / 2) {
     console.warn(`[session] Partial restore: ${result.failed}/${result.total} windows failed`);

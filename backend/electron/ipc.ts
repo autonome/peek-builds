@@ -2150,9 +2150,11 @@ export function registerWindowHandlers(): void {
     }
 
     DEBUG && console.log('Creating window with options:', winOptions);
+    console.log(`[window-open:bounds] url=${url.substring(0, 80)} final position: (${winOptions.x},${winOptions.y}) ${winOptions.width}x${winOptions.height}${useCanvas ? " [canvas]" : ""}`);
 
     // Create new window
     const win = new BrowserWindow(winOptions);
+    { const actualBounds = win.getBounds(); console.log(`[window-open:actual] Window ${win.id} actual bounds after creation: (${actualBounds.x},${actualBounds.y}) ${actualBounds.width}x${actualBounds.height}`); }
 
     // Forward console logs from window to main process stdout (for debugging)
     win.webContents.on('console-message', (event) => {

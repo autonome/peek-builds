@@ -70,6 +70,27 @@ let _windowHomeDisplays: Map<number, WindowHomeDisplay> = new Map();
 let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
 const DEBOUNCE_MS = 500;
 
+/** When true, display changes update the snapshot but skip window repositioning.
+ * Used during session restore to prevent newly restored windows from being moved. */
+let _suppressRepositioning = false;
+
+/**
+ * Suppress window repositioning during a critical section (e.g., session restore).
+ * The display snapshot is still updated on changes, but windows are not moved.
+ * Call with true before restore, false after.
+ */
+export function suppressDisplayRepositioning(suppress: boolean): void {
+  _suppressRepositioning = suppress;
+  if (suppress) {
+    console.log("[display-watcher] Repositioning SUPPRESSED (session restore in progress)");
+  } else {
+    // Take a fresh snapshot so the watcher has the correct baseline
+    // after session restore created new windows
+    _previousDisplays = snapshotDisplays();
+    console.log("[display-watcher] Repositioning RE-ENABLED, snapshot refreshed");
+  }
+}
+
 /**
  * Take a snapshot of the current display layout.
  */
@@ -413,6 +434,11 @@ function restoreWindowToHomeDisplay(
  */
 function handleDisplayChange(): void {
   console.log(`[display-watcher] handleDisplayChange fired — checking for window repositioning`);
+  if (_suppressRepositioning) {
+    console.log("[display-watcher] Repositioning suppressed during session restore — updating snapshot only");
+    _previousDisplays = snapshotDisplays();
+    return;
+  }
   const newDisplays = snapshotDisplays();
   const oldDisplays = _previousDisplays;
 
