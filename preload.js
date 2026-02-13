@@ -2120,224 +2120,252 @@ window.addEventListener('load', () => {
 // doesn't opt out via `data-no-drag` on <body> (e.g., peek://page which has
 // its own canvas-based drag system).
 //
-// Design decisions:
+// Design (v3 rewrite):
 //   - Window ID is fetched once at init (it never changes).
-//   - Window position is fetched eagerly on mousedown (overlaps with the hold
-//     timer) so dragging starts instantly when the timer fires.
-//   - Hold delay is 150ms -- short enough to feel responsive, long enough to
-//     avoid triggering on normal clicks.
-//   - Movement threshold is 5px -- if the mouse moves more than this during
-//     the hold period, the drag is cancelled (the user is clicking, not holding).
+//   - Window position is fetched eagerly on mousedown (overlaps with hold timer).
+//   - Hold delay is 120ms. Short enough to feel responsive.
+//   - NO movement threshold during hold period. Mouse can move freely while
+//     waiting for the hold timer to fire. When it fires, the CURRENT mouse
+//     position becomes the drag origin (no jump from early movement).
 //   - Text selection takes priority: if a selection appears during hold/drag,
 //     the drag is cancelled.
 //   - Only blocks drag when mousedown target IS a focused text input/textarea
-//     or contentEditable. Other elements (buttons, links, labels, etc.) all
-//     support long-press drag -- even in windows with focused inputs (like cmd).
-//   - Elements with data-no-drag attribute (or ancestors with it) never trigger drag.
-//   - Button state is tracked via mousedown/mouseup rather than relying on
-//     e.buttons during mousemove, which can report stale values during fast
-//     cursor movement (known Chromium/Electron issue).
-//   - Click suppression: when a drag occurs, the subsequent click event on the
-//     original mousedown target is suppressed to prevent accidental activation.
-//   - Window-level event listeners with capture ensure events aren't lost during
-//     fast cursor movement that escapes element boundaries.
+//     or contentEditable. Other elements (buttons, labels, etc.) allow drag.
+//   - Elements with data-no-drag attribute (or ancestors) never trigger drag.
+//   - Button state tracked via mousedown/mouseup boolean (not e.buttons which
+//     can be stale during fast cursor movement — known Chromium issue).
+//   - Click suppression: after a drag, the subsequent click event is suppressed
+//     to prevent accidental button/link activation.
+//   - Window-level capture-phase listeners ensure events aren't lost when the
+//     cursor escapes element boundaries during fast movement.
+//   - requestAnimationFrame batches window-move IPC calls for smoothness.
+//   - Comprehensive console.log('[DRAG]') breadcrumbs for diagnostics.
 // ============================================================================
 (function initWindowDrag() {
-  const HOLD_DELAY = 150; // ms before drag starts
-  const MOVE_THRESHOLD = 5; // px - cancel hold if mouse moves more than this
+  const HOLD_DELAY = 120; // ms before drag engages
 
+  // State
   let isDragging = false;
   let holdTimer = null;
-  let startMouse = null; // { x, y } screen coords at mousedown
-  let startWindowPos = null; // { x, y } window position at mousedown
-  let cachedWindowId = null; // fetched once at init
-  let pendingPosPromise = null; // position fetch started eagerly on mousedown
-  let mouseButtonDown = false; // track button state ourselves for reliability
-  let suppressNextClick = false; // suppress click after drag to prevent activation
+  let mouseButtonDown = false;
+  let cachedWindowId = null;
 
-  // Only block drag when the mousedown target IS a focused text input/textarea
-  // or contentEditable. This is checked against the mousedown target element,
-  // NOT document.activeElement -- so clicking empty space in a window that has
-  // a focused input (like the cmd palette) still allows drag.
+  // Mouse positions
+  let lastScreenX = 0;   // updated every mousemove while button is held
+  let lastScreenY = 0;
+  let dragOriginX = 0;   // screen coords at the moment drag began
+  let dragOriginY = 0;
+  let windowOriginX = 0; // window position at the moment drag began
+  let windowOriginY = 0;
+
+  // Eager position fetch (started on mousedown, resolved when hold fires)
+  let positionPromise = null;
+
+  // Click suppression after drag
+  let suppressClick = false;
+
+  // requestAnimationFrame dedup
+  let rafPending = false;
+  let rafX = 0;
+  let rafY = 0;
+
+  // -------------------------------------------------------------------------
+  // Helpers
+  // -------------------------------------------------------------------------
+
+  /** Should we block drag for this mousedown target? */
   const shouldBlockDrag = (target) => {
     if (!target) return false;
-    // Check for data-no-drag on element or ancestors
-    if (target.hasAttribute && target.hasAttribute('data-no-drag')) return true;
+    // data-no-drag on element or ancestor
     if (target.closest && target.closest('[data-no-drag]')) return true;
-    // Only block when target itself is a focused text input/textarea
-    const tag = target.tagName?.toLowerCase();
+    if (target.hasAttribute && target.hasAttribute('data-no-drag')) return true;
+    // Block only when target IS a focused text input/textarea
+    const tag = (target.tagName || '').toLowerCase();
     if ((tag === 'input' || tag === 'textarea') && target === document.activeElement) return true;
     // Block on contentEditable elements that are focused
-    if (target.isContentEditable) return true;
+    if (target.isContentEditable && target === document.activeElement) return true;
     return false;
   };
 
-  // Check if text is being selected
+  /** Is there an active text selection? */
   const hasTextSelection = () => {
-    const selection = window.getSelection();
-    return selection && selection.toString().length > 0;
+    const sel = window.getSelection();
+    return sel && sel.toString().length > 0;
   };
 
+  /** Cancel the hold timer without ending a drag in progress. */
   const cancelHold = () => {
     if (holdTimer) {
       clearTimeout(holdTimer);
       holdTimer = null;
     }
-    pendingPosPromise = null;
   };
 
-  const endDrag = () => {
+  /** End everything: cancel hold and/or stop drag. */
+  const endDrag = (reason) => {
+    const wasDragging = isDragging;
     cancelHold();
     if (isDragging) {
       isDragging = false;
-      suppressNextClick = true; // suppress the click that follows mouseup
+      suppressClick = true;
       document.body.style.cursor = '';
       document.body.classList.remove('is-dragging');
     }
-    startMouse = null;
-    startWindowPos = null;
-    pendingPosPromise = null;
+    positionPromise = null;
+    if (wasDragging) {
+      console.log('[DRAG] ended:', reason);
+    }
   };
 
+  // -------------------------------------------------------------------------
+  // Core event handlers
+  // -------------------------------------------------------------------------
+
   const onMouseDown = (e) => {
-    // Only left click
     if (e.button !== 0) return;
     mouseButtonDown = true;
-    // Don't initiate drag from actively-focused text inputs (checked against target)
-    if (shouldBlockDrag(e.target)) return;
-    // If we don't have a window ID yet, can't drag
-    if (!cachedWindowId) return;
 
-    // Capture screen position synchronously
-    startMouse = { x: e.screenX, y: e.screenY };
-    startWindowPos = null;
+    // Always record position (used by hold timer to set drag origin)
+    lastScreenX = e.screenX;
+    lastScreenY = e.screenY;
 
-    // Start fetching window position eagerly (overlaps with hold timer)
-    // so when the timer fires we already have the position.
-    pendingPosPromise = ipcRenderer.invoke('window-get-position', { id: cachedWindowId })
-      .catch(() => null);
+    const blocked = shouldBlockDrag(e.target);
+    console.log('[DRAG] mousedown', e.target?.tagName,
+      (e.target?.className?.toString?.() || '').slice(0, 40),
+      '| blocked:', blocked, '| wid:', cachedWindowId);
 
+    if (blocked) return;
+    if (!cachedWindowId) {
+      console.log('[DRAG] abort: no windowId');
+      return;
+    }
+
+    // Eagerly fetch window position (overlaps with hold timer)
+    positionPromise = ipcRenderer.invoke('window-get-position', { id: cachedWindowId })
+      .catch((err) => { console.log('[DRAG] pos fetch fail:', err); return null; });
+
+    // Start hold timer. NO movement threshold: mouse can move freely during
+    // the hold period. When this fires we snapshot the current mouse position.
     holdTimer = setTimeout(async () => {
       holdTimer = null;
-      try {
-        // If text was selected during hold period, don't start drag
-        if (hasTextSelection()) {
-          startMouse = null;
-          pendingPosPromise = null;
-          return;
-        }
 
-        // If mouse position was cleared (e.g., by movement threshold), bail
-        if (!startMouse) {
-          pendingPosPromise = null;
-          return;
-        }
-
-        // Await the eagerly-started position fetch
-        const pos = await pendingPosPromise;
-        pendingPosPromise = null;
-        if (!pos || !pos.success) return;
-
-        // Double-check: mouse may have been released during the await
-        if (!startMouse || !mouseButtonDown) return;
-
-        startWindowPos = { x: pos.x, y: pos.y };
-        isDragging = true;
-        document.body.style.cursor = 'grabbing';
-        document.body.classList.add('is-dragging');
-      } catch (err) {
-        DEBUG && console.error('[preload] Failed to start drag:', err);
+      if (!mouseButtonDown) {
+        console.log('[DRAG] hold expired but button already released');
+        positionPromise = null;
+        return;
       }
+      if (hasTextSelection()) {
+        console.log('[DRAG] hold expired but text selected');
+        positionPromise = null;
+        return;
+      }
+
+      const pos = await positionPromise;
+      positionPromise = null;
+
+      if (!pos || !pos.success) {
+        console.log('[DRAG] hold expired but pos fetch failed:', pos);
+        return;
+      }
+      if (!mouseButtonDown) {
+        console.log('[DRAG] hold expired but button released during await');
+        return;
+      }
+
+      // Snapshot CURRENT mouse position as drag origin (not the original
+      // mousedown position). This way any movement during the hold period
+      // doesn't cause a sudden jump when drag starts.
+      dragOriginX = lastScreenX;
+      dragOriginY = lastScreenY;
+      windowOriginX = pos.x;
+      windowOriginY = pos.y;
+      isDragging = true;
+      document.body.style.cursor = 'grabbing';
+      document.body.classList.add('is-dragging');
+
+      console.log('[DRAG] ENGAGED origin=(' + dragOriginX + ',' + dragOriginY +
+        ') window=(' + windowOriginX + ',' + windowOriginY + ')');
     }, HOLD_DELAY);
   };
 
   const onMouseMove = (e) => {
-    if (!startMouse) return;
+    if (!mouseButtonDown) return;
 
-    if (!isDragging) {
-      // Cancel hold if mouse moves too much before delay
-      const dx = Math.abs(e.screenX - startMouse.x);
-      const dy = Math.abs(e.screenY - startMouse.y);
-      if (dx > MOVE_THRESHOLD || dy > MOVE_THRESHOLD) {
-        cancelHold();
-        startMouse = null;
-      }
-      // Cancel hold if text selection starts
-      if (startMouse && hasTextSelection()) {
-        cancelHold();
-        startMouse = null;
-      }
-      return;
-    }
+    // Always track latest mouse position (hold timer reads this)
+    lastScreenX = e.screenX;
+    lastScreenY = e.screenY;
 
-    // Safety: cancel if no button held (use our tracked state, not e.buttons
-    // which can report 0 during fast movements due to Chromium event coalescing)
-    if (!mouseButtonDown) {
-      endDrag();
-      return;
-    }
+    if (!isDragging) return;
 
-    // If text got selected somehow during drag, end drag and let selection win
+    // Cancel drag if text selection appeared
     if (hasTextSelection()) {
-      endDrag();
+      endDrag('text selection during drag');
       return;
     }
 
-    // Calculate and apply new position
-    const deltaX = e.screenX - startMouse.x;
-    const deltaY = e.screenY - startMouse.y;
-    const newX = startWindowPos.x + deltaX;
-    const newY = startWindowPos.y + deltaY;
+    // Compute new window position
+    const deltaX = e.screenX - dragOriginX;
+    const deltaY = e.screenY - dragOriginY;
+    rafX = windowOriginX + deltaX;
+    rafY = windowOriginY + deltaY;
 
-    ipcRenderer.invoke('window-move', { id: cachedWindowId, x: newX, y: newY });
+    // Batch via requestAnimationFrame for smoothness
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        if (isDragging && cachedWindowId) {
+          ipcRenderer.invoke('window-move', { id: cachedWindowId, x: rafX, y: rafY });
+        }
+      });
+    }
   };
 
   const onMouseUp = (e) => {
-    if (e.button === 0) {
-      mouseButtonDown = false;
+    if (e.button !== 0) return;
+    mouseButtonDown = false;
+
+    if (isDragging) {
+      console.log('[DRAG] mouseup ending drag');
     }
-    endDrag();
+    endDrag('mouseup');
   };
 
-  // Suppress click events that fire after a drag to prevent accidental
-  // activation of buttons/links/tags that were under the initial mousedown.
+  /** Suppress click events that fire after a drag. */
   const onClickCapture = (e) => {
-    if (suppressNextClick) {
-      suppressNextClick = false;
+    if (suppressClick) {
+      suppressClick = false;
       e.stopImmediatePropagation();
       e.preventDefault();
-      DEBUG && console.log('[preload] Suppressed post-drag click on', e.target?.tagName);
+      console.log('[DRAG] suppressed post-drag click on', e.target?.tagName);
     }
   };
 
-  // Also end drag if window loses focus
+  /** End drag if window loses focus. */
   const onBlur = () => {
     mouseButtonDown = false;
-    endDrag();
+    endDrag('window blur');
   };
 
-  // Initialize on DOMContentLoaded
+  // -------------------------------------------------------------------------
+  // Initialization
+  // -------------------------------------------------------------------------
   const init = async () => {
-    // Fetch and cache window ID once (it never changes)
     try {
       cachedWindowId = await ipcRenderer.invoke('get-window-id');
     } catch (err) {
-      DEBUG && console.error('[preload] Failed to get window ID for drag:', err);
+      console.error('[DRAG] failed to get window ID:', err);
     }
 
-    // Use window-level listeners with capture for mousemove/mouseup to ensure
-    // events aren't lost during fast cursor movement that escapes elements.
-    // mousedown stays on document (we need the target element).
+    // Capture-phase on document for mousedown (need e.target for shouldBlockDrag).
+    // Capture-phase on window for mousemove/mouseup (survive fast cursor escape).
     document.addEventListener('mousedown', onMouseDown, true);
     window.addEventListener('mousemove', onMouseMove, true);
     window.addEventListener('mouseup', onMouseUp, true);
     window.addEventListener('blur', onBlur);
-
-    // Click suppression: capture phase, highest priority -- prevents clicks
-    // that fire after a drag from activating buttons/tags/links.
     document.addEventListener('click', onClickCapture, true);
 
-    DEBUG && console.log('[preload] Window drag initialized, windowId:', cachedWindowId);
+    console.log('[DRAG] initialized, windowId:', cachedWindowId);
   };
 
   if (document.readyState === 'loading') {
