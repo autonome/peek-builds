@@ -368,6 +368,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateContextHistory();
   migrateEntityType();
   migrateStandalonePriceEntities();
+  migrateStandaloneDateEntities();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
@@ -1573,6 +1574,62 @@ function migrateStandalonePriceEntities(): void {
 
   db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
   DEBUG && console.log('main', `Removed ${removedCount} standalone price entities`);
+}
+
+/**
+ * Remove standalone date entities that lack contextual labels.
+ * Before the extractor was improved (2026-02-13), date entities were created
+ * without an attributes.context field, producing noisy standalone dates like "Feb 15, 2026".
+ * The updated extractor always associates dates with a meaningful label (event, deadline, etc.).
+ * This migration hard-deletes date entities missing the context attribute.
+ */
+function migrateStandaloneDateEntities(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'remove_standalone_date_entities_v1';
+
+  // Check if already migrated
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') {
+    DEBUG && console.log('main', 'Standalone date entity migration already complete');
+    return;
+  }
+
+  // Find all entity items where entityType is 'date' and attributes.context is missing
+  const dateEntities = db.prepare(`
+    SELECT id FROM items
+    WHERE type = 'entity'
+      AND deletedAt = 0
+      AND json_extract(metadata, '$.entityType') = 'date'
+      AND (json_extract(metadata, '$.attributes.context') IS NULL
+        OR json_extract(metadata, '$.attributes.context') = '')
+  `).all() as { id: string }[];
+
+  if (dateEntities.length === 0) {
+    db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+    DEBUG && console.log('main', 'No standalone date entities to remove');
+    return;
+  }
+
+  DEBUG && console.log('main', `Removing ${dateEntities.length} standalone date entities without context`);
+
+  let removedCount = 0;
+  for (const entity of dateEntities) {
+    try {
+      // Delete associated item_events (observations)
+      db.prepare('DELETE FROM item_events WHERE itemId = ?').run(entity.id);
+      // Delete associated item_tags
+      db.prepare('DELETE FROM item_tags WHERE itemId = ?').run(entity.id);
+      // Hard-delete the item itself
+      db.prepare('DELETE FROM items WHERE id = ?').run(entity.id);
+      removedCount++;
+    } catch (error) {
+      console.error(`Failed to remove standalone date entity ${entity.id}:`, error);
+    }
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+  DEBUG && console.log('main', `Removed ${removedCount} standalone date entities`);
 }
 
 /**

@@ -1,9 +1,9 @@
 /**
  * Regex-based entity extractors
  *
- * Extracts emails, phone numbers, dates, prices (with product context),
- * addresses, and tracking numbers from page text content using regular
- * expressions.
+ * Extracts emails, phone numbers, dates (with event/label context),
+ * prices (with product context), addresses, and tracking numbers from
+ * page text content using regular expressions.
  */
 
 // Email pattern
@@ -41,6 +41,53 @@ const TRACKING_PATTERNS = [
   // USPS
   { carrier: 'USPS', pattern: /\b(?:9[234]|7[01])\d{20,22}\b/g },
 ];
+
+/**
+ * Extract the meaningful context/label near a date match.
+ * Looks at the text before the date (up to 80 chars) for an event name, deadline,
+ * appointment, or other meaningful label. Returns null if no useful context is found.
+ * @param {string} text - Full text
+ * @param {number} matchIndex - Index of the date match in text
+ * @returns {string|null} Context label or null
+ */
+function extractDateContext(text, matchIndex) {
+  // Look at text before the date (up to 80 chars)
+  const beforeStart = Math.max(0, matchIndex - 80);
+  const before = text.slice(beforeStart, matchIndex).trim();
+
+  // Split by common delimiters (newlines, bullets, pipes, dashes, commas, semicolons)
+  const segments = before.split(/[\n\r|•·–—,;]/).filter(s => s.trim().length > 0);
+  const lastSegment = (segments.length > 0 ? segments[segments.length - 1] : '').trim();
+
+  if (!lastSegment || lastSegment.length < 2) return null;
+
+  // Remove trailing noise phrases that sit between a label and the date.
+  // Use word boundary (\b) to avoid partial-word matches (e.g., "at" inside "createdAt").
+  const cleaned = lastSegment
+    .replace(/\s*\b(?:on|at|from|until|by|before|after|due|date|posted|published|updated|created|scheduled\s+for|starts?|ends?|beginning|starting|ending)\b\s*:?\s*$/i, '')
+    .replace(/\s*[-:]\s*$/, '')
+    .trim();
+
+  // Reject if what remains is too short or is just numbers/punctuation
+  if (!cleaned || cleaned.length < 2) return null;
+  if (/^[\d\s.,;:!?$%/\-]+$/.test(cleaned)) return null;
+
+  // Reject generic noise words that don't constitute meaningful context
+  const noiseWords = /^(?:the|a|an|and|or|for|to|in|on|at|is|it|was|has|this|that|our|your|last|next|from|also|see|more|view|click|here|back|page|home|menu)\s*$/i;
+  if (noiseWords.test(cleaned)) return null;
+
+  // Reject metadata-like prefixes (createdAt, updatedAt, publishedAt, etc.)
+  if (/^(?:createdAt|updatedAt|modifiedAt|publishedAt|deletedAt|syncedAt|lastModified|timestamp|datetime|created|updated|modified|published|deleted)\s*$/i.test(cleaned)) return null;
+
+  // Take up to ~60 chars, trim to last word boundary
+  let label = cleaned.slice(-60).trim();
+  if (cleaned.length > 60) {
+    const spaceIdx = label.indexOf(' ');
+    if (spaceIdx > 0) label = label.slice(spaceIdx + 1);
+  }
+
+  return label || null;
+}
 
 /**
  * Extract the likely product/subject name near a price match.
@@ -139,24 +186,29 @@ export function extractRegexEntities(text, url) {
     });
   }
 
-  // Extract dates
+  // Extract dates WITH context only - standalone dates are noise.
+  // A date must be associated with a nearby event name, deadline, or meaningful label.
   for (const pattern of DATE_PATTERNS) {
-    // Reset lastIndex for each pattern
     pattern.lastIndex = 0;
-    const matches = text.match(pattern) || [];
+    let dateMatch;
     const seenDates = new Set();
-    for (const dateStr of matches) {
-      const normalized = dateStr.trim();
+    while ((dateMatch = pattern.exec(text)) !== null) {
+      const normalized = dateMatch[0].trim();
       if (seenDates.has(normalized.toLowerCase())) continue;
       seenDates.add(normalized.toLowerCase());
-      entities.push({
-        name: normalized,
-        entityType: 'date',
-        confidence: 0.8,
-        extractor: 'regex',
-        attributes: { originalText: normalized },
-        sourceUrl: url
-      });
+
+      const context = extractDateContext(text, dateMatch.index);
+      if (context) {
+        entities.push({
+          name: `${context} ${normalized}`,
+          entityType: 'date',
+          confidence: 0.8,
+          extractor: 'regex',
+          attributes: { originalText: normalized, context: context },
+          sourceUrl: url
+        });
+      }
+      // If no context found, skip this date — it's noise
     }
   }
 

@@ -148,42 +148,61 @@ describe('Entity Recognition Extension', () => {
       });
     });
 
-    describe('date extraction', () => {
-      it('should extract ISO dates (YYYY-MM-DD)', () => {
-        const text = 'Meeting on 2026-02-10';
+    describe('date extraction (contextual)', () => {
+      it('should extract ISO dates with context', () => {
+        const text = 'Team Meeting on 2026-02-10';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
-        assert.ok(dates.some(d => d.name === '2026-02-10'));
+        assert.ok(dates[0].name.includes('2026-02-10'));
+        assert.ok(dates[0].attributes.context, 'Should have context attribute');
       });
 
-      it('should extract US formatted dates (Month DD, YYYY)', () => {
-        const text = 'Published February 10, 2026';
+      it('should extract US formatted dates with context', () => {
+        const text = 'Annual Report Published February 10, 2026';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
-        assert.ok(dates.some(d => d.name.includes('February')));
+        assert.ok(dates[0].name.includes('February'));
+        assert.ok(dates[0].attributes.context, 'Should have context attribute');
       });
 
-      it('should extract abbreviated month dates (Feb 10, 2026)', () => {
-        const text = 'Updated: Jan 5, 2026';
+      it('should extract abbreviated month dates with context', () => {
+        const text = 'Sprint Review Updated: Jan 5, 2026';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
+        assert.ok(dates[0].attributes.context, 'Should have context attribute');
       });
 
-      it('should extract EU formatted dates (DD Month YYYY)', () => {
-        const text = 'Published: 10 February 2026';
+      it('should extract EU formatted dates with context', () => {
+        const text = 'Quarterly Report Published: 10 February 2026';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
+        assert.ok(dates[0].attributes.context, 'Should have context attribute');
       });
 
-      it('should extract slash-formatted dates (MM/DD/YYYY)', () => {
-        const text = 'Date: 02/10/2026';
+      it('should extract slash-formatted dates with context', () => {
+        const text = 'Invoice Due Date: 02/10/2026';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
+        assert.ok(dates[0].attributes.context, 'Should have context attribute');
+      });
+
+      it('should NOT extract standalone dates without context', () => {
+        const text = '2026-03-15';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const dates = result.filter(e => e.entityType === 'date');
+        assert.strictEqual(dates.length, 0, 'Standalone date should be ignored');
+      });
+
+      it('should NOT extract dates preceded only by generic words', () => {
+        const text = 'the 2026-03-15';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const dates = result.filter(e => e.entityType === 'date');
+        assert.strictEqual(dates.length, 0, 'Date with only noise words should be ignored');
       });
 
       it('should not match invalid month numbers in ISO dates', () => {
@@ -193,12 +212,21 @@ describe('Entity Recognition Extension', () => {
         assert.strictEqual(dates.length, 0, 'Should not match invalid ISO date');
       });
 
-      it('should set confidence to 0.8 for dates', () => {
-        const text = 'Date: 2026-03-15';
+      it('should set confidence to 0.8 for contextual dates', () => {
+        const text = 'Project Deadline: 2026-03-15';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
         assert.strictEqual(dates[0].confidence, 0.8);
+      });
+
+      it('should include context in the entity name', () => {
+        const text = 'Conference Talk February 15, 2026';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const dates = result.filter(e => e.entityType === 'date');
+        assert.ok(dates.length >= 1);
+        assert.ok(dates[0].name.includes('Conference Talk'), 'Name should include context');
+        assert.ok(dates[0].name.includes('February 15, 2026'), 'Name should include date');
       });
     });
 
@@ -325,7 +353,7 @@ describe('Entity Recognition Extension', () => {
 
       it('should handle text with mixed entity types', () => {
         const text = 'Contact alice@test.com or call (555) 123-4567. ' +
-                     'Meeting on 2026-03-15. Premium Widget $49.99.';
+                     'Team Meeting on 2026-03-15. Premium Widget $49.99.';
         const result = extractRegexEntities(text, 'https://example.com');
         const types = new Set(result.map(e => e.entityType));
         assert.ok(types.has('email'), 'Should find email');
@@ -1337,8 +1365,8 @@ describe('Entity Recognition Extension', () => {
 
     // ── Dates: All months, different formats, edge cases ─────────────
 
-    describe('dates - all months and formats', () => {
-      it('should extract all 12 full month names with dates', () => {
+    describe('dates - contextual extraction with labels', () => {
+      it('should extract all 12 full month names with event context', () => {
         const months = [
           'January 15, 2026', 'February 20, 2026', 'March 5, 2026',
           'April 10, 2026', 'May 25, 2026', 'June 3, 2026',
@@ -1346,13 +1374,14 @@ describe('Entity Recognition Extension', () => {
           'October 12, 2026', 'November 28, 2026', 'December 25, 2026'
         ];
         for (const month of months) {
-          const result = extractRegexEntities(`Event on ${month}`, 'https://example.com');
+          const result = extractRegexEntities(`Company Retreat on ${month}`, 'https://example.com');
           const dates = result.filter(e => e.entityType === 'date');
           assert.ok(dates.length >= 1, `Should extract date from: ${month}`);
+          assert.ok(dates[0].attributes.context, `Should have context for: ${month}`);
         }
       });
 
-      it('should extract all 12 abbreviated month names with dates', () => {
+      it('should extract all 12 abbreviated month names with context', () => {
         const months = [
           'Jan 15, 2026', 'Feb 20, 2026', 'Mar 5, 2026',
           'Apr 10, 2026', 'May 25, 2026', 'Jun 3, 2026',
@@ -1360,59 +1389,60 @@ describe('Entity Recognition Extension', () => {
           'Oct 12, 2026', 'Nov 28, 2026', 'Dec 25, 2026'
         ];
         for (const month of months) {
-          const result = extractRegexEntities(`Posted ${month}`, 'https://example.com');
+          const result = extractRegexEntities(`Board Meeting ${month}`, 'https://example.com');
           const dates = result.filter(e => e.entityType === 'date');
           assert.ok(dates.length >= 1, `Should extract date from: ${month}`);
+          assert.ok(dates[0].attributes.context, `Should have context for: ${month}`);
         }
       });
 
-      it('should extract dates with "Posted on" prefix', () => {
-        const text = 'Posted on March 1, 2026 by the admin team.';
+      it('should extract dates with meaningful label before "Posted on"', () => {
+        const text = 'Annual Report Posted on March 1, 2026 by the admin team.';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
-        assert.ok(dates.some(d => d.name.includes('March')));
+        assert.ok(dates[0].name.includes('March'));
+        assert.ok(dates[0].attributes.context, 'Should have context');
       });
 
-      it('should extract dates with "Last updated:" prefix', () => {
-        const text = 'Last updated: 2026-01-15';
+      it('should NOT extract dates with only metadata-like prefixes', () => {
+        const text = 'createdAt: 2026-01-15';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const dates = result.filter(e => e.entityType === 'date');
+        assert.strictEqual(dates.length, 0, 'Metadata timestamps should be ignored');
+      });
+
+      it('should extract leap year date with context', () => {
+        const text = 'Birthday Party Born on 2024-02-29 which was a leap year';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
-        assert.ok(dates.some(d => d.name === '2026-01-15'));
+        assert.ok(dates[0].name.includes('2024-02-29'));
       });
 
-      it('should extract leap year date', () => {
-        const text = 'Born on 2024-02-29 which was a leap year';
-        const result = extractRegexEntities(text, 'https://example.com');
-        const dates = result.filter(e => e.entityType === 'date');
-        assert.ok(dates.length >= 1);
-        assert.ok(dates.some(d => d.name === '2024-02-29'));
-      });
-
-      it('should extract EU format dates for multiple months', () => {
-        const text = '10 February 2026 was the deadline. We extended to 15 March 2026.';
+      it('should extract EU format dates with meaningful context', () => {
+        const text = 'Tax Filing Deadline 10 February 2026 was the deadline. Extension Deadline 15 March 2026.';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 2);
       });
 
-      it('should extract slash-formatted dates', () => {
-        const text = 'Invoice date: 01/15/2026. Due date: 02/15/2026.';
+      it('should extract slash-formatted dates with context', () => {
+        const text = 'Invoice date: 01/15/2026. Payment Due date: 02/15/2026.';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
-        assert.ok(dates.length >= 2);
+        assert.ok(dates.length >= 1);
       });
 
       it('should not match invalid month 13 in ISO format', () => {
-        const text = 'Reference: 2026-13-01';
+        const text = 'Meeting Reference: 2026-13-01';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.strictEqual(dates.length, 0);
       });
 
       it('should not match invalid day 32 in ISO format', () => {
-        const text = 'Reference: 2026-01-32';
+        const text = 'Meeting Reference: 2026-01-32';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.strictEqual(dates.length, 0);
@@ -1429,25 +1459,43 @@ describe('Entity Recognition Extension', () => {
         assert.ok(dates.length >= 4, `Expected at least 4 dates, got ${dates.length}`);
       });
 
-      it('should extract dates with comma after day', () => {
-        const text = 'Conference starts August 15, 2026';
+      it('should extract dates with context label and comma after day', () => {
+        const text = 'Tech Conference starts August 15, 2026';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
+        assert.ok(dates[0].attributes.context, 'Should have context');
       });
 
-      it('should extract dates without comma after day', () => {
-        const text = 'Conference starts August 15 2026';
+      it('should extract dates with context label and no comma after day', () => {
+        const text = 'Tech Conference starts August 15 2026';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
+        assert.ok(dates[0].attributes.context, 'Should have context');
       });
 
-      it('should extract ISO dates from metadata-like text', () => {
+      it('should NOT extract ISO dates from metadata-like text without meaningful labels', () => {
         const text = 'createdAt: 2026-06-01, updatedAt: 2026-06-15, publishedAt: 2026-07-01';
         const result = extractRegexEntities(text, 'https://example.com');
         const dates = result.filter(e => e.entityType === 'date');
-        assert.strictEqual(dates.length, 3);
+        assert.strictEqual(dates.length, 0, 'Metadata timestamps should be ignored');
+      });
+
+      it('should NOT extract standalone dates without any preceding text', () => {
+        const text = '2026-06-15';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const dates = result.filter(e => e.entityType === 'date');
+        assert.strictEqual(dates.length, 0, 'Standalone date should be ignored');
+      });
+
+      it('should extract date with event name in entity name', () => {
+        const text = 'Spring Gala March 20, 2026';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const dates = result.filter(e => e.entityType === 'date');
+        assert.ok(dates.length >= 1);
+        assert.ok(dates[0].name.includes('Spring Gala'), 'Entity name should include event');
+        assert.ok(dates[0].name.includes('March 20, 2026'), 'Entity name should include date');
       });
     });
 
@@ -1628,7 +1676,7 @@ describe('Entity Recognition Extension', () => {
     describe('mixed entities from realistic page content', () => {
       it('should extract entities from an e-commerce receipt', () => {
         const text = `Thank you for your order!
-          Order placed on January 28, 2026
+          Order Confirmation placed January 28, 2026
           Shipping to: 123 Oak Ave, Portland, OR 97201
           Contact: orders@shopify-store.com
           Phone: (503) 555-0142
@@ -1642,14 +1690,14 @@ describe('Entity Recognition Extension', () => {
         const types = new Set(result.map(e => e.entityType));
         assert.ok(types.has('email'), 'Should find email');
         assert.ok(types.has('phone'), 'Should find phone');
-        assert.ok(types.has('date'), 'Should find date');
+        assert.ok(types.has('date'), 'Should find date with order context');
         assert.ok(types.has('price'), 'Should find prices with product context');
         assert.ok(types.has('tracking_number'), 'Should find tracking number');
       });
 
       it('should extract entities from a job posting', () => {
         const text = `Software Engineer - Remote
-          Posted: March 15, 2026
+          Application Deadline March 15, 2026
           Salary Range $120,000 - $160,000 per year
           Apply: careers@techstartup.io
           Questions? Call (415) 555-0200`;
@@ -1665,7 +1713,7 @@ describe('Entity Recognition Extension', () => {
       });
 
       it('should extract entities from a news article footer', () => {
-        const text = `Published: 2026-02-10. Updated: 2026-02-11.
+        const text = `Breaking News Report 2026-02-10. Follow-up Analysis 2026-02-11.
           Contact the newsroom: tips@dailynews.com
           Subscription: $9.99/month or $99.99/year
           Customer service: 1-800-555-NEWS (1-800-555-6397)`;
@@ -1679,18 +1727,19 @@ describe('Entity Recognition Extension', () => {
       it('should handle very long text without crashing', () => {
         const longText = 'This is a very long paragraph. '.repeat(1000) +
           'Contact us at test@example.com or call (555) 123-4567. ' +
-          'Price: $99.99. Date: 2026-06-15.';
+          'Premium Widget $99.99. Project Deadline 2026-06-15.';
         const result = extractRegexEntities(longText, 'https://example.com');
         assert.ok(Array.isArray(result));
         assert.ok(result.length >= 1, 'Should still find entities in long text');
       });
 
       it('should extract from text with special unicode characters', () => {
-        const text = 'Contact support@example.com for help with your €500 order placed on 2026-03-15';
+        const text = 'Contact support@example.com for help with your €500 order placed 2026-03-15';
         const result = extractRegexEntities(text, 'https://example.com');
         const emails = result.filter(e => e.entityType === 'email');
         assert.strictEqual(emails.length, 1);
         // € is not in the PRICE_RE pattern, so no price match for €500
+        // Date should have context from the order text preceding it
         const dates = result.filter(e => e.entityType === 'date');
         assert.ok(dates.length >= 1);
       });
