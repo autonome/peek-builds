@@ -448,6 +448,121 @@ describe('Frecency -- Adaptive Feedback', () => {
   });
 });
 
+// ============================================================================
+// findMatchingUrlCommand (from extensions/cmd/panel.js)
+// ============================================================================
+
+interface CommandRegistry {
+  [name: string]: { name: string };
+}
+
+function findMatchingUrlCommand(commands: CommandRegistry, url: string): string | null {
+  if (!url) return null;
+  const lowerUrl = url.toLowerCase();
+
+  // Try exact match first
+  if (commands[url]) return url;
+
+  // Try to find a registered command whose name starts with the typed URL
+  // or whose URL the typed text is a prefix of
+  let bestMatch: string | null = null;
+  let bestLength = Infinity;
+
+  for (const name of Object.keys(commands)) {
+    const lowerName = name.toLowerCase();
+    if (lowerName.startsWith(lowerUrl) || lowerUrl.startsWith(lowerName)) {
+      if (name.length < bestLength) {
+        bestMatch = name;
+        bestLength = name.length;
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+// ============================================================================
+// getFrecencyScore (from extensions/cmd/panel.js)
+// ============================================================================
+
+function getFrecencyScore(matchCounts: { [name: string]: number }, name: string): number {
+  const k = 10;
+  const count = matchCounts[name] || 0;
+  if (count === 0) return 0;
+  return count / (count + k);
+}
+
+describe('URL Frecency -- findMatchingUrlCommand', () => {
+  it('finds exact URL match', () => {
+    const commands: CommandRegistry = {
+      'http://localhost:3000': { name: 'http://localhost:3000' },
+      'open tags': { name: 'open tags' },
+    };
+    assert.strictEqual(findMatchingUrlCommand(commands, 'http://localhost:3000'), 'http://localhost:3000');
+  });
+
+  it('finds URL command when typed URL is a prefix', () => {
+    const commands: CommandRegistry = {
+      'http://localhost:3000': { name: 'http://localhost:3000' },
+      'https://example.com/page': { name: 'https://example.com/page' },
+    };
+    assert.strictEqual(findMatchingUrlCommand(commands, 'http://localhost'), 'http://localhost:3000');
+  });
+
+  it('finds URL command when command is a prefix of typed URL', () => {
+    const commands: CommandRegistry = {
+      'https://example.com': { name: 'https://example.com' },
+    };
+    assert.strictEqual(findMatchingUrlCommand(commands, 'https://example.com/new/path'), 'https://example.com');
+  });
+
+  it('returns null when no URL matches', () => {
+    const commands: CommandRegistry = {
+      'open tags': { name: 'open tags' },
+      'history': { name: 'history' },
+    };
+    assert.strictEqual(findMatchingUrlCommand(commands, 'http://unknown.com'), null);
+  });
+
+  it('returns null for empty URL', () => {
+    const commands: CommandRegistry = {
+      'http://localhost:3000': { name: 'http://localhost:3000' },
+    };
+    assert.strictEqual(findMatchingUrlCommand(commands, ''), null);
+  });
+
+  it('prefers shorter (more specific) match', () => {
+    const commands: CommandRegistry = {
+      'http://localhost': { name: 'http://localhost' },
+      'http://localhost:3000': { name: 'http://localhost:3000' },
+      'http://localhost:3000/long/path': { name: 'http://localhost:3000/long/path' },
+    };
+    // Typed "http://localhost" matches all three; shortest is preferred
+    assert.strictEqual(findMatchingUrlCommand(commands, 'http://localhost'), 'http://localhost');
+  });
+});
+
+describe('URL Frecency -- matchCounts boost URL ranking', () => {
+  it('URL with matchCounts gets positive frecency score', () => {
+    const matchCounts = { 'http://localhost:3000': 5 };
+    const score = getFrecencyScore(matchCounts, 'http://localhost:3000');
+    assert.ok(score > 0, 'URL with 5 uses should have positive frecency');
+    assert.ok(Math.abs(score - 5/15) < 0.01, 'score should be ~0.333');
+  });
+
+  it('URL without matchCounts gets zero frecency score', () => {
+    const matchCounts = {};
+    assert.strictEqual(getFrecencyScore(matchCounts, 'http://localhost:3000'), 0);
+  });
+
+  it('frequently used URL ranks above unused URL', () => {
+    const matchCounts = { 'http://localhost:3000': 10 };
+    const usedScore = getFrecencyScore(matchCounts, 'http://localhost:3000');
+    const unusedScore = getFrecencyScore(matchCounts, 'https://other.com');
+    assert.ok(usedScore > unusedScore, 'Used URL should rank above unused URL');
+  });
+});
+
 describe('Drag System -- shouldBlockDrag', () => {
   it('returns false for null target', () => {
     assert.strictEqual(shouldBlockDrag(null, null), false);

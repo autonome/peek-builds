@@ -584,9 +584,16 @@ function handleSpecialKey(e) {
     const urlResult = getValidURL(trimmedText);
     if (urlResult.valid) {
       log('cmd:panel', 'Detected URL, opening:', urlResult.url);
-      state.lastExecuted = 'open';
-      updateMatchCount('open');
-      updateAdaptiveFeedback(trimmedText.split(' ')[0], 'open');
+
+      // Record frecency for the URL itself (as a registered command from history).
+      // Find the best matching URL command so frecency accumulates for it,
+      // making it appear in future suggestions when the user starts typing it.
+      const urlToOpen = urlResult.url;
+      const matchingUrlCommand = findMatchingUrlCommand(urlToOpen);
+      const frecencyTarget = matchingUrlCommand || urlToOpen;
+      state.lastExecuted = frecencyTarget;
+      updateMatchCount(frecencyTarget);
+      updateAdaptiveFeedback(trimmedText, frecencyTarget);
 
       // Open URL directly using api.window.open
       api.window.open(urlResult.url, {
@@ -1931,6 +1938,43 @@ function hasModifier(e) {
  */
 function isModifier(e) {
   return ['Alt', 'Control', 'Shift', 'Meta'].indexOf(e.key) !== -1;
+}
+
+/**
+ * Find the best matching URL command registered from history.
+ * When a user types a URL and presses Enter, we need to record frecency
+ * against the registered command name (from history.js) so it appears
+ * in future suggestions. Matches exact URL or the closest registered URL
+ * that starts with the typed URL.
+ * @param {string} url - The URL to find a matching command for
+ * @returns {string|null} - The registered command name, or null if no match
+ */
+function findMatchingUrlCommand(url) {
+  if (!url) return null;
+  const lowerUrl = url.toLowerCase();
+
+  // Try exact match first
+  if (state.commands[url]) return url;
+
+  // Try to find a registered command whose name starts with the typed URL
+  // (e.g., typed "http://localhost" matches command "http://localhost:3000")
+  // or whose URL the typed text is a prefix of
+  let bestMatch = null;
+  let bestLength = Infinity;
+
+  for (const name of Object.keys(state.commands)) {
+    const lowerName = name.toLowerCase();
+    // Check if the command name is a URL that matches what was typed
+    if (lowerName.startsWith(lowerUrl) || lowerUrl.startsWith(lowerName)) {
+      // Prefer the shortest match (most specific)
+      if (name.length < bestLength) {
+        bestMatch = name;
+        bestLength = name.length;
+      }
+    }
+  }
+
+  return bestMatch;
 }
 
 /**
