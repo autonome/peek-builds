@@ -3786,6 +3786,14 @@ export function registerSyncHandlers(): void {
       const activeProfile = getActiveProfile();
       updateLastSyncTime(activeProfile.id, syncTime);
 
+      // Notify all windows that sync pulled new data so they can refresh
+      if (result.pulled > 0) {
+        publish('system', PubSubScopes.GLOBAL, 'sync:pull-completed', {
+          pulled: result.pulled,
+          conflicts: result.conflicts
+        });
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -3825,6 +3833,16 @@ export function registerSyncHandlers(): void {
       }
 
       const result = await syncAll(config.serverUrl, config.apiKey);
+
+      // Notify all windows that sync pulled new data so they can refresh
+      if (result.pulled > 0) {
+        publish('system', PubSubScopes.GLOBAL, 'sync:pull-completed', {
+          pulled: result.pulled,
+          pushed: result.pushed,
+          conflicts: result.conflicts
+        });
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

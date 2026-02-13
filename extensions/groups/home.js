@@ -484,6 +484,13 @@ const init = async () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
+  // Subscribe to sync events — sync operations bypass per-item events,
+  // so we need this to refresh when new data arrives via sync
+  api.subscribe('sync:pull-completed', (msg) => {
+    debug && console.log('[groups] sync:pull-completed event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
   // Set up create group UI
   setupCreateGroup();
 

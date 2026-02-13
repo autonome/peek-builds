@@ -4,15 +4,23 @@ Consolidated from rounds 2-5. Only open/unaddressed items carried over.
 
 ## BLOCKING: Session Restore + Window Positioning
 
-Full review needed — these interact and compound each other.
+Round 6 fixes (4 root causes found and fixed):
 
-- [ ] Session restore restores wrong window content: open two web pages (one on each side edge) + settings in middle. Close app. Restart. All positioned correctly BUT settings window now shows a duplicate of the left-edge page instead of settings.
-- [ ] Session restore loses edge positions: windows moved to screen edges aren't on edges after restore
-  - suppressDisplayRepositioning() added in round 5 but still broken
-- [ ] Display switching: unplug external display, plug back in — windows stay on laptop instead of returning to external
-  - Home display tracking added in round 5 (saves display ID + relative position, matches on re-add) but still broken
-- [ ] Display switching: windows cluster in top-left when switching between different-sized displays
-  - Three iterations so far (ratio mapping → group scaling → home tracking), none fully working
+1. **Settings not saved**: utility window filter was too broad (`role === 'utility'` skipped settings). Now only skips non-focusable utility windows (HUD).
+2. **Canvas mode disabled on restore**: saved params (role, escapeMode) leaked into window-open handler, disabling canvas. Now stripped before restore.
+3. **Debounce outlasts suppression**: display events queued before suppress could fire during restore. Now cancels pending timers on suppress toggle.
+4. **macOS moves windows before debounce**: on display unplug, macOS relocates windows instantly but display-watcher waited 500ms. Now eagerly snapshots bounds on first display-removed event.
+
+### Session Restore
+
+- [ ] Open two web pages (edges of screen) + settings (middle). Close app. Restart. All three restore with correct content and positions.
+- [ ] Move windows to screen edges → restart → windows still on edges
+- [ ] Session restore doesn't duplicate HUD/utility windows (no double dock bounce)
+
+### Display Switching
+
+- [ ] Unplug external display → windows move to laptop. Plug back in → windows return to external display.
+- [ ] Switch between different-sized displays → windows reposition proportionally (not clustered in top-left)
 
 ## Window Dragging
 

@@ -640,6 +640,13 @@ const init = async () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
+  // Subscribe to sync events — sync operations bypass per-item events,
+  // so we need this to refresh when new data arrives via sync
+  api.subscribe('sync:pull-completed', (msg) => {
+    debug && console.log('[pagestream] sync:pull-completed event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
   // Periodically update relative timestamps
   setInterval(() => {
     const timeElements = document.querySelectorAll('.card-time');
