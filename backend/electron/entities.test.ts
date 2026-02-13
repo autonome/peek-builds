@@ -202,49 +202,67 @@ describe('Entity Recognition Extension', () => {
       });
     });
 
-    describe('price extraction', () => {
-      it('should extract USD prices with $ symbol', () => {
-        const text = 'Price: $29.99';
+    describe('price extraction (contextual)', () => {
+      it('should extract price with product context', () => {
+        const text = 'MacBook Pro $29.99';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
-        assert.ok(prices.some(p => p.name.includes('$29.99')));
+        assert.ok(prices[0].name.includes('$29.99'));
+        assert.ok(prices[0].attributes.product, 'Should have product attribute');
+        assert.ok(prices[0].attributes.price === '$29.99');
       });
 
-      it('should extract prices with thousands separators', () => {
-        const text = 'Total: $1,299.00';
+      it('should NOT extract standalone prices without context', () => {
+        const text = '$9.99';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 1);
+        assert.strictEqual(prices.length, 0, 'Standalone price should be ignored');
       });
 
-      it('should extract EUR currency code prices', () => {
-        const text = 'Cost: 49.99 EUR';
-        const result = extractRegexEntities(text, 'https://example.com');
-        const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 1);
-      });
-
-      it('should extract EUR prefix prices', () => {
-        const text = 'Price: EUR 150.00';
-        const result = extractRegexEntities(text, 'https://example.com');
-        const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 1);
-      });
-
-      it('should extract GBP prices', () => {
-        const text = 'Available for GBP 75.00';
-        const result = extractRegexEntities(text, 'https://example.com');
-        const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 1);
-      });
-
-      it('should set confidence to 0.85 for prices', () => {
+      it('should NOT extract prices preceded only by generic words', () => {
         const text = 'Only $9.99';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const prices = result.filter(e => e.entityType === 'price');
+        assert.strictEqual(prices.length, 0, 'Price with only noise words should be ignored');
+      });
+
+      it('should extract price with product name before it', () => {
+        const text = 'Premium Widget $1,299.00';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const prices = result.filter(e => e.entityType === 'price');
+        assert.ok(prices.length >= 1);
+        assert.ok(prices[0].attributes.product.includes('Premium Widget'));
+      });
+
+      it('should extract price from product listing with dash separator', () => {
+        const text = 'Blue Widget - $49.99';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const prices = result.filter(e => e.entityType === 'price');
+        assert.ok(prices.length >= 1);
+        assert.ok(prices[0].name.includes('$49.99'));
+      });
+
+      it('should set confidence to 0.85 for contextual prices', () => {
+        const text = 'Annual Plan $99.99';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
         assert.strictEqual(prices[0].confidence, 0.85);
+      });
+
+      it('should extract EUR suffix price with context', () => {
+        const text = 'Conference Ticket 49.99 EUR';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const prices = result.filter(e => e.entityType === 'price');
+        assert.ok(prices.length >= 1);
+      });
+
+      it('should extract GBP price with product context', () => {
+        const text = 'Premium Membership GBP 75.00';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const prices = result.filter(e => e.entityType === 'price');
+        assert.ok(prices.length >= 1);
       });
     });
 
@@ -307,7 +325,7 @@ describe('Entity Recognition Extension', () => {
 
       it('should handle text with mixed entity types', () => {
         const text = 'Contact alice@test.com or call (555) 123-4567. ' +
-                     'Meeting on 2026-03-15. Price: $49.99.';
+                     'Meeting on 2026-03-15. Premium Widget $49.99.';
         const result = extractRegexEntities(text, 'https://example.com');
         const types = new Set(result.map(e => e.entityType));
         assert.ok(types.has('email'), 'Should find email');
@@ -1435,86 +1453,81 @@ describe('Entity Recognition Extension', () => {
 
     // ── Prices: Various currencies and formats ───────────────────────
 
-    describe('prices - currencies and formats', () => {
-      it('should extract USD symbol prices', () => {
-        const text = 'Starting at $99 per month';
+    describe('prices - contextual extraction with product names', () => {
+      it('should extract price with product context', () => {
+        const text = 'Pro Plan $99 per month';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const prices = result.filter(e => e.entityType === 'price');
+        assert.ok(prices.length >= 1);
+        assert.ok(prices[0].attributes.product, 'Should capture product name');
+      });
+
+      it('should extract large price with product context', () => {
+        const text = 'Luxury Condo listed at $1,299,999.99';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const prices = result.filter(e => e.entityType === 'price');
+        assert.ok(prices.length >= 1);
+        assert.ok(prices[0].attributes.product.includes('Luxury Condo'));
+      });
+
+      it('should NOT extract standalone price without context', () => {
+        const text = '$50';
+        const result = extractRegexEntities(text, 'https://example.com');
+        const prices = result.filter(e => e.entityType === 'price');
+        assert.strictEqual(prices.length, 0, 'Standalone price should be ignored');
+      });
+
+      it('should extract USD suffix price with context', () => {
+        const text = 'Premium Package 199.99 USD';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
       });
 
-      it('should extract large prices with thousands separators', () => {
-        const text = 'Property listed at $1,299,999.99';
+      it('should extract EUR price with context', () => {
+        const text = 'Deluxe Room EUR 250.00';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
       });
 
-      it('should extract prices without decimals', () => {
-        const text = 'Only $50 for early birds';
+      it('should extract EUR suffix price with context', () => {
+        const text = 'Business License 49.99 EUR including tax';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
       });
 
-      it('should extract $0.00 price (free)', () => {
-        const text = 'Special offer: $0.00 shipping on orders over $35.00';
+      it('should extract GBP price with product context', () => {
+        const text = 'Standard Membership GBP 150.00';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
       });
 
-      it('should extract USD suffix prices', () => {
-        const text = 'Total: 199.99 USD';
+      it('should extract CAD price with product context', () => {
+        const text = 'Winter Jacket CAD 89.99';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
       });
 
-      it('should extract EUR prefix prices', () => {
-        const text = 'Price: EUR 250.00';
+      it('should extract AUD price with product context', () => {
+        const text = 'Surfboard AUD 120.00';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
       });
 
-      it('should extract EUR suffix prices', () => {
-        const text = 'Total cost: 49.99 EUR including tax';
+      it('should extract JPY price with product context', () => {
+        const text = 'Sushi Set JPY 15000';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
       });
 
-      it('should extract GBP prefix prices', () => {
-        const text = 'UK price: GBP 150.00';
-        const result = extractRegexEntities(text, 'https://example.com');
-        const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 1);
-      });
-
-      it('should extract CAD prices', () => {
-        const text = 'Canadian price: CAD 89.99';
-        const result = extractRegexEntities(text, 'https://example.com');
-        const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 1);
-      });
-
-      it('should extract AUD prices', () => {
-        const text = 'Australian price: AUD 120.00';
-        const result = extractRegexEntities(text, 'https://example.com');
-        const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 1);
-      });
-
-      it('should extract JPY prices', () => {
-        const text = 'Japanese price: JPY 15000';
-        const result = extractRegexEntities(text, 'https://example.com');
-        const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 1);
-      });
-
-      it('should extract CHF prices', () => {
-        const text = 'Swiss price: CHF 200.00';
+      it('should extract CHF price with product context', () => {
+        const text = 'Swiss Watch CHF 200.00';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
@@ -1528,18 +1541,19 @@ describe('Entity Recognition Extension', () => {
           Bundle Deal - $79.99`;
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
-        assert.ok(prices.length >= 4);
+        assert.ok(prices.length >= 4, 'Should find all product prices');
       });
 
-      it('should extract price from "Starting at" context', () => {
-        const text = 'Starting at $99 per user per month';
+      it('should strip "starting at" prefix and keep product name', () => {
+        const text = 'Enterprise Plan starting at $99 per user per month';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
+        assert.ok(prices[0].attributes.product, 'Should have product context');
       });
 
-      it('should extract price with 5-digit amount', () => {
-        const text = 'Annual subscription: $12,000.00';
+      it('should extract large subscription price with context', () => {
+        const text = 'Annual Enterprise License $12,000.00';
         const result = extractRegexEntities(text, 'https://example.com');
         const prices = result.filter(e => e.entityType === 'price');
         assert.ok(prices.length >= 1);
@@ -1620,10 +1634,8 @@ describe('Entity Recognition Extension', () => {
           Phone: (503) 555-0142
 
           Items:
-          - Blue Widget x2: $24.99
-          - Red Gadget x1: $49.99
-          Shipping: $5.99
-          Total: $105.96
+          Blue Widget x2 $24.99
+          Red Gadget x1 $49.99
 
           Tracking: 1Z999AA10123456784`;
         const result = extractRegexEntities(text, 'https://shopify-store.com/receipt');
@@ -1631,14 +1643,14 @@ describe('Entity Recognition Extension', () => {
         assert.ok(types.has('email'), 'Should find email');
         assert.ok(types.has('phone'), 'Should find phone');
         assert.ok(types.has('date'), 'Should find date');
-        assert.ok(types.has('price'), 'Should find prices');
+        assert.ok(types.has('price'), 'Should find prices with product context');
         assert.ok(types.has('tracking_number'), 'Should find tracking number');
       });
 
       it('should extract entities from a job posting', () => {
         const text = `Software Engineer - Remote
           Posted: March 15, 2026
-          Salary: $120,000 - $160,000 per year
+          Salary Range $120,000 - $160,000 per year
           Apply: careers@techstartup.io
           Questions? Call (415) 555-0200`;
         const result = extractRegexEntities(text, 'https://techstartup.io/jobs');
@@ -2202,7 +2214,7 @@ describe('Entity Recognition Extension', () => {
         assert.strictEqual(org!.name, 'ElectroShop');
       });
 
-      it('should extract LocalBusiness as place type (due to typeMap override)', () => {
+      it('should extract LocalBusiness as organization type', () => {
         const html = `<html><head>
           <script type="application/ld+json">
           {
@@ -2223,8 +2235,8 @@ describe('Entity Recognition Extension', () => {
         const result = extractStructuredDataEntities(html, 'https://joescoffee.com');
         const entity = result.find(e => e.extractor === 'json-ld');
         assert.ok(entity);
-        // LocalBusiness is mapped to 'place' (last duplicate key wins in typeMap)
-        assert.strictEqual(entity!.entityType, 'place');
+        // LocalBusiness is correctly classified as organization
+        assert.strictEqual(entity!.entityType, 'organization');
         assert.strictEqual(entity!.name, "Joe's Coffee Shop");
       });
 
@@ -2278,20 +2290,25 @@ describe('Entity Recognition Extension', () => {
         assert.strictEqual(jsonLd.length, 0, 'BreadcrumbList should be skipped');
       });
 
-      it('should skip Recipe type (not in typeMap)', () => {
+      it('should extract Recipe type as creative_work', () => {
         const html = `<html><head>
           <script type="application/ld+json">
           {
             "@type": "Recipe",
             "name": "Chocolate Chip Cookies",
             "author": { "@type": "Person", "name": "Chef Julia" },
-            "cookTime": "PT25M"
+            "cookTime": "PT25M",
+            "recipeCategory": "Dessert"
           }
           </script>
         </head><body></body></html>`;
         const result = extractStructuredDataEntities(html, 'https://recipes.com');
-        const jsonLd = result.filter(e => e.extractor === 'json-ld');
-        assert.strictEqual(jsonLd.length, 0, 'Recipe type should be skipped');
+        const recipe = result.find(e => e.extractor === 'json-ld' && e.name === 'Chocolate Chip Cookies');
+        assert.ok(recipe, 'Recipe should be extracted as creative_work');
+        assert.strictEqual(recipe!.entityType, 'creative_work');
+        assert.strictEqual(recipe!.attributes.author, 'Chef Julia');
+        assert.strictEqual(recipe!.attributes.cookTime, 'PT25M');
+        assert.strictEqual(recipe!.attributes.category, 'Dessert');
       });
 
       it('should extract Event with performer and location object', () => {

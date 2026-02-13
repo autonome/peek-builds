@@ -82,18 +82,45 @@ function jsonLdItemToEntity(item, url) {
 
   // Map schema.org types to entity types
   const typeMap = {
+    // People
     'Person': 'person',
+    // Organizations
     'Organization': 'organization',
     'Corporation': 'organization',
     'LocalBusiness': 'organization',
     'Restaurant': 'organization',
+    'Store': 'organization',
+    'EducationalOrganization': 'organization',
+    'GovernmentOrganization': 'organization',
+    'NGO': 'organization',
+    'SportsTeam': 'organization',
+    'Airline': 'organization',
+    'MedicalOrganization': 'organization',
+    // Events
     'Event': 'event',
     'MusicEvent': 'event',
     'SportsEvent': 'event',
+    'BusinessEvent': 'event',
+    'EducationEvent': 'event',
+    'Festival': 'event',
+    'TheaterEvent': 'event',
+    'ExhibitionEvent': 'event',
+    // Places
     'Place': 'place',
-    'LocalBusiness': 'place',
     'PostalAddress': 'place',
+    'LandmarksOrHistoricalBuildings': 'place',
+    'TouristAttraction': 'place',
+    'City': 'place',
+    'Country': 'place',
+    'State': 'place',
+    // Products
     'Product': 'product',
+    'IndividualProduct': 'product',
+    'SoftwareApplication': 'product',
+    'MobileApplication': 'product',
+    'WebApplication': 'product',
+    'VideoGame': 'product',
+    // Creative works
     'Article': 'creative_work',
     'NewsArticle': 'creative_work',
     'BlogPosting': 'creative_work',
@@ -101,6 +128,14 @@ function jsonLdItemToEntity(item, url) {
     'MusicRecording': 'creative_work',
     'MusicAlbum': 'creative_work',
     'Movie': 'creative_work',
+    'TVSeries': 'creative_work',
+    'Podcast': 'creative_work',
+    'Course': 'creative_work',
+    'Recipe': 'creative_work',
+    'HowTo': 'creative_work',
+    'Review': 'creative_work',
+    'VideoObject': 'creative_work',
+    'CreativeWork': 'creative_work',
   };
 
   const entityType = typeMap[type];
@@ -178,6 +213,39 @@ function jsonLdItemToEntity(item, url) {
         if (offer && offer.price) {
           attributes.price = `${offer.priceCurrency || '$'}${offer.price}`;
         }
+      }
+      // SoftwareApplication-specific
+      if (item.applicationCategory) attributes.category = item.applicationCategory;
+      if (item.operatingSystem) attributes.operatingSystem = item.operatingSystem;
+      break;
+
+    case 'creative_work':
+      if (item.author) {
+        attributes.author = typeof item.author === 'string' ? item.author :
+          (item.author.name || '');
+      }
+      if (item.publisher) {
+        attributes.publisher = typeof item.publisher === 'string' ? item.publisher :
+          (item.publisher.name || '');
+      }
+      if (item.datePublished) attributes.datePublished = item.datePublished;
+      if (item.dateModified) attributes.dateModified = item.dateModified;
+      // Recipe-specific
+      if (item.recipeCategory) attributes.category = item.recipeCategory;
+      if (item.cookTime) attributes.cookTime = item.cookTime;
+      if (item.prepTime) attributes.prepTime = item.prepTime;
+      // Course-specific
+      if (item.provider) {
+        attributes.provider = typeof item.provider === 'string' ? item.provider :
+          (item.provider.name || '');
+      }
+      // Review-specific
+      if (item.reviewRating) {
+        attributes.rating = item.reviewRating.ratingValue || '';
+      }
+      if (item.itemReviewed) {
+        attributes.itemReviewed = typeof item.itemReviewed === 'string' ? item.itemReviewed :
+          (item.itemReviewed.name || '');
       }
       break;
   }

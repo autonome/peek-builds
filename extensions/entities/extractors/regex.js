@@ -1,8 +1,9 @@
 /**
  * Regex-based entity extractors
  *
- * Extracts emails, phone numbers, dates, prices, and tracking numbers
- * from page text content using regular expressions.
+ * Extracts emails, phone numbers, dates, prices (with product context),
+ * addresses, and tracking numbers from page text content using regular
+ * expressions.
  */
 
 // Email pattern
@@ -23,8 +24,13 @@ const DATE_PATTERNS = [
   /\b(?:0[1-9]|1[0-2])\/(?:0[1-9]|[12]\d|3[01])\/\d{4}\b/g,
 ];
 
-// Price/currency pattern
-const PRICE_RE = /(?:\$|EUR|GBP|USD|CAD|AUD|JPY|CHF)\s?[\d,]+(?:\.\d{2})?|\d+(?:,\d{3})*(?:\.\d{2})?\s?(?:USD|EUR|GBP|CAD|AUD|JPY|CHF)/gi;
+// Price/currency pattern - used with exec() to get match positions for context extraction.
+// Prices are only extracted when associated with a nearby product/service name.
+const PRICE_CONTEXT_RE = /(?:\$|EUR|GBP|USD|CAD|AUD|JPY|CHF)\s?[\d,]+(?:\.\d{2})?|\d+(?:,\d{3})*(?:\.\d{2})?\s?(?:USD|EUR|GBP|CAD|AUD|JPY|CHF)/gi;
+
+// US/international street address pattern
+// Matches patterns like "123 Main St", "456 Oak Avenue, Suite 200"
+const ADDRESS_RE = /\b\d{1,5}\s+(?:[A-Z][a-zA-Z]*\s*){1,4}(?:Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Road|Rd|Lane|Ln|Way|Court|Ct|Place|Pl|Circle|Cir|Trail|Trl|Parkway|Pkwy|Highway|Hwy)\.?(?:\s*,?\s*(?:Suite|Ste|Apt|Unit|#)\s*\w+)?\b/gi;
 
 // Tracking number patterns
 const TRACKING_PATTERNS = [
@@ -35,6 +41,56 @@ const TRACKING_PATTERNS = [
   // USPS
   { carrier: 'USPS', pattern: /\b(?:9[234]|7[01])\d{20,22}\b/g },
 ];
+
+/**
+ * Extract the likely product/subject name near a price match.
+ * Looks at the text before the price (up to 80 chars) for meaningful words.
+ * Returns null if no useful context is found.
+ * @param {string} text - Full text
+ * @param {number} matchIndex - Index of the price match in text
+ * @returns {string|null} Product/subject name or null
+ */
+function extractPriceContext(text, matchIndex) {
+  // Look at text before the price (up to 80 chars)
+  const beforeStart = Math.max(0, matchIndex - 80);
+  const before = text.slice(beforeStart, matchIndex).trim();
+
+  // Also look at text after the price (up to 40 chars) for patterns like "$9.99/month"
+  const afterEnd = Math.min(text.length, matchIndex + 30);
+  const after = text.slice(matchIndex, afterEnd);
+
+  // Try to find a product-like noun phrase in the preceding text.
+  // Split by common delimiters (newlines, bullets, pipes, dashes used as separators)
+  const segments = before.split(/[\n\r|•·–—]/).filter(s => s.trim().length > 0);
+  const lastSegment = (segments.length > 0 ? segments[segments.length - 1] : '').trim();
+
+  if (!lastSegment || lastSegment.length < 2) return null;
+
+  // Remove trailing noise phrases like "starting at", "from", "only", "just", "price:", etc.
+  // These appear between the product name and the price.
+  const cleaned = lastSegment
+    .replace(/\s*(?:starting\s+(?:at|from)|starts?\s+at|from|only|just|price\s*:|cost\s*:|for\s+(?:just|only))\s*$/i, '')
+    .replace(/\s*[-:]\s*$/, '') // Remove trailing dash or colon separators
+    .trim();
+
+  // Reject if what remains is too short or is just numbers/punctuation
+  if (!cleaned || cleaned.length < 2) return null;
+  if (/^[\d\s.,;:!?$%]+$/.test(cleaned)) return null;
+
+  // Reject if it looks like generic navigation/UI text
+  const noiseWords = /^(?:home|menu|cart|checkout|login|sign\s*in|search|buy|add|view|more|see|get|shop|order|click|here|back|next|previous|the|a|an|and|or|for|to|in|on|at|is|it)\s*$/i;
+  if (noiseWords.test(cleaned)) return null;
+
+  // Take up to ~60 chars, trim to last word boundary
+  let name = cleaned.slice(-60).trim();
+  // If we cut mid-word, trim to last space
+  if (cleaned.length > 60) {
+    const spaceIdx = name.indexOf(' ');
+    if (spaceIdx > 0) name = name.slice(spaceIdx + 1);
+  }
+
+  return name || null;
+}
 
 /**
  * Extract all regex-based entities from text content
@@ -104,19 +160,50 @@ export function extractRegexEntities(text, url) {
     }
   }
 
-  // Extract prices
-  const prices = text.match(PRICE_RE) || [];
+  // Extract prices WITH context only - standalone prices are noise.
+  // A price must be associated with a nearby product/service name.
+  PRICE_CONTEXT_RE.lastIndex = 0;
+  let priceMatch;
   const seenPrices = new Set();
-  for (const price of prices) {
-    const normalized = price.trim();
-    if (seenPrices.has(normalized)) continue;
-    seenPrices.add(normalized);
+  while ((priceMatch = PRICE_CONTEXT_RE.exec(text)) !== null) {
+    const priceText = priceMatch[0].trim();
+    if (seenPrices.has(priceText)) continue;
+    seenPrices.add(priceText);
+
+    const productName = extractPriceContext(text, priceMatch.index);
+    if (productName) {
+      // Create a meaningful price entity: "ProductName — $X.XX"
+      entities.push({
+        name: `${productName} ${priceText}`,
+        entityType: 'price',
+        confidence: 0.85,
+        extractor: 'regex',
+        attributes: {
+          price: priceText,
+          product: productName,
+          originalText: priceText
+        },
+        sourceUrl: url
+      });
+    }
+    // If no product context found, skip this price — it's noise
+  }
+
+  // Extract street addresses
+  ADDRESS_RE.lastIndex = 0;
+  const addresses = text.match(ADDRESS_RE) || [];
+  const seenAddresses = new Set();
+  for (const addr of addresses) {
+    const normalized = addr.trim().replace(/\s+/g, ' ');
+    const key = normalized.toLowerCase();
+    if (seenAddresses.has(key)) continue;
+    seenAddresses.add(key);
     entities.push({
       name: normalized,
-      entityType: 'price',
-      confidence: 0.85,
+      entityType: 'place',
+      confidence: 0.75,
       extractor: 'regex',
-      attributes: { originalText: normalized },
+      attributes: { address: normalized },
       sourceUrl: url
     });
   }
