@@ -2,14 +2,21 @@
  * Entities Browser UI
  *
  * Card grid showing all extracted entities with type filtering and search.
+ * Includes detail pane showing full entity metadata and all source pages.
  */
 
 import { getEntities, getObservations, extractCurrentPage } from './background.js';
 
 const api = window.app;
 
+// View states
+const VIEW_LIST = 'list';
+const VIEW_DETAIL = 'detail';
+
+let currentView = VIEW_LIST;
 let currentTypeFilter = '';
 let currentSearch = '';
+let selectedEntity = null; // Entity being viewed in detail
 
 // View preferences (persisted)
 let viewPrefs = {
@@ -128,6 +135,151 @@ function setupToolbar() {
 
 // ==================== Rendering ====================
 
+/**
+ * Open a URL in a new content window
+ */
+async function openSourceUrl(url) {
+  try {
+    await api.window.open(url, {
+      role: 'content',
+      width: 800,
+      height: 600,
+      trackingSource: 'entities',
+      trackingSourceId: 'source-page'
+    });
+  } catch (err) {
+    console.error('[entities:ui] Failed to open URL:', err);
+  }
+}
+
+/**
+ * Show the list view, hide detail view
+ */
+function showList() {
+  currentView = VIEW_LIST;
+  selectedEntity = null;
+  document.getElementById('entityGrid').style.display = '';
+  document.getElementById('gridToolbar').style.display = '';
+  document.getElementById('detailView').style.display = 'none';
+  renderEntities();
+}
+
+/**
+ * Show the detail view for an entity
+ */
+async function showDetailView(entity) {
+  currentView = VIEW_DETAIL;
+  selectedEntity = entity;
+
+  let meta = {};
+  try { meta = JSON.parse(entity.metadata || '{}'); } catch {}
+
+  const entityType = meta.entityType || 'unknown';
+  const icon = TYPE_ICONS[entityType] || '?';
+  const confidence = meta.confidence ? Math.round(meta.confidence * 100) : 0;
+  const extractor = meta.extractor || 'unknown';
+  const attrs = meta.attributes || {};
+  const aliases = meta.aliases || [];
+
+  // Hide grid, show detail
+  document.getElementById('entityGrid').style.display = 'none';
+  document.getElementById('gridToolbar').style.display = 'none';
+  const detailView = document.getElementById('detailView');
+  detailView.style.display = '';
+
+  // Header
+  const typeIconEl = document.getElementById('detailTypeIcon');
+  typeIconEl.className = `detail-type-icon entity-type-icon type-${entityType}`;
+  typeIconEl.textContent = icon;
+  document.getElementById('detailTitle').textContent = entity.content || entity.name || '';
+  document.getElementById('detailSubtitle').textContent = entityType.replace('_', ' ');
+
+  // Attributes
+  const attrsEl = document.getElementById('detailAttributes');
+  const attrEntries = Object.entries(attrs).filter(([, v]) => v && String(v).length > 0);
+  if (attrEntries.length > 0) {
+    attrsEl.innerHTML = attrEntries.map(([key, value]) => {
+      const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+      const isUrl = typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'));
+      const displayValue = isUrl
+        ? `<a class="detail-link" href="#" data-url="${escapeHtml(value)}">${escapeHtml(truncate(value, 60))}</a>`
+        : escapeHtml(truncate(String(value), 120));
+      return `<div class="detail-attr-row"><span class="detail-attr-label">${escapeHtml(label)}</span><span class="detail-attr-value">${displayValue}</span></div>`;
+    }).join('');
+  } else {
+    attrsEl.innerHTML = '<span class="detail-empty">No attributes</span>';
+  }
+
+  // Aliases
+  const aliasesSection = document.getElementById('detailAliasesSection');
+  const aliasesEl = document.getElementById('detailAliases');
+  if (aliases.length > 0) {
+    aliasesSection.style.display = '';
+    aliasesEl.innerHTML = aliases.map(a => `<span class="detail-alias">${escapeHtml(a)}</span>`).join('');
+  } else {
+    aliasesSection.style.display = 'none';
+  }
+
+  // Extraction info
+  const infoEl = document.getElementById('detailExtractionInfo');
+  infoEl.innerHTML = `
+    <div class="detail-attr-row"><span class="detail-attr-label">Confidence</span><span class="detail-attr-value">${confidence}%</span></div>
+    <div class="detail-attr-row"><span class="detail-attr-label">Extractor</span><span class="detail-attr-value">${escapeHtml(extractor)}</span></div>
+    <div class="detail-attr-row"><span class="detail-attr-label">First Seen</span><span class="detail-attr-value">${entity.createdAt ? new Date(entity.createdAt).toLocaleString() : 'Unknown'}</span></div>
+    <div class="detail-attr-row"><span class="detail-attr-label">Last Updated</span><span class="detail-attr-value">${entity.updatedAt ? new Date(entity.updatedAt).toLocaleString() : 'Unknown'}</span></div>
+  `;
+
+  // Source pages
+  const sourcesEl = document.getElementById('detailSources');
+  sourcesEl.innerHTML = '<span class="detail-empty">Loading sources...</span>';
+
+  try {
+    const observations = await getObservations(entity.id);
+    if (observations.length > 0) {
+      // Deduplicate by URL, keeping most recent
+      const byUrl = new Map();
+      for (const obs of observations) {
+        if (!obs.url) continue;
+        if (!byUrl.has(obs.url) || obs.occurredAt > byUrl.get(obs.url).occurredAt) {
+          byUrl.set(obs.url, obs);
+        }
+      }
+
+      const uniqueObs = Array.from(byUrl.values()).sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
+
+      sourcesEl.innerHTML = uniqueObs.map(obs => {
+        const title = obs.pageTitle || truncate(obs.url, 60);
+        const displayUrl = truncate(obs.url, 80);
+        return `
+          <div class="detail-source-row">
+            <a class="detail-source-link" href="#" data-url="${escapeHtml(obs.url)}">
+              <span class="detail-source-title">${escapeHtml(title)}</span>
+              <span class="detail-source-url">${escapeHtml(displayUrl)}</span>
+            </a>
+            <span class="detail-source-meta">
+              ${obs.extractor ? escapeHtml(obs.extractor) : ''}
+              ${obs.occurredAt ? ' \u00B7 ' + formatDate(obs.occurredAt) : ''}
+            </span>
+          </div>
+        `;
+      }).join('');
+    } else {
+      sourcesEl.innerHTML = '<span class="detail-empty">No source pages recorded</span>';
+    }
+  } catch (err) {
+    console.error('[entities:ui] Failed to load observations:', err);
+    sourcesEl.innerHTML = '<span class="detail-empty">Failed to load sources</span>';
+  }
+
+  // Wire up all clickable links in detail view
+  detailView.querySelectorAll('[data-url]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      openSourceUrl(el.dataset.url);
+    });
+  });
+}
+
 async function renderEntities() {
   const grid = document.getElementById('entityGrid');
   const countEl = document.getElementById('entityCount');
@@ -167,6 +319,25 @@ async function renderEntities() {
   // Apply sorting
   sortEntities(entities);
 
+  // Fetch first observation for each entity (batch)
+  const observationMap = new Map();
+  await Promise.all(entities.map(async (entity) => {
+    try {
+      const obs = await getObservations(entity.id, { limit: 5 });
+      if (obs.length > 0) {
+        // Deduplicate by URL, keep most recent
+        const byUrl = new Map();
+        for (const o of obs) {
+          if (!o.url) continue;
+          if (!byUrl.has(o.url) || o.occurredAt > byUrl.get(o.url).occurredAt) {
+            byUrl.set(o.url, o);
+          }
+        }
+        observationMap.set(entity.id, Array.from(byUrl.values()));
+      }
+    } catch { /* ignore */ }
+  }));
+
   for (const entity of entities) {
     let meta = {};
     try { meta = JSON.parse(entity.metadata || '{}'); } catch {}
@@ -203,6 +374,24 @@ async function renderEntities() {
       aliasHtml = `<div class="entity-meta">aka: ${aliases.map(a => escapeHtml(a)).join(', ')}</div>`;
     }
 
+    // Source page (first observation)
+    const observations = observationMap.get(entity.id) || [];
+    let sourceHtml = '';
+    if (observations.length > 0) {
+      const firstObs = observations[0];
+      const sourceTitle = firstObs.pageTitle || truncate(firstObs.url, 40);
+      const sourceCount = observations.length;
+      sourceHtml = `<div class="entity-source">
+        <svg class="source-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <line x1="10" y1="14" x2="21" y2="3"></line>
+        </svg>
+        <span class="source-title" data-url="${escapeHtml(firstObs.url)}">${escapeHtml(truncate(sourceTitle, 35))}</span>
+        ${sourceCount > 1 ? `<span class="source-count">+${sourceCount - 1} more</span>` : ''}
+      </div>`;
+    }
+
     const headerDiv = document.createElement('div');
     headerDiv.slot = 'header';
     headerDiv.innerHTML = `
@@ -219,6 +408,7 @@ async function renderEntities() {
       <div class="entity-type">${escapeHtml(entityType.replace('_', ' '))}</div>
       ${attrHtml}
       ${aliasHtml}
+      ${sourceHtml}
     `;
     card.appendChild(bodyDiv);
 
@@ -231,6 +421,18 @@ async function renderEntities() {
       </div>
     `;
     card.appendChild(footerDiv);
+
+    // Click on source link opens the page directly
+    card.addEventListener('click', (e) => {
+      const sourceLink = e.target.closest('.source-title[data-url]');
+      if (sourceLink) {
+        e.stopPropagation();
+        openSourceUrl(sourceLink.dataset.url);
+        return;
+      }
+      // Otherwise open detail view
+      showDetailView(entity);
+    });
 
     grid.appendChild(card);
   }
@@ -282,13 +484,24 @@ document.getElementById('extractBtn').addEventListener('click', async () => {
 // Listen for new entity extractions
 if (api) {
   api.subscribe('entities:extracted', () => {
-    renderEntities();
+    if (currentView === VIEW_LIST) renderEntities();
   }, api.scopes.GLOBAL);
 
   // Also listen for editor changes that might affect entities
   api.subscribe('editor:changed', () => {
-    renderEntities();
+    if (currentView === VIEW_LIST) renderEntities();
   }, api.scopes.GLOBAL);
+
+  // Register escape handler for back-navigation from detail view
+  if (api.escape) {
+    api.escape.onEscape(() => {
+      if (currentView === VIEW_DETAIL) {
+        setTimeout(() => showList(), 0);
+        return { handled: true };
+      }
+      return { handled: false };
+    });
+  }
 }
 
 // ==================== Utilities ====================

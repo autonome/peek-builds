@@ -65,6 +65,37 @@
     <div class="content">
       <peek-grid-toolbar class="grid-toolbar" id="gridToolbar" view-mode="columns"></peek-grid-toolbar>
       <peek-grid id="entityGrid" min-item-width="280" gap="12"></peek-grid>
+
+      <!-- Inline detail view (replaces card grid when an entity is selected) -->
+      <div class="detail-view" id="detailView" style="display: none;">
+        <div class="detail-header">
+          <span class="detail-type-icon" id="detailTypeIcon"></span>
+          <div class="detail-header-info">
+            <div class="detail-title" id="detailTitle"></div>
+            <div class="detail-subtitle" id="detailSubtitle"></div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <label class="detail-label">Attributes</label>
+          <div class="detail-attributes" id="detailAttributes"></div>
+        </div>
+
+        <div class="detail-section" id="detailAliasesSection" style="display: none;">
+          <label class="detail-label">Also Known As</label>
+          <div class="detail-aliases" id="detailAliases"></div>
+        </div>
+
+        <div class="detail-section">
+          <label class="detail-label">Extraction Info</label>
+          <div class="detail-extraction-info" id="detailExtractionInfo"></div>
+        </div>
+
+        <div class="detail-section">
+          <label class="detail-label">Source Pages</label>
+          <div class="detail-sources" id="detailSources"></div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="home.js"></script>
