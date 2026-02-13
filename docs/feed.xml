@@ -4,9 +4,85 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Wed, 11 Feb 2026 20:57:01 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 13 Feb 2026 16:15:03 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-02-13</title>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-13</guid>
+      <pubDate>Fri, 13 Feb 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Desktop - Session Restore<br>
+<ul><li>feat(session): implement full session save/restore system (Phases 1-4) (0e8afccd, f270c56d, d0150877, d2fb834a)</li><br>
+<li style="margin-left:1em">Phase 1: Snapshot all windows on quit (position, size, URL, mode)</li><br>
+<li style="margin-left:1em">Phase 2: Restore windows on startup with confirmation dialog</li><br>
+<li style="margin-left:1em">Phase 3: Autosave timer and manual session commands</li><br>
+<li style="margin-left:1em">Phase 4: Crash recovery dialog and error handling</li><br>
+<li>fix(session): save settings windows, strip stale params on restore, fix display-watcher race conditions (d12bd2b9)</li><br>
+<li>fix(session): suppress display-watcher during session restore to preserve window positions (c32b73df)</li><br>
+<li>fix(session): handle SIGINT/SIGTERM as clean shutdowns to prevent false crash dialog (f56f5624, 8ab6d36d, 16a2d4bc)</li><br>
+<li>fix(session): synchronous SIGINT save and correct canvas page bounds (2df8a733)</li><br>
+<li>fix(session): open startup feature when restore is declined or fails (0f280143)</li><br>
+</ul><br>
+Desktop - Display Switching<br>
+<ul><li>feat(display): reposition windows when displays change (d732fa79)</li><br>
+<li style="margin-left:1em">Pre-debounce bounds capture preserves window positions before OS moves them</li><br>
+<li style="margin-left:1em">Group-based distance scaling for proportional repositioning</li><br>
+<li>fix(display-watcher): add home display tracking to restore windows after display reconnect (60b0798d)</li><br>
+<li>fix(display): use group-based distance scaling for window repositioning (11166190)</li><br>
+</ul><br>
+Desktop - Entity Recognition<br>
+<ul><li>feat(entities): show source pages in entity list and add detail pane with full metadata (12feb902)</li><br>
+<li>fix(entities): improve detection coverage and reduce price noise (82b70037)</li><br>
+<li>fix(entities): migrate out standalone price entities lacking product context (383202ae)</li><br>
+<li>fix(entities): require context for date entities, migrate out standalone dates (6ada27ba)</li><br>
+</ul><br>
+Desktop - Command Palette<br>
+<ul><li>feat(cmd): add command chaining flow for list notes, markdown, download, save as note (04ef4c8a)</li><br>
+<li>feat(cmd): add "open file" command with chaining + fix note inline tag extraction (0717e87b)</li><br>
+<li>fix(cmd): remove web search fallback on Enter — require explicit command match (49c6e5ec)</li><br>
+<li>fix(cmd,perf): sort history by frecency, use targeted queries for URL lookups (0873e5ee)</li><br>
+<li>fix(cmd): restore web page URLs in frecency suggestions (65baa072)</li><br>
+<li>fix(cmd): ESC clears text first, Shift-Tab cycles backward, fix frecency tracking (8f6b41a8)</li><br>
+<li>fix(cmd): register IZUI escape handler so ESC clears text before closing (80592eb0)</li><br>
+<li>fix(cmd): remove prefix feedback that caused adaptive sort cross-contamination (5ceb0517)</li><br>
+<li>fix(cmd): add deterministic tiebreaker to command palette sort for consistent autocomplete (566b63a8)</li><br>
+</ul><br>
+Desktop - Page View & Navigation<br>
+<ul><li>feat(page): replace fullscreen transparent window with minimal page host (c543e38b)</li><br>
+<li>fix(page): eliminate navbar show/hide webview jump (43c9353e, 982f6a10, 083fbdf9, bd0449db)</li><br>
+<li>fix(page): restore webview drag with mousedown/mouseup bridge from guest page (63cd1414)</li><br>
+<li>fix(page): remove broken click-through code that activated unrelated windows (10f29146)</li><br>
+</ul><br>
+Desktop - Window Dragging<br>
+<ul><li>fix(drag): rewrite window drag system v3 — unified, faster, works everywhere (5a7c7899, fa58f66b, 1f815b61)</li><br>
+</ul><br>
+Desktop - HUD & Groups<br>
+<ul><li>fix(hud): hide on app blur using did-resign-active (be05026c)</li><br>
+<li>fix(groups): fix group creation via inline form (141829f7)</li><br>
+<li>fix(tags): restore reactivity on sync and data changes (60eb36df)</li><br>
+<li>fix(tags/groups/cmd): fix item icons, group creation form, and tagset detection (5b0ca938)</li><br>
+</ul><br>
+Desktop - Dark Mode & Settings<br>
+<ul><li>fix(darkmode): respect OS color scheme in system mode (6813ea5f)</li><br>
+<li>fix(websearch): fix suggestions, default engine setting, and settings UI (bcaeb205)</li><br>
+<li>feat(websearch): add Kagi as built-in search engine (e7d05c94)</li><br>
+<li>fix(settings): add descriptions and human-readable labels to core settings (0bfe87b9)</li><br>
+<li>fix(settings): quit shortcut default reset, editor portrait, datastore table fix (f6a16ad4)</li><br>
+</ul><br>
+Desktop - Fixes<br>
+<ul><li>fix(mode,window): fix mode leak into global scope and bring existing windows to front (9b783b6b)</li><br>
+<li>fix(shortcuts): silence spurious warnings when unregistering global shortcuts during shutdown (7941b5f6)</li><br>
+<li>fix(cmd): ensure command registration after extensions loaded (3f9df015)</li><br>
+<li>refactor(cmd): remove cmd:ready/query boilerplate, register commands directly (f7306de6)</li><br>
+<li>feat(components): add sorting and view modes to card grid toolbar (83a85332)</li><br>
+<li>fix(rss): use tangled.org URLs, fix localsearch manifest loading (06afcb89)</li><br>
+</ul><br>
+Testing<br>
+<ul><li>test(session): add 67 real integration tests for session save/restore (49f094f7)</li><br>
+<li>test(display-watcher): add tests for pre-debounce capture, suppress timer cancellation, and isRemoval flag (fd56204f)</li><br>
+<li>test: add 94 new unit tests and fix 3 E2E test failures (2251f86f)</li></ul></p>]]></description>
+    </item>
     <item>
       <title>2026-02-11</title>
       <link>https://tangled.org/burrito.space/peek</link>

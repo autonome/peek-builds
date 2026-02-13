@@ -13,6 +13,79 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-13
+
+Desktop - Session Restore
+- [x] feat(session): implement full session save/restore system (Phases 1-4) (0e8afccd, f270c56d, d0150877, d2fb834a)
+  - Phase 1: Snapshot all windows on quit (position, size, URL, mode)
+  - Phase 2: Restore windows on startup with confirmation dialog
+  - Phase 3: Autosave timer and manual session commands
+  - Phase 4: Crash recovery dialog and error handling
+- [x] fix(session): save settings windows, strip stale params on restore, fix display-watcher race conditions (d12bd2b9)
+- [x] fix(session): suppress display-watcher during session restore to preserve window positions (c32b73df)
+- [x] fix(session): handle SIGINT/SIGTERM as clean shutdowns to prevent false crash dialog (f56f5624, 8ab6d36d, 16a2d4bc)
+- [x] fix(session): synchronous SIGINT save and correct canvas page bounds (2df8a733)
+- [x] fix(session): open startup feature when restore is declined or fails (0f280143)
+
+Desktop - Display Switching
+- [x] feat(display): reposition windows when displays change (d732fa79)
+  - Pre-debounce bounds capture preserves window positions before OS moves them
+  - Group-based distance scaling for proportional repositioning
+- [x] fix(display-watcher): add home display tracking to restore windows after display reconnect (60b0798d)
+- [x] fix(display): use group-based distance scaling for window repositioning (11166190)
+
+Desktop - Entity Recognition
+- [x] feat(entities): show source pages in entity list and add detail pane with full metadata (12feb902)
+- [x] fix(entities): improve detection coverage and reduce price noise (82b70037)
+- [x] fix(entities): migrate out standalone price entities lacking product context (383202ae)
+- [x] fix(entities): require context for date entities, migrate out standalone dates (6ada27ba)
+
+Desktop - Command Palette
+- [x] feat(cmd): add command chaining flow for list notes, markdown, download, save as note (04ef4c8a)
+- [x] feat(cmd): add "open file" command with chaining + fix note inline tag extraction (0717e87b)
+- [x] fix(cmd): remove web search fallback on Enter — require explicit command match (49c6e5ec)
+- [x] fix(cmd,perf): sort history by frecency, use targeted queries for URL lookups (0873e5ee)
+- [x] fix(cmd): restore web page URLs in frecency suggestions (65baa072)
+- [x] fix(cmd): ESC clears text first, Shift-Tab cycles backward, fix frecency tracking (8f6b41a8)
+- [x] fix(cmd): register IZUI escape handler so ESC clears text before closing (80592eb0)
+- [x] fix(cmd): remove prefix feedback that caused adaptive sort cross-contamination (5ceb0517)
+- [x] fix(cmd): add deterministic tiebreaker to command palette sort for consistent autocomplete (566b63a8)
+
+Desktop - Page View & Navigation
+- [x] feat(page): replace fullscreen transparent window with minimal page host (c543e38b)
+- [x] fix(page): eliminate navbar show/hide webview jump (43c9353e, 982f6a10, 083fbdf9, bd0449db)
+- [x] fix(page): restore webview drag with mousedown/mouseup bridge from guest page (63cd1414)
+- [x] fix(page): remove broken click-through code that activated unrelated windows (10f29146)
+
+Desktop - Window Dragging
+- [x] fix(drag): rewrite window drag system v3 — unified, faster, works everywhere (5a7c7899, fa58f66b, 1f815b61)
+
+Desktop - HUD & Groups
+- [x] fix(hud): hide on app blur using did-resign-active (be05026c)
+- [x] fix(groups): fix group creation via inline form (141829f7)
+- [x] fix(tags): restore reactivity on sync and data changes (60eb36df)
+- [x] fix(tags/groups/cmd): fix item icons, group creation form, and tagset detection (5b0ca938)
+
+Desktop - Dark Mode & Settings
+- [x] fix(darkmode): respect OS color scheme in system mode (6813ea5f)
+- [x] fix(websearch): fix suggestions, default engine setting, and settings UI (bcaeb205)
+- [x] feat(websearch): add Kagi as built-in search engine (e7d05c94)
+- [x] fix(settings): add descriptions and human-readable labels to core settings (0bfe87b9)
+- [x] fix(settings): quit shortcut default reset, editor portrait, datastore table fix (f6a16ad4)
+
+Desktop - Fixes
+- [x] fix(mode,window): fix mode leak into global scope and bring existing windows to front (9b783b6b)
+- [x] fix(shortcuts): silence spurious warnings when unregistering global shortcuts during shutdown (7941b5f6)
+- [x] fix(cmd): ensure command registration after extensions loaded (3f9df015)
+- [x] refactor(cmd): remove cmd:ready/query boilerplate, register commands directly (f7306de6)
+- [x] feat(components): add sorting and view modes to card grid toolbar (83a85332)
+- [x] fix(rss): use tangled.org URLs, fix localsearch manifest loading (06afcb89)
+
+Testing
+- [x] test(session): add 67 real integration tests for session save/restore (49f094f7)
+- [x] test(display-watcher): add tests for pre-debounce capture, suppress timer cancellation, and isRemoval flag (fd56204f)
+- [x] test: add 94 new unit tests and fix 3 E2E test failures (2251f86f)
+
 ## 2026-02-11
 
 Desktop - New Extensions
