@@ -538,9 +538,18 @@ function handleSpecialKey(e) {
       return;
     }
 
-    // Otherwise, execute the matched command
+    // Otherwise, execute the matched command — but only if the user has committed
+    // to it (Tab-completed, typed the full name, or explicitly selected from results).
+    // Ghost text (inline autocomplete) is visual-only; Enter operates on typed text.
     const name = state.matches[state.matchIndex];
-    if (name && Object.keys(state.commands).indexOf(name) > -1) {
+    const typedLower = trimmedText.toLowerCase();
+    const nameLower = name ? name.toLowerCase() : '';
+    const userCommittedToCommand = name && (
+      typedLower === nameLower ||                          // Typed full command name
+      typedLower.startsWith(nameLower + ' ') ||            // Command name + parameters
+      state.showResults                                     // Explicitly browsing results list
+    );
+    if (userCommittedToCommand && Object.keys(state.commands).indexOf(name) > -1) {
       // Preserve any parameters when executing
       const typedText = commandInput.value;
 

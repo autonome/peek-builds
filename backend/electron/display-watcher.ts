@@ -8,14 +8,18 @@
  * off-screen or bunched in corners. This module detects those cases and moves windows
  * to valid positions on the remaining/changed displays.
  *
- * Algorithm:
+ * Algorithm (group-based distance scaling):
  * - Snapshot display layout at startup and after each change
- * - On display change, for each BrowserWindow:
- *   - Find which old display the window center was on
- *   - Find the best new display to place it on
- *   - Calculate the window's relative position (% of old display workArea)
- *   - Apply that relative position to the new display workArea
- *   - Clamp so the window stays fully visible
+ * - On display change, for each group of windows on a changed display:
+ *   1. Find the bounding box of all window centers on the old display
+ *   2. Calculate the center of that bounding box
+ *   3. For each window, compute its offset from the bounding box center
+ *   4. Scale those offsets by (new display size / old display size)
+ *   5. Place windows at (new display center + scaled offset)
+ *   6. Scale window dimensions proportionally
+ *   7. Clamp to keep all windows on-screen
+ * - This preserves the spatial LAYOUT and scales DISTANCES between windows,
+ *   rather than mapping each window proportional position independently.
  * - Skip windows that are still fully visible on a valid display
  */
 
@@ -25,11 +29,17 @@ import { WEB_CORE_ADDRESS } from './config.js';
 
 const DEBUG = !!process.env.DEBUG;
 
-/** Snapshot of a display's work area at a point in time */
+/** Snapshot of a display work area at a point in time */
 interface DisplaySnapshot {
   id: number;
   bounds: Electron.Rectangle;
   workArea: Electron.Rectangle;
+}
+
+/** A window and its bounds at the time of the display change */
+interface WindowEntry {
+  win: BrowserWindow;
+  bounds: Electron.Rectangle;
 }
 
 /** Last known display layout */
@@ -73,7 +83,7 @@ function findDisplayForPoint(displays: DisplaySnapshot[], x: number, y: number):
 
 /**
  * Check if a window is still accessible on the current displays.
- * "Accessible" means the window's center-top region (title bar area)
+ * "Accessible" means the window center-top region (title bar area)
  * is on a valid display, so the user can still grab and move it.
  */
 function isWindowAccessible(displays: DisplaySnapshot[], bounds: Electron.Rectangle): boolean {
@@ -105,7 +115,7 @@ function findBestNewDisplay(
     const sameId = newDisplays.find(d => d.id === oldDisplay.id);
     if (sameId) return sameId;
 
-    // Find the display whose workArea center is closest to the old display's center
+    // Find the display whose workArea center is closest to the old display center
     const oldCenterX = oldDisplay.workArea.x + oldDisplay.workArea.width / 2;
     const oldCenterY = oldDisplay.workArea.y + oldDisplay.workArea.height / 2;
 
@@ -132,51 +142,127 @@ function findBestNewDisplay(
 }
 
 /**
- * Reposition a window from an old display to a new display,
- * preserving its relative position.
+ * Calculate repositioned bounds for a group of windows moving between displays.
+ *
+ * Uses center-of-group scaling: finds the bounding box of all window centers,
+ * then scales each window offset from that center by the display size ratio.
+ * This preserves the spatial layout and scales distances proportionally.
+ *
+ * For a single window, this degrades gracefully: the window center is mapped
+ * to the same relative position on the new display, with scaled dimensions.
+ *
+ * @param windowBounds Array of window bounds to reposition
+ * @param oldDisplay The display windows are moving from
+ * @param newDisplay The display windows are moving to
+ * @returns Array of new bounds, one per input window
  */
-function repositionWindow(
-  win: BrowserWindow,
-  winBounds: Electron.Rectangle,
+function calculateGroupRepositionedBounds(
+  windowBounds: Electron.Rectangle[],
   oldDisplay: DisplaySnapshot,
   newDisplay: DisplaySnapshot
-): void {
+): Electron.Rectangle[] {
   const oldWA = oldDisplay.workArea;
   const newWA = newDisplay.workArea;
 
-  // Calculate relative position within old workArea (0..1)
-  const relX = oldWA.width > 0 ? (winBounds.x - oldWA.x) / oldWA.width : 0;
-  const relY = oldWA.height > 0 ? (winBounds.y - oldWA.y) / oldWA.height : 0;
-  const relW = oldWA.width > 0 ? winBounds.width / oldWA.width : 0.5;
-  const relH = oldWA.height > 0 ? winBounds.height / oldWA.height : 0.5;
+  // Scale factors for distances
+  const scaleX = oldWA.width > 0 ? newWA.width / oldWA.width : 1;
+  const scaleY = oldWA.height > 0 ? newWA.height / oldWA.height : 1;
 
-  // Apply relative position to new workArea
-  let newW = Math.round(relW * newWA.width);
-  let newH = Math.round(relH * newWA.height);
+  // Calculate the center of each window
+  const centers = windowBounds.map(wb => ({
+    x: wb.x + wb.width / 2,
+    y: wb.y + wb.height / 2,
+  }));
 
-  // Minimum window size
-  newW = Math.max(newW, 200);
-  newH = Math.max(newH, 150);
+  // Find the bounding box of all window centers
+  let minCX = Infinity, maxCX = -Infinity;
+  let minCY = Infinity, maxCY = -Infinity;
+  for (const c of centers) {
+    minCX = Math.min(minCX, c.x);
+    maxCX = Math.max(maxCX, c.x);
+    minCY = Math.min(minCY, c.y);
+    maxCY = Math.max(maxCY, c.y);
+  }
 
-  // Cap to new workArea size
-  newW = Math.min(newW, newWA.width);
-  newH = Math.min(newH, newWA.height);
+  // Center of the bounding box of window centers (on old display)
+  const groupCenterX = (minCX + maxCX) / 2;
+  const groupCenterY = (minCY + maxCY) / 2;
 
-  let newX = Math.round(newWA.x + relX * newWA.width);
-  let newY = Math.round(newWA.y + relY * newWA.height);
+  // Map the group center to new display: preserve its relative position within the workArea
+  const groupRelX = oldWA.width > 0 ? (groupCenterX - oldWA.x) / oldWA.width : 0.5;
+  const groupRelY = oldWA.height > 0 ? (groupCenterY - oldWA.y) / oldWA.height : 0.5;
+  const newGroupCenterX = newWA.x + groupRelX * newWA.width;
+  const newGroupCenterY = newWA.y + groupRelY * newWA.height;
 
-  // Clamp so window stays fully within the new workArea
-  newX = Math.max(newWA.x, Math.min(newX, newWA.x + newWA.width - newW));
-  newY = Math.max(newWA.y, Math.min(newY, newWA.y + newWA.height - newH));
+  const results: Electron.Rectangle[] = [];
 
-  DEBUG && console.log(
-    `[display-watcher] Repositioning window ${win.id}: ` +
-    `(${winBounds.x},${winBounds.y} ${winBounds.width}x${winBounds.height}) -> ` +
-    `(${newX},${newY} ${newW}x${newH}) ` +
-    `[display ${oldDisplay.id} -> ${newDisplay.id}]`
-  );
+  for (let i = 0; i < windowBounds.length; i++) {
+    const wb = windowBounds[i];
+    const center = centers[i];
 
-  win.setBounds({ x: newX, y: newY, width: newW, height: newH });
+    // Offset from group center on old display
+    const offsetX = center.x - groupCenterX;
+    const offsetY = center.y - groupCenterY;
+
+    // Scale the offset by display size ratio
+    const scaledOffsetX = offsetX * scaleX;
+    const scaledOffsetY = offsetY * scaleY;
+
+    // Scale window dimensions proportionally
+    let newW = Math.round(wb.width * scaleX);
+    let newH = Math.round(wb.height * scaleY);
+
+    // Enforce minimum window size
+    newW = Math.max(newW, 200);
+    newH = Math.max(newH, 150);
+
+    // Cap to new workArea size
+    newW = Math.min(newW, newWA.width);
+    newH = Math.min(newH, newWA.height);
+
+    // New center = new group center + scaled offset
+    const newCenterX = newGroupCenterX + scaledOffsetX;
+    const newCenterY = newGroupCenterY + scaledOffsetY;
+
+    // Convert center to top-left
+    let newX = Math.round(newCenterX - newW / 2);
+    let newY = Math.round(newCenterY - newH / 2);
+
+    // Clamp so window stays fully within the new workArea
+    newX = Math.max(newWA.x, Math.min(newX, newWA.x + newWA.width - newW));
+    newY = Math.max(newWA.y, Math.min(newY, newWA.y + newWA.height - newH));
+
+    results.push({ x: newX, y: newY, width: newW, height: newH });
+  }
+
+  return results;
+}
+
+/**
+ * Reposition a group of windows from an old display to a new display,
+ * preserving their spatial layout with scaled distances.
+ */
+function repositionWindowGroup(
+  entries: WindowEntry[],
+  oldDisplay: DisplaySnapshot,
+  newDisplay: DisplaySnapshot
+): void {
+  const windowBounds = entries.map(e => e.bounds);
+  const newBoundsList = calculateGroupRepositionedBounds(windowBounds, oldDisplay, newDisplay);
+
+  for (let i = 0; i < entries.length; i++) {
+    const { win, bounds } = entries[i];
+    const newBounds = newBoundsList[i];
+
+    DEBUG && console.log(
+      `[display-watcher] Repositioning window ${win.id}: ` +
+      `(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}) -> ` +
+      `(${newBounds.x},${newBounds.y} ${newBounds.width}x${newBounds.height}) ` +
+      `[display ${oldDisplay.id} -> ${newDisplay.id}]`
+    );
+
+    win.setBounds(newBounds);
+  }
 }
 
 /**
@@ -214,14 +300,24 @@ function handleDisplayChange(): void {
   }
 
   if (changedDisplayIds.size === 0) {
-    DEBUG && console.log('[display-watcher] No display workAreas changed, skipping repositioning');
+    DEBUG && console.log("[display-watcher] No display workAreas changed, skipping repositioning");
     _previousDisplays = newDisplays;
     return;
   }
 
-  DEBUG && console.log(`[display-watcher] Changed display IDs: ${[...changedDisplayIds].join(', ')}`);
+  DEBUG && console.log(`[display-watcher] Changed display IDs: ${[...changedDisplayIds].join(", ")}`);
 
-  // Iterate all BrowserWindows
+  // Collect windows that need repositioning, grouped by (oldDisplay -> newDisplay) transition
+  // Key: "oldDisplayId->newDisplayId"
+  const transitionGroups = new Map<string, {
+    entries: WindowEntry[];
+    oldDisplay: DisplaySnapshot;
+    newDisplay: DisplaySnapshot;
+  }>();
+
+  // Also track orphaned windows (center off-screen, no old display found)
+  const orphanedWindows: WindowEntry[] = [];
+
   const allWindows = BrowserWindow.getAllWindows();
   for (const win of allWindows) {
     if (win.isDestroyed()) continue;
@@ -238,13 +334,16 @@ function handleDisplayChange(): void {
     // Check if window is still accessible on a current display
     if (isWindowAccessible(newDisplays, bounds)) {
       // Window is still reachable - but check if its display changed size
-      // (e.g. switching from a 2560px monitor to a 1440px one on the same port)
       const oldDisplay = findDisplayForPoint(oldDisplays, centerX, centerY);
       if (oldDisplay && changedDisplayIds.has(oldDisplay.id)) {
         const newDisplay = newById.get(oldDisplay.id);
         if (newDisplay) {
-          // Same display ID but different size - reposition proportionally
-          repositionWindow(win, bounds, oldDisplay, newDisplay);
+          // Same display ID but different size - needs repositioning
+          const key = `${oldDisplay.id}->${newDisplay.id}`;
+          if (!transitionGroups.has(key)) {
+            transitionGroups.set(key, { entries: [], oldDisplay, newDisplay });
+          }
+          transitionGroups.get(key)!.entries.push({ win, bounds });
         }
       }
       // Otherwise, window is fine where it is
@@ -253,22 +352,39 @@ function handleDisplayChange(): void {
 
     // Window center is off-screen - find where it was and move it
     const oldDisplay = findDisplayForPoint(oldDisplays, centerX, centerY);
-    const newDisplay = findBestNewDisplay(oldDisplay, newDisplays);
-
     if (oldDisplay) {
-      repositionWindow(win, bounds, oldDisplay, newDisplay);
+      const newDisplay = findBestNewDisplay(oldDisplay, newDisplays);
+      const key = `${oldDisplay.id}->${newDisplay.id}`;
+      if (!transitionGroups.has(key)) {
+        transitionGroups.set(key, { entries: [], oldDisplay, newDisplay });
+      }
+      transitionGroups.get(key)!.entries.push({ win, bounds });
     } else {
-      // Can't determine old display - just center on the best new display
-      const wa = newDisplay.workArea;
-      const w = Math.min(bounds.width, wa.width);
-      const h = Math.min(bounds.height, wa.height);
-      const x = wa.x + Math.round((wa.width - w) / 2);
-      const y = wa.y + Math.round((wa.height - h) / 2);
-      DEBUG && console.log(
-        `[display-watcher] Centering orphaned window ${win.id} on display ${newDisplay.id}: (${x},${y} ${w}x${h})`
-      );
-      win.setBounds({ x, y, width: w, height: h });
+      // Cannot determine old display
+      orphanedWindows.push({ win, bounds });
     }
+  }
+
+  // Reposition each group with distance scaling
+  for (const [key, group] of transitionGroups) {
+    DEBUG && console.log(
+      `[display-watcher] Repositioning group [${key}]: ${group.entries.length} window(s)`
+    );
+    repositionWindowGroup(group.entries, group.oldDisplay, group.newDisplay);
+  }
+
+  // Handle orphaned windows: center them on the best available display
+  for (const { win, bounds } of orphanedWindows) {
+    const newDisplay = findBestNewDisplay(null, newDisplays);
+    const wa = newDisplay.workArea;
+    const w = Math.min(bounds.width, wa.width);
+    const h = Math.min(bounds.height, wa.height);
+    const x = wa.x + Math.round((wa.width - w) / 2);
+    const y = wa.y + Math.round((wa.height - h) / 2);
+    DEBUG && console.log(
+      `[display-watcher] Centering orphaned window ${win.id} on display ${newDisplay.id}: (${x},${y} ${w}x${h})`
+    );
+    win.setBounds({ x, y, width: w, height: h });
   }
 
   // Update snapshot for next change
@@ -300,22 +416,22 @@ export function initDisplayWatcher(): void {
 
   DEBUG && console.log(
     `[display-watcher] Initialized with ${_previousDisplays.length} display(s): ` +
-    _previousDisplays.map(d => `${d.id} (${d.workArea.width}x${d.workArea.height})`).join(', ')
+    _previousDisplays.map(d => `${d.id} (${d.workArea.width}x${d.workArea.height})`).join(", ")
   );
 
   // Listen for display changes
   screen.on('display-added', () => {
-    DEBUG && console.log('[display-watcher] display-added event');
+    DEBUG && console.log("[display-watcher] display-added event");
     onDisplayChange();
   });
 
   screen.on('display-removed', () => {
-    DEBUG && console.log('[display-watcher] display-removed event');
+    DEBUG && console.log("[display-watcher] display-removed event");
     onDisplayChange();
   });
 
   screen.on('display-metrics-changed', (_event: Electron.Event, _display: Display, changedMetrics: string[]) => {
-    DEBUG && console.log('[display-watcher] display-metrics-changed event, metrics:', changedMetrics.join(', '));
+    DEBUG && console.log("[display-watcher] display-metrics-changed event, metrics:", changedMetrics.join(", "));
     // Only react to meaningful changes (bounds, workArea, scaleFactor)
     // Ignore rotation-only changes
     const meaningful = changedMetrics.some(m => ['bounds', 'workArea', 'scaleFactor'].includes(m));
@@ -337,5 +453,5 @@ export function cleanupDisplayWatcher(): void {
   screen.removeAllListeners('display-added');
   screen.removeAllListeners('display-removed');
   screen.removeAllListeners('display-metrics-changed');
-  DEBUG && console.log('[display-watcher] Cleaned up');
+  DEBUG && console.log("[display-watcher] Cleaned up");
 }

@@ -25,62 +25,69 @@ Status of each item from the original list:
 - [ ] no way to clear text in cmd bar. eg i type something, hit tab to inline complete a long suggestion, but then change my mind. esc closes the bar, and upon reopening, the text i don't want is still there. how about we use izui style nav - first escape clears the typed text, second closes cmd
 - [ ] shift-tab in cmd bar should cycle through suggestions in reverse
 - [ ] adding new note from any method gives the item card the url icon in the tags instead of document icon
+- [ ] we lost click-hold-drag on web pages again
+- [ ] cmd inline suggestions are auto-autocompleting, eg: cmd: barf -> kagi search for barf -> change default search to ddg, confirm works for new search, eg cmd: blah -> cmd: barf -> i see the autocomplete but don't hit shift, hit enter instead -> loads the suggestion url that i didn't want (expected it to do new search w/ ddg)
+- [ ] settings labels are there, but in some cases the layout is bad, crammed in on both sides around checkbox, should do consistent and readable layout across all settings panes, maybe needs dedicated peek- component set
 
 ## Session Restore
 - [x] `yarn start` → open web pages → move/resize them → Ctrl+C → `yarn start` — silently restores, correct positions
-  - RETEST: fixed page.js URL params, crash dialog now requires crashCount > 0 (single unclean shutdown silently restores)
+  - [x] RETEST: fixed page.js URL params, crash dialog now requires crashCount > 0 (single unclean shutdown silently restores)
 - [x] Cmd+Q quit → restart — silently restores (clean shutdown, no dialog)
-  - RETEST: fixed quitApp() to not call shutdown() before app.quit()
+  - [x] RETEST: fixed quitApp() to not call shutdown() before app.quit()
 - [x] Ctrl+C quit → restart — silently restores (single unclean shutdown, no dialog)
-  - RETEST: changed crash dialog condition to require crashCount > 0
+  - [x] RETEST: changed crash dialog condition to require crashCount > 0
 - [x] Session restore doesn't duplicate HUD/utility windows (no double dock bounce)
-  - RETEST: utility-role windows skipped during session save
+  - [x] RETEST: utility-role windows skipped during session save
 - [x] cmd → "save session" → cmd → "restore previous session" — confirmation dialog, restores
   - this is the manual save/restore command (separate from auto-restore on startup)
 
 ## Window Dragging
+
 - [ ] Cmd: long-press anywhere in visible bar → drag works
-  - RETEST: narrowed exclusions to only focused text inputs; buttons/links/etc now allow drag
+  - [x] RETEST: narrowed exclusions to only focused text inputs; buttons/links/etc now allow drag
   - failed, couldn't get it to drag at all
 - [ ] Tags: long-press on item cards, tag buttons, any non-text-input area → drag works
-  - RETEST: same fix
+  - [x] RETEST: same fix
   - failed, it kinda worked sometimes, but lost it sometimes, and also did select the tag button (for example), but should not do the activation, since the user is only trying to move the window not select a tag
+  - same failure
 - [ ] Settings: long-press on nav items, labels, non-focused inputs → drag works
-  - RETEST: same fix
+  - [ ] RETEST: same fix
   - not tested, needs fix from above
 - [ ] Editor: long-press drag
-  - RETEST: same fix
+  - [ ] RETEST: same fix
   - not tested, needs fix from above
 - [ ] Fast cursor movement during drag doesn't drop the drag
-  - RETEST: replaced e.buttons check with explicit mouseButtonDown boolean tracking
+  - [x] RETEST: replaced e.buttons check with explicit mouseButtonDown boolean tracking
+  - still broken
   - definitely not fixed, maybe worse even
 - [x] Page host: minimal window, no click-through needed (transparent area eliminated)
-  - RETEST: replaced fullscreen transparent window with tight-fitting minimal window
+  - [x] RETEST: replaced fullscreen transparent window with tight-fitting minimal window
 - [x] Page host: navbar show/hide doesn't cause webview jump
-  - RETEST: window always includes navbar space, show/hide is CSS-only (no setBounds)
+  - [x] RETEST: window always includes navbar space, show/hide is CSS-only (no setBounds)
 
 ## Command Palette
 - [ ] Type "ta" — ghost text shows "tag" (prefix match on fresh/equal scores)
-  - RETEST: added deterministic tiebreakers (prefix > shorter > alphabetical)
+  - [ ] RETEST: added deterministic tiebreakers (prefix > shorter > alphabetical)
   - still "tag" as first inline suggestion, no matter how many times i select "open tags"
 - [ ] Use "open tags" many times → type "ta" — adapts to suggest "open tags"
-  - RETEST: same fix ensures frecency wins when scores diverge
+  - [ ] RETEST: same fix ensures frecency wins when scores diverge
+  - not tested
 
 ## Search Engines
-- [ ] Set Kagi as default via dropdown → cmd search uses kagi.com
-  - RETEST: fixed namespace mismatch (web search vs websearch), defaultEngine now a select dropdown
-- [ ] Search suggestions appear as you type in search UI
-  - RETEST: added net-fetch IPC using Electron net.fetch() to bypass CORS
+- [x] Set Kagi as default via dropdown → cmd search uses kagi.com
+  - [x] RETEST: fixed namespace mismatch (web search vs websearch), defaultEngine now a select dropdown
+- [x] Search suggestions appear as you type in search UI
+  - [x] RETEST: added net-fetch IPC using Electron net.fetch() to bypass CORS
 
 ## Settings UI
-- [ ] Editor, Web Search, Example Gallery sections show human-readable labels
-  - RETEST: added labels to extension schema files, settings.js uses them
-- [ ] Datastore section renders inline (not new window), shows correct table counts
-  - RETEST: renders as pane, updated table list to current schema
-- [ ] Diagnostics section renders inline (not new window)
-  - RETEST: renders as pane
-- [ ] Clear quit shortcut field → resets to default (Cmd+Q visible)
-  - RETEST: empty string auto-resets to schema default, placeholder shows default
+- [x] Editor, Web Search, Example Gallery sections show human-readable labels
+  - [x] RETEST: added labels to extension schema files, settings.js uses them
+- [x] Datastore section renders inline (not new window), shows correct table counts
+  - [x]RETEST: renders as pane, updated table list to current schema
+- [x] Diagnostics section renders inline (not new window)
+  - [x] RETEST: renders as pane
+- [x] Clear quit shortcut field → resets to default (Cmd+Q visible)
+  - [x] RETEST: empty string auto-resets to schema default, placeholder shows default
 
 ## HUD
 - [ ] HUD only visible when Peek is focused, hides when switching to other app
@@ -119,9 +126,9 @@ lots of issues with the whole flow. this is a challenging feature, maybe we stop
 
 - [ ] Dark mode: web pages respect OS color scheme (not forced dark)
   - FIX: nativeTheme.themeSource only set to 'dark' for 'force' mode, 'system' for everything else
-  - not tested yet
+  - [ ] not tested yet, need better test steps
 - [x] Note inline hashtags: `#foo #bar` in note text creates tag associations
   - FIX: extractInlineHashtags() scans text content for hashtag patterns
 - [ ] Display switching: windows reposition proportionally when changing displays
-  - NEW: display-watcher.ts monitors display-added/removed/metrics-changed, remaps window positions proportionally
-  - haven't tested yet
+  - [x] NEW: display-watcher.ts monitors display-added/removed/metrics-changed, remaps window positions proportionally
+  - not working. tested moving from laptop to big screen as main display. windows in correct place, but as if the top-left of big screen was entire small screen. want to match the layout, while scaling *distance* up/down between screen sizes.
