@@ -15,12 +15,17 @@ const api = window.app;
 // Storage keys for persistent adaptive matching
 const STORAGE_KEY_FEEDBACK = 'adaptiveFeedback';
 const STORAGE_KEY_COUNTS = 'matchCounts';
+const STORAGE_KEY_VERSION = 'adaptiveVersion';
+// Version 2: removed prefix feedback that caused cross-contamination
+// (e.g., typing 'tag' no longer pollutes the 'ta' feedback entry)
+const ADAPTIVE_VERSION = 2;
 
 // Cache for adaptive data
 let adaptiveDataCache = null;
 
 /**
  * Load persisted adaptive data from extension settings
+ * Checks data version and resets stale data from older feedback algorithms
  */
 const loadAdaptiveData = async () => {
   if (adaptiveDataCache) {
@@ -29,12 +34,31 @@ const loadAdaptiveData = async () => {
 
   const result = await api.settings.get();
   if (result.success && result.data) {
-    adaptiveDataCache = {
-      feedback: result.data[STORAGE_KEY_FEEDBACK] || {},
-      counts: result.data[STORAGE_KEY_COUNTS] || {}
-    };
+    const storedVersion = result.data[STORAGE_KEY_VERSION] || 0;
+
+    if (storedVersion < ADAPTIVE_VERSION) {
+      // Data is from an older algorithm version (prefix feedback caused cross-contamination).
+      // Reset feedback but keep match counts (frecency) since those are still valid.
+      log('cmd:panel', 'loadAdaptiveData: resetting stale feedback data (version', storedVersion, '->', ADAPTIVE_VERSION + ')');
+      adaptiveDataCache = {
+        feedback: {},
+        counts: result.data[STORAGE_KEY_COUNTS] || {}
+      };
+      // Persist the reset and new version
+      await Promise.all([
+        api.settings.setKey(STORAGE_KEY_FEEDBACK, {}),
+        api.settings.setKey(STORAGE_KEY_VERSION, ADAPTIVE_VERSION)
+      ]);
+    } else {
+      adaptiveDataCache = {
+        feedback: result.data[STORAGE_KEY_FEEDBACK] || {},
+        counts: result.data[STORAGE_KEY_COUNTS] || {}
+      };
+    }
   } else {
     adaptiveDataCache = { feedback: {}, counts: {} };
+    // Set version for fresh installs
+    await api.settings.setKey(STORAGE_KEY_VERSION, ADAPTIVE_VERSION);
   }
   log('cmd:panel', 'loadAdaptiveData: loaded', Object.keys(adaptiveDataCache.feedback).length, 'feedback entries,', Object.keys(adaptiveDataCache.counts).length, 'count entries');
   return adaptiveDataCache;
@@ -1538,10 +1562,13 @@ function findMatchingCommands(text) {
  *
  * Records feedback for:
  * 1. The exact typed string (full weight)
- * 2. Prefixes of the typed string (half weight) - helps with partial typing
- * 3. Substrings of the command name that could be search queries (quarter weight)
- *    - e.g., selecting "open tags" also creates entries for "ta", "tag", "tags"
- *    - This ensures the command ranks well when searched by any matching substring
+ * 2. Substrings of the command name that could be search queries (quarter weight)
+ *    - e.g., selecting "open tags" via "open" also creates entries for "ta", "tag", "tags"
+ *    - This ensures multi-word commands rank well when searched by any word substring
+ *
+ * Note: Prefix feedback (typing "tag" adds to "ta") was removed in v2 because it
+ * caused cross-contamination between queries (e.g., "tag" command usage polluted
+ * the "ta" query, preventing "open tags" from ranking first).
  */
 function updateAdaptiveFeedback(typed, name) {
   // Initialize feedback for this typed string if needed
@@ -1556,20 +1583,6 @@ function updateAdaptiveFeedback(typed, name) {
   }
   state.adaptiveFeedback[typed][name]++;
 
-  // Also record feedback for all prefixes of the typed string
-  // This helps with single-character matching
-  for (let i = 1; i < typed.length; i++) {
-    const prefix = typed.substring(0, i);
-    if (!state.adaptiveFeedback[prefix]) {
-      state.adaptiveFeedback[prefix] = {};
-    }
-    if (!state.adaptiveFeedback[prefix][name]) {
-      state.adaptiveFeedback[prefix][name] = 0;
-    }
-    // Give partial credit to prefixes (half weight)
-    state.adaptiveFeedback[prefix][name] += 0.5;
-  }
-
   // Record feedback for substrings of the command name that could be typed
   // as search queries. This covers the case where a user always types "open"
   // to reach "open tags" but sometimes types "ta" instead - the command
@@ -1579,7 +1592,7 @@ function updateAdaptiveFeedback(typed, name) {
   const words = lowerName.split(/[\s-]+/); // Split on spaces and hyphens
 
   for (const word of words) {
-    // Skip words that are the same as or prefix of the typed text (already covered above)
+    // Skip words that are the same as or prefix of the typed text (already covered by the direct feedback or redundant)
     if (lowerTyped.startsWith(word) || word.startsWith(lowerTyped)) {
       continue;
     }
