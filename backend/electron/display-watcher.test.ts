@@ -920,4 +920,520 @@ describe("Display Watcher - Pure Logic", () => {
       assert.strictEqual(restored2.y, bounds2.y);
     });
   });
+
+  // ==========================================================================
+  // New tests for pre-debounce capture, suppress timer cancellation, isRemoval
+  // ==========================================================================
+
+  describe("captureWindowBounds", () => {
+    // Pure version of captureWindowBounds that accepts mock windows
+    interface MockWindow {
+      id: number;
+      destroyed: boolean;
+      visible: boolean;
+      bounds: Rectangle;
+    }
+
+    function captureWindowBounds(windows: MockWindow[]): Map<number, Rectangle> {
+      const result = new Map<number, Rectangle>();
+      for (const win of windows) {
+        if (win.destroyed || !win.visible) continue;
+        result.set(win.id, win.bounds);
+      }
+      return result;
+    }
+
+    it("captures bounds of all visible, non-destroyed windows", () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: false, visible: true, bounds: { x: 100, y: 200, width: 800, height: 600 } },
+        { id: 2, destroyed: false, visible: true, bounds: { x: 300, y: 400, width: 600, height: 400 } },
+      ];
+      const result = captureWindowBounds(windows);
+      assert.strictEqual(result.size, 2);
+      assert.deepStrictEqual(result.get(1), { x: 100, y: 200, width: 800, height: 600 });
+      assert.deepStrictEqual(result.get(2), { x: 300, y: 400, width: 600, height: 400 });
+    });
+
+    it("skips destroyed windows", () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: true, visible: true, bounds: { x: 100, y: 200, width: 800, height: 600 } },
+        { id: 2, destroyed: false, visible: true, bounds: { x: 300, y: 400, width: 600, height: 400 } },
+      ];
+      const result = captureWindowBounds(windows);
+      assert.strictEqual(result.size, 1);
+      assert.strictEqual(result.has(1), false);
+      assert.strictEqual(result.has(2), true);
+    });
+
+    it("skips non-visible windows", () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: false, visible: false, bounds: { x: 100, y: 200, width: 800, height: 600 } },
+        { id: 2, destroyed: false, visible: true, bounds: { x: 300, y: 400, width: 600, height: 400 } },
+      ];
+      const result = captureWindowBounds(windows);
+      assert.strictEqual(result.size, 1);
+      assert.strictEqual(result.has(1), false);
+      assert.strictEqual(result.has(2), true);
+    });
+
+    it("skips windows that are both destroyed and non-visible", () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: true, visible: false, bounds: { x: 100, y: 200, width: 800, height: 600 } },
+      ];
+      const result = captureWindowBounds(windows);
+      assert.strictEqual(result.size, 0);
+    });
+
+    it("returns empty map when no windows exist", () => {
+      const result = captureWindowBounds([]);
+      assert.strictEqual(result.size, 0);
+    });
+
+    it("returns empty map when all windows are destroyed or hidden", () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: true, visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } },
+        { id: 2, destroyed: false, visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 } },
+        { id: 3, destroyed: true, visible: false, bounds: { x: 0, y: 0, width: 800, height: 600 } },
+      ];
+      const result = captureWindowBounds(windows);
+      assert.strictEqual(result.size, 0);
+    });
+  });
+
+  describe("suppressDisplayRepositioning timer cancellation", () => {
+    // Model the state machine of suppress toggling and timer/bounds management.
+    // This mirrors the logic in suppressDisplayRepositioning() from display-watcher.ts.
+    interface WatcherState {
+      suppressRepositioning: boolean;
+      debounceTimer: ReturnType<typeof setTimeout> | null;
+      preDebounceWindowBounds: Map<number, Rectangle> | null;
+    }
+
+    function suppressDisplayRepositioning(state: WatcherState, suppress: boolean): void {
+      state.suppressRepositioning = suppress;
+      if (suppress) {
+        if (state.debounceTimer) {
+          clearTimeout(state.debounceTimer);
+          state.debounceTimer = null;
+        }
+        state.preDebounceWindowBounds = null;
+      } else {
+        if (state.debounceTimer) {
+          clearTimeout(state.debounceTimer);
+          state.debounceTimer = null;
+        }
+        state.preDebounceWindowBounds = null;
+      }
+    }
+
+    it("cancels pending debounce timer when suppression is enabled", () => {
+      const state: WatcherState = {
+        suppressRepositioning: false,
+        debounceTimer: setTimeout(() => {}, 100000),
+        preDebounceWindowBounds: new Map([[1, { x: 0, y: 0, width: 800, height: 600 }]]),
+      };
+      suppressDisplayRepositioning(state, true);
+      assert.strictEqual(state.debounceTimer, null);
+      assert.strictEqual(state.preDebounceWindowBounds, null);
+      assert.strictEqual(state.suppressRepositioning, true);
+    });
+
+    it("cancels pending debounce timer when suppression is disabled", () => {
+      const state: WatcherState = {
+        suppressRepositioning: true,
+        debounceTimer: setTimeout(() => {}, 100000),
+        preDebounceWindowBounds: new Map([[2, { x: 100, y: 100, width: 400, height: 300 }]]),
+      };
+      suppressDisplayRepositioning(state, false);
+      assert.strictEqual(state.debounceTimer, null);
+      assert.strictEqual(state.preDebounceWindowBounds, null);
+      assert.strictEqual(state.suppressRepositioning, false);
+    });
+
+    it("clears pre-debounce bounds when enabling suppression even without timer", () => {
+      const state: WatcherState = {
+        suppressRepositioning: false,
+        debounceTimer: null,
+        preDebounceWindowBounds: new Map([[1, { x: 0, y: 0, width: 800, height: 600 }]]),
+      };
+      suppressDisplayRepositioning(state, true);
+      assert.strictEqual(state.preDebounceWindowBounds, null);
+      assert.strictEqual(state.debounceTimer, null);
+    });
+
+    it("clears pre-debounce bounds when disabling suppression even without timer", () => {
+      const state: WatcherState = {
+        suppressRepositioning: true,
+        debounceTimer: null,
+        preDebounceWindowBounds: new Map([[3, { x: 200, y: 200, width: 600, height: 400 }]]),
+      };
+      suppressDisplayRepositioning(state, false);
+      assert.strictEqual(state.preDebounceWindowBounds, null);
+      assert.strictEqual(state.debounceTimer, null);
+    });
+
+    it("is safe to call with no timer and no bounds", () => {
+      const state: WatcherState = {
+        suppressRepositioning: false,
+        debounceTimer: null,
+        preDebounceWindowBounds: null,
+      };
+      suppressDisplayRepositioning(state, true);
+      assert.strictEqual(state.suppressRepositioning, true);
+      assert.strictEqual(state.debounceTimer, null);
+      assert.strictEqual(state.preDebounceWindowBounds, null);
+    });
+
+    it("prevents stale debounced handler from firing after suppress toggle", () => {
+      // Simulate: display event fires, starts debounce timer, then suppress(true)
+      // is called before timer fires. The timer should be cancelled.
+      let handlerFired = false;
+      const state: WatcherState = {
+        suppressRepositioning: false,
+        debounceTimer: setTimeout(() => { handlerFired = true; }, 50),
+        preDebounceWindowBounds: new Map([[1, { x: 0, y: 0, width: 800, height: 600 }]]),
+      };
+
+      suppressDisplayRepositioning(state, true);
+
+      // Verify timer was cleared (handler should not fire)
+      assert.strictEqual(state.debounceTimer, null);
+      // Wait longer than the timer would have fired to confirm it was cancelled
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          assert.strictEqual(handlerFired, false, "debounced handler should NOT have fired after suppression");
+          resolve();
+        }, 100);
+      });
+    });
+  });
+
+  describe("onDisplayChange isRemoval flag and pre-debounce capture", () => {
+    // Model the onDisplayChange logic as a pure state machine.
+    // This mirrors the debounce + pre-debounce capture logic from display-watcher.ts.
+    interface MockWindow {
+      id: number;
+      destroyed: boolean;
+      visible: boolean;
+      bounds: Rectangle;
+    }
+
+    interface DebounceState {
+      debounceTimer: ReturnType<typeof setTimeout> | null;
+      preDebounceWindowBounds: Map<number, Rectangle> | null;
+      handleDisplayChangeCalled: boolean;
+    }
+
+    function captureWindowBounds(windows: MockWindow[]): Map<number, Rectangle> {
+      const result = new Map<number, Rectangle>();
+      for (const win of windows) {
+        if (win.destroyed || !win.visible) continue;
+        result.set(win.id, win.bounds);
+      }
+      return result;
+    }
+
+    function onDisplayChange(
+      state: DebounceState,
+      windows: MockWindow[],
+      isRemoval: boolean,
+      debounceMs: number
+    ): void {
+      // On the FIRST event in a debounce window, capture bounds eagerly if removal
+      if (!state.debounceTimer && isRemoval) {
+        state.preDebounceWindowBounds = captureWindowBounds(windows);
+      }
+
+      if (state.debounceTimer) {
+        clearTimeout(state.debounceTimer);
+      }
+      state.debounceTimer = setTimeout(() => {
+        state.debounceTimer = null;
+        state.handleDisplayChangeCalled = true;
+        state.preDebounceWindowBounds = null;
+      }, debounceMs);
+    }
+
+    it("captures window bounds on first display-removed event (no existing timer)", () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: false, visible: true, bounds: { x: 100, y: 200, width: 800, height: 600 } },
+        { id: 2, destroyed: false, visible: true, bounds: { x: 2700, y: 100, width: 600, height: 400 } },
+      ];
+      const state: DebounceState = {
+        debounceTimer: null,
+        preDebounceWindowBounds: null,
+        handleDisplayChangeCalled: false,
+      };
+
+      onDisplayChange(state, windows, true, 500);
+
+      assert.notStrictEqual(state.preDebounceWindowBounds, null);
+      assert.strictEqual(state.preDebounceWindowBounds!.size, 2);
+      assert.deepStrictEqual(state.preDebounceWindowBounds!.get(1), { x: 100, y: 200, width: 800, height: 600 });
+      assert.deepStrictEqual(state.preDebounceWindowBounds!.get(2), { x: 2700, y: 100, width: 600, height: 400 });
+
+      // Cleanup
+      if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    });
+
+    it("does NOT re-capture bounds on subsequent events during debounce window", () => {
+      const originalWindows: MockWindow[] = [
+        { id: 1, destroyed: false, visible: true, bounds: { x: 100, y: 200, width: 800, height: 600 } },
+      ];
+      const state: DebounceState = {
+        debounceTimer: null,
+        preDebounceWindowBounds: null,
+        handleDisplayChangeCalled: false,
+      };
+
+      // First event captures bounds
+      onDisplayChange(state, originalWindows, true, 500);
+      const capturedBounds = state.preDebounceWindowBounds;
+      assert.notStrictEqual(capturedBounds, null);
+
+      // macOS relocates window (simulated by different bounds)
+      const relocatedWindows: MockWindow[] = [
+        { id: 1, destroyed: false, visible: true, bounds: { x: 500, y: 300, width: 800, height: 600 } },
+      ];
+
+      // Second event during debounce - should NOT overwrite pre-debounce bounds
+      onDisplayChange(state, relocatedWindows, true, 500);
+      assert.strictEqual(state.preDebounceWindowBounds, capturedBounds,
+        "pre-debounce bounds should NOT be overwritten by subsequent events");
+      assert.deepStrictEqual(state.preDebounceWindowBounds!.get(1), { x: 100, y: 200, width: 800, height: 600 },
+        "bounds should still reflect the ORIGINAL positions");
+
+      // Cleanup
+      if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    });
+
+    it("does NOT capture bounds for non-removal events (isRemoval=false)", () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: false, visible: true, bounds: { x: 100, y: 200, width: 800, height: 600 } },
+      ];
+      const state: DebounceState = {
+        debounceTimer: null,
+        preDebounceWindowBounds: null,
+        handleDisplayChangeCalled: false,
+      };
+
+      onDisplayChange(state, windows, false, 500);
+
+      assert.strictEqual(state.preDebounceWindowBounds, null,
+        "should NOT capture bounds for non-removal events");
+
+      // Cleanup
+      if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    });
+
+    it("clears pre-debounce bounds after debounced handler fires", async () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: false, visible: true, bounds: { x: 100, y: 200, width: 800, height: 600 } },
+      ];
+      const state: DebounceState = {
+        debounceTimer: null,
+        preDebounceWindowBounds: null,
+        handleDisplayChangeCalled: false,
+      };
+
+      onDisplayChange(state, windows, true, 30);
+      assert.notStrictEqual(state.preDebounceWindowBounds, null);
+
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          assert.strictEqual(state.preDebounceWindowBounds, null,
+            "pre-debounce bounds should be cleared after handler fires");
+          assert.strictEqual(state.handleDisplayChangeCalled, true,
+            "handleDisplayChange should have been called");
+          assert.strictEqual(state.debounceTimer, null,
+            "debounce timer should be null after handler fires");
+          resolve();
+        }, 80);
+      });
+    });
+
+    it("resets debounce timer on each subsequent event", () => {
+      const windows: MockWindow[] = [
+        { id: 1, destroyed: false, visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } },
+      ];
+      const state: DebounceState = {
+        debounceTimer: null,
+        preDebounceWindowBounds: null,
+        handleDisplayChangeCalled: false,
+      };
+
+      onDisplayChange(state, windows, true, 500);
+      const firstTimer = state.debounceTimer;
+      assert.notStrictEqual(firstTimer, null);
+
+      // Second event should create a new timer
+      onDisplayChange(state, windows, false, 500);
+      assert.notStrictEqual(state.debounceTimer, null);
+      // Timer reference changes because old was cleared and new was created
+      // (Node may reuse timer refs but the clearTimeout+setTimeout cycle happens)
+      assert.notStrictEqual(state.debounceTimer, firstTimer,
+        "debounce timer should be reset on subsequent event");
+
+      // Cleanup
+      if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    });
+  });
+
+  describe("Phase 1 pre-debounce bounds fallback", () => {
+    // Tests the pattern: _preDebounceWindowBounds?.get(win.id) ?? win.getBounds()
+    // This is used in handleDisplayChange Phase 1 to correctly identify which display
+    // a window was on BEFORE macOS auto-relocated it.
+
+    interface MockWindow {
+      id: number;
+      currentBounds: Rectangle; // what getBounds() returns NOW (post-relocation)
+    }
+
+    function getEffectiveBounds(
+      preDebounceWindowBounds: Map<number, Rectangle> | null,
+      win: MockWindow
+    ): Rectangle {
+      return preDebounceWindowBounds?.get(win.id) ?? win.currentBounds;
+    }
+
+    it("uses pre-debounce bounds when available", () => {
+      const preDebounce = new Map<number, Rectangle>([
+        [1, { x: 2700, y: 100, width: 800, height: 600 }],  // was on external display
+      ]);
+      const win: MockWindow = {
+        id: 1,
+        currentBounds: { x: 100, y: 100, width: 800, height: 600 },  // macOS moved it to laptop
+      };
+
+      const bounds = getEffectiveBounds(preDebounce, win);
+      assert.deepStrictEqual(bounds, { x: 2700, y: 100, width: 800, height: 600 },
+        "should use pre-debounce bounds (original position on external display)");
+    });
+
+    it("falls back to current bounds when pre-debounce map is null", () => {
+      const win: MockWindow = {
+        id: 1,
+        currentBounds: { x: 100, y: 100, width: 800, height: 600 },
+      };
+
+      const bounds = getEffectiveBounds(null, win);
+      assert.deepStrictEqual(bounds, { x: 100, y: 100, width: 800, height: 600 },
+        "should fall back to current bounds when no pre-debounce map");
+    });
+
+    it("falls back to current bounds when window not in pre-debounce map", () => {
+      const preDebounce = new Map<number, Rectangle>([
+        [2, { x: 2700, y: 100, width: 800, height: 600 }],  // different window
+      ]);
+      const win: MockWindow = {
+        id: 1,
+        currentBounds: { x: 100, y: 100, width: 800, height: 600 },
+      };
+
+      const bounds = getEffectiveBounds(preDebounce, win);
+      assert.deepStrictEqual(bounds, { x: 100, y: 100, width: 800, height: 600 },
+        "should fall back to current bounds when window not in pre-debounce map");
+    });
+
+    it("correctly identifies window's home display using pre-debounce bounds", () => {
+      // Scenario: external display (display1080) removed. macOS moved window to laptop.
+      // Pre-debounce bounds show the window was at (2700, 100) - on display1080.
+      // Current bounds show (100, 100) - on the laptop display.
+      const preDebounce = new Map<number, Rectangle>([
+        [1, { x: 2700, y: 100, width: 800, height: 600 }],
+      ]);
+      const win: MockWindow = {
+        id: 1,
+        currentBounds: { x: 100, y: 100, width: 800, height: 600 },
+      };
+
+      const bounds = getEffectiveBounds(preDebounce, win);
+      const centerX = bounds.x + Math.round(bounds.width / 2);
+      const centerY = bounds.y + Math.round(bounds.height / 2);
+
+      // With pre-debounce bounds, center is at (3100, 400) -> on display1080
+      const oldDisplays = [display1440, display1080];
+      const found = findDisplayForPoint(oldDisplays, centerX, centerY);
+      assert.strictEqual(found?.id, 2,
+        "should find the window was on display1080 using pre-debounce bounds");
+    });
+
+    it("without pre-debounce bounds, mis-identifies display after macOS relocation", () => {
+      // Same scenario but WITHOUT pre-debounce bounds - demonstrates the problem
+      const win: MockWindow = {
+        id: 1,
+        currentBounds: { x: 100, y: 100, width: 800, height: 600 },
+      };
+
+      const bounds = getEffectiveBounds(null, win);
+      const centerX = bounds.x + Math.round(bounds.width / 2);
+      const centerY = bounds.y + Math.round(bounds.height / 2);
+
+      // Without pre-debounce, center is at (500, 400) -> on display1440 (laptop),
+      // even though the window WAS on display1080 before macOS moved it
+      const oldDisplays = [display1440, display1080];
+      const found = findDisplayForPoint(oldDisplays, centerX, centerY);
+      assert.strictEqual(found?.id, 1,
+        "without pre-debounce, window appears to be on display1440 (wrong - macOS already moved it)");
+    });
+
+    it("handles multiple windows with mixed pre-debounce availability", () => {
+      // Window 1: was on external, captured in pre-debounce
+      // Window 2: was on laptop, NOT in pre-debounce (was visible but different ID)
+      // Window 3: new window created after capture, NOT in pre-debounce
+      const preDebounce = new Map<number, Rectangle>([
+        [1, { x: 2700, y: 100, width: 800, height: 600 }],
+        [2, { x: 200, y: 200, width: 600, height: 400 }],
+      ]);
+
+      const win1: MockWindow = { id: 1, currentBounds: { x: 50, y: 50, width: 800, height: 600 } };
+      const win2: MockWindow = { id: 2, currentBounds: { x: 200, y: 200, width: 600, height: 400 } };
+      const win3: MockWindow = { id: 3, currentBounds: { x: 300, y: 300, width: 500, height: 350 } };
+
+      assert.deepStrictEqual(getEffectiveBounds(preDebounce, win1),
+        { x: 2700, y: 100, width: 800, height: 600 },
+        "win1 should use pre-debounce bounds");
+      assert.deepStrictEqual(getEffectiveBounds(preDebounce, win2),
+        { x: 200, y: 200, width: 600, height: 400 },
+        "win2 should use pre-debounce bounds");
+      assert.deepStrictEqual(getEffectiveBounds(preDebounce, win3),
+        { x: 300, y: 300, width: 500, height: 350 },
+        "win3 should fall back to current bounds (not in pre-debounce)");
+    });
+
+    it("end-to-end: pre-debounce bounds enable correct home display save on removal", () => {
+      // Full scenario: external display removed, pre-debounce captured, Phase 1 saves home
+      const preDebounce = new Map<number, Rectangle>([
+        [1, { x: 2700, y: 100, width: 800, height: 600 }],  // was on display1080
+        [2, { x: 500, y: 300, width: 600, height: 400 }],    // was on display1440
+      ]);
+
+      // After macOS relocates windows, both are on display1440
+      const windows = [
+        { id: 1, currentBounds: { x: 100, y: 100, width: 800, height: 600 } },
+        { id: 2, currentBounds: { x: 500, y: 300, width: 600, height: 400 } },
+      ];
+
+      const removedDisplayIds = new Set([display1080.id]);
+      const oldDisplays = [display1440, display1080];
+      const savedHomes = new Map<number, WindowHomeDisplay>();
+
+      for (const win of windows) {
+        const bounds = getEffectiveBounds(preDebounce, win);
+        const centerX = bounds.x + Math.round(bounds.width / 2);
+        const centerY = bounds.y + Math.round(bounds.height / 2);
+
+        const oldDisplay = findDisplayForPoint(oldDisplays, centerX, centerY);
+        if (oldDisplay && removedDisplayIds.has(oldDisplay.id)) {
+          savedHomes.set(win.id, computeHomeDisplay(bounds, oldDisplay));
+        }
+      }
+
+      // Only window 1 should be saved as displaced (it was on the removed display)
+      assert.strictEqual(savedHomes.size, 1, "only window on removed display should be saved");
+      assert.strictEqual(savedHomes.has(1), true);
+      assert.strictEqual(savedHomes.has(2), false);
+      assert.strictEqual(savedHomes.get(1)!.displayId, display1080.id);
+    });
+  });
 });
