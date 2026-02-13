@@ -242,7 +242,6 @@ let pageMouseButtonDown = false;
 
 // Hold-to-drag state
 const DRAG_HOLD_THRESHOLD = 150;
-const WEBVIEW_DRAG_HOLD_THRESHOLD = 300;
 let holdDragTimer = null;
 let holdDragPending = false;
 let holdDragStartScreenX = 0;
@@ -299,66 +298,132 @@ document.addEventListener('mouseup', () => {
   cancelHoldDrag();
 });
 
-// --- Webview hold-to-drag via injected long-press detector + overlay ---
+// --- Webview hold-to-drag via injected mouse event bridge + overlay ---
+// The webview is a separate Electron renderer process — mouse events inside it
+// don't propagate to the host document. We solve this by:
+// 1. Injecting a mouse event bridge into the guest page via executeJavaScript
+// 2. The guest script sends mousedown/mouseup/mousemove signals via console.log
+// 3. The host listens for console-message events on the <webview> element
+// 4. On mousedown from webview, the host starts a hold-to-drag timer
+// 5. On mouseup from webview, the host cancels the timer / ends drag
+// 6. When the timer fires, the host activates the drag overlay and starts dragging
+// The overlay (pointer-events:all when active) captures all subsequent mouse events.
 
-const WEBVIEW_LONG_PRESS_JS = `
+const WEBVIEW_MOUSE_BRIDGE_JS = `
 (function() {
-  if (window.__peekLongPressInstalled) return;
-  window.__peekLongPressInstalled = true;
+  if (window.__peekMouseBridgeInstalled) return;
+  window.__peekMouseBridgeInstalled = true;
 
-  let timer = null;
-  let startX = 0;
-  let startY = 0;
-
-  function cancel() {
-    if (timer) { clearTimeout(timer); timer = null; }
-  }
+  // Save native console.log before the page can override it
+  var nativeLog = console.log.bind(console);
+  var buttonDown = false;
 
   document.addEventListener('mousedown', function(e) {
     if (e.button !== 0) return;
-    startX = e.screenX;
-    startY = e.screenY;
-    cancel();
-    timer = setTimeout(function() {
-      console.log('__PEEK_DRAG__:' + e.screenX + ':' + e.screenY);
-      timer = null;
-    }, ${WEBVIEW_DRAG_HOLD_THRESHOLD});
+    buttonDown = true;
+    nativeLog('__PEEK_MOUSEDOWN__:' + e.screenX + ':' + e.screenY);
   }, true);
 
-  document.addEventListener('mousemove', function(e) {
-    if (!timer) return;
-    if (Math.abs(e.screenX - startX) > 5 || Math.abs(e.screenY - startY) > 5) {
-      cancel();
+  document.addEventListener('mouseup', function() {
+    if (buttonDown) {
+      buttonDown = false;
+      nativeLog('__PEEK_MOUSEUP__');
     }
   }, true);
 
-  document.addEventListener('mouseup', function() { cancel(); }, true);
-  document.addEventListener('scroll', function() { cancel(); }, true);
-  document.addEventListener('contextmenu', function() { cancel(); }, true);
+  // Only send mousemove while button is held (avoids flooding the bridge)
+  document.addEventListener('mousemove', function(e) {
+    if (!buttonDown) return;
+    nativeLog('__PEEK_MOUSEMOVE__:' + e.screenX + ':' + e.screenY);
+  }, true);
 })();
 `;
 
-webview.addEventListener('console-message', (e) => {
-  if (typeof e.message !== 'string' || !e.message.startsWith('__PEEK_DRAG__:')) return;
-  const parts = e.message.split(':');
-  const screenX = parseFloat(parts[1]);
-  const screenY = parseFloat(parts[2]);
-  if (isNaN(screenX) || isNaN(screenY)) return;
+// Track webview mouse state separately from document mouse state
+let webviewMouseDown = false;
+let webviewHoldTimer = null;
+let webviewHoldScreenX = 0;
+let webviewHoldScreenY = 0;
 
-  dragOverlay.classList.add('active');
-  pageMouseButtonDown = true;  // Webview mousedown doesn't bubble to document, set manually
-  startDrag(screenX, screenY);
-  DEBUG && console.log('[page] Webview long-press drag started at', screenX, screenY);
+function cancelWebviewHold() {
+  if (webviewHoldTimer) {
+    clearTimeout(webviewHoldTimer);
+    webviewHoldTimer = null;
+  }
+}
+
+webview.addEventListener('console-message', (e) => {
+  if (typeof e.message !== 'string') return;
+
+  // --- Mousedown from webview: start hold-to-drag timer ---
+  if (e.message.startsWith('__PEEK_MOUSEDOWN__:')) {
+    const parts = e.message.split(':');
+    const screenX = parseFloat(parts[1]);
+    const screenY = parseFloat(parts[2]);
+    if (isNaN(screenX) || isNaN(screenY)) return;
+
+    webviewMouseDown = true;
+    webviewHoldScreenX = screenX;
+    webviewHoldScreenY = screenY;
+    cancelWebviewHold();
+
+    webviewHoldTimer = setTimeout(() => {
+      webviewHoldTimer = null;
+      if (!webviewMouseDown) return;  // Released before threshold
+      // Activate the overlay so it captures all subsequent mouse events for the drag
+      dragOverlay.classList.add('active');
+      pageMouseButtonDown = true;
+      startDrag(webviewHoldScreenX, webviewHoldScreenY);
+      DEBUG && console.log('[page] Webview hold-drag started at', webviewHoldScreenX, webviewHoldScreenY);
+    }, DRAG_HOLD_THRESHOLD);
+    return;
+  }
+
+  // --- Mouseup from webview: cancel hold timer / end drag ---
+  if (e.message === '__PEEK_MOUSEUP__') {
+    webviewMouseDown = false;
+    cancelWebviewHold();
+    // If drag was active, end it (mouseup from webview won't bubble to document)
+    if (isDragging) {
+      pageMouseButtonDown = false;
+    }
+    return;
+  }
+
+  // --- Mousemove from webview: cancel hold if moved too far ---
+  if (e.message.startsWith('__PEEK_MOUSEMOVE__:')) {
+    if (!webviewHoldTimer) return;  // No pending hold
+    const parts = e.message.split(':');
+    const screenX = parseFloat(parts[1]);
+    const screenY = parseFloat(parts[2]);
+    if (isNaN(screenX) || isNaN(screenY)) return;
+    const dx = Math.abs(screenX - webviewHoldScreenX);
+    const dy = Math.abs(screenY - webviewHoldScreenY);
+    if (dx > 5 || dy > 5) {
+      cancelWebviewHold();
+    }
+    return;
+  }
 });
 
-webview.addEventListener('dom-ready', () => {
-  webview.executeJavaScript(WEBVIEW_LONG_PRESS_JS).catch(err => {
-    DEBUG && console.log('[page] Failed to inject long-press detector:', err.message);
+function injectMouseBridge() {
+  webview.executeJavaScript(WEBVIEW_MOUSE_BRIDGE_JS).catch(err => {
+    DEBUG && console.log('[page] Failed to inject mouse bridge:', err.message);
   });
+}
+
+// Inject on dom-ready (fires on each full navigation)
+webview.addEventListener('dom-ready', injectMouseBridge);
+
+// Also inject on did-navigate for robustness (some navigations may not fire dom-ready)
+webview.addEventListener('did-navigate', () => {
+  setTimeout(injectMouseBridge, 50);
 });
 
 dragOverlay.addEventListener('mouseup', () => {
   dragOverlay.classList.remove('active');
+  webviewMouseDown = false;
+  cancelWebviewHold();
 });
 
 // --- Custom resize (all corner handles) ---
