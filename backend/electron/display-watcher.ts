@@ -66,6 +66,11 @@ let _previousDisplays: DisplaySnapshot[] = [];
 /** Displaced windows awaiting restoration, keyed by BrowserWindow id */
 let _windowHomeDisplays: Map<number, WindowHomeDisplay> = new Map();
 
+/** Pre-debounce snapshot of window positions, captured immediately on display-removed.
+ * macOS moves windows from disconnected displays BEFORE our debounced handler fires,
+ * so we must capture window-to-display mappings eagerly. Maps windowId -> bounds. */
+let _preDebounceWindowBounds: Map<number, Electron.Rectangle> | null = null;
+
 /** Debounce timer for display changes (macOS fires multiple events rapidly) */
 let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
 const DEBOUNCE_MS = 500;
@@ -82,8 +87,23 @@ let _suppressRepositioning = false;
 export function suppressDisplayRepositioning(suppress: boolean): void {
   _suppressRepositioning = suppress;
   if (suppress) {
+    // Cancel any pending debounced display change handler.
+    // Without this, a display event that fired before suppression could trigger
+    // repositioning AFTER suppression ends (the debounce timer outlasts the suppress window).
+    if (_debounceTimer) {
+      clearTimeout(_debounceTimer);
+      _debounceTimer = null;
+    }
+    _preDebounceWindowBounds = null;
     console.log("[display-watcher] Repositioning SUPPRESSED (session restore in progress)");
   } else {
+    // Cancel any pending debounced events that accumulated during suppression.
+    // These would use stale snapshots and could reposition windows incorrectly.
+    if (_debounceTimer) {
+      clearTimeout(_debounceTimer);
+      _debounceTimer = null;
+    }
+    _preDebounceWindowBounds = null;
     // Take a fresh snapshot so the watcher has the correct baseline
     // after session restore created new windows
     _previousDisplays = snapshotDisplays();
@@ -483,7 +503,11 @@ function handleDisplayChange(): void {
   );
 
   // ========================================================================
-  // Phase 1 (Save): Save home display info for windows on removed displays
+  // Phase 1 (Save): Save home display info for windows on removed displays.
+  // Use pre-debounce window bounds if available — macOS auto-relocates windows from
+  // disconnected displays BEFORE our debounced handler runs, so win.getBounds() at this
+  // point returns the post-relocation position (on the laptop), not the original position
+  // (on the external display). The pre-debounce capture gives us the true positions.
   // ========================================================================
   if (removedDisplayIds.size > 0) {
     const allWindows = BrowserWindow.getAllWindows();
@@ -498,7 +522,9 @@ function handleDisplayChange(): void {
       // Only save if we haven't already saved a home display for this window
       if (_windowHomeDisplays.has(win.id)) continue;
 
-      const bounds = win.getBounds();
+      // Use pre-debounce bounds (captured before macOS moved windows) if available,
+      // otherwise fall back to current bounds (may already be post-relocation).
+      const bounds = _preDebounceWindowBounds?.get(win.id) ?? win.getBounds();
       const centerX = bounds.x + Math.round(bounds.width / 2);
       const centerY = bounds.y + Math.round(bounds.height / 2);
 
@@ -510,7 +536,8 @@ function handleDisplayChange(): void {
     }
 
     DEBUG && console.log(
-      `[display-watcher] Phase 1: Saved ${_windowHomeDisplays.size} displaced window(s)`
+      `[display-watcher] Phase 1: Saved ${_windowHomeDisplays.size} displaced window(s)` +
+      (_preDebounceWindowBounds ? ' (using pre-debounce bounds)' : ' (using current bounds)')
     );
   }
 
@@ -642,17 +669,44 @@ function handleDisplayChange(): void {
 }
 
 /**
+ * Capture a snapshot of all window bounds right now.
+ * Called immediately (before debounce) on display-removed events so we know
+ * which display each window was on BEFORE macOS auto-relocates them.
+ */
+function captureWindowBounds(): Map<number, Electron.Rectangle> {
+  const bounds = new Map<number, Electron.Rectangle>();
+  const allWindows = BrowserWindow.getAllWindows();
+  for (const win of allWindows) {
+    if (win.isDestroyed() || !win.isVisible()) continue;
+    bounds.set(win.id, win.getBounds());
+  }
+  return bounds;
+}
+
+/**
  * Debounced display change handler.
  * macOS fires multiple display events in quick succession (e.g. resolution + workArea).
  * We debounce to handle them as a single batch.
+ *
+ * @param isRemoval - if true, capture window bounds immediately before macOS moves them
  */
-function onDisplayChange(): void {
+function onDisplayChange(isRemoval = false): void {
+  // On the FIRST event in a debounce window, capture window bounds eagerly.
+  // macOS moves windows from disconnected displays before our debounced handler fires,
+  // so we need the pre-move positions to correctly identify which display each window was on.
+  if (!_debounceTimer && isRemoval) {
+    _preDebounceWindowBounds = captureWindowBounds();
+    DEBUG && console.log(`[display-watcher] Captured pre-debounce window bounds: ${_preDebounceWindowBounds.size} windows`);
+  }
+
   if (_debounceTimer) {
     clearTimeout(_debounceTimer);
   }
   _debounceTimer = setTimeout(() => {
     _debounceTimer = null;
     handleDisplayChange();
+    // Clear pre-debounce bounds after handling
+    _preDebounceWindowBounds = null;
   }, DEBOUNCE_MS);
 }
 
@@ -677,7 +731,7 @@ export function initDisplayWatcher(): void {
 
   screen.on('display-removed', () => {
     DEBUG && console.log("[display-watcher] display-removed event");
-    onDisplayChange();
+    onDisplayChange(/* isRemoval */ true);
   });
 
   screen.on('display-metrics-changed', (_event: Electron.Event, _display: Display, changedMetrics: string[]) => {

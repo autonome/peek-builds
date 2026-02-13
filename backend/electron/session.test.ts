@@ -1383,6 +1383,9 @@ describe('Session Integration Tests', () => {
     /**
      * Extracted filtering logic from session.ts saveSessionSnapshot.
      * Returns true if a window should be SKIPPED (not saved).
+     *
+     * Updated: Only non-focusable utility windows (e.g. HUD overlays) are skipped.
+     * User-facing utility windows (settings, diagnostic) are now saved.
      */
     function shouldSkipWindow(
       url: string,
@@ -1395,18 +1398,38 @@ describe('Session Integration Tests', () => {
       if (url.includes('peek://app/background.html')) return true;
       if (url.includes('peek://app/extension-host.html')) return true;
       if (params.modal) return true;
-      if (params.role === 'utility') return true;
+      if (params.role === 'utility' && params.focusable === false) return true;
       return false;
     }
 
-    it('skips utility windows (role=utility)', () => {
+    it('skips non-focusable utility windows like HUD (role=utility, focusable=false)', () => {
       const skip = shouldSkipWindow(
         'peek://ext/hud/panel.html',
+        { role: 'utility', focusable: false },
+        true,
+        false
+      );
+      assert.strictEqual(skip, true, 'Non-focusable utility windows (HUD) should be skipped during save');
+    });
+
+    it('includes focusable utility windows like settings (role=utility, focusable not false)', () => {
+      const skip = shouldSkipWindow(
+        'peek://app/settings/settings.html',
         { role: 'utility' },
         true,
         false
       );
-      assert.strictEqual(skip, true, 'Utility windows should be skipped during save');
+      assert.strictEqual(skip, false, 'User-facing utility windows (settings) should be saved');
+    });
+
+    it('includes utility windows with focusable=true', () => {
+      const skip = shouldSkipWindow(
+        'peek://app/diagnostic.html',
+        { role: 'utility', focusable: true },
+        true,
+        false
+      );
+      assert.strictEqual(skip, false, 'Focusable utility windows should be saved');
     });
 
     it('skips modal windows', () => {
@@ -1497,6 +1520,105 @@ describe('Session Integration Tests', () => {
         false
       );
       assert.strictEqual(skip, false, 'Windows with no role should be included');
+    });
+  });
+
+  // ========================================================================
+  // Restore param stripping tests
+  //
+  // BUG #7 THIS CATCHES: Saved params containing role/escapeMode/x/y interfere
+  // with window-open handler during restore, causing canvas mode to be disabled
+  // for web pages or stale positions to be used.
+  // ========================================================================
+
+  describe('Restore param stripping', () => {
+    /**
+     * Replicate the param stripping logic from session.ts restoreSessionSnapshot.
+     * Returns cleaned params with interfering keys removed.
+     */
+    function stripRestoreParams(params: Record<string, unknown>): Record<string, unknown> {
+      const cleanParams: Record<string, unknown> = {};
+      const stripKeys = new Set(['x', 'y', 'width', 'height', 'role', 'escapeMode', 'address', 'transient', 'parentWindowId']);
+      for (const [key, value] of Object.entries(params)) {
+        if (!stripKeys.has(key)) {
+          cleanParams[key] = value;
+        }
+      }
+      return cleanParams;
+    }
+
+    it('strips stale position params (x, y, width, height)', () => {
+      // BUG: If descriptor.params contains x/y from original creation,
+      // they leak through when boundsOptions doesn't override them.
+      const params = {
+        x: 500, y: 300, width: 800, height: 600,
+        key: 'test', transparent: true,
+      };
+      const clean = stripRestoreParams(params);
+      assert.strictEqual(clean.x, undefined, 'x should be stripped');
+      assert.strictEqual(clean.y, undefined, 'y should be stripped');
+      assert.strictEqual(clean.width, undefined, 'width should be stripped');
+      assert.strictEqual(clean.height, undefined, 'height should be stripped');
+      assert.strictEqual(clean.key, 'test', 'key should be preserved');
+      assert.strictEqual(clean.transparent, true, 'transparent should be preserved');
+    });
+
+    it('strips role to prevent hasNonContentRole disabling canvas mode', () => {
+      // BUG: Web page saved with role:'workspace' gets useCanvas=false on restore
+      // because hasNonContentRole = true for 'workspace'.
+      const params = {
+        role: 'workspace',
+        escapeMode: 'navigate',
+        key: 'https://example.com',
+      };
+      const clean = stripRestoreParams(params);
+      assert.strictEqual(clean.role, undefined, 'role should be stripped');
+      assert.strictEqual(clean.escapeMode, undefined, 'escapeMode should be stripped');
+      assert.strictEqual(clean.key, 'https://example.com', 'key should be preserved');
+    });
+
+    it('strips address and session-specific params', () => {
+      const params = {
+        address: 'peek://app/settings/settings.html',
+        transient: true,
+        parentWindowId: 42,
+        key: 'settings',
+        transparent: true,
+      };
+      const clean = stripRestoreParams(params);
+      assert.strictEqual(clean.address, undefined, 'address should be stripped');
+      assert.strictEqual(clean.transient, undefined, 'transient should be stripped');
+      assert.strictEqual(clean.parentWindowId, undefined, 'parentWindowId should be stripped');
+      assert.strictEqual(clean.key, 'settings', 'key should be preserved');
+      assert.strictEqual(clean.transparent, true, 'transparent should be preserved');
+    });
+
+    it('preserves user-facing params through strip', () => {
+      const params = {
+        key: 'my-window',
+        transparent: true,
+        modal: false,
+        trackingSource: 'cmd',
+        trackingSourceId: 'open',
+        focusable: true,
+        debug: false,
+        // These should be stripped:
+        x: 100, y: 200, role: 'content', address: 'url', transient: false,
+      };
+      const clean = stripRestoreParams(params);
+      assert.strictEqual(clean.key, 'my-window');
+      assert.strictEqual(clean.transparent, true);
+      assert.strictEqual(clean.modal, false);
+      assert.strictEqual(clean.trackingSource, 'cmd');
+      assert.strictEqual(clean.trackingSourceId, 'open');
+      assert.strictEqual(clean.focusable, true);
+      assert.strictEqual(clean.debug, false);
+      // Verify stripped keys are gone
+      assert.strictEqual(clean.x, undefined);
+      assert.strictEqual(clean.y, undefined);
+      assert.strictEqual(clean.role, undefined);
+      assert.strictEqual(clean.address, undefined);
+      assert.strictEqual(clean.transient, undefined);
     });
   });
 });

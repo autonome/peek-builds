@@ -22,9 +22,10 @@ Status of each item from the original list:
 
 ## new items in round 2
 
-- [ ] no way to clear text in cmd bar. eg i type something, hit tab to inline complete a long suggestion, but then change my mind. esc closes the bar, and upon reopening, the text i don't want is still there. how about we use izui style nav - first escape clears the typed text, second closes cmd
+- [x] no way to clear text in cmd bar. eg i type something, hit tab to inline complete a long suggestion, but then change my mind. esc closes the bar, and upon reopening, the text i don't want is still there. how about we use izui style nav - first escape clears the typed text, second closes cmd
   - [x] RETEST round 3: first ESC clears input text, second ESC closes panel
   - failed - cmd: type something -> esc -> cmd closes
+  - [x] RETEST round 5: root cause was dead code — Electron main process intercepts ESC via before-input-event, blocks DOM keydown. Fixed by registering api.escape.onEscape() callback that returns {handled:true} when clearing text.
 - [x] shift-tab in cmd bar should cycle through suggestions in reverse
   - [x] RETEST round 3: Shift-Tab cycles backward with modular wrap
 - [x] adding new note from any method gives the item card the url icon in the tags instead of document icon
@@ -38,10 +39,16 @@ Status of each item from the original list:
 
 ## new items in round 4
 
-- mode leaks into global OS scope, eg cmd: (open page, to trigger page mode) -> switch to some other app -> cmd hotkey -> cmd should be in default mode, but says page
-- open windows don't come to front, eg: cmd: settings -> cmd: (open web page) -> cmd: settings -> nothing happens, still see web page (this even happens when app not focused - it focuses app, but not correct window)
-- settings/profiles -> selected profile should be on top, list sorted by last used
-- perhaps related to the multi-display-positioning, we lost window positioning correctness over session restores. i tried moving two windows to edges to see if they'd still be on edges, then restart peek, and neither were on edges
+- [x] mode leaks into global OS scope, eg cmd: (open page, to trigger page mode) -> switch to some other app -> cmd hotkey -> cmd should be in default mode, but says page
+  - [x] RETEST round 5: changed from coordinator.isTransient() (one-way ratchet, never downgrades) to !coordinator.isAppFocused() (real-time OS focus state). Mode resets to default when app loses focus.
+- [x] open windows don't come to front, eg: cmd: settings -> cmd: (open web page) -> cmd: settings -> nothing happens, still see web page (this even happens when app not focused - it focuses app, but not correct window)
+  - [x] RETEST round 5: added win.focus() after win.show() in keepLive window reuse path. macOS show() makes visible but doesn't raise — focus() brings to front.
+- [ ] settings/profiles -> selected profile should be on top, list sorted by last used
+  - not fixed yet
+- [ ] perhaps related to the multi-display-positioning, we lost window positioning correctness over session restores. i tried moving two windows to edges to see if they'd still be on edges, then restart peek, and neither were on edges
+  - [ ] RETEST round 5: added suppressDisplayRepositioning() during session restore. macOS workArea changes on app activation were triggering false "display changed" events that repositioned restored windows.
+  - worse, and weirder: open two web pages, move one to each side edge of screen. open settings. close app. yarn start. all are positioned correctly, but the middle page that was settings app is now another instance of the page on left edge!!!
+  - add a task to do full review of session restore + window positioning in an agent dedicated to shaking things out here
 
 ## Session Restore
 - [x] `yarn start` → open web pages → move/resize them → Ctrl+C → `yarn start` — silently restores, correct positions
@@ -60,7 +67,8 @@ Status of each item from the original list:
 - [ ] Cmd: long-press anywhere in visible bar → drag works
   - [x] RETEST round 2: narrowed exclusions to only focused text inputs — failed, couldn't drag at all
   - [x] RETEST round 3: shouldBlockDrag checks e.target not document.activeElement — failed, same
-  - [ ] RETEST round 4: FULL REWRITE — removed 5px movement threshold (root cause: hand tremor cancelled hold timer silently), hold fires unconditionally after 120ms, snapshots position at fire time, RAF-batched IPC
+  - [x] RETEST round 4: FULL REWRITE — removed 5px movement threshold (root cause: hand tremor cancelled hold timer silently), hold fires unconditionally after 120ms, snapshots position at fire time, RAF-batched IPC
+  - still completely broken
 - [ ] Tags: long-press on item cards, tag buttons, any non-text-input area → drag works, does NOT activate button
   - [x] RETEST round 2: same fix — failed, kinda worked sometimes, activated buttons
   - [x] RETEST round 3: suppressNextClick flag — failed, same
@@ -146,3 +154,4 @@ lots of issues with the whole flow. this is a challenging feature, maybe we stop
   - [x] RETEST round 2: display-watcher.ts per-window ratio mapping — failed, windows clustered in top-left
   - [x] RETEST round 4: group-based center-of-group distance scaling — scales inter-window distances proportionally, preserves spatial arrangement
   - worse! is a regression. now when i am in external display as main, and unplug it then plug back in, all windows still on laptop instead of main display.
+  - [ ] RETEST round 5: added home display tracking — saves each window's "home" display ID + relative position. On display remove, remembers where windows were. On display re-add, matches by ID then resolution (5% tolerance) and restores windows back to their home display.

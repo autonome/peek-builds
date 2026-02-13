@@ -180,8 +180,10 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       continue;
     }
 
-    // Skip utility windows (e.g. HUD) — extensions manage these themselves
-    if (winData.params.role === 'utility') {
+    // Skip non-focusable utility windows (e.g. HUD overlays).
+    // These are extension-managed and shouldn't be restored by session.
+    // User-facing utility windows (settings, diagnostic, etc.) ARE saved.
+    if (winData.params.role === 'utility' && winData.params.focusable === false) {
       continue;
     }
 
@@ -559,12 +561,28 @@ export async function restoreSessionSnapshot(
 
 
       console.log(`[session:restore] Window "${descriptor.url.substring(0, 80)}" saved bounds: (${descriptor.bounds.x},${descriptor.bounds.y}) ${descriptor.bounds.width}x${descriptor.bounds.height}, center=(${centerX},${centerY}), onScreen=${isPointOnScreen(centerX, centerY)}, boundsOptions: x=${boundsOptions.x} y=${boundsOptions.y}`);
-      if ("x" in descriptor.params || "y" in descriptor.params) {
-        console.log(`[session:restore] WARNING: descriptor.params contains position: x=${descriptor.params.x} y=${descriptor.params.y}`);
+
+      // Strip params that would interfere with the window-open handler's own logic.
+      // These are internal bookkeeping or context-dependent values that should be
+      // re-derived from the URL and current environment during restore:
+      // - x/y/width/height: stale positions from original creation (bounds are authoritative)
+      // - role: saved role can trigger hasNonContentRole in window-open, preventing
+      //   canvas mode for web pages that had role 'workspace' (Bug: useCanvas=false)
+      // - escapeMode: affects role detection (escapeMode:'navigate' -> role:'workspace')
+      //   which also disables canvas mode for web pages
+      // - address: internal bookkeeping param, overwritten by window-open anyway
+      // - transient/parentWindowId: session state, not applicable to restored windows
+      const cleanParams: Record<string, unknown> = {};
+      const stripKeys = new Set(['x', 'y', 'width', 'height', 'role', 'escapeMode', 'address', 'transient', 'parentWindowId']);
+      for (const [key, value] of Object.entries(descriptor.params)) {
+        if (!stripKeys.has(key)) {
+          cleanParams[key] = value;
+        }
       }
-      // Build options from saved params, overlaying bounds
+
+      // Build options from cleaned params, overlaying bounds
       const options: Record<string, unknown> = {
-        ...descriptor.params,
+        ...cleanParams,
         ...boundsOptions,
       };
 
