@@ -476,6 +476,55 @@ async function render() {
 
 render();
 
+// Register IZUI escape handler for the main process before-input-event flow.
+// The backend intercepts ESC on keyDown via before-input-event and calls e.preventDefault(),
+// so the DOM keydown event never reaches the page. This callback is the only way
+// for the panel to handle ESC with clear-text-first behavior.
+api.escape.onEscape(() => {
+  const commandInput = document.getElementById('command-input');
+
+  // Exit output selection mode first
+  if (state.outputSelectionMode) {
+    exitOutputSelectionMode();
+    commandInput.value = '';
+    state.typed = '';
+    updateCommandUI();
+    updateResultsUI();
+    return { handled: true };
+  }
+
+  // Exit chain mode next
+  if (state.chainMode) {
+    exitChainMode();
+    commandInput.value = '';
+    state.typed = '';
+    updateCommandUI();
+    updateResultsUI();
+    return { handled: true };
+  }
+
+  // Hide results if visible
+  if (state.showResults) {
+    state.showResults = false;
+    updateResultsUI();
+    return { handled: true };
+  }
+
+  // Clear text first, then close (IZUI-style: escape content before container)
+  if (commandInput.value) {
+    commandInput.value = '';
+    state.typed = '';
+    state.matches = [];
+    state.matchIndex = 0;
+    updateCommandUI();
+    updateResultsUI();
+    return { handled: true };
+  }
+
+  // Input is empty, no modes active — let backend close the window
+  return { handled: false };
+});
+
 /**
  * Handles special key presses (arrows, tab, enter, escape)
  */
