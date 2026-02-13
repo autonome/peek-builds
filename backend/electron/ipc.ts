@@ -1985,16 +1985,20 @@ export function registerWindowHandlers(): void {
       if (existingWindow) {
         DEBUG && console.log('Reusing existing window with key:', options.key);
 
-        // For keepLive reuse, update the per-window transient flag from current session state
-        // but do NOT call evaluateOnShow() — session state shouldn't change just because
-        // a hidden window was re-shown (Phase 4: session entryMode is stable)
+        // For keepLive reuse, update the per-window transient flag from OS-level app focus.
+        // Use isAppFocused() (real-time OS focus) instead of session's isTransient()
+        // because the session has a one-way ratchet (active never downgrades to transient).
+        // When a user switches to another app and then invokes cmd via global hotkey,
+        // the session may still be 'active' from earlier use, but appFocused correctly
+        // reflects that Peek was NOT the foreground app at invocation time.
         const coordinator = getIzuiCoordinator();
         const existingData = existingWindow.data as { params: Record<string, unknown> };
-        existingData.params.transient = coordinator.isTransient();
-        DEBUG && console.log('Reused window transient from session:', existingData.params.transient);
+        existingData.params.transient = !coordinator.isAppFocused();
+        DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
           existingWindow.window.show();
+          existingWindow.window.focus();
         }
         return { success: true, id: existingWindow.id, reused: true };
       }

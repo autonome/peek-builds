@@ -137,11 +137,13 @@ let modeWasSet = false;
  */
 const loadCommandContext = async () => {
   try {
-    // IZUI Policy: If invoked transiently (app wasn't focused when invoked),
-    // use "default" mode since we're not targeting a specific window context.
-    // Use api.izui.isTransient() which re-evaluates on each call (not frozen at creation)
-    // This fixes keepLive windows being stuck with stale transient state.
-    const isTransient = await api.izui.isTransient();
+    // IZUI Policy: If invoked transiently (app was not focused when invoked),
+    // use "default" mode since we are not targeting a specific window context.
+    // Use api.window.isTransient() which reads the per-window transient flag
+    // set in the keepLive reuse path BEFORE the window is shown (and before
+    // showing the window triggers browser-window-focus which would promote
+    // the session from transient to active, defeating the check).
+    const isTransient = await api.window.isTransient();
     if (isTransient) {
       log('cmd:panel', 'Transient invocation - using default mode');
       currentMode = 'default';
