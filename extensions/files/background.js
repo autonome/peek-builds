@@ -358,71 +358,136 @@ const commandDefinitions = [
           data = [data];
         }
 
-        // Build markdown document
-        const lines = [];
+        // Fields to skip in metadata display (internal/noise)
+        const SKIP_FIELDS = new Set([
+          'id', '_id', '_rev',
+          'content', // shown as body text
+          '_tags', 'tags', // shown separately
+          'metadata', // parsed and shown separately
+          'createdAt', 'updatedAt', 'deletedAt', 'syncedAt',
+          'frecencyScore', 'visitCount', 'lastVisitAt',
+          '_sync', 'syncSource', 'sync_source',
+          'type', // used for title detection
+          'name', 'title', // used for heading
+        ]);
 
-        // Title from input context
-        const title = ctx.inputTitle || 'Notes';
-        lines.push(`# ${title}`);
-        lines.push('');
-        lines.push(`*${data.length} item${data.length !== 1 ? 's' : ''}*`);
-        lines.push('');
-        lines.push('---');
+        // Detect common type across items
+        const types = new Set(data.map(item => item?.type).filter(Boolean));
+        const commonType = types.size === 1 ? types.values().next().value : null;
+
+        // Detect common tags across items
+        let commonTags = [];
+        if (data.length > 0) {
+          const allTagSets = data.map(item => new Set(item?._tags || []));
+          if (allTagSets.length > 0 && allTagSets[0].size > 0) {
+            commonTags = [...allTagSets[0]].filter(tag =>
+              allTagSets.every(tagSet => tagSet.has(tag))
+            );
+          }
+        }
+
+        // Build document title
+        let docTitle;
+        if (ctx.inputTitle) {
+          docTitle = ctx.inputTitle;
+        } else if (commonType) {
+          // Capitalize and pluralize the type
+          const typeName = commonType.charAt(0).toUpperCase() + commonType.slice(1) + 's';
+          docTitle = typeName;
+          if (commonTags.length > 0) {
+            docTitle += ' ' + commonTags.map(t => '#' + t).join(' ');
+          }
+        } else {
+          docTitle = 'Export';
+        }
+
+        const lines = [];
+        lines.push(`# ${docTitle}`);
         lines.push('');
 
         data.forEach((item, index) => {
           if (typeof item !== 'object' || item === null) {
-            // Primitive value
             lines.push(`- ${String(item)}`);
             lines.push('');
             return;
           }
 
-          // Extract meaningful title from the item
+          // Extract heading from item
           const content = item.content || '';
           const contentLines = content.split('\n');
-          // Use first line as heading (strip markdown heading prefix if present)
           let heading = (contentLines[0] || '').replace(/^#+\s*/, '').trim();
           if (!heading) {
             heading = item.name || item.title || `Item ${index + 1}`;
           }
-          // Truncate long headings
           if (heading.length > 80) {
             heading = heading.substring(0, 77) + '...';
           }
 
           lines.push(`## ${heading}`);
-          lines.push('');
 
-          // Show tags if available
+          // Show tags (filter out common tags to reduce noise)
           const tags = item._tags || [];
-          if (tags.length > 0) {
-            lines.push(`**Tags:** ${tags.map(t => '#' + t).join(' ')}`);
-            lines.push('');
+          const uniqueTags = tags.filter(t => !commonTags.includes(t));
+          if (uniqueTags.length > 0) {
+            lines.push(`- Tags: ${uniqueTags.map(t => '#' + t).join(', ')}`);
+          } else if (tags.length > 0 && commonTags.length === 0) {
+            lines.push(`- Tags: ${tags.map(t => '#' + t).join(', ')}`);
           }
 
-          // Show date if available
-          if (item.createdAt || item.updatedAt) {
-            const date = new Date(item.updatedAt || item.createdAt);
+          // Show date
+          if (item.createdAt) {
+            const date = new Date(item.createdAt);
             if (!isNaN(date.getTime())) {
-              lines.push(`*${date.toLocaleDateString()} ${date.toLocaleTimeString()}*`);
-              lines.push('');
+              lines.push(`- Created: ${date.toLocaleDateString()}`);
             }
           }
 
-          // Show content body (skip first line if it was used as heading)
-          const body = contentLines.slice(1).join('\n').trim();
+          // Show metadata fields (parsed from JSON metadata if present)
+          if (item.metadata) {
+            try {
+              const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
+              if (typeof meta === 'object' && meta !== null) {
+                for (const [key, value] of Object.entries(meta)) {
+                  if (SKIP_FIELDS.has(key) || key.startsWith('_')) continue;
+                  if (value === null || value === undefined || value === '') continue;
+                  const displayVal = typeof value === 'object' ? JSON.stringify(value) : String(value);
+                  if (displayVal.length > 200) continue; // Skip very long values
+                  lines.push(`- ${key}: ${displayVal}`);
+                }
+              }
+            } catch (e) {
+              // Not valid JSON metadata, skip
+            }
+          }
+
+          // Show non-standard fields that aren't in the skip list
+          for (const [key, value] of Object.entries(item)) {
+            if (SKIP_FIELDS.has(key) || key.startsWith('_')) continue;
+            if (value === null || value === undefined || value === '') continue;
+            if (typeof value === 'object') continue; // Skip complex objects
+            const displayVal = String(value);
+            if (displayVal.length > 200) continue;
+            lines.push(`- ${key}: ${displayVal}`);
+          }
+
+          lines.push('');
+
+          // Show content body (skip first line if used as heading)
+          const isContentHeading = heading === contentLines[0]?.replace(/^#+\s*/, '').trim();
+          const body = isContentHeading
+            ? contentLines.slice(1).join('\n').trim()
+            : content.trim();
+
           if (body) {
             lines.push(body);
             lines.push('');
-          } else if (content && !heading.startsWith(content.substring(0, 10))) {
-            // If heading didn't come from content, show full content
-            lines.push(content);
-            lines.push('');
           }
 
-          lines.push('---');
-          lines.push('');
+          // Separator between items (skip after last item)
+          if (index < data.length - 1) {
+            lines.push('---');
+            lines.push('');
+          }
         });
 
         const markdownOutput = lines.join('\n');
@@ -433,7 +498,7 @@ const commandDefinitions = [
           output: {
             data: markdownOutput,
             mimeType: 'text/markdown',
-            title: title
+            title: docTitle
           }
         };
       } catch (err) {

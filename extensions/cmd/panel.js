@@ -7,6 +7,9 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import './commands.js'; // Load commands module to dispatch cmd-update-commands event
 import { log } from 'peek://app/log.js';
+import * as CodeMirror from 'peek://extensions/editor/codemirror.js';
+import { StatusLine } from 'peek://extensions/editor/status-line.js';
+const { getCM, Vim } = CodeMirror;
 
 log('cmd:panel', 'loaded');
 
@@ -117,6 +120,13 @@ loadAdaptiveData().then(data => {
   state.matchCounts = data.counts;
   log('cmd:panel', 'Loaded adaptive data');
 });
+
+// ===== Chain Editor State =====
+// Embedded CodeMirror editor for editing text/markdown in chain mode
+let chainEditor = null;       // CodeMirror EditorView instance
+let chainStatusLine = null;   // StatusLine for vim mode
+let chainEditorVimMode = false; // Vim mode preference
+let chainEditorFocused = false; // Whether the chain editor currently holds focus
 
 // Current command context (mode, target window, etc.)
 // Loaded asynchronously when panel opens
@@ -342,8 +352,10 @@ function updateWindowSize() {
   const previewVisible = document.getElementById('preview-container')?.classList.contains('visible');
   const chainVisible = document.getElementById('chain-indicator')?.classList.contains('visible');
   const execVisible = document.getElementById('execution-state')?.classList.contains('visible');
+  const chainEditorVisible = document.getElementById('chain-editor-container')?.classList.contains('visible');
+  const chainStepsVisible = document.getElementById('chain-steps')?.classList.contains('visible');
 
-  const needsExpanded = resultsVisible || previewVisible || chainVisible || execVisible || state.outputSelectionMode;
+  const needsExpanded = resultsVisible || previewVisible || chainVisible || execVisible || state.outputSelectionMode || chainEditorVisible || chainStepsVisible;
   const targetHeight = needsExpanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT;
 
   api.window.resize(600, targetHeight);
@@ -373,11 +385,26 @@ async function render() {
     state.showResults = false;
 
     if (state.typed) {
-      // Always pass full text to findMatchingCommands so it can detect parameters
-      state.matches = findMatchingCommands(state.typed);
+      // In chain mode, filter to only commands that accept the current pipe type
+      if (state.chainMode && state.chainContext) {
+        const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+        const chainingNames = new Set(chainingCommands.map(cmd => cmd.name));
+        // Find matching commands, then intersect with chaining-compatible ones
+        const allMatches = findMatchingCommands(state.typed);
+        state.matches = allMatches.filter(name => chainingNames.has(name));
+      } else {
+        // Always pass full text to findMatchingCommands so it can detect parameters
+        state.matches = findMatchingCommands(state.typed);
+      }
       state.matchIndex = 0;
     } else {
-      state.matches = [];
+      if (state.chainMode && state.chainContext) {
+        // Show all chaining commands when input is cleared
+        const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+        state.matches = chainingCommands.map(cmd => cmd.name);
+      } else {
+        state.matches = [];
+      }
       state.matchIndex = 0;
     }
     updateCommandUI();
@@ -395,13 +422,19 @@ async function render() {
     }
   });
 
-  // Keep focus on input
+  // Keep focus on input (unless chain editor is active)
   window.addEventListener('blur', () => {
-    setTimeout(() => commandInput.focus(), 10);
+    if (!chainEditorFocused) {
+      setTimeout(() => commandInput.focus(), 10);
+    }
   });
 
   window.addEventListener('focus', () => {
-    commandInput.focus();
+    if (chainEditorFocused && chainEditor) {
+      CodeMirror.focus(chainEditor);
+    } else {
+      commandInput.focus();
+    }
   });
 
   // Handle visibility changes
@@ -429,6 +462,8 @@ async function render() {
       if (state.chainMode) {
         exitChainMode();
       }
+      // Also ensure chain editor is cleaned up
+      destroyChainEditor();
       // Reset showResults
       state.showResults = false;
       // Reset mode state for fresh context loading
@@ -452,6 +487,20 @@ async function render() {
 
   // Initialize mode indicator (uses commandContext loaded above)
   initModeIndicator();
+
+  // Global keydown handler for chain editor shortcuts
+  // When the editor is focused, it captures most keys. We need a window-level
+  // handler to intercept Tab (advance chain) from within the editor.
+  window.addEventListener('keydown', (e) => {
+    if (!chainEditorFocused || !chainEditor || !state.chainMode) return;
+
+    // Tab: finalize editor content and show command input for next command
+    if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      advanceChainFromEditor();
+    }
+  }, true); // Use capture phase to intercept before CodeMirror
 
   // Chain cancel button handler
   const chainCancelBtn = document.getElementById('chain-cancel');
@@ -492,6 +541,35 @@ api.escape.onEscape(() => {
     state.typed = '';
     updateCommandUI();
     updateResultsUI();
+    return { handled: true };
+  }
+
+  // Handle chain editor vim mode escape cascade
+  if (chainEditorFocused && chainEditor && chainEditorVimMode) {
+    try {
+      const cm = getCM(chainEditor);
+      if (cm && cm.state && cm.state.vim) {
+        const vimState = cm.state.vim;
+        if (vimState.insertMode || vimState.visualMode) {
+          log('cmd:panel', 'Chain editor: vim insert/visual -> normal');
+          Vim.handleKey(cm, '<Esc>');
+          return { handled: true };
+        }
+        // In normal mode: exit editor focus, return to command input
+        log('cmd:panel', 'Chain editor: vim normal -> exit editor focus');
+        chainEditorFocused = false;
+        commandInput.focus();
+        return { handled: true };
+      }
+    } catch (e) {
+      log('cmd:panel', 'Chain editor vim escape error:', e);
+    }
+  }
+
+  // If chain editor is focused (non-vim), exit editor focus
+  if (chainEditorFocused && chainEditor) {
+    chainEditorFocused = false;
+    commandInput.focus();
     return { handled: true };
   }
 
@@ -629,7 +707,8 @@ function handleSpecialKey(e) {
     const userCommittedToCommand = name && (
       typedLower === nameLower ||                          // Typed full command name
       typedLower.startsWith(nameLower + ' ') ||            // Command name + parameters
-      state.showResults                                     // Explicitly browsing results list
+      state.showResults ||                                  // Explicitly browsing results list
+      state.chainMode                                       // In chain mode, commands are pre-filtered
     );
     if (userCommittedToCommand && Object.keys(state.commands).indexOf(name) > -1) {
       // Preserve any parameters when executing
@@ -706,6 +785,13 @@ function handleSpecialKey(e) {
   // Right Arrow or Enter in output selection mode - proceed to chaining
   if (state.outputSelectionMode && (e.key === 'ArrowRight' || e.key === 'Enter')) {
     selectOutputItem();
+    return;
+  }
+
+  // Tab key in chain mode with editor — finalize editor and show command input
+  if (e.key === 'Tab' && state.chainMode && chainEditorFocused && chainEditor) {
+    e.preventDefault();
+    advanceChainFromEditor();
     return;
   }
 
@@ -811,6 +897,10 @@ function findChainingCommands(mimeType) {
 function enterChainMode(output, sourceCommand) {
   log('cmd:panel', 'Entering chain mode with output:', output.mimeType, output.title);
 
+  // Clean up any existing chain editor from a previous step
+  destroyChainEditor();
+  hidePreview();
+
   state.chainMode = true;
   state.chainContext = {
     data: output.data,
@@ -833,11 +923,16 @@ function enterChainMode(output, sourceCommand) {
 
   // Update UI
   updateChainUI();
+  updateChainStepsUI();
   updateCommandUI();
   updateResultsUI();
 
-  // Show preview if we have data
-  if (output.data) {
+  // For text types, show embedded editor instead of plain preview
+  if (output.data && isTextMimeType(output.mimeType) && typeof output.data === 'string') {
+    hidePreview();
+    createChainEditor(output.data, output.mimeType);
+  } else if (output.data) {
+    // Show standard preview for non-text types
     showPreview(output.data, output.mimeType, output.title);
   }
 }
@@ -854,11 +949,13 @@ function exitChainMode() {
   state.matches = [];
   state.matchIndex = 0;
 
-  // Hide preview
+  // Hide preview and destroy chain editor
   hidePreview();
+  destroyChainEditor();
 
   // Update UI
   updateChainUI();
+  updateChainStepsUI();
   updateCommandUI();
   updateResultsUI();
 }
@@ -882,15 +979,243 @@ function chainUndo() {
   state.matches = chainingCommands.map(cmd => cmd.name);
   state.matchIndex = 0;
 
+  // Destroy chain editor if present
+  destroyChainEditor();
+
   // Update UI
   updateChainUI();
+  updateChainStepsUI();
   updateCommandUI();
   updateResultsUI();
 
-  // Update preview
-  if (state.chainContext.data) {
+  // Update preview for restored context
+  if (state.chainContext.data && isTextMimeType(state.chainContext.mimeType) && typeof state.chainContext.data === 'string') {
+    hidePreview();
+    createChainEditor(state.chainContext.data, state.chainContext.mimeType);
+  } else if (state.chainContext.data) {
     showPreview(state.chainContext.data, state.chainContext.mimeType, state.chainContext.title);
   }
+}
+
+// ===== Chain Editor Functions =====
+
+/**
+ * Check if a MIME type is a text type suitable for embedded editor.
+ * Note: application/json is excluded because structured data is better
+ * shown as a table preview, not as raw text in an editor.
+ */
+function isTextMimeType(mimeType) {
+  if (!mimeType) return false;
+  return mimeType.startsWith('text/');
+}
+
+/**
+ * Load vim mode preference from editor extension settings
+ */
+async function loadChainEditorVimPref() {
+  try {
+    if (api?.settings?.getExtKey) {
+      const result = await api.settings.getExtKey('editor', 'prefs');
+      if (result.success && result.data && typeof result.data === 'object') {
+        chainEditorVimMode = !!result.data.vimMode;
+        log('cmd:panel', 'Chain editor vimMode:', chainEditorVimMode);
+      }
+    }
+  } catch (err) {
+    log('cmd:panel', 'Failed to load vim pref:', err);
+  }
+}
+
+/**
+ * Create the embedded CodeMirror editor for chain text output
+ * @param {string} content - Text content to edit
+ * @param {string} mimeType - MIME type of content
+ */
+async function createChainEditor(content, mimeType) {
+  destroyChainEditor();
+
+  const container = document.querySelector('#chain-editor-container');
+  const bodyEl = container?.querySelector('.chain-editor-body');
+  const statusLineEl = container?.querySelector('.chain-editor-status-line');
+  if (!container || !bodyEl) return;
+
+  // Load vim preference
+  await loadChainEditorVimPref();
+
+  // Clear the body
+  bodyEl.innerHTML = '';
+
+  // Create status line
+  if (statusLineEl) {
+    statusLineEl.innerHTML = '';
+    chainStatusLine = new StatusLine({ container: statusLineEl });
+    if (chainEditorVimMode) {
+      chainStatusLine.show();
+      chainStatusLine.updateMode('normal');
+    } else {
+      chainStatusLine.hide();
+      statusLineEl.style.display = 'none';
+    }
+  }
+
+  chainEditor = CodeMirror.createEditor({
+    parent: bodyEl,
+    content: content || '',
+    vimMode: chainEditorVimMode,
+    showLineNumbers: true,
+    onChange: (newContent) => {
+      // Update chain context data with edited content
+      if (state.chainMode && state.chainContext) {
+        state.chainContext.data = newContent;
+        // Also update the top of the chain stack
+        if (state.chainStack.length > 0) {
+          state.chainStack[state.chainStack.length - 1].data = newContent;
+        }
+      }
+    },
+    onSelectionChange: (line, col) => {
+      if (chainStatusLine && chainEditorVimMode) {
+        chainStatusLine.updatePosition(line, col);
+      }
+    },
+    onVimModeChange: (mode) => {
+      if (chainStatusLine && chainEditorVimMode) {
+        chainStatusLine.updateMode(mode);
+      }
+    }
+  });
+
+  // Show the container
+  container.classList.add('visible');
+
+  // Update the header title
+  const titleEl = container.querySelector('.chain-editor-title');
+  if (titleEl) {
+    titleEl.textContent = state.chainContext?.title || 'Edit output';
+  }
+
+  chainEditorFocused = true;
+
+  // Focus the editor after layout settles
+  setTimeout(() => {
+    if (chainEditor) {
+      CodeMirror.focus(chainEditor);
+    }
+  }, 100);
+
+  updateWindowSize();
+}
+
+/**
+ * Destroy the chain editor and clean up
+ */
+function destroyChainEditor() {
+  chainEditorFocused = false;
+
+  if (chainStatusLine) {
+    chainStatusLine.destroy();
+    chainStatusLine = null;
+  }
+
+  const statusLineEl = document.querySelector('#chain-editor-container .chain-editor-status-line');
+  if (statusLineEl) {
+    statusLineEl.innerHTML = '';
+  }
+
+  if (chainEditor) {
+    CodeMirror.destroy(chainEditor);
+    chainEditor = null;
+  }
+
+  const container = document.getElementById('chain-editor-container');
+  if (container) {
+    container.classList.remove('visible');
+  }
+}
+
+/**
+ * Get the current content from the chain editor
+ * @returns {string|null} Editor content, or null if no editor active
+ */
+function getChainEditorContent() {
+  if (!chainEditor) return null;
+  return CodeMirror.getContent(chainEditor);
+}
+
+/**
+ * Handle Tab key press when chain editor is focused.
+ * Finalizes the editor content and prepares for next command in chain.
+ */
+function advanceChainFromEditor() {
+  if (!chainEditor || !state.chainMode || !state.chainContext) return;
+
+  // Get final content from editor
+  const content = CodeMirror.getContent(chainEditor);
+
+  // Update chain context with final edited content
+  state.chainContext.data = content;
+  if (state.chainStack.length > 0) {
+    state.chainStack[state.chainStack.length - 1].data = content;
+  }
+
+  // Destroy the editor
+  destroyChainEditor();
+
+  // Re-focus command input for next command
+  const commandInput = document.getElementById('command-input');
+  if (commandInput) {
+    commandInput.value = '';
+    commandInput.focus();
+  }
+
+  // Update matches to show commands accepting this type
+  const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+  state.typed = '';
+  state.matches = chainingCommands.map(cmd => cmd.name);
+  state.matchIndex = 0;
+  state.showResults = true;
+
+  updateChainUI();
+  updateCommandUI();
+  updateResultsUI();
+}
+
+// ===== Chain Steps UI =====
+
+/**
+ * Update the chain steps indicator showing the pipe history
+ */
+function updateChainStepsUI() {
+  const stepsEl = document.getElementById('chain-steps');
+  if (!stepsEl) return;
+
+  if (!state.chainMode || state.chainStack.length === 0) {
+    stepsEl.classList.remove('visible');
+    stepsEl.innerHTML = '';
+    return;
+  }
+
+  stepsEl.innerHTML = '';
+  stepsEl.classList.add('visible');
+
+  state.chainStack.forEach((step, i) => {
+    if (i > 0) {
+      const arrow = document.createElement('span');
+      arrow.className = 'chain-arrow';
+      arrow.textContent = '-->';
+      stepsEl.appendChild(arrow);
+    }
+
+    const stepEl = document.createElement('span');
+    stepEl.className = 'chain-step';
+    if (i === state.chainStack.length - 1) {
+      stepEl.classList.add('active');
+    }
+    stepEl.textContent = step.sourceCommand || step.title || step.mimeType;
+    stepsEl.appendChild(stepEl);
+  });
+
+  updateWindowSize();
 }
 
 // ===== Output Selection Mode Functions =====
@@ -1419,10 +1744,26 @@ async function execute(name, typed) {
         return;
       }
 
-      // If output is an array, enter output selection mode first
-      // User picks an item, then we enter chain mode with that item
+      // If output is an array, check if we should pipe the whole array
+      // or enter output selection mode for individual item picking
       if (Array.isArray(outputData) && outputData.length > 0) {
-        // Enter output selection mode to let user pick an item
+        // Check if there are downstream commands that accept this MIME type.
+        // If so, pipe the entire array into chain mode (e.g., list notes -> markdown).
+        // If no downstream commands, fall back to output selection mode.
+        const downstreamCommands = findChainingCommands(outputMimeType);
+        if (downstreamCommands.length > 0) {
+          // Pipe entire array to chain mode
+          enterChainMode(result.output, name);
+
+          const commandInput = document.getElementById('command-input');
+          if (commandInput) {
+            commandInput.value = '';
+            commandInput.focus();
+          }
+          return;
+        }
+
+        // No downstream commands - enter output selection mode to let user pick
         enterOutputSelectionMode(outputData, outputMimeType, name);
 
         // Clear input for selection
