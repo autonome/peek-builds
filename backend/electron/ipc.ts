@@ -244,6 +244,15 @@ function trackVisibleWindowFocus(win: BrowserWindow): void {
   DEBUG && console.log('Updated lastFocusedVisibleWindowId:', lastFocusedVisibleWindowId, url);
 }
 
+// ============================================================================
+// Popup-to-Opener Bridge (OAuth / window.opener shim)
+// ============================================================================
+// Maps popup window IDs to their opener window IDs. Used to route
+// window.opener.postMessage() calls from popup webviews back to the opener.
+// Populated in setWindowOpenHandler, cleaned up on popup window close.
+
+const popupToOpener = new Map<number, number>();
+
 /**
  * Convert an Item to an Address-like shape for backward compatibility.
  * Callers that expect Address objects (with uri, protocol, etc.) will
@@ -2528,7 +2537,15 @@ export function registerWindowHandlers(): void {
                   const parentInfo = getWindowInfo(win.id);
                   const source = parentInfo ? parentInfo.source : 'system';
 
-                  // Build page container URL
+                  // Get the opener's current URL for the window.opener shim
+                  let openerUrl = url; // fallback to the registered URL
+                  try {
+                    openerUrl = guestWebContents.getURL() || url;
+                  } catch (e) {
+                    DEBUG && console.log('[webview-popup] Failed to get opener URL:', e);
+                  }
+
+                  // Build page container URL (includes openerUrl for the bridge shim)
                   const parentBounds = win.getBounds();
                   const pageParams = new URLSearchParams({
                     url: popupUrl,
@@ -2536,6 +2553,7 @@ export function registerWindowHandlers(): void {
                     y: String(parentBounds.y + 30),
                     width: String(1024),
                     height: String(768),
+                    openerUrl,
                   });
                   const loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
 
@@ -2601,6 +2619,13 @@ export function registerWindowHandlers(): void {
                       metadata: { url: popupUrl },
                     });
                   }
+
+                  // Store popup-to-opener mapping for the postMessage bridge
+                  popupToOpener.set(popupWin.id, win.id);
+                  popupWin.on('closed', () => {
+                    popupToOpener.delete(popupWin.id);
+                    DEBUG && console.log(`[webview-popup] Cleaned up opener mapping for popup ${popupWin.id}`);
+                  });
 
                   // Load the page container URL
                   await popupWin.loadURL(loadUrl);
@@ -3231,6 +3256,81 @@ export function registerWindowHandlers(): void {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message, windows: [] };
     }
+  });
+
+  // ========================================================================
+  // Popup-to-Opener Bridge (OAuth / window.opener shim) — IPC handlers
+  // ========================================================================
+
+  // Route postMessage from a popup's webview to the opener's webview.
+  // Called by the popup's page.js when it picks up __PEEK_OPENER_POSTMESSAGE__
+  // from the console-message bridge.
+  ipcMain.handle('opener-postmessage', (ev, data) => {
+    const senderWin = BrowserWindow.fromWebContents(ev.sender);
+    if (!senderWin) return { success: false, error: 'No sender window' };
+
+    const openerWindowId = popupToOpener.get(senderWin.id);
+    if (!openerWindowId) {
+      DEBUG && console.log('[opener-bridge] No opener mapping for window', senderWin.id);
+      return { success: false, error: 'No opener window mapped' };
+    }
+
+    const openerWin = BrowserWindow.fromId(openerWindowId);
+    if (!openerWin || openerWin.isDestroyed()) {
+      DEBUG && console.log('[opener-bridge] Opener window', openerWindowId, 'not found or destroyed');
+      popupToOpener.delete(senderWin.id);
+      return { success: false, error: 'Opener window not found' };
+    }
+
+    // Forward the message to the opener's renderer (page.js)
+    // page.js listens for 'opener-message-received' via api.ipc.on()
+    openerWin.webContents.send('opener-message-received', {
+      message: data.message,
+      origin: data.origin || '*',
+      popupWindowId: senderWin.id,
+    });
+
+    DEBUG && console.log(`[opener-bridge] Routed postMessage from popup ${senderWin.id} to opener ${openerWindowId}`);
+    return { success: true };
+  });
+
+  // Route opener.close() from a popup to close the opener window.
+  ipcMain.handle('opener-close', (ev) => {
+    const senderWin = BrowserWindow.fromWebContents(ev.sender);
+    if (!senderWin) return { success: false, error: 'No sender window' };
+
+    const openerWindowId = popupToOpener.get(senderWin.id);
+    if (!openerWindowId) return { success: false, error: 'No opener mapped' };
+
+    const openerWin = BrowserWindow.fromId(openerWindowId);
+    if (!openerWin || openerWin.isDestroyed()) {
+      popupToOpener.delete(senderWin.id);
+      return { success: false, error: 'Opener window not found' };
+    }
+
+    DEBUG && console.log(`[opener-bridge] Popup ${senderWin.id} requested opener.close() on ${openerWindowId}`);
+    closeOrHideWindow(openerWin);
+    return { success: true };
+  });
+
+  // Route opener.focus() from a popup to focus the opener window.
+  ipcMain.handle('opener-focus', (ev) => {
+    const senderWin = BrowserWindow.fromWebContents(ev.sender);
+    if (!senderWin) return { success: false, error: 'No sender window' };
+
+    const openerWindowId = popupToOpener.get(senderWin.id);
+    if (!openerWindowId) return { success: false, error: 'No opener mapped' };
+
+    const openerWin = BrowserWindow.fromId(openerWindowId);
+    if (!openerWin || openerWin.isDestroyed()) {
+      popupToOpener.delete(senderWin.id);
+      return { success: false, error: 'Opener window not found' };
+    }
+
+    DEBUG && console.log(`[opener-bridge] Popup ${senderWin.id} requested opener.focus() on ${openerWindowId}`);
+    openerWin.show();
+    openerWin.focus();
+    return { success: true };
   });
 }
 

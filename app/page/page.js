@@ -21,6 +21,52 @@ import api from '../api.js';
 
 const DEBUG = true;
 
+// --- OAuth URL detection (Level 2) ---
+// Patterns that indicate an OAuth/authentication flow in progress.
+// When detected, navbar auto-show on hover is suppressed to avoid interrupting the flow.
+
+const OAUTH_DOMAINS = [
+  'accounts.google.com',
+  'login.microsoftonline.com',
+  'auth0.com',
+  'appleid.apple.com',
+];
+
+const OAUTH_PATH_PATTERNS = [
+  '/oauth/',
+  '/authorize',
+  '/auth/',
+  '/login/oauth',
+  '/oauth2/',
+  '/connect/authorize',
+  '/o/oauth2/',
+];
+
+function isOAuthUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    // Check domain-based patterns
+    for (const domain of OAUTH_DOMAINS) {
+      if (parsed.hostname === domain || parsed.hostname.endsWith('.' + domain)) {
+        return true;
+      }
+    }
+    // Check path-based patterns
+    const lowerPath = parsed.pathname.toLowerCase();
+    for (const pattern of OAUTH_PATH_PATTERNS) {
+      if (lowerPath.includes(pattern)) {
+        return true;
+      }
+    }
+  } catch (e) {
+    // Invalid URL, not OAuth
+  }
+  return false;
+}
+
+let isOnOAuthPage = false;
+
 // --- Constants ---
 const NAVBAR_HEIGHT = 36;
 const NAVBAR_GAP = 0; // trigger zone serves as the visual gap
@@ -404,6 +450,36 @@ webview.addEventListener('console-message', (e) => {
     }
     return;
   }
+
+  // --- Popup-to-opener postMessage bridge (Level 3) ---
+  // When a popup's webview guest calls window.opener.postMessage(), the injected
+  // shim logs this message. We forward it to the main process which routes it
+  // to the opener window.
+  if (e.message.startsWith('__PEEK_OPENER_POSTMESSAGE__:')) {
+    const jsonStr = e.message.substring('__PEEK_OPENER_POSTMESSAGE__:'.length);
+    try {
+      const payload = JSON.parse(jsonStr);
+      DEBUG && console.log('[page] Forwarding opener postMessage:', payload);
+      api.invoke('opener-postmessage', payload);
+    } catch (err) {
+      console.error('[page] Failed to parse opener postMessage:', err);
+    }
+    return;
+  }
+
+  // --- Popup opener.close() bridge (Level 4) ---
+  if (e.message === '__PEEK_OPENER_CLOSE__') {
+    DEBUG && console.log('[page] Popup requested opener.close()');
+    api.invoke('opener-close');
+    return;
+  }
+
+  // --- Popup opener.focus() bridge (Level 4) ---
+  if (e.message === '__PEEK_OPENER_FOCUS__') {
+    DEBUG && console.log('[page] Popup requested opener.focus()');
+    api.invoke('opener-focus');
+    return;
+  }
 });
 
 function injectMouseBridge() {
@@ -654,6 +730,12 @@ function cancelHide() {
 }
 
 triggerZone.addEventListener('mouseenter', () => {
+  // Suppress navbar auto-show during OAuth flows (Level 2) to avoid
+  // interrupting credential entry. User can still Cmd+L to force show.
+  if (isOnOAuthPage) {
+    DEBUG && console.log('[page] Suppressing navbar hover during OAuth flow');
+    return;
+  }
   show({ source: 'hover' });
 });
 
@@ -785,6 +867,15 @@ webview.addEventListener('did-navigate', async (e) => {
   DEBUG && console.log('[page] did-navigate:', e.url);
   urlText.value = e.url;
   updateState();
+
+  // Update OAuth state (Level 2)
+  const wasOAuth = isOnOAuthPage;
+  isOnOAuthPage = isOAuthUrl(e.url);
+  if (isOnOAuthPage && !wasOAuth) {
+    DEBUG && console.log('[page] OAuth flow detected:', e.url);
+  } else if (!isOnOAuthPage && wasOAuth) {
+    DEBUG && console.log('[page] OAuth flow ended');
+  }
 
   try {
     await api.datastore.trackNavigation(e.url, {
@@ -1143,5 +1234,80 @@ api.subscribe('websearch:engine-discovered', (msg) => {
     autoDismiss: 8000,
   });
 }, api.scopes.GLOBAL);
+
+// --- Popup-to-opener postMessage bridge: receiver side (Level 3) ---
+// When main process routes a postMessage from a popup to this opener window,
+// dispatch it as a MessageEvent into the webview guest.
+api.ipc.on('opener-message-received', (data) => {
+  if (!data || !data.message) return;
+  DEBUG && console.log('[page] Received opener message, dispatching to webview:', data);
+  const messageJson = JSON.stringify(data.message);
+  const origin = data.origin || '*';
+  webview.executeJavaScript(`
+    window.dispatchEvent(new MessageEvent('message', {
+      data: ${messageJson},
+      origin: ${JSON.stringify(origin)}
+    }));
+  `).catch(err => {
+    DEBUG && console.log('[page] Failed to dispatch opener message to webview:', err.message);
+  });
+});
+
+// --- Opener shim injection for popup windows (Level 3 & 4) ---
+// If this window was opened as a popup (has openerUrl param), inject a window.opener
+// shim into the webview guest that bridges postMessage back to the opener via IPC.
+const openerUrl = params.get('openerUrl');
+
+const OPENER_SHIM_JS = openerUrl ? `
+(function() {
+  if (window.__peekOpenerShimInstalled) return;
+  window.__peekOpenerShimInstalled = true;
+
+  var nativeLog = console.log.bind(console);
+  var openerUrl = ${JSON.stringify(openerUrl)};
+
+  Object.defineProperty(window, 'opener', {
+    configurable: true,
+    get: function() {
+      return {
+        postMessage: function(message, targetOrigin) {
+          var payload = JSON.stringify({
+            message: message,
+            targetOrigin: targetOrigin || '*',
+            origin: window.location.origin
+          });
+          nativeLog('__PEEK_OPENER_POSTMESSAGE__:' + payload);
+        },
+        closed: false,
+        location: {
+          href: openerUrl,
+          origin: (function() {
+            try { return new URL(openerUrl).origin; } catch(e) { return ''; }
+          })()
+        },
+        close: function() {
+          nativeLog('__PEEK_OPENER_CLOSE__');
+        },
+        focus: function() {
+          nativeLog('__PEEK_OPENER_FOCUS__');
+        }
+      };
+    }
+  });
+})();
+` : null;
+
+if (OPENER_SHIM_JS) {
+  function injectOpenerShim() {
+    webview.executeJavaScript(OPENER_SHIM_JS).catch(err => {
+      DEBUG && console.log('[page] Failed to inject opener shim:', err.message);
+    });
+  }
+  webview.addEventListener('dom-ready', injectOpenerShim);
+  webview.addEventListener('did-navigate', () => {
+    setTimeout(injectOpenerShim, 50);
+  });
+  DEBUG && console.log('[page] Opener shim will be injected (openerUrl:', openerUrl, ')');
+}
 
 DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);
