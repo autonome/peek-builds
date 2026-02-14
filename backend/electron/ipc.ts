@@ -3309,7 +3309,7 @@ export function registerWindowHandlers(): void {
     }
 
     DEBUG && console.log(`[opener-bridge] Popup ${senderWin.id} requested opener.close() on ${openerWindowId}`);
-    closeOrHideWindow(openerWin);
+    closeOrHideWindow(openerWin.id);
     return { success: true };
   });
 
