@@ -169,6 +169,8 @@ export {
   // External URL handling
   handleExternalUrl,
   setAppReady,
+  notifyFrontendReady,
+  notifySessionRestoreDone,
   registerExternalUrlHandlers,
   registerSecondInstanceHandler,
   handleCliUrl,

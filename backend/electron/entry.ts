@@ -25,6 +25,8 @@ import {
   cleanupDevExtensions,
   // External URL handling
   setAppReady,
+  notifyFrontendReady,
+  notifySessionRestoreDone,
   registerExternalUrlHandlers,
   registerSecondInstanceHandler,
   handleCliUrl,
@@ -403,6 +405,13 @@ const onReady = async () => {
     return _sessionRestorePending;
   });
 
+  // IPC handler for background window's app/index.js to signal readiness.
+  // Pending external URLs won't be processed until this fires.
+  ipcMain.handle('frontend-ready', () => {
+    notifyFrontendReady();
+    return true;
+  });
+
   // Initialize session partitioning for profile isolation
   // This must happen early, before any sessions are used
   initSessionPartition(PROFILE, defaultUserDataPath);
@@ -598,6 +607,12 @@ const onReady = async () => {
           _sessionRestorePending = false;
           publish(systemAddress, scopes.GLOBAL, 'session:open-startup', {});
         }
+        // Signal that session restore is done (success or failure)
+        // so pending external URLs can now be processed.
+        notifySessionRestoreDone();
+      } else {
+        // No session restore pending — signal immediately
+        notifySessionRestoreDone();
       }
 
       // Start periodic autosave timer (Phase 3)

@@ -38,6 +38,14 @@ let mainWindow: BrowserWindow | null = null;
 // External URL handling state
 let _appReady = false;
 let _pendingUrls: Array<{ url: string; sourceId: string }> = [];
+// Frontend readiness: resolved when background window's app/index.js signals ready
+let _frontendReadyResolve: (() => void) | null = null;
+const _frontendReadyPromise = new Promise<void>(resolve => { _frontendReadyResolve = resolve; });
+let _frontendReady = false;
+// Session restore completion: resolved after session restore finishes (or is skipped)
+let _sessionRestoreDoneResolve: (() => void) | null = null;
+const _sessionRestoreDonePromise = new Promise<void>(resolve => { _sessionRestoreDoneResolve = resolve; });
+let _sessionRestoreDone = false;
 
 // Extension windows: extId -> { win, manifest, status }
 const extensionWindows = new Map<string, {
@@ -1081,6 +1089,10 @@ export function getBackgroundWindow(): BrowserWindow | null {
 
 /**
  * Handle URLs opened from external apps (e.g., when Peek is default browser)
+ *
+ * URLs are queued until both:
+ * 1. The frontend subscriber in app/index.js is ready (frontend-ready IPC)
+ * 2. Session restore has completed (so we don't race window creation)
  */
 export function handleExternalUrl(url: string, sourceId = 'os'): void {
   DEBUG && console.log('External URL received:', url, 'from:', sourceId);
@@ -1090,10 +1102,20 @@ export function handleExternalUrl(url: string, sourceId = 'os'): void {
     return;
   }
 
-  // On macOS, open-url fires during app activation, which can happen before
-  // the app is fully focused. Wait a tick to ensure activation completes.
-  // This fixes the issue where first click from external app focuses Peek
-  // but doesn't open the URL (second click works because app is already focused).
+  // If frontend isn't ready yet, queue and wait
+  if (!_frontendReady || !_sessionRestoreDone) {
+    _pendingUrls.push({ url, sourceId });
+    DEBUG && console.log('External URL queued (waiting for frontend/session):', url);
+    return;
+  }
+
+  publishExternalUrl(url, sourceId);
+}
+
+/**
+ * Publish a single external URL to the frontend via pubsub
+ */
+function publishExternalUrl(url: string, sourceId: string): void {
   const processUrl = () => {
     // Note: Using trackingSource/trackingSourceId because preload.js overwrites msg.source
     publish(getSystemAddress(), scopes.GLOBAL, 'external:open-url', {
@@ -1104,7 +1126,8 @@ export function handleExternalUrl(url: string, sourceId = 'os'): void {
     });
   };
 
-  // Small delay to ensure app activation completes before processing URL
+  // On macOS, open-url fires during app activation, which can happen before
+  // the app is fully focused. Wait a tick to ensure activation completes.
   if (process.platform === 'darwin' && sourceId === 'os') {
     setTimeout(processUrl, 100);
   } else {
@@ -1113,21 +1136,70 @@ export function handleExternalUrl(url: string, sourceId = 'os'): void {
 }
 
 /**
- * Process any URLs that arrived before app was ready
+ * Process any URLs that arrived before app was fully ready.
+ * Waits for both frontend readiness and session restore completion,
+ * then processes URLs sequentially (one at a time) with a small
+ * delay between each to avoid racing concurrent window creation.
  */
-export function processPendingUrls(): void {
-  _pendingUrls.forEach(({ url, sourceId }) => {
-    handleExternalUrl(url, sourceId);
-  });
+async function processPendingUrls(): Promise<void> {
+  // Wait for frontend subscriber and session restore before processing
+  await Promise.all([_frontendReadyPromise, _sessionRestoreDonePromise]);
+
+  const urls = _pendingUrls.slice();
   _pendingUrls = [];
+
+  if (urls.length === 0) return;
+
+  DEBUG && console.log(`[url] Processing ${urls.length} pending URL(s)`);
+
+  // Process sequentially with a small delay between each
+  for (const { url, sourceId } of urls) {
+    publishExternalUrl(url, sourceId);
+    // Small delay between URLs to avoid concurrent window creation races
+    if (urls.length > 1) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  }
 }
 
 /**
- * Mark app as ready to handle external URLs
+ * Mark app as ready to handle external URLs.
+ * Pending URLs are NOT processed immediately — they wait for
+ * frontendReady and sessionRestoreDone signals.
  */
 export function setAppReady(): void {
   _appReady = true;
+  // Kick off pending URL processing (will wait for frontend + session restore)
   processPendingUrls();
+}
+
+/**
+ * Signal that the frontend (background window's app/index.js) has finished
+ * initializing and has registered its pubsub subscribers.
+ * Called via IPC 'frontend-ready' from the background window.
+ */
+export function notifyFrontendReady(): void {
+  if (_frontendReady) return;
+  _frontendReady = true;
+  DEBUG && console.log('[url] Frontend ready — pubsub subscribers registered');
+  if (_frontendReadyResolve) {
+    _frontendReadyResolve();
+    _frontendReadyResolve = null;
+  }
+}
+
+/**
+ * Signal that session restore has completed (or was skipped).
+ * Called from entry.ts after restoreSessionSnapshot finishes.
+ */
+export function notifySessionRestoreDone(): void {
+  if (_sessionRestoreDone) return;
+  _sessionRestoreDone = true;
+  DEBUG && console.log('[url] Session restore done');
+  if (_sessionRestoreDoneResolve) {
+    _sessionRestoreDoneResolve();
+    _sessionRestoreDoneResolve = null;
+  }
 }
 
 /**
@@ -1159,7 +1231,8 @@ export function registerSecondInstanceHandler(): void {
 }
 
 /**
- * Check for URL in CLI arguments and handle it
+ * Check for URL in CLI arguments and handle it.
+ * Uses handleExternalUrl which queues until frontend + session restore are ready.
  */
 export function handleCliUrl(): void {
   const urlArg = process.argv.find(arg =>
@@ -1167,8 +1240,7 @@ export function handleCliUrl(): void {
   );
   if (urlArg) {
     DEBUG && console.log('CLI URL argument:', urlArg);
-    // Defer until background app is ready
-    setTimeout(() => handleExternalUrl(urlArg, 'cli'), 1000);
+    handleExternalUrl(urlArg, 'cli');
   }
 }
 

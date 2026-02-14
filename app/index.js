@@ -533,8 +533,26 @@ const init = async () => {
         trackingSourceId
       });
     } catch (error) {
-      log.error('core', 'Error opening external URL:', error);
+      log.error('core', 'Error opening external URL (attempt 1):', error);
+      // Retry once after a short delay
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        log('core', 'Retrying external URL:', url);
+        await windowManager.createWindow(url, {
+          key: url,
+          trackingSource,
+          trackingSourceId
+        });
+      } catch (retryError) {
+        log.error('core', 'Error opening external URL (retry failed):', retryError);
+      }
     }
+  });
+
+  // Signal to main process that frontend subscribers are ready.
+  // This unblocks pending external URLs that arrived during startup.
+  api.invoke('frontend-ready').catch(err => {
+    log.error('core', 'Failed to signal frontend-ready:', err);
   });
 
   // Check if session restore is pending — if so, skip the startup feature
