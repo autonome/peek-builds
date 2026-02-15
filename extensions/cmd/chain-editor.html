@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chain Editor</title>
+
+    <!-- Import map for CodeMirror -->
+    <script type="importmap">
+    {
+      "imports": {
+        "@codemirror/state": "peek://node_modules/@codemirror/state/dist/index.js",
+        "@codemirror/view": "peek://node_modules/@codemirror/view/dist/index.js",
+        "@codemirror/commands": "peek://node_modules/@codemirror/commands/dist/index.js",
+        "@codemirror/language": "peek://node_modules/@codemirror/language/dist/index.js",
+        "@codemirror/autocomplete": "peek://node_modules/@codemirror/autocomplete/dist/index.js",
+        "@codemirror/lang-markdown": "peek://node_modules/@codemirror/lang-markdown/dist/index.js",
+        "@codemirror/lang-html": "peek://node_modules/@codemirror/lang-html/dist/index.js",
+        "@codemirror/lang-css": "peek://node_modules/@codemirror/lang-css/dist/index.js",
+        "@codemirror/lang-javascript": "peek://node_modules/@codemirror/lang-javascript/dist/index.js",
+        "@codemirror/theme-one-dark": "peek://node_modules/@codemirror/theme-one-dark/dist/index.js",
+        "@codemirror/search": "peek://node_modules/@codemirror/search/dist/index.js",
+        "@replit/codemirror-vim": "peek://node_modules/@replit/codemirror-vim/dist/index.js",
+        "@lezer/common": "peek://node_modules/@lezer/common/dist/index.js",
+        "@lezer/highlight": "peek://node_modules/@lezer/highlight/dist/index.js",
+        "@lezer/lr": "peek://node_modules/@lezer/lr/dist/index.js",
+        "@lezer/markdown": "peek://node_modules/@lezer/markdown/dist/index.js",
+        "@lezer/html": "peek://node_modules/@lezer/html/dist/index.js",
+        "@lezer/css": "peek://node_modules/@lezer/css/dist/index.js",
+        "@lezer/javascript": "peek://node_modules/@lezer/javascript/dist/index.js",
+        "crelt": "peek://node_modules/crelt/index.js",
+        "style-mod": "peek://node_modules/style-mod/src/style-mod.js",
+        "w3c-keyname": "peek://node_modules/w3c-keyname/index.js",
+        "@marijn/find-cluster-break": "peek://node_modules/@marijn/find-cluster-break/src/index.js"
+      }
+    }
+    </script>
+
+    <style>
+      @import url('peek://theme/variables.css');
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        background-color: rgba(30, 33, 40, 0.98);
+        font-family: var(--theme-font-sans);
+        color: white;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        border-radius: 8px;
+      }
+
+      #editor-container {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        position: relative;
+      }
+
+      #editor-container .cm-editor {
+        height: 100%;
+      }
+
+      #editor-container .cm-scroller {
+        overflow: auto;
+      }
+
+      #status-line {
+        flex-shrink: 0;
+      }
+
+      #status-line .vim-status-line {
+        border-radius: 0 0 8px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="editor-container"></div>
+    <div id="status-line"></div>
+
+    <script type="module" src="./chain-editor.js"></script>
+  </body>
+</html>

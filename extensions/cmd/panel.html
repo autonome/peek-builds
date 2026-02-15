@@ -7,6 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
     <style>
       @import url('peek://theme/variables.css');
 
@@ -475,65 +476,6 @@
         margin: 0 6px;
       }
 
-      /* Embedded editor container for text chain previews */
-      #chain-editor-container {
-        display: none;
-        margin: 5px 10px;
-        background: rgba(40, 44, 52, 0.98);
-        border-radius: 8px;
-        overflow: hidden;
-        width: calc(100% - 20px);
-        box-sizing: border-box;
-        flex: 1;
-        min-height: 0;
-        position: relative;
-      }
-
-      #chain-editor-container.visible {
-        display: flex;
-        flex-direction: column;
-      }
-
-      #chain-editor-container .chain-editor-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 6px 10px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        font-size: 11px;
-        color: rgba(255, 255, 255, 0.6);
-        flex-shrink: 0;
-      }
-
-      #chain-editor-container .chain-editor-hint {
-        font-size: 10px;
-        color: rgba(255, 255, 255, 0.4);
-      }
-
-      #chain-editor-container .chain-editor-body {
-        flex: 1;
-        min-height: 0;
-        overflow: hidden;
-        position: relative;
-      }
-
-      /* CodeMirror sizing inside chain editor */
-      #chain-editor-container .chain-editor-body .cm-editor {
-        height: 100%;
-      }
-
-      #chain-editor-container .chain-editor-body .cm-scroller {
-        overflow: auto;
-      }
-
-      /* Vim status line inside chain editor */
-      #chain-editor-container .chain-editor-status-line {
-        flex-shrink: 0;
-      }
-
-      #chain-editor-container .chain-editor-status-line .vim-status-line {
-        border-radius: 0 0 8px 8px;
-      }
     </style>
   </head>
   <body>
@@ -572,16 +514,6 @@
         <span id="preview-title"></span>
       </div>
       <div id="preview-content"></div>
-    </div>
-
-    <!-- Embedded editor for text chain output (markdown, plain text) -->
-    <div id="chain-editor-container">
-      <div class="chain-editor-header">
-        <span class="chain-editor-title">Edit output</span>
-        <span class="chain-editor-hint">Tab: next command | Esc: cancel chain</span>
-      </div>
-      <div class="chain-editor-body"></div>
-      <div class="chain-editor-status-line"></div>
     </div>
 
     <script type="module" src="./panel.js"></script>

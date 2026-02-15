@@ -7,9 +7,8 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import './commands.js'; // Load commands module to dispatch cmd-update-commands event
 import { log } from 'peek://app/log.js';
-import * as CodeMirror from 'peek://extensions/editor/codemirror.js';
-import { StatusLine } from 'peek://extensions/editor/status-line.js';
-const { getCM, Vim } = CodeMirror;
+// CodeMirror imports removed — chain text editing now uses popup windows
+// (see chain-editor.html/js)
 
 log('cmd:panel', 'loaded');
 
@@ -121,12 +120,8 @@ loadAdaptiveData().then(data => {
   log('cmd:panel', 'Loaded adaptive data');
 });
 
-// ===== Chain Editor State =====
-// Embedded CodeMirror editor for editing text/markdown in chain mode
-let chainEditor = null;       // CodeMirror EditorView instance
-let chainStatusLine = null;   // StatusLine for vim mode
-let chainEditorVimMode = false; // Vim mode preference
-let chainEditorFocused = false; // Whether the chain editor currently holds focus
+// Chain popup state (popup windows for interactive chain editing)
+let chainPopupActive = false;  // Whether a chain popup is currently open
 
 // Current command context (mode, target window, etc.)
 // Loaded asynchronously when panel opens
@@ -352,10 +347,9 @@ function updateWindowSize() {
   const previewVisible = document.getElementById('preview-container')?.classList.contains('visible');
   const chainVisible = document.getElementById('chain-indicator')?.classList.contains('visible');
   const execVisible = document.getElementById('execution-state')?.classList.contains('visible');
-  const chainEditorVisible = document.getElementById('chain-editor-container')?.classList.contains('visible');
   const chainStepsVisible = document.getElementById('chain-steps')?.classList.contains('visible');
 
-  const needsExpanded = resultsVisible || previewVisible || chainVisible || execVisible || state.outputSelectionMode || chainEditorVisible || chainStepsVisible;
+  const needsExpanded = resultsVisible || previewVisible || chainVisible || execVisible || state.outputSelectionMode || chainStepsVisible;
   const targetHeight = needsExpanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT;
 
   api.window.resize(600, targetHeight);
@@ -422,19 +416,15 @@ async function render() {
     }
   });
 
-  // Keep focus on input (unless chain editor is active)
+  // Keep focus on input (unless chain popup is active)
   window.addEventListener('blur', () => {
-    if (!chainEditorFocused) {
+    if (!chainPopupActive) {
       setTimeout(() => commandInput.focus(), 10);
     }
   });
 
   window.addEventListener('focus', () => {
-    if (chainEditorFocused && chainEditor) {
-      CodeMirror.focus(chainEditor);
-    } else {
-      commandInput.focus();
-    }
+    commandInput.focus();
   });
 
   // Handle visibility changes
@@ -462,8 +452,8 @@ async function render() {
       if (state.chainMode) {
         exitChainMode();
       }
-      // Also ensure chain editor is cleaned up
-      destroyChainEditor();
+      // Reset chain popup state
+      chainPopupActive = false;
       // Reset showResults
       state.showResults = false;
       // Reset mode state for fresh context loading
@@ -487,20 +477,6 @@ async function render() {
 
   // Initialize mode indicator (uses commandContext loaded above)
   initModeIndicator();
-
-  // Global keydown handler for chain editor shortcuts
-  // When the editor is focused, it captures most keys. We need a window-level
-  // handler to intercept Tab (advance chain) from within the editor.
-  window.addEventListener('keydown', (e) => {
-    if (!chainEditorFocused || !chainEditor || !state.chainMode) return;
-
-    // Tab: finalize editor content and show command input for next command
-    if (e.key === 'Tab' && !e.shiftKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      advanceChainFromEditor();
-    }
-  }, true); // Use capture phase to intercept before CodeMirror
 
   // Chain cancel button handler
   const chainCancelBtn = document.getElementById('chain-cancel');
@@ -541,35 +517,6 @@ api.escape.onEscape(() => {
     state.typed = '';
     updateCommandUI();
     updateResultsUI();
-    return { handled: true };
-  }
-
-  // Handle chain editor vim mode escape cascade
-  if (chainEditorFocused && chainEditor && chainEditorVimMode) {
-    try {
-      const cm = getCM(chainEditor);
-      if (cm && cm.state && cm.state.vim) {
-        const vimState = cm.state.vim;
-        if (vimState.insertMode || vimState.visualMode) {
-          log('cmd:panel', 'Chain editor: vim insert/visual -> normal');
-          Vim.handleKey(cm, '<Esc>');
-          return { handled: true };
-        }
-        // In normal mode: exit editor focus, return to command input
-        log('cmd:panel', 'Chain editor: vim normal -> exit editor focus');
-        chainEditorFocused = false;
-        commandInput.focus();
-        return { handled: true };
-      }
-    } catch (e) {
-      log('cmd:panel', 'Chain editor vim escape error:', e);
-    }
-  }
-
-  // If chain editor is focused (non-vim), exit editor focus
-  if (chainEditorFocused && chainEditor) {
-    chainEditorFocused = false;
-    commandInput.focus();
     return { handled: true };
   }
 
@@ -788,13 +735,6 @@ function handleSpecialKey(e) {
     return;
   }
 
-  // Tab key in chain mode with editor — finalize editor and show command input
-  if (e.key === 'Tab' && state.chainMode && chainEditorFocused && chainEditor) {
-    e.preventDefault();
-    advanceChainFromEditor();
-    return;
-  }
-
   // Tab key - autocomplete or cycle through matches
   if (e.key === 'Tab' && state.matches.length > 0) {
     const currentMatch = state.matches[state.matchIndex];
@@ -894,11 +834,9 @@ function findChainingCommands(mimeType) {
  * @param {Object} output - { data, mimeType, title }
  * @param {string} sourceCommand - Name of the command that produced this output
  */
-function enterChainMode(output, sourceCommand) {
+async function enterChainMode(output, sourceCommand) {
   log('cmd:panel', 'Entering chain mode with output:', output.mimeType, output.title);
 
-  // Clean up any existing chain editor from a previous step
-  destroyChainEditor();
   hidePreview();
 
   state.chainMode = true;
@@ -927,12 +865,12 @@ function enterChainMode(output, sourceCommand) {
   updateCommandUI();
   updateResultsUI();
 
-  // For text types, show embedded editor instead of plain preview
-  if (output.data && isTextMimeType(output.mimeType) && typeof output.data === 'string') {
-    hidePreview();
-    createChainEditor(output.data, output.mimeType);
+  // For interactive popups (declared by command or MIME fallback)
+  const popupUrl = output.interactive || getDefaultPopupForMime(output.mimeType);
+  if (popupUrl && output.data) {
+    await openChainPopup(popupUrl, output.data, output.mimeType, output.title);
   } else if (output.data) {
-    // Show standard preview for non-text types
+    // Non-interactive output — just show preview
     showPreview(output.data, output.mimeType, output.title);
   }
 }
@@ -948,10 +886,10 @@ function exitChainMode() {
   state.chainStack = [];
   state.matches = [];
   state.matchIndex = 0;
+  chainPopupActive = false;
 
-  // Hide preview and destroy chain editor
+  // Hide preview
   hidePreview();
-  destroyChainEditor();
 
   // Update UI
   updateChainUI();
@@ -979,9 +917,6 @@ function chainUndo() {
   state.matches = chainingCommands.map(cmd => cmd.name);
   state.matchIndex = 0;
 
-  // Destroy chain editor if present
-  destroyChainEditor();
-
   // Update UI
   updateChainUI();
   updateChainStepsUI();
@@ -989,195 +924,121 @@ function chainUndo() {
   updateResultsUI();
 
   // Update preview for restored context
-  if (state.chainContext.data && isTextMimeType(state.chainContext.mimeType) && typeof state.chainContext.data === 'string') {
-    hidePreview();
-    createChainEditor(state.chainContext.data, state.chainContext.mimeType);
-  } else if (state.chainContext.data) {
-    showPreview(state.chainContext.data, state.chainContext.mimeType, state.chainContext.title);
-  }
-}
-
-// ===== Chain Editor Functions =====
-
-/**
- * Check if a MIME type is a text type suitable for embedded editor.
- * Note: application/json is excluded because structured data is better
- * shown as a table preview, not as raw text in an editor.
- */
-function isTextMimeType(mimeType) {
-  if (!mimeType) return false;
-  return mimeType.startsWith('text/');
-}
-
-/**
- * Load vim mode preference from editor extension settings
- */
-async function loadChainEditorVimPref() {
-  try {
-    if (api?.settings?.getExtKey) {
-      const result = await api.settings.getExtKey('editor', 'prefs');
-      if (result.success && result.data && typeof result.data === 'object') {
-        chainEditorVimMode = !!result.data.vimMode;
-        log('cmd:panel', 'Chain editor vimMode:', chainEditorVimMode);
-      }
-    }
-  } catch (err) {
-    log('cmd:panel', 'Failed to load vim pref:', err);
-  }
-}
-
-/**
- * Create the embedded CodeMirror editor for chain text output
- * @param {string} content - Text content to edit
- * @param {string} mimeType - MIME type of content
- */
-async function createChainEditor(content, mimeType) {
-  destroyChainEditor();
-
-  const container = document.querySelector('#chain-editor-container');
-  const bodyEl = container?.querySelector('.chain-editor-body');
-  const statusLineEl = container?.querySelector('.chain-editor-status-line');
-  if (!container || !bodyEl) return;
-
-  // Load vim preference
-  await loadChainEditorVimPref();
-
-  // Clear the body
-  bodyEl.innerHTML = '';
-
-  // Create status line
-  if (statusLineEl) {
-    statusLineEl.innerHTML = '';
-    chainStatusLine = new StatusLine({ container: statusLineEl });
-    if (chainEditorVimMode) {
-      chainStatusLine.show();
-      chainStatusLine.updateMode('normal');
+  if (state.chainContext.data) {
+    const popupUrl = getDefaultPopupForMime(state.chainContext.mimeType);
+    if (popupUrl) {
+      hidePreview();
+      openChainPopup(popupUrl, state.chainContext.data, state.chainContext.mimeType, state.chainContext.title);
     } else {
-      chainStatusLine.hide();
-      statusLineEl.style.display = 'none';
+      showPreview(state.chainContext.data, state.chainContext.mimeType, state.chainContext.title);
     }
   }
+}
 
-  chainEditor = CodeMirror.createEditor({
-    parent: bodyEl,
-    content: content || '',
-    vimMode: chainEditorVimMode,
-    showLineNumbers: true,
-    onChange: (newContent) => {
-      // Update chain context data with edited content
-      if (state.chainMode && state.chainContext) {
-        state.chainContext.data = newContent;
-        // Also update the top of the chain stack
-        if (state.chainStack.length > 0) {
-          state.chainStack[state.chainStack.length - 1].data = newContent;
-        }
-      }
-    },
-    onSelectionChange: (line, col) => {
-      if (chainStatusLine && chainEditorVimMode) {
-        chainStatusLine.updatePosition(line, col);
-      }
-    },
-    onVimModeChange: (mode) => {
-      if (chainStatusLine && chainEditorVimMode) {
-        chainStatusLine.updateMode(mode);
-      }
+// ===== Chain Popup Functions =====
+
+/**
+ * Default popup URLs for MIME type prefixes.
+ * Commands can override these by declaring an `interactive` field in output.
+ */
+const DEFAULT_POPUPS = {
+  'text/': 'peek://ext/cmd/chain-editor.html',
+};
+
+/**
+ * Get the default popup URL for a given MIME type (prefix matching).
+ * @param {string} mimeType
+ * @returns {string|null} Popup URL or null if no default
+ */
+function getDefaultPopupForMime(mimeType) {
+  if (!mimeType) return null;
+  for (const [prefix, url] of Object.entries(DEFAULT_POPUPS)) {
+    if (mimeType.startsWith(prefix)) return url;
+  }
+  return null;
+}
+
+/**
+ * Open a chain popup window for interactive editing of chain output.
+ *
+ * The popup receives content via pubsub and returns the edited result
+ * via pubsub when the user closes the popup.
+ *
+ * @param {string} popupUrl - The URL to open (e.g., peek://ext/cmd/chain-editor.html)
+ * @param {*} data - The content data to send to the popup
+ * @param {string} mimeType - MIME type of the data
+ * @param {string} title - Human-readable title
+ */
+async function openChainPopup(popupUrl, data, mimeType, title) {
+  const sessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  chainPopupActive = true;
+
+  log('cmd:panel', 'Opening chain popup:', popupUrl, 'sessionId:', sessionId);
+
+  // Subscribe for result BEFORE opening popup
+  const unsubscribe = api.subscribe('chain-popup:result', (msg) => {
+    if (msg.sessionId !== sessionId) return;
+    unsubscribe();
+    chainPopupActive = false;
+
+    log('cmd:panel', 'Received chain popup result, length:', (msg.data || '').length);
+
+    // Update chain context with returned data
+    state.chainContext.data = msg.data;
+    state.chainContext.mimeType = msg.mimeType || mimeType;
+    if (state.chainStack.length > 0) {
+      state.chainStack[state.chainStack.length - 1].data = msg.data;
     }
+
+    // Show commands accepting the new mimeType
+    const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+    state.typed = '';
+    state.matches = chainingCommands.map(cmd => cmd.name);
+    state.matchIndex = 0;
+    state.showResults = true;
+
+    updateChainUI();
+    updateChainStepsUI();
+    updateCommandUI();
+    updateResultsUI();
+    updateWindowSize();
+
+    // Re-focus command input
+    const commandInput = document.getElementById('command-input');
+    if (commandInput) {
+      commandInput.focus();
+    }
+  }, api.scopes.GLOBAL);
+
+  // Get cmd panel bounds for positioning
+  const panelBounds = await api.window.getBounds();
+
+  // Open popup as modal child, centered vertically over cmd
+  const editorHeight = 400;
+  const editorY = Math.round(panelBounds.y - editorHeight / 2 + panelBounds.height / 2);
+
+  const url = `${popupUrl}?sessionId=${encodeURIComponent(sessionId)}&mimeType=${encodeURIComponent(mimeType)}&title=${encodeURIComponent(title || 'Edit')}`;
+
+  await api.window.open(url, {
+    role: 'utility',
+    width: panelBounds.width,
+    height: editorHeight,
+    x: panelBounds.x,
+    y: editorY,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    hasShadow: true,
+    resizable: true,
   });
 
-  // Show the container
-  container.classList.add('visible');
-
-  // Update the header title
-  const titleEl = container.querySelector('.chain-editor-title');
-  if (titleEl) {
-    titleEl.textContent = state.chainContext?.title || 'Edit output';
-  }
-
-  chainEditorFocused = true;
-
-  // Focus the editor after layout settles
-  setTimeout(() => {
-    if (chainEditor) {
-      CodeMirror.focus(chainEditor);
-    }
-  }, 100);
-
-  updateWindowSize();
-}
-
-/**
- * Destroy the chain editor and clean up
- */
-function destroyChainEditor() {
-  chainEditorFocused = false;
-
-  if (chainStatusLine) {
-    chainStatusLine.destroy();
-    chainStatusLine = null;
-  }
-
-  const statusLineEl = document.querySelector('#chain-editor-container .chain-editor-status-line');
-  if (statusLineEl) {
-    statusLineEl.innerHTML = '';
-  }
-
-  if (chainEditor) {
-    CodeMirror.destroy(chainEditor);
-    chainEditor = null;
-  }
-
-  const container = document.getElementById('chain-editor-container');
-  if (container) {
-    container.classList.remove('visible');
-  }
-}
-
-/**
- * Get the current content from the chain editor
- * @returns {string|null} Editor content, or null if no editor active
- */
-function getChainEditorContent() {
-  if (!chainEditor) return null;
-  return CodeMirror.getContent(chainEditor);
-}
-
-/**
- * Handle Tab key press when chain editor is focused.
- * Finalizes the editor content and prepares for next command in chain.
- */
-function advanceChainFromEditor() {
-  if (!chainEditor || !state.chainMode || !state.chainContext) return;
-
-  // Get final content from editor
-  const content = CodeMirror.getContent(chainEditor);
-
-  // Update chain context with final edited content
-  state.chainContext.data = content;
-  if (state.chainStack.length > 0) {
-    state.chainStack[state.chainStack.length - 1].data = content;
-  }
-
-  // Destroy the editor
-  destroyChainEditor();
-
-  // Re-focus command input for next command
-  const commandInput = document.getElementById('command-input');
-  if (commandInput) {
-    commandInput.value = '';
-    commandInput.focus();
-  }
-
-  // Update matches to show commands accepting this type
-  const chainingCommands = findChainingCommands(state.chainContext.mimeType);
-  state.typed = '';
-  state.matches = chainingCommands.map(cmd => cmd.name);
-  state.matchIndex = 0;
-  state.showResults = true;
-
-  updateChainUI();
-  updateCommandUI();
-  updateResultsUI();
+  // Send content via pubsub (avoids URL length limits)
+  api.publish('chain-popup:content', {
+    sessionId,
+    data,
+    mimeType,
+    title: title || 'Edit'
+  }, api.scopes.GLOBAL);
 }
 
 // ===== Chain Steps UI =====
@@ -1753,7 +1614,7 @@ async function execute(name, typed) {
         const downstreamCommands = findChainingCommands(outputMimeType);
         if (downstreamCommands.length > 0) {
           // Pipe entire array to chain mode
-          enterChainMode(result.output, name);
+          await enterChainMode(result.output, name);
 
           const commandInput = document.getElementById('command-input');
           if (commandInput) {
@@ -1777,7 +1638,7 @@ async function execute(name, typed) {
       }
 
       // Single item output - enter chain mode directly
-      enterChainMode(result.output, name);
+      await enterChainMode(result.output, name);
 
       // Clear input for next command
       const commandInput = document.getElementById('command-input');
@@ -1846,12 +1707,37 @@ function findMatchingCommands(text) {
 
   log('cmd:panel', 'Command part:', commandPart, 'Has parameters:', hasParameters);
 
+  // Check if the typed text already starts with a complete multi-word command name + space.
+  // If so, the user has committed to that command (e.g., "list notes #foo") and we should
+  // only return that exact command — not other commands that share the first word.
+  let committedCommand = null;
+  if (hasParameters) {
+    const trimmedLower = lowerText.trimEnd();
+    for (const name of Object.keys(state.commands)) {
+      const lowerName = name.toLowerCase();
+      if (lowerName.includes(' ') && (trimmedLower === lowerName || lowerText.startsWith(lowerName + ' '))) {
+        // Prefer longest matching command name (e.g., "list notes" over "list")
+        if (!committedCommand || name.length > committedCommand.length) {
+          committedCommand = name;
+        }
+      }
+    }
+  }
+
   // Iterate over all commands, searching for matches
   for (const name of Object.keys(state.commands)) {
     const cmd = state.commands[name];
 
     // Check mode availability first
     if (!isCommandAvailable(cmd)) {
+      continue;
+    }
+
+    // If user committed to a specific multi-word command, only include that one
+    if (committedCommand) {
+      if (name === committedCommand) {
+        matches.push(name);
+      }
       continue;
     }
 
@@ -2074,6 +1960,11 @@ function updateCommandUI() {
     // Command with parameters - text after command name + space is params
     typedCommand = selectedMatch;
     typedParams = state.typed.substring(selectedMatch.length);
+  } else if (selectedMatch.toLowerCase().startsWith(trimmedTyped.toLowerCase())) {
+    // Typed text is a prefix of the command (e.g., "list n" → "list notes")
+    // Treat entire typed text as command part, no params
+    typedCommand = trimmedTyped;
+    typedParams = '';
   } else {
     // Partial match - use first space as split point (original behavior)
     const hasParameters = state.typed.includes(' ');

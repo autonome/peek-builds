@@ -267,7 +267,7 @@ const commandDefinitions = [
   },
   {
     name: 'save',
-    description: 'Save data to a file',
+    description: 'Save data to a file (save dialog)',
     accepts: ['*/*'], // Accept any MIME type
     produces: [], // End of chain - doesn't produce output
 
@@ -306,18 +306,22 @@ const commandDefinitions = [
           content = JSON.stringify(data, null, 2);
         }
 
-        // Send to background script to handle download
-        // Background persists regardless of panel state
-        api.publish('cmd:save-file', {
-          content,
-          filename,
-          mimeType
-        }, api.scopes.GLOBAL);
+        // Use the native save dialog
+        const result = await api.files.save(content, { filename, mimeType });
 
-        console.log('[save] Requested download:', filename);
+        if (result.canceled) {
+          console.log('[save] User cancelled save dialog');
+          return { success: true, message: 'Save cancelled' };
+        }
+
+        if (!result.success) {
+          return { success: false, error: result.error || 'Failed to save file' };
+        }
+
+        console.log('[save] Saved to:', result.path);
         return {
           success: true,
-          message: `Saving ${filename}...`
+          message: `Saved to ${result.path}`
         };
       } catch (err) {
         console.error('[save] Error:', err);
@@ -498,73 +502,12 @@ const commandDefinitions = [
           output: {
             data: markdownOutput,
             mimeType: 'text/markdown',
-            title: docTitle
+            title: docTitle,
+            interactive: 'peek://ext/cmd/chain-editor.html'
           }
         };
       } catch (err) {
         console.error('[markdown] Error:', err);
-        return { success: false, error: err.message };
-      }
-    }
-  },
-
-  // ===== Download Command =====
-  {
-    name: 'download',
-    description: 'Download data to a file (save dialog)',
-    accepts: ['text/*', 'application/json'],
-    produces: [], // End of chain
-
-    execute: async (ctx) => {
-      console.log('[download] execute:', ctx);
-
-      if (!ctx.input) {
-        return {
-          success: false,
-          error: 'No input data. Use this command in a chain after a command that produces output.'
-        };
-      }
-
-      try {
-        const data = ctx.input;
-        const mimeType = ctx.inputMimeType || 'text/plain';
-
-        // Determine filename
-        let filename = ctx.search?.trim();
-        if (!filename) {
-          filename = generateFilename(mimeType, ctx.inputTitle);
-        }
-        if (!filename.includes('.')) {
-          filename += '.' + getExtensionFromMime(mimeType);
-        }
-
-        // Stringify data if needed
-        let content;
-        if (typeof data === 'string') {
-          content = data;
-        } else {
-          content = JSON.stringify(data, null, 2);
-        }
-
-        // Use the native save dialog via api.files.save
-        const result = await api.files.save(content, { filename, mimeType });
-
-        if (result.canceled) {
-          console.log('[download] User cancelled save dialog');
-          return { success: true, message: 'Download cancelled' };
-        }
-
-        if (!result.success) {
-          return { success: false, error: result.error || 'Failed to save file' };
-        }
-
-        console.log('[download] Saved to:', result.path);
-        return {
-          success: true,
-          message: `Saved to ${result.path}`
-        };
-      } catch (err) {
-        console.error('[download] Error:', err);
         return { success: false, error: err.message };
       }
     }
