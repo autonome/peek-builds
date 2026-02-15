@@ -83,12 +83,18 @@ const findItemByUrl = async (url) => {
 };
 
 /**
+ * Strip # prefix from tag name (users type "#foo" but tags are stored as "foo")
+ */
+const normalizeTagName = (name) => name.startsWith('#') ? name.slice(1) : name;
+
+/**
  * Add tags to an item using the join table
  */
 const addTagsToItem = async (itemId, tagNames) => {
   const results = [];
 
-  for (const tagName of tagNames) {
+  for (const rawName of tagNames) {
+    const tagName = normalizeTagName(rawName);
     // Get or create the tag
     api.log('[tag] Getting/creating tag:', tagName);
     const tagResult = await api.datastore.getOrCreateTag(tagName);
@@ -131,7 +137,8 @@ const removeTagsFromItem = async (itemId, tagNames) => {
     return results;
   }
 
-  for (const tagName of tagNames) {
+  for (const rawName of tagNames) {
+    const tagName = normalizeTagName(rawName);
     // Find the tag by name
     const tag = tagsResult.data.find(t => t.name.toLowerCase() === tagName.toLowerCase());
     if (!tag) {
@@ -369,7 +376,8 @@ const createTagset = async (tagsString) => {
   const itemId = result.data.id;
 
   // Add each tag to the tagset
-  for (const tagName of tagNames) {
+  for (const rawName of tagNames) {
+    const tagName = normalizeTagName(rawName);
     const tagResult = await api.datastore.getOrCreateTag(tagName);
     if (tagResult.success) {
       await api.datastore.tagItem(itemId, tagResult.data.tag.id);
