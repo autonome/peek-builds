@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -402,7 +402,14 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   const [, forceRender] = useState(0);
 
   // Track value changes for undo history
-  useEffect(() => {
+  // NOTE: useLayoutEffect (not useEffect) is critical here. forceRender updates
+  // undo/redo button disabled state, but useEffect fires AFTER paint, causing a
+  // second re-render that resets cursor position on iOS WKWebView. useLayoutEffect
+  // fires before paint, collapsing both renders into one visual update.
+  // This is a partial fix — other async state updates (e.g. auto-save's
+  // setOriginalEditValues/loadSavedTexts at 500ms) could still cause cursor jumps.
+  // A full fix would save/restore selectionStart/End across all re-renders.
+  useLayoutEffect(() => {
     if (isUndoRedoRef.current) {
       isUndoRedoRef.current = false;
       return;
@@ -483,9 +490,9 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     const textarea = textareaRef.current;
     if (!textarea) return;
 
-    const { selectionStart } = textarea;
-    const textBefore = value.substring(0, selectionStart);
-    const textAfter = value.substring(selectionStart);
+    const { selectionStart, value: domValue } = textarea;
+    const textBefore = domValue.substring(0, selectionStart);
+    const textAfter = domValue.substring(selectionStart);
 
     // Find current line
     const lastNewline = textBefore.lastIndexOf('\n');
@@ -504,7 +511,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     if (contentAfterMarker.trim() === '') {
       // Empty list item — remove the marker (end the list)
       const lineStart = lastNewline + 1;
-      const newValue = value.substring(0, lineStart) + '\n' + textAfter;
+      const newValue = domValue.substring(0, lineStart) + '\n' + textAfter;
       onChange(newValue);
       // Set cursor after the newline
       requestAnimationFrame(() => {
@@ -597,7 +604,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
         value={value}
         onChange={(e) => {
           // Normalize: collapse multiple spaces after list markers (iOS swipe/autosuggestion adds extra space)
-          const normalized = e.target.value.replace(/^(\s*(?:[-*+]|\d+\.))\s{2,}/gm, '$1 ');
+          const normalized = e.target.value.replace(/^(\s*(?:[-*+]|\d+\.))[ \t]{2,}/gm, '$1 ');
           onChange(normalized);
           // Trigger auto-save if provided
           if (onAutoSave) {
