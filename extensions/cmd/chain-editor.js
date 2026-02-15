@@ -164,7 +164,9 @@ window.addEventListener('beforeunload', () => {
 });
 
 /**
- * Initialize: subscribe for content, then wait for it
+ * Initialize: subscribe for content, signal readiness, then wait for content.
+ * Uses a retry loop because pubsub subscription registration is async —
+ * the ready signal might arrive at the panel before our subscribe is processed.
  */
 function init() {
   if (!sessionId) {
@@ -174,10 +176,13 @@ function init() {
 
   console.log('[chain-editor] Waiting for content, sessionId:', sessionId);
 
+  let received = false;
+
   // Subscribe for content from the cmd panel
-  const unsubscribe = api.subscribe('chain-popup:content', (msg) => {
+  api.subscribe('chain-popup:content', (msg) => {
     if (msg.sessionId !== sessionId) return;
-    unsubscribe();
+    if (received) return;
+    received = true;
 
     console.log('[chain-editor] Received content, length:', (msg.data || '').length);
     createEditor(msg.data || '');

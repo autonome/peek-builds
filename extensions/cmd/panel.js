@@ -122,6 +122,7 @@ loadAdaptiveData().then(data => {
 
 // Chain popup state (popup windows for interactive chain editing)
 let chainPopupActive = false;  // Whether a chain popup is currently open
+let chainPopupWindowId = null; // Window ID of the active chain popup
 
 // Current command context (mode, target window, etc.)
 // Loaded asynchronously when panel opens
@@ -780,7 +781,23 @@ function handleSpecialKey(e) {
 function buildExecutionContext(name, typed) {
   // Strip the command name from the beginning to get the rest
   const trimmed = typed.trim();
-  const rest = trimmed.startsWith(name) ? trimmed.slice(name.length).trim() : trimmed;
+  const nameLower = name.toLowerCase();
+  const trimmedLower = trimmed.toLowerCase();
+  let rest;
+  if (trimmedLower.startsWith(nameLower)) {
+    // Typed full command name (or more) — slice it off
+    rest = trimmed.slice(name.length).trim();
+  } else {
+    // Typed partial text (e.g., "s" matched "save") — check if first word is prefix of command
+    const spaceIdx = trimmed.indexOf(' ');
+    const firstWord = spaceIdx > 0 ? trimmedLower.slice(0, spaceIdx) : trimmedLower;
+    if (nameLower.startsWith(firstWord)) {
+      // First word is prefix of command name — rest is after the space (if any)
+      rest = spaceIdx > 0 ? trimmed.slice(spaceIdx + 1).trim() : '';
+    } else {
+      rest = trimmed;
+    }
+  }
   const params = rest.length > 0 ? rest.split(/\s+/) : [];
   const search = rest.length > 0 ? rest : null;
 
@@ -888,6 +905,12 @@ function exitChainMode() {
   state.matchIndex = 0;
   chainPopupActive = false;
 
+  // Close any open popup window
+  if (chainPopupWindowId) {
+    api.window.close(chainPopupWindowId);
+    chainPopupWindowId = null;
+  }
+
   // Hide preview
   hidePreview();
 
@@ -976,10 +999,13 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
   log('cmd:panel', 'Opening chain popup:', popupUrl, 'sessionId:', sessionId);
 
   // Subscribe for result BEFORE opening popup
-  const unsubscribe = api.subscribe('chain-popup:result', (msg) => {
+  let resultReceived = false;
+  api.subscribe('chain-popup:result', (msg) => {
     if (msg.sessionId !== sessionId) return;
-    unsubscribe();
+    if (resultReceived) return;
+    resultReceived = true;
     chainPopupActive = false;
+    chainPopupWindowId = null;
 
     log('cmd:panel', 'Received chain popup result, length:', (msg.data || '').length);
 
@@ -1003,23 +1029,28 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
     updateResultsUI();
     updateWindowSize();
 
-    // Re-focus command input
-    const commandInput = document.getElementById('command-input');
-    if (commandInput) {
-      commandInput.focus();
-    }
+    // Re-focus cmd panel BrowserWindow and input after popup closes
+    api.window.getWindowId().then(id => {
+      if (id) api.window.focus(id);
+    });
+    setTimeout(() => {
+      const commandInput = document.getElementById('command-input');
+      if (commandInput) {
+        commandInput.focus();
+      }
+    }, 100);
   }, api.scopes.GLOBAL);
 
   // Get cmd panel bounds for positioning
   const panelBounds = await api.window.getBounds();
 
-  // Open popup as modal child, centered vertically over cmd
+  // Open popup centered vertically over cmd
   const editorHeight = 400;
   const editorY = Math.round(panelBounds.y - editorHeight / 2 + panelBounds.height / 2);
 
   const url = `${popupUrl}?sessionId=${encodeURIComponent(sessionId)}&mimeType=${encodeURIComponent(mimeType)}&title=${encodeURIComponent(title || 'Edit')}`;
 
-  await api.window.open(url, {
+  const openResult = await api.window.open(url, {
     role: 'utility',
     width: panelBounds.width,
     height: editorHeight,
@@ -1032,7 +1063,14 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
     resizable: true,
   });
 
-  // Send content via pubsub (avoids URL length limits)
+  // Track popup window ID for cleanup
+  chainPopupWindowId = openResult?.id || null;
+
+  // Delay content publish to let the popup's module script load and subscribe.
+  // loadURL resolves on did-finish-load, but ES modules execute after that.
+  await new Promise(r => setTimeout(r, 300));
+
+  // Send content via pubsub
   api.publish('chain-popup:content', {
     sessionId,
     data,

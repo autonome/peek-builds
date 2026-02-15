@@ -2745,6 +2745,15 @@ export function registerWindowHandlers(): void {
         setTimeout(() => {
           if (!win.isDestroyed()) {
             win.on('blur', () => {
+              // Don't close if focus moved to a child utility window (e.g., chain popup)
+              const focused = BrowserWindow.getFocusedWindow();
+              if (focused && !focused.isDestroyed()) {
+                const focusedInfo = getWindowInfo(focused.id);
+                if (focusedInfo?.params?.role === 'utility') {
+                  DEBUG && console.log('window-open: blur for modal window suppressed — focus went to utility child', url);
+                  return;
+                }
+              }
               DEBUG && console.log('window-open: blur for modal window', url);
               closeOrHideWindow(win.id);
             });
@@ -3661,14 +3670,21 @@ export function registerMiscHandlers(onQuit: () => void): void {
       }
       filters.push({ name: 'All Files', extensions: ['*'] });
 
-      // Get the sender's window to parent the dialog
-      // This prevents the modal panel from blurring when dialog opens
+      // Parent the dialog to a visible window to avoid showing hidden background pages.
+      // Prefer the focused window; fall back to sender's window only if it's visible.
       const senderWindow = BrowserWindow.fromWebContents(ev.sender);
+      const focusedWindow = BrowserWindow.getFocusedWindow();
+      const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
+        ? focusedWindow
+        : (senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null);
 
-      const result = await dialog.showSaveDialog(senderWindow!, {
+      const dialogOpts: Electron.SaveDialogOptions = {
         defaultPath: data.filename,
         filters,
-      });
+      };
+      const result = parentWindow
+        ? await dialog.showSaveDialog(parentWindow, dialogOpts)
+        : await dialog.showSaveDialog(dialogOpts);
 
       if (result.canceled || !result.filePath) {
         return { success: false, canceled: true };
@@ -3687,17 +3703,24 @@ export function registerMiscHandlers(onQuit: () => void): void {
   // File open dialog - shows native open dialog, reads file, returns content + metadata
   ipcMain.handle('file-open-dialog', async (ev) => {
     try {
-      // Get the sender's window to parent the dialog
+      // Parent the dialog to a visible window to avoid showing hidden background pages.
       const senderWindow = BrowserWindow.fromWebContents(ev.sender);
+      const focusedWindow = BrowserWindow.getFocusedWindow();
+      const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
+        ? focusedWindow
+        : (senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null);
 
-      const result = await dialog.showOpenDialog(senderWindow!, {
+      const openDialogOpts: Electron.OpenDialogOptions = {
         properties: ['openFile'],
         filters: [
           { name: 'All Files', extensions: ['*'] },
           { name: 'Text Files', extensions: ['txt', 'md', 'json', 'html', 'csv', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log'] },
           { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'rtf'] },
         ]
-      });
+      };
+      const result = parentWindow
+        ? await dialog.showOpenDialog(parentWindow, openDialogOpts)
+        : await dialog.showOpenDialog(openDialogOpts);
 
       if (result.canceled || result.filePaths.length === 0) {
         return { success: false, canceled: true };

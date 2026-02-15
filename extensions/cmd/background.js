@@ -22,6 +22,9 @@ log('ext:cmd', 'background', labels.name);
 // commands by publishing to cmd:register, and we store them here.
 const commandRegistry = new Map();
 
+// Track commands that were freshly registered by live extensions (not from cache)
+const liveRegisteredCommands = new Set();
+
 // Track registered shortcut for cleanup
 let registeredShortcut = null;
 
@@ -202,6 +205,7 @@ const initCommandRegistry = () => {
         accepts: cmd.accepts || [],
         produces: cmd.produces || []
       });
+      liveRegisteredCommands.add(cmd.name);
     }
   }, api.scopes.GLOBAL);
 
@@ -222,6 +226,7 @@ const initCommandRegistry = () => {
       accepts: msg.accepts || [],   // MIME types this command accepts as input
       produces: msg.produces || []  // MIME types this command produces as output
     });
+    liveRegisteredCommands.add(msg.name);
   }, api.scopes.GLOBAL);
 
   // Handle command unregistrations
@@ -418,6 +423,20 @@ const init = async () => {
     log('ext:cmd', 'ext:all-loaded - saving command cache');
     // Small delay to ensure all commands are registered
     setTimeout(async () => {
+      // Purge stale cached commands that were NOT re-registered by live extensions
+      const stale = [];
+      for (const name of commandRegistry.keys()) {
+        if (!liveRegisteredCommands.has(name)) {
+          stale.push(name);
+        }
+      }
+      for (const name of stale) {
+        log('ext:cmd', 'Purging stale cached command:', name);
+        commandRegistry.delete(name);
+        // Notify panel so it removes the command from its local registry
+        api.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+      }
+
       const { appVersion, extensionVersions } = await getCurrentVersions();
       await saveCommandCache(appVersion, extensionVersions);
     }, 100);
@@ -445,53 +464,6 @@ const init = async () => {
       api.publish('cmd:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
       log.error('ext:cmd', 'settings-update error:', err);
-    }
-  }, api.scopes.GLOBAL);
-
-  // 5. Handle save-file requests from panel
-  // Background script handles this so it persists after panel closes
-  // Uses a pending downloads map to handle the request/response pattern
-  const pendingDownloads = new Map();
-
-  api.subscribe('cmd:save-file', async (msg) => {
-    log('ext:cmd', 'save-file request:', msg.filename);
-
-    try {
-      // Generate unique ID and store the data
-      const downloadId = Math.random().toString(36).slice(2);
-      pendingDownloads.set(downloadId, {
-        content: msg.content,
-        filename: msg.filename,
-        mimeType: msg.mimeType
-      });
-
-      // Open download window with the ID
-      const downloadPageUrl = `peek://ext/cmd/download.html?id=${downloadId}`;
-
-      await api.window.open(downloadPageUrl, {
-        role: 'utility',
-        width: 400,
-        height: 200,
-        show: true,
-        alwaysOnTop: true
-      });
-    } catch (err) {
-      log.error('ext:cmd', 'save-file error:', err);
-    }
-  }, api.scopes.GLOBAL);
-
-  // Download window requests data when ready
-  api.subscribe('cmd:download-ready', (msg) => {
-    log('ext:cmd', 'download-ready:', msg.id);
-
-    const data = pendingDownloads.get(msg.id);
-    if (data) {
-      // Send data to the requesting window
-      api.publish(`cmd:download-data:${msg.id}`, data, api.scopes.GLOBAL);
-      // Clean up
-      pendingDownloads.delete(msg.id);
-    } else {
-      log.error('ext:cmd', 'No pending download for id:', msg.id);
     }
   }, api.scopes.GLOBAL);
 

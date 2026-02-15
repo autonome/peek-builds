@@ -2387,6 +2387,11 @@ export function addItem(type: ItemType, options: ItemOptions = {}): { id: string
     domain
   );
 
+  // Sync inline hashtags as tags for text items
+  if (type === 'text' && options.content) {
+    syncContentHashtags(itemId, options.content as string);
+  }
+
   return { id: itemId };
 }
 
@@ -2396,6 +2401,31 @@ export function addItem(type: ItemType, options: ItemOptions = {}): { id: string
 export function getItem(itemId: string): Item | null {
   const result = getDb().prepare('SELECT * FROM items WHERE id = ? AND deletedAt = 0').get(itemId);
   return (result as Item) || null;
+}
+
+/**
+ * Extract inline hashtags from text content and add them as tags on the item.
+ * Only adds — never removes (can't distinguish manual tags from hashtag-derived).
+ */
+function syncContentHashtags(itemId: string, content: string): void {
+  if (!content) return;
+
+  const matches = content.match(/(?:^|\s)#([^\s#]+)/g);
+  if (!matches) return;
+
+  const tagNames = [...new Set(matches.map(m => m.trim().slice(1)))];
+  if (tagNames.length === 0) return;
+
+  // Get current tags to avoid redundant writes
+  const currentTags = getItemTags(itemId);
+  const currentTagNames = new Set(currentTags.map(t => t.name));
+
+  for (const name of tagNames) {
+    if (!currentTagNames.has(name)) {
+      const { tag } = getOrCreateTag(name);
+      tagItem(itemId, tag.id);
+    }
+  }
 }
 
 /**
@@ -2493,6 +2523,14 @@ export function updateItem(itemId: string, options: ItemOptions): boolean {
   const result = getDb().prepare(
     `UPDATE items SET ${updates.join(', ')} WHERE id = ? AND deletedAt = 0`
   ).run(...values);
+
+  // Sync inline hashtags as tags for text items when content changes
+  if (result.changes > 0 && options.content !== undefined) {
+    const item = getItem(itemId);
+    if (item && item.type === 'text') {
+      syncContentHashtags(itemId, options.content as string);
+    }
+  }
 
   return result.changes > 0;
 }
