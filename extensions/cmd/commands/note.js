@@ -266,6 +266,7 @@ const commands = [
     name: 'list notes',
     description: 'List notes filtered by tags (e.g. list notes #todo #today)',
     produces: ['application/json'],
+    params: [{ type: 'tag', multiple: true, prefix: '#' }],
 
     async execute(ctx) {
       const tagNames = parseTagParams(ctx.search);

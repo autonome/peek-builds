@@ -99,6 +99,8 @@ function createProxyCommand(cmdData) {
     // Preserve connector metadata for chaining
     accepts: cmdData.accepts || [],
     produces: cmdData.produces || [],
+    // Parameter definitions for completions
+    params: cmdData.params || [],
     execute: async (ctx) => {
       return new Promise((resolve) => {
         const resultTopic = `cmd:execute:${cmdData.name}:result`;

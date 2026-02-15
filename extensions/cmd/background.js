@@ -95,7 +95,8 @@ const saveCommandCache = async (appVersion, extensionVersions) => {
       modes: cmd.modes || [],
       hasCanExecute: cmd.hasCanExecute || false,
       accepts: cmd.accepts,
-      produces: cmd.produces
+      produces: cmd.produces,
+      params: cmd.params || []
     }));
 
     const cache = {
@@ -203,7 +204,9 @@ const initCommandRegistry = () => {
         hasCanExecute: cmd.hasCanExecute || false,
         // Connector metadata for chaining
         accepts: cmd.accepts || [],
-        produces: cmd.produces || []
+        produces: cmd.produces || [],
+        // Parameter definitions for completions
+        params: cmd.params || []
       });
       liveRegisteredCommands.add(cmd.name);
     }
@@ -224,7 +227,9 @@ const initCommandRegistry = () => {
       hasCanExecute: msg.hasCanExecute || false,
       // Connector metadata for chaining
       accepts: msg.accepts || [],   // MIME types this command accepts as input
-      produces: msg.produces || []  // MIME types this command produces as output
+      produces: msg.produces || [],  // MIME types this command produces as output
+      // Parameter definitions for completions
+      params: msg.params || []
     });
     liveRegisteredCommands.add(msg.name);
   }, api.scopes.GLOBAL);
@@ -386,7 +391,8 @@ const init = async () => {
         description: cmd.description || '',
         source: cmd.source,
         accepts: cmd.accepts || [],
-        produces: cmd.produces || []
+        produces: cmd.produces || [],
+        params: cmd.params || []
       });
     }
     log('ext:cmd', 'Pre-populated registry from cache:', commandRegistry.size, 'commands');

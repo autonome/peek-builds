@@ -435,6 +435,7 @@ const extension = {
     api.commands.register({
       name: 'tag',
       description: 'Add tags to the active window URL',
+      params: [{ type: 'tag', multiple: true }],
       execute: executeTag
     });
 
@@ -449,6 +450,7 @@ const extension = {
     api.commands.register({
       name: 'untag',
       description: 'Remove tags from the active window URL',
+      params: [{ type: 'tag', multiple: true }],
       execute: executeUntag
     });
 
@@ -456,6 +458,7 @@ const extension = {
     api.commands.register({
       name: 'tagset',
       description: 'Create a tagset with specified tags',
+      params: [{ type: 'tag', multiple: true, prefix: '#' }],
       execute: executeTagset
     });
 

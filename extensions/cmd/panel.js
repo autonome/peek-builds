@@ -7,6 +7,7 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import './commands.js'; // Load commands module to dispatch cmd-update-commands event
 import { log } from 'peek://app/log.js';
+import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
 // CodeMirror imports removed — chain text editing now uses popup windows
 // (see chain-editor.html/js)
 
@@ -105,6 +106,13 @@ let state = {
   chainMode: false, // Whether we're in chain mode (piping output between commands)
   chainContext: null, // Current chain data: { data, mimeType, title, sourceCommand }
   chainStack: [], // History stack for undo (array of chainContext objects)
+
+  // Param suggestion mode state
+  paramMode: false, // In param suggestion mode?
+  paramCommand: null, // Which command we're completing params for
+  paramSuggestions: [], // Current suggestion items [{title, subtitle, value}]
+  paramIndex: -1, // Selected suggestion (-1 = none)
+  paramGeneration: 0, // Stale result guard for async completions
 
   // Execution state for showing progress
   executing: false, // Whether a command is currently executing
@@ -392,6 +400,31 @@ async function render() {
         state.matches = findMatchingCommands(state.typed);
       }
       state.matchIndex = 0;
+
+      // Check if we should enter/update param mode
+      // Find the best committed command: typed starts with command name + space
+      const typedLower = state.typed.toLowerCase();
+      let paramCandidate = null;
+      for (const matchName of state.matches) {
+        const matchLower = matchName.toLowerCase();
+        if (typedLower.startsWith(matchLower + ' ')) {
+          // Prefer longest command name (e.g., "list notes" over "list")
+          if (!paramCandidate || matchName.length > paramCandidate.length) {
+            paramCandidate = matchName;
+          }
+        }
+      }
+
+      if (paramCandidate) {
+        const cmd = state.commands[paramCandidate];
+        if (cmd && cmd.params && cmd.params.length > 0) {
+          enterParamMode(paramCandidate);
+        } else {
+          exitParamMode();
+        }
+      } else {
+        exitParamMode();
+      }
     } else {
       if (state.chainMode && state.chainContext) {
         // Show all chaining commands when input is cleared
@@ -401,6 +434,7 @@ async function render() {
         state.matches = [];
       }
       state.matchIndex = 0;
+      exitParamMode();
     }
     updateCommandUI();
     updateResultsUI();
@@ -453,6 +487,12 @@ async function render() {
       if (state.chainMode) {
         exitChainMode();
       }
+      // Exit param mode if panel was reused
+      if (state.paramMode) {
+        exitParamMode();
+      }
+      // Invalidate completer cache so tags are fresh
+      invalidateCompleterCache();
       // Reset chain popup state
       chainPopupActive = false;
       // Reset showResults
@@ -511,6 +551,14 @@ render();
 api.escape.onEscape(() => {
   const commandInput = document.getElementById('command-input');
 
+  // Exit param mode first
+  if (state.paramMode) {
+    exitParamMode();
+    updateResultsUI();
+    updateCommandUI();
+    return { handled: true };
+  }
+
   // Exit output selection mode first
   if (state.outputSelectionMode) {
     exitOutputSelectionMode();
@@ -561,6 +609,14 @@ function handleSpecialKey(e) {
 
   // Escape key - exit modes first, then close window
   if (e.key === 'Escape' && !hasModifier(e)) {
+    // Exit param mode first
+    if (state.paramMode) {
+      exitParamMode();
+      updateResultsUI();
+      updateCommandUI();
+      return;
+    }
+
     // Exit output selection mode first
     if (state.outputSelectionMode) {
       exitOutputSelectionMode();
@@ -669,6 +725,9 @@ function handleSpecialKey(e) {
       updateMatchCount(name);
       updateAdaptiveFeedback(commandPart, name);
 
+      // Exit param mode before executing
+      exitParamMode();
+
       // Execute with full typed text
       execute(name, typedText);
 
@@ -687,6 +746,14 @@ function handleSpecialKey(e) {
 
   // Arrow Up - navigate results or output items up
   if (e.key === 'ArrowUp') {
+    if (state.paramMode && state.paramSuggestions.length > 0) {
+      if (state.paramIndex > 0) {
+        state.paramIndex--;
+      }
+      updateResultsUI();
+      updateCommandUI();
+      return;
+    }
     if (state.outputSelectionMode && state.outputItemIndex > 0) {
       // Navigate output items
       state.outputItemIndex--;
@@ -704,6 +771,15 @@ function handleSpecialKey(e) {
 
   // Arrow Down - show results or navigate down
   if (e.key === 'ArrowDown') {
+    if (state.paramMode && state.paramSuggestions.length > 0) {
+      if (state.paramIndex + 1 < state.paramSuggestions.length) {
+        state.paramIndex++;
+      }
+      updateResultsUI();
+      updateCommandUI();
+      return;
+    }
+
     if (state.outputSelectionMode) {
       // Navigate output items
       if (state.outputItemIndex + 1 < state.outputItems.length) {
@@ -736,6 +812,13 @@ function handleSpecialKey(e) {
     return;
   }
 
+  // Tab key - in param mode, accept top suggestion
+  if (e.key === 'Tab' && state.paramMode && state.paramSuggestions.length > 0) {
+    const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
+    acceptParamSuggestion(idx);
+    return;
+  }
+
   // Tab key - autocomplete or cycle through matches
   if (e.key === 'Tab' && state.matches.length > 0) {
     const currentMatch = state.matches[state.matchIndex];
@@ -762,9 +845,21 @@ function handleSpecialKey(e) {
     state.typed = match + ' ';
     commandInput.value = state.typed;
 
+    // Check if Tab-completed command has params → enter param mode
+    const cmd = state.commands[match];
+    if (cmd && cmd.params && cmd.params.length > 0) {
+      enterParamMode(match);
+    } else {
+      exitParamMode();
+    }
+
     // Update UI but DON'T recalculate matches - keep cycling through current set
     updateCommandUI();
     // Don't call updateResultsUI() here - it would recalculate matches
+    // (unless in param mode, where we need to show suggestions)
+    if (state.paramMode) {
+      updateResultsUI();
+    }
 
     // Place cursor at the end
     setTimeout(() => {
@@ -1952,6 +2047,170 @@ function updateMatchCount(name) {
   saveAdaptiveData(state.adaptiveFeedback, state.matchCounts);
 }
 
+// ===== Param Mode Functions =====
+
+/**
+ * Enter param suggestion mode for a committed command
+ * If already in param mode for the same command, just refresh suggestions.
+ * @param {string} commandName - The command the user has committed to
+ */
+function enterParamMode(commandName) {
+  const cmd = state.commands[commandName];
+  if (!cmd) return;
+
+  if (!state.paramMode || state.paramCommand !== commandName) {
+    log('cmd:panel', 'Entering param mode for:', commandName);
+    state.paramMode = true;
+    state.paramCommand = commandName;
+    state.paramSuggestions = [];
+    state.paramIndex = -1;
+  }
+
+  updateParamSuggestions();
+}
+
+/**
+ * Exit param suggestion mode
+ */
+function exitParamMode() {
+  if (!state.paramMode) return;
+  log('cmd:panel', 'Exiting param mode');
+  state.paramMode = false;
+  state.paramCommand = null;
+  state.paramSuggestions = [];
+  state.paramIndex = -1;
+}
+
+/**
+ * Extract the current partial token and completed tokens from typed text
+ * @returns {{partial: string, completedTokens: string[]}}
+ */
+function getParamTokens() {
+  const commandName = state.paramCommand;
+  if (!commandName) return { partial: '', completedTokens: [] };
+
+  const typed = state.typed || '';
+  const lowerTyped = typed.toLowerCase();
+  const lowerName = commandName.toLowerCase();
+
+  // Get text after the command name
+  let rest = '';
+  if (lowerTyped.startsWith(lowerName + ' ')) {
+    rest = typed.slice(commandName.length + 1);
+  } else if (lowerTyped.startsWith(lowerName)) {
+    rest = typed.slice(commandName.length);
+  }
+
+  // Split into tokens - the last one is the current partial
+  const tokens = rest.split(/\s+/);
+  const endsWithSpace = rest.endsWith(' ') || rest === '';
+
+  if (endsWithSpace) {
+    // Trailing space means all tokens are completed, partial is empty
+    return {
+      partial: '',
+      completedTokens: tokens.filter(t => t.length > 0)
+    };
+  }
+
+  // Last token is partial (still being typed)
+  const partial = tokens.pop() || '';
+  return {
+    partial,
+    completedTokens: tokens.filter(t => t.length > 0)
+  };
+}
+
+/**
+ * Update param suggestions based on current input
+ */
+async function updateParamSuggestions() {
+  if (!state.paramMode || !state.paramCommand) return;
+
+  const cmd = state.commands[state.paramCommand];
+  if (!cmd) return;
+
+  const paramDef = (cmd.params && cmd.params[0]) || null;
+  if (!paramDef) {
+    state.paramSuggestions = [];
+    return;
+  }
+
+  const generation = ++state.paramGeneration;
+  const { partial, completedTokens } = getParamTokens();
+
+  // Build exclusion set from completed tokens
+  const prefix = paramDef.prefix || '';
+  const exclude = new Set(
+    completedTokens.map(t => {
+      const stripped = prefix && t.toLowerCase().startsWith(prefix.toLowerCase())
+        ? t.slice(prefix.length).toLowerCase()
+        : t.toLowerCase();
+      return stripped;
+    })
+  );
+
+  const suggestions = await getSuggestions(paramDef, partial, exclude);
+
+  // Discard stale results
+  if (generation !== state.paramGeneration) return;
+
+  state.paramSuggestions = suggestions;
+  state.paramIndex = suggestions.length > 0 ? 0 : -1;
+
+  updateResultsUI();
+  updateCommandUI();
+}
+
+/**
+ * Accept a param suggestion at the given index
+ * @param {number} index - Index in paramSuggestions to accept
+ */
+function acceptParamSuggestion(index) {
+  if (index < 0 || index >= state.paramSuggestions.length) return;
+
+  const suggestion = state.paramSuggestions[index];
+  const commandInput = document.getElementById('command-input');
+  const commandName = state.paramCommand;
+
+  // Get current text after command name
+  const typed = state.typed || '';
+  const lowerTyped = typed.toLowerCase();
+  const lowerName = commandName.toLowerCase();
+  let beforeParams = commandName + ' ';
+
+  // Get text after command name
+  let rest = '';
+  if (lowerTyped.startsWith(lowerName + ' ')) {
+    rest = typed.slice(commandName.length + 1);
+  }
+
+  // Split tokens, replace the last partial with suggestion value
+  const tokens = rest.split(/\s+/).filter(t => t.length > 0);
+  const endsWithSpace = rest.endsWith(' ') || rest === '';
+
+  if (!endsWithSpace && tokens.length > 0) {
+    // Replace the partial (last token) with suggestion value
+    tokens[tokens.length - 1] = suggestion.value;
+  } else {
+    // No partial — append the suggestion
+    tokens.push(suggestion.value);
+  }
+
+  // Rebuild input: command + completed tokens + trailing space
+  const newValue = beforeParams + tokens.join(' ') + ' ';
+  commandInput.value = newValue;
+  state.typed = newValue;
+
+  // Cursor to end
+  setTimeout(() => {
+    commandInput.setSelectionRange(newValue.length, newValue.length);
+  }, 0);
+
+  // Refresh suggestions for the next token
+  updateParamSuggestions();
+}
+
 /**
  * Updates the command text UI with proper highlighting
  * Shows typed text in white, suggestion completion in grey
@@ -2065,6 +2324,29 @@ function updateCommandUI() {
     typedSpan.textContent = state.typed;
     commandText.appendChild(typedSpan);
   }
+
+  // In param mode, ghost-complete the current partial token from top suggestion
+  if (state.paramMode && state.paramSuggestions.length > 0) {
+    const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
+    const suggestion = state.paramSuggestions[idx];
+    if (suggestion) {
+      const { partial } = getParamTokens();
+      // Only show ghost if suggestion value starts with the partial
+      if (partial && suggestion.value.toLowerCase().startsWith(partial.toLowerCase())) {
+        const ghostText = suggestion.value.substring(partial.length);
+        if (ghostText) {
+          const ghostSpan = document.createElement('span');
+          ghostSpan.textContent = ghostText;
+          commandText.appendChild(ghostSpan);
+        }
+      } else if (!partial) {
+        // No partial typed — show full suggestion as ghost
+        const ghostSpan = document.createElement('span');
+        ghostSpan.textContent = suggestion.value;
+        commandText.appendChild(ghostSpan);
+      }
+    }
+  }
 }
 
 /**
@@ -2076,6 +2358,47 @@ function updateResultsUI() {
 
   // Don't show if in output selection mode (that has its own UI)
   if (state.outputSelectionMode) {
+    return;
+  }
+
+  // Param mode: show parameter suggestions instead of command matches
+  if (state.paramMode && state.paramSuggestions.length > 0) {
+    resultsContainer.classList.add('visible');
+
+    state.paramSuggestions.forEach((suggestion, index) => {
+      const item = document.createElement('div');
+      item.className = 'command-item';
+      if (index === state.paramIndex) {
+        item.classList.add('selected');
+      }
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'cmd-name';
+      nameSpan.textContent = suggestion.title;
+      item.appendChild(nameSpan);
+
+      if (suggestion.subtitle) {
+        const descSpan = document.createElement('span');
+        descSpan.className = 'cmd-desc';
+        descSpan.textContent = suggestion.subtitle;
+        item.appendChild(descSpan);
+      }
+
+      item.addEventListener('click', () => {
+        acceptParamSuggestion(index);
+      });
+
+      resultsContainer.appendChild(item);
+    });
+
+    updateWindowSize();
+    return;
+  }
+
+  // In param mode with no suggestions, hide results (no "no results" noise)
+  if (state.paramMode) {
+    resultsContainer.classList.remove('visible');
+    updateWindowSize();
     return;
   }
 

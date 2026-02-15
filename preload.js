@@ -1243,7 +1243,8 @@ api.commands = {
       modes: command.modes || [],
       hasCanExecute: !!command.canExecute,
       accepts: command.accepts || [],
-      produces: command.produces || []
+      produces: command.produces || [],
+      params: command.params || []
     });
 
     // Debounce: flush after BATCH_DELAY_MS of no new registrations
