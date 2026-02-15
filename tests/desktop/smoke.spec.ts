@@ -1494,6 +1494,422 @@ test.describe('Tag Command @desktop', () => {
 });
 
 // ============================================================================
+// Command Execution Tests (uses shared app)
+// Tests the full command execution path through pubsub:
+//   cmd:execute:<name> -> extension handler -> result via resultTopic
+// ============================================================================
+
+test.describe('Command Execution @desktop', () => {
+  let bgWindow: Page;
+  let pageWindowId: number | null = null;
+  const testPageUrl = `https://cmd-exec-test-${Date.now()}.example.com/`;
+
+  test.beforeAll(async () => {
+    bgWindow = sharedBgWindow;
+    await waitForExtensionsReady(bgWindow);
+
+    // Open a page window so tag commands have an "active window" to work with
+    const openResult = await bgWindow.evaluate(async (url: string) => {
+      return await (window as any).app.window.open(url, {
+        width: 800,
+        height: 600,
+        key: 'cmd-exec-test-page'
+      });
+    }, testPageUrl);
+
+    if (openResult.success && openResult.id) {
+      pageWindowId = openResult.id;
+    }
+
+    // Give the window time to register in the window list
+    await sleep(500);
+  });
+
+  test.afterAll(async () => {
+    // Close the page window we opened
+    if (pageWindowId) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, pageWindowId);
+    }
+  });
+
+  test('tag command with # prefixed tags stores tags without prefix', async () => {
+    const timestamp = Date.now();
+    const tag1 = `testfoo${timestamp}`;
+    const tag2 = `testbar${timestamp}`;
+
+    // Execute the tag command through pubsub
+    const result = await bgWindow.evaluate(async (args: { name: string; search: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${args.name}:result`;
+        api.subscribe(resultTopic, (result: any) => {
+          resolve(result);
+        }, api.scopes.GLOBAL);
+
+        api.publish(`cmd:execute:${args.name}`, {
+          search: args.search,
+          params: [],
+          expectResult: true,
+          resultTopic
+        }, api.scopes.GLOBAL);
+
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { name: 'tag', search: `#${tag1} #${tag2}` });
+
+    expect((result as any).success).toBe(true);
+
+    // Verify tags are stored WITHOUT the # prefix
+    const added = (result as any).added || [];
+    expect(added).toContain(tag1);
+    expect(added).toContain(tag2);
+    // Ensure no # prefix leaked through
+    expect(added.some((t: string) => t.startsWith('#'))).toBe(false);
+
+    // Verify via datastore that the item has these tags
+    const itemCheck = await bgWindow.evaluate(async (url: string) => {
+      const api = (window as any).app;
+      const queryResult = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
+      if (!queryResult.success || !queryResult.data.length) return { found: false };
+      const item = queryResult.data.find((i: any) => i.content === url);
+      if (!item) return { found: false };
+      const tagsResult = await api.datastore.getItemTags(item.id);
+      return { found: true, tags: tagsResult.data?.map((t: any) => t.name) || [] };
+    }, testPageUrl);
+
+    expect(itemCheck.found).toBe(true);
+    expect(itemCheck.tags).toContain(tag1);
+    expect(itemCheck.tags).toContain(tag2);
+  });
+
+  test('tag command without # prefix works the same way', async () => {
+    const timestamp = Date.now();
+    const tagName = `testbaz${timestamp}`;
+
+    const result = await bgWindow.evaluate(async (args: { name: string; search: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${args.name}:result`;
+        api.subscribe(resultTopic, (result: any) => {
+          resolve(result);
+        }, api.scopes.GLOBAL);
+
+        api.publish(`cmd:execute:${args.name}`, {
+          search: args.search,
+          params: [],
+          expectResult: true,
+          resultTopic
+        }, api.scopes.GLOBAL);
+
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { name: 'tag', search: tagName });
+
+    expect((result as any).success).toBe(true);
+    const added = (result as any).added || [];
+    expect(added).toContain(tagName);
+
+    // Verify via datastore
+    const itemCheck = await bgWindow.evaluate(async (args: { url: string; tagName: string }) => {
+      const api = (window as any).app;
+      const queryResult = await api.datastore.queryItems({ type: 'url', search: args.url, limit: 5 });
+      if (!queryResult.success || !queryResult.data.length) return { found: false };
+      const item = queryResult.data.find((i: any) => i.content === args.url);
+      if (!item) return { found: false };
+      const tagsResult = await api.datastore.getItemTags(item.id);
+      return { found: true, tags: tagsResult.data?.map((t: any) => t.name) || [] };
+    }, { url: testPageUrl, tagName });
+
+    expect(itemCheck.found).toBe(true);
+    expect(itemCheck.tags).toContain(tagName);
+  });
+
+  test('tag command creates item if none exists', async () => {
+    const timestamp = Date.now();
+    // Open a new page window with a URL that has no item yet
+    const newUrl = `https://cmd-exec-new-item-${timestamp}.example.com/`;
+    const tagName = `newtag${timestamp}`;
+
+    // Close the shared page window so the new window becomes the "active" one
+    // (getActiveWindow returns the first non-internal window)
+    if (pageWindowId) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, pageWindowId);
+      pageWindowId = null;
+      await sleep(200);
+    }
+
+    const openResult = await bgWindow.evaluate(async (url: string) => {
+      return await (window as any).app.window.open(url, {
+        width: 800,
+        height: 600,
+        key: `cmd-exec-new-item-${Date.now()}`
+      });
+    }, newUrl);
+    expect(openResult.success).toBe(true);
+    const newWindowId = openResult.id;
+
+    // Give the window time to register
+    await sleep(500);
+
+    // Execute tag command — should create item and tag it
+    const result = await bgWindow.evaluate(async (args: { name: string; search: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${args.name}:result`;
+        api.subscribe(resultTopic, (result: any) => {
+          resolve(result);
+        }, api.scopes.GLOBAL);
+
+        api.publish(`cmd:execute:${args.name}`, {
+          search: args.search,
+          params: [],
+          expectResult: true,
+          resultTopic
+        }, api.scopes.GLOBAL);
+
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { name: 'tag', search: `#${tagName}` });
+
+    expect((result as any).success).toBe(true);
+    expect((result as any).added).toContain(tagName);
+
+    // Verify the item was created in the datastore
+    const itemCheck = await bgWindow.evaluate(async (args: { url: string; tagName: string }) => {
+      const api = (window as any).app;
+      const queryResult = await api.datastore.queryItems({ type: 'url', search: args.url, limit: 5 });
+      if (!queryResult.success || !queryResult.data.length) return { found: false };
+      const item = queryResult.data.find((i: any) => i.content === args.url);
+      if (!item) return { found: false };
+      const tagsResult = await api.datastore.getItemTags(item.id);
+      return { found: true, itemId: item.id, tags: tagsResult.data?.map((t: any) => t.name) || [] };
+    }, { url: newUrl, tagName });
+
+    expect(itemCheck.found).toBe(true);
+    expect(itemCheck.tags).toContain(tagName);
+
+    // Reopen a shared page window for remaining tests
+    const reopenResult = await bgWindow.evaluate(async (url: string) => {
+      return await (window as any).app.window.open(url, {
+        width: 800,
+        height: 600,
+        key: 'cmd-exec-test-page'
+      });
+    }, testPageUrl);
+    if (reopenResult.success && reopenResult.id) {
+      pageWindowId = reopenResult.id;
+    }
+    await sleep(300);
+
+    // Clean up the test window
+    if (newWindowId) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, newWindowId);
+    }
+  });
+
+  test('untag command removes tags from item', async () => {
+    const timestamp = Date.now();
+    const tagName = `untagme${timestamp}`;
+
+    // First, tag the item via command execution
+    const tagResult = await bgWindow.evaluate(async (args: { name: string; search: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${args.name}:result`;
+        api.subscribe(resultTopic, (result: any) => {
+          resolve(result);
+        }, api.scopes.GLOBAL);
+
+        api.publish(`cmd:execute:${args.name}`, {
+          search: args.search,
+          params: [],
+          expectResult: true,
+          resultTopic
+        }, api.scopes.GLOBAL);
+
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { name: 'tag', search: `#${tagName}` });
+
+    expect((tagResult as any).success).toBe(true);
+    expect((tagResult as any).added).toContain(tagName);
+
+    // Verify tag exists on the item
+    const beforeCheck = await bgWindow.evaluate(async (args: { url: string; tagName: string }) => {
+      const api = (window as any).app;
+      const queryResult = await api.datastore.queryItems({ type: 'url', search: args.url, limit: 5 });
+      if (!queryResult.success || !queryResult.data.length) return { found: false };
+      const item = queryResult.data.find((i: any) => i.content === args.url);
+      if (!item) return { found: false };
+      const tagsResult = await api.datastore.getItemTags(item.id);
+      return { found: true, tags: tagsResult.data?.map((t: any) => t.name) || [] };
+    }, { url: testPageUrl, tagName });
+
+    expect(beforeCheck.found).toBe(true);
+    expect(beforeCheck.tags).toContain(tagName);
+
+    // Now untag via the untag command
+    const untagResult = await bgWindow.evaluate(async (args: { name: string; search: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${args.name}:result`;
+        api.subscribe(resultTopic, (result: any) => {
+          resolve(result);
+        }, api.scopes.GLOBAL);
+
+        api.publish(`cmd:execute:${args.name}`, {
+          search: args.search,
+          params: [],
+          expectResult: true,
+          resultTopic
+        }, api.scopes.GLOBAL);
+
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { name: 'untag', search: `#${tagName}` });
+
+    expect((untagResult as any).success).toBe(true);
+
+    // Verify tag is removed
+    const afterCheck = await bgWindow.evaluate(async (args: { url: string; tagName: string }) => {
+      const api = (window as any).app;
+      const queryResult = await api.datastore.queryItems({ type: 'url', search: args.url, limit: 5 });
+      if (!queryResult.success || !queryResult.data.length) return { found: false };
+      const item = queryResult.data.find((i: any) => i.content === args.url);
+      if (!item) return { found: false };
+      const tagsResult = await api.datastore.getItemTags(item.id);
+      return { found: true, tags: tagsResult.data?.map((t: any) => t.name) || [] };
+    }, { url: testPageUrl, tagName });
+
+    expect(afterCheck.found).toBe(true);
+    expect(afterCheck.tags).not.toContain(tagName);
+  });
+
+  test('tag command with no args returns current tags', async () => {
+    const timestamp = Date.now();
+    const tagName = `showme${timestamp}`;
+
+    // First add a tag so there's something to show
+    const tagResult = await bgWindow.evaluate(async (args: { name: string; search: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${args.name}:result`;
+        api.subscribe(resultTopic, (result: any) => {
+          resolve(result);
+        }, api.scopes.GLOBAL);
+
+        api.publish(`cmd:execute:${args.name}`, {
+          search: args.search,
+          params: [],
+          expectResult: true,
+          resultTopic
+        }, api.scopes.GLOBAL);
+
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { name: 'tag', search: tagName });
+
+    expect((tagResult as any).success).toBe(true);
+
+    // Now execute tag with no search args — should return current tags
+    const result = await bgWindow.evaluate(async (args: { name: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${args.name}:result`;
+        api.subscribe(resultTopic, (result: any) => {
+          resolve(result);
+        }, api.scopes.GLOBAL);
+
+        api.publish(`cmd:execute:${args.name}`, {
+          search: '',
+          params: [],
+          expectResult: true,
+          resultTopic
+        }, api.scopes.GLOBAL);
+
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { name: 'tag' });
+
+    expect((result as any).success).toBe(true);
+    // Should return tags array for the active window's URL
+    expect(Array.isArray((result as any).tags)).toBe(true);
+    // The tag we just added should be in the list
+    const tagNames = (result as any).tags.map((t: any) => t.name);
+    expect(tagNames).toContain(tagName);
+  });
+
+  test('tagset command creates tagset item with tags stripped of #', async () => {
+    const timestamp = Date.now();
+    const tag1 = `setx${timestamp}`;
+    const tag2 = `sety${timestamp}`;
+
+    // Execute tagset command with # prefixed tags, comma separated
+    const result = await bgWindow.evaluate(async (args: { name: string; search: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        const resultTopic = `cmd:execute:${args.name}:result`;
+        api.subscribe(resultTopic, (result: any) => {
+          resolve(result);
+        }, api.scopes.GLOBAL);
+
+        api.publish(`cmd:execute:${args.name}`, {
+          search: args.search,
+          params: [],
+          expectResult: true,
+          resultTopic
+        }, api.scopes.GLOBAL);
+
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { name: 'tagset', search: `#${tag1}, #${tag2}` });
+
+    expect((result as any).success).toBe(true);
+    expect((result as any).message).toContain(tag1);
+    expect((result as any).message).toContain(tag2);
+
+    // Verify the tagset item was created in the datastore
+    const tagsetCheck = await bgWindow.evaluate(async (args: { tag1: string; tag2: string }) => {
+      const api = (window as any).app;
+      // Query for tagset items
+      const queryResult = await api.datastore.queryItems({ type: 'tagset', limit: 50 });
+      if (!queryResult.success) return { found: false };
+
+      // Find our tagset by content (tags joined with ", ")
+      const tagset = queryResult.data.find((item: any) =>
+        item.content.includes(args.tag1) && item.content.includes(args.tag2)
+      );
+      if (!tagset) return { found: false };
+
+      // Get the tags on the tagset item
+      const tagsResult = await api.datastore.getItemTags(tagset.id);
+      return {
+        found: true,
+        itemId: tagset.id,
+        content: tagset.content,
+        tags: tagsResult.data?.map((t: any) => t.name) || []
+      };
+    }, { tag1, tag2 });
+
+    expect(tagsetCheck.found).toBe(true);
+    // Tags should be stored without # prefix
+    expect(tagsetCheck.tags).toContain(tag1);
+    expect(tagsetCheck.tags).toContain(tag2);
+    // The content field should contain the normalized tag names
+    expect(tagsetCheck.content).toContain(tag1);
+    expect(tagsetCheck.content).toContain(tag2);
+    // Should also have the from:cmd tag
+    expect(tagsetCheck.tags).toContain('from:cmd');
+  });
+});
+
+// ============================================================================
 // Tag Events Tests (uses shared app)
 // ============================================================================
 
