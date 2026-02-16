@@ -98,8 +98,10 @@ let state = {
   filterTagName: null,
   isLoading: true,
   wasAtBottom: true, // Track if user was scrolled to bottom
-  browsing: false,   // Whether we're in inline browse mode
-  browseUrl: null    // URL currently being browsed inline
+  browsing: false,       // Whether we're in inline browse mode
+  browseUrl: null,       // URL currently being browsed inline
+  browseCardIndex: -1,   // Index of the card being browsed
+  browseOriginalContent: null // Saved original card innerHTML
 };
 
 // Expose state for debugging in tests
@@ -396,36 +398,83 @@ const createVisitCard = (visit, item, index) => {
 // ===== Inline Browsing =====
 
 /**
- * Open a URL in a proper page window via api.window.open().
- * Extension windows don't support <webview> tags (webviewTag is not enabled),
- * so we open the URL in a full page window which has canvas + webview support.
+ * Open a URL inline by expanding the active card and loading an iframe.
+ * Extension windows don't support <webview> tags, so we use iframes.
  */
-const openInline = async (url) => {
+const openInline = (url) => {
   if (state.browsing) return;
+
+  const cards = getCards();
+  const card = cards[state.selectedIndex];
+  if (!card) return;
+
+  debug && console.log('[pagestream] Opening inline:', url);
+
   state.browsing = true;
   state.browseUrl = url;
+  state.browseCardIndex = state.selectedIndex;
+  // Save original card content so we can restore on close
+  state.browseOriginalContent = card.innerHTML;
 
-  debug && console.log('[pagestream] Opening in page window:', url);
+  // Clear card content and insert iframe
+  card.innerHTML = '';
 
-  try {
-    await api.window.open(url, {
-      trackingSource: 'pagestream',
-    });
-  } catch (err) {
-    console.error('[pagestream] Failed to open page window:', err);
+  const iframe = document.createElement('iframe');
+  iframe.className = 'browse-iframe';
+  iframe.src = url;
+  iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups';
+  card.appendChild(iframe);
+
+  // Add expanded class to trigger CSS transition
+  card.classList.add('card-expanded');
+
+  // Show backdrop
+  const backdrop = document.getElementById('browse-backdrop');
+  backdrop.classList.add('active');
+
+  // Update navbar to show the current URL
+  const navbarEl = document.getElementById('navbar');
+  if (navbarEl && navbarEl.setUrl) {
+    navbarEl.setUrl(url);
   }
-
-  // Reset browsing state immediately so the card stream stays usable
-  state.browsing = false;
-  state.browseUrl = null;
 };
 
 /**
- * Close browse mode and return to card view
+ * Close browse mode: remove iframe, animate card back down, restore content
  */
 const closeBrowse = () => {
+  if (!state.browsing) return;
+
+  const cards = getCards();
+  const card = cards[state.browseCardIndex];
+
+  if (card) {
+    // Remove expanded class (triggers reverse CSS transition)
+    card.classList.remove('card-expanded');
+
+    // Restore original card content
+    if (state.browseOriginalContent) {
+      card.innerHTML = state.browseOriginalContent;
+    }
+  }
+
+  // Hide backdrop
+  const backdrop = document.getElementById('browse-backdrop');
+  backdrop.classList.remove('active');
+
+  // Clear navbar URL
+  const navbarEl = document.getElementById('navbar');
+  if (navbarEl && navbarEl.setUrl) {
+    navbarEl.setUrl('');
+  }
+
   state.browsing = false;
   state.browseUrl = null;
+  state.browseCardIndex = -1;
+  state.browseOriginalContent = null;
+
+  // Re-apply selection styling
+  updateSelection();
 };
 
 // ===== Filtering =====
@@ -532,6 +581,13 @@ const handleKeydown = (e) => {
   if ((e.key === 'l' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !isInputFocused)) {
     e.preventDefault();
     navbarEl.focusUrl();
+    scrollToBottom();
+    // Also select the last card (most recent)
+    const cards = getCards();
+    if (cards.length > 0) {
+      state.selectedIndex = cards.length - 1;
+      updateSelection();
+    }
     return;
   }
 

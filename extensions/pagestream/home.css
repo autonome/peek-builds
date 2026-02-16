@@ -273,4 +273,54 @@ peek-navbar {
   color: var(--base05);
 }
 
-/* Browse overlay styles removed - pages now open in proper page windows */
+/* ===== Inline Browse Mode ===== */
+
+/* Overlay backdrop when a card is expanded */
+.browse-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 99;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.browse-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Expanded card fills the viewport */
+.stream-container peek-card.card-expanded {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  bottom: 60px; /* leave room for navbar */
+  z-index: 100;
+  opacity: 1;
+  --peek-card-bg: var(--base01);
+  --peek-card-padding: 0px;
+  --peek-card-gap: 0px;
+  --peek-card-radius: 12px;
+  overflow: hidden;
+}
+
+.stream-container peek-card.card-expanded::part(card) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+  border-color: transparent !important;
+  outline: none !important;
+}
+
+/* iframe inside expanded card */
+.browse-iframe {
+  width: 100%;
+  flex: 1;
+  border: none;
+  background: white;
+  border-radius: 0 0 12px 12px;
+}
