@@ -517,6 +517,15 @@ a.card-title {
   display: block;
 }
 
+/* Reading list checkbox variant - uses book icon, distinct color */
+.todo-checkbox.reading-checkbox {
+  color: #5856d6; /* Purple for reading list */
+}
+
+.todo-checkbox.reading-checkbox.checked {
+  color: #34c759; /* Green for read/completed */
+}
+
 /* Legacy styles for edit mode - keep for now */
 .saved-url-item {
   padding: 1.15rem;
@@ -949,6 +958,14 @@ body.dark .todo-checkbox.checked {
   color: #30d158; /* Green for completed in dark mode */
 }
 
+body.dark .todo-checkbox.reading-checkbox {
+  color: #7d7aff; /* Purple for reading list in dark mode */
+}
+
+body.dark .todo-checkbox.reading-checkbox.checked {
+  color: #30d158; /* Green for read/completed in dark mode */
+}
+
 body.dark .card-delete-btn {
   color: #666;
 }
@@ -1164,6 +1181,19 @@ body.dark .header-btn {
   color: #666;
   margin: 0 0 1rem 0;
   line-height: 1.4;
+}
+
+.settings-label {
+  display: block;
+  font-size: 0.8rem;
+  color: #888;
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+body.dark .settings-label {
+  color: #666;
 }
 
 /* Profile banner shown in main view when not on default profile */

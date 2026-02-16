@@ -808,6 +808,17 @@ function App() {
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
   const [archiveTag, setArchiveTag] = useState("archive");
   const [archiveTagInput, setArchiveTagInput] = useState("archive");
+  const [todoTag, setTodoTag] = useState("todo");
+  const [todoTagInput, setTodoTagInput] = useState("todo");
+  const [doneTag, setDoneTag] = useState("done");
+  const [doneTagInput, setDoneTagInput] = useState("done");
+  const [readmeTag, setReadmeTag] = useState("readme");
+  const [readmeTagInput, setReadmeTagInput] = useState("readme");
+  const [readTag, setReadTag] = useState("read");
+  const [readTagInput, setReadTagInput] = useState("read");
+  const [offlineTag, setOfflineTag] = useState("offline");
+  const [offlineTagInput, setOfflineTagInput] = useState("offline");
+  const [offlineStorageSize, setOfflineStorageSize] = useState(0);
 
   // Keyboard height for iOS keyboard avoidance
   const keyboardHeight = useKeyboardHeight();
@@ -953,6 +964,10 @@ function App() {
     loadSyncStatus();
     loadProfileInfo();
     loadArchiveTag();
+    loadTodoTags();
+    loadReadingTags();
+    loadOfflineTag();
+    loadOfflineStorageSize();
     tryAutoSync();
 
     // Reload when app comes back to foreground (to pick up items from share extension)
@@ -1066,6 +1081,78 @@ function App() {
       setArchiveTag(archiveTagInput);
     } catch (error) {
       console.error("Failed to save archive tag:", error);
+    }
+  };
+
+  const loadTodoTags = async () => {
+    try {
+      const [todo, done] = await invoke<[string, string]>("get_todo_tags");
+      setTodoTag(todo);
+      setTodoTagInput(todo);
+      setDoneTag(done);
+      setDoneTagInput(done);
+    } catch (error) {
+      console.error("Failed to load todo tags:", error);
+    }
+  };
+
+  const saveTodoTags = async () => {
+    try {
+      await invoke("set_todo_tags", { todoTag: todoTagInput, doneTag: doneTagInput });
+      setTodoTag(todoTagInput);
+      setDoneTag(doneTagInput);
+    } catch (error) {
+      console.error("Failed to save todo tags:", error);
+    }
+  };
+
+  const loadReadingTags = async () => {
+    try {
+      const [readme, read] = await invoke<[string, string]>("get_reading_tags");
+      setReadmeTag(readme);
+      setReadmeTagInput(readme);
+      setReadTag(read);
+      setReadTagInput(read);
+    } catch (error) {
+      console.error("Failed to load reading tags:", error);
+    }
+  };
+
+  const saveReadingTags = async () => {
+    try {
+      await invoke("set_reading_tags", { readmeTag: readmeTagInput, readTag: readTagInput });
+      setReadmeTag(readmeTagInput);
+      setReadTag(readTagInput);
+    } catch (error) {
+      console.error("Failed to save reading tags:", error);
+    }
+  };
+
+  const loadOfflineTag = async () => {
+    try {
+      const tag = await invoke<string>("get_offline_tag");
+      setOfflineTag(tag);
+      setOfflineTagInput(tag);
+    } catch (error) {
+      console.error("Failed to load offline tag:", error);
+    }
+  };
+
+  const saveOfflineTag = async () => {
+    try {
+      await invoke("set_offline_tag", { tag: offlineTagInput });
+      setOfflineTag(offlineTagInput);
+    } catch (error) {
+      console.error("Failed to save offline tag:", error);
+    }
+  };
+
+  const loadOfflineStorageSize = async () => {
+    try {
+      const size = await invoke<number>("get_offline_storage_size");
+      setOfflineStorageSize(size);
+    } catch (error) {
+      console.error("Failed to load offline storage size:", error);
     }
   };
 
@@ -2282,8 +2369,8 @@ function App() {
       if (inlineDiv) {
         topOffset = inlineDiv.getBoundingClientRect().top;
       }
-      console.log("[App] Creating inline webview at topOffset:", topOffset, "for:", url);
-      await invoke("open_inline_webview", { url, topOffset });
+      console.log("[App] Creating inline webview at topOffset:", topOffset, "for:", url, "itemId:", itemId);
+      await invoke("open_inline_webview", { url, topOffset, itemId });
       setWebviewLoaded(true);
     } catch (error) {
       console.error("[App] Failed to create inline webview:", error);
@@ -2357,6 +2444,18 @@ function App() {
                 <line x1="3" y1="9" x2="21" y2="9"></line>
               </svg>
             </button>
+            {offlineTag && item.tags.includes(offlineTag) && !isExpanded && (
+              <button
+                className="card-action-btn"
+                onClick={(e) => openOfflineReader(item.id, e)}
+                title="Read offline"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            )}
             <button
               className="card-delete-btn"
               onClick={(e) => {
@@ -2373,12 +2472,12 @@ function App() {
         </div>
         {isExpanded && renderWebviewInline(expandedWebview.url)}
         <div className="card-footer">
-          {(item.tags.includes("todo") || item.tags.includes("done")) && (
+          {(item.tags.includes(todoTag) || item.tags.includes(doneTag)) && (
             <button
-              className={`todo-checkbox ${item.tags.includes("done") ? "checked" : ""}`}
-              onClick={(e) => toggleTodoDone(e, item.id, "page", item.tags)}
+              className={`todo-checkbox ${item.tags.includes(doneTag) ? "checked" : ""}`}
+              onClick={(e) => toggleTagPair(e, item.id, "page", item.tags, todoTag, doneTag)}
             >
-              {item.tags.includes("done") ? (
+              {item.tags.includes(doneTag) ? (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                   <polyline points="9 11 12 14 22 4"></polyline>
@@ -2386,6 +2485,25 @@ function App() {
               ) : (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                </svg>
+              )}
+            </button>
+          )}
+          {(item.tags.includes(readmeTag) || item.tags.includes(readTag)) && (
+            <button
+              className={`todo-checkbox reading-checkbox ${item.tags.includes(readTag) ? "checked" : ""}`}
+              onClick={(e) => toggleTagPair(e, item.id, "page", item.tags, readmeTag, readTag)}
+            >
+              {item.tags.includes(readTag) ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+                  <polyline points="9 11 12 14 22 4"></polyline>
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
                 </svg>
               )}
             </button>
@@ -2475,12 +2593,12 @@ function App() {
         </div>
         {isExpanded && renderWebviewInline(expandedWebview.url)}
         <div className="card-footer">
-          {(tags.includes("todo") || tags.includes("done")) && (
+          {(tags.includes(todoTag) || tags.includes(doneTag)) && (
             <button
-              className={`todo-checkbox ${tags.includes("done") ? "checked" : ""}`}
-              onClick={(e) => toggleTodoDone(e, item.id, "text", tags)}
+              className={`todo-checkbox ${tags.includes(doneTag) ? "checked" : ""}`}
+              onClick={(e) => toggleTagPair(e, item.id, "text", tags, todoTag, doneTag)}
             >
-              {tags.includes("done") ? (
+              {tags.includes(doneTag) ? (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                   <polyline points="9 11 12 14 22 4"></polyline>
@@ -2488,6 +2606,25 @@ function App() {
               ) : (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                </svg>
+              )}
+            </button>
+          )}
+          {(tags.includes(readmeTag) || tags.includes(readTag)) && (
+            <button
+              className={`todo-checkbox reading-checkbox ${tags.includes(readTag) ? "checked" : ""}`}
+              onClick={(e) => toggleTagPair(e, item.id, "text", tags, readmeTag, readTag)}
+            >
+              {tags.includes(readTag) ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+                  <polyline points="9 11 12 14 22 4"></polyline>
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
                 </svg>
               )}
             </button>
@@ -2631,19 +2768,19 @@ function App() {
     }
   };
 
-  // Toggle between todo and done states
-  const toggleTodoDone = async (e: React.MouseEvent, id: string, type: ItemType, currentTags: string[]) => {
+  // Generalized tag pair toggle (used for todo/done and readme/read)
+  const toggleTagPair = async (e: React.MouseEvent, id: string, type: ItemType, currentTags: string[], tagA: string, tagB: string) => {
     e.stopPropagation(); // Don't trigger card click
-    const hasTodo = currentTags.includes("todo");
-    const hasDone = currentTags.includes("done");
+    const hasA = currentTags.includes(tagA);
+    const hasB = currentTags.includes(tagB);
 
     let newTags: string[];
-    if (hasTodo) {
-      // todo -> done
-      newTags = currentTags.filter(t => t !== "todo").concat("done");
-    } else if (hasDone) {
-      // done -> todo
-      newTags = currentTags.filter(t => t !== "done").concat("todo");
+    if (hasA) {
+      // tagA -> tagB
+      newTags = currentTags.filter(t => t !== tagA).concat(tagB);
+    } else if (hasB) {
+      // tagB -> tagA
+      newTags = currentTags.filter(t => t !== tagB).concat(tagA);
     } else {
       return; // Neither tag present, shouldn't happen
     }
@@ -2667,8 +2804,13 @@ function App() {
       }
       await loadAllTags();
     } catch (error) {
-      console.error("Failed to toggle todo/done:", error);
+      console.error("Failed to toggle tag pair:", error);
     }
+  };
+
+  // Legacy wrapper for backward compatibility
+  const toggleTodoDone = (e: React.MouseEvent, id: string, type: ItemType, currentTags: string[]) => {
+    toggleTagPair(e, id, type, currentTags, todoTag, doneTag);
   };
 
   // Open URL in system browser (Safari)
@@ -2738,7 +2880,52 @@ function App() {
       setExpandedWebview(null);
       setWebviewLoaded(false);
       setWebviewError(false);
+      // Refresh data to pick up any navigation-tracked history items
+      loadSavedUrls();
     }, WEBVIEW_ANIM_MS);
+  };
+
+  const openOfflineReader = async (itemId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setWebviewLoaded(false);
+    setWebviewError(false);
+    setWebviewAnimated(false);
+    setExpandedWebview({ url: 'offline://' + itemId, itemId });
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const card = document.getElementById(`card-${itemId}`);
+        const app = appRef.current;
+        if (card && app) {
+          const cardRect = card.getBoundingClientRect();
+          const appRect = app.getBoundingClientRect();
+          const probe = document.createElement('div');
+          probe.style.cssText = 'position:fixed;top:0;height:env(safe-area-inset-top,0px);visibility:hidden;';
+          document.body.appendChild(probe);
+          const safeTop = probe.offsetHeight;
+          document.body.removeChild(probe);
+          const offset = cardRect.top - appRect.top - safeTop;
+          app.style.setProperty('--slide-offset', `${Math.max(0, offset)}px`);
+        }
+        document.documentElement.style.setProperty('--webview-ease', 'var(--webview-ease-in)');
+        setWebviewAnimated(true);
+        setTimeout(async () => {
+          try {
+            let topOffset = 0;
+            const card = document.getElementById(`card-${itemId}`);
+            const inlineDiv = card?.querySelector('.webview-inline');
+            if (inlineDiv) {
+              topOffset = inlineDiv.getBoundingClientRect().top;
+            }
+            console.log("[App] Opening offline reader at topOffset:", topOffset, "for item:", itemId);
+            await invoke("open_inline_webview_html", { itemId, topOffset });
+            setWebviewLoaded(true);
+          } catch (error) {
+            console.error("[App] Failed to open offline reader:", error);
+            setWebviewError(true);
+          }
+        }, WEBVIEW_ANIM_MS);
+      });
+    });
   };
 
   const renderDiscardConfirmModal = () => {
@@ -3089,6 +3276,109 @@ function App() {
                 })()}
               </>
             )}
+          </div>
+
+          {/* Todos Section */}
+          <div className="settings-section">
+            <h2>Todos</h2>
+            <p className="settings-description">
+              Configure the tag pair for todo/done checkboxes. Items with the "active" tag show an unchecked checkbox; tapping it switches to the "completed" tag.
+            </p>
+            <div className="webhook-input">
+              <label className="settings-label">Active tag</label>
+              <input
+                type="text"
+                value={todoTagInput}
+                onChange={(e) => setTodoTagInput(e.target.value)}
+                placeholder="todo"
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+            </div>
+            <div className="webhook-input">
+              <label className="settings-label">Completed tag</label>
+              <input
+                type="text"
+                value={doneTagInput}
+                onChange={(e) => setDoneTagInput(e.target.value)}
+                placeholder="done"
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+            </div>
+            <button
+              onClick={saveTodoTags}
+              disabled={todoTagInput === todoTag && doneTagInput === doneTag}
+              className="save-settings-btn"
+            >
+              Save Todo Tags
+            </button>
+          </div>
+
+          {/* Reading List Section */}
+          <div className="settings-section">
+            <h2>Reading List</h2>
+            <p className="settings-description">
+              Configure the tag pair for reading list checkboxes. Works like todo/done but with a book icon. Items with the "unread" tag show an unchecked book; tapping it switches to the "read" tag.
+            </p>
+            <div className="webhook-input">
+              <label className="settings-label">Unread tag</label>
+              <input
+                type="text"
+                value={readmeTagInput}
+                onChange={(e) => setReadmeTagInput(e.target.value)}
+                placeholder="readme"
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+            </div>
+            <div className="webhook-input">
+              <label className="settings-label">Read tag</label>
+              <input
+                type="text"
+                value={readTagInput}
+                onChange={(e) => setReadTagInput(e.target.value)}
+                placeholder="read"
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+            </div>
+            <button
+              onClick={saveReadingTags}
+              disabled={readmeTagInput === readmeTag && readTagInput === readTag}
+              className="save-settings-btn"
+            >
+              Save Reading Tags
+            </button>
+          </div>
+
+          {/* Offline Section */}
+          <div className="settings-section">
+            <h2>Offline</h2>
+            <p className="settings-description">
+              Items tagged with this tag will have their content fetched and stored locally for offline reading. Reader-mode extraction is used to save clean article text.
+            </p>
+            <div className="webhook-input">
+              <label className="settings-label">Offline tag</label>
+              <input
+                type="text"
+                value={offlineTagInput}
+                onChange={(e) => setOfflineTagInput(e.target.value)}
+                placeholder="offline"
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+            </div>
+            <button
+              onClick={saveOfflineTag}
+              disabled={offlineTagInput === offlineTag}
+              className="save-settings-btn"
+            >
+              Save Offline Tag
+            </button>
+            <p className="settings-description" style={{ marginTop: '0.5rem' }}>
+              Disk usage: {offlineStorageSize < 1024 ? `${offlineStorageSize} B` : offlineStorageSize < 1024 * 1024 ? `${(offlineStorageSize / 1024).toFixed(1)} KB` : `${(offlineStorageSize / (1024 * 1024)).toFixed(1)} MB`}
+            </p>
           </div>
 
           {/* Display Section */}

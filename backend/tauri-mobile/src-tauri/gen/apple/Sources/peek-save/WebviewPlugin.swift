@@ -1,13 +1,22 @@
 import UIKit
 import WebKit
 
+// FFI declarations for Rust navigation tracking
+@_silgen_name("track_webview_navigation")
+func track_webview_navigation(_ url: UnsafePointer<CChar>, _ sourceItemId: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("track_navigation_free")
+func track_navigation_free(_ ptr: UnsafeMutablePointer<CChar>?)
+
 // WKWebView controller for embedded browser
 class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
     private var webView: WKWebView!
     private var itemId: String = ""
+    private var originalUrl: String = ""
 
     func configure(url: URL, itemId: String) {
         self.itemId = itemId
+        self.originalUrl = url.absoluteString
 
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
@@ -83,8 +92,23 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         navigationItem.title = webView.title ?? webView.url?.host
-        if let url = webView.url?.absoluteString {
-            print("[WebviewPlugin] Navigated to: \(url) for item: \(itemId)")
+        guard let url = webView.url?.absoluteString else { return }
+        print("[WebviewPlugin] Navigated to: \(url) for item: \(itemId)")
+
+        // Track navigation to new URLs as history
+        if url != originalUrl {
+            url.withCString { urlPtr in
+                itemId.withCString { itemIdPtr in
+                    let resultPtr = track_webview_navigation(urlPtr, itemIdPtr)
+                    if let resultPtr = resultPtr {
+                        let newItemId = String(cString: resultPtr)
+                        if !newItemId.isEmpty {
+                            print("[WebviewPlugin] Tracked navigation, new item: \(newItemId)")
+                        }
+                        track_navigation_free(resultPtr)
+                    }
+                }
+            }
         }
     }
 
@@ -99,8 +123,28 @@ class EmbeddedWebViewController: UIViewController, WKNavigationDelegate {
 
 // Navigation delegate for inline webview (must be held strongly)
 class InlineWebViewDelegate: NSObject, WKNavigationDelegate {
+    var originalUrl: String = ""
+    var itemId: String = ""
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        print("[WebviewPlugin] Inline webview loaded: \(webView.url?.absoluteString ?? "nil")")
+        guard let url = webView.url?.absoluteString else { return }
+        print("[WebviewPlugin] Inline webview loaded: \(url)")
+
+        // Track navigation to new URLs as history
+        if url != originalUrl && !originalUrl.isEmpty {
+            url.withCString { urlPtr in
+                itemId.withCString { itemIdPtr in
+                    let resultPtr = track_webview_navigation(urlPtr, itemIdPtr)
+                    if let resultPtr = resultPtr {
+                        let newItemId = String(cString: resultPtr)
+                        if !newItemId.isEmpty {
+                            print("[WebviewPlugin] Inline tracked navigation, new item: \(newItemId)")
+                        }
+                        track_navigation_free(resultPtr)
+                    }
+                }
+            }
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -181,9 +225,10 @@ public func webviewPluginClose() {
 
 // C-compatible function to open inline webview (subview, not modal)
 @_cdecl("webview_plugin_open_inline")
-public func webviewPluginOpenInline(urlPtr: UnsafePointer<CChar>, topOffset: Double) -> Bool {
+public func webviewPluginOpenInline(urlPtr: UnsafePointer<CChar>, topOffset: Double, itemIdPtr: UnsafePointer<CChar>) -> Bool {
     let urlString = String(cString: urlPtr)
-    print("[WebviewPlugin] open_inline called with URL: \(urlString), topOffset: \(topOffset)")
+    let itemId = String(cString: itemIdPtr)
+    print("[WebviewPlugin] open_inline called with URL: \(urlString), topOffset: \(topOffset), itemId: \(itemId)")
 
     guard let url = URL(string: urlString) else {
         print("[WebviewPlugin] Invalid URL: \(urlString)")
@@ -269,6 +314,8 @@ public func webviewPluginOpenInline(urlPtr: UnsafePointer<CChar>, topOffset: Dou
 
         // Set navigation delegate (held strongly in global var)
         let delegate = InlineWebViewDelegate()
+        delegate.originalUrl = urlString
+        delegate.itemId = itemId
         webView.navigationDelegate = delegate
         inlineWebViewDelegate = delegate
 
@@ -287,6 +334,49 @@ public func webviewPluginOpenInline(urlPtr: UnsafePointer<CChar>, topOffset: Dou
         currentInlineWebView = webView
 
         print("[WebviewPlugin] Inline webview added as subview at topOffset: \(topOffset)")
+    }
+
+    return true
+}
+
+// C-compatible function to open inline webview with HTML string content (for offline reader mode)
+@_cdecl("webview_plugin_open_inline_html")
+public func webviewPluginOpenInlineHtml(htmlPtr: UnsafePointer<CChar>, topOffset: Double) -> Bool {
+    let htmlString = String(cString: htmlPtr)
+    print("[WebviewPlugin] open_inline_html called, topOffset: \(topOffset), html length: \(htmlString.count)")
+
+    DispatchQueue.main.async {
+        // Remove any existing inline webview
+        currentInlineWebView?.removeFromSuperview()
+        currentInlineWebView = nil
+
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = windowScene.windows.first,
+              let rootView = window.rootViewController?.view else {
+            print("[WebviewPlugin] ERROR: Could not find root view")
+            return
+        }
+
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.translatesAutoresizingMaskIntoConstraints = false
+
+        // Add on top of all other subviews
+        rootView.addSubview(webView)
+
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: rootView.topAnchor, constant: CGFloat(topOffset)),
+            webView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor)
+        ])
+
+        webView.loadHTMLString(htmlString, baseURL: nil)
+        currentInlineWebView = webView
+
+        print("[WebviewPlugin] Inline HTML webview added at topOffset: \(topOffset)")
     }
 
     return true

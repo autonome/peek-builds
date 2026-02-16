@@ -21,8 +21,104 @@ fn ios_log(msg: &str) {
 extern "C" {
     fn webview_plugin_open(url: *const std::ffi::c_char, item_id: *const std::ffi::c_char) -> bool;
     fn webview_plugin_close();
-    fn webview_plugin_open_inline(url: *const std::ffi::c_char, top_offset: f64) -> bool;
+    fn webview_plugin_open_inline(url: *const std::ffi::c_char, top_offset: f64, item_id: *const std::ffi::c_char) -> bool;
+    fn webview_plugin_open_inline_html(html: *const std::ffi::c_char, top_offset: f64) -> bool;
     fn webview_plugin_close_inline();
+}
+
+/// FFI function called by Swift when the user navigates to a new URL in the webview.
+/// Creates or finds a URL item, tags it with from:history, and records a visit.
+/// Returns the item ID as a C string (caller must free with track_navigation_free).
+#[no_mangle]
+pub extern "C" fn track_webview_navigation(url_ptr: *const c_char, source_item_id_ptr: *const c_char) -> *mut c_char {
+    let url = unsafe { CStr::from_ptr(url_ptr) }.to_string_lossy().to_string();
+    let source_item_id = unsafe { CStr::from_ptr(source_item_id_ptr) }.to_string_lossy().to_string();
+
+    println!("[Rust] track_webview_navigation called: url={}, source_item_id={}", url, source_item_id);
+
+    let result = match track_navigation_inner(&url, &source_item_id) {
+        Ok(item_id) => item_id,
+        Err(e) => {
+            println!("[Rust] track_webview_navigation error: {}", e);
+            String::new()
+        }
+    };
+
+    std::ffi::CString::new(result).unwrap_or_default().into_raw()
+}
+
+/// Free the C string returned by track_webview_navigation
+#[no_mangle]
+pub extern "C" fn track_navigation_free(ptr: *mut c_char) {
+    if !ptr.is_null() {
+        unsafe { let _ = std::ffi::CString::from_raw(ptr); }
+    }
+}
+
+/// Inner implementation for track_navigation — finds or creates a URL item tagged from:history
+fn track_navigation_inner(url: &str, _source_item_id: &str) -> Result<String, String> {
+    let conn = get_connection()?;
+    let now = Utc::now().to_rfc3339();
+    let url = normalize_url(url);
+
+    // Check if this URL already exists
+    let url_without_slash = url.strip_suffix('/').unwrap_or(&url);
+    let existing_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM items WHERE type = 'url' AND (url = ? OR url = ?) AND deleted_at IS NULL",
+            params![&url, &url_without_slash],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let is_new = existing_id.is_none();
+    let item_id = if let Some(id) = existing_id {
+        // Update timestamp
+        conn.execute(
+            "UPDATE items SET updated_at = ? WHERE id = ?",
+            params![&now, &id],
+        ).map_err(|e| format!("Failed to update item: {}", e))?;
+        id
+    } else {
+        // Create new item
+        let id = uuid::Uuid::new_v4().to_string();
+        let metadata = inject_sync_metadata_for_save(None);
+        let metadata_json = serde_json::to_string(&metadata).unwrap_or_default();
+        conn.execute(
+            "INSERT INTO items (id, type, url, metadata, created_at, updated_at) VALUES (?, 'url', ?, ?, ?, ?)",
+            params![&id, &url, &metadata_json, &now, &now],
+        ).map_err(|e| format!("Failed to insert item: {}", e))?;
+        id
+    };
+
+    // Ensure from:history tag exists and is linked
+    let tag_id: String = conn
+        .query_row("SELECT id FROM tags WHERE name = 'from:history'", [], |row| row.get(0))
+        .unwrap_or_else(|_| {
+            let new_id = generate_tag_id();
+            let frecency = calculate_frecency(1, &now);
+            conn.execute(
+                "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 'from:history', 1, ?, ?, ?, ?)",
+                params![&new_id, &now, frecency, &now, &now],
+            ).ok();
+            new_id
+        });
+
+    conn.execute(
+        "INSERT OR IGNORE INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
+        params![&item_id, &tag_id, &now],
+    ).map_err(|e| format!("Failed to tag item: {}", e))?;
+
+    // Record the visit
+    let visit_id = uuid::Uuid::new_v4().to_string();
+    let timestamp = Utc::now().timestamp_millis();
+    conn.execute(
+        "INSERT INTO item_visits (id, item_id, timestamp, source, window_type) VALUES (?, ?, ?, 'webview', 'embedded')",
+        params![&visit_id, &item_id, timestamp],
+    ).map_err(|e| format!("Failed to record visit: {}", e))?;
+
+    println!("[Rust] Navigation tracked: item_id={}, new={}", item_id, is_new);
+    Ok(item_id)
 }
 
 // Sync version constants — must match backend/version.ts and backend/server/version.js
@@ -231,10 +327,40 @@ struct ProfileConfig {
     sync: SyncSettings,
     #[serde(default = "default_archive_tag")]
     archive_tag: String,
+    #[serde(default = "default_todo_tag")]
+    todo_tag: String,
+    #[serde(default = "default_done_tag")]
+    done_tag: String,
+    #[serde(default = "default_readme_tag")]
+    readme_tag: String,
+    #[serde(default = "default_read_tag")]
+    read_tag: String,
+    #[serde(default = "default_offline_tag")]
+    offline_tag: String,
 }
 
 fn default_archive_tag() -> String {
     "archive".to_string()
+}
+
+fn default_todo_tag() -> String {
+    "todo".to_string()
+}
+
+fn default_done_tag() -> String {
+    "done".to_string()
+}
+
+fn default_readme_tag() -> String {
+    "readme".to_string()
+}
+
+fn default_read_tag() -> String {
+    "read".to_string()
+}
+
+fn default_offline_tag() -> String {
+    "offline".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -574,6 +700,11 @@ fn migrate_old_profile_config(old_config: OldProfileConfig) -> ProfileConfig {
         profiles: new_profiles,
         sync,
         archive_tag: default_archive_tag(),
+        todo_tag: default_todo_tag(),
+        done_tag: default_done_tag(),
+        readme_tag: default_readme_tag(),
+        read_tag: default_read_tag(),
+        offline_tag: default_offline_tag(),
     }
 }
 
@@ -922,6 +1053,11 @@ fn create_default_profile_config() -> ProfileConfig {
         ],
         sync: SyncSettings::default(),
         archive_tag: default_archive_tag(),
+        todo_tag: default_todo_tag(),
+        done_tag: default_done_tag(),
+        readme_tag: default_readme_tag(),
+        read_tag: default_read_tag(),
+        offline_tag: default_offline_tag(),
     }
 }
 
@@ -1250,6 +1386,12 @@ fn ensure_database_initialized() -> Result<(), String> {
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS offline_content (
+                    item_id TEXT PRIMARY KEY,
+                    fetched_at TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL
+                );
                 ",
         ) {
             return Err(format!("Failed to create tables: {}", e));
@@ -1412,6 +1554,30 @@ fn ensure_database_initialized() -> Result<(), String> {
                 ",
         ) {
             println!("[Rust] Warning: Failed to create item_visits table: {}", e);
+        }
+    }
+
+    // Ensure offline_content index table exists (for offline reading feature)
+    let has_offline_content_table: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='offline_content'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) > 0;
+
+    if !has_offline_content_table {
+        println!("[Rust] Creating offline_content table for offline reading...");
+        if let Err(e) = conn.execute_batch(
+            "
+                CREATE TABLE IF NOT EXISTS offline_content (
+                    item_id TEXT PRIMARY KEY,
+                    fetched_at TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL
+                );
+                ",
+        ) {
+            println!("[Rust] Warning: Failed to create offline_content table: {}", e);
         }
     }
 
@@ -2695,15 +2861,17 @@ async fn close_native_webview() -> Result<(), String> {
 
 /// Open a URL in an inline native WKWebView (added as subview, not modal)
 #[tauri::command]
-async fn open_inline_webview(url: String, top_offset: f64) -> Result<(), String> {
-    println!("[Rust] open_inline_webview called for url: {}, top_offset: {}", url, top_offset);
+async fn open_inline_webview(url: String, top_offset: f64, item_id: Option<String>) -> Result<(), String> {
+    println!("[Rust] open_inline_webview called for url: {}, top_offset: {}, item_id: {:?}", url, top_offset, item_id);
 
     #[cfg(target_os = "ios")]
     {
         use std::ffi::CString;
         let url_cstr = CString::new(url.as_str()).map_err(|e| format!("Invalid URL string: {}", e))?;
+        let item_id_str = item_id.unwrap_or_default();
+        let item_id_cstr = CString::new(item_id_str.as_str()).map_err(|e| format!("Invalid item_id string: {}", e))?;
 
-        let result = unsafe { webview_plugin_open_inline(url_cstr.as_ptr(), top_offset) };
+        let result = unsafe { webview_plugin_open_inline(url_cstr.as_ptr(), top_offset, item_id_cstr.as_ptr()) };
         if result {
             Ok(())
         } else {
@@ -2713,7 +2881,7 @@ async fn open_inline_webview(url: String, top_offset: f64) -> Result<(), String>
 
     #[cfg(not(target_os = "ios"))]
     {
-        let _ = (url, top_offset);
+        let _ = (url, top_offset, item_id);
         Ok(())
     }
 }
@@ -2726,6 +2894,55 @@ async fn close_inline_webview() -> Result<(), String> {
         unsafe { webview_plugin_close_inline() };
     }
     Ok(())
+}
+
+/// Open offline reader-mode HTML in inline native WKWebView
+#[tauri::command]
+async fn open_inline_webview_html(item_id: String, top_offset: f64) -> Result<(), String> {
+    println!("[Rust] open_inline_webview_html called for item_id: {}, top_offset: {}", item_id, top_offset);
+
+    // Read the offline content
+    let container = get_container_path()
+        .ok_or_else(|| "No container path".to_string())?;
+    let content_path = container.join("offline").join(&item_id).join("content.html");
+    if !content_path.exists() {
+        return Err("No offline content available".to_string());
+    }
+    let html = fs::read_to_string(&content_path)
+        .map_err(|e| format!("Failed to read offline content: {}", e))?;
+
+    // Wrap in a styled reader-mode shell
+    let styled_html = format!(r#"<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body {{ font-family: -apple-system, system-ui, sans-serif; padding: 16px; line-height: 1.6; color: #333; max-width: 100%; overflow-x: hidden; }}
+img {{ max-width: 100%; height: auto; }}
+pre {{ overflow-x: auto; }}
+@media (prefers-color-scheme: dark) {{
+  body {{ background: #1a1a1a; color: #ddd; }}
+  a {{ color: #6cb4ee; }}
+}}
+</style>
+</head><body>{}</body></html>"#, html);
+
+    #[cfg(target_os = "ios")]
+    {
+        use std::ffi::CString;
+        let html_cstr = CString::new(styled_html).map_err(|e| format!("Invalid HTML content: {}", e))?;
+        let result = unsafe { webview_plugin_open_inline_html(html_cstr.as_ptr(), top_offset) };
+        if result {
+            Ok(())
+        } else {
+            Err("Failed to open inline HTML webview".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (item_id, top_offset, styled_html);
+        Ok(())
+    }
 }
 
 /// Update a page (URL) item - backward compatible
@@ -2845,15 +3062,34 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
 
     // Push to webhook (fire and forget)
     let saved_url = SavedUrl {
-        id,
-        url,
-        tags,
+        id: id.clone(),
+        url: url.clone(),
+        tags: tags.clone(),
         saved_at: now,
         metadata: None,
     };
     tauri::async_runtime::spawn(async move {
         push_url_to_webhook(saved_url).await;
     });
+
+    // Handle offline tag changes
+    let config = load_profile_config();
+    let offline_tag_name = config.offline_tag;
+
+    let offline_added = tags_to_add.iter().any(|t| **t == offline_tag_name);
+    let offline_removed = tags_to_remove.iter().any(|t| **t == offline_tag_name);
+
+    if offline_added {
+        let item_id = id.clone();
+        let fetch_url = url.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = fetch_and_store_offline_content(&item_id, &fetch_url).await {
+                println!("[Rust] Failed to fetch offline content: {}", e);
+            }
+        });
+    } else if offline_removed {
+        let _ = remove_offline_content(&id);
+    }
 
     Ok(())
 }
@@ -2976,11 +3212,11 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
 
     // Push to webhook (fire and forget) - only for page types
     if item_type == "page" {
-        if let Some(url) = url_opt {
+        if let Some(ref url) = url_opt {
             let saved_url = SavedUrl {
-                id,
-                url,
-                tags,
+                id: id.clone(),
+                url: url.clone(),
+                tags: tags.clone(),
                 saved_at: now,
                 metadata: None,
             };
@@ -2988,6 +3224,26 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
                 push_url_to_webhook(saved_url).await;
             });
         }
+    }
+
+    // Handle offline tag changes
+    let config = load_profile_config();
+    let offline_tag = config.offline_tag;
+
+    let offline_added = tags_to_add.iter().any(|t| **t == offline_tag);
+    let offline_removed = tags_to_remove.iter().any(|t| **t == offline_tag);
+
+    if offline_added {
+        if let Some(url) = url_opt {
+            let item_id = id.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = fetch_and_store_offline_content(&item_id, &url).await {
+                    println!("[Rust] Failed to fetch offline content: {}", e);
+                }
+            });
+        }
+    } else if offline_removed {
+        let _ = remove_offline_content(&id);
     }
 
     Ok(())
@@ -3908,6 +4164,174 @@ fn set_archive_tag(tag: String) -> Result<(), String> {
     if !save_profile_config(&config) {
         return Err("Failed to save archive tag".to_string());
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_todo_tags() -> Result<(String, String), String> {
+    let config = load_profile_config();
+    Ok((config.todo_tag, config.done_tag))
+}
+
+#[tauri::command]
+fn set_todo_tags(todo_tag: String, done_tag: String) -> Result<(), String> {
+    let mut config = load_profile_config();
+    config.todo_tag = todo_tag;
+    config.done_tag = done_tag;
+    if !save_profile_config(&config) {
+        return Err("Failed to save todo tags".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_reading_tags() -> Result<(String, String), String> {
+    let config = load_profile_config();
+    Ok((config.readme_tag, config.read_tag))
+}
+
+#[tauri::command]
+fn set_reading_tags(readme_tag: String, read_tag: String) -> Result<(), String> {
+    let mut config = load_profile_config();
+    config.readme_tag = readme_tag;
+    config.read_tag = read_tag;
+    if !save_profile_config(&config) {
+        return Err("Failed to save reading tags".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_offline_tag() -> Result<String, String> {
+    let config = load_profile_config();
+    Ok(config.offline_tag)
+}
+
+#[tauri::command]
+fn set_offline_tag(tag: String) -> Result<(), String> {
+    let mut config = load_profile_config();
+    config.offline_tag = tag;
+    if !save_profile_config(&config) {
+        return Err("Failed to save offline tag".to_string());
+    }
+    Ok(())
+}
+
+/// Get total size of offline content storage in bytes
+#[tauri::command]
+fn get_offline_storage_size() -> Result<u64, String> {
+    let conn = get_connection()?;
+    let total: u64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM offline_content",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    Ok(total)
+}
+
+/// Fetch URL content, extract reader-mode HTML, and store to filesystem
+#[tauri::command]
+async fn fetch_offline_content(item_id: String, url: String) -> Result<(), String> {
+    fetch_and_store_offline_content(&item_id, &url).await
+}
+
+/// Delete stored offline content for an item
+#[tauri::command]
+fn delete_offline_content(item_id: String) -> Result<(), String> {
+    remove_offline_content(&item_id)
+}
+
+/// Retrieve stored offline content HTML for display
+#[tauri::command]
+fn get_offline_content(item_id: String) -> Result<Option<String>, String> {
+    let container = get_container_path()
+        .ok_or_else(|| "No container path".to_string())?;
+    let content_path = container.join("offline").join(&item_id).join("content.html");
+    if content_path.exists() {
+        let content = fs::read_to_string(&content_path)
+            .map_err(|e| format!("Failed to read offline content: {}", e))?;
+        Ok(Some(content))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Fetch a URL, extract reader-mode content, and store to the offline directory
+async fn fetch_and_store_offline_content(item_id: &str, url: &str) -> Result<(), String> {
+    println!("[Rust] Fetching offline content for item {} from {}", item_id, url);
+
+    // Fetch the HTML
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client.get(url)
+        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch URL: {}", e))?;
+
+    let html = response.text().await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    // Extract reader-mode content using readability-rust (Mozilla Readability.js port)
+    let mut parser = readability_rust::Readability::new(&html, None)
+        .map_err(|e| format!("Failed to parse HTML: {}", e))?;
+    let article = parser.parse()
+        .ok_or_else(|| "Readability could not extract article content".to_string())?;
+
+    let content = article.content
+        .ok_or_else(|| "Readability extracted no content from page".to_string())?;
+
+    // Store to filesystem
+    let container = get_container_path()
+        .ok_or_else(|| "No container path".to_string())?;
+    let offline_dir = container.join("offline").join(item_id);
+    fs::create_dir_all(&offline_dir)
+        .map_err(|e| format!("Failed to create offline directory: {}", e))?;
+
+    let content_path = offline_dir.join("content.html");
+    let size_bytes = content.len() as i64;
+    fs::write(&content_path, &content)
+        .map_err(|e| format!("Failed to write offline content: {}", e))?;
+
+    // Update index in SQLite
+    let conn = get_connection()?;
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR REPLACE INTO offline_content (item_id, fetched_at, size_bytes) VALUES (?, ?, ?)",
+        params![item_id, &now, size_bytes],
+    )
+    .map_err(|e| format!("Failed to update offline index: {}", e))?;
+
+    println!("[Rust] Stored offline content for item {}: {} bytes", item_id, size_bytes);
+    Ok(())
+}
+
+/// Remove offline content files and index entry for an item
+fn remove_offline_content(item_id: &str) -> Result<(), String> {
+    println!("[Rust] Removing offline content for item {}", item_id);
+
+    // Remove from filesystem
+    if let Some(container) = get_container_path() {
+        let offline_dir = container.join("offline").join(item_id);
+        if offline_dir.exists() {
+            fs::remove_dir_all(&offline_dir)
+                .map_err(|e| format!("Failed to remove offline directory: {}", e))?;
+        }
+    }
+
+    // Remove from index
+    if let Ok(conn) = get_connection() {
+        let _ = conn.execute(
+            "DELETE FROM offline_content WHERE item_id = ?",
+            params![item_id],
+        );
+    }
+
     Ok(())
 }
 
@@ -4991,6 +5415,16 @@ pub fn run() {
             set_auto_sync,
             get_archive_tag,
             set_archive_tag,
+            get_todo_tags,
+            set_todo_tags,
+            get_reading_tags,
+            set_reading_tags,
+            get_offline_tag,
+            set_offline_tag,
+            get_offline_storage_size,
+            fetch_offline_content,
+            delete_offline_content,
+            get_offline_content,
             sync_to_webhook,
             get_last_sync,
             auto_sync_if_needed,
@@ -5017,6 +5451,7 @@ pub fn run() {
             swap_profile_databases,
             // Inline webview
             open_inline_webview,
+            open_inline_webview_html,
             close_inline_webview
         ])
         .run(tauri::generate_context!())

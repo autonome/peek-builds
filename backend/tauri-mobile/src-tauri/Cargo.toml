@@ -31,6 +31,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 url = "2"
 regex = "1"
 base64 = "0.22"
+readability-rust = "0.1"
 
 [features]
 # custom-protocol: use bundled assets instead of dev server (for release builds)

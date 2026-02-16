@@ -373,6 +373,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateUnformattedPhoneEntities();
   migrateLowQualityEntities();
   migrateInvalidPersonEntities();
+  migrateTagNavigationHistory();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
@@ -2008,6 +2009,54 @@ function migrateInvalidPersonEntities(): void {
  * Drop legacy address/visit/address_tags tables.
  * Data was already migrated to items/item_visits/item_tags by earlier migrations.
  */
+/**
+ * Tag existing URL items that have visits but no tags with 'from:history'.
+ * These are navigation-tracked URLs that were created before we started
+ * auto-tagging them. Items with user-added tags are left alone.
+ */
+function migrateTagNavigationHistory(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'tag_navigation_history_v1';
+
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') {
+    return;
+  }
+
+  // Find URL items that have visits (navigation-tracked) but no tags at all
+  const untaggedNavItems = db.prepare(`
+    SELECT DISTINCT i.id FROM items i
+    INNER JOIN item_visits iv ON i.id = iv.itemId
+    LEFT JOIN item_tags it ON i.id = it.itemId
+    WHERE i.type = 'url' AND i.deletedAt = 0 AND it.itemId IS NULL
+  `).all() as { id: string }[];
+
+  if (untaggedNavItems.length > 0) {
+    const timestamp = now();
+    // Get or create the from:history tag
+    const historyTagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get('from:history') as { id: string } | undefined;
+    let historyTagId: string;
+    if (historyTagRow) {
+      historyTagId = historyTagRow.id;
+    } else {
+      historyTagId = generateId('tag');
+      db.prepare(
+        'INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 0, ?, 0, ?, ?)'
+      ).run(historyTagId, 'from:history', timestamp, timestamp, timestamp);
+    }
+
+    const insertStmt = db.prepare('INSERT OR IGNORE INTO item_tags (itemId, tagId, createdAt) VALUES (?, ?, ?)');
+    for (const { id } of untaggedNavItems) {
+      insertStmt.run(id, historyTagId, timestamp);
+    }
+
+    DEBUG && console.log('main', `Tagged ${untaggedNavItems.length} navigation URLs with from:history`);
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+}
+
 function dropLegacyAddressTables(): void {
   if (!db) return;
 
@@ -3303,6 +3352,10 @@ export function trackNavigation(uri: string, options: {
       parsed.domain,
       options.favicon || ''
     );
+
+    // Tag navigation-created items as history so they're hidden from default views
+    const { tag: historyTag } = getOrCreateTag('from:history');
+    tagItem(itemId, historyTag.id);
   }
 
   // Record the visit
