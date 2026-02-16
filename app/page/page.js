@@ -446,13 +446,26 @@ webview.addEventListener('console-message', (e) => {
     return;
   }
 
-  // --- Mousemove from webview: cancel hold if moved too far ---
+  // --- Mousemove from webview: update drag or cancel hold ---
   if (e.message.startsWith('__PEEK_MOUSEMOVE__:')) {
-    if (!webviewHoldTimer) return;  // No pending hold
     const parts = e.message.split(':');
     const screenX = parseFloat(parts[1]);
     const screenY = parseFloat(parts[2]);
     if (isNaN(screenX) || isNaN(screenY)) return;
+
+    // If actively dragging, update window position from webview mouse coords.
+    // The drag overlay may not capture events from the webview's compositor
+    // surface, so we must handle drag movement here as well.
+    if (isDragging) {
+      const dx = screenX - dragStartScreenX;
+      const dy = screenY - dragStartScreenY;
+      screenBounds.x = dragStartBoundsX + dx;
+      screenBounds.y = dragStartBoundsY + dy;
+      setWindowBounds(computeWindowBounds(screenBounds));
+      return;
+    }
+
+    if (!webviewHoldTimer) return;  // No pending hold
     const dx = Math.abs(screenX - webviewHoldScreenX);
     const dy = Math.abs(screenY - webviewHoldScreenY);
     if (dx > 5 || dy > 5) {
