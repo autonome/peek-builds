@@ -433,9 +433,15 @@ webview.addEventListener('console-message', (e) => {
   if (e.message === '__PEEK_MOUSEUP__') {
     webviewMouseDown = false;
     cancelWebviewHold();
-    // If drag was active, end it (mouseup from webview won't bubble to document)
+    // If drag was active, fully end it — webview mouseup won't bubble to document,
+    // so we must clean up here to avoid the drag overlay staying active and blocking clicks.
     if (isDragging) {
+      isDragging = false;
       pageMouseButtonDown = false;
+      dragOverlay.classList.remove('active');
+      document.body.style.cursor = '';
+      navbar.style.cursor = 'grab';
+      updateUrlParams();
     }
     return;
   }
