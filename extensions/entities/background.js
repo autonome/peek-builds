@@ -12,7 +12,7 @@ import { extractRegexEntities } from './extractors/regex.js';
 import { extractMicroformatEntities } from './extractors/microformats.js';
 import { extractStructuredDataEntities, extractPageMetadata } from './extractors/structured-data.js';
 import { processEntities } from './entity-matcher.js';
-import { getEntities, getObservations } from './entity-store.js';
+import { getEntities, getObservations, setEntityFeedback } from './entity-store.js';
 import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
@@ -455,4 +455,4 @@ const extension = {
 export default extension;
 
 // Export for UI
-export { getEntities, getObservations, extractCurrentPage };
+export { getEntities, getObservations, extractCurrentPage, setEntityFeedback };

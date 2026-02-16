@@ -8,7 +8,7 @@
 - This file is not for notes or description - link to documents in ./notes for that
 - Checkbox states: `- [ ]` pending, `- [~]` in-progress (move to WIP.md), `- [x]` done (move to CHANGELOG.md)
 
-## Design principles / capablities / etc
+## Design principles / capabilities / etc
 
 core
 - feels like home: trust, comfort, control
@@ -16,17 +16,20 @@ core
 - sleep at night because no idea or anything you saw is ever lost
 - create, save, classify at the speed of thought
 
-what makes a home
+what makes a home / kitchen / workshop
 - everything is right where you need it, b/c you control what is where
-- when you know what is where, you can make things without frustration
-- you generally know what’s happening - who’s around/coming/going, etc, not a lot of surprises
+- when you know what is where, you can make things with less frustration
+- you generally know what’s happening - who’s around/coming/going, etc, not too much surprise (but some!)
 
 what makes magical mind-readingness
-- frecency everywhere all of the time: user actions are training data for sorting
+- frecency everywhere all of the time
+- user actions are training data for sorting
+- the thing you were thinking of is already at the top of the list
 
-what provides awareness
+what makes awareness
 - actions tracked at the core
 - metrics generated, rollups displayed, synthesis emergent
+- task context with you at the center (vs asking a companion robot - disempowering!)
 
 synthesis
 - frecency + adaptive matching gives experience/feeling of magical mind-readingness

@@ -174,6 +174,11 @@ export async function getEntities(options = {}) {
     return { ...item, _meta: metadata };
   });
 
+  // Filter out thumbs-down entities unless explicitly requested
+  if (!options.includeHidden) {
+    entities = entities.filter(e => (e._meta.feedback?.score ?? 0) !== -1);
+  }
+
   if (options.entityType) {
     entities = entities.filter(e => e._meta.entityType === options.entityType);
   }
@@ -248,6 +253,21 @@ export async function updateEntityMetadata(entityId, updates) {
 
   return api.datastore.updateItem(entityId, {
     metadata: JSON.stringify(metadata)
+  });
+}
+
+/**
+ * Set feedback score on an entity
+ * @param {string} entityId - Entity item ID
+ * @param {number} score - -1 (thumbs down/hide), 0 (unscored), 1 (thumbs up/correct)
+ * @returns {Promise<{success: boolean}>}
+ */
+export async function setEntityFeedback(entityId, score) {
+  return updateEntityMetadata(entityId, {
+    feedback: {
+      score,
+      scoredAt: Date.now()
+    }
   });
 }
 

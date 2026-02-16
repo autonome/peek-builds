@@ -5,7 +5,7 @@
  * Includes detail pane showing full entity metadata and all source pages.
  */
 
-import { getEntities, getObservations, extractCurrentPage } from './background.js';
+import { getEntities, getObservations, extractCurrentPage, setEntityFeedback } from './background.js';
 
 const api = window.app;
 
@@ -239,6 +239,37 @@ async function showDetailView(entity) {
     <div class="detail-attr-row"><span class="detail-attr-label">Last Updated</span><span class="detail-attr-value">${entity.updatedAt ? new Date(entity.updatedAt).toLocaleString() : 'Unknown'}</span></div>
   `;
 
+  // Feedback section
+  const feedbackEl = document.getElementById('detailFeedback');
+  if (feedbackEl) {
+    const feedbackScore = meta.feedback?.score ?? 0;
+    feedbackEl.innerHTML = `
+      <div class="detail-feedback-buttons">
+        <button class="detail-feedback-btn feedback-down ${feedbackScore === -1 ? 'active' : ''}" data-score="-1">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+          <span>Hide</span>
+        </button>
+        <button class="detail-feedback-btn feedback-up ${feedbackScore === 1 ? 'active' : ''}" data-score="1">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+          <span>Correct</span>
+        </button>
+      </div>
+    `;
+    feedbackEl.querySelectorAll('.detail-feedback-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const newScore = parseInt(btn.dataset.score);
+        const currentScore = meta.feedback?.score ?? 0;
+        const score = currentScore === newScore ? 0 : newScore;
+        await setEntityFeedback(entity.id, score);
+        if (score === -1) {
+          showList();
+        } else {
+          showDetailView(entity);
+        }
+      });
+    });
+  }
+
   // Source pages
   const sourcesEl = document.getElementById('detailSources');
   sourcesEl.innerHTML = '<span class="detail-empty">Loading sources...</span>';
@@ -429,15 +460,45 @@ async function renderEntities() {
     const footerParts = [`${confidence}% confidence`];
     if (pageCountText) footerParts.push(pageCountText);
     footerParts.push(formatDate(entity.createdAt));
+    const feedbackScore = meta.feedback?.score ?? 0;
     footerDiv.innerHTML = `
       <div class="card-footer">
         <span class="entity-confidence">${footerParts.filter(Boolean).join(' \u00B7 ')}</span>
+        <span class="feedback-buttons">
+          <button class="feedback-btn feedback-down ${feedbackScore === -1 ? 'active' : ''}" data-score="-1" title="Hide noisy extraction">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+          </button>
+          <button class="feedback-btn feedback-up ${feedbackScore === 1 ? 'active' : ''}" data-score="1" title="Mark as correct">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+          </button>
+        </span>
       </div>
     `;
     card.appendChild(footerDiv);
 
     // Click on source link opens the page directly
-    card.addEventListener('click', (e) => {
+    card.addEventListener('click', async (e) => {
+      // Feedback buttons
+      const feedbackBtn = e.target.closest('.feedback-btn');
+      if (feedbackBtn) {
+        e.stopPropagation();
+        const newScore = parseInt(feedbackBtn.dataset.score);
+        const currentScore = meta.feedback?.score ?? 0;
+        // Toggle off if clicking the same score
+        const score = currentScore === newScore ? 0 : newScore;
+        await setEntityFeedback(entity.id, score);
+        // If thumbs down, remove card with animation; otherwise re-render
+        if (score === -1) {
+          card.style.transition = 'opacity 0.3s, transform 0.3s';
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.95)';
+          setTimeout(() => renderEntities(), 300);
+        } else {
+          renderEntities();
+        }
+        return;
+      }
+
       const sourceLink = e.target.closest('.source-title[data-url]');
       if (sourceLink) {
         e.stopPropagation();
