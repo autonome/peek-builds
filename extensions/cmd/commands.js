@@ -109,8 +109,12 @@ function createProxyCommand(cmdData) {
     base.execute = async (ctx) => {
       return new Promise((resolve) => {
         const resultTopic = `noun:result:${cmdData._nounName}:${Date.now()}`;
+        let settled = false;
 
         const unsubscribe = api.subscribe(resultTopic, (result) => {
+          if (settled) return;
+          settled = true;
+          unsubscribe?.();
           resolve(result);
         }, api.scopes.GLOBAL);
 
@@ -121,6 +125,9 @@ function createProxyCommand(cmdData) {
         }, api.scopes.GLOBAL);
 
         setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          unsubscribe?.();
           resolve(undefined);
         }, 30000);
       });
@@ -132,8 +139,12 @@ function createProxyCommand(cmdData) {
   base.execute = async (ctx) => {
     return new Promise((resolve) => {
       const resultTopic = `cmd:execute:${cmdData.name}:result`;
+      let settled = false;
 
       const unsubscribe = api.subscribe(resultTopic, (result) => {
+        if (settled) return;
+        settled = true;
+        unsubscribe?.();
         resolve(result);
       }, api.scopes.GLOBAL);
 
@@ -144,6 +155,9 @@ function createProxyCommand(cmdData) {
       }, api.scopes.GLOBAL);
 
       setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        unsubscribe?.();
         resolve(undefined);
       }, 30000);
     });

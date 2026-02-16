@@ -91,17 +91,23 @@ const loadCommandCache = async () => {
  */
 const saveCommandCache = async (appVersion, extensionVersions) => {
   try {
-    const commands = Array.from(commandRegistry.values()).map(cmd => ({
-      name: cmd.name,
-      description: cmd.description,
-      source: cmd.source,
-      scope: cmd.scope || 'global',
-      modes: cmd.modes || [],
-      hasCanExecute: cmd.hasCanExecute || false,
-      accepts: cmd.accepts,
-      produces: cmd.produces,
-      params: cmd.params || []
-    }));
+    const commands = Array.from(commandRegistry.values()).map(cmd => {
+      const entry = {
+        name: cmd.name,
+        description: cmd.description,
+        source: cmd.source,
+        scope: cmd.scope || 'global',
+        modes: cmd.modes || [],
+        hasCanExecute: cmd.hasCanExecute || false,
+        accepts: cmd.accepts,
+        produces: cmd.produces,
+        params: cmd.params || []
+      };
+      // Preserve noun routing metadata in cache
+      if (cmd._nounName) entry._nounName = cmd._nounName;
+      if (cmd._nounCapability) entry._nounCapability = cmd._nounCapability;
+      return entry;
+    });
 
     const cache = {
       appVersion,
@@ -197,7 +203,7 @@ const initCommandRegistry = () => {
     log('ext:cmd', 'cmd:register-batch received:', msg.commands.length, 'commands');
 
     for (const cmd of msg.commands) {
-      commandRegistry.set(cmd.name, {
+      const entry = {
         name: cmd.name,
         description: cmd.description || '',
         source: cmd.source,
@@ -212,7 +218,11 @@ const initCommandRegistry = () => {
         produces: cmd.produces || [],
         // Parameter definitions for completions
         params: cmd.params || []
-      });
+      };
+      // Preserve noun routing metadata for proxy dispatch
+      if (cmd._nounName) entry._nounName = cmd._nounName;
+      if (cmd._nounCapability) entry._nounCapability = cmd._nounCapability;
+      commandRegistry.set(cmd.name, entry);
       liveRegisteredCommands.add(cmd.name);
     }
   }, api.scopes.GLOBAL);
@@ -220,7 +230,7 @@ const initCommandRegistry = () => {
   // Handle individual command registrations from extensions
   api.subscribe('cmd:register', (msg) => {
     log('ext:cmd', 'cmd:register received:', msg.name);
-    commandRegistry.set(msg.name, {
+    const entry = {
       name: msg.name,
       description: msg.description || '',
       source: msg.source,
@@ -235,7 +245,11 @@ const initCommandRegistry = () => {
       produces: msg.produces || [],  // MIME types this command produces as output
       // Parameter definitions for completions
       params: msg.params || []
-    });
+    };
+    // Preserve noun routing metadata for proxy dispatch
+    if (msg._nounName) entry._nounName = msg._nounName;
+    if (msg._nounCapability) entry._nounCapability = msg._nounCapability;
+    commandRegistry.set(msg.name, entry);
     liveRegisteredCommands.add(msg.name);
   }, api.scopes.GLOBAL);
 
@@ -448,14 +462,18 @@ const init = async () => {
   if (cache && cache.commands) {
     // Pre-populate from cache (will be updated by fresh registrations)
     for (const cmd of cache.commands) {
-      commandRegistry.set(cmd.name, {
+      const entry = {
         name: cmd.name,
         description: cmd.description || '',
         source: cmd.source,
         accepts: cmd.accepts || [],
         produces: cmd.produces || [],
         params: cmd.params || []
-      });
+      };
+      // Restore noun routing metadata from cache
+      if (cmd._nounName) entry._nounName = cmd._nounName;
+      if (cmd._nounCapability) entry._nounCapability = cmd._nounCapability;
+      commandRegistry.set(cmd.name, entry);
     }
 
     // Restore cached nouns and regenerate their commands

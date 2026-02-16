@@ -63,7 +63,7 @@ export function registerNoun(nounDef) {
       try {
         const result = await handler(msg);
         if (msg.expectResult && msg.resultTopic) {
-          api.publish(msg.resultTopic, result, api.scopes.GLOBAL);
+          api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
         }
       } catch (err) {
         console.error('[nouns] Error in', cap, nounDef.name, err);
