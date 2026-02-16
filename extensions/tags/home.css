@@ -256,6 +256,174 @@ peek-input.search-input {
   flex-direction: column;
 }
 
+/* Selected tags bar - shows active tag filters above the grid */
+.selected-tags-bar {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.selected-tags-bar.visible {
+  display: flex;
+}
+
+.selected-tag-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--base0D);
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--base00);
+  font-weight: 500;
+}
+
+.selected-tag-chip .remove-selected-tag {
+  background: none;
+  border: none;
+  color: var(--base00);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.8;
+}
+
+.selected-tag-chip .remove-selected-tag:hover {
+  opacity: 1;
+}
+
+.tag-gear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: 1px solid var(--base03);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--base04);
+  padding: 0;
+  transition: all 0.15s;
+}
+
+.tag-gear-btn:hover {
+  background: var(--base02);
+  color: var(--base05);
+}
+
+.tag-gear-btn.active {
+  background: var(--base02);
+  color: var(--base0D);
+  border-color: var(--base0D);
+}
+
+/* Tag management panel */
+.tag-manage-panel {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.tag-manage-panel.visible {
+  display: flex;
+}
+
+.tag-manage-panel input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: var(--theme-font-sans);
+  background: var(--base00);
+  border: 1px solid var(--base02);
+  border-radius: 4px;
+  color: var(--base05);
+  outline: none;
+  min-width: 0;
+}
+
+.tag-manage-panel input:focus {
+  border-color: var(--base0D);
+}
+
+.tag-manage-panel button {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.tag-manage-save {
+  background: var(--base0D);
+  color: var(--base00);
+}
+
+.tag-manage-save:hover {
+  filter: brightness(1.1);
+}
+
+.tag-manage-delete {
+  background: var(--base08);
+  color: var(--base00);
+}
+
+.tag-manage-delete:hover {
+  filter: brightness(1.1);
+}
+
+/* Sidebar header with sort controls */
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.sidebar-header .sidebar-title {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.sidebar-sort-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base04);
+  font-size: 11px;
+  padding: 0;
+  transition: all 0.15s;
+}
+
+.sidebar-sort-btn:hover {
+  background: var(--base02);
+  color: var(--base05);
+}
+
+.sidebar-sort-btn.active {
+  background: var(--base01);
+  border-color: var(--base02);
+  color: var(--base0D);
+}
+
 /* Grid toolbar */
 peek-grid-toolbar.grid-toolbar {
   margin-bottom: 8px;
@@ -269,8 +437,8 @@ peek-grid-toolbar.grid-toolbar {
 
 /* Cards grid - peek-grid custom properties */
 peek-grid.cards {
-  --peek-grid-min-item-width: 280px;
-  --peek-grid-gap: 12px;
+  --peek-grid-min-item-width: 240px;
+  --peek-grid-gap: 8px;
 }
 
 /* Card customization - peek-card custom properties */
@@ -278,8 +446,8 @@ peek-card {
   --peek-card-bg: var(--base01);
   --peek-card-border: transparent;
   --peek-card-radius: 8px;
-  --peek-card-padding: 14px;
-  --peek-card-gap: 10px;
+  --peek-card-padding: 10px;
+  --peek-card-gap: 6px;
 }
 
 peek-card[selected] {
@@ -290,12 +458,12 @@ peek-card[selected] {
 .card-header {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .card-favicon {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: 4px;
   flex-shrink: 0;
   background: var(--base02);

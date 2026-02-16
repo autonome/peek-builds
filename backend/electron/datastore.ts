@@ -2245,6 +2245,23 @@ export function getOrCreateTag(name: string): { tag: Tag; created: boolean } {
   return { tag: newTag, created: true };
 }
 
+export function renameTag(id: string, newName: string): Tag | null {
+  const slug = newName.toLowerCase().trim().replace(/\s+/g, '-');
+  const timestamp = now();
+  const result = getDb().prepare(
+    'UPDATE tags SET name = ?, slug = ?, updatedAt = ? WHERE id = ?'
+  ).run(newName.trim(), slug, timestamp, id);
+  if (result.changes === 0) return null;
+  return getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
+}
+
+export function deleteTag(id: string): boolean {
+  const db = getDb();
+  db.prepare('DELETE FROM item_tags WHERE tagId = ?').run(id);
+  const result = db.prepare('DELETE FROM tags WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
 export function getTagsByFrecency(domain?: string): Tag[] {
   let tags = getDb().prepare('SELECT * FROM tags').all() as Tag[];
 

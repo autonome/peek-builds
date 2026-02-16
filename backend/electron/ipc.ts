@@ -14,6 +14,8 @@ import {
   addContent,
   queryContent,
   getOrCreateTag,
+  renameTag,
+  deleteTag,
   getTagsByFrecency,
   getTable,
   setRow,
@@ -576,6 +578,39 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-get-tags-by-frecency', async (ev, data = {}) => {
     try {
       const result = getTagsByFrecency(data.limit);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-rename-tag', async (ev, data) => {
+    try {
+      const result = renameTag(data.tagId, data.newName);
+      if (result) {
+        publish('system', PubSubScopes.GLOBAL, 'tag:renamed', {
+          tagId: data.tagId,
+          newName: data.newName
+        });
+        if (DEBUG) console.log('[ipc] tag:renamed', data.tagId, data.newName);
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-delete-tag', async (ev, data) => {
+    try {
+      const result = deleteTag(data.tagId);
+      if (result) {
+        publish('system', PubSubScopes.GLOBAL, 'tag:deleted', {
+          tagId: data.tagId
+        });
+        if (DEBUG) console.log('[ipc] tag:deleted', data.tagId);
+      }
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

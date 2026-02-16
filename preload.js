@@ -517,6 +517,12 @@ api.datastore = {
   getItemsByTag: (tagId) => {
     return ipcRenderer.invoke('datastore-get-items-by-tag', { tagId });
   },
+  renameTag: (tagId, newName) => {
+    return ipcRenderer.invoke('datastore-rename-tag', { tagId, newName });
+  },
+  deleteTag: (tagId) => {
+    return ipcRenderer.invoke('datastore-delete-tag', { tagId });
+  },
 
   // History operations (visits joined with addresses)
   getHistory: (filter = {}) => {

@@ -88,7 +88,10 @@ let state = {
   itemTags: new Map(),       // Map of addressId -> [tags]
   selectedIndex: 0,
   searchQuery: '',
-  editingItem: null          // Item being viewed in detail
+  editingItem: null,         // Item being viewed in detail
+  tagSortBy: 'frecency',    // 'frecency' | 'name'
+  tagSortDirection: 'asc',  // 'asc' | 'desc'
+  managePanelOpen: false     // Whether the tag manage panel is visible
 };
 
 // Expose state for debugging
@@ -449,6 +452,16 @@ const setupEventListeners = () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
+  api.subscribe('tag:renamed', (msg) => {
+    debug && console.log('[tags] tag:renamed event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('tag:deleted', (msg) => {
+    debug && console.log('[tags] tag:deleted event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
   // Subscribe to item events for reactive updates
   api.subscribe('item:created', (msg) => {
     debug && console.log('[tags] item:created event received:', msg);
@@ -493,6 +506,21 @@ const setupEventListeners = () => {
       }
       state.selectedIndex = 0;
       render();
+    });
+  });
+
+  // Sidebar sort buttons
+  document.querySelectorAll('.sidebar-sort-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.sort;
+      if (action === 'name') {
+        // Toggle between frecency and name sort
+        state.tagSortBy = state.tagSortBy === 'name' ? 'frecency' : 'name';
+      } else if (action === 'direction') {
+        // Toggle sort direction
+        state.tagSortDirection = state.tagSortDirection === 'asc' ? 'desc' : 'asc';
+      }
+      renderTagSidebar();
     });
   });
 
@@ -712,7 +740,11 @@ const updateFilterCounts = () => {
  *     AND match the search query against content/title/URL/tags.
  */
 const getFilteredItems = () => {
-  let items = [...state.items];
+  // Only show items that have at least one tag
+  let items = state.items.filter(item => {
+    const tags = state.itemTags.get(item.id);
+    return tags && tags.length > 0;
+  });
 
   // Filter by type
   if (state.activeFilter !== 'all') {
@@ -779,6 +811,7 @@ const getFilteredTags = () => {
 const render = () => {
   renderFilterButtons();
   renderTagSidebar();
+  renderSelectedTagsBar();
   renderCards();
   renderActiveTagIndicator();
   updateSearchPlaceholder();
@@ -856,11 +889,178 @@ const clearTagFilter = () => {
 };
 
 /**
+ * Render selected tags bar at top of the right pane.
+ * Shows active tag filter chips with remove buttons, and a gear icon when a single tag is selected.
+ */
+const renderSelectedTagsBar = () => {
+  const bar = document.querySelector('.selected-tags-bar');
+  const panel = document.querySelector('.tag-manage-panel');
+
+  if (state.activeTags.length === 0) {
+    bar.classList.remove('visible');
+    bar.innerHTML = '';
+    panel.classList.remove('visible');
+    panel.innerHTML = '';
+    state.managePanelOpen = false;
+    return;
+  }
+
+  bar.innerHTML = '';
+  bar.classList.add('visible');
+
+  state.activeTags.forEach(tag => {
+    const chip = document.createElement('span');
+    chip.className = 'selected-tag-chip';
+    chip.innerHTML = `
+      ${escapeHtml(tag.name)}
+      <button class="remove-selected-tag">&times;</button>
+    `;
+    chip.querySelector('.remove-selected-tag').addEventListener('click', () => {
+      removeActiveTag(tag.id);
+    });
+    bar.appendChild(chip);
+  });
+
+  // Show gear icon when exactly one tag is selected
+  if (state.activeTags.length === 1) {
+    const gearBtn = document.createElement('button');
+    gearBtn.className = 'tag-gear-btn' + (state.managePanelOpen ? ' active' : '');
+    gearBtn.title = 'Manage tag';
+    gearBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+    gearBtn.addEventListener('click', () => {
+      state.managePanelOpen = !state.managePanelOpen;
+      gearBtn.classList.toggle('active', state.managePanelOpen);
+      renderTagManagePanel();
+    });
+    bar.appendChild(gearBtn);
+  } else {
+    panel.classList.remove('visible');
+    panel.innerHTML = '';
+    state.managePanelOpen = false;
+  }
+
+  renderTagManagePanel();
+};
+
+/**
+ * Render the tag management panel (rename / delete) for a single selected tag.
+ */
+const renderTagManagePanel = () => {
+  const panel = document.querySelector('.tag-manage-panel');
+
+  if (!state.managePanelOpen || state.activeTags.length !== 1) {
+    panel.classList.remove('visible');
+    panel.innerHTML = '';
+    return;
+  }
+
+  const tag = state.activeTags[0];
+  panel.innerHTML = '';
+  panel.classList.add('visible');
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = tag.name;
+  input.placeholder = 'Tag name';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'tag-manage-save';
+  saveBtn.textContent = 'Rename';
+  saveBtn.addEventListener('click', () => renameTagAction(tag.id, input.value));
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') renameTagAction(tag.id, input.value);
+  });
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'tag-manage-delete';
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.addEventListener('click', () => deleteTagAction(tag.id));
+
+  panel.appendChild(input);
+  panel.appendChild(saveBtn);
+  panel.appendChild(deleteBtn);
+};
+
+/**
+ * Rename a tag via IPC, update local state, and re-render.
+ */
+const renameTagAction = async (tagId, newName) => {
+  newName = newName.trim();
+  if (!newName) return;
+
+  const result = await api.datastore.renameTag(tagId, newName);
+  if (result.success) {
+    // Update local state
+    const tagInList = state.tags.find(t => t.id === tagId);
+    if (tagInList) tagInList.name = newName;
+
+    const activeTag = state.activeTags.find(t => t.id === tagId);
+    if (activeTag) activeTag.name = newName;
+
+    // Update itemTags references
+    state.itemTags.forEach(tags => {
+      const t = tags.find(t => t.id === tagId);
+      if (t) t.name = newName;
+    });
+
+    render();
+    debug && console.log('[tags] Renamed tag', tagId, 'to', newName);
+  } else {
+    console.error('[tags] Failed to rename tag:', result.error);
+  }
+};
+
+/**
+ * Delete a tag via IPC, update local state, and re-render.
+ */
+const deleteTagAction = async (tagId) => {
+  if (!confirm('Delete this tag? It will be removed from all items.')) return;
+
+  const result = await api.datastore.deleteTag(tagId);
+  if (result.success) {
+    // Remove from state
+    state.tags = state.tags.filter(t => t.id !== tagId);
+    state.activeTags = state.activeTags.filter(t => t.id !== tagId);
+    state.managePanelOpen = false;
+
+    // Remove from itemTags
+    state.itemTags.forEach((tags, itemId) => {
+      state.itemTags.set(itemId, tags.filter(t => t.id !== tagId));
+    });
+
+    state.selectedIndex = 0;
+    render();
+    debug && console.log('[tags] Deleted tag', tagId);
+  } else {
+    console.error('[tags] Failed to delete tag:', result.error);
+  }
+};
+
+/**
  * Render the tag sidebar.
  * Selected tags are pinned to the top of the list with a visual separator.
  */
 const renderTagSidebar = () => {
-  const tags = getFilteredTags();
+  let tags = getFilteredTags();
+
+  // Sort tags by current preference
+  if (state.tagSortBy === 'name') {
+    const dir = state.tagSortDirection === 'asc' ? 1 : -1;
+    tags = [...tags].sort((a, b) => dir * a.name.localeCompare(b.name));
+  } else {
+    // frecency (default) — already sorted by frecency from getTagsByFrecency
+    if (state.tagSortDirection === 'desc') {
+      tags = [...tags].reverse();
+    }
+  }
+
+  // Update sort button active states
+  document.querySelectorAll('.sidebar-sort-btn').forEach(btn => {
+    if (btn.dataset.sort === 'name') {
+      btn.classList.toggle('active', state.tagSortBy === 'name');
+    }
+  });
 
   if (tags.length === 0) {
     tagList.innerHTML = '<div class="empty-state">No tags yet</div>';
@@ -940,7 +1140,7 @@ const renderCards = () => {
       ? 'No items match your search.'
       : state.activeTags.length > 0
         ? `No items with all selected tags.`
-        : 'No saved items yet.';
+        : 'No tagged items yet. Tag items to see them here.';
     cardsContainer.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
