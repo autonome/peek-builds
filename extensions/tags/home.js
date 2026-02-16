@@ -720,10 +720,16 @@ window.showList = showList;
  * Update filter button counts
  */
 const updateFilterCounts = () => {
-  const pageCount = state.items.filter(item => !item.type || item.type === 'url' || item.uri).length;
-  const textCount = state.items.filter(item => item.type === 'text').length;
-  const tagsetCount = state.items.filter(item => item.type === 'tagset').length;
-  const imageCount = state.items.filter(item => item.type === 'image').length;
+  // Only count items that have tags (matching what getFilteredItems shows)
+  const tagged = state.items.filter(item => {
+    const tags = state.itemTags.get(item.id);
+    return tags && tags.length > 0;
+  });
+
+  const pageCount = tagged.filter(item => !item.type || item.type === 'url' || item.uri).length;
+  const textCount = tagged.filter(item => item.type === 'text').length;
+  const tagsetCount = tagged.filter(item => item.type === 'tagset').length;
+  const imageCount = tagged.filter(item => item.type === 'image').length;
 
   document.querySelector('[data-count="page"]').textContent = pageCount;
   document.querySelector('[data-count="text"]').textContent = textCount;
@@ -1168,7 +1174,8 @@ const getItemDisplayInfo = (item) => {
   const itemType = item.type || 'url';
   const noteUrl = (itemType === 'text') ? extractUrl(item.content) : null;
 
-  let title, subtitle, faviconUrl;
+  let title, subtitle;
+  let faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">?</text></svg>';
 
   if (isAddress) {
     title = item.title || item.uri;
@@ -1196,6 +1203,18 @@ const getItemDisplayInfo = (item) => {
       title = item.content || 'Image';
       subtitle = 'Image';
       faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🖼️</text></svg>';
+    } else if (itemType === 'entity') {
+      title = item.title || item.content || 'Entity';
+      subtitle = 'Entity';
+      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">💎</text></svg>';
+    } else if (itemType === 'feed') {
+      title = item.title || item.content || 'Feed';
+      subtitle = 'Feed';
+      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📡</text></svg>';
+    } else if (itemType === 'series') {
+      title = item.title || item.content || 'Series';
+      subtitle = 'Series';
+      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📚</text></svg>';
     }
   }
 

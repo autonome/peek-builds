@@ -11,6 +11,7 @@
 
 import { protocol, net } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { getDb } from './datastore.js';
 import { DEBUG } from './config.js';
@@ -42,6 +43,18 @@ const BARE_IMPORT_MAP: Record<string, string> = {
   'lit-element': 'node_modules/lit-element/lit-element.js',
   'lit-element/': 'node_modules/lit-element/'
 };
+
+/**
+ * Fetch a local file, logging a warning if it doesn't exist.
+ * Replaces bare net.fetch(fileURL) calls so we get visibility into 404s.
+ */
+function fetchFile(absolutePath: string, requestUrl: string): Response {
+  if (!fs.existsSync(absolutePath)) {
+    console.error(`[protocol] FILE NOT FOUND: ${absolutePath} (requested: ${requestUrl})`);
+    return new Response('Not Found', { status: 404 });
+  }
+  return net.fetch(pathToFileURL(absolutePath).toString()) as unknown as Response;
+}
 
 /**
  * Resolve a bare import specifier to a file path
@@ -187,6 +200,7 @@ export function getExtensionPath(id: string): string | null {
  * The protocol request handler - extracted so it can be registered on multiple sessions
  */
 async function handleProtocolRequest(req: Request): Promise<Response> {
+  try {
     let { host, pathname } = new URL(req.url);
 
     // trim leading slash
@@ -220,8 +234,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     if (resolvedPath) {
       DEBUG && console.log(`[protocol] Resolved bare import: ${bareSpecifier} -> ${resolvedPath}`);
       const absolutePath = path.resolve(rootDir, resolvedPath);
-      const fileURL = pathToFileURL(absolutePath).toString();
-      return net.fetch(fileURL);
+      return fetchFile(absolutePath, req.url);
     }
 
     // Handle extension content: peek://ext/{ext-id}/{path}
@@ -247,8 +260,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
 
       DEBUG && console.log(`[protocol] ext ${extId}/${extPath} -> ${absolutePath}`);
 
-      const fileURL = pathToFileURL(absolutePath).toString();
-      return net.fetch(fileURL);
+      return fetchFile(absolutePath, req.url);
     }
 
     // Handle extensions infrastructure: peek://extensions/{path}
@@ -263,8 +275,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         return new Response('Forbidden', { status: 403 });
       }
 
-      const fileURL = pathToFileURL(absolutePath).toString();
-      return net.fetch(fileURL);
+      return fetchFile(absolutePath, req.url);
     }
 
     // Handle theme files: peek://theme/{path} or peek://theme/{themeId}/{path}
@@ -300,10 +311,13 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         return new Response('Forbidden', { status: 403 });
       }
 
-      const fileURL = pathToFileURL(absolutePath).toString();
-
       // For CSS and font files, add no-cache headers to ensure theme changes take effect
       if (themePath.endsWith('.css') || themePath.endsWith('.woff2') || themePath.endsWith('.woff')) {
+        if (!fs.existsSync(absolutePath)) {
+          console.error(`[protocol] FILE NOT FOUND: ${absolutePath} (requested: ${req.url})`);
+          return new Response('Not Found', { status: 404 });
+        }
+        const fileURL = pathToFileURL(absolutePath).toString();
         const response = await net.fetch(fileURL);
         const body = await response.arrayBuffer();
         return new Response(body, {
@@ -317,7 +331,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         });
       }
 
-      return net.fetch(fileURL);
+      return fetchFile(absolutePath, req.url);
     }
 
     // Handle per-extension hosts: peek://{ext-id}/{path}
@@ -335,8 +349,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         return new Response('Forbidden', { status: 403 });
       }
 
-      const fileURL = pathToFileURL(absolutePath).toString();
-      return net.fetch(fileURL);
+      return fetchFile(absolutePath, req.url);
     }
 
     let relativePath = pathname;
@@ -349,9 +362,12 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     }
 
     const absolutePath = path.resolve(rootDir, relativePath);
-    const fileURL = pathToFileURL(absolutePath).toString();
 
-    return net.fetch(fileURL);
+    return fetchFile(absolutePath, req.url);
+  } catch (err) {
+    console.error(`[protocol] Failed to handle ${req.url}:`, err);
+    return new Response('Not Found', { status: 404 });
+  }
 }
 
 /**
