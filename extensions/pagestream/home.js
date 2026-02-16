@@ -479,19 +479,19 @@ const handleEscape = () => {
  */
 const handleKeydown = (e) => {
   const searchInput = document.querySelector('peek-input.search-input');
-  const urlInput = document.getElementById('url-input');
+  const navbarEl = document.getElementById('navbar');
 
   // Check if an input is focused
   const isSearchFocused = document.activeElement === searchInput ||
     (searchInput && searchInput.shadowRoot?.activeElement);
-  const isUrlFocused = document.activeElement === urlInput ||
-    (urlInput && urlInput.shadowRoot?.activeElement);
+  const isUrlFocused = document.activeElement === navbarEl ||
+    (navbarEl && navbarEl.shadowRoot?.activeElement);
   const isInputFocused = isSearchFocused || isUrlFocused;
 
-  // Cmd+L or / to focus URL input (when not in an input)
+  // Cmd+L or / to focus navbar URL input (when not in an input)
   if ((e.key === 'l' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !isInputFocused)) {
     e.preventDefault();
-    urlInput.focus();
+    navbarEl.focusUrl();
     return;
   }
 
@@ -507,20 +507,9 @@ const handleKeydown = (e) => {
     return;
   }
 
-  // Handle Enter in URL input
+  // Enter in navbar URL is handled by the peek-navbar component's navigate event.
+  // Skip keyboard navigation when navbar URL input is focused.
   if (e.key === 'Enter' && isUrlFocused) {
-    e.preventDefault();
-    const value = urlInput.value;
-    const url = getValidURL(value);
-    if (url) {
-      urlInput.value = '';
-      api.window.open(url, {
-        role: 'content',
-        key: url,
-        width: 800,
-        height: 600
-      });
-    }
     return;
   }
 
@@ -588,6 +577,21 @@ const init = async () => {
   // Register escape handler
   api.escape.onEscape(handleEscape);
 
+  // Set up navbar component for URL navigation
+  const navbarEl = document.getElementById('navbar');
+  navbarEl.addEventListener('navigate', (e) => {
+    const url = e.detail?.url;
+    if (url) {
+      debug && console.log('[pagestream] Navigating to:', url);
+      api.window.open(url, {
+        role: 'content',
+        key: url,
+        width: 800,
+        height: 600
+      });
+    }
+  });
+
   // Set up search input
   const searchInput = document.querySelector('peek-input.search-input');
   searchInput.addEventListener('input', (e) => {
@@ -610,6 +614,11 @@ const init = async () => {
 
   // Scroll to bottom (newest) on initial load
   scrollToBottom();
+
+  // Auto-focus the navbar URL input on open
+  requestAnimationFrame(() => {
+    navbarEl.focusUrl();
+  });
 
   // Debounced refresh for reactive updates
   const debouncedRefresh = debounce(async () => {

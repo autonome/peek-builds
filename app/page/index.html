@@ -5,6 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Loading...</title>
   <link rel="stylesheet" href="peek://theme/variables.css">
+  <!-- Import map for Lit (required by peek-navbar component) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "lit": "peek://node_modules/lit/index.js",
+      "lit/": "peek://node_modules/lit/",
+      "lit-html": "peek://node_modules/lit-html/lit-html.js",
+      "lit-html/": "peek://node_modules/lit-html/",
+      "lit-element": "peek://node_modules/lit-element/lit-element.js",
+      "lit-element/": "peek://node_modules/lit-element/",
+      "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+      "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+    }
+  }
+  </script>
   <style>
     * {
       margin: 0;
@@ -36,86 +51,15 @@
      * Window expands upward via setBounds() to accommodate it.
      * Dragging is handled by custom JS (moves window), not -webkit-app-region.
      */
-    .navbar {
+    peek-navbar {
       position: absolute;
-      height: 36px;
       display: none;
-      align-items: center;
-      gap: 8px;
-      padding: 0 12px;
-      background: var(--theme-bg-secondary, rgba(30, 30, 30, 0.92));
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      color: var(--theme-text, #e0e0e0);
-      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
-      font-size: 15px;
-      border: none;
-      border-radius: 10px;
-      cursor: grab;
-      user-select: none;
-      -webkit-user-select: none;
       z-index: 100;
+      cursor: grab;
     }
 
-    .navbar.visible {
-      display: flex;
-    }
-
-    .nav-btn {
-      background: none;
-      border: none;
-      color: var(--theme-text-secondary, #bbb);
-      font-size: 20px;
-      width: 36px;
-      height: 36px;
-      border-radius: 8px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      flex-shrink: 0;
-      transition: background 0.1s, color 0.1s;
-    }
-
-    .nav-btn:hover:not(:disabled) {
-      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.12));
-      color: var(--theme-text, #fff);
-    }
-
-    .nav-btn:active:not(:disabled) {
-      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.2));
-    }
-
-    .nav-btn:disabled {
-      color: var(--theme-text-muted, #555);
-      cursor: default;
-    }
-
-    .url-text {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      color: var(--theme-text-secondary, #aaa);
-      font-size: 14px;
-      font-family: inherit;
-      padding: 6px 10px;
-      border-radius: 6px;
-      background: var(--theme-bg-tertiary, rgba(128, 128, 128, 0.1));
-      border: none;
-      outline: none;
-      cursor: text;
-      min-width: 0;
-    }
-
-    .url-text:hover {
-      background: var(--theme-bg, rgba(128, 128, 128, 0.18));
-    }
-
-    .url-text:focus {
-      background: var(--theme-bg, rgba(128, 128, 128, 0.22));
-      color: var(--theme-text, #e0e0e0);
+    peek-navbar.visible {
+      display: block;
     }
 
     /* Trigger zone — transparent strip above webview, always part of window.
@@ -349,12 +293,10 @@
     <span class="group-name"></span>
   </div>
   <div class="trigger-zone" id="trigger-zone"></div>
-  <div class="navbar" id="navbar">
-    <button class="nav-btn" id="btn-back" title="Back (Cmd+[)">&#8592;</button>
-    <button class="nav-btn" id="btn-forward" title="Forward (Cmd+])">&#8594;</button>
-    <button class="nav-btn" id="btn-reload" title="Reload (Cmd+R)">&#8635;</button>
-    <input type="text" class="url-text" id="url-text" spellcheck="false" autocomplete="off">
-  </div>
+  <script type="module">
+    import 'peek://app/components/peek-navbar.js';
+  </script>
+  <peek-navbar id="navbar"></peek-navbar>
   <webview id="content" allowpopups></webview>
   <div class="drag-overlay" id="drag-overlay"></div>
   <div class="resize-handle" id="resize-se" data-dir="se"></div>

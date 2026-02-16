@@ -27,6 +27,7 @@
     <script type="module">
       import 'peek://app/components/peek-card.js';
       import 'peek://app/components/peek-input.js';
+      import 'peek://app/components/peek-navbar.js';
     </script>
   </head>
   <body>
@@ -44,13 +45,8 @@
       </div>
     </div>
 
-    <div class="url-input-container">
-      <peek-input
-        class="url-input"
-        id="url-input"
-        placeholder="Enter URL... (Cmd+L)"
-        type="url"
-      ></peek-input>
+    <div class="navbar-container">
+      <peek-navbar id="navbar"></peek-navbar>
     </div>
 
     <script type="module" src="home.js"></script>

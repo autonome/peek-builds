@@ -122,12 +122,39 @@ const resizeHandles = {
   navNe: document.getElementById('resize-nav-ne'),
   navNw: document.getElementById('resize-nav-nw'),
 };
-const btnBack = document.getElementById('btn-back');
-const btnForward = document.getElementById('btn-forward');
-const btnReload = document.getElementById('btn-reload');
-const urlText = document.getElementById('url-text');
 const modeIndicator = document.getElementById('mode-indicator');
 const widgetContainer = document.getElementById('widget-container');
+
+// Disable component-level keyboard shortcuts — page.js handles them via pubsub
+navbar.shortcuts = false;
+
+// --- peek-navbar component event wiring ---
+navbar.addEventListener('navigate', (e) => {
+  const url = e.detail?.url;
+  if (url) {
+    DEBUG && console.log('[page] Navigating to:', url);
+    webview.loadURL(url);
+    navbar.setUrl(url);
+  }
+});
+navbar.addEventListener('go-back', () => {
+  if (webview.canGoBack()) {
+    DEBUG && console.log('[page] navbar go-back');
+    webview.goBack();
+    updateState();
+  }
+});
+navbar.addEventListener('go-forward', () => {
+  if (webview.canGoForward()) {
+    DEBUG && console.log('[page] navbar go-forward');
+    webview.goForward();
+    updateState();
+  }
+});
+navbar.addEventListener('reload', () => {
+  DEBUG && console.log('[page] navbar reload');
+  webview.reload();
+});
 
 // --- Window bounds computation ---
 // Computes the BrowserWindow bounds from the webview screen position
@@ -272,7 +299,7 @@ async function initWebview() {
   }
 
   webview.src = targetUrl;
-  urlText.value = targetUrl;
+  navbar.setUrl(targetUrl);
 }
 
 initWebview();
@@ -315,9 +342,10 @@ function cancelHoldDrag() {
   dragOverlay.classList.remove('active');
 }
 
-// Instant drag on navbar background (excluding buttons and URL text)
+// Instant drag on navbar background (excluding buttons and URL text inside shadow DOM)
 navbar.addEventListener('mousedown', (e) => {
-  if (e.target.closest('.nav-btn') || e.target.closest('.url-text')) return;
+  // The peek-navbar component handles its own button/input mousedowns with stopPropagation,
+  // so if the event reaches us, it's on the navbar background — start drag.
   pageMouseButtonDown = true;
   startDrag(e.screenX, e.screenY);
   navbar.style.cursor = 'grabbing';
@@ -674,8 +702,8 @@ document.addEventListener('mouseup', () => {
 // --- State display ---
 
 function updateState() {
-  btnBack.disabled = !webview.canGoBack();
-  btnForward.disabled = !webview.canGoForward();
+  navbar.canGoBack = webview.canGoBack();
+  navbar.canGoForward = webview.canGoForward();
 }
 
 // --- Show / Hide navbar ---
@@ -701,10 +729,7 @@ function show(opts) {
     DEBUG && console.log('[page] Navbar shown, source:', showSource);
   }
   if (opts?.focusUrl) {
-    requestAnimationFrame(() => {
-      urlText.focus();
-      urlText.select();
-    });
+    navbar.focusUrl();
   }
 }
 
@@ -718,7 +743,7 @@ function hide() {
   // Window stays the same size (always includes navbar space).
   // Just update trigger zone and resize handle visibility.
   updatePositions();
-  urlText.blur();
+  navbar.inputElement?.blur();
   showSource = null;
   DEBUG && console.log('[page] Navbar hidden');
 }
@@ -822,66 +847,11 @@ api.subscribe('page:go-forward', (msg) => {
   }
 }, api.scopes.GLOBAL);
 
-// --- Nav button actions ---
-
-btnBack.addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (webview.canGoBack()) {
-    webview.goBack();
-    updateState();
-  }
-});
-
-btnForward.addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (webview.canGoForward()) {
-    webview.goForward();
-    updateState();
-  }
-});
-
-btnReload.addEventListener('click', (e) => {
-  e.stopPropagation();
-  webview.reload();
-});
-
-// --- URL field: navigate on Enter ---
-
-function normalizeUrl(input) {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (trimmed.includes('.') && !trimmed.includes(' ')) return 'https://' + trimmed;
-  return 'https://' + trimmed;
-}
-
-urlText.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    const url = normalizeUrl(urlText.value);
-    if (url) {
-      DEBUG && console.log('[page] Navigating to:', url);
-      webview.loadURL(url);
-      urlText.value = url;
-      urlText.blur();
-      hide();
-    }
-  }
-  if (e.key === 'Escape') {
-    urlText.value = webview.getURL() || targetUrl;
-    urlText.blur();
-    hide();
-    e.stopPropagation();
-  }
-});
-
-urlText.addEventListener('mousedown', (e) => {
-  e.stopPropagation();
-});
-
-urlText.addEventListener('focus', () => {
-  requestAnimationFrame(() => urlText.select());
-});
+// --- Nav button actions and URL navigation are handled by peek-navbar component ---
+// Event listeners wired up in the "peek-navbar component event wiring" section above.
+// On navigate or dismiss (Escape), also hide the navbar (page-specific behavior).
+navbar.addEventListener('navigate', () => { hide(); });
+navbar.addEventListener('dismiss', () => { hide(); });
 
 // --- Escape handling ---
 
@@ -909,7 +879,7 @@ webview.addEventListener('page-title-updated', (e) => {
 
 webview.addEventListener('did-navigate', async (e) => {
   DEBUG && console.log('[page] did-navigate:', e.url);
-  urlText.value = e.url;
+  navbar.setUrl(e.url);
   updateState();
 
   // Update OAuth state (Level 2)
@@ -933,7 +903,7 @@ webview.addEventListener('did-navigate', async (e) => {
 
 webview.addEventListener('did-navigate-in-page', (e) => {
   if (e.isMainFrame) {
-    urlText.value = e.url;
+    navbar.setUrl(e.url);
     updateState();
   }
 });

@@ -15,7 +15,8 @@ html {
 }
 
 body {
-  background: var(--base00);
+  /* Fully transparent - window itself handles transparency */
+  background: transparent;
   color: var(--base05);
   height: 100vh;
   display: flex;
@@ -32,9 +33,12 @@ body {
 peek-input.search-input {
   display: block;
   width: 100%;
-  --peek-input-bg: var(--base01);
-  --peek-input-border: var(--base02);
+  --peek-input-bg: rgba(var(--base01-rgb, 30, 30, 46), 0.8);
+  --peek-input-border: rgba(var(--base02-rgb, 45, 45, 65), 0.6);
   --peek-input-height: 36px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 8px;
 }
 
 peek-input.search-input::part(input) {
@@ -46,37 +50,67 @@ peek-input.search-input::part(input) {
 .stream-container {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 16px;
+  padding: 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 20px;
   scroll-behavior: smooth;
 }
 
 /* Cards in the stream */
 .stream-container peek-card {
-  --peek-card-bg: var(--base01);
-  --peek-card-hover-bg: var(--base02);
+  --peek-card-bg: rgba(var(--base01-rgb, 30, 30, 46), 0.85);
+  --peek-card-hover-bg: rgba(var(--base02-rgb, 45, 45, 65), 0.9);
   --peek-card-border: transparent;
   --peek-card-radius: 8px;
   --peek-card-padding: 10px;
   --peek-card-gap: 4px;
   flex-shrink: 0;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, padding 0.25s ease, font-size 0.25s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .stream-container peek-card[selected] {
-  --peek-card-bg: var(--base02);
-  transform: scale(1.02);
+  --peek-card-bg: rgba(var(--base02-rgb, 45, 45, 65), 0.9);
 }
 
 .stream-container peek-card[selected]:hover {
-  --peek-card-bg: var(--base03);
+  --peek-card-bg: rgba(var(--base03-rgb, 60, 60, 80), 0.92);
 }
 
+/* Active/focused card is displayed at 2x size */
 .stream-container peek-card.active-card {
-  transform: scale(1.03);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  transform: scale(1.15);
+  transform-origin: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  --peek-card-padding: 16px;
+  --peek-card-gap: 8px;
+  z-index: 10;
+}
+
+.stream-container peek-card.active-card .card-title {
+  font-size: 18px;
+}
+
+.stream-container peek-card.active-card .card-url {
+  font-size: 13px;
+}
+
+.stream-container peek-card.active-card .card-favicon {
+  width: 24px;
+  height: 24px;
+}
+
+.stream-container peek-card.active-card .card-time,
+.stream-container peek-card.active-card .card-domain {
+  font-size: 13px;
+}
+
+/* Non-active cards are smaller */
+.stream-container peek-card:not(.active-card) {
+  transform: scale(0.88);
+  opacity: 0.75;
 }
 
 /* Card slotted content */
@@ -156,31 +190,24 @@ peek-input.search-input::part(input) {
   color: var(--base05);
 }
 
-/* URL input at bottom */
-.url-input-container {
+/* Navbar at bottom */
+.navbar-container {
   padding: 8px 16px 12px 16px;
   flex-shrink: 0;
-  border-top: 1px solid var(--base02);
 }
 
-peek-input.url-input {
-  display: block;
-  width: 100%;
-  --peek-input-bg: var(--base01);
-  --peek-input-border: var(--base02);
-  --peek-input-height: 36px;
-}
-
-peek-input.url-input::part(input) {
-  color: var(--base05);
-  font-size: 13px;
+peek-navbar {
+  --peek-navbar-bg: rgba(var(--base01-rgb, 30, 30, 46), 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 10px;
 }
 
 /* Empty state */
 .empty-state {
   text-align: center;
   padding: 48px 24px;
-  color: var(--base03);
+  color: var(--base04);
   font-size: 14px;
   flex: 1;
   display: flex;

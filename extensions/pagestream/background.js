@@ -66,6 +66,7 @@ const openPagestreamWindow = async () => {
       key: address,
       height,
       width,
+      transparent: true,
       trackingSource: 'cmd',
       trackingSourceId: 'pagestream'
     };

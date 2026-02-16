@@ -11,3 +11,4 @@ Be able to use the app on mobile and desktop with the safety of knowing there's 
 Today
 - [x] integrate app versioning changes, local end to end testing, deployment to server/mobile/desktop and test
 - [x][desktop] the items in the History section under the Addressability header
+- [~] pagestream improvements: transparent bg, card spacing, active card 2x, navbar component, auto-focus
