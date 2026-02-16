@@ -97,7 +97,9 @@ let state = {
   filterTagId: null,
   filterTagName: null,
   isLoading: true,
-  wasAtBottom: true  // Track if user was scrolled to bottom
+  wasAtBottom: true, // Track if user was scrolled to bottom
+  browsing: false,   // Whether we're in inline browse mode
+  browseUrl: null    // URL currently being browsed inline
 };
 
 // Expose state for debugging in tests
@@ -201,10 +203,11 @@ const getCards = () => {
 const updateSelection = () => {
   const cards = getCards();
   cards.forEach((card, i) => {
-    const isSelected = (i === state.selectedIndex);
-    card.selected = isSelected;
-    card.elevated = isSelected;
-    if (isSelected) {
+    const isActive = (i === state.selectedIndex);
+    // Do not set selected/elevated - those trigger blue border in peek-card shadow DOM
+    card.selected = false;
+    card.elevated = false;
+    if (isActive) {
       card.classList.add('active-card');
     } else {
       card.classList.remove('active-card');
@@ -374,27 +377,99 @@ const createVisitCard = (visit, item, index) => {
     }
   });
 
-  // Click to open the URL
-  let isOpening = false;
-  card.addEventListener('card-click', async () => {
-    if (isOpening) return;
-    isOpening = true;
-    try {
-      state.selectedIndex = index;
-      updateSelection();
-      debug && console.log('[pagestream] Opening:', url);
-      await api.window.open(url, {
-        role: 'content',
-        key: url,
-        width: 800,
-        height: 600
-      });
-    } finally {
-      setTimeout(() => { isOpening = false; }, 500);
-    }
+  // Click to open the URL inline
+  card.addEventListener('card-click', () => {
+    state.selectedIndex = index;
+    updateSelection();
+    openInline(url);
   });
 
   return card;
+};
+
+// ===== Inline Browsing =====
+
+/**
+ * Open a URL inline in a browse overlay (iframe/webview)
+ */
+const openInline = (url) => {
+  if (state.browsing) return;
+  state.browsing = true;
+  state.browseUrl = url;
+
+  debug && console.log('[pagestream] Opening inline:', url);
+
+  // Create the overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'browse-overlay';
+  overlay.id = 'browse-overlay';
+
+  // Create webview/iframe for the page
+  const frame = document.createElement('webview');
+  frame.src = url;
+  frame.id = 'browse-frame';
+  frame.setAttribute('allowpopups', '');
+
+  // Create a navbar for the browse session
+  const navContainer = document.createElement('div');
+  navContainer.className = 'navbar-container';
+  const navbar = document.createElement('peek-navbar');
+  navbar.id = 'browse-navbar';
+  navbar.url = url;
+  navbar.shortcuts = false; // host manages shortcuts
+  navContainer.appendChild(navbar);
+
+  overlay.appendChild(frame);
+  overlay.appendChild(navContainer);
+  document.body.appendChild(overlay);
+
+  // Update navbar URL as webview navigates
+  frame.addEventListener('did-navigate', (e) => {
+    state.browseUrl = e.url || frame.src;
+    navbar.setUrl(state.browseUrl);
+    navbar.canGoBack = frame.canGoBack ? frame.canGoBack() : false;
+    navbar.canGoForward = frame.canGoForward ? frame.canGoForward() : false;
+  });
+
+  frame.addEventListener('did-navigate-in-page', (e) => {
+    state.browseUrl = e.url || frame.src;
+    navbar.setUrl(state.browseUrl);
+    navbar.canGoBack = frame.canGoBack ? frame.canGoBack() : false;
+    navbar.canGoForward = frame.canGoForward ? frame.canGoForward() : false;
+  });
+
+  // Navbar navigation events
+  navbar.addEventListener('navigate', (e) => {
+    const navUrl = e.detail?.url;
+    if (navUrl) {
+      frame.src = navUrl;
+      state.browseUrl = navUrl;
+    }
+  });
+
+  navbar.addEventListener('go-back', () => {
+    if (frame.canGoBack && frame.canGoBack()) frame.goBack();
+  });
+
+  navbar.addEventListener('go-forward', () => {
+    if (frame.canGoForward && frame.canGoForward()) frame.goForward();
+  });
+
+  navbar.addEventListener('reload', () => {
+    if (frame.reload) frame.reload();
+  });
+};
+
+/**
+ * Close the inline browse overlay and return to card view
+ */
+const closeBrowse = () => {
+  const overlay = document.getElementById('browse-overlay');
+  if (overlay) {
+    overlay.remove();
+  }
+  state.browsing = false;
+  state.browseUrl = null;
 };
 
 // ===== Filtering =====
@@ -453,7 +528,13 @@ const clearTagFilter = async () => {
  * Returns { handled: true } if we handled it, { handled: false } to close window
  */
 const handleEscape = () => {
-  debug && console.log('[pagestream:esc] handleEscape called, search:', state.searchQuery, 'filter:', state.filterTagId);
+  debug && console.log('[pagestream:esc] handleEscape called, browsing:', state.browsing, 'search:', state.searchQuery, 'filter:', state.filterTagId);
+
+  // Close inline browse overlay first
+  if (state.browsing) {
+    closeBrowse();
+    return { handled: true };
+  }
 
   // Clear tag filter first
   if (state.filterTagId) {
@@ -478,6 +559,9 @@ const handleEscape = () => {
  * Handle keyboard navigation
  */
 const handleKeydown = (e) => {
+  // Don't handle card navigation while in browse mode
+  if (state.browsing) return;
+
   const searchInput = document.querySelector('peek-input.search-input');
   const navbarEl = document.getElementById('navbar');
 
@@ -536,9 +620,11 @@ const handleKeydown = (e) => {
     case 'Enter':
       if (!isInputFocused) {
         e.preventDefault();
-        const selected = cards[state.selectedIndex];
-        if (selected) {
-          selected.click();
+        // Open the active card's URL inline
+        const filtered = getFilteredVisits();
+        const entry = filtered[state.selectedIndex];
+        if (entry) {
+          openInline(entry.item.content);
         }
       }
       break;
@@ -583,12 +669,7 @@ const init = async () => {
     const url = e.detail?.url;
     if (url) {
       debug && console.log('[pagestream] Navigating to:', url);
-      api.window.open(url, {
-        role: 'content',
-        key: url,
-        width: 800,
-        height: 600
-      });
+      openInline(url);
     }
   });
 
@@ -612,8 +693,10 @@ const init = async () => {
   await loadVisits();
   render();
 
-  // Scroll to bottom (newest) on initial load
-  scrollToBottom();
+  // Scroll to bottom (newest) on initial load - use rAF to ensure layout is complete
+  requestAnimationFrame(() => {
+    scrollToBottom();
+  });
 
   // Auto-focus the navbar URL input on open
   requestAnimationFrame(() => {
