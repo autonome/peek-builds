@@ -394,12 +394,14 @@ let webviewMouseDown = false;
 let webviewHoldTimer = null;
 let webviewHoldScreenX = 0;
 let webviewHoldScreenY = 0;
+let webviewHoldReady = false;  // true after hold threshold, waiting for movement to start drag
 
 function cancelWebviewHold() {
   if (webviewHoldTimer) {
     clearTimeout(webviewHoldTimer);
     webviewHoldTimer = null;
   }
+  webviewHoldReady = false;
 }
 
 webview.addEventListener('console-message', (e) => {
@@ -420,11 +422,11 @@ webview.addEventListener('console-message', (e) => {
     webviewHoldTimer = setTimeout(() => {
       webviewHoldTimer = null;
       if (!webviewMouseDown) return;  // Released before threshold
-      // Activate the overlay so it captures all subsequent mouse events for the drag
-      dragOverlay.classList.add('active');
-      pageMouseButtonDown = true;
-      startDrag(webviewHoldScreenX, webviewHoldScreenY);
-      DEBUG && console.log('[page] Webview hold-drag started at', webviewHoldScreenX, webviewHoldScreenY);
+      // Don't activate overlay yet — wait for mouse movement to confirm drag intent.
+      // Activating immediately on hold would block the webview from receiving mouseup,
+      // preventing click events (e.g., YouTube pause button) for holds > 80ms.
+      webviewHoldReady = true;
+      DEBUG && console.log('[page] Webview hold ready, waiting for movement');
     }, DRAG_HOLD_THRESHOLD);
     return;
   }
@@ -460,6 +462,16 @@ webview.addEventListener('console-message', (e) => {
       screenBounds.x = dragStartBoundsX + dx;
       screenBounds.y = dragStartBoundsY + dy;
       setWindowBounds(computeWindowBounds(screenBounds));
+      return;
+    }
+
+    // Hold threshold passed and mouse is moving — start drag now
+    if (webviewHoldReady) {
+      webviewHoldReady = false;
+      dragOverlay.classList.add('active');
+      pageMouseButtonDown = true;
+      startDrag(webviewHoldScreenX, webviewHoldScreenY);
+      DEBUG && console.log('[page] Webview hold-drag started at', webviewHoldScreenX, webviewHoldScreenY);
       return;
     }
 
@@ -503,18 +515,23 @@ webview.addEventListener('console-message', (e) => {
   }
 });
 
+let mouseBridgeTimer = null;
+
 function injectMouseBridge() {
-  webview.executeJavaScript(WEBVIEW_MOUSE_BRIDGE_JS).catch(err => {
-    DEBUG && console.log('[page] Failed to inject mouse bridge:', err.message);
-  });
+  webview.executeJavaScript(WEBVIEW_MOUSE_BRIDGE_JS).catch(() => {});
 }
 
 // Inject on dom-ready (fires on each full navigation)
 webview.addEventListener('dom-ready', injectMouseBridge);
 
-// Also inject on did-navigate for robustness (some navigations may not fire dom-ready)
+// Also inject on did-navigate for robustness (some navigations may not fire dom-ready).
+// Cancel any pending injection from a previous navigation to avoid listener buildup.
 webview.addEventListener('did-navigate', () => {
-  setTimeout(injectMouseBridge, 50);
+  if (mouseBridgeTimer) clearTimeout(mouseBridgeTimer);
+  mouseBridgeTimer = setTimeout(() => {
+    mouseBridgeTimer = null;
+    injectMouseBridge();
+  }, 50);
 });
 
 dragOverlay.addEventListener('mouseup', () => {
@@ -1325,14 +1342,17 @@ const OPENER_SHIM_JS = openerUrl ? `
 ` : null;
 
 if (OPENER_SHIM_JS) {
+  let openerShimTimer = null;
   function injectOpenerShim() {
-    webview.executeJavaScript(OPENER_SHIM_JS).catch(err => {
-      DEBUG && console.log('[page] Failed to inject opener shim:', err.message);
-    });
+    webview.executeJavaScript(OPENER_SHIM_JS).catch(() => {});
   }
   webview.addEventListener('dom-ready', injectOpenerShim);
   webview.addEventListener('did-navigate', () => {
-    setTimeout(injectOpenerShim, 50);
+    if (openerShimTimer) clearTimeout(openerShimTimer);
+    openerShimTimer = setTimeout(() => {
+      openerShimTimer = null;
+      injectOpenerShim();
+    }, 50);
   });
   DEBUG && console.log('[page] Opener shim will be injected (openerUrl:', openerUrl, ')');
 }
