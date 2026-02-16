@@ -108,6 +108,7 @@ import {
 import {
   APP_DEF_WIDTH,
   APP_DEF_HEIGHT,
+  WEB_CORE_ADDRESS,
   getPreloadPath,
   IPC_CHANNELS,
   isHeadless,
@@ -2986,6 +2987,73 @@ export function registerWindowHandlers(): void {
       return { success: true };
     } catch (error) {
       console.error('Failed to move window:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('window-center', async (ev, msg) => {
+    DEBUG && console.log('window-center', msg);
+
+    try {
+      let win: BrowserWindow | null = null;
+      if (msg?.id) {
+        win = BrowserWindow.fromId(msg.id);
+      } else {
+        const wc = ev.sender;
+        win = BrowserWindow.fromWebContents(wc);
+      }
+
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+
+      const bounds = win.getBounds();
+      const display = screen.getDisplayNearestPoint({
+        x: bounds.x + Math.round(bounds.width / 2),
+        y: bounds.y + Math.round(bounds.height / 2)
+      });
+      const wa = display.workArea;
+      const x = wa.x + Math.round((wa.width - bounds.width) / 2);
+      const y = wa.y + Math.round((wa.height - bounds.height) / 2);
+      win.setBounds({ x, y, width: bounds.width, height: bounds.height });
+
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to center window:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('window-center-all', async () => {
+    DEBUG && console.log('window-center-all');
+
+    try {
+      const windows = BrowserWindow.getAllWindows();
+      let centered = 0;
+
+      for (const win of windows) {
+        if (win.isDestroyed() || !win.isVisible()) continue;
+
+        const info = getWindowInfo(win.id);
+        if (info?.params?.address === WEB_CORE_ADDRESS) continue;
+
+        const bounds = win.getBounds();
+        const display = screen.getDisplayNearestPoint({
+          x: bounds.x + Math.round(bounds.width / 2),
+          y: bounds.y + Math.round(bounds.height / 2)
+        });
+        const wa = display.workArea;
+        const x = wa.x + Math.round((wa.width - bounds.width) / 2);
+        const y = wa.y + Math.round((wa.height - bounds.height) / 2);
+        win.setBounds({ x, y, width: bounds.width, height: bounds.height });
+        centered++;
+      }
+
+      return { success: true, centered };
+    } catch (error) {
+      console.error('Failed to center all windows:', error);
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
     }

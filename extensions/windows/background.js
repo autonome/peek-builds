@@ -75,6 +75,22 @@ const commandDefinitions = [
       console.log('[ext:windows] Opening windows view');
       openWindowsView();
     }
+  },
+  {
+    name: 'center window',
+    description: 'Center the active window on its display',
+    execute: async (ctx) => {
+      const windowId = await api.window.getFocusedVisibleWindowId();
+      if (!windowId) return { success: false, error: 'No active window' };
+      return api.window.center(windowId);
+    }
+  },
+  {
+    name: 'center all windows',
+    description: 'Center all windows on their respective displays',
+    execute: async (ctx) => {
+      return api.window.centerAll();
+    }
   }
 ];
 

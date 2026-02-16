@@ -367,6 +367,14 @@ api.window = {
    */
   isTransient: () => {
     return ipcRenderer.invoke('window-is-transient');
+  },
+  center: (id) => {
+    DEBUG && console.log('window.center', id);
+    return ipcRenderer.invoke('window-center', { source: sourceAddress, id });
+  },
+  centerAll: () => {
+    DEBUG && console.log('window.centerAll');
+    return ipcRenderer.invoke('window-center-all');
   }
 };
 
