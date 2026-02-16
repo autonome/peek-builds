@@ -16,6 +16,7 @@ import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
 import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, DEBUG } from './config.js';
+import { trackWindow } from './display-watcher.js';
 import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
@@ -1045,6 +1046,9 @@ export function createBackgroundWindow(): BrowserWindow {
 
           // Add escape key handler
           addEscHandler(newWin);
+
+          // Track window for display change handling
+          trackWindow(newWin);
 
           // Set up DevTools if requested
           winDevtoolsConfig(newWin);

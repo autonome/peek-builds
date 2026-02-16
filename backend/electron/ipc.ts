@@ -2637,6 +2637,7 @@ export function registerWindowHandlers(): void {
                     popupParams.groupMode = groupMode;
                   }
                   registerWindow(popupWin.id, source, popupParams);
+                  trackWindow(popupWin);
                   coordinator.pushWindow(popupWin.id);
 
                   // Set mode context (inherit group mode or detect from URL)

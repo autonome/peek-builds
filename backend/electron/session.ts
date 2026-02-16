@@ -14,7 +14,7 @@
 import { BrowserWindow, dialog, screen } from 'electron';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow } from './main.js';
-import { suppressDisplayRepositioning } from "./display-watcher.js";
+
 import { publish, scopes as PubSubScopes, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
 
@@ -534,13 +534,6 @@ export async function restoreSessionSnapshot(
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
 
-  // Suppress display-watcher repositioning during restore.
-  // macOS can fire display-metrics-changed (workArea) when the app becomes active
-  // (e.g., dock visibility changes, menu bar adjustments). Without suppression,
-  // the display-watcher would reposition newly restored windows using proportional
-  // scaling, losing their exact saved positions (especially at screen edges).
-  suppressDisplayRepositioning(true);
-
   for (const descriptor of sortedWindows) {
     try {
       // Validate bounds: check if saved center point falls within any active display
@@ -646,11 +639,6 @@ export async function restoreSessionSnapshot(
     }
   }
 
-
-  // Re-enable display-watcher repositioning now that all windows are restored.
-  // This also refreshes the display snapshot so future display changes use
-  // the correct baseline (with restored windows in their final positions).
-  suppressDisplayRepositioning(false);
   // Check for partial restore — warn if majority of windows failed
   if (result.failed > 0 && result.total > 2 && result.failed > result.total / 2) {
     console.warn(`[session] Partial restore: ${result.failed}/${result.total} windows failed`);
