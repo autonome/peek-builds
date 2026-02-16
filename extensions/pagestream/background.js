@@ -8,6 +8,7 @@
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -79,31 +80,9 @@ const openPagestreamWindow = async () => {
   }
 };
 
-// ===== Command definitions =====
-
-const commandDefinitions = [
-  {
-    name: 'open pagestream',
-    description: 'Open the browsing history stream',
-    execute: async (ctx) => {
-      console.log('[ext:pagestream] Opening pagestream');
-      openPagestreamWindow();
-    }
-  },
-  {
-    name: 'pagestream',
-    description: 'Open the browsing history stream',
-    execute: async (ctx) => {
-      console.log('[ext:pagestream] Opening pagestream');
-      openPagestreamWindow();
-    }
-  }
-];
-
 // ===== Registration =====
 
 let registeredShortcut = null;
-let registeredCommands = [];
 
 const initShortcut = (shortcut) => {
   api.shortcuts.register(shortcut, () => {
@@ -112,20 +91,20 @@ const initShortcut = (shortcut) => {
   registeredShortcut = shortcut;
 };
 
-const initCommands = async () => {
-  commandDefinitions.forEach(cmd => {
-    api.commands.register(cmd);
-    registeredCommands.push(cmd.name);
+const initCommands = () => {
+  registerNoun({
+    name: 'pagestream',
+    singular: 'pagestream',
+    description: 'Browsing history stream',
+    skipBare: false,
+    browse: async () => { openPagestreamWindow(); },
   });
-  console.log('[ext:pagestream] Registered commands:', registeredCommands);
+  console.log('[ext:pagestream] Noun registered: pagestream');
 };
 
 const uninitCommands = () => {
-  registeredCommands.forEach(name => {
-    api.commands.unregister(name);
-  });
-  registeredCommands = [];
-  console.log('[ext:pagestream] Unregistered commands');
+  unregisterNoun('pagestream');
+  console.log('[ext:pagestream] Noun unregistered: pagestream');
 };
 
 const init = async () => {

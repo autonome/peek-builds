@@ -9,6 +9,8 @@
  * - Pubsub integration
  */
 
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+
 // Feature detection
 const hasPeekAPI = typeof window.app !== 'undefined';
 const api = hasPeekAPI ? window.app : null;
@@ -45,10 +47,12 @@ const extension = {
    * Register commands - called when cmd extension is ready
    */
   registerCommands() {
-    api.commands.register({
-      name: 'open editor',
-      description: 'Open the markdown editor',
-      execute: () => openEditor()
+    registerNoun({
+      name: 'editor',
+      singular: 'editor',
+      description: 'Markdown editor',
+      skipBare: true, // No bare "editor" command
+      browse: async () => { openEditor(); },
     });
 
     console.log('[editor] Commands registered');
@@ -99,7 +103,7 @@ const extension = {
     console.log('[editor] Cleaning up...');
 
     if (hasPeekAPI) {
-      api.commands.unregister('open editor');
+      unregisterNoun('editor');
       api.shortcuts.unregister('Option+e', { global: true });
       api.shortcuts.unregister('CommandOrControl+E');
     }

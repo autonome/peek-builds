@@ -9,6 +9,8 @@
  * - Commands: tag, tags, untag, tagset
  */
 
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+
 // Feature detection - check if Peek API is available
 const hasPeekAPI = typeof window.app !== 'undefined';
 const api = hasPeekAPI ? window.app : null;
@@ -425,18 +427,37 @@ const extension = {
    * Register commands - called when cmd extension is ready
    */
   registerCommands() {
-    // Command to open tags view
-    api.commands.register({
-      name: 'open tags',
-      description: 'Open the tags browser',
-      execute: openTags
-    });
+    // Register noun for auto-generated open/list commands
+    registerNoun({
+      name: 'tags',
+      singular: 'tag',
+      description: 'Tags for organizing items',
+      skipBare: true, // Keep specialized 'tags' command below
 
-    // Command to list tags
-    api.commands.register({
-      name: 'list tags',
-      description: 'List all tags by frecency',
-      execute: listTags
+      query: async ({ search }) => {
+        const result = await api.datastore.getTagsByFrecency();
+        if (!result.success) return { success: false };
+        let tags = result.data;
+        if (search) {
+          const q = search.toLowerCase();
+          tags = tags.filter(t => t.name.toLowerCase().includes(q));
+        }
+        return {
+          success: true,
+          output: {
+            data: tags.slice(0, 20).map(t => ({
+              name: t.name,
+              frequency: t.frequency,
+              frecency: t.frecencyScore
+            })),
+            mimeType: 'application/json',
+            title: `Tags (${tags.length})`
+          }
+        };
+      },
+
+      browse: async () => { openTags(); },
+      produces: 'application/json'
     });
 
     // Tag command - add tags to the active window URL
@@ -497,8 +518,7 @@ const extension = {
     console.log('[tags] Cleaning up...');
 
     if (hasPeekAPI) {
-      api.commands.unregister('open tags');
-      api.commands.unregister('list tags');
+      unregisterNoun('tags');
       api.commands.unregister('tag');
       api.commands.unregister('tags');
       api.commands.unregister('untag');

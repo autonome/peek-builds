@@ -92,7 +92,7 @@ window.addEventListener('DOMContentLoaded', () => initializeCommandSources());
  * result, which we capture here and return for the chaining flow.
  */
 function createProxyCommand(cmdData) {
-  return {
+  const base = {
     name: cmdData.name,
     description: cmdData.description || '',
     source: cmdData.source,
@@ -101,31 +101,54 @@ function createProxyCommand(cmdData) {
     produces: cmdData.produces || [],
     // Parameter definitions for completions
     params: cmdData.params || [],
-    execute: async (ctx) => {
-      return new Promise((resolve) => {
-        const resultTopic = `cmd:execute:${cmdData.name}:result`;
+  };
 
-        // Set up listener for result (one-time)
+  // Noun proxy — dispatch via noun:{capability}:{nounName} instead of cmd:execute:{name}
+  if (cmdData._nounCapability && cmdData._nounName) {
+    const topic = `noun:${cmdData._nounCapability}:${cmdData._nounName}`;
+    base.execute = async (ctx) => {
+      return new Promise((resolve) => {
+        const resultTopic = `noun:result:${cmdData._nounName}:${Date.now()}`;
+
         const unsubscribe = api.subscribe(resultTopic, (result) => {
-          // Got result from extension - pass it back for chaining
           resolve(result);
         }, api.scopes.GLOBAL);
 
-        // Publish execution request to the extension
-        // Include a flag so extension knows to publish result
-        api.publish(`cmd:execute:${cmdData.name}`, {
+        api.publish(topic, {
           ...ctx,
           expectResult: true,
           resultTopic
         }, api.scopes.GLOBAL);
 
-        // Timeout after 30 seconds - return undefined (no chaining)
         setTimeout(() => {
           resolve(undefined);
         }, 30000);
       });
-    }
+    };
+    return base;
+  }
+
+  // Regular command proxy — dispatch via cmd:execute:{name}
+  base.execute = async (ctx) => {
+    return new Promise((resolve) => {
+      const resultTopic = `cmd:execute:${cmdData.name}:result`;
+
+      const unsubscribe = api.subscribe(resultTopic, (result) => {
+        resolve(result);
+      }, api.scopes.GLOBAL);
+
+      api.publish(`cmd:execute:${cmdData.name}`, {
+        ...ctx,
+        expectResult: true,
+        resultTopic
+      }, api.scopes.GLOBAL);
+
+      setTimeout(() => {
+        resolve(undefined);
+      }, 30000);
+    });
   };
+  return base;
 }
 
 /**

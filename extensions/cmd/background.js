@@ -12,6 +12,7 @@
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import { log } from 'peek://app/log.js';
+import { generateCommandsFromNoun, validateNounDef } from './noun-registry.js';
 
 const api = window.app;
 
@@ -21,6 +22,9 @@ log('ext:cmd', 'background', labels.name);
 // This extension owns the command registry. Other extensions register
 // commands by publishing to cmd:register, and we store them here.
 const commandRegistry = new Map();
+
+// Noun registry — stores noun metadata for regenerating commands
+const nounRegistry = new Map();
 
 // Track commands that were freshly registered by live extensions (not from cache)
 const liveRegisteredCommands = new Set();
@@ -103,6 +107,7 @@ const saveCommandCache = async (appVersion, extensionVersions) => {
       appVersion,
       extensionVersions,
       commands,
+      nouns: Array.from(nounRegistry.values()),
       cachedAt: Date.now()
     };
 
@@ -238,6 +243,63 @@ const initCommandRegistry = () => {
   api.subscribe('cmd:unregister', (msg) => {
     log('ext:cmd', 'cmd:unregister received:', msg.name);
     commandRegistry.delete(msg.name);
+  }, api.scopes.GLOBAL);
+
+  // ===== Noun Registration Handlers =====
+
+  // Handle batch noun registrations from extensions
+  api.subscribe('noun:register-batch', (msg) => {
+    if (!msg.nouns || !Array.isArray(msg.nouns)) return;
+
+    log('ext:cmd', 'noun:register-batch received:', msg.nouns.length, 'nouns');
+
+    const generatedCommands = [];
+
+    for (const nounDef of msg.nouns) {
+      const validation = validateNounDef(nounDef);
+      if (!validation.valid) {
+        log.error('ext:cmd', 'Invalid noun definition:', nounDef.name, validation.error);
+        continue;
+      }
+
+      // Store noun metadata
+      nounRegistry.set(nounDef.name, nounDef);
+
+      // Generate commands from noun definition
+      const commands = generateCommandsFromNoun(nounDef);
+      for (const cmd of commands) {
+        commandRegistry.set(cmd.name, cmd);
+        liveRegisteredCommands.add(cmd.name);
+        generatedCommands.push(cmd);
+      }
+
+      log('ext:cmd', 'Noun registered:', nounDef.name, '→', commands.map(c => c.name).join(', '));
+    }
+
+    // Broadcast generated commands to panel via existing cmd:register-batch flow
+    if (generatedCommands.length > 0) {
+      api.publish('cmd:register-batch', { commands: generatedCommands }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+
+  // Handle noun unregistrations
+  api.subscribe('noun:unregister', (msg) => {
+    if (!msg.name) return;
+
+    const nounDef = nounRegistry.get(msg.name);
+    if (!nounDef) return;
+
+    log('ext:cmd', 'Noun unregistering:', msg.name);
+
+    // Regenerate command names from noun metadata to know what to remove
+    const commands = generateCommandsFromNoun(nounDef);
+    for (const cmd of commands) {
+      commandRegistry.delete(cmd.name);
+      liveRegisteredCommands.delete(cmd.name);
+      api.publish('cmd:unregister', { name: cmd.name }, api.scopes.GLOBAL);
+    }
+
+    nounRegistry.delete(msg.name);
   }, api.scopes.GLOBAL);
 
   // Handle command list queries from the panel
@@ -395,6 +457,19 @@ const init = async () => {
         params: cmd.params || []
       });
     }
+
+    // Restore cached nouns and regenerate their commands
+    if (cache.nouns) {
+      for (const nounDef of cache.nouns) {
+        nounRegistry.set(nounDef.name, nounDef);
+        const nounCmds = generateCommandsFromNoun(nounDef);
+        for (const cmd of nounCmds) {
+          commandRegistry.set(cmd.name, cmd);
+        }
+      }
+      log('ext:cmd', 'Restored', cache.nouns.length, 'nouns from cache');
+    }
+
     log('ext:cmd', 'Pre-populated registry from cache:', commandRegistry.size, 'commands');
   }
 

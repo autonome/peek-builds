@@ -8,6 +8,7 @@
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -298,94 +299,9 @@ const openGroup = async (groupName) => {
   return { success: true, count: urlItems.length, windowIds: openedWindows };
 };
 
-// ===== Command definitions =====
-
-const commandDefinitions = [
-  {
-    name: 'open groups',
-    description: 'Open the groups manager',
-    execute: async (ctx) => {
-      console.log('[ext:groups] Opening groups manager');
-      openGroupsWindow();
-    }
-  },
-  {
-    name: 'list groups',
-    description: 'List all groups (chainable)',
-    accepts: [],
-    produces: ['application/json'],
-    execute: async (ctx) => {
-      const groups = await getAllGroups();
-      if (groups.length === 0) {
-        return { output: 'No groups yet. Tag some pages to create groups.', mimeType: 'text/plain' };
-      }
-
-      // Get URL item counts for each group
-      const groupsWithCounts = await Promise.all(groups.map(async (g) => {
-        const result = await api.datastore.getItemsByTag(g.id);
-        const urlCount = result.success ? result.data.filter(item => item.type === 'url').length : 0;
-        return { id: g.id, name: g.name, color: g.color, count: urlCount };
-      }));
-
-      // Filter to non-empty groups
-      const nonEmpty = groupsWithCounts.filter(g => g.count > 0);
-      if (nonEmpty.length === 0) {
-        return { output: 'No groups with pages yet.', mimeType: 'text/plain' };
-      }
-
-      // Return chainable JSON output
-      return {
-        success: true,
-        output: {
-          data: nonEmpty,
-          mimeType: 'application/json',
-          title: `Groups (${nonEmpty.length} items)`
-        }
-      };
-    }
-  },
-  {
-    name: 'save group',
-    description: 'Save open windows to a group',
-    execute: async (ctx) => {
-      if (ctx.search) {
-        const groupName = ctx.search.trim();
-        const result = await saveToGroup(groupName);
-        if (result.success) {
-          console.log(`[ext:groups] Saved ${result.count} of ${result.total} windows to "${groupName}"`);
-        }
-      } else {
-        console.log('[ext:groups] Usage: save group <name>');
-      }
-    }
-  },
-  {
-    name: 'open group',
-    description: 'Open all URLs in a group',
-    execute: async (ctx) => {
-      if (ctx.search) {
-        const groupName = ctx.search.trim();
-        await openGroup(groupName);
-      } else {
-        const groups = await getAllGroups();
-        if (groups.length === 0) {
-          console.log('[ext:groups] No groups saved yet. Use "save group <name>" to create one.');
-        } else {
-          console.log('[ext:groups] Available groups:');
-          groups.forEach(g => console.log('  -', g.name));
-        }
-      }
-    }
-  }
-];
-
-// Track dynamic group commands separately
-let dynamicGroupCommands = [];
-
 // ===== Registration =====
 
 let registeredShortcut = null;
-let registeredCommands = [];
 const LOCAL_SHORTCUT = 'CommandOrControl+G';
 
 const initShortcut = (shortcut) => {
@@ -400,71 +316,57 @@ const initShortcut = (shortcut) => {
   });
 };
 
-/**
- * Register dynamic commands for each existing group
- * Creates "group GroupName" commands that are searchable
- */
-const registerDynamicGroupCommands = async () => {
-  // Unregister old dynamic commands first
-  for (const name of dynamicGroupCommands) {
-    api.commands.unregister(name);
-  }
-  dynamicGroupCommands = [];
+const initCommands = () => {
+  registerNoun({
+    name: 'groups',
+    singular: 'group',
+    description: 'Saved tab groups',
 
-  // Get all groups with URL items
-  const groups = await getAllGroups();
-  const groupsWithCounts = await Promise.all(groups.map(async (g) => {
-    const result = await api.datastore.getItemsByTag(g.id);
-    const urlCount = result.success ? result.data.filter(item => item.type === 'url').length : 0;
-    return { ...g, count: urlCount };
-  }));
-
-  // Register a command for each non-empty group
-  const nonEmpty = groupsWithCounts.filter(g => g.count > 0);
-  for (const group of nonEmpty) {
-    const cmdName = `group ${group.name}`;
-    const cmd = {
-      name: cmdName,
-      description: `Open ${group.count} pages in "${group.name}"`,
-      execute: async () => {
-        await openGroup(group.name);
+    query: async ({ search }) => {
+      const groups = await getAllGroups();
+      const withCounts = await Promise.all(groups.map(async g => {
+        const result = await api.datastore.getItemsByTag(g.id);
+        const count = result.success ? result.data.filter(i => i.type === 'url').length : 0;
+        return { id: g.id, name: g.name, color: g.color, count };
+      }));
+      let filtered = withCounts.filter(g => g.count > 0);
+      if (search) {
+        const s = search.toLowerCase();
+        filtered = filtered.filter(g => g.name.toLowerCase().includes(s));
       }
-    };
-    api.commands.register(cmd);
-    dynamicGroupCommands.push(cmdName);
-  }
+      if (filtered.length === 0) {
+        return { output: 'No groups found.', mimeType: 'text/plain' };
+      }
+      return {
+        success: true,
+        output: {
+          data: filtered,
+          mimeType: 'application/json',
+          title: `Groups (${filtered.length})`
+        }
+      };
+    },
 
-  if (nonEmpty.length > 0) {
-    debug && console.log('[ext:groups] Registered dynamic group commands:', dynamicGroupCommands);
-  }
-};
+    browse: async () => { openGroupsWindow(); },
 
-const initCommands = async () => {
-  // Register static commands
-  commandDefinitions.forEach(cmd => {
-    api.commands.register(cmd);
-    registeredCommands.push(cmd.name);
+    open: async (ctx) => {
+      if (ctx.search) await openGroup(ctx.search.trim());
+    },
+
+    create: async ({ search }) => {
+      if (!search) return { success: false, error: 'Usage: new group <name>' };
+      return await saveToGroup(search.trim());
+    },
+
+    produces: 'application/json'
   });
-  console.log('[ext:groups] Registered commands:', registeredCommands);
 
-  // Register dynamic group commands
-  await registerDynamicGroupCommands();
+  console.log('[ext:groups] Noun registered: groups');
 };
 
 const uninitCommands = () => {
-  // Unregister static commands
-  registeredCommands.forEach(name => {
-    api.commands.unregister(name);
-  });
-  registeredCommands = [];
-
-  // Unregister dynamic commands
-  for (const name of dynamicGroupCommands) {
-    api.commands.unregister(name);
-  }
-  dynamicGroupCommands = [];
-
-  console.log('[ext:groups] Unregistered commands');
+  unregisterNoun('groups');
+  console.log('[ext:groups] Noun unregistered: groups');
 };
 
 const init = async () => {

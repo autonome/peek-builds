@@ -8,6 +8,8 @@
  * - Commands for subscribing and viewing feeds
  */
 
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+
 const api = window.app;
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -318,31 +320,52 @@ const extension = {
   },
 
   registerCommands() {
-    api.commands.register({
+    // Register noun for auto-generated browse/list/create commands
+    registerNoun({
       name: 'feeds',
-      description: 'Open feed reader',
-      execute: openFeedsUI
-    });
+      singular: 'feed',
+      description: 'RSS/Atom feed subscriptions',
 
-    api.commands.register({
-      name: 'feeds:subscribe',
-      description: 'Subscribe to an RSS/Atom feed',
-      execute: async (ctx) => {
-        const url = ctx?.input?.text || ctx?.input;
-        if (url && typeof url === 'string' && url.startsWith('http')) {
-          const result = await subscribeFeed(url);
-          if (result.success) {
-            openFeedsUI();
+      query: async ({ search }) => {
+        const feeds = await getFeeds();
+        let filtered = feeds;
+        if (search) {
+          const s = search.toLowerCase();
+          filtered = feeds.filter(f => f.name.toLowerCase().includes(s) || f.url.toLowerCase().includes(s));
+        }
+        if (filtered.length === 0) {
+          return { output: 'No feeds found.', mimeType: 'text/plain' };
+        }
+        return {
+          success: true,
+          output: {
+            data: filtered,
+            mimeType: 'application/json',
+            title: `Feeds (${filtered.length})`
           }
-        } else {
-          // Open UI with subscribe prompt
+        };
+      },
+
+      browse: async () => { openFeedsUI(); },
+
+      create: async ({ search }) => {
+        if (!search || !search.startsWith('http')) {
+          openFeedsUI();
+          return { success: true, message: 'Opening feed reader' };
+        }
+        const result = await subscribeFeed(search.trim());
+        if (result.success) {
           openFeedsUI();
         }
-      }
+        return result;
+      },
+
+      produces: 'application/json'
     });
 
+    // Refresh is a verb action, not a noun capability — keep as regular command
     api.commands.register({
-      name: 'feeds:refresh',
+      name: 'refresh feeds',
       description: 'Refresh all feeds',
       execute: pollAllFeeds
     });
@@ -394,9 +417,8 @@ const extension = {
     }
 
     api.shortcuts.unregister('Option+Shift+F', { global: true });
-    api.commands.unregister('feeds');
-    api.commands.unregister('feeds:subscribe');
-    api.commands.unregister('feeds:refresh');
+    unregisterNoun('feeds');
+    api.commands.unregister('refresh feeds');
   }
 };
 

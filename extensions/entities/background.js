@@ -13,6 +13,7 @@ import { extractMicroformatEntities } from './extractors/microformats.js';
 import { extractStructuredDataEntities, extractPageMetadata } from './extractors/structured-data.js';
 import { processEntities } from './entity-matcher.js';
 import { getEntities, getObservations } from './entity-store.js';
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
 
@@ -303,14 +304,47 @@ const extension = {
   },
 
   registerCommands() {
-    api.commands.register({
+    // Register noun for auto-generated browse/list commands
+    registerNoun({
       name: 'entities',
-      description: 'Open entity browser',
-      execute: openEntityBrowser
+      singular: 'entity',
+      description: 'Extracted people, places, organizations, and more',
+      skipBare: true, // "entities" bare command should browse, but we want the noun to generate "open entities" and "list entities"
+
+      query: async ({ search }) => {
+        const entities = await getEntities({
+          search: search || undefined,
+          limit: 50
+        });
+        if (entities.length === 0) {
+          return { output: 'No entities found.', mimeType: 'text/plain' };
+        }
+        return {
+          success: true,
+          output: {
+            data: entities.map(e => {
+              let meta = {};
+              try { meta = JSON.parse(e.metadata || '{}'); } catch {}
+              return {
+                id: e.id,
+                name: e.content,
+                type: meta.entityType,
+                confidence: meta.confidence
+              };
+            }),
+            mimeType: 'application/json',
+            title: `Entities (${entities.length})`
+          }
+        };
+      },
+
+      browse: async () => { openEntityBrowser(); },
+      produces: 'application/json'
     });
 
+    // Extract is a specialized verb action — keep as regular command
     api.commands.register({
-      name: 'entity:extract',
+      name: 'extract entities',
       description: 'Extract entities from current page',
       execute: async () => {
         const entities = await extractCurrentPage();
@@ -413,8 +447,8 @@ const extension = {
     pendingExtractions.clear();
 
     // Unregister commands
-    api.commands.unregister('entities');
-    api.commands.unregister('entity:extract');
+    unregisterNoun('entities');
+    api.commands.unregister('extract entities');
   }
 };
 

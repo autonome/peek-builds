@@ -2268,8 +2268,8 @@ test.describe('Groups View @desktop', () => {
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
 
-    // Wait for cards to render
-    await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
+    // Wait for group cards to render (async data loading + rendering)
+    await groupsWindow.waitForSelector(`peek-card.group-card[data-tag-id="${nonEmptyTag.data.tag.id}"]`, { timeout: 10000 });
 
     // Get all group card tag IDs
     const groupCards = await groupsWindow.$$eval('peek-card.group-card', (cards: any[]) =>

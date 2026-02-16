@@ -13,6 +13,7 @@
  */
 
 import { scriptExecutor } from './script-executor.js';
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
 
@@ -200,27 +201,69 @@ const getScript = async (scriptId) => {
 };
 
 /**
- * Register commands - called when cmd extension is ready
+ * Register commands via noun API
  */
 const registerCommands = () => {
-  api.commands.register({
+  registerNoun({
     name: 'scripts',
-    description: 'Open scripts manager',
-    execute: () => openScriptsManager()
-  });
+    singular: 'script',
+    description: 'Userscripts and content scripts',
 
-  api.commands.register({
-    name: 'scripts: new',
-    description: 'Create a new script',
-    execute: async () => {
-      const result = await createScript({});
+    query: async ({ search }) => {
+      const result = await getScripts();
+      if (!result.success) return { success: false };
+      let scripts = result.data;
+      if (search) {
+        const s = search.toLowerCase();
+        scripts = scripts.filter(sc => sc.name.toLowerCase().includes(s));
+      }
+      if (scripts.length === 0) {
+        return { output: 'No scripts found.', mimeType: 'text/plain' };
+      }
+      return {
+        success: true,
+        output: {
+          data: scripts.map(sc => ({
+            id: sc.id,
+            name: sc.name,
+            description: sc.description,
+            enabled: sc.enabled,
+            matchPatterns: sc.matchPatterns
+          })),
+          mimeType: 'application/json',
+          title: `Scripts (${scripts.length})`
+        }
+      };
+    },
+
+    browse: async () => { openScriptsManager(); },
+
+    open: async (ctx) => {
+      if (ctx.search) {
+        const result = await getScripts();
+        if (result.success) {
+          const match = result.data.find(s => s.name.toLowerCase().includes(ctx.search.toLowerCase()));
+          if (match) {
+            openScriptsManager({ scriptId: match.id });
+            return;
+          }
+        }
+      }
+      openScriptsManager();
+    },
+
+    create: async ({ search }) => {
+      const result = await createScript({ name: search || undefined });
       if (result.success) {
         openScriptsManager({ scriptId: result.data.id });
       }
-    }
+      return result;
+    },
+
+    produces: 'application/json'
   });
 
-  console.log('[ext:scripts] Commands registered');
+  console.log('[ext:scripts] Noun registered: scripts');
 };
 
 /**
@@ -278,8 +321,7 @@ const init = async () => {
  */
 const uninit = () => {
   console.log('[ext:scripts] Cleaning up...');
-  api.commands.unregister('scripts');
-  api.commands.unregister('scripts: new');
+  unregisterNoun('scripts');
   api.shortcuts.unregister('Command+Shift+S');
 };
 

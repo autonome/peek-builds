@@ -166,6 +166,72 @@ const extension = {
 export default extension;
 ```
 
+### Noun Registration API
+
+Extensions that manage data (tags, groups, feeds, scripts, entities) should register **nouns** instead of individual verb commands. The noun system auto-generates standard verb commands (`list`, `open`, `new`) from capability declarations.
+
+**Architecture:**
+```
+Extension → registerNoun() (nouns.js)
+  → publishes noun metadata via pubsub
+  → cmd background.js receives, generates commands via noun-registry.js
+  → commands appear in palette like any other commands
+  → execution routes back via noun:{capability}:{name} pubsub
+```
+
+All layers use only `window.app` pubsub — zero platform-specific code.
+
+**Usage:**
+```javascript
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+
+registerNoun({
+  name: 'groups',             // Plural (required)
+  singular: 'group',          // Singular (required)
+  description: 'Saved tab groups',
+
+  // Capabilities — each auto-generates verb commands
+  query: async ({ search }) => items,   // → "list groups", bare "groups"
+  browse: async () => { /* open UI */ },// → "open groups", bare "groups"
+  open: async ({ search }) => {},       // → "open group {search}" (needs query too)
+  create: async ({ search }) => result, // → "new group {search}"
+
+  produces: 'application/json',         // MIME type for chaining
+  params: [{type: 'tag', multiple: true}],
+  skipBare: false,            // If true, suppress bare "{name}" command
+});
+```
+
+**Auto-generated commands:**
+
+| User types | Capability | Requires |
+|-----------|-----------|----------|
+| `groups` | browse (or query if no browse) | browse or query |
+| `list groups` | query | query |
+| `open groups` | browse | browse |
+| `open group X` | open | query + open |
+| `new group X` | create | create |
+
+**Key files:**
+- `extensions/cmd/noun-registry.js` — Pure command generation (no deps)
+- `extensions/cmd/nouns.js` — Registration API (uses `window.app` pubsub)
+- `extensions/cmd/background.js` — Noun registry + command broadcasting
+- `extensions/cmd/commands.js` — Noun-aware proxy execution
+
+**Converted extensions:**
+
+| Extension | Capabilities | `skipBare` | Regular commands kept |
+|-----------|-------------|------------|----------------------|
+| tags | query, browse | true | tag, tags, untag, tagset |
+| groups | query, browse, open, create | false | — |
+| feeds | query, browse, create | false | refresh feeds |
+| entities | query, browse | true | extract entities |
+| scripts | query, browse, open, create | false | — |
+| pagestream | browse | false | — |
+| editor | browse | true | — |
+
+**When NOT to use nouns:** Panel-local commands (note, edit, history, url) that run directly in the panel window and don't go through pubsub. Also, action verbs that aren't standard CRUD (e.g., `refresh feeds`, `extract entities`).
+
 ### Editor Extension
 
 The editor extension (`extensions/editor/`) is the canonical surface for creating, editing, and deleting items. It complements the tags extension, which focuses on browsing and tag management.
