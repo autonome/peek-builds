@@ -174,6 +174,12 @@ const loadItemTags = async (itemId) => {
 const getFilteredVisits = () => {
   let filtered = state.visits;
 
+  // Deduplicate consecutive entries with the same URL
+  filtered = filtered.filter(({ item }, i, arr) => {
+    if (i === 0) return true;
+    return item.content !== arr[i - 1].item.content;
+  });
+
   // Text search filter
   if (state.searchQuery) {
     const q = state.searchQuery.toLowerCase();
@@ -390,84 +396,34 @@ const createVisitCard = (visit, item, index) => {
 // ===== Inline Browsing =====
 
 /**
- * Open a URL inline in a browse overlay (iframe/webview)
+ * Open a URL in a proper page window via api.window.open().
+ * Extension windows don't support <webview> tags (webviewTag is not enabled),
+ * so we open the URL in a full page window which has canvas + webview support.
  */
-const openInline = (url) => {
+const openInline = async (url) => {
   if (state.browsing) return;
   state.browsing = true;
   state.browseUrl = url;
 
-  debug && console.log('[pagestream] Opening inline:', url);
+  debug && console.log('[pagestream] Opening in page window:', url);
 
-  // Create the overlay
-  const overlay = document.createElement('div');
-  overlay.className = 'browse-overlay';
-  overlay.id = 'browse-overlay';
+  try {
+    await api.window.open(url, {
+      trackingSource: 'pagestream',
+    });
+  } catch (err) {
+    console.error('[pagestream] Failed to open page window:', err);
+  }
 
-  // Create webview/iframe for the page
-  const frame = document.createElement('webview');
-  frame.src = url;
-  frame.id = 'browse-frame';
-  frame.setAttribute('allowpopups', '');
-
-  // Create a navbar for the browse session
-  const navContainer = document.createElement('div');
-  navContainer.className = 'navbar-container';
-  const navbar = document.createElement('peek-navbar');
-  navbar.id = 'browse-navbar';
-  navbar.url = url;
-  navbar.shortcuts = false; // host manages shortcuts
-  navContainer.appendChild(navbar);
-
-  overlay.appendChild(frame);
-  overlay.appendChild(navContainer);
-  document.body.appendChild(overlay);
-
-  // Update navbar URL as webview navigates
-  frame.addEventListener('did-navigate', (e) => {
-    state.browseUrl = e.url || frame.src;
-    navbar.setUrl(state.browseUrl);
-    navbar.canGoBack = frame.canGoBack ? frame.canGoBack() : false;
-    navbar.canGoForward = frame.canGoForward ? frame.canGoForward() : false;
-  });
-
-  frame.addEventListener('did-navigate-in-page', (e) => {
-    state.browseUrl = e.url || frame.src;
-    navbar.setUrl(state.browseUrl);
-    navbar.canGoBack = frame.canGoBack ? frame.canGoBack() : false;
-    navbar.canGoForward = frame.canGoForward ? frame.canGoForward() : false;
-  });
-
-  // Navbar navigation events
-  navbar.addEventListener('navigate', (e) => {
-    const navUrl = e.detail?.url;
-    if (navUrl) {
-      frame.src = navUrl;
-      state.browseUrl = navUrl;
-    }
-  });
-
-  navbar.addEventListener('go-back', () => {
-    if (frame.canGoBack && frame.canGoBack()) frame.goBack();
-  });
-
-  navbar.addEventListener('go-forward', () => {
-    if (frame.canGoForward && frame.canGoForward()) frame.goForward();
-  });
-
-  navbar.addEventListener('reload', () => {
-    if (frame.reload) frame.reload();
-  });
+  // Reset browsing state immediately so the card stream stays usable
+  state.browsing = false;
+  state.browseUrl = null;
 };
 
 /**
- * Close the inline browse overlay and return to card view
+ * Close browse mode and return to card view
  */
 const closeBrowse = () => {
-  const overlay = document.getElementById('browse-overlay');
-  if (overlay) {
-    overlay.remove();
-  }
   state.browsing = false;
   state.browseUrl = null;
 };
@@ -698,10 +654,7 @@ const init = async () => {
     scrollToBottom();
   });
 
-  // Auto-focus the navbar URL input on open
-  requestAnimationFrame(() => {
-    navbarEl.focusUrl();
-  });
+  // Focus stays on the card stream (not the navbar) so the most recent entry is active
 
   // Debounced refresh for reactive updates
   const debouncedRefresh = debounce(async () => {
