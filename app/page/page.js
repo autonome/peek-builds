@@ -21,6 +21,10 @@ import api from '../api.js';
 
 const DEBUG = true;
 
+// Cache our window ID for filtering GLOBAL pubsub messages
+let myWindowId = null;
+api.window.getWindowId().then(id => { myWindowId = id; });
+
 // --- OAuth URL detection (Level 2) ---
 // Patterns that indicate an OAuth/authentication flow in progress.
 // When detected, navbar auto-show on hover is suppressed to avoid interrupting the flow.
@@ -752,16 +756,21 @@ navbar.addEventListener('mouseleave', () => {
 });
 
 // Cmd+L: show navbar with URL focus
-api.subscribe('page:show-navbar', () => show({ focusUrl: true, source: 'shortcut' }), api.scopes.GLOBAL);
+api.subscribe('page:show-navbar', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
+  show({ focusUrl: true, source: 'shortcut' });
+}, api.scopes.GLOBAL);
 
 // Cmd+R: reload the webview
-api.subscribe('page:reload', () => {
+api.subscribe('page:reload', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
   DEBUG && console.log('[page] Cmd+R: reloading webview');
   webview.reload();
 }, api.scopes.GLOBAL);
 
 // Cmd+[ / Cmd+Left: go back
-api.subscribe('page:go-back', () => {
+api.subscribe('page:go-back', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
   if (webview.canGoBack()) {
     DEBUG && console.log('[page] Cmd+[: going back');
     webview.goBack();
@@ -770,7 +779,8 @@ api.subscribe('page:go-back', () => {
 }, api.scopes.GLOBAL);
 
 // Cmd+] / Cmd+Right: go forward
-api.subscribe('page:go-forward', () => {
+api.subscribe('page:go-forward', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
   if (webview.canGoForward()) {
     DEBUG && console.log('[page] Cmd+]: going forward');
     webview.goForward();
