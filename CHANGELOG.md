@@ -13,6 +13,46 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-16
+
+Desktop - Command Palette
+- [x] feat(cmd): generic command chaining with pipe system (597)
+- [x] feat(cmd): replace embedded chain editor with popup window system (572)
+- [x] feat(cmd): add parameter suggestions to command palette (693)
+- [x] feat(cmd): add noun registration API for declarative command generation (191)
+- [x] fix(cmd): remove download cmd, fix save filename, fix dialog parent, unify hashtag extraction (5b95)
+- [x] fix(cmd): preserve noun routing metadata in command registry pipeline (39a4)
+
+Desktop - Entity Recognition
+- [x] feat(entities): add observation frequency ranking — Phase 1 (803)
+- [x] feat(entities): add thumbs up/down feedback for entity quality scoring (c0e)
+
+Desktop - Tags
+- [x] feat(tags): add rename and delete tag operations (ac2)
+- [x] fix(tags): add protocol 404 logging, handle all item types, fix filter counts (403e)
+
+Desktop - Display Switching
+- [x] refactor(display-watcher): replace 3-phase algorithm with safety-net-only approach (afa)
+  - Gutted 881-line 3-phase algorithm, replaced with 304-line single-pass safety net
+  - Lets macOS handle display migration natively, only rescues genuinely orphaned windows
+
+Desktop - Page View & Dragging
+- [x] fix(page): filter Cmd+L/R/[/] pubsub by windowId so only active page window responds (657)
+- [x] fix(page): fully end drag on webview mouseup to prevent overlay blocking clicks (a7b)
+- [x] fix(page): handle webview mousemove during active drag for window movement (ac37)
+- [x] fix(drag): remove data-no-drag from extension window bodies to restore hold-to-drag (63c1)
+
+Desktop - Auth & URLs
+- [x] feat(auth): OAuth popup bridge and flow improvements (c93)
+- [x] fix(url): wait for frontend ready and session restore before processing external URLs (e7ab)
+
+Testing
+- [x] test(cmd): add completer unit tests; fix tag # prefix stripping (610)
+- [x] test(cmd): add integration tests for command execution through pubsub (e11)
+- [x] test(cmd): add command chaining pipe system tests (566c)
+- [x] test(oauth): add OAuth bridge unit tests (77b)
+- [x] fix(test): fix 4 stale test expectations in desktop smoke tests (4d9)
+
 ## 2026-02-13
 
 Desktop - Session Restore
