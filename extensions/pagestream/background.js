@@ -56,8 +56,13 @@ const openPagestreamWindow = async () => {
   if (isOpeningPagestream) return;
   isOpeningPagestream = true;
   try {
-    const height = 700;
-    const width = 500;
+    let screenW = 1440, screenH = 900;
+    try {
+      screenW = window.screen.availWidth || window.screen.width || 1440;
+      screenH = window.screen.availHeight || window.screen.height || 900;
+    } catch {}
+    const width = screenW;
+    const height = Math.round(screenH * 0.8);
 
     const params = {
       // IZUI role
@@ -71,9 +76,9 @@ const openPagestreamWindow = async () => {
       trackingSourceId: 'pagestream'
     };
 
-    const window = await api.window.open(address, params);
-    debug && console.log('[ext:pagestream] Pagestream window opened:', window);
-    pagestreamWindowId = window?.id || null;
+    const win = await api.window.open(address, params);
+    debug && console.log('[ext:pagestream] Pagestream window opened:', win);
+    pagestreamWindowId = win?.id || null;
   } catch (error) {
     console.error('[ext:pagestream] Failed to open pagestream window:', error);
   } finally {

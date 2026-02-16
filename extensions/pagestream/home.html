@@ -26,29 +26,17 @@
     <!-- Import peek-components -->
     <script type="module">
       import 'peek://app/components/peek-card.js';
-      import 'peek://app/components/peek-input.js';
-      import 'peek://app/components/peek-navbar.js';
     </script>
   </head>
   <body>
-    <div class="browse-backdrop" id="browse-backdrop"></div>
-    <div class="search-container">
-      <peek-input
-        class="search-input"
-        placeholder="Search history..."
-        type="search"
-      ></peek-input>
-    </div>
-
     <div class="stream-container" id="stream">
       <div class="empty-state" id="empty-state">
         No browsing history yet. Open a page to start your stream.
       </div>
     </div>
 
-    <div class="navbar-container">
-      <peek-navbar id="navbar"></peek-navbar>
-    </div>
+    <!-- Animation ghost — fixed positioned, card-to-fullscreen transition -->
+    <div id="anim-ghost" class="anim-ghost"></div>
 
     <script type="module" src="home.js"></script>
   </body>

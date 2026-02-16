@@ -76,14 +76,9 @@ export class PeekCard extends PeekElement {
                     transform var(--peek-transition-fast);
       }
 
-      /* Bordered (default) */
-      :host([bordered]) .card,
-      :host(:not([bordered])) .card {
+      /* Bordered — only when attribute is present and not "false" */
+      :host([bordered]:not([bordered="false"])) .card {
         border: 1px solid var(--peek-card-border, var(--theme-border, #e0e0e0));
-      }
-
-      :host([bordered="false"]) .card {
-        border: none;
       }
 
       /* Elevated */

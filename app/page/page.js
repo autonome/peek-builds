@@ -913,50 +913,63 @@ webview.addEventListener('did-fail-load', (e) => {
   console.error('[page] Load failed:', e.errorCode, e.errorDescription);
 });
 
-// Set default background color on webview content if the page doesn't set one
+// Detect page background color, set it as backing color on the webview element,
+// then fade the webview in. This prevents the white flash when loading pages in dark mode.
 webview.addEventListener('dom-ready', async () => {
   try {
-    const detectionJs = `
+    const bgResult = await webview.executeJavaScript(`
       (function() {
         function isTransparentColor(color) {
           if (!color) return true;
           if (color === 'transparent') return true;
           if (color === 'rgba(0, 0, 0, 0)') return true;
-          const rgbaMatch = color.match(/rgba\\s*\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*([\\d.]+)\\s*\\)/);
+          var rgbaMatch = color.match(/rgba\\s*\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*([\\d.]+)\\s*\\)/);
           if (rgbaMatch && parseFloat(rgbaMatch[1]) === 0) return true;
           return false;
         }
 
-        function hasBackground(el) {
-          if (!el) return false;
-          const style = window.getComputedStyle(el);
-          const bgColor = style.backgroundColor;
-          const hasColor = !isTransparentColor(bgColor);
-          const bgImage = style.backgroundImage;
-          const hasImage = bgImage && bgImage !== 'none';
-          return hasColor || hasImage;
+        function getEffectiveBg(el) {
+          if (!el) return null;
+          var style = window.getComputedStyle(el);
+          var bgColor = style.backgroundColor;
+          if (!isTransparentColor(bgColor)) return bgColor;
+          return null;
         }
 
-        const html = document.documentElement;
-        const body = document.body;
-        return !(hasBackground(html) || hasBackground(body));
+        var bodyBg = getEffectiveBg(document.body);
+        var htmlBg = getEffectiveBg(document.documentElement);
+        var detectedBg = bodyBg || htmlBg || null;
+        var hasAnyBg = !!(bodyBg || htmlBg ||
+          (document.body && window.getComputedStyle(document.body).backgroundImage !== 'none') ||
+          (document.documentElement && window.getComputedStyle(document.documentElement).backgroundImage !== 'none'));
+
+        return { detectedBg: detectedBg, hasAnyBg: hasAnyBg };
       })();
-    `;
+    `);
 
-    const needsBackground = await webview.executeJavaScript(detectionJs);
-
-    if (needsBackground) {
-      const defaultBg = '#ffffff';
-      await webview.executeJavaScript(`
-        document.documentElement.style.backgroundColor = '${defaultBg}';
-      `);
-      DEBUG && console.log('[page] No background detected, set default:', defaultBg);
-    } else {
-      DEBUG && console.log('[page] Page has background, skipping default');
+    if (!bgResult.hasAnyBg) {
+      // Page has no background — set white inside the page
+      await webview.executeJavaScript(
+        "document.documentElement.style.backgroundColor = '#ffffff';"
+      );
+      webview.style.background = '#ffffff';
+      DEBUG && console.log('[page] No background detected, set default white');
+    } else if (bgResult.detectedBg) {
+      // Match the webview element's backing color to the page's actual bg
+      webview.style.background = bgResult.detectedBg;
+      DEBUG && console.log('[page] Detected background:', bgResult.detectedBg);
     }
   } catch (err) {
-    console.error('[page] Failed to check/set background:', err);
+    console.error('[page] Failed to detect background:', err);
   }
+
+  // Fade in the webview now that background is matched
+  webview.classList.add('ready');
+});
+
+// Reset visibility on new navigations so fade-in works each time
+webview.addEventListener('did-start-loading', () => {
+  webview.classList.remove('ready');
 });
 
 // --- OpenSearch discovery & page:loaded event ---
