@@ -454,8 +454,6 @@ webview.addEventListener('console-message', (e) => {
     if (isNaN(screenX) || isNaN(screenY)) return;
 
     // If actively dragging, update window position from webview mouse coords.
-    // The drag overlay may not capture events from the webview's compositor
-    // surface, so we must handle drag movement here as well.
     if (isDragging) {
       const dx = screenX - dragStartScreenX;
       const dy = screenY - dragStartScreenY;
