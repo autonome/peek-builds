@@ -20,7 +20,7 @@ const api = window.app;
 // Configuration
 const REEXTRACT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 const EXTRACTION_DELAY_MS = 2000; // Wait for page to finish rendering
-const CONFIDENCE_THRESHOLD = 0.5;
+const CONFIDENCE_THRESHOLD = 0.7;
 
 // In-memory cache of recently extracted URLs
 const extractionCache = new Map();

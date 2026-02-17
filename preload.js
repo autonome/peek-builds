@@ -2157,8 +2157,11 @@ window.addEventListener('load', () => {
 //   - Comprehensive console.log('[DRAG]') breadcrumbs for diagnostics.
 // ============================================================================
 (function initWindowDrag() {
-  const HOLD_DELAY = 80; // ms before drag engages
-  const MOVE_THRESHOLD = 3; // px of movement required to engage drag
+  const MOVE_THRESHOLD = 3; // px of movement required to engage drag after hold fires
+  const JITTER_TOLERANCE = 3; // px of movement allowed during hold without cancelling
+
+  // Configurable hold delay (read from prefs at init, default 2s)
+  let HOLD_DELAY = 2000;
 
   // State
   let isDragging = false;
@@ -2170,6 +2173,8 @@ window.addEventListener('load', () => {
   // Mouse positions
   let lastScreenX = 0;   // updated every mousemove while button is held
   let lastScreenY = 0;
+  let holdOriginX = 0;   // screen coords at mousedown (for jitter detection during hold)
+  let holdOriginY = 0;
   let dragOriginX = 0;   // screen coords at the moment drag began
   let dragOriginY = 0;
   let windowOriginX = 0; // window position at the moment drag began
@@ -2221,15 +2226,19 @@ window.addEventListener('load', () => {
   /** End everything: cancel hold and/or stop drag. */
   const endDrag = (reason) => {
     const wasDragging = isDragging;
+    const wasHoldReady = holdReady;
     cancelHold();
     holdReady = false;
     if (isDragging) {
       isDragging = false;
       suppressClick = true;
-      document.body.style.cursor = '';
       document.body.classList.remove('is-dragging');
       document.body.style.userSelect = '';
       document.body.style.webkitUserSelect = '';
+    }
+    // Reset cursor if it was set to 'grab' (hold ready) or 'grabbing' (dragging)
+    if (wasDragging || wasHoldReady) {
+      document.body.style.cursor = '';
     }
     positionPromise = null;
     if (wasDragging) {
@@ -2248,6 +2257,8 @@ window.addEventListener('load', () => {
     // Always record position (used by hold timer to set drag origin)
     lastScreenX = e.screenX;
     lastScreenY = e.screenY;
+    holdOriginX = e.screenX;
+    holdOriginY = e.screenY;
 
     const blocked = shouldBlockDrag(e.target);
     console.log('[DRAG] mousedown', e.target?.tagName,
@@ -2264,8 +2275,8 @@ window.addEventListener('load', () => {
     positionPromise = ipcRenderer.invoke('window-get-position', { id: cachedWindowId })
       .catch((err) => { console.log('[DRAG] pos fetch fail:', err); return null; });
 
-    // Start hold timer. NO movement threshold: mouse can move freely during
-    // the hold period. When this fires we snapshot the current mouse position.
+    // Start hold timer. Mouse must stay still (within jitter tolerance) during
+    // the hold period. Movement cancels the timer, allowing text selection.
     holdTimer = setTimeout(async () => {
       holdTimer = null;
 
@@ -2292,16 +2303,15 @@ window.addEventListener('load', () => {
         return;
       }
 
-      // Mark ready — actual drag engages on first mousemove with enough movement.
-      // This prevents click-and-hold (no movement) from engaging drag and
-      // swallowing the subsequent click event.
+      // Hold fired — show visual cursor feedback. Drag engages on next movement.
       dragOriginX = lastScreenX;
       dragOriginY = lastScreenY;
       windowOriginX = pos.x;
       windowOriginY = pos.y;
       holdReady = true;
+      document.body.style.cursor = 'grab';
 
-      console.log('[DRAG] HOLD READY origin=(' + dragOriginX + ',' + dragOriginY +
+      console.log('[DRAG] HOLD READY (cursor→grab) origin=(' + dragOriginX + ',' + dragOriginY +
         ') window=(' + windowOriginX + ',' + windowOriginY + ')');
     }, HOLD_DELAY);
   };
@@ -2313,7 +2323,20 @@ window.addEventListener('load', () => {
     lastScreenX = e.screenX;
     lastScreenY = e.screenY;
 
-    // Hold timer fired — engage drag once movement exceeds threshold
+    // During hold period (timer not yet fired): cancel if mouse moves beyond jitter tolerance.
+    // This allows text selection to proceed normally.
+    if (holdTimer && !holdReady && !isDragging) {
+      const dx = Math.abs(e.screenX - holdOriginX);
+      const dy = Math.abs(e.screenY - holdOriginY);
+      if (dx > JITTER_TOLERANCE || dy > JITTER_TOLERANCE) {
+        cancelHold();
+        positionPromise = null;
+        console.log('[DRAG] hold cancelled — mouse moved during hold period');
+        return;
+      }
+    }
+
+    // Hold timer fired (cursor is 'grab') — engage drag once movement exceeds threshold
     if (holdReady && !isDragging) {
       const dx = e.screenX - dragOriginX;
       const dy = e.screenY - dragOriginY;
@@ -2388,6 +2411,16 @@ window.addEventListener('load', () => {
       console.error('[DRAG] failed to get window ID:', err);
     }
 
+    // Read drag hold delay from prefs (in seconds, convert to ms)
+    try {
+      const prefs = await ipcRenderer.invoke('get-app-prefs');
+      if (prefs && typeof prefs.dragHoldDelay === 'number') {
+        HOLD_DELAY = Math.max(0, prefs.dragHoldDelay * 1000);
+      }
+    } catch (err) {
+      console.warn('[DRAG] failed to read prefs, using default hold delay:', err);
+    }
+
     // Capture-phase on document for mousedown (need e.target for shouldBlockDrag).
     // Capture-phase on window for mousemove/mouseup (survive fast cursor escape).
     document.addEventListener('mousedown', onMouseDown, true);
@@ -2396,7 +2429,7 @@ window.addEventListener('load', () => {
     window.addEventListener('blur', onBlur);
     document.addEventListener('click', onClickCapture, true);
 
-    console.log('[DRAG] initialized, windowId:', cachedWindowId);
+    console.log('[DRAG] initialized, windowId:', cachedWindowId, 'holdDelay:', HOLD_DELAY + 'ms');
   };
 
   if (document.readyState === 'loading') {

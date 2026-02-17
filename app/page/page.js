@@ -319,12 +319,24 @@ let dragStartBoundsX = 0;
 let dragStartBoundsY = 0;
 let pageMouseButtonDown = false;
 
-// Hold-to-drag state
-const DRAG_HOLD_THRESHOLD = 80;
+// Hold-to-drag state (configurable, read from prefs at init)
+const JITTER_TOLERANCE = 3; // px of movement allowed during hold without cancelling
+let DRAG_HOLD_THRESHOLD = 2000; // ms, updated from prefs
 let holdDragTimer = null;
 let holdDragPending = false;
+let holdDragReady = false; // true when hold fires, cursor is 'grab', waiting for movement
 let holdDragStartScreenX = 0;
 let holdDragStartScreenY = 0;
+
+// Read drag hold delay from prefs
+(async () => {
+  try {
+    const prefs = await api.invoke('get-app-prefs');
+    if (prefs && typeof prefs.dragHoldDelay === 'number') {
+      DRAG_HOLD_THRESHOLD = Math.max(0, prefs.dragHoldDelay * 1000);
+    }
+  } catch {}
+})();
 
 function startDrag(screenX, screenY) {
   isDragging = true;
@@ -341,7 +353,9 @@ function cancelHoldDrag() {
     holdDragTimer = null;
   }
   holdDragPending = false;
+  holdDragReady = false;
   dragOverlay.classList.remove('active');
+  document.body.style.cursor = '';
 }
 
 // Instant drag on navbar background (excluding buttons and URL text inside shadow DOM)
@@ -354,7 +368,10 @@ navbar.addEventListener('mousedown', (e) => {
   e.preventDefault();
 });
 
-// Hold-to-drag from anywhere on the document
+// Hold-to-drag from anywhere on the document.
+// User must hold still (within jitter tolerance) for DRAG_HOLD_THRESHOLD ms.
+// When hold fires, cursor changes to 'grab'. Movement after that starts drag.
+// Any movement during hold period cancels the timer, allowing text selection.
 document.addEventListener('mousedown', (e) => {
   if (e.target.closest('.resize-handle')) return;
   if (isDragging) return;
@@ -367,10 +384,32 @@ document.addEventListener('mousedown', (e) => {
 
   holdDragTimer = setTimeout(() => {
     if (holdDragPending) {
-      startDrag(holdDragStartScreenX, holdDragStartScreenY);
+      // Hold fired — show grab cursor as visual feedback, wait for movement
       holdDragPending = false;
+      holdDragReady = true;
+      document.body.style.cursor = 'grab';
     }
   }, DRAG_HOLD_THRESHOLD);
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!pageMouseButtonDown) return;
+
+  // During hold period: cancel if mouse moves beyond jitter tolerance
+  if (holdDragPending && holdDragTimer) {
+    const dx = Math.abs(e.screenX - holdDragStartScreenX);
+    const dy = Math.abs(e.screenY - holdDragStartScreenY);
+    if (dx > JITTER_TOLERANCE || dy > JITTER_TOLERANCE) {
+      cancelHoldDrag();
+    }
+    return;
+  }
+
+  // After hold fired (cursor is 'grab'): movement starts drag
+  if (holdDragReady && !isDragging) {
+    holdDragReady = false;
+    startDrag(holdDragStartScreenX, holdDragStartScreenY);
+  }
 });
 
 document.addEventListener('mouseup', () => {
@@ -431,6 +470,9 @@ function cancelWebviewHold() {
     clearTimeout(webviewHoldTimer);
     webviewHoldTimer = null;
   }
+  if (webviewHoldReady) {
+    document.body.style.cursor = '';
+  }
   webviewHoldReady = false;
 }
 
@@ -452,11 +494,10 @@ webview.addEventListener('console-message', (e) => {
     webviewHoldTimer = setTimeout(() => {
       webviewHoldTimer = null;
       if (!webviewMouseDown) return;  // Released before threshold
-      // Don't activate overlay yet — wait for mouse movement to confirm drag intent.
-      // Activating immediately on hold would block the webview from receiving mouseup,
-      // preventing click events (e.g., YouTube pause button) for holds > 80ms.
+      // Hold fired — show grab cursor as visual feedback, wait for movement to confirm drag.
       webviewHoldReady = true;
-      DEBUG && console.log('[page] Webview hold ready, waiting for movement');
+      document.body.style.cursor = 'grab';
+      DEBUG && console.log('[page] Webview hold ready (cursor→grab), waiting for movement');
     }, DRAG_HOLD_THRESHOLD);
     return;
   }
@@ -508,7 +549,7 @@ webview.addEventListener('console-message', (e) => {
     if (!webviewHoldTimer) return;  // No pending hold
     const dx = Math.abs(screenX - webviewHoldScreenX);
     const dy = Math.abs(screenY - webviewHoldScreenY);
-    if (dx > 5 || dy > 5) {
+    if (dx > JITTER_TOLERANCE || dy > JITTER_TOLERANCE) {
       cancelWebviewHold();
     }
     return;
@@ -1015,8 +1056,27 @@ webview.addEventListener('dom-ready', async () => {
   }
 });
 
-// Note: we do NOT remove .ready on did-start-loading — keeping the webview
-// visible during navigation prevents flash when flipping between pages.
+// Re-add loading glow on new navigations (but keep webview visible — don't reset opacity)
+webview.addEventListener('did-start-loading', () => {
+  // Only show loading glow if we're not already displaying content
+  // (avoid flash on in-page navigations)
+  if (!webview.classList.contains('ready')) {
+    webview.classList.add('loading');
+  }
+  DEBUG && console.log('[page] did-start-loading');
+});
+
+// Fallback: ensure loading glow stops even if dom-ready doesn't fire
+webview.addEventListener('did-stop-loading', () => {
+  if (webview.classList.contains('loading')) {
+    webview.classList.remove('loading');
+    webview.classList.add('ready');
+    if (showSource === 'loading') {
+      scheduleHide();
+    }
+    DEBUG && console.log('[page] did-stop-loading: removed loading glow (fallback)');
+  }
+});
 
 // --- OpenSearch discovery & page:loaded event ---
 

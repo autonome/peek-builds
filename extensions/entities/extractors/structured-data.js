@@ -250,10 +250,37 @@ function jsonLdItemToEntity(item, url) {
       break;
   }
 
+  // Validate: require sufficient fields to avoid storing generic/templated entries
+  const meaningfulFields = Object.values(attributes).filter(v =>
+    v && (typeof v === 'string' ? v.trim().length > 0 : true)
+  ).length;
+
+  // Type-specific minimum field requirements
+  switch (entityType) {
+    case 'person':
+      // Person needs at least 1 additional field beyond name (email, url, jobTitle, org, etc.)
+      if (meaningfulFields < 1) return null;
+      break;
+    case 'organization':
+      if (meaningfulFields < 1) return null;
+      break;
+    case 'event':
+      // Events need a start date at minimum
+      if (!attributes.startDate) return null;
+      break;
+    case 'product':
+      // Products need at least price or description
+      if (!attributes.price && !attributes.description) return null;
+      break;
+  }
+
+  // Confidence based on field richness: 0.9 for 3+ fields, 0.85 for fewer
+  const confidence = meaningfulFields >= 3 ? 0.9 : 0.85;
+
   return {
     name: name.trim(),
     entityType,
-    confidence: 1.0,
+    confidence,
     extractor: 'json-ld',
     attributes,
     sourceUrl: url,
@@ -326,9 +353,9 @@ function extractOpenGraph(doc, url) {
     });
   }
 
-  // Extract article author
+  // Extract article author (only if it looks like a real name — at least 2 words)
   const articleAuthor = getMetaContent(doc, 'article:author');
-  if (articleAuthor && !articleAuthor.startsWith('http')) {
+  if (articleAuthor && !articleAuthor.startsWith('http') && articleAuthor.trim().includes(' ')) {
     entities.push({
       name: articleAuthor.trim(),
       entityType: 'person',

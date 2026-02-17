@@ -257,18 +257,79 @@ export async function updateEntityMetadata(entityId, updates) {
 }
 
 /**
- * Set feedback score on an entity
+ * Set feedback score on an entity.
+ * Thumbs-down (-1) also adds the entity name+type to the suppressed set,
+ * preventing future extractions of the same name+type.
  * @param {string} entityId - Entity item ID
  * @param {number} score - -1 (thumbs down/hide), 0 (unscored), 1 (thumbs up/correct)
  * @returns {Promise<{success: boolean}>}
  */
 export async function setEntityFeedback(entityId, score) {
-  return updateEntityMetadata(entityId, {
+  const result = await updateEntityMetadata(entityId, {
     feedback: {
       score,
       scoredAt: Date.now()
     }
   });
+
+  // Update suppressed set
+  if (result.success) {
+    const item = await api.datastore.getItem(entityId);
+    if (item.success && item.data) {
+      let meta = {};
+      try { meta = JSON.parse(item.data.metadata || '{}'); } catch {}
+      const key = `${normalizeName(item.data.content)}:${meta.entityType}`;
+      if (score === -1) {
+        _suppressedEntities.add(key);
+      } else {
+        _suppressedEntities.delete(key);
+      }
+    }
+  }
+
+  return result;
+}
+
+// --- Suppressed entity tracking ---
+// Entities that the user has thumbs-downed are suppressed so future extractions
+// of the same name+type are automatically skipped.
+
+/** @type {Set<string>} - Set of "normalizedName:entityType" keys */
+let _suppressedEntities = null;
+
+/**
+ * Load suppressed entities from existing thumbs-down feedback.
+ * Called lazily on first check.
+ */
+async function loadSuppressedEntities() {
+  if (_suppressedEntities !== null) return;
+  _suppressedEntities = new Set();
+  try {
+    const result = await api.datastore.queryItems({ type: 'entity' });
+    if (!result.success) return;
+    for (const item of result.data) {
+      if (item.deletedAt > 0) continue;
+      let meta = {};
+      try { meta = JSON.parse(item.metadata || '{}'); } catch {}
+      if (meta.feedback?.score === -1) {
+        _suppressedEntities.add(`${normalizeName(item.content)}:${meta.entityType}`);
+      }
+    }
+    console.log(`[entities:store] Loaded ${_suppressedEntities.size} suppressed entities`);
+  } catch (err) {
+    console.warn('[entities:store] Failed to load suppressed entities:', err.message);
+  }
+}
+
+/**
+ * Check if an entity name+type has been suppressed by user feedback
+ * @param {string} name - Entity name
+ * @param {string} entityType - Entity type
+ * @returns {Promise<boolean>}
+ */
+export async function isEntitySuppressed(name, entityType) {
+  await loadSuppressedEntities();
+  return _suppressedEntities.has(`${normalizeName(name)}:${entityType}`);
 }
 
 /**

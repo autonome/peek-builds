@@ -3530,6 +3530,11 @@ export function registerMiscHandlers(onQuit: () => void): void {
     return win ? win.id : null;
   });
 
+  // Get app-level preferences
+  ipcMain.handle('get-app-prefs', () => {
+    return getPrefs();
+  });
+
   // Check if current window is transient (opened when app wasn't focused)
   // Used for IZUI policy: transient windows have different escape/mode behavior
   ipcMain.handle('window-is-transient', (ev) => {

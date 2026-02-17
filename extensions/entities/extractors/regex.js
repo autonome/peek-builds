@@ -158,13 +158,21 @@ export function extractRegexEntities(text, url) {
 
   const entities = [];
 
-  // Extract emails
+  // Extract emails (filter automated/system addresses)
+  const BLOCKED_EMAIL_PREFIXES = [
+    'noreply', 'no-reply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply',
+    'notification', 'notifications', 'automated', 'mailer-daemon', 'postmaster',
+    'webmaster', 'hostmaster', 'abuse', 'bounce', 'auto', 'daemon',
+  ];
   const emails = text.match(EMAIL_RE) || [];
   const seenEmails = new Set();
   for (const email of emails) {
     const normalized = email.toLowerCase();
     if (seenEmails.has(normalized)) continue;
     seenEmails.add(normalized);
+    // Skip automated/system email addresses
+    const localPart = normalized.split('@')[0];
+    if (BLOCKED_EMAIL_PREFIXES.some(p => localPart === p || localPart.startsWith(p + '+'))) continue;
     entities.push({
       name: normalized,
       entityType: 'email',
@@ -193,7 +201,7 @@ export function extractRegexEntities(text, url) {
     entities.push({
       name: trimmed,
       entityType: 'phone',
-      confidence: 0.85,
+      confidence: 0.7,
       extractor: 'regex',
       attributes: { number: trimmed },
       sourceUrl: url
@@ -267,7 +275,7 @@ export function extractRegexEntities(text, url) {
     entities.push({
       name: normalized,
       entityType: 'place',
-      confidence: 0.75,
+      confidence: 0.6,
       extractor: 'regex',
       attributes: { address: normalized },
       sourceUrl: url

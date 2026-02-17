@@ -45,34 +45,40 @@
       overflow: hidden;
       -webkit-mask-image: -webkit-radial-gradient(white, white);
       opacity: 0;
-      transition: opacity 0.15s ease, border-color 0.3s ease, outline-color 0.3s ease;
+      transition: opacity 0.15s ease, border-color 0.3s ease, outline-color 0.3s ease, background-color 0.3s ease;
     }
 
     @keyframes loading-glow {
       0%, 100% {
-        border-color: rgba(140, 170, 255, 0.25);
-        outline-color: rgba(120, 160, 255, 0.08);
+        border-color: rgba(120, 160, 255, 0.4);
+        outline-color: rgba(100, 150, 255, 0.15);
       }
       50% {
-        border-color: rgba(140, 170, 255, 0.6);
-        outline-color: rgba(120, 160, 255, 0.25);
+        border-color: rgba(120, 160, 255, 0.85);
+        outline-color: rgba(100, 150, 255, 0.4);
       }
+    }
+
+    @keyframes bg-fade-in {
+      from { background-color: transparent; }
+      to { background-color: rgba(255, 255, 255, 0.95); }
     }
 
     webview.loading {
       opacity: 1;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1.5px solid rgba(140, 170, 255, 0.25);
-      outline: 4px solid rgba(120, 160, 255, 0.08);
+      background-color: rgba(255, 255, 255, 0.95);
+      animation: bg-fade-in 0.3s ease forwards, loading-glow 1.5s ease-in-out 0.3s infinite;
+      border: 2px solid rgba(120, 160, 255, 0.4);
+      outline: 6px solid rgba(100, 150, 255, 0.15);
       outline-offset: 0px;
-      animation: loading-glow 2s ease-in-out infinite;
     }
 
     webview.ready {
       opacity: 1;
-      border: none;
-      outline: none;
+      border: 2px solid transparent;
+      outline: 6px solid transparent;
       background: initial;
+      animation: none;
     }
 
     /*

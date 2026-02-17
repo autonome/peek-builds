@@ -12,6 +12,7 @@ const labels = {
     hideTitleBar: 'Hide title bars',
     restoreSession: 'Restore session on startup',
     sessionAutosaveInterval: 'Autosave interval (minutes)',
+    dragHoldDelay: 'Drag hold delay (seconds)',
   }
 };
 
@@ -87,6 +88,11 @@ const prefsSchema = {
       "type": "integer",
       "default": 600
     },
+    "dragHoldDelay": {
+      "description": "Seconds to hold still before drag mode activates (0 = instant)",
+      "type": "number",
+      "default": 2
+    },
   },
   "required": [ "shortcutKey", "startupFeature", "enableTrayIcon", "showInDockAndSwitcher", "quitShortcut" ]
 };
@@ -161,7 +167,8 @@ const defaults = {
     restoreSession: true,
     sessionAutosaveInterval: 5,
     pageWidth: 800,
-    pageHeight: 600
+    pageHeight: 600,
+    dragHoldDelay: 2
   },
   items: [
     { id: '82de735f-a4b7-4fe6-a458-ec29939ae00d',
