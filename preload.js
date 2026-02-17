@@ -2158,9 +2158,11 @@ window.addEventListener('load', () => {
 // ============================================================================
 (function initWindowDrag() {
   const HOLD_DELAY = 80; // ms before drag engages
+  const MOVE_THRESHOLD = 3; // px of movement required to engage drag
 
   // State
   let isDragging = false;
+  let holdReady = false; // hold timer fired, waiting for movement to engage drag
   let holdTimer = null;
   let mouseButtonDown = false;
   let cachedWindowId = null;
@@ -2220,6 +2222,7 @@ window.addEventListener('load', () => {
   const endDrag = (reason) => {
     const wasDragging = isDragging;
     cancelHold();
+    holdReady = false;
     if (isDragging) {
       isDragging = false;
       suppressClick = true;
@@ -2289,23 +2292,16 @@ window.addEventListener('load', () => {
         return;
       }
 
-      // Snapshot CURRENT mouse position as drag origin (not the original
-      // mousedown position). This way any movement during the hold period
-      // doesn't cause a sudden jump when drag starts.
+      // Mark ready — actual drag engages on first mousemove with enough movement.
+      // This prevents click-and-hold (no movement) from engaging drag and
+      // swallowing the subsequent click event.
       dragOriginX = lastScreenX;
       dragOriginY = lastScreenY;
       windowOriginX = pos.x;
       windowOriginY = pos.y;
-      isDragging = true;
-      document.body.style.cursor = 'grabbing';
-      document.body.classList.add('is-dragging');
-      // Clear any accidental text selection that formed during the hold period
-      // and suppress further selections while dragging
-      window.getSelection()?.removeAllRanges();
-      document.body.style.userSelect = 'none';
-      document.body.style.webkitUserSelect = 'none';
+      holdReady = true;
 
-      console.log('[DRAG] ENGAGED origin=(' + dragOriginX + ',' + dragOriginY +
+      console.log('[DRAG] HOLD READY origin=(' + dragOriginX + ',' + dragOriginY +
         ') window=(' + windowOriginX + ',' + windowOriginY + ')');
     }, HOLD_DELAY);
   };
@@ -2316,6 +2312,22 @@ window.addEventListener('load', () => {
     // Always track latest mouse position (hold timer reads this)
     lastScreenX = e.screenX;
     lastScreenY = e.screenY;
+
+    // Hold timer fired — engage drag once movement exceeds threshold
+    if (holdReady && !isDragging) {
+      const dx = e.screenX - dragOriginX;
+      const dy = e.screenY - dragOriginY;
+      if (Math.abs(dx) < MOVE_THRESHOLD && Math.abs(dy) < MOVE_THRESHOLD) return;
+
+      holdReady = false;
+      isDragging = true;
+      document.body.style.cursor = 'grabbing';
+      document.body.classList.add('is-dragging');
+      window.getSelection()?.removeAllRanges();
+      document.body.style.userSelect = 'none';
+      document.body.style.webkitUserSelect = 'none';
+      console.log('[DRAG] ENGAGED after movement');
+    }
 
     if (!isDragging) return;
 

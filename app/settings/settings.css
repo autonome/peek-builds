@@ -186,10 +186,16 @@ body {
 
 .form-group-inline {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 16px;
   padding: 12px 0;
   border-bottom: 1px solid var(--border-light);
+}
+
+.form-group-inline-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .form-group-inline:last-child {
@@ -205,8 +211,10 @@ body {
 
 /* Checkbox */
 .checkbox-wrapper {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
+  padding-top: 2px;
 }
 
 .checkbox-wrapper input[type="checkbox"] {

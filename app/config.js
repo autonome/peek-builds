@@ -10,7 +10,6 @@ const labels = {
     showInDockAndSwitcher: 'Show in dock',
     backupDir: 'Backup directory',
     hideTitleBar: 'Hide title bars',
-    persistWindowState: 'Remember window positions',
     restoreSession: 'Restore session on startup',
     sessionAutosaveInterval: 'Autosave interval (minutes)',
   }
@@ -65,11 +64,6 @@ const prefsSchema = {
     },
     "hideTitleBar": {
       "description": "Hide window title bars by default (frameless windows)",
-      "type": "boolean",
-      "default": true
-    },
-    "persistWindowState": {
-      "description": "Remember window position and size across app restarts",
       "type": "boolean",
       "default": true
     },
@@ -164,7 +158,6 @@ const defaults = {
     showInDockAndSwitcher: true,
     backupDir: '',
     hideTitleBar: true,
-    persistWindowState: true,
     restoreSession: true,
     sessionAutosaveInterval: 5,
     pageWidth: 800,

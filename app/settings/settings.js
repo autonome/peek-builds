@@ -67,15 +67,20 @@ const createCheckbox = (label, value, onChange, options = {}) => {
   });
 
   wrapper.appendChild(input);
-  group.appendChild(labelEl);
-  group.appendChild(wrapper);
+
+  const textDiv = document.createElement('div');
+  textDiv.className = 'form-group-inline-text';
+  textDiv.appendChild(labelEl);
 
   if (options.helpText) {
     const help = document.createElement('div');
     help.className = 'help-text';
     help.textContent = options.helpText;
-    group.appendChild(help);
+    textDiv.appendChild(help);
   }
+
+  group.appendChild(textDiv);
+  group.appendChild(wrapper);
 
   return group;
 };

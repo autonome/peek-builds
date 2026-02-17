@@ -2097,29 +2097,7 @@ export function registerWindowHandlers(): void {
       }
     };
 
-    // Load saved window state if persistState is enabled and window has a key
-    let savedState: { x?: number; y?: number; width?: number; height?: number } | null = null;
-    if (options.key && (options.persistState === true || getPrefs().persistWindowState)) {
-      try {
-        const rowId = `window_state:${options.key}`;
-        const row = getRow('extension_settings', rowId);
-        if (row && row.value) {
-          savedState = JSON.parse(row.value as string);
-          DEBUG && console.log('Loaded saved window state for key:', options.key, savedState);
-        }
-      } catch (e) {
-        DEBUG && console.log('Failed to load window state:', e);
-      }
-    }
-
-    // Apply saved state or explicit position parameters
-    if (savedState) {
-      if (savedState.x !== undefined) winOptions.x = savedState.x;
-      if (savedState.y !== undefined) winOptions.y = savedState.y;
-      if (savedState.width !== undefined) winOptions.width = savedState.width;
-      if (savedState.height !== undefined) winOptions.height = savedState.height;
-    }
-    // Explicit options override saved state
+    // Apply explicit position parameters (used by session restore and direct callers)
     if (options.x !== undefined) {
       winOptions.x = parseInt(options.x);
     }
@@ -2733,37 +2711,6 @@ export function registerWindowHandlers(): void {
       trackContentWindowFocus(win);
       if (!options.modal) {
         trackVisibleWindowFocus(win);
-      }
-
-      // Set up window state persistence if enabled
-      const shouldPersist = options.key && (options.persistState === true || getPrefs().persistWindowState);
-      if (shouldPersist) {
-        // Debounce timer for saving state
-        let saveTimer: NodeJS.Timeout | null = null;
-        const saveState = () => {
-          if (saveTimer) clearTimeout(saveTimer);
-          saveTimer = setTimeout(() => {
-            if (win.isDestroyed()) return;
-            const bounds = win.getBounds();
-            const rowId = `window_state:${options.key}`;
-            const data = {
-              extensionId: 'window_state',
-              key: options.key,
-              value: JSON.stringify({
-                x: bounds.x,
-                y: bounds.y,
-                width: bounds.width,
-                height: bounds.height
-              }),
-              updatedAt: Date.now()
-            };
-            setRow('extension_settings', rowId, data);
-            DEBUG && console.log('Saved window state for key:', options.key, bounds);
-          }, 500); // Debounce 500ms
-        };
-
-        win.on('move', saveState);
-        win.on('resize', saveState);
       }
 
       // Set up DevTools if requested
