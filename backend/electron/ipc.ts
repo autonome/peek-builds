@@ -292,22 +292,49 @@ function itemToAddress(item: Item): Record<string, unknown> {
 }
 
 /**
- * Auto-tag an item with the group tag if the calling window is in group mode.
+ * Auto-tag an item with the group tag if the calling window (or the last
+ * focused visible window) is in group mode. This handles the case where
+ * items are created via cmd palette or other intermediary windows while
+ * the user is working in a group context.
  * Returns true if the item was tagged.
  */
+/**
+ * Tag an item and publish the event so UIs (groups, tags) update reactively
+ */
+function tagItemAndPublish(itemId: string, tagId: string): void {
+  const result = tagItem(itemId, tagId);
+  if (!result.alreadyExists) {
+    const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(tagId) as { name: string } | undefined;
+    publish('system', PubSubScopes.GLOBAL, 'tag:item-added', {
+      tagId,
+      tagName: tag?.name,
+      itemId
+    });
+  }
+}
+
 function autoTagIfGroupMode(ev: Electron.IpcMainInvokeEvent, itemId: string): boolean {
   try {
     const callingWin = BrowserWindow.fromWebContents(ev.sender);
-    if (!callingWin || callingWin.isDestroyed()) return false;
-    const modeEntry = getContextEntry('mode', callingWin.id);
-    if (modeEntry && modeEntry.value === 'group' && modeEntry.metadata?.groupId) {
-      const groupId = modeEntry.metadata.groupId as string;
-      tagItem(itemId, groupId);
-      DEBUG && console.log('[ipc] Auto-tagged item', itemId, 'with group', groupId);
+    const callerWinId = callingWin && !callingWin.isDestroyed() ? callingWin.id : null;
+    const callerMode = callerWinId ? getContextEntry('mode', callerWinId) : null;
+    const lastVisibleMode = lastFocusedVisibleWindowId ? getContextEntry('mode', lastFocusedVisibleWindowId) : null;
+
+    if (callerMode && callerMode.value === 'group' && callerMode.metadata?.groupId) {
+      const groupId = callerMode.metadata.groupId as string;
+      tagItemAndPublish(itemId, groupId);
+      console.log('[ipc] Auto-tagged item', itemId, 'with group', groupId, '(from caller)');
+      return true;
+    }
+    // Fallback: check last focused visible window (handles cmd palette, modal callers)
+    if (lastVisibleMode && lastVisibleMode.value === 'group' && lastVisibleMode.metadata?.groupId) {
+      const groupId = lastVisibleMode.metadata.groupId as string;
+      tagItemAndPublish(itemId, groupId);
+      console.log('[ipc] Auto-tagged item', itemId, 'with group', groupId, '(from last visible)');
       return true;
     }
   } catch (e) {
-    DEBUG && console.log('[ipc] autoTagIfGroupMode error:', e);
+    console.log('[ipc] autoTagIfGroupMode error:', e);
   }
   return false;
 }
@@ -2366,6 +2393,30 @@ export function registerWindowHandlers(): void {
             }
           });
           DEBUG && console.log('Inherited group mode from opener:', openerGroupMode.metadata?.groupName);
+        } else if (lastFocusedVisibleWindowId) {
+          // Fallback: check lastFocusedVisibleWindowId for group mode
+          // This handles the case where a non-group window (e.g. cmd palette)
+          // opens a URL while the user was previously focused on a group window
+          const lastVisibleContext = getContextEntry('mode', lastFocusedVisibleWindowId);
+          if (lastVisibleContext && lastVisibleContext.value === 'group' && lastVisibleContext.metadata) {
+            addContextEntry('mode', 'group', {
+              windowId: win.id,
+              source: msg.source,
+              metadata: {
+                ...lastVisibleContext.metadata,
+                url: modeUrl,
+                inheritedFrom: lastFocusedVisibleWindowId
+              }
+            });
+            console.log('[openWindow] Inherited group mode from lastFocusedVisibleWindow:', lastFocusedVisibleWindowId, lastVisibleContext.metadata?.groupName);
+          } else {
+            const detectedMode = detectModeFromUrl(modeUrl);
+            addContextEntry('mode', detectedMode, {
+              windowId: win.id,
+              source: msg.source,
+              metadata: { url: modeUrl }
+            });
+          }
         } else {
           // Set mode based on URL detection (original behavior)
           const detectedMode = detectModeFromUrl(modeUrl);
@@ -2470,9 +2521,10 @@ export function registerWindowHandlers(): void {
           }
           // Auto-tag with group if this window is in group mode
           const loadModeEntry = getContextEntry('mode', win.id);
+          console.log('[openWindow] trackWindowLoad auto-tag check:', { winId: win.id, mode: loadModeEntry?.value, groupId: loadModeEntry?.metadata?.groupId, itemId: trackResult.itemId });
           if (loadModeEntry && loadModeEntry.value === 'group' && loadModeEntry.metadata?.groupId) {
-            tagItem(trackResult.itemId, loadModeEntry.metadata.groupId as string);
-            DEBUG && console.log('[openWindow] Auto-tagged item', trackResult.itemId, 'with group', loadModeEntry.metadata.groupId);
+            tagItemAndPublish(trackResult.itemId, loadModeEntry.metadata.groupId as string);
+            console.log('[openWindow] Auto-tagged item', trackResult.itemId, 'with group', loadModeEntry.metadata.groupId);
           }
         } catch (e) {
           DEBUG && console.log('Failed to track window load:', e);
@@ -2504,7 +2556,7 @@ export function registerWindowHandlers(): void {
           // Auto-tag with group if this window is in group mode
           const navModeEntry = getContextEntry('mode', win.id);
           if (navModeEntry && navModeEntry.value === 'group' && navModeEntry.metadata?.groupId) {
-            tagItem(navTrack.itemId, navModeEntry.metadata.groupId as string);
+            tagItemAndPublish(navTrack.itemId, navModeEntry.metadata.groupId as string);
             DEBUG && console.log('[did-navigate] Auto-tagged item', navTrack.itemId, 'with group', navModeEntry.metadata.groupId);
           }
         } catch (e) {
@@ -2607,7 +2659,7 @@ export function registerWindowHandlers(): void {
                     // Auto-tag popup item with the group tag
                     if (popupItemId) {
                       try {
-                        tagItem(popupItemId, groupMode.groupId);
+                        tagItemAndPublish(popupItemId, groupMode.groupId);
                         DEBUG && console.log('[webview-popup] Auto-tagged popup item', popupItemId, 'with group', groupMode.groupId);
                       } catch (e) {
                         DEBUG && console.log('[webview-popup] Failed to auto-tag popup:', e);

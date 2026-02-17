@@ -1,19 +1,19 @@
 /**
- * Tentacles Extension Background Script
+ * Help Docs Extension Background Script
  *
- * Spawns a fullscreen transparent overlay window where animated tentacles
- * creep in from screen edges and flee from the cursor.
+ * Spawns a fullscreen transparent overlay window with animated
+ * documentation hints that appear from screen edges.
  *
- * Runs in isolated extension process (peek://ext/tentacles/background.html)
+ * Runs in isolated extension process (peek://ext/helpdocs/background.html)
  */
 
 const api = window.app;
 const debug = api.debug;
 
-console.log('[ext:tentacles] background init');
+console.log('[ext:helpdocs] background init');
 
-const OVERLAY_ADDRESS = 'peek://ext/tentacles/tentacles.html';
-const STORAGE_KEY = 'tentacles_enabled';
+const OVERLAY_ADDRESS = 'peek://ext/helpdocs/overlay.html';
+const STORAGE_KEY = 'helpdocs_enabled';
 
 let enabled = false;
 let overlayWindowId = null;
@@ -28,16 +28,16 @@ const loadState = async () => {
       const result = await api.settings.getKey('overlay_visible');
       if (result.success && result.data !== undefined && result.data !== null) {
         enabled = !!result.data;
-        console.log('[ext:tentacles] Loaded state from datastore - enabled:', enabled);
+        console.log('[ext:helpdocs] Loaded state from datastore - enabled:', enabled);
         return enabled;
       }
     } catch (err) {
-      console.log('[ext:tentacles] Failed to load from datastore:', err);
+      console.log('[ext:helpdocs] Failed to load from datastore:', err);
     }
   }
   const stored = localStorage.getItem(STORAGE_KEY);
-  enabled = stored === null ? true : stored === 'true'; // Default enabled
-  console.log('[ext:tentacles] Loaded state - enabled:', enabled);
+  enabled = stored === 'true'; // Default disabled
+  console.log('[ext:helpdocs] Loaded state - enabled:', enabled);
   return enabled;
 };
 
@@ -49,11 +49,11 @@ const saveState = (value) => {
   try {
     localStorage.setItem(STORAGE_KEY, String(value));
   } catch (err) {
-    debug && console.log('[ext:tentacles] Failed to cache state:', err);
+    debug && console.log('[ext:helpdocs] Failed to cache state:', err);
   }
   if (api?.settings?.setKey) {
     api.settings.setKey('overlay_visible', value).catch(err => {
-      console.error('[ext:tentacles] Failed to save state:', err);
+      console.error('[ext:helpdocs] Failed to save state:', err);
     });
   }
 };
@@ -88,7 +88,7 @@ const openOverlay = async () => {
     frame: false,
     hasShadow: false,
     escapeMode: 'ignore',
-    title: 'Tentacles',
+    title: 'Help Docs',
     centerOnParent: false,
     show: true
   };
@@ -97,23 +97,23 @@ const openOverlay = async () => {
     const result = await api.window.open(OVERLAY_ADDRESS, params);
     if (result.success) {
       overlayWindowId = result.id;
-      console.log('[ext:tentacles] Overlay opened:', overlayWindowId);
+      console.log('[ext:helpdocs] Overlay opened:', overlayWindowId);
 
       // Make the window click-through but still receive mouse move events
       // forward: true means mouse moves are still forwarded to the renderer
       setTimeout(async () => {
         try {
           await api.window.setIgnoreMouseEvents(overlayWindowId, true, true);
-          console.log('[ext:tentacles] Set click-through with forward');
+          console.log('[ext:helpdocs] Set click-through with forward');
         } catch (err) {
-          console.error('[ext:tentacles] Failed to set click-through:', err);
+          console.error('[ext:helpdocs] Failed to set click-through:', err);
         }
       }, 500);
     } else {
-      console.error('[ext:tentacles] Failed to open overlay:', result.error);
+      console.error('[ext:helpdocs] Failed to open overlay:', result.error);
     }
   } catch (error) {
-    console.error('[ext:tentacles] Error opening overlay:', error);
+    console.error('[ext:helpdocs] Error opening overlay:', error);
   }
 };
 
@@ -139,7 +139,7 @@ const closeOverlay = async () => {
   if (overlayWindowId) {
     await api.window.close(overlayWindowId);
     overlayWindowId = null;
-    console.log('[ext:tentacles] Overlay closed');
+    console.log('[ext:helpdocs] Overlay closed');
   }
 };
 
@@ -148,10 +148,10 @@ const toggle = async () => {
   saveState(newState);
   if (newState) {
     await openOverlay();
-    return { output: 'Tentacles enabled', mimeType: 'text/plain' };
+    return { output: 'Help docs enabled', mimeType: 'text/plain' };
   } else {
     await closeOverlay();
-    return { output: 'Tentacles disabled', mimeType: 'text/plain' };
+    return { output: 'Help docs disabled', mimeType: 'text/plain' };
   }
 };
 
@@ -161,7 +161,7 @@ const commandDefinitions = [
     name: 'help docs',
     description: 'Toggle help documentation overlay',
     execute: async () => {
-      console.log('[ext:tentacles] Toggle command executed');
+      console.log('[ext:helpdocs] Toggle command executed');
       return await toggle();
     }
   }
@@ -174,7 +174,7 @@ const initCommands = () => {
     api.commands.register(cmd);
     registeredCommands.push(cmd.name);
   });
-  console.log('[ext:tentacles] Registered commands:', registeredCommands);
+  console.log('[ext:helpdocs] Registered commands:', registeredCommands);
 };
 
 const uninitCommands = () => {
@@ -185,7 +185,7 @@ const uninitCommands = () => {
 };
 
 const init = async () => {
-  console.log('[ext:tentacles] init');
+  console.log('[ext:helpdocs] init');
 
   await loadState();
   initCommands();
@@ -206,17 +206,17 @@ const init = async () => {
     await openOverlay();
   }
 
-  console.log('[ext:tentacles] Initialized, enabled:', enabled);
+  console.log('[ext:helpdocs] Initialized, enabled:', enabled);
 };
 
 const uninit = () => {
-  console.log('[ext:tentacles] uninit');
+  console.log('[ext:helpdocs] uninit');
   uninitCommands();
   closeOverlay();
 };
 
 export default {
-  id: 'tentacles',
+  id: 'helpdocs',
   labels: {
     name: 'Help docs'
   },

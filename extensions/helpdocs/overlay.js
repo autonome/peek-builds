@@ -1,24 +1,24 @@
 /**
- * Tentacles Animation Script
+ * Help Docs Overlay Animation Script
  *
- * Renders organic tentacles that creep in from screen edges,
+ * Renders organic animated strands that creep in from screen edges,
  * undulate gently, and flee from the cursor.
  *
- * Each tentacle is a chain of segments rendered as a smooth bezier curve.
+ * Each strand is a chain of segments rendered as a smooth bezier curve.
  * Control points animate with sinusoidal wobble for organic motion.
  * Cursor proximity triggers a fear/recoil response.
  */
 
-const canvas = document.getElementById('tentacle-canvas');
+const canvas = document.getElementById('overlay-canvas');
 const ctx = canvas.getContext('2d');
 
 // --- Configuration ---
 const CONFIG = {
   // Spawn timing
-  spawnIntervalMin: 30000,   // 30s minimum between spawns
-  spawnIntervalMax: 60000,   // 60s maximum between spawns
+  spawnIntervalMin: 3000,    // 3s minimum between spawns
+  spawnIntervalMax: 8000,    // 8s maximum between spawns
 
-  // Tentacle properties
+  // Strand properties
   minSegments: 6,
   maxSegments: 14,
   minSegmentLength: 12,
@@ -27,7 +27,7 @@ const CONFIG = {
   maxThickness: 12,
 
   // Animation
-  creepSpeed: 0.3,           // pixels per frame when creeping in
+  creepSpeed: 0.8,           // pixels per frame when creeping in
   retreatSpeed: 0.15,        // pixels per frame when retreating naturally
   fleeSpeed: 3.0,            // pixels per frame when fleeing from cursor
   wobbleSpeed: 0.02,         // radians per frame for sinusoidal wobble
@@ -41,10 +41,10 @@ const CONFIG = {
 
   // Fear response
   fearRadius: 100,           // px distance to trigger fear
-  fearRecoveryTime: 2000,    // ms before tentacle can return after fear
+  fearRecoveryTime: 2000,    // ms before strand can return after fear
 
   // Visual
-  maxAlpha: 0.35,
+  maxAlpha: 0.7,
   colors: [
     { r: 90, g: 60, b: 120 },   // muted purple
     { r: 60, g: 90, b: 80 },    // dark teal
@@ -53,12 +53,12 @@ const CONFIG = {
     { r: 50, g: 80, b: 70 },    // deep sea green
   ],
 
-  // Max simultaneous tentacles
-  maxTentacles: 4,
+  // Max simultaneous strands
+  maxStrands: 12,
 };
 
 // --- State ---
-let tentacles = [];
+let strands = [];
 let mouseX = -1000;
 let mouseY = -1000;
 let animationId = null;
@@ -76,9 +76,9 @@ const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const dist = (x1, y1, x2, y2) => Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
 
 /**
- * Create a new tentacle emerging from a random edge
+ * Create a new strand emerging from a random edge
  */
-function createTentacle() {
+function createStrand() {
   const edge = randInt(0, 3);
   const numSegments = randInt(CONFIG.minSegments, CONFIG.maxSegments);
   const segmentLength = rand(CONFIG.minSegmentLength, CONFIG.maxSegmentLength);
@@ -159,31 +159,31 @@ function createTentacle() {
 }
 
 /**
- * Compute the joint positions of a tentacle
+ * Compute the joint positions of a strand
  * Returns array of {x, y} points from base to tip
  */
-function computePoints(t) {
-  const points = [{ x: t.baseX, y: t.baseY }];
-  let currentAngle = t.baseAngle;
-  let x = t.baseX;
-  let y = t.baseY;
+function computePoints(s) {
+  const points = [{ x: s.baseX, y: s.baseY }];
+  let currentAngle = s.baseAngle;
+  let x = s.baseX;
+  let y = s.baseY;
 
   // Only draw segments up to current extension
-  const visibleSegments = Math.ceil(t.extension * t.numSegments);
-  const partialFrac = (t.extension * t.numSegments) - Math.floor(t.extension * t.numSegments);
+  const visibleSegments = Math.ceil(s.extension * s.numSegments);
+  const partialFrac = (s.extension * s.numSegments) - Math.floor(s.extension * s.numSegments);
 
-  for (let i = 0; i < visibleSegments && i < t.segments.length; i++) {
-    const seg = t.segments[i];
+  for (let i = 0; i < visibleSegments && i < s.segments.length; i++) {
+    const seg = s.segments[i];
 
-    // Wobble: sinusoidal oscillation that propagates down the tentacle
-    const wobble = Math.sin(t.wobbleTime * seg.wobbleFreq + seg.wobblePhase + i * 0.8)
+    // Wobble: sinusoidal oscillation that propagates down the strand
+    const wobble = Math.sin(s.wobbleTime * seg.wobbleFreq + seg.wobblePhase + i * 0.8)
                    * CONFIG.wobbleAmplitude * (1 + i * 0.1);
 
     currentAngle += seg.angleOffset + wobble;
 
     // If this is the last visible segment and partial, shorten it
     let len = seg.length;
-    if (i === visibleSegments - 1 && visibleSegments < t.numSegments) {
+    if (i === visibleSegments - 1 && visibleSegments < s.numSegments) {
       len *= partialFrac || 1;
     }
 
@@ -196,16 +196,16 @@ function computePoints(t) {
 }
 
 /**
- * Draw a smooth tentacle through points using quadratic bezier curves
+ * Draw a smooth strand through points using quadratic bezier curves
  */
-function drawTentacle(t) {
-  const points = computePoints(t);
+function drawStrand(s) {
+  const points = computePoints(s);
   if (points.length < 2) return;
 
-  const { r, g, b } = t.color;
-  const alpha = t.alpha;
+  const { r, g, b } = s.color;
+  const alpha = s.alpha;
 
-  // Draw the tentacle as a tapered, smooth path
+  // Draw the strand as a tapered, smooth path
   // We'll draw it as a filled shape with varying width
   ctx.save();
 
@@ -214,8 +214,8 @@ function drawTentacle(t) {
     const p1 = points[i + 1];
 
     // Thickness tapers from base to tip
-    const t0 = t.thickness * (1 - (i / points.length) * 0.7);
-    const t1 = t.thickness * (1 - ((i + 1) / points.length) * 0.7);
+    const t0 = s.thickness * (1 - (i / points.length) * 0.7);
+    const t1 = s.thickness * (1 - ((i + 1) / points.length) * 0.7);
 
     // Direction perpendicular to segment
     const dx = p1.x - p0.x;
@@ -232,14 +232,14 @@ function drawTentacle(t) {
     ctx.lineTo(p0.x - nx * t0 / 2, p0.y - ny * t0 / 2);
     ctx.closePath();
 
-    // Gradient alpha along the tentacle
+    // Gradient alpha along the strand
     const segAlpha = alpha * (1 - (i / points.length) * 0.5);
     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${segAlpha})`;
     ctx.fill();
   }
 
   // Draw a smooth overlay using bezier curves for the center line
-  // This gives the "core" of the tentacle a richer look
+  // This gives the "core" of the strand a richer look
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
 
@@ -270,7 +270,7 @@ function drawTentacle(t) {
 
   // Core line (slightly lighter, thinner)
   ctx.strokeStyle = `rgba(${Math.min(255, r + 30)}, ${Math.min(255, g + 30)}, ${Math.min(255, b + 30)}, ${alpha * 0.6})`;
-  ctx.lineWidth = Math.max(1, t.thickness * 0.3);
+  ctx.lineWidth = Math.max(1, s.thickness * 0.3);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.stroke();
@@ -278,17 +278,17 @@ function drawTentacle(t) {
   // Tip: small circle at the end
   if (points.length >= 2) {
     const tip = points[points.length - 1];
-    const tipRadius = t.thickness * 0.2 * (1 - ((points.length - 1) / t.numSegments) * 0.5);
+    const tipRadius = s.thickness * 0.2 * (1 - ((points.length - 1) / s.numSegments) * 0.5);
     ctx.beginPath();
     ctx.arc(tip.x, tip.y, Math.max(1, tipRadius), 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${Math.min(255, r + 40)}, ${Math.min(255, g + 40)}, ${Math.min(255, b + 40)}, ${alpha * 0.8})`;
     ctx.fill();
   }
 
-  // Suckers/spots along the tentacle for extra organic feel
+  // Spots along the strand for extra organic feel
   for (let i = 1; i < points.length - 1; i += 2) {
     const p = points[i];
-    const spotSize = t.thickness * 0.12 * (1 - (i / points.length) * 0.5);
+    const spotSize = s.thickness * 0.12 * (1 - (i / points.length) * 0.5);
     ctx.beginPath();
     ctx.arc(p.x, p.y, Math.max(0.5, spotSize), 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${Math.max(0, r - 20)}, ${Math.max(0, g - 20)}, ${Math.max(0, b - 20)}, ${alpha * 0.4})`;
@@ -299,10 +299,10 @@ function drawTentacle(t) {
 }
 
 /**
- * Check if the cursor is near any point of a tentacle
+ * Check if the cursor is near any point of a strand
  */
-function isCursorNear(t) {
-  const points = computePoints(t);
+function isCursorNear(s) {
+  const points = computePoints(s);
   for (const p of points) {
     if (dist(mouseX, mouseY, p.x, p.y) < CONFIG.fearRadius) {
       return true;
@@ -312,68 +312,68 @@ function isCursorNear(t) {
 }
 
 /**
- * Update a single tentacle's state
+ * Update a single strand's state
  */
-function updateTentacle(t, dt) {
+function updateStrand(s, dt) {
   // Advance wobble time
-  t.wobbleTime += CONFIG.wobbleSpeed * (dt / 16);
+  s.wobbleTime += CONFIG.wobbleSpeed * (dt / 16);
 
   // Check for cursor proximity
-  const cursorNear = isCursorNear(t);
+  const cursorNear = isCursorNear(s);
 
-  if (cursorNear && !t.afraid && t.phase !== 'dead') {
+  if (cursorNear && !s.afraid && s.phase !== 'dead') {
     // FEAR! Rapidly retract
-    t.afraid = true;
-    t.fearTime = 0;
-    t.phase = 'fleeing';
-    t.targetExtension = 0;
+    s.afraid = true;
+    s.fearTime = 0;
+    s.phase = 'fleeing';
+    s.targetExtension = 0;
   }
 
   // Update phase
-  t.phaseTime += dt;
+  s.phaseTime += dt;
 
-  switch (t.phase) {
+  switch (s.phase) {
     case 'creeping':
       // Slowly extend
-      t.extension = clamp(t.extension + CONFIG.creepSpeed * (dt / 1000), 0, 1);
-      t.alpha = clamp(t.alpha + 0.01 * (dt / 16), 0, CONFIG.maxAlpha);
+      s.extension = clamp(s.extension + CONFIG.creepSpeed * (dt / 1000), 0, 1);
+      s.alpha = clamp(s.alpha + 0.01 * (dt / 16), 0, CONFIG.maxAlpha);
 
-      if (t.extension >= 1) {
-        t.phase = 'lingering';
-        t.phaseTime = 0;
+      if (s.extension >= 1) {
+        s.phase = 'lingering';
+        s.phaseTime = 0;
       }
       break;
 
     case 'lingering':
       // Just wobble in place
-      t.alpha = CONFIG.maxAlpha;
-      if (t.phaseTime >= t.lingerDuration) {
-        t.phase = 'retreating';
-        t.phaseTime = 0;
-        t.targetExtension = 0;
+      s.alpha = CONFIG.maxAlpha;
+      if (s.phaseTime >= s.lingerDuration) {
+        s.phase = 'retreating';
+        s.phaseTime = 0;
+        s.targetExtension = 0;
       }
       break;
 
     case 'retreating':
       // Slowly retract
-      t.extension = clamp(t.extension - CONFIG.retreatSpeed * (dt / 1000), 0, 1);
-      t.alpha = clamp(t.extension * CONFIG.maxAlpha, 0, CONFIG.maxAlpha);
+      s.extension = clamp(s.extension - CONFIG.retreatSpeed * (dt / 1000), 0, 1);
+      s.alpha = clamp(s.extension * CONFIG.maxAlpha, 0, CONFIG.maxAlpha);
 
-      if (t.extension <= 0) {
-        t.phase = 'dead';
+      if (s.extension <= 0) {
+        s.phase = 'dead';
       }
       break;
 
     case 'fleeing':
       // Rapidly retract with increased wobble
-      t.extension = clamp(t.extension - CONFIG.fleeSpeed * (dt / 1000), 0, 1);
-      t.alpha = clamp(t.extension * CONFIG.maxAlpha, 0, CONFIG.maxAlpha);
+      s.extension = clamp(s.extension - CONFIG.fleeSpeed * (dt / 1000), 0, 1);
+      s.alpha = clamp(s.extension * CONFIG.maxAlpha, 0, CONFIG.maxAlpha);
 
       // Extra frantic wobble when afraid
-      t.wobbleTime += CONFIG.wobbleSpeed * 3 * (dt / 16);
+      s.wobbleTime += CONFIG.wobbleSpeed * 3 * (dt / 16);
 
-      if (t.extension <= 0) {
-        t.phase = 'dead';
+      if (s.extension <= 0) {
+        s.phase = 'dead';
       }
       break;
   }
@@ -389,37 +389,36 @@ function animate(timestamp) {
   // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Update and draw all tentacles
-  for (const t of tentacles) {
-    updateTentacle(t, dt);
-    if (t.phase !== 'dead') {
-      drawTentacle(t);
+  // Update and draw all strands
+  for (const s of strands) {
+    updateStrand(s, dt);
+    if (s.phase !== 'dead') {
+      drawStrand(s);
     }
   }
 
-  // Remove dead tentacles
-  tentacles = tentacles.filter(t => t.phase !== 'dead');
+  // Remove dead strands
+  strands = strands.filter(s => s.phase !== 'dead');
 
   animationId = requestAnimationFrame(animate);
 }
 
 /**
- * Spawn a new tentacle if under the limit
+ * Spawn a new strand if under the limit
  */
-function spawnTentacle() {
-  if (tentacles.length < CONFIG.maxTentacles) {
-    tentacles.push(createTentacle());
-    console.log('[tentacles] Spawned tentacle, total:', tentacles.length);
+function spawnStrand() {
+  if (strands.length < CONFIG.maxStrands) {
+    strands.push(createStrand());
   }
   scheduleNextSpawn();
 }
 
 /**
- * Schedule the next tentacle spawn
+ * Schedule the next strand spawn
  */
 function scheduleNextSpawn() {
   const delay = rand(CONFIG.spawnIntervalMin, CONFIG.spawnIntervalMax);
-  spawnTimer = setTimeout(spawnTentacle, delay);
+  spawnTimer = setTimeout(spawnStrand, delay);
 }
 
 /**
@@ -438,7 +437,6 @@ function resizeCanvas() {
  * Initialize
  */
 function init() {
-  console.log('[tentacles] Initializing canvas');
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
 
@@ -457,12 +455,11 @@ function init() {
   // Start animation loop
   animationId = requestAnimationFrame(animate);
 
-  // Spawn first tentacle after a short delay, then schedule periodic spawns
-  setTimeout(() => {
-    spawnTentacle();
-  }, 3000);
-
-  console.log('[tentacles] Animation started');
+  // Spawn a batch immediately from all edges
+  for (let i = 0; i < 6; i++) {
+    spawnStrand();
+  }
+  scheduleNextSpawn();
 }
 
 init();

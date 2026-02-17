@@ -499,8 +499,14 @@ const init = async () => {
   const debouncedRefresh = debounce(async () => {
     debug && console.log('[groups] debounced refresh triggered');
     await loadTags();
-    if (state.view === VIEW_GROUPS) renderGroups();
-    else if (state.view === VIEW_ADDRESSES) renderAddresses();
+    if (state.view === VIEW_GROUPS) {
+      renderGroups();
+    } else if (state.view === VIEW_ADDRESSES && state.currentTag) {
+      // Reload addresses for the current tag — loadTags only refreshes tag metadata,
+      // not the items list shown in the addresses view
+      await loadAddressesForTag(state.currentTag.id);
+      renderAddresses();
+    }
   }, 150);
 
   // Subscribe to tag events for reactive updates
