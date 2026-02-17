@@ -43,6 +43,10 @@
   --theme-warning: var(--base0A);
   --theme-danger: var(--base08);
 
+  /* Surface — floating panels on transparent/layered backgrounds */
+  --theme-surface-border: 1px solid rgba(0, 0, 0, 0.12);
+  --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.08);
+
   /* Typography - system-ui has 96%+ support (caniuse.com/font-family-system-ui) */
   --theme-font-sans: system-ui, sans-serif;
   --theme-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, "Cascadia Mono", monospace;
@@ -70,6 +74,9 @@
     --base0D: #0a84ff;  /* Blue */
     --base0E: #bf5af2;  /* Purple */
     --base0F: #ac8e68;  /* Brown */
+
+    --theme-surface-border: 1px solid rgba(255, 255, 255, 0.2);
+    --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.5);
   }
 }
 
@@ -92,6 +99,9 @@
   --base0D: #0066cc;
   --base0E: #6f42c1;
   --base0F: #8b4513;
+
+  --theme-surface-border: 1px solid rgba(0, 0, 0, 0.12);
+  --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 
 /* ========== Forced Dark Mode ========== */
@@ -113,4 +123,7 @@
   --base0D: #0a84ff;
   --base0E: #bf5af2;
   --base0F: #ac8e68;
+
+  --theme-surface-border: 1px solid rgba(255, 255, 255, 0.2);
+  --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.5);
 }
