@@ -260,6 +260,41 @@ const init = async () => {
     editorLayout.setSaveStatusVisible(true);
   }
 
+  // Register vim ex-commands for :w and :wq
+  Vim.defineEx('write', 'w', () => {
+    if (!currentItemId) {
+      debug && console.log('[editor:vim] :w — no item to save');
+      return;
+    }
+    const content = editorLayout.getContent();
+    // Cancel any pending autosave — we're saving now
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    performAutosave(content);
+    debug && console.log('[editor:vim] :w — saved');
+  });
+
+  Vim.defineEx('wq', 'wq', async () => {
+    if (currentItemId) {
+      const content = editorLayout.getContent();
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      await performAutosave(content);
+      debug && console.log('[editor:vim] :wq — saved');
+    }
+    // Close the editor window
+    if (api?.window?.close) {
+      api.window.close();
+    } else {
+      window.close();
+    }
+    debug && console.log('[editor:vim] :wq — closing window');
+  });
+
   // Set up escape handler
   //
   // Vim mode ESC cascade:

@@ -1,8 +1,8 @@
 {
   "id": "tentacles",
   "shortname": "tentacles",
-  "name": "Tentacles",
-  "description": "Animated tentacles that occasionally creep in from screen edges and flee from the cursor",
+  "name": "Help docs",
+  "description": "Helpful documentation and assistance features",
   "version": "1.0.0",
   "background": "background.html",
   "builtin": true
