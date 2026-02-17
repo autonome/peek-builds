@@ -83,6 +83,16 @@ const prefsSchema = {
       "type": "integer",
       "default": 5
     },
+    "pageWidth": {
+      "description": "Default width for new page windows",
+      "type": "integer",
+      "default": 800
+    },
+    "pageHeight": {
+      "description": "Default height for new page windows",
+      "type": "integer",
+      "default": 600
+    },
   },
   "required": [ "shortcutKey", "startupFeature", "enableTrayIcon", "showInDockAndSwitcher", "quitShortcut" ]
 };
@@ -156,7 +166,9 @@ const defaults = {
     hideTitleBar: true,
     persistWindowState: true,
     restoreSession: true,
-    sessionAutosaveInterval: 5
+    sessionAutosaveInterval: 5,
+    pageWidth: 800,
+    pageHeight: 600
   },
   items: [
     { id: '82de735f-a4b7-4fe6-a458-ec29939ae00d',

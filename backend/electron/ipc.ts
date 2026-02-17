@@ -2082,8 +2082,8 @@ export function registerWindowHandlers(): void {
     const winOptions: Electron.BrowserWindowConstructorOptions = {
       frame: isWebPage ? false : frameDefault, // Web pages are always frameless
       ...options,
-      width: parseInt(options.width) || APP_DEF_WIDTH,
-      height: parseInt(options.height) || APP_DEF_HEIGHT,
+      width: parseInt(options.width) || (getPrefs().pageWidth as number) || APP_DEF_WIDTH,
+      height: parseInt(options.height) || (getPrefs().pageHeight as number) || APP_DEF_HEIGHT,
       show: isHeadless() ? false : options.show !== false,
       // Canvas pages: transparent minimal window, no shadow, no OS resize (we handle it via setBounds)
       transparent: useCanvas ? true : (options.transparent || false),
