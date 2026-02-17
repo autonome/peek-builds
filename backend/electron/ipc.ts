@@ -292,6 +292,27 @@ function itemToAddress(item: Item): Record<string, unknown> {
 }
 
 /**
+ * Auto-tag an item with the group tag if the calling window is in group mode.
+ * Returns true if the item was tagged.
+ */
+function autoTagIfGroupMode(ev: Electron.IpcMainInvokeEvent, itemId: string): boolean {
+  try {
+    const callingWin = BrowserWindow.fromWebContents(ev.sender);
+    if (!callingWin || callingWin.isDestroyed()) return false;
+    const modeEntry = getContextEntry('mode', callingWin.id);
+    if (modeEntry && modeEntry.value === 'group' && modeEntry.metadata?.groupId) {
+      const groupId = modeEntry.metadata.groupId as string;
+      tagItem(itemId, groupId);
+      DEBUG && console.log('[ipc] Auto-tagged item', itemId, 'with group', groupId);
+      return true;
+    }
+  } catch (e) {
+    DEBUG && console.log('[ipc] autoTagIfGroupMode error:', e);
+  }
+  return false;
+}
+
+/**
  * Register datastore IPC handlers
  */
 export function registerDatastoreHandlers(): void {
@@ -323,6 +344,9 @@ export function registerDatastoreHandlers(): void {
         itemType: 'url',
         content: normalizedUri
       });
+
+      // Auto-tag with group if calling window is in group mode
+      autoTagIfGroupMode(ev, result.id);
 
       return { success: true, data: result, id: result.id };
     } catch (error) {
@@ -669,6 +693,9 @@ export function registerDatastoreHandlers(): void {
       });
       if (DEBUG) console.log('[ipc] item:created', result.id, data.type);
 
+      // Auto-tag with group if calling window is in group mode
+      autoTagIfGroupMode(ev, result.id);
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -891,6 +918,10 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-track-navigation', async (ev, data) => {
     try {
       const result = trackNavigation(data.uri, data.options);
+
+      // Auto-tag with group if calling window is in group mode
+      autoTagIfGroupMode(ev, result.itemId);
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2177,9 +2208,23 @@ export function registerWindowHandlers(): void {
     DEBUG && console.log('Creating window with options:', winOptions);
     console.log(`[window-open:bounds] url=${url.substring(0, 80)} final position: (${winOptions.x},${winOptions.y}) ${winOptions.width}x${winOptions.height}${useCanvas ? " [canvas]" : ""}`);
 
+    // Pass through optional BrowserWindow properties from caller
+    if (options.alwaysOnTop !== undefined) winOptions.alwaysOnTop = !!options.alwaysOnTop;
+    if (options.focusable !== undefined) winOptions.focusable = !!options.focusable;
+    if (options.skipTaskbar !== undefined) winOptions.skipTaskbar = !!options.skipTaskbar;
+    if (options.hasShadow !== undefined && !useCanvas) winOptions.hasShadow = !!options.hasShadow;
+
     // Create new window
     const win = new BrowserWindow(winOptions);
     { const actualBounds = win.getBounds(); console.log(`[window-open:actual] Window ${win.id} actual bounds after creation: (${actualBounds.x},${actualBounds.y}) ${actualBounds.width}x${actualBounds.height}`); }
+
+    // Reinforce alwaysOnTop after creation — on macOS the constructor flag alone
+    // is unreliable; calling setAlwaysOnTop with 'floating' level ensures it stays
+    // above regular windows.
+    if (options.alwaysOnTop) {
+      win.setAlwaysOnTop(true, 'floating');
+      DEBUG && console.log('[window-open] Set alwaysOnTop floating for window', win.id);
+    }
 
     // Track window position for display-watcher home display restoration
     trackWindow(win);
@@ -2423,6 +2468,12 @@ export function registerWindowHandlers(): void {
               content: url
             });
           }
+          // Auto-tag with group if this window is in group mode
+          const loadModeEntry = getContextEntry('mode', win.id);
+          if (loadModeEntry && loadModeEntry.value === 'group' && loadModeEntry.metadata?.groupId) {
+            tagItem(trackResult.itemId, loadModeEntry.metadata.groupId as string);
+            DEBUG && console.log('[openWindow] Auto-tagged item', trackResult.itemId, 'with group', loadModeEntry.metadata.groupId);
+          }
         } catch (e) {
           DEBUG && console.log('Failed to track window load:', e);
         }
@@ -2449,6 +2500,12 @@ export function registerWindowHandlers(): void {
               itemType: 'url',
               content: navUrl
             });
+          }
+          // Auto-tag with group if this window is in group mode
+          const navModeEntry = getContextEntry('mode', win.id);
+          if (navModeEntry && navModeEntry.value === 'group' && navModeEntry.metadata?.groupId) {
+            tagItem(navTrack.itemId, navModeEntry.metadata.groupId as string);
+            DEBUG && console.log('[did-navigate] Auto-tagged item', navTrack.itemId, 'with group', navModeEntry.metadata.groupId);
           }
         } catch (e) {
           DEBUG && console.log('Failed to track did-navigate:', e);
@@ -2519,12 +2576,14 @@ export function registerWindowHandlers(): void {
               (async () => {
                 try {
                   // Track the popup URL in history
+                  let popupItemId: string | undefined;
                   try {
                     const popupTrack = trackWindowLoad(popupUrl, {
                       source: 'window-open',
                       sourceId: url,
                       windowType: 'main',
                     });
+                    popupItemId = popupTrack.itemId;
                     if (popupTrack.created) {
                       publish('system', PubSubScopes.GLOBAL, 'item:created', {
                         itemId: popupTrack.itemId,
@@ -2545,6 +2604,15 @@ export function registerWindowHandlers(): void {
                       groupName: parentContext.metadata.groupName as string,
                       color: parentContext.metadata.color as string,
                     };
+                    // Auto-tag popup item with the group tag
+                    if (popupItemId) {
+                      try {
+                        tagItem(popupItemId, groupMode.groupId);
+                        DEBUG && console.log('[webview-popup] Auto-tagged popup item', popupItemId, 'with group', groupMode.groupId);
+                      } catch (e) {
+                        DEBUG && console.log('[webview-popup] Failed to auto-tag popup:', e);
+                      }
+                    }
                   }
 
                   // Get the source address from the parent window's registration

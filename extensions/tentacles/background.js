@@ -158,8 +158,8 @@ const toggle = async () => {
 // Commands
 const commandDefinitions = [
   {
-    name: 'tentacles',
-    description: 'Toggle tentacles easter egg on/off',
+    name: 'help docs',
+    description: 'Toggle help documentation overlay',
     execute: async () => {
       console.log('[ext:tentacles] Toggle command executed');
       return await toggle();
@@ -218,7 +218,7 @@ const uninit = () => {
 export default {
   id: 'tentacles',
   labels: {
-    name: 'Tentacles'
+    name: 'Help docs'
   },
   init,
   uninit
