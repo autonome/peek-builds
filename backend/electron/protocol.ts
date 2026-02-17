@@ -47,13 +47,25 @@ const BARE_IMPORT_MAP: Record<string, string> = {
 /**
  * Fetch a local file, logging a warning if it doesn't exist.
  * Replaces bare net.fetch(fileURL) calls so we get visibility into 404s.
+ * Returns no-cache headers to prevent Chromium from serving stale app files.
  */
-function fetchFile(absolutePath: string, requestUrl: string): Response {
+async function fetchFile(absolutePath: string, requestUrl: string): Promise<Response> {
   if (!fs.existsSync(absolutePath)) {
     console.error(`[protocol] FILE NOT FOUND: ${absolutePath} (requested: ${requestUrl})`);
     return new Response('Not Found', { status: 404 });
   }
-  return net.fetch(pathToFileURL(absolutePath).toString()) as unknown as Response;
+  const fileURL = pathToFileURL(absolutePath).toString();
+  const response = await net.fetch(fileURL);
+  const body = await response.arrayBuffer();
+  return new Response(body, {
+    status: response.status,
+    headers: {
+      'Content-Type': response.headers.get('Content-Type') || 'application/octet-stream',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    }
+  });
 }
 
 /**
