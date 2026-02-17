@@ -847,12 +847,16 @@ api.subscribe('page:go-forward', (msg) => {
   }
 }, api.scopes.GLOBAL);
 
-// Navigate to a new URL (used by pagestream to flip between cards)
+// Navigate to a new URL (used by pagestream to flip between cards).
+// Tracks the original URL so Escape can skip accumulated history.
+let pagestreamOriginalUrl = null;
+
 api.subscribe('page:navigate', (msg) => {
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
   const url = msg.url;
   if (url) {
     DEBUG && console.log('[page] page:navigate:', url);
+    if (!pagestreamOriginalUrl) pagestreamOriginalUrl = webview.getURL();
     webview.loadURL(url);
     navbar.setUrl(url);
   }
@@ -887,6 +891,13 @@ navbar.addEventListener('dismiss', () => { hide(); });
 // --- Escape handling ---
 
 api.escape.onEscape(() => {
+  // If pagestream was flipping through cards, skip all accumulated history
+  // and let backend close the window (return to pagestream)
+  if (pagestreamOriginalUrl) {
+    pagestreamOriginalUrl = null;
+    DEBUG && console.log('[page] ESC: pagestream browsing, closing window');
+    return { handled: false }; // let backend close
+  }
   if (webview.canGoBack()) {
     DEBUG && console.log('[page] ESC: webview going back');
     webview.goBack();
