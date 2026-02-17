@@ -378,6 +378,7 @@ const openInPageHost = async (url) => {
     });
     if (result && result.id) {
       state.openWindowId = result.id;
+      registerGlobalNav();
     }
   } catch (err) {
     console.error('[pagestream] Failed to open page:', err);
@@ -391,8 +392,80 @@ const openInPageHost = async (url) => {
   }, 300);
 };
 
+// ===== Global navigation while page host is open =====
+
+let globalNavRegistered = false;
+
+/** Move card selection and optionally navigate the open page host */
+const moveSelection = (action) => {
+  const cards = getCards();
+  if (cards.length === 0) return;
+
+  const prevIndex = state.selectedIndex;
+
+  switch (action) {
+    case 'down':
+      if (state.selectedIndex < cards.length - 1) state.selectedIndex++;
+      break;
+    case 'up':
+      if (state.selectedIndex > 0) state.selectedIndex--;
+      break;
+    case 'first':
+      state.selectedIndex = 0;
+      break;
+    case 'last':
+      state.selectedIndex = cards.length - 1;
+      break;
+  }
+
+  if (state.selectedIndex === prevIndex) return;
+
+  updateSelection();
+
+  // If a page host is open, navigate it to the new card's URL
+  if (state.openWindowId) {
+    const filtered = getFilteredVisits();
+    const entry = filtered[state.selectedIndex];
+    if (entry) {
+      state.openCardIndex = state.selectedIndex;
+      api.publish('page:navigate', {
+        windowId: state.openWindowId,
+        url: entry.item.content
+      }, api.scopes.GLOBAL);
+    }
+  }
+};
+
+const GLOBAL_NAV_SHORTCUTS = [
+  ['CommandOrControl+Down', () => moveSelection('down')],
+  ['CommandOrControl+Up', () => moveSelection('up')],
+  ['CommandOrControl+J', () => moveSelection('down')],
+  ['CommandOrControl+K', () => moveSelection('up')],
+  ['CommandOrControl+Shift+G', () => moveSelection('first')],
+  ['CommandOrControl+Shift+End', () => moveSelection('last')],
+];
+
+const registerGlobalNav = () => {
+  if (globalNavRegistered) return;
+  for (const [key, fn] of GLOBAL_NAV_SHORTCUTS) {
+    api.shortcuts.register(key, fn, { global: true });
+  }
+  globalNavRegistered = true;
+  debug && console.log('[pagestream] Global nav shortcuts registered');
+};
+
+const unregisterGlobalNav = () => {
+  if (!globalNavRegistered) return;
+  for (const [key] of GLOBAL_NAV_SHORTCUTS) {
+    api.shortcuts.unregister(key, { global: true });
+  }
+  globalNavRegistered = false;
+  debug && console.log('[pagestream] Global nav shortcuts unregistered');
+};
+
 const onPageHostClosed = async (closedWindowId) => {
   if (closedWindowId !== state.openWindowId) return;
+  unregisterGlobalNav();
   state.openWindowId = null;
 
   const cards = getCards();
@@ -568,18 +641,12 @@ const handleKeydown = (e) => {
     case 'j':
     case 'ArrowDown':
       e.preventDefault();
-      if (state.selectedIndex < cards.length - 1) {
-        state.selectedIndex++;
-        updateSelection();
-      }
+      moveSelection('down');
       break;
     case 'k':
     case 'ArrowUp':
       e.preventDefault();
-      if (state.selectedIndex > 0) {
-        state.selectedIndex--;
-        updateSelection();
-      }
+      moveSelection('up');
       break;
     case 'Enter':
       e.preventDefault();
@@ -592,24 +659,14 @@ const handleKeydown = (e) => {
       }
       break;
     case 'g':
-      e.preventDefault();
-      state.selectedIndex = 0;
-      updateSelection();
-      break;
-    case 'G':
-      e.preventDefault();
-      state.selectedIndex = cards.length - 1;
-      updateSelection();
-      break;
     case 'Home':
       e.preventDefault();
-      state.selectedIndex = 0;
-      updateSelection();
+      moveSelection('first');
       break;
+    case 'G':
     case 'End':
       e.preventDefault();
-      state.selectedIndex = cards.length - 1;
-      updateSelection();
+      moveSelection('last');
       break;
   }
 };

@@ -847,6 +847,17 @@ api.subscribe('page:go-forward', (msg) => {
   }
 }, api.scopes.GLOBAL);
 
+// Navigate to a new URL (used by pagestream to flip between cards)
+api.subscribe('page:navigate', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
+  const url = msg.url;
+  if (url) {
+    DEBUG && console.log('[page] page:navigate:', url);
+    webview.loadURL(url);
+    navbar.setUrl(url);
+  }
+}, api.scopes.GLOBAL);
+
 // --- Nav button actions and URL navigation are handled by peek-navbar component ---
 // Event listeners wired up in the "peek-navbar component event wiring" section above.
 // On navigate or dismiss (Escape), also hide the navbar (page-specific behavior).
