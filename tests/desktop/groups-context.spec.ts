@@ -36,7 +36,16 @@ async function createGroupWithItems(
   urls: string[]
 ): Promise<{ tagId: string; itemIds: string[] }> {
   const tagResult = await bgWindow.evaluate(async (name: string) => {
-    return await (window as any).app.datastore.getOrCreateTag(name);
+    const result = await (window as any).app.datastore.getOrCreateTag(name);
+    if (result.success) {
+      // Promote tag to group so it appears in the groups list
+      const tag = result.data.tag;
+      let meta = {};
+      try { meta = tag.metadata ? JSON.parse(tag.metadata) : {}; } catch {}
+      meta.isGroup = true;
+      await (window as any).app.datastore.setRow('tags', tag.id, { ...tag, metadata: JSON.stringify(meta) });
+    }
+    return result;
   }, groupName);
   expect(tagResult.success).toBe(true);
   const tagId = tagResult.data?.tag?.id || tagResult.data?.data?.id || tagResult.data?.id;

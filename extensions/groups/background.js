@@ -194,7 +194,23 @@ const saveToGroup = async (groupName) => {
     return { success: false, error: tagResult.error };
   }
 
-  const tagId = tagResult.data.tag.id;
+  const tag = tagResult.data.tag;
+  const tagId = tag.id;
+
+  // Auto-promote: ensure the tag has isGroup: true in metadata
+  try {
+    let meta = {};
+    if (tag.metadata) {
+      meta = typeof tag.metadata === 'object' ? tag.metadata : JSON.parse(tag.metadata);
+    }
+    if (!meta.isGroup) {
+      meta.isGroup = true;
+      await api.datastore.setRow('tags', tagId, { ...tag, metadata: JSON.stringify(meta) });
+      debug && console.log('[ext:groups] Auto-promoted tag to group:', groupName);
+    }
+  } catch (err) {
+    console.error('[ext:groups] Failed to auto-promote tag:', err);
+  }
 
   const listResult = await api.window.list({ includeInternal: false });
   if (!listResult.success || listResult.windows.length === 0) {
@@ -380,16 +396,16 @@ const init = async () => {
   // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 
-  // Listen for window close events to cleanup group mode
+  // Listen for window close events to clean up groups window tracking
+  // NOTE: We do NOT exit group mode when the groups panel closes.
+  // Group mode persists on member windows. It is only cleared when:
+  // - The user navigates back to the groups list (handled in home.js showGroups)
+  // - The user explicitly changes mode
   api.subscribe('window:closed', async (msg) => {
     const closedWindowId = msg?.id;
 
-    // If the groups window closed, exit group mode for all windows in the active group
-    if (closedWindowId === groupsWindowId && activeGroupId) {
-      debug && console.log('[ext:groups] Groups window closed, exiting group mode for active group');
-      await exitGroupMode(activeGroupId);
-      activeGroupId = null;
-      activeGroupName = null;
+    if (closedWindowId === groupsWindowId) {
+      debug && console.log('[ext:groups] Groups window closed, keeping group mode on member windows');
       groupsWindowId = null;
     }
   }, api.scopes.GLOBAL);

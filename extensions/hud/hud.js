@@ -14,6 +14,10 @@ const modeValue = document.getElementById('mode-value');
 const izuiValue = document.getElementById('izui-value');
 const windowTitle = document.getElementById('window-title');
 const statsValue = document.getElementById('stats-value');
+const groupAccent = document.getElementById('group-accent');
+const groupBanner = document.getElementById('group-banner');
+const groupName = document.getElementById('group-name');
+const hudContainer = document.getElementById('hud-container');
 
 // Current state
 let currentMode = 'default';
@@ -56,6 +60,23 @@ const updateModeDisplay = () => {
   modeValue.textContent = displayText;
   modeValue.classList.add(`mode-${currentMode}`);
 
+  // Update group visual treatment
+  if (currentMode === 'group' && currentModeMetadata.groupName) {
+    const color = currentModeMetadata.color || '#999';
+    groupAccent.style.background = color;
+    groupAccent.style.display = '';
+    groupName.textContent = currentModeMetadata.groupName;
+    groupBanner.style.display = '';
+    hudContainer.classList.add('hud-group-active');
+    hudContainer.style.setProperty('--group-color', color + '40');
+  } else {
+    groupAccent.style.display = 'none';
+    groupBanner.style.display = 'none';
+    hudContainer.classList.remove('hud-group-active');
+    hudContainer.style.removeProperty('--group-color');
+  }
+
+  autoResizeWindow();
   debug && console.log('[hud] Updated mode display:', displayText);
 };
 

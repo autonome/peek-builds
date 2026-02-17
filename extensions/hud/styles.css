@@ -76,7 +76,43 @@ html, body {
 }
 
 /* Mode and IZUI state classes (no color overrides — all muted) */
-.mode-default, .mode-page, .mode-group, .mode-settings,
+.mode-default, .mode-page, .mode-settings,
 .izui-idle, .izui-transient, .izui-active, .izui-overlay {
   color: inherit;
+}
+
+/* Group mode — elevated visual treatment */
+.mode-group {
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+/* Group accent stripe — colored bar at top of HUD */
+.group-accent {
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  margin: -10px -10px 8px -10px;
+  background: #999;
+}
+
+/* Group banner — prominent group name */
+.group-banner {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.group-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* When in group mode, tint the container border */
+#hud-container.hud-group-active {
+  border-color: var(--group-color, rgba(255, 255, 255, 0.04));
 }

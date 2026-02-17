@@ -70,11 +70,54 @@ let state = {
   addresses: [],
   untaggedCount: 0,
   selectedIndex: 0,
-  searchQuery: ''
+  searchQuery: '',
+  showAllTags: false
 };
 
 // Expose state for debugging in tests
 window._groupsState = state;
+
+/**
+ * Parse tag metadata JSON safely
+ */
+const parseTagMetadata = (tag) => {
+  if (!tag.metadata) return {};
+  if (typeof tag.metadata === 'object') return tag.metadata;
+  try {
+    return JSON.parse(tag.metadata);
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * Check if a tag is promoted to a group (has isGroup: true in metadata)
+ */
+const isGroupTag = (tag) => {
+  const meta = parseTagMetadata(tag);
+  return meta.isGroup === true;
+};
+
+/**
+ * Promote a tag to a group by setting isGroup: true in its metadata
+ */
+const promoteTagToGroup = async (tag) => {
+  const meta = parseTagMetadata(tag);
+  meta.isGroup = true;
+  const metadataStr = JSON.stringify(meta);
+  try {
+    await api.datastore.setRow('tags', tag.id, {
+      ...tag,
+      metadata: metadataStr
+    });
+    tag.metadata = metadataStr;
+    debug && console.log('[groups] Promoted tag to group:', tag.name);
+    return true;
+  } catch (err) {
+    console.error('[groups] Failed to promote tag to group:', err);
+    return false;
+  }
+};
 
 /**
  * Internal ESC handler for groups navigation
@@ -385,6 +428,9 @@ const setupCreateGroup = () => {
       const result = await api.datastore.getOrCreateTag(name);
       if (result.success) {
         debug && console.log('[groups] Created new group (tag):', name, result.data);
+        // Mark the tag as a group
+        const tag = result.data.tag;
+        await promoteTagToGroup(tag);
         hideForm();
         // Refresh groups list
         await loadTags();
@@ -667,33 +713,62 @@ const renderGroups = () => {
   container.innerHTML = '';
   updateToolbarSortOptions();
 
-  // Build list of all groups (untagged first if it has items)
-  let allGroups = [];
-  if (state.untaggedCount > 0) {
-    allGroups.push({ ...UNTAGGED_GROUP, frequency: state.untaggedCount });
-  }
+  // Separate promoted groups from regular tags
+  const promotedGroups = state.tags.filter(tag => isGroupTag(tag));
+  const unpromotedTags = state.tags.filter(tag => !isGroupTag(tag));
 
-  // Add all tags (including empty ones so newly created groups appear)
-  allGroups = allGroups.concat(state.tags);
+  // Build list of groups to show
+  let groupsToShow = [];
+  if (state.untaggedCount > 0) {
+    groupsToShow.push({ ...UNTAGGED_GROUP, frequency: state.untaggedCount });
+  }
+  groupsToShow = groupsToShow.concat(promotedGroups);
 
   // Apply search filter
-  let filteredGroups = filterGroups(allGroups);
-
-  if (filteredGroups.length === 0) {
-    const message = state.searchQuery
-      ? 'No groups match your search.'
-      : 'No groups yet. Tag some pages to create groups.';
-    container.innerHTML = `<div class="empty-state">${message}</div>`;
-    return;
-  }
+  let filteredGroups = filterGroups(groupsToShow);
 
   // Apply sorting
   filteredGroups = sortGroups(filteredGroups);
 
-  filteredGroups.forEach(tag => {
-    const card = createGroupCard(tag);
-    container.appendChild(card);
-  });
+  if (filteredGroups.length === 0 && !state.showAllTags) {
+    const message = state.searchQuery
+      ? 'No groups match your search.'
+      : 'No groups yet. Create a group or promote tags below.';
+    container.innerHTML = `<div class="empty-state">${message}</div>`;
+  } else {
+    filteredGroups.forEach(tag => {
+      const card = createGroupCard(tag);
+      container.appendChild(card);
+    });
+  }
+
+  // "All Tags" toggle section — show unpromoted tags so users can promote them
+  const hasUnpromotedTags = unpromotedTags.length > 0;
+  if (hasUnpromotedTags) {
+    const toggleContainer = document.createElement('div');
+    toggleContainer.className = 'all-tags-toggle';
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'all-tags-btn';
+    toggleBtn.textContent = state.showAllTags
+      ? `Hide tags (${unpromotedTags.length})`
+      : `Show all tags (${unpromotedTags.length})`;
+    toggleBtn.addEventListener('click', () => {
+      state.showAllTags = !state.showAllTags;
+      renderGroups();
+    });
+    toggleContainer.appendChild(toggleBtn);
+    container.appendChild(toggleContainer);
+
+    if (state.showAllTags) {
+      let filteredTags = filterGroups(unpromotedTags);
+      filteredTags = sortGroups(filteredTags);
+      filteredTags.forEach(tag => {
+        const card = createGroupCard(tag, { showPromote: true });
+        container.appendChild(card);
+      });
+    }
+  }
 
   // Reset selection
   state.selectedIndex = 0;
@@ -787,14 +862,20 @@ const renderAddresses = () => {
 
 /**
  * Create a card element for a group (tag)
+ * @param {object} tag - Tag object
+ * @param {object} [options] - Options
+ * @param {boolean} [options.showPromote] - Show "Add to Groups" button for unpromoted tags
  */
-const createGroupCard = (tag) => {
+const createGroupCard = (tag, options = {}) => {
   const card = document.createElement('peek-card');
   card.className = 'group-card';
   card.interactive = true;
   card.elevated = true;
   if (tag.isSpecial) {
     card.classList.add('special-group');
+  }
+  if (options.showPromote) {
+    card.classList.add('unpromoted-tag');
   }
   card.dataset.tagId = tag.id;
 
@@ -813,9 +894,27 @@ const createGroupCard = (tag) => {
   title.className = 'card-title';
   title.textContent = tag.name;
   title.style.margin = '0';
+  title.style.flex = '1';
+  title.style.minWidth = '0';
 
   header.appendChild(colorDot);
   header.appendChild(title);
+
+  // Add "promote to group" button for unpromoted tags
+  if (options.showPromote) {
+    const promoteBtn = document.createElement('button');
+    promoteBtn.className = 'promote-btn';
+    promoteBtn.title = 'Add to Groups';
+    promoteBtn.textContent = '+';
+    promoteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await promoteTagToGroup(tag);
+      await loadTags();
+      renderGroups();
+    });
+    header.appendChild(promoteBtn);
+  }
+
   card.appendChild(header);
 
   // Footer slot: count

@@ -207,9 +207,17 @@ test.describe('Slides @desktop', () => {
 test.describe('Groups Navigation @desktop', () => {
   test('groups to group to url and back navigation', async () => {
     const bgWindow = sharedBgWindow;
-    // Create a tag/group with some items
+    // Create a tag/group with some items and promote it to a group
     const tagResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.getOrCreateTag('test-group');
+      const result = await (window as any).app.datastore.getOrCreateTag('test-group');
+      if (result.success) {
+        const tag = result.data.tag;
+        let meta = {};
+        try { meta = tag.metadata ? JSON.parse(tag.metadata) : {}; } catch {}
+        meta.isGroup = true;
+        await (window as any).app.datastore.setRow('tags', tag.id, { ...tag, metadata: JSON.stringify(meta) });
+      }
+      return result;
     });
     expect(tagResult.success).toBe(true);
     const tagId = tagResult.data?.tag?.id || tagResult.data?.data?.id || tagResult.data?.id;
@@ -2230,15 +2238,25 @@ test.describe('Groups View @desktop', () => {
   });
 
   test('empty groups are not shown in groups list', async () => {
-    // Create an empty tag (group with no items)
+    // Create an empty tag (group with no items) and promote it
     const emptyTag = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.getOrCreateTag('empty-group-test');
+      const result = await (window as any).app.datastore.getOrCreateTag('empty-group-test');
+      if (result.success) {
+        const tag = result.data.tag;
+        await (window as any).app.datastore.setRow('tags', tag.id, { ...tag, metadata: JSON.stringify({ isGroup: true }) });
+      }
+      return result;
     });
     expect(emptyTag.success).toBe(true);
 
-    // Create a tag with an item
+    // Create a tag with an item and promote it
     const nonEmptyTag = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.getOrCreateTag('non-empty-group-test');
+      const result = await (window as any).app.datastore.getOrCreateTag('non-empty-group-test');
+      if (result.success) {
+        const tag = result.data.tag;
+        await (window as any).app.datastore.setRow('tags', tag.id, { ...tag, metadata: JSON.stringify({ isGroup: true }) });
+      }
+      return result;
     });
     expect(nonEmptyTag.success).toBe(true);
 
