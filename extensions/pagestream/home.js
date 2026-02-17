@@ -49,7 +49,7 @@ const isWebUrl = (url) => {
 
 // ===== State =====
 
-const ANIM_DURATION = '0.33s';
+const ANIM_DURATION = '0.2s';
 const ANIM_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
 
 let state = {

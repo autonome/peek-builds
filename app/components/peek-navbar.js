@@ -65,7 +65,8 @@ export class PeekNavbar extends PeekElement {
         color: var(--theme-text, #e0e0e0);
         font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
         font-size: 15px;
-        border: none;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
         border-radius: 10px;
         user-select: none;
         -webkit-user-select: none;
