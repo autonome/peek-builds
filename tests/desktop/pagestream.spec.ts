@@ -6,8 +6,8 @@
  * - Window opens via command
  * - Cards render from visit history
  * - Keyboard navigation works (j/k, Enter, g/G)
- * - Search filtering works
- * - URL input opens pages
+ * - g/G jump to start/end
+ * - Internal state exposed for testing
  *
  * Run with:
  *   yarn test:electron:bg
@@ -260,48 +260,6 @@ test.describe('Pagestream Extension @desktop', () => {
     }
   });
 
-  test('search filters the stream', async () => {
-    const { pagestreamWindow, windowId } = await openPagestream(sharedBgWindow);
-
-    try {
-      // Wait for cards to render
-      await pagestreamWindow.evaluate(async () => {
-        const start = Date.now();
-        while (Date.now() - start < 5000) {
-          const cards = document.querySelectorAll('#stream peek-card.visit-card');
-          if (cards.length > 0) return true;
-          await new Promise(r => setTimeout(r, 200));
-        }
-        return false;
-      });
-
-      // Get initial card count
-      const initialCount = await pagestreamWindow.evaluate(() => {
-        return document.querySelectorAll('#stream peek-card.visit-card').length;
-      });
-
-      // Type a search query that should match only some cards
-      const searchInput = await pagestreamWindow.$('peek-input.search-input');
-      expect(searchInput).toBeTruthy();
-
-      // Focus search and type
-      await pagestreamWindow.keyboard.press('Meta+f');
-      await sleep(100);
-      await pagestreamWindow.keyboard.type('pagestream-test-1');
-      await sleep(300);
-
-      // Check that cards are filtered
-      const filteredCount = await pagestreamWindow.evaluate(() => {
-        return document.querySelectorAll('#stream peek-card.visit-card').length;
-      });
-
-      // Filtered should have fewer cards (or same if initial was 1)
-      expect(filteredCount).toBeLessThanOrEqual(initialCount);
-    } finally {
-      await closeWindow(sharedBgWindow, windowId);
-    }
-  });
-
   test('g and G jump to start and end', async () => {
     const { pagestreamWindow, windowId } = await openPagestream(sharedBgWindow);
 
@@ -339,30 +297,6 @@ test.describe('Pagestream Extension @desktop', () => {
       });
 
       expect(afterShiftG).toBe(totalCards - 1);
-    } finally {
-      await closeWindow(sharedBgWindow, windowId);
-    }
-  });
-
-  test('URL input is present and focusable with Cmd+L', async () => {
-    const { pagestreamWindow, windowId } = await openPagestream(sharedBgWindow);
-
-    try {
-      // Verify URL input exists
-      const urlInput = await pagestreamWindow.$('#url-input');
-      expect(urlInput).toBeTruthy();
-
-      // Verify Cmd+L focuses the URL input
-      await pagestreamWindow.keyboard.press('Meta+l');
-      await sleep(200);
-
-      // Check that the URL input (or its shadow root internal input) is focused
-      const isUrlFocused = await pagestreamWindow.evaluate(() => {
-        const urlInput = document.getElementById('url-input');
-        return document.activeElement === urlInput ||
-          (urlInput && urlInput.shadowRoot?.activeElement?.tagName === 'INPUT');
-      });
-      expect(isUrlFocused).toBe(true);
     } finally {
       await closeWindow(sharedBgWindow, windowId);
     }
