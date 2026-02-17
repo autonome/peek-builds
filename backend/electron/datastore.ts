@@ -1731,7 +1731,7 @@ function migrateUnformattedPhoneEntities(): void {
 function migrateLowQualityEntities(): void {
   if (!db) return;
 
-  const MIGRATION_ID = 'remove_low_quality_entities_v1';
+  const MIGRATION_ID = 'remove_low_quality_entities_v2';
 
   const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
   if (migrationRecord && migrationRecord.status === 'complete') return;
@@ -1798,8 +1798,10 @@ function migrateLowQualityEntities(): void {
       }
     }
 
-    // 5. Low-confidence addresses (regex-extracted places below new threshold)
-    if (entityType === 'place' && confidence < 0.7 && (meta.extractor === 'regex')) {
+    // 5. All regex-extracted places — the address regex is too noisy.
+    // Going forward, regex places get confidence 0.6 which is below the 0.7 threshold,
+    // so none will be stored. Clean up all existing ones.
+    if (entityType === 'place' && meta.extractor === 'regex') {
       removeEntity(entity.id);
       continue;
     }
