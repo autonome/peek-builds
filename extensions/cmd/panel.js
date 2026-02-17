@@ -659,6 +659,18 @@ function handleSpecialKey(e) {
     return;
   }
 
+  // Enter key in param mode with item-type param — accept selected suggestion
+  if (e.key === 'Enter' && !hasModifier(e) && state.paramMode && state.paramSuggestions.length > 0) {
+    const cmd = state.commands[state.paramCommand];
+    const paramDef = cmd && cmd.params && cmd.params[0];
+    if (paramDef && paramDef.type === 'item') {
+      e.preventDefault();
+      const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
+      acceptParamSuggestion(idx);
+      return;
+    }
+  }
+
   // Enter key - execute command (but not if in output selection mode - handled above)
   if (e.key === 'Enter' && !hasModifier(e) && !state.outputSelectionMode) {
     // Check if the typed text is a URL - if so, open it directly
@@ -2139,6 +2151,13 @@ async function updateParamSuggestions() {
   const generation = ++state.paramGeneration;
   const { partial, completedTokens } = getParamTokens();
 
+  // For item-type params, pass the full rest-of-input as the search query
+  // (user is typing a search phrase, not discrete tokens)
+  let searchPartial = partial;
+  if (paramDef.type === 'item') {
+    searchPartial = [...completedTokens, partial].filter(Boolean).join(' ');
+  }
+
   // Build exclusion set from completed tokens
   const prefix = paramDef.prefix || '';
   const exclude = new Set(
@@ -2150,7 +2169,7 @@ async function updateParamSuggestions() {
     })
   );
 
-  const suggestions = await getSuggestions(paramDef, partial, exclude);
+  const suggestions = await getSuggestions(paramDef, searchPartial, exclude);
 
   // Discard stale results
   if (generation !== state.paramGeneration) return;
@@ -2170,6 +2189,16 @@ function acceptParamSuggestion(index) {
   if (index < 0 || index >= state.paramSuggestions.length) return;
 
   const suggestion = state.paramSuggestions[index];
+
+  // Item-type param: open editor directly instead of inserting text
+  const cmd = state.commands[state.paramCommand];
+  const paramDef = cmd && cmd.params && cmd.params[0];
+  if (paramDef && paramDef.type === 'item' && suggestion._item) {
+    api.publish('editor:open', { itemId: suggestion._item.id }, api.scopes.GLOBAL);
+    setTimeout(shutdown, 100);
+    return;
+  }
+
   const commandInput = document.getElementById('command-input');
   const commandName = state.paramCommand;
 
@@ -2331,9 +2360,13 @@ function updateCommandUI() {
     const suggestion = state.paramSuggestions[idx];
     if (suggestion) {
       const { partial } = getParamTokens();
-      // Only show ghost if suggestion value starts with the partial
-      if (partial && suggestion.value.toLowerCase().startsWith(partial.toLowerCase())) {
-        const ghostText = suggestion.value.substring(partial.length);
+      // For item-type params, show title (human-readable) instead of value (ID)
+      const cmd = state.commands[state.paramCommand];
+      const paramDef = cmd && cmd.params && cmd.params[0];
+      const ghostSource = (paramDef && paramDef.type === 'item') ? suggestion.title : suggestion.value;
+      // Only show ghost if suggestion starts with the partial
+      if (partial && ghostSource.toLowerCase().startsWith(partial.toLowerCase())) {
+        const ghostText = ghostSource.substring(partial.length);
         if (ghostText) {
           const ghostSpan = document.createElement('span');
           ghostSpan.textContent = ghostText;
@@ -2342,7 +2375,7 @@ function updateCommandUI() {
       } else if (!partial) {
         // No partial typed — show full suggestion as ghost
         const ghostSpan = document.createElement('span');
-        ghostSpan.textContent = suggestion.value;
+        ghostSpan.textContent = ghostSource;
         commandText.appendChild(ghostSpan);
       }
     }

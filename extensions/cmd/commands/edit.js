@@ -64,6 +64,7 @@ const commands = [
     // Accept search text, produce item (note object)
     accepts: ['text'],
     produces: ['item'],
+    params: [{ type: 'item', itemType: 'text' }],
 
     async execute(ctx) {
       const query = ctx.search || '';

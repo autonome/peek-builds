@@ -98,6 +98,43 @@ export function completeEnum(partial, exclude, paramDef) {
 }
 
 /**
+ * Item completer - searches notes/items with search-as-you-type
+ * @param {string} partial - Current search text
+ * @param {Set<string>} exclude - Not used for items
+ * @param {Object} paramDef - The param definition {type, itemType}
+ * @returns {Promise<Array<{title, subtitle, value, _item}>>}
+ */
+export async function completeItem(partial, exclude, paramDef) {
+  const queryOpts = {
+    type: paramDef.itemType || 'text',
+    limit: 20,
+    sortBy: 'updated'
+  };
+
+  const searchText = (partial || '').trim();
+  if (searchText) {
+    queryOpts.search = searchText;
+  }
+
+  const result = await api.datastore.queryItems(queryOpts);
+  if (!result.success || !result.data) return [];
+
+  return result.data.map(item => {
+    const content = item.content || '';
+    const firstLine = content.split('\n')[0].replace(/^#+ /, '').trim() || 'Untitled';
+    const title = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
+    const date = item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '';
+
+    return {
+      title,
+      subtitle: date,
+      value: item.id,
+      _item: item
+    };
+  });
+}
+
+/**
  * Get suggestions for a param definition
  * @param {Object} paramDef - {type, multiple, prefix, values}
  * @param {string} partial - Current partial token
@@ -110,6 +147,8 @@ export async function getSuggestions(paramDef, partial, exclude) {
       return completeTag(partial, exclude, paramDef);
     case 'enum':
       return completeEnum(partial, exclude, paramDef);
+    case 'item':
+      return completeItem(partial, exclude, paramDef);
     default:
       return [];
   }
