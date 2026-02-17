@@ -378,7 +378,6 @@ const openInPageHost = async (url) => {
     });
     if (result && result.id) {
       state.openWindowId = result.id;
-      registerGlobalNav();
     }
   } catch (err) {
     console.error('[pagestream] Failed to open page:', err);
@@ -393,8 +392,6 @@ const openInPageHost = async (url) => {
 };
 
 // ===== Global navigation while page host is open =====
-
-let globalNavRegistered = false;
 
 /** Move card selection and optionally navigate the open page host */
 const moveSelection = (action) => {
@@ -436,36 +433,15 @@ const moveSelection = (action) => {
   }
 };
 
-const GLOBAL_NAV_SHORTCUTS = [
-  ['CommandOrControl+Down', () => moveSelection('down')],
-  ['CommandOrControl+Up', () => moveSelection('up')],
-  ['CommandOrControl+J', () => moveSelection('down')],
-  ['CommandOrControl+K', () => moveSelection('up')],
-  ['CommandOrControl+Shift+G', () => moveSelection('first')],
-  ['CommandOrControl+Shift+End', () => moveSelection('last')],
-];
-
-const registerGlobalNav = () => {
-  if (globalNavRegistered) return;
-  for (const [key, fn] of GLOBAL_NAV_SHORTCUTS) {
-    api.shortcuts.register(key, fn, { global: true });
-  }
-  globalNavRegistered = true;
-  debug && console.log('[pagestream] Global nav shortcuts registered');
-};
-
-const unregisterGlobalNav = () => {
-  if (!globalNavRegistered) return;
-  for (const [key] of GLOBAL_NAV_SHORTCUTS) {
-    api.shortcuts.unregister(key, { global: true });
-  }
-  globalNavRegistered = false;
-  debug && console.log('[pagestream] Global nav shortcuts unregistered');
-};
+// Listen for navigation keys forwarded from page host via pubsub
+// (subscription lives for the lifetime of pagestream — moveSelection
+// is safe to call any time, it just no-ops if nothing is open)
+api.subscribe('pagestream:nav', (msg) => {
+  if (msg.action) moveSelection(msg.action);
+}, api.scopes.GLOBAL);
 
 const onPageHostClosed = async (closedWindowId) => {
   if (closedWindowId !== state.openWindowId) return;
-  unregisterGlobalNav();
   state.openWindowId = null;
 
   const cards = getCards();

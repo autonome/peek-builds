@@ -858,6 +858,26 @@ api.subscribe('page:navigate', (msg) => {
   }
 }, api.scopes.GLOBAL);
 
+// Forward card-navigation keys to pagestream (only fires when webview is NOT focused,
+// e.g., after pressing Escape which blurs to the page chrome level)
+document.addEventListener('keydown', (e) => {
+  // Don't intercept if typing in navbar
+  if (document.activeElement === navbar || navbar.contains(document.activeElement)) return;
+
+  const NAV_MAP = {
+    'j': 'down', 'ArrowDown': 'down',
+    'k': 'up', 'ArrowUp': 'up',
+    'g': 'first', 'Home': 'first',
+    'G': 'last', 'End': 'last',
+  };
+
+  const action = NAV_MAP[e.key];
+  if (action) {
+    e.preventDefault();
+    api.publish('pagestream:nav', { action }, api.scopes.GLOBAL);
+  }
+});
+
 // --- Nav button actions and URL navigation are handled by peek-navbar component ---
 // Event listeners wired up in the "peek-navbar component event wiring" section above.
 // On navigate or dismiss (Escape), also hide the navbar (page-specific behavior).
@@ -978,10 +998,8 @@ webview.addEventListener('dom-ready', async () => {
   webview.classList.add('ready');
 });
 
-// Reset visibility on new navigations so fade-in works each time
-webview.addEventListener('did-start-loading', () => {
-  webview.classList.remove('ready');
-});
+// Note: we do NOT remove .ready on did-start-loading — keeping the webview
+// visible during navigation prevents flash when flipping between pages.
 
 // --- OpenSearch discovery & page:loaded event ---
 
