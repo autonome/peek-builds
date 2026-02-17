@@ -15,23 +15,26 @@ const ctx = canvas.getContext('2d');
 // --- Configuration ---
 const CONFIG = {
   // Spawn timing
-  spawnIntervalMin: 3000,    // 3s minimum between spawns
-  spawnIntervalMax: 8000,    // 8s maximum between spawns
+  spawnIntervalMin: 800,     // faster spawning
+  spawnIntervalMax: 2500,
 
   // Strand properties
-  minSegments: 6,
-  maxSegments: 14,
-  minSegmentLength: 12,
-  maxSegmentLength: 28,
-  minThickness: 3,
-  maxThickness: 12,
+  minSegments: 8,
+  maxSegments: 18,
+  minSegmentLength: 14,
+  maxSegmentLength: 30,
+  minThickness: 8,
+  maxThickness: 22,
 
   // Animation
   creepSpeed: 0.8,           // pixels per frame when creeping in
   retreatSpeed: 0.15,        // pixels per frame when retreating naturally
   fleeSpeed: 3.0,            // pixels per frame when fleeing from cursor
-  wobbleSpeed: 0.02,         // radians per frame for sinusoidal wobble
-  wobbleAmplitude: 0.15,     // max radians of wobble per segment
+  wobbleSpeed: 0.015,        // base radians per frame for wobble
+  wobbleAmplitude: 0.08,     // base wobble at root (increases toward tip)
+  tipAmplitude: 0.35,        // max wobble at tip
+  curlStrength: 0.4,         // tendency to curl (0 = straight, 1 = tight spiral)
+  curlDriftSpeed: 0.003,     // how fast the curl direction changes
 
   // Lifecycle
   creepInDuration: 3000,     // ms to creep in
@@ -44,17 +47,18 @@ const CONFIG = {
   fearRecoveryTime: 2000,    // ms before strand can return after fear
 
   // Visual
-  maxAlpha: 0.7,
+  maxAlpha: 1.0,
   colors: [
-    { r: 90, g: 60, b: 120 },   // muted purple
-    { r: 60, g: 90, b: 80 },    // dark teal
-    { r: 70, g: 70, b: 100 },   // slate blue
-    { r: 80, g: 60, b: 90 },    // dusty violet
-    { r: 50, g: 80, b: 70 },    // deep sea green
+    { r: 60, g: 30, b: 90 },    // deep purple
+    { r: 30, g: 65, b: 55 },    // dark teal
+    { r: 40, g: 40, b: 75 },    // deep slate blue
+    { r: 55, g: 30, b: 65 },    // dark violet
+    { r: 25, g: 55, b: 45 },    // deep sea green
+    { r: 45, g: 25, b: 50 },    // near-black plum
   ],
 
   // Max simultaneous strands
-  maxStrands: 12,
+  maxStrands: 30,
 };
 
 // --- State ---
@@ -76,10 +80,11 @@ const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const dist = (x1, y1, x2, y2) => Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
 
 /**
- * Create a new strand emerging from a random edge
+ * Create a new strand emerging from a specific or random edge.
+ * @param {number} [forceEdge] - If provided, use this edge (0-3). Otherwise random.
  */
-function createStrand() {
-  const edge = randInt(0, 3);
+function createStrand(forceEdge) {
+  const edge = forceEdge !== undefined ? forceEdge : randInt(0, 3);
   const numSegments = randInt(CONFIG.minSegments, CONFIG.maxSegments);
   const segmentLength = rand(CONFIG.minSegmentLength, CONFIG.maxSegmentLength);
   const thickness = rand(CONFIG.minThickness, CONFIG.maxThickness);
@@ -114,14 +119,17 @@ function createStrand() {
       break;
   }
 
-  // Each segment has a base angle offset and a wobble phase
+  // Each segment has a base angle offset and independent wobble parameters
   const segments = [];
   for (let i = 0; i < numSegments; i++) {
     segments.push({
       length: segmentLength * (1 - i * 0.03), // taper slightly
-      angleOffset: rand(-0.15, 0.15),          // slight random curvature
+      angleOffset: rand(-0.1, 0.1),           // slight random curvature
       wobblePhase: rand(0, Math.PI * 2),       // random initial phase
-      wobbleFreq: rand(0.6, 1.4),              // varied wobble frequency
+      wobbleFreq: rand(0.5, 1.5),             // varied wobble frequency
+      // Secondary slower wobble for more complex motion
+      wobblePhase2: rand(0, Math.PI * 2),
+      wobbleFreq2: rand(0.15, 0.4),           // much slower secondary wave
     });
   }
 
@@ -153,6 +161,10 @@ function createStrand() {
     // Wobble time accumulator
     wobbleTime: rand(0, 100),
 
+    // Curl state: a slow-drifting bias that makes segments curl in one direction
+    curlBias: rand(-1, 1),           // current curl direction (-1 to 1)
+    curlPhase: rand(0, Math.PI * 2), // phase for curl drift
+
     // Alpha
     alpha: 0,
   };
@@ -161,6 +173,13 @@ function createStrand() {
 /**
  * Compute the joint positions of a strand
  * Returns array of {x, y} points from base to tip
+ *
+ * Motion model:
+ * - Base segments are relatively stable (anchored to the edge)
+ * - Tip segments are much more active and mobile
+ * - A slow-drifting curl bias makes the whole strand curl/uncurl over time
+ * - Two wobble frequencies per segment create complex, non-repetitive motion
+ * - Curl accumulates along the strand (each segment adds to the curve)
  */
 function computePoints(s) {
   const points = [{ x: s.baseX, y: s.baseY }];
@@ -175,11 +194,25 @@ function computePoints(s) {
   for (let i = 0; i < visibleSegments && i < s.segments.length; i++) {
     const seg = s.segments[i];
 
-    // Wobble: sinusoidal oscillation that propagates down the strand
-    const wobble = Math.sin(s.wobbleTime * seg.wobbleFreq + seg.wobblePhase + i * 0.8)
-                   * CONFIG.wobbleAmplitude * (1 + i * 0.1);
+    // How far along the strand (0 = base, 1 = tip)
+    const t = i / s.numSegments;
 
-    currentAngle += seg.angleOffset + wobble;
+    // Wobble amplitude increases toward tip (tentacle-like: base stable, tip active)
+    const amplitude = lerp(CONFIG.wobbleAmplitude, CONFIG.tipAmplitude, t * t);
+
+    // Primary wobble: faster, smaller oscillation
+    const wobble1 = Math.sin(s.wobbleTime * seg.wobbleFreq + seg.wobblePhase + i * 0.6)
+                    * amplitude;
+
+    // Secondary wobble: slower, creates longer sweeping motions
+    const wobble2 = Math.sin(s.wobbleTime * seg.wobbleFreq2 + seg.wobblePhase2 + i * 0.3)
+                    * amplitude * 0.7;
+
+    // Curl: accumulates along the strand, creating spiral/curl shapes
+    // The curl bias drifts slowly so the strand curls and uncurls over time
+    const curl = s.curlBias * CONFIG.curlStrength * t;
+
+    currentAngle += seg.angleOffset + wobble1 + wobble2 + curl;
 
     // If this is the last visible segment and partial, shorten it
     let len = seg.length;
@@ -213,9 +246,9 @@ function drawStrand(s) {
     const p0 = points[i];
     const p1 = points[i + 1];
 
-    // Thickness tapers from base to tip
-    const t0 = s.thickness * (1 - (i / points.length) * 0.7);
-    const t1 = s.thickness * (1 - ((i + 1) / points.length) * 0.7);
+    // Thickness tapers from base to tip — gradual taper, base stays thick
+    const t0 = s.thickness * (1 - (i / points.length) * 0.5);
+    const t1 = s.thickness * (1 - ((i + 1) / points.length) * 0.5);
 
     // Direction perpendicular to segment
     const dx = p1.x - p0.x;
@@ -232,9 +265,8 @@ function drawStrand(s) {
     ctx.lineTo(p0.x - nx * t0 / 2, p0.y - ny * t0 / 2);
     ctx.closePath();
 
-    // Gradient alpha along the strand
-    const segAlpha = alpha * (1 - (i / points.length) * 0.5);
-    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${segAlpha})`;
+    // Solid color — no per-segment alpha fade
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
     ctx.fill();
   }
 
@@ -318,6 +350,10 @@ function updateStrand(s, dt) {
   // Advance wobble time
   s.wobbleTime += CONFIG.wobbleSpeed * (dt / 16);
 
+  // Drift the curl bias — slow sinusoidal drift creates curling/uncurling over time
+  s.curlPhase += CONFIG.curlDriftSpeed * (dt / 16);
+  s.curlBias = Math.sin(s.curlPhase) * 0.8 + Math.sin(s.curlPhase * 0.37) * 0.2;
+
   // Check for cursor proximity
   const cursorNear = isCursorNear(s);
 
@@ -336,7 +372,7 @@ function updateStrand(s, dt) {
     case 'creeping':
       // Slowly extend
       s.extension = clamp(s.extension + CONFIG.creepSpeed * (dt / 1000), 0, 1);
-      s.alpha = clamp(s.alpha + 0.01 * (dt / 16), 0, CONFIG.maxAlpha);
+      s.alpha = clamp(s.alpha + 0.03 * (dt / 16), 0, CONFIG.maxAlpha);
 
       if (s.extension >= 1) {
         s.phase = 'lingering';
@@ -404,11 +440,29 @@ function animate(timestamp) {
 }
 
 /**
+ * Edge rotation for spawning — cycles through edges to ensure strands
+ * come from at least 3 sides. Uses a shuffled queue that refills when empty.
+ */
+let edgeQueue = [];
+
+function nextEdge() {
+  if (edgeQueue.length === 0) {
+    // Refill with all 4 edges, shuffled
+    edgeQueue = [0, 1, 2, 3];
+    for (let i = edgeQueue.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [edgeQueue[i], edgeQueue[j]] = [edgeQueue[j], edgeQueue[i]];
+    }
+  }
+  return edgeQueue.pop();
+}
+
+/**
  * Spawn a new strand if under the limit
  */
 function spawnStrand() {
   if (strands.length < CONFIG.maxStrands) {
-    strands.push(createStrand());
+    strands.push(createStrand(nextEdge()));
   }
   scheduleNextSpawn();
 }
@@ -455,9 +509,20 @@ function init() {
   // Start animation loop
   animationId = requestAnimationFrame(animate);
 
-  // Spawn a batch immediately from all edges
+  // Spawn initial batch — guarantee at least one strand per edge,
+  // plus 2 extra from random edges, for immediate multi-side presence.
+  const initialEdges = [0, 1, 2, 3];
+  // Shuffle so the order isn't predictable
+  for (let i = initialEdges.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [initialEdges[i], initialEdges[j]] = [initialEdges[j], initialEdges[i]];
+  }
+  for (const edge of initialEdges) {
+    strands.push(createStrand(edge));
+  }
+  // Plus 6 extra from the rotating queue for a full initial presence
   for (let i = 0; i < 6; i++) {
-    spawnStrand();
+    strands.push(createStrand(nextEdge()));
   }
   scheduleNextSpawn();
 }

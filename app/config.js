@@ -12,7 +12,7 @@ const labels = {
     hideTitleBar: 'Hide title bars',
     restoreSession: 'Restore session on startup',
     sessionAutosaveInterval: 'Autosave interval (minutes)',
-    dragHoldDelay: 'Drag hold delay (seconds)',
+    dragHoldDelay: 'Window drag hold delay',
   }
 };
 
@@ -89,7 +89,7 @@ const prefsSchema = {
       "default": 600
     },
     "dragHoldDelay": {
-      "description": "Seconds to hold still before drag mode activates (0 = instant)",
+      "description": "How long (in seconds) to hold the mouse still before a window becomes draggable. Click and hold without moving — the cursor changes to a hand when ready, then drag to move. This allows normal text selection and clicking without accidental window drags. Set to 0 for instant drag. Takes effect on new windows.",
       "type": "number",
       "default": 2
     },

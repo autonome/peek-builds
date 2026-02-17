@@ -306,6 +306,16 @@ initWebview();
 webview.classList.add('loading');
 show({ source: 'loading' });
 
+// Safety timeout: if loading glow is still active after 10s, force it off.
+// Catches edge cases where neither dom-ready nor did-stop-loading fires.
+setTimeout(() => {
+  if (webview.classList.contains('loading')) {
+    webview.classList.remove('loading');
+    webview.classList.add('ready');
+    DEBUG && console.log('[page] Loading glow safety timeout — forced off after 10s');
+  }
+}, 10000);
+
 // --- Custom drag ---
 // Two modes:
 //   1. Navbar background: instant drag (no hold delay)
@@ -1001,6 +1011,15 @@ webview.addEventListener('did-fail-load', (e) => {
 // Detect page background color, set it as backing color on the webview element,
 // then fade the webview in. This prevents the white flash when loading pages in dark mode.
 webview.addEventListener('dom-ready', async () => {
+  // Always end loading state — even if background detection fails
+  const endLoading = () => {
+    webview.classList.add('ready');
+    webview.classList.remove('loading');
+    if (showSource === 'loading') {
+      scheduleHide();
+    }
+  };
+
   try {
     const bgResult = await webview.executeJavaScript(`
       (function() {
@@ -1048,12 +1067,7 @@ webview.addEventListener('dom-ready', async () => {
     console.error('[page] Failed to detect background:', err);
   }
 
-  // Fade in the webview now that background is matched
-  webview.classList.add('ready');
-  webview.classList.remove('loading');
-  if (showSource === 'loading') {
-    scheduleHide();
-  }
+  endLoading();
 });
 
 // Re-add loading glow on new navigations (but keep webview visible — don't reset opacity)

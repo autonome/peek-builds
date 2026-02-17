@@ -371,6 +371,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateStandaloneDateEntities();
   migrateNoisyDateEntities();
   migrateUnformattedPhoneEntities();
+  migrateLowQualityEntities();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
@@ -1719,6 +1720,117 @@ function migrateUnformattedPhoneEntities(): void {
   db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
   if (removedCount > 0) {
     console.log(`[datastore] Removed ${removedCount} unformatted phone entities (bare digit sequences)`);
+  }
+}
+
+/**
+ * Remove low-quality entities that were stored before quality filters were added.
+ * Applies retroactively: blocklisted names, low-confidence addresses, automated emails,
+ * sparse JSON-LD entities (name-only persons/orgs), and events without dates.
+ */
+function migrateLowQualityEntities(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'remove_low_quality_entities_v1';
+
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') return;
+
+  // Blocklist of generic names (must match entity-matcher.js BLOCKLIST)
+  const blocklist = new Set([
+    'event', 'article', 'person', 'organization', 'product', 'news',
+    'home', 'about', 'contact', 'menu', 'search', 'loading', 'unknown',
+    'untitled', 'none', 'n/a', 'tbd', 'lorem ipsum', 'test', 'example',
+    'admin', 'user', 'guest', 'anonymous', 'null', 'undefined',
+    'website', 'page', 'site', 'blog', 'shop', 'store', 'app',
+    'privacy policy', 'terms of service', 'cookie policy', 'subscribe',
+    'sign in', 'sign up', 'log in', 'register', 'learn more', 'read more',
+    'click here', 'view more', 'see more', 'show more', 'load more',
+  ]);
+
+  const blockedEmailPrefixes = [
+    'noreply', 'no-reply', 'no_reply', 'donotreply', 'do-not-reply', 'do_not_reply',
+    'notification', 'notifications', 'automated', 'mailer-daemon', 'postmaster',
+    'webmaster', 'hostmaster', 'abuse', 'bounce', 'auto', 'daemon',
+  ];
+
+  const allEntities = db.prepare(`
+    SELECT id, content, metadata FROM items
+    WHERE type = 'entity' AND deletedAt = 0
+  `).all() as { id: string; content: string; metadata: string }[];
+
+  let removedCount = 0;
+  const removeEntity = (id: string) => {
+    try {
+      db!.prepare('DELETE FROM item_events WHERE itemId = ?').run(id);
+      db!.prepare('DELETE FROM item_tags WHERE itemId = ?').run(id);
+      db!.prepare('DELETE FROM items WHERE id = ?').run(id);
+      removedCount++;
+    } catch (error) {
+      console.error(`Failed to remove entity ${id}:`, error);
+    }
+  };
+
+  for (const entity of allEntities) {
+    const name = (entity.content || '').trim();
+    const nameLower = name.toLowerCase();
+    let meta: Record<string, unknown> = {};
+    try { meta = JSON.parse(entity.metadata || '{}'); } catch { /* skip */ }
+    const entityType = meta.entityType as string || '';
+    const attrs = (meta.attributes || {}) as Record<string, unknown>;
+    const confidence = (meta.confidence as number) || 0;
+
+    // 1. Blocklisted names
+    if (blocklist.has(nameLower)) { removeEntity(entity.id); continue; }
+
+    // 2. Too short or all numbers
+    if (name.length < 2 || /^\d+$/.test(name)) { removeEntity(entity.id); continue; }
+
+    // 3. All punctuation/symbols
+    if (/^[\d\s.,;:!?$%/\-@#&*()[\]{}|\\<>]+$/.test(name)) { removeEntity(entity.id); continue; }
+
+    // 4. Automated emails
+    if (entityType === 'email') {
+      const localPart = nameLower.split('@')[0] || '';
+      if (blockedEmailPrefixes.some(p => localPart === p || localPart.startsWith(p + '+'))) {
+        removeEntity(entity.id);
+        continue;
+      }
+    }
+
+    // 5. Low-confidence addresses (regex-extracted places below new threshold)
+    if (entityType === 'place' && confidence < 0.7 && (meta.extractor === 'regex')) {
+      removeEntity(entity.id);
+      continue;
+    }
+
+    // 6. JSON-LD persons/orgs with only a name (no other meaningful attributes)
+    if ((meta.extractor === 'json-ld') && (entityType === 'person' || entityType === 'organization')) {
+      const meaningfulFields = Object.values(attrs).filter(v =>
+        v && (typeof v === 'string' ? (v as string).trim().length > 0 : true)
+      ).length;
+      if (meaningfulFields < 1) {
+        removeEntity(entity.id);
+        continue;
+      }
+    }
+
+    // 7. Events without start date (from JSON-LD)
+    if (entityType === 'event' && (meta.extractor === 'json-ld') && !attrs.startDate) {
+      removeEntity(entity.id);
+      continue;
+    }
+
+    // 8. Products without price or description (from JSON-LD)
+    if (entityType === 'product' && (meta.extractor === 'json-ld') && !attrs.price && !attrs.description) {
+      removeEntity(entity.id);
+      continue;
+    }
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+  if (removedCount > 0) {
+    console.log(`[datastore] Removed ${removedCount} low-quality entities (blocklist, automated emails, sparse structured data)`);
   }
 }
 
