@@ -27,10 +27,23 @@ body {
 .stream-container {
   flex: 1;
   overflow-y: auto;
-  padding: 20px 16px;
+  overflow-x: hidden;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 20px;
+  /* Hide scrollbar for cleaner carousel look */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.stream-container::-webkit-scrollbar {
+  display: none;
+}
+
+/* Spacers at top/bottom allow first and last cards to reach center */
+.stream-spacer {
+  flex-shrink: 0;
 }
 
 /* Cards — opaque backgrounds, no borders */

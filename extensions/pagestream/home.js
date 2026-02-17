@@ -59,7 +59,6 @@ let state = {
   filterTagId: null,
   filterTagName: null,
   isLoading: true,
-  wasAtBottom: true,
   animating: false,
   openWindowId: null,
   openCardIndex: -1,
@@ -135,7 +134,7 @@ const getCards = () => {
   return Array.from(document.querySelectorAll('#stream peek-card'));
 };
 
-const updateSelection = () => {
+const updateSelection = (animate = true) => {
   const cards = getCards();
   cards.forEach((card, i) => {
     const isActive = (i === state.selectedIndex);
@@ -176,17 +175,33 @@ const updateSelection = () => {
 
   const selected = cards[state.selectedIndex];
   if (selected) {
-    selected.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    scrollCardToCenter(selected, animate);
   }
 };
 
-const render = () => {
+/** Scroll so that the given card is vertically centered in the stream */
+const scrollCardToCenter = (card, animate = true) => {
+  const container = document.getElementById('stream');
+  const cardRect = card.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+
+  // Card center relative to container's scroll position
+  const cardCenterInContainer = (card.offsetTop + cardRect.height / 2);
+  const targetScrollTop = cardCenterInContainer - container.clientHeight / 2;
+
+  container.scrollTo({
+    top: targetScrollTop,
+    behavior: animate ? 'smooth' : 'instant'
+  });
+};
+
+const render = (initialLoad = false) => {
   const container = document.getElementById('stream');
   const emptyState = document.getElementById('empty-state');
   const filtered = getFilteredVisits();
 
-  const existingCards = container.querySelectorAll('peek-card');
-  existingCards.forEach(card => card.remove());
+  // Remove old cards and spacers
+  container.querySelectorAll('peek-card, .stream-spacer').forEach(el => el.remove());
 
   if (state.isLoading) {
     emptyState.textContent = 'Loading history...';
@@ -202,30 +217,29 @@ const render = () => {
 
   emptyState.style.display = 'none';
 
+  // Add top spacer — half viewport height so first card can be centered
+  const spacerHeight = Math.floor(container.clientHeight / 2 - 60);
+  const topSpacer = document.createElement('div');
+  topSpacer.className = 'stream-spacer';
+  topSpacer.style.height = spacerHeight + 'px';
+  container.appendChild(topSpacer);
+
   filtered.forEach(({ visit, item }, index) => {
     const card = createVisitCard(visit, item, index);
     container.appendChild(card);
   });
 
+  // Add bottom spacer
+  const bottomSpacer = document.createElement('div');
+  bottomSpacer.className = 'stream-spacer';
+  bottomSpacer.style.height = spacerHeight + 'px';
+  container.appendChild(bottomSpacer);
+
   if (state.selectedIndex < 0 || state.selectedIndex >= filtered.length) {
     state.selectedIndex = filtered.length - 1;
   }
-  updateSelection();
-
-  if (state.wasAtBottom) {
-    scrollToBottom();
-  }
-};
-
-const scrollToBottom = () => {
-  const container = document.getElementById('stream');
-  container.scrollTop = container.scrollHeight;
-};
-
-const isAtBottom = () => {
-  const container = document.getElementById('stream');
-  const threshold = 50;
-  return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+  // On initial load, snap to center instantly (no smooth scroll)
+  updateSelection(!initialLoad);
 };
 
 // ===== Open URL in Page Host (with animation) =====
@@ -609,24 +623,13 @@ const init = async () => {
 
   api.escape.onEscape(handleEscape);
 
-  const streamContainer = document.getElementById('stream');
-  streamContainer.addEventListener('scroll', () => {
-    state.wasAtBottom = isAtBottom();
-  });
-
   document.addEventListener('keydown', handleKeydown);
 
   await loadVisits();
-  render();
-
-  scrollToBottom();
-  requestAnimationFrame(() => {
-    scrollToBottom();
-  });
+  render(true);
 
   const debouncedRefresh = debounce(async () => {
     debug && console.log('[pagestream] debounced refresh triggered');
-    state.wasAtBottom = isAtBottom();
     await loadVisits();
     render();
   }, 150);

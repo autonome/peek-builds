@@ -62,7 +62,7 @@ const openPagestreamWindow = async () => {
       screenH = window.screen.availHeight || window.screen.height || 900;
     } catch {}
     const width = screenW;
-    const height = Math.round(screenH * 0.8);
+    const height = screenH;
 
     const params = {
       // IZUI role
