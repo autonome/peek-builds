@@ -303,6 +303,8 @@ async function initWebview() {
 }
 
 initWebview();
+webview.classList.add('loading');
+show({ source: 'loading' });
 
 // --- Custom drag ---
 // Two modes:
@@ -771,7 +773,7 @@ document.addEventListener('mousemove', (e) => { lastMouseY = e.clientY; }, true)
 function scheduleHide() {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
-    if (showSource !== 'hover') return;
+    if (showSource !== 'hover' && showSource !== 'loading') return;
     // If cursor is still in the navbar+trigger area, don't hide.
     // This prevents the hide→contract→re-trigger→show bounce when cursor
     // crosses the boundary between navbar and webview.
@@ -1007,6 +1009,10 @@ webview.addEventListener('dom-ready', async () => {
 
   // Fade in the webview now that background is matched
   webview.classList.add('ready');
+  webview.classList.remove('loading');
+  if (showSource === 'loading') {
+    scheduleHide();
+  }
 });
 
 // Note: we do NOT remove .ready on did-start-loading — keeping the webview
