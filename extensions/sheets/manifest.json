@@ -1,0 +1,9 @@
+{
+  "id": "sheets",
+  "shortname": "sheets",
+  "name": "Sheets",
+  "description": "Widget sheets with freeform card layouts hosting webviews",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": true
+}
