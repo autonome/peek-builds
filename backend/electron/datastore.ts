@@ -32,6 +32,7 @@ import { tableNames } from '../types/index.js';
 import { DEBUG } from './config.js';
 import { DATASTORE_VERSION } from '../version.js';
 import { addDeviceMetadata } from './device.js';
+import { calculateItemFrecency } from '../../app/lib/frecency.js';
 
 // Load canonical schema for validation
 // Path is relative to compiled JS in dist/backend/electron/
@@ -1034,21 +1035,8 @@ function migrateItemFrecencyColumns(): void {
   }
 }
 
-/**
- * Calculate frecency score for an item based on visit history.
- * Uses a time-decay algorithm where recent visits contribute more.
- */
-export function calculateItemFrecency(visits: Array<{ timestamp: number; interacted: number; source: string }>): number {
-  let score = 0;
-  for (const visit of visits) {
-    const ageDays = (Date.now() - visit.timestamp) / (1000 * 60 * 60 * 24);
-    const decay = 1 / (1 + Math.pow(ageDays / 7, 0.5));
-    // Weight: interacted visits count more, direct navigations count less than link clicks
-    const weight = visit.interacted ? 2 : (visit.source === 'direct' ? 0.5 : 1);
-    score += weight * decay;
-  }
-  return Math.round(score * 10);
-}
+// calculateItemFrecency is imported from app/lib/frecency.js (shared frontend/backend module)
+export { calculateItemFrecency };
 
 /**
  * Migrate ALL addresses to items (not just tagged ones).
