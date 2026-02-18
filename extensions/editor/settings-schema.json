@@ -1,7 +1,8 @@
 {
   "labels": {
     "prefs": {
-      "vimMode": "Vim mode"
+      "vimMode": "Vim mode",
+      "vimSettings": "Vim settings (managed via :set commands)"
     }
   },
   "prefs": {
@@ -15,6 +16,26 @@
         "description": "Enable vim keybindings in the text editor",
         "type": "boolean",
         "default": false
+      },
+      "vimSettings": {
+        "description": "Persisted vim :set options (wrap, lineNumbers). Managed automatically via vim :set commands.",
+        "type": "object",
+        "properties": {
+          "wrap": {
+            "description": "Line wrapping (:set wrap / :set nowrap)",
+            "type": "boolean",
+            "default": false
+          },
+          "lineNumbers": {
+            "description": "Line numbers and fold gutter (:set number / :set nonumber)",
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "default": {
+          "wrap": false,
+          "lineNumbers": true
+        }
       }
     }
   },
@@ -23,7 +44,11 @@
   },
   "defaults": {
     "prefs": {
-      "vimMode": false
+      "vimMode": false,
+      "vimSettings": {
+        "wrap": false,
+        "lineNumbers": true
+      }
     }
   }
 }

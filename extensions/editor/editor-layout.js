@@ -15,6 +15,7 @@ export class EditorLayout {
     this.onContentChange = options.onContentChange;
     this.initialContent = options.initialContent || '';
     this.vimMode = options.vimMode || false;
+    this.initialVimSettings = options.vimSettings || null; // { wrap, lineNumbers }
 
     this.outlineSidebar = null;
     this.previewSidebar = null;
@@ -132,6 +133,11 @@ export class EditorLayout {
       onSelectionChange: (line, col) => this.handleSelectionChange(line, col),
       onVimModeChange: (mode) => this.handleVimModeUpdate(mode),
     });
+
+    // Apply persisted vim settings (wrap, lineNumbers) if provided
+    if (this.initialVimSettings && this.cmEditor) {
+      CodeMirror.applyVimSettings(this.cmEditor, this.initialVimSettings);
+    }
 
     // Default sidebars to collapsed
     this.outlineSidebar.toggle();
@@ -452,6 +458,15 @@ export class EditorLayout {
    */
   setVimMode(enabled) {
     this.updateVimModeState(enabled);
+  }
+
+  /**
+   * Apply vim settings (wrap, lineNumbers) to the editor.
+   */
+  applyVimSettings(settings) {
+    if (this.cmEditor && settings) {
+      CodeMirror.applyVimSettings(this.cmEditor, settings);
+    }
   }
 
   /**

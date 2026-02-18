@@ -20,6 +20,18 @@ const themeCompartment = new Compartment();
 const lineWrapCompartment = new Compartment();
 const lineNumberCompartment = new Compartment();
 
+// Module-level callback for vim :set option changes (set by consumer via setVimOptionCallback)
+let _vimOptionCallback = null;
+
+/**
+ * Register a callback that fires when vim :set commands change options.
+ * Callback signature: (optionName, value) => void
+ * Options: 'wrap' (boolean), 'number' (boolean)
+ */
+export function onVimSetOption(callback) {
+  _vimOptionCallback = callback;
+}
+
 // ============================================================================
 // Folditall Algorithm Helpers
 // ============================================================================
@@ -417,6 +429,7 @@ Vim.defineOption('wrap', false, 'boolean', undefined, (value, cm) => {
       effects: lineWrapCompartment.reconfigure(value ? EditorView.lineWrapping : []),
     });
   }
+  if (_vimOptionCallback) _vimOptionCallback('wrap', value);
 });
 
 // Vim :set number / :set nonumber — toggle line numbers and fold gutter
@@ -428,6 +441,7 @@ Vim.defineOption('number', true, 'boolean', undefined, (value, cm) => {
       effects: lineNumberCompartment.reconfigure(value ? [lineNumbers(), foldGutter()] : []),
     });
   }
+  if (_vimOptionCallback) _vimOptionCallback('number', value);
 });
 
 /**
@@ -743,6 +757,26 @@ export function focus(view) {
  */
 export function destroy(view) {
   view.destroy();
+}
+
+/**
+ * Apply persisted vim settings (wrap, lineNumbers) to an editor view.
+ * Call after createEditor to restore saved settings.
+ * @param {EditorView} view - CodeMirror EditorView instance
+ * @param {Object} settings - { wrap: boolean, lineNumbers: boolean }
+ */
+export function applyVimSettings(view, settings) {
+  if (!view) return;
+  const effects = [];
+  if (typeof settings.wrap === 'boolean') {
+    effects.push(lineWrapCompartment.reconfigure(settings.wrap ? EditorView.lineWrapping : []));
+  }
+  if (typeof settings.lineNumbers === 'boolean') {
+    effects.push(lineNumberCompartment.reconfigure(settings.lineNumbers ? [lineNumbers(), foldGutter()] : []));
+  }
+  if (effects.length > 0) {
+    view.dispatch({ effects });
+  }
 }
 
 export { EditorView, EditorState, getCM, Vim };

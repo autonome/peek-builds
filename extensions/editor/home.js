@@ -11,7 +11,7 @@
  */
 
 import { EditorLayout } from './editor-layout.js';
-import { getCM, Vim } from './codemirror.js';
+import { getCM, Vim, onVimSetOption } from './codemirror.js';
 
 const api = window.app;
 const debug = api?.debug;
@@ -149,12 +149,19 @@ const init = async () => {
 
   // Load vim mode preference from extension settings API (Settings app stores under 'prefs' key)
   let vimMode = false;
+  let vimSettings = null; // persisted vim :set settings (wrap, lineNumbers)
   try {
     if (api?.settings?.getKey) {
       const result = await api.settings.getKey(PREFS_STORAGE_KEY);
       if (result.success && result.data && typeof result.data === 'object') {
         vimMode = !!result.data.vimMode;
         debug && console.log('[editor] Loaded vimMode from prefs:', vimMode);
+
+        // Load persisted vim :set settings
+        if (result.data.vimSettings && typeof result.data.vimSettings === 'object') {
+          vimSettings = result.data.vimSettings;
+          debug && console.log('[editor] Loaded vimSettings from prefs:', vimSettings);
+        }
       } else {
         debug && console.log('[editor] No prefs found in datastore, using default vimMode:', vimMode);
       }
@@ -252,6 +259,7 @@ const init = async () => {
     container: rootEl,
     initialContent,
     vimMode,
+    vimSettings,
     onContentChange: handleContentChange,
   });
 
@@ -259,6 +267,31 @@ const init = async () => {
   if (currentItemId) {
     editorLayout.setSaveStatusVisible(true);
   }
+
+  // Persist vim :set option changes (wrap, number) to settings
+  onVimSetOption(async (optionName, value) => {
+    debug && console.log(`[editor] Vim :set ${optionName}=${value}, persisting`);
+    try {
+      if (api?.settings?.getKey && api?.settings?.setKey) {
+        const result = await api.settings.getKey(PREFS_STORAGE_KEY);
+        const prefs = (result.success && result.data && typeof result.data === 'object')
+          ? { ...result.data }
+          : {};
+
+        // Map vim option names to our settings keys
+        const settingsKey = optionName === 'number' ? 'lineNumbers' : optionName;
+        if (!prefs.vimSettings || typeof prefs.vimSettings !== 'object') {
+          prefs.vimSettings = {};
+        }
+        prefs.vimSettings[settingsKey] = value;
+
+        await api.settings.setKey(PREFS_STORAGE_KEY, prefs);
+        debug && console.log('[editor] Persisted vimSettings:', prefs.vimSettings);
+      }
+    } catch (err) {
+      debug && console.log('[editor] Failed to persist vim setting:', err);
+    }
+  });
 
   // Register vim ex-commands for :w and :wq
   Vim.defineEx('write', 'w', () => {
@@ -344,10 +377,10 @@ const init = async () => {
     });
   }
 
-  // Listen for settings changes from Settings app to live-reload vim mode
+  // Listen for settings changes from Settings app to live-reload vim mode and vim settings
   if (api?.subscribe) {
     api.subscribe('editor:settings-changed', async () => {
-      debug && console.log('[editor] Settings changed, reloading vim mode');
+      debug && console.log('[editor] Settings changed, reloading vim mode and vim settings');
       try {
         if (api?.settings?.getKey) {
           const result = await api.settings.getKey(PREFS_STORAGE_KEY);
@@ -357,6 +390,12 @@ const init = async () => {
               editorLayout.setVimMode(newVimMode);
             }
             debug && console.log('[editor] Updated vimMode from settings:', newVimMode);
+
+            // Apply vim settings if changed
+            if (result.data.vimSettings && editorLayout) {
+              editorLayout.applyVimSettings(result.data.vimSettings);
+              debug && console.log('[editor] Updated vimSettings from settings:', result.data.vimSettings);
+            }
           }
         }
       } catch (err) {
