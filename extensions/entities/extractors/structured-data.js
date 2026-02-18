@@ -2,7 +2,10 @@
  * Structured data entity extractor
  *
  * Extracts entities from JSON-LD, schema.org markup, and Open Graph meta tags.
+ * Includes coherence checks using name-validator for person/org validation.
  */
+
+import { classifyNamePattern, isLikelyPersonName } from '../name-validator.js';
 
 /**
  * Extract structured data entities from HTML content
@@ -78,7 +81,7 @@ function jsonLdItemToEntity(item, url) {
   const type = Array.isArray(item['@type']) ? item['@type'][0] : item['@type'];
   const name = item.name || item.headline || item.title;
 
-  if (!name || typeof name !== 'string' || name.trim().length < 2) return null;
+  if (!name || typeof name !== 'string' || name.trim().length < 4) return null;
 
   // Map schema.org types to entity types
   const typeMap = {
@@ -275,7 +278,31 @@ function jsonLdItemToEntity(item, url) {
   }
 
   // Confidence based on field richness: 0.9 for 3+ fields, 0.85 for fewer
-  const confidence = meaningfulFields >= 3 ? 0.9 : 0.85;
+  let confidence = meaningfulFields >= 3 ? 0.9 : 0.85;
+
+  // --- Coherence checks for person entities from JSON-LD ---
+  if (entityType === 'person') {
+    const trimmedName = name.trim();
+    const pattern = classifyNamePattern(trimmedName);
+
+    // CamelCase single word claimed as Person → skip (e.g., "IndieWeb", "YouTube")
+    if (pattern.likelyType === 'organization' &&
+        (pattern.reason === 'CamelCase brand name' || pattern.reason === 'leading CamelCase word')) {
+      return null;
+    }
+
+    // Has person-like properties? (givenName, familyName, jobTitle, email)
+    const hasPersonProps = item.givenName || item.familyName || item.jobTitle ||
+                           item.email || attributes.email || attributes.jobTitle || attributes.organization;
+
+    // If no person-like properties and name doesn't look like a person, skip
+    if (!hasPersonProps) {
+      const personCheck = isLikelyPersonName(trimmedName);
+      if (!personCheck.likely && pattern.likelyType !== 'unknown' && pattern.likelyType !== 'ambiguous') {
+        return null;
+      }
+    }
+  }
 
   return {
     name: name.trim(),
@@ -317,24 +344,73 @@ function extractOpenGraph(doc, url) {
   const ogSiteName = getMetaContent(doc, 'og:site_name');
 
   // Extract profile info (og:type = profile)
+  // Only create person entity if we have real name parts OR the title contains a space
+  // (single-word titles like "IndieWeb" are site names, not person names)
   if (ogType === 'profile' && ogTitle) {
     const firstName = getMetaContent(doc, 'profile:first_name');
     const lastName = getMetaContent(doc, 'profile:last_name');
     const fullName = (firstName && lastName) ? `${firstName} ${lastName}` : ogTitle;
+    const trimmedFullName = fullName.trim();
 
-    entities.push({
-      name: fullName.trim(),
-      entityType: 'person',
-      confidence: 0.9,
-      extractor: 'opengraph',
-      attributes: {
-        url,
-        description: ogDescription || '',
-        image: ogImage || '',
-        source: ogSiteName || ''
-      },
-      sourceUrl: url
-    });
+    // Require at least 2 words — real person names have first + last
+    if (!trimmedFullName.includes(' ')) return entities;
+
+    // Coherence check: if OG says "profile" but name fails person checks, skip or re-type
+    const pattern = classifyNamePattern(trimmedFullName);
+    const personCheck = isLikelyPersonName(trimmedFullName);
+
+    // CamelCase or org suffix → not a person, regardless of og:type=profile
+    if (pattern.likelyType === 'organization' && pattern.confidence >= 0.7) {
+      // Re-type as organization instead of dropping
+      entities.push({
+        name: trimmedFullName,
+        entityType: 'organization',
+        confidence: 0.7,
+        extractor: 'opengraph',
+        attributes: {
+          url,
+          description: ogDescription || '',
+          image: ogImage || '',
+          source: ogSiteName || ''
+        },
+        sourceUrl: url
+      });
+    } else if (!personCheck.likely && !firstName && !lastName) {
+      // No name DB match AND no explicit profile:first_name/last_name → skip
+      // (sites like IndieWeb use og:type=profile for non-person pages)
+      // But still allow if the name is ambiguous (could be a person we don't recognize)
+      if (pattern.likelyType !== 'ambiguous' && pattern.likelyType !== 'unknown') {
+        return entities;
+      }
+      // Ambiguous — allow with reduced confidence
+      entities.push({
+        name: trimmedFullName,
+        entityType: 'person',
+        confidence: 0.7,
+        extractor: 'opengraph',
+        attributes: {
+          url,
+          description: ogDescription || '',
+          image: ogImage || '',
+          source: ogSiteName || ''
+        },
+        sourceUrl: url
+      });
+    } else {
+      entities.push({
+        name: trimmedFullName,
+        entityType: 'person',
+        confidence: 0.9,
+        extractor: 'opengraph',
+        attributes: {
+          url,
+          description: ogDescription || '',
+          image: ogImage || '',
+          source: ogSiteName || ''
+        },
+        sourceUrl: url
+      });
+    }
   }
 
   // Extract business info (og:type = business.business)

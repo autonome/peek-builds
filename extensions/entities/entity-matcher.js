@@ -6,6 +6,7 @@
  */
 
 import { findEntity, createEntity, addObservation, normalizeName, isEntitySuppressed } from './entity-store.js';
+import { validateEntityType, ensureNameDatabase } from './name-validator.js';
 
 // Generic names that should never be stored as entities
 const BLOCKLIST = new Set([
@@ -17,6 +18,8 @@ const BLOCKLIST = new Set([
   'privacy policy', 'terms of service', 'cookie policy', 'subscribe',
   'sign in', 'sign up', 'log in', 'register', 'learn more', 'read more',
   'click here', 'view more', 'see more', 'show more', 'load more',
+  'main page', 'front page', 'index', 'welcome', 'dashboard', 'feed',
+  'homepage', 'start page', 'new tab',
 ]);
 
 /**
@@ -25,8 +28,8 @@ const BLOCKLIST = new Set([
 function isBlocklisted(name) {
   if (!name) return true;
   const n = name.trim();
-  // Too short
-  if (n.length < 2) return true;
+  // Too short (rejects 1-3 char abbreviations like "LOC", "WI", "Ed")
+  if (n.length < 4) return true;
   // All numbers
   if (/^\d+$/.test(n)) return true;
   // All punctuation/symbols
@@ -50,6 +53,9 @@ function isBlocklisted(name) {
 export async function processEntities(rawEntities, pageContext, confidenceThreshold = 0.7) {
   const processed = [];
 
+  // Ensure name database is loaded before validation
+  await ensureNameDatabase();
+
   // Deduplicate within the batch by name+type
   const seen = new Map();
   const dedupedEntities = [];
@@ -63,6 +69,19 @@ export async function processEntities(rawEntities, pageContext, confidenceThresh
 
     // Filter entities suppressed by user feedback
     if (await isEntitySuppressed(entity.name, entity.entityType)) continue;
+
+    // Validate entity type claim using name heuristics + name database
+    const validation = validateEntityType(entity.name, entity.entityType);
+    if (!validation.valid) {
+      if (validation.suggestedType) {
+        // Re-type the entity instead of dropping it
+        entity.entityType = validation.suggestedType;
+        entity.confidence *= 0.8; // reduce confidence for reclassified entities
+      } else {
+        // No valid type — skip this entity
+        continue;
+      }
+    }
 
     const key = `${normalizeName(entity.name)}:${entity.entityType}`;
 

@@ -372,6 +372,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateNoisyDateEntities();
   migrateUnformattedPhoneEntities();
   migrateLowQualityEntities();
+  migrateInvalidPersonEntities();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
@@ -1731,7 +1732,7 @@ function migrateUnformattedPhoneEntities(): void {
 function migrateLowQualityEntities(): void {
   if (!db) return;
 
-  const MIGRATION_ID = 'remove_low_quality_entities_v3';
+  const MIGRATION_ID = 'remove_low_quality_entities_v5';
 
   const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
   if (migrationRecord && migrationRecord.status === 'complete') return;
@@ -1746,6 +1747,8 @@ function migrateLowQualityEntities(): void {
     'privacy policy', 'terms of service', 'cookie policy', 'subscribe',
     'sign in', 'sign up', 'log in', 'register', 'learn more', 'read more',
     'click here', 'view more', 'see more', 'show more', 'load more',
+    'main page', 'front page', 'index', 'welcome', 'dashboard', 'feed',
+    'homepage', 'start page', 'new tab',
   ]);
 
   const blockedEmailPrefixes = [
@@ -1783,8 +1786,8 @@ function migrateLowQualityEntities(): void {
     // 1. Blocklisted names
     if (blocklist.has(nameLower)) { removeEntity(entity.id); continue; }
 
-    // 2. Too short or all numbers
-    if (name.length < 2 || /^\d+$/.test(name)) { removeEntity(entity.id); continue; }
+    // 2. Too short (< 4 chars catches abbreviations like "LOC", "WI", "Ed", "Se") or all numbers
+    if (name.length < 4 || /^\d+$/.test(name)) { removeEntity(entity.id); continue; }
 
     // 3. All punctuation/symbols
     if (/^[\d\s.,;:!?$%/\-@#&*()[\]{}|\\<>]+$/.test(name)) { removeEntity(entity.id); continue; }
@@ -1828,11 +1831,176 @@ function migrateLowQualityEntities(): void {
       removeEntity(entity.id);
       continue;
     }
+
+    // 9. Single-word "person" entities from OpenGraph — these are site/org names, not people
+    if (entityType === 'person' && meta.extractor === 'opengraph' && !name.includes(' ')) {
+      removeEntity(entity.id);
+      continue;
+    }
   }
 
   db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
   if (removedCount > 0) {
     console.log(`[datastore] Removed ${removedCount} low-quality entities (blocklist, automated emails, sparse structured data)`);
+  }
+}
+
+/**
+ * Validate existing person entities using name heuristics and a local name database.
+ * Removes person entities that fail validation:
+ * - CamelCase brand names stored as persons (e.g., "IndieWeb")
+ * - Single-word persons not in the common first names database
+ * - Names with org suffixes stored as persons
+ * - Re-types obvious organizations that were misclassified as persons
+ *
+ * See docs/entity-validation-research.md for the full framework design.
+ */
+function migrateInvalidPersonEntities(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'validate_person_entities_v1';
+
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') return;
+
+  // Load the name database synchronously for the migration context
+  let namesData: { firstNames: string[]; surnames: string[] };
+  try {
+    const namesPath = join(__dirname, '../../../extensions/entities/data/names.json');
+    namesData = JSON.parse(readFileSync(namesPath, 'utf-8'));
+  } catch (error) {
+    console.warn('[datastore] Could not load names.json for person entity migration, skipping:', (error as Error).message);
+    db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+    return;
+  }
+
+  const firstNames = new Set(namesData.firstNames.map(n => n.toLowerCase()));
+  const surnames = new Set(namesData.surnames.map(n => n.toLowerCase()));
+
+  // CamelCase pattern: single word with internal uppercase (IndieWeb, YouTube, GitHub)
+  const camelCasePattern = /^[A-Z][a-z]+(?:[A-Z][a-z]*)+$/;
+
+  // Org suffixes
+  const orgSuffixPattern = /\b(Inc|LLC|Ltd|Corp|Corporation|Foundation|Association|Institute|University|Museum|Academy|Society)\b\.?/i;
+
+  // "The X" pattern
+  const thePattern = /^The\s+/;
+
+  // ALL_CAPS
+  const allCapsPattern = /^[A-Z]{2,}$/;
+
+  // Honorific prefix
+  const honorificPattern = /^(Mr|Mrs|Ms|Miss|Dr|Prof|Professor|Sir|Dame|Lady|Lord|Rev|Reverend)\b\.?\s/i;
+
+  // URL/path-like
+  const urlLikePattern = /^(https?:\/\/|www\.|\/)/i;
+  const pathLikePattern = /[/\\]|\.(?:com|org|net|edu|gov|io|html|php)\b/i;
+
+  const personEntities = db.prepare(`
+    SELECT id, content, metadata FROM items
+    WHERE type = 'entity'
+      AND deletedAt = 0
+      AND json_extract(metadata, '$.entityType') = 'person'
+  `).all() as { id: string; content: string; metadata: string }[];
+
+  let removedCount = 0;
+  let retypedCount = 0;
+
+  const removeEntity = (id: string) => {
+    try {
+      db!.prepare('DELETE FROM item_events WHERE itemId = ?').run(id);
+      db!.prepare('DELETE FROM item_tags WHERE itemId = ?').run(id);
+      db!.prepare('DELETE FROM items WHERE id = ?').run(id);
+      removedCount++;
+    } catch (error) {
+      console.error(`Failed to remove invalid person entity ${id}:`, error);
+    }
+  };
+
+  const retypeToOrg = (id: string, metadata: string) => {
+    try {
+      const meta = JSON.parse(metadata || '{}');
+      meta.entityType = 'organization';
+      meta.confidence = (meta.confidence || 0.5) * 0.8;
+      meta.retypedFrom = 'person';
+      meta.retypedReason = 'name validation migration';
+      db!.prepare('UPDATE items SET metadata = ? WHERE id = ?').run(JSON.stringify(meta), id);
+
+      // Update tags: remove entity:person tag, add entity:organization tag
+      const personTag = db!.prepare(`SELECT id FROM tags WHERE name = 'entity:person'`).get() as { id: string } | undefined;
+      const orgTag = db!.prepare(`SELECT id FROM tags WHERE name = 'entity:organization'`).get() as { id: string } | undefined;
+      if (personTag) {
+        db!.prepare('DELETE FROM item_tags WHERE itemId = ? AND tagId = ?').run(id, personTag.id);
+      }
+      if (orgTag) {
+        db!.prepare('INSERT OR IGNORE INTO item_tags (itemId, tagId) VALUES (?, ?)').run(id, orgTag.id);
+      }
+      retypedCount++;
+    } catch (error) {
+      console.error(`Failed to retype person entity ${id} to org:`, error);
+    }
+  };
+
+  for (const entity of personEntities) {
+    const name = (entity.content || '').trim();
+    const words = name.split(/\s+/);
+
+    // URL/path-like → remove
+    if (urlLikePattern.test(name) || pathLikePattern.test(name)) {
+      removeEntity(entity.id);
+      continue;
+    }
+
+    // Has honorific → keep (strong person signal)
+    if (honorificPattern.test(name)) continue;
+
+    // CamelCase single word → retype to org (e.g., "IndieWeb", "YouTube")
+    if (words.length === 1 && camelCasePattern.test(name)) {
+      retypeToOrg(entity.id, entity.metadata);
+      continue;
+    }
+
+    // ALL_CAPS single word → remove (abbreviation, not person)
+    if (words.length === 1 && allCapsPattern.test(name)) {
+      removeEntity(entity.id);
+      continue;
+    }
+
+    // Org suffix → retype to org
+    if (orgSuffixPattern.test(name)) {
+      retypeToOrg(entity.id, entity.metadata);
+      continue;
+    }
+
+    // "The X" pattern → retype to org
+    if (thePattern.test(name) && words.length >= 2) {
+      retypeToOrg(entity.id, entity.metadata);
+      continue;
+    }
+
+    // Single word: only keep if it is a known first name
+    if (words.length === 1) {
+      const lower = name.toLowerCase();
+      if (!firstNames.has(lower)) {
+        removeEntity(entity.id);
+        continue;
+      }
+      // Known first name mononym (Madonna, Jesus) — keep
+      continue;
+    }
+
+    // Multi-word with leading CamelCase → retype to org
+    if (camelCasePattern.test(words[0])) {
+      retypeToOrg(entity.id, entity.metadata);
+      continue;
+    }
+
+    // Multi-word: keep (two-word names are plausible persons even without DB match)
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+  if (removedCount > 0 || retypedCount > 0) {
+    console.log(`[datastore] Person entity validation: removed ${removedCount}, retyped ${retypedCount} to organization`);
   }
 }
 
