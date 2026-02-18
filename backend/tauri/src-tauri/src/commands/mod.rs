@@ -4,6 +4,8 @@
 
 pub mod datastore;
 pub mod extensions;
+pub mod file_dialog;
+pub mod net_fetch;
 pub mod profiles;
 pub mod sync;
 pub mod theme;

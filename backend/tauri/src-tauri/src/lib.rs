@@ -17,6 +17,8 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
+#[cfg(desktop)]
+use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
 
 // Note: Tauri doesn't have backgroundColor support like Electron.
 // The white flash prevention is handled through CSS in the frontend.
@@ -105,6 +107,31 @@ pub fn run() {
                 // Prevent app from appearing in Dock and stealing focus
                 #[cfg(target_os = "macos")]
                 app.set_activation_policy(ActivationPolicy::Accessory);
+            }
+
+            // Create system tray icon (desktop only, not in headless mode)
+            #[cfg(desktop)]
+            if !headless {
+                let icon = app.default_window_icon().cloned()
+                    .expect("Failed to get default window icon for tray");
+                TrayIconBuilder::new()
+                    .tooltip("Peek")
+                    .icon(icon)
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event {
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+                println!("[tauri] System tray created");
             }
 
             // Determine profile based on environment
@@ -464,6 +491,11 @@ pub fn run() {
             commands::profiles::profiles_enable_sync,
             commands::profiles::profiles_disable_sync,
             commands::profiles::profiles_get_sync_config,
+            // Net fetch (CORS-bypassing proxy)
+            commands::net_fetch::net_fetch,
+            // File dialogs
+            commands::file_dialog::file_save_dialog,
+            commands::file_dialog::file_open_dialog,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
