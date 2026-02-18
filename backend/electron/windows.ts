@@ -25,7 +25,6 @@ import {
 
 import {
   getIzuiCoordinator,
-  escPolicy,
 } from './izui-state.js';
 
 /**
@@ -100,7 +99,19 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
   });
 }
 
-// escPolicy is imported from the shared IZUI module via ./izui-state.js
+/**
+ * ESC policy: given session state and window role, determine what to do.
+ * Pure function — no side effects.
+ */
+function escPolicy(sessionState: string, role: string): 'close' | 'close-and-restore' | 'nothing' {
+  // These roles always close regardless of session state
+  if (['quick-view', 'palette', 'utility'].includes(role)) return 'close';
+  if (role === 'overlay') return 'close-and-restore';
+  if (role === 'child-content') return 'close';
+  // workspace and content: only close in transient sessions
+  if (sessionState === 'transient') return 'close';
+  return 'nothing';
+}
 
 /**
  * Core ESC handling logic for a BrowserWindow.
