@@ -17,6 +17,8 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 // Compartments for runtime-reconfigurable extensions
 const vimCompartment = new Compartment();
 const themeCompartment = new Compartment();
+const lineWrapCompartment = new Compartment();
+const lineNumberCompartment = new Compartment();
 
 // ============================================================================
 // Folditall Algorithm Helpers
@@ -406,6 +408,28 @@ Vim.mapCommand('zm', 'action', 'foldAll', {}, { context: 'normal' });
 // Space toggles fold (like za) - folditall behavior
 Vim.mapCommand('<Space>', 'action', 'toggleFold', {}, { context: 'normal' });
 
+// Vim :set wrap / :set nowrap — toggle line wrapping
+Vim.defineOption('wrap', false, 'boolean', undefined, (value, cm) => {
+  if (!cm) return; // called without editor during init
+  const view = cm.cm6;
+  if (view) {
+    view.dispatch({
+      effects: lineWrapCompartment.reconfigure(value ? EditorView.lineWrapping : []),
+    });
+  }
+});
+
+// Vim :set number / :set nonumber — toggle line numbers and fold gutter
+Vim.defineOption('number', true, 'boolean', undefined, (value, cm) => {
+  if (!cm) return; // called without editor during init
+  const view = cm.cm6;
+  if (view) {
+    view.dispatch({
+      effects: lineNumberCompartment.reconfigure(value ? [lineNumbers(), foldGutter()] : []),
+    });
+  }
+});
+
 /**
  * Create a peek-themed CodeMirror theme using CSS variables
  */
@@ -591,8 +615,14 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
     // Theming
     themeCompartment.of(peekTheme),
 
+    // Line wrapping (off by default, toggle via :set wrap / :set nowrap)
+    lineWrapCompartment.of([]),
+
     // Vim mode (initially based on setting)
     vimCompartment.of(vimMode ? vim() : []),
+
+    // Line numbers and fold gutter (toggle via :set number / :set nonumber)
+    lineNumberCompartment.of(showLineNumbers ? [lineNumbers(), foldGutter()] : []),
 
     // Update listener for content, selection, and vim mode changes
     EditorView.updateListener.of(update => {
@@ -637,11 +667,6 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
       }
     }),
   ];
-
-  // Optional line numbers
-  if (showLineNumbers) {
-    extensions.push(lineNumbers(), foldGutter());
-  }
 
   const state = EditorState.create({
     doc: content,

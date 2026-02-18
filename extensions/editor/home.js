@@ -276,6 +276,15 @@ const init = async () => {
     debug && console.log('[editor:vim] :w — saved');
   });
 
+  Vim.defineEx('quit', 'q', () => {
+    if (api?.window?.close) {
+      api.window.close();
+    } else {
+      window.close();
+    }
+    debug && console.log('[editor:vim] :q — closing window');
+  });
+
   Vim.defineEx('wq', 'wq', async () => {
     if (currentItemId) {
       const content = editorLayout.getContent();
