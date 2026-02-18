@@ -231,6 +231,17 @@ const saveToGroup = async (groupName) => {
   }
 
   console.log(`[ext:groups] Saved ${savedCount} URLs to group "${groupName}"`);
+
+  // Persist current window layouts for this group
+  try {
+    if (api.session?.saveGroupWorkspaces) {
+      await api.session.saveGroupWorkspaces();
+      debug && console.log('[ext:groups] Group workspace layouts saved');
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] Failed to save workspace layouts:', err);
+  }
+
   return { success: true, count: savedCount, total: listResult.windows.length };
 };
 
@@ -290,9 +301,46 @@ const openGroup = async (groupName) => {
   activeGroupId = tag.id;
   activeGroupName = tag.name;
 
+  // Load saved workspace snapshot for this group (if any)
+  let savedBoundsMap = null;
+  let sortedUrlItems = urlItems;
+  try {
+    const wsResult = await api.settings.getExtKey('group-workspaces', 'workspace:' + tag.id);
+    if (wsResult.success && wsResult.data) {
+      const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;
+      if (snapshot.version === 1 && Array.isArray(snapshot.windows)) {
+        // Build URL → bounds map
+        savedBoundsMap = new Map();
+        for (const w of snapshot.windows) {
+          if (w.url && w.bounds) {
+            savedBoundsMap.set(normalizeUrlForCompare(w.url), { bounds: w.bounds, zOrder: w.zOrder ?? 0 });
+          }
+        }
+        // Sort items by saved z-order (highest zOrder = opened later = on top)
+        sortedUrlItems = [...urlItems].sort((a, b) => {
+          const aZ = savedBoundsMap.get(normalizeUrlForCompare(a._openUrl))?.zOrder ?? 0;
+          const bZ = savedBoundsMap.get(normalizeUrlForCompare(b._openUrl))?.zOrder ?? 0;
+          return bZ - aZ;
+        });
+        debug && console.log(`[ext:groups] Loaded workspace snapshot with ${snapshot.windows.length} saved positions`);
+      }
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] No saved workspace layout, using defaults:', err);
+  }
+
   // Open windows and set group mode
   const openedWindows = [];
-  for (const item of urlItems) {
+  for (const item of sortedUrlItems) {
+    // Look up saved bounds for this URL
+    const savedEntry = savedBoundsMap?.get(normalizeUrlForCompare(item._openUrl));
+    const boundsOpts = savedEntry?.bounds ? {
+      x: savedEntry.bounds.x,
+      y: savedEntry.bounds.y,
+      width: savedEntry.bounds.width,
+      height: savedEntry.bounds.height,
+    } : {};
+
     const result = await api.window.open(item._openUrl, {
       role: 'content',
       trackingSource: 'cmd',
@@ -302,7 +350,8 @@ const openGroup = async (groupName) => {
         groupId: tag.id,
         groupName: tag.name,
         color: tag.color
-      }
+      },
+      ...boundsOpts
     });
     if (result?.id) {
       openedWindows.push(result.id);

@@ -271,6 +271,9 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     `).run('session-metadata', JSON.stringify(metadata), Date.now());
 
     DEBUG && console.log(`[session] Session snapshot saved successfully`);
+
+    // Also save per-group workspace snapshots (for group layout restore)
+    saveGroupWorkspaces();
   } catch (error) {
     console.error('[session] Failed to save session snapshot:', error);
   }
@@ -747,6 +750,90 @@ export function updateAutosaveInterval(intervalMinutes: number): void {
     DEBUG && console.log(`[session] Autosave interval changed: ${_autosaveIntervalMinutes} -> ${intervalMinutes}`);
     startAutosaveTimer(intervalMinutes);
   }
+}
+
+/**
+ * Save per-group workspace snapshots to extension_settings.
+ *
+ * Groups windows by their group mode context and writes a layout snapshot
+ * for each group. Used by openGroup() to restore window positions.
+ * Synchronous (safe for before-quit handler).
+ */
+export function saveGroupWorkspaces(): void {
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return;
+  }
+
+  const registeredWindows = getAllWindows();
+
+  // Use BrowserWindow.getAllWindows() order for z-order approximation
+  const allBrowserWindows = BrowserWindow.getAllWindows();
+  const zOrderMap = new Map<number, number>();
+  allBrowserWindows.forEach((win, index) => {
+    zOrderMap.set(win.id, index);
+  });
+
+  // Collect windows grouped by groupId
+  const groupWindows = new Map<string, { groupName: string; windows: Array<{ url: string; bounds: Electron.Rectangle; zOrder: number; focused: boolean }> }>();
+
+  for (const [id] of registeredWindows) {
+    const win = BrowserWindow.fromId(id);
+    if (!win || win.isDestroyed() || !win.isVisible()) continue;
+
+    const rawUrl = win.webContents.getURL();
+    if (rawUrl.includes('peek://app/background.html') || rawUrl.includes('peek://app/extension-host.html')) continue;
+
+    // Check if this window is in group mode
+    let modeEntry;
+    try {
+      modeEntry = getContextEntry('mode', id);
+    } catch {
+      continue;
+    }
+    if (!modeEntry || modeEntry.value !== 'group') continue;
+
+    const metadata = modeEntry.metadata as Record<string, unknown> | null;
+    const groupId = metadata?.groupId as string | undefined;
+    const groupName = metadata?.groupName as string | undefined;
+    if (!groupId) continue;
+
+    const realUrl = extractRealUrl(rawUrl);
+    const canvasBounds = extractCanvasBounds(rawUrl);
+    const bounds = canvasBounds || win.getBounds();
+
+    if (!groupWindows.has(groupId)) {
+      groupWindows.set(groupId, { groupName: groupName || '', windows: [] });
+    }
+    groupWindows.get(groupId)!.windows.push({
+      url: realUrl,
+      bounds,
+      zOrder: zOrderMap.get(id) ?? 0,
+      focused: win.isFocused(),
+    });
+  }
+
+  // Write each group's workspace snapshot
+  const upsert = db.prepare(`
+    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    VALUES (?, 'group-workspaces', ?, ?, ?)
+  `);
+
+  for (const [groupId, group] of groupWindows) {
+    const snapshot = {
+      version: 1,
+      groupId,
+      groupName: group.groupName,
+      createdAt: Date.now(),
+      windows: group.windows,
+    };
+    const key = `workspace:${groupId}`;
+    upsert.run(`group-workspaces:${key}`, key, JSON.stringify(snapshot), Date.now());
+  }
+
+  DEBUG && console.log(`[session] Saved workspace snapshots for ${groupWindows.size} group(s)`);
 }
 
 /**

@@ -1731,6 +1731,17 @@ api.settings = {
   }
 };
 
+// Session API — allows extensions to trigger session-level operations
+api.session = {
+  /**
+   * Save group workspace layouts (window positions per group)
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  saveGroupWorkspaces: () => {
+    return ipcRenderer.invoke('save-group-workspaces');
+  }
+};
+
 // Net fetch API - proxies HTTP requests through main process to bypass CORS
 // Useful for extensions that need to fetch from external APIs
 api.net = {

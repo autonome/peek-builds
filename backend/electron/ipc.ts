@@ -2163,6 +2163,24 @@ export function registerWindowHandlers(): void {
       winOptions.y = parseInt(options.y);
     }
 
+    // Off-screen bounds validation: if explicit x/y were provided, verify the
+    // center point falls on an active display. If not (e.g. monitor disconnected),
+    // drop x/y so the window centers on the current display instead.
+    if (winOptions.x !== undefined && winOptions.y !== undefined) {
+      const centerX = winOptions.x + Math.round(((winOptions.width as number) || 800) / 2);
+      const centerY = winOptions.y + Math.round(((winOptions.height as number) || 600) / 2);
+      const displays = screen.getAllDisplays();
+      const onScreen = displays.some(d => {
+        const { x: dx, y: dy, width: dw, height: dh } = d.bounds;
+        return centerX >= dx && centerX < dx + dw && centerY >= dy && centerY < dy + dh;
+      });
+      if (!onScreen) {
+        DEBUG && console.log(`[window-open] Dropping off-screen position (${winOptions.x},${winOptions.y}) center=(${centerX},${centerY})`);
+        delete winOptions.x;
+        delete winOptions.y;
+      }
+    }
+
     // Determine opener window and whether it's a real content parent
     // Background/infrastructure windows (background.html, extension-host.html) are
     // not real parents — they're just the IPC sender. Only content windows count
@@ -4832,6 +4850,18 @@ function registerSessionHandlers(): void {
         cancelled: false,
         ...result,
       };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Save group workspace layouts on demand (called from groups extension)
+  ipcMain.handle('save-group-workspaces', async () => {
+    try {
+      const { saveGroupWorkspaces } = await import('./session.js');
+      saveGroupWorkspaces();
+      return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
