@@ -1008,18 +1008,20 @@ webview.addEventListener('did-fail-load', (e) => {
   console.error('[page] Load failed:', e.errorCode, e.errorDescription);
 });
 
-// Detect page background color, set it as backing color on the webview element,
-// then fade the webview in. This prevents the white flash when loading pages in dark mode.
+// On dom-ready: clear loading glow immediately, then detect page background color.
+// Background detection prevents the white flash when loading pages in dark mode.
 webview.addEventListener('dom-ready', async () => {
-  // Always end loading state — even if background detection fails
-  const endLoading = () => {
-    webview.classList.add('ready');
-    webview.classList.remove('loading');
-    if (showSource === 'loading') {
-      scheduleHide();
-    }
-  };
+  // End loading state IMMEDIATELY — don't wait for async bg detection.
+  // This MUST be synchronous at the top of dom-ready so the glow always
+  // clears promptly, even if executeJavaScript hangs or never resolves.
+  webview.classList.add('ready');
+  webview.classList.remove('loading');
+  if (showSource === 'loading') {
+    scheduleHide();
+  }
+  DEBUG && console.log('[page] dom-ready: loading glow cleared');
 
+  // Detect background color (cosmetic — must not block loading state)
   try {
     const bgResult = await webview.executeJavaScript(`
       (function() {
@@ -1066,8 +1068,6 @@ webview.addEventListener('dom-ready', async () => {
   } catch (err) {
     console.error('[page] Failed to detect background:', err);
   }
-
-  endLoading();
 });
 
 // Re-add loading glow on new navigations (but keep webview visible — don't reset opacity)
