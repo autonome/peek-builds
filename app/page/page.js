@@ -302,19 +302,52 @@ async function initWebview() {
   navbar.setUrl(targetUrl);
 }
 
-initWebview();
-webview.classList.add('loading');
-show({ source: 'loading' });
+// --- Loading lifecycle & visual effect ---
+// Simple state machine: 'loading' or 'loaded'.
+// Visual effect (CSS class) subscribes to state changes.
 
-// Safety timeout: if loading glow is still active after 10s, force it off.
-// Catches edge cases where neither dom-ready nor did-stop-loading fires.
-setTimeout(() => {
-  if (webview.classList.contains('loading')) {
-    webview.classList.remove('loading');
-    webview.classList.add('ready');
-    DEBUG && console.log('[page] Loading glow safety timeout — forced off after 10s');
+const loadingLifecycle = {
+  _state: 'idle',
+  _listeners: [],
+
+  get state() { return this._state; },
+
+  startLoading() {
+    if (this._state === 'loading') return;
+    this._state = 'loading';
+    this._notify();
+    DEBUG && console.log('[page] Loading started');
+  },
+
+  stopLoading() {
+    if (this._state === 'loaded') return;
+    this._state = 'loaded';
+    this._notify();
+    DEBUG && console.log('[page] Loading finished');
+  },
+
+  onChange(fn) {
+    this._listeners.push(fn);
+  },
+
+  _notify() {
+    for (const fn of this._listeners) fn(this._state);
   }
-}, 10000);
+};
+
+// Visual effect module — applies/removes CSS classes based on lifecycle state
+loadingLifecycle.onChange((state) => {
+  if (state === 'loading') {
+    webview.classList.add('loading');
+    webview.classList.remove('loaded');
+  } else if (state === 'loaded') {
+    webview.classList.remove('loading');
+    webview.classList.add('loaded');
+  }
+});
+
+initWebview();
+loadingLifecycle.startLoading();
 
 // --- Custom drag ---
 // Two modes:
@@ -824,7 +857,7 @@ document.addEventListener('mousemove', (e) => { lastMouseY = e.clientY; }, true)
 function scheduleHide() {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
-    if (showSource !== 'hover' && showSource !== 'loading') return;
+    if (showSource !== 'hover') return;
     // If cursor is still in the navbar+trigger area, don't hide.
     // This prevents the hide→contract→re-trigger→show bounce when cursor
     // crosses the boundary between navbar and webview.
@@ -1008,20 +1041,10 @@ webview.addEventListener('did-fail-load', (e) => {
   console.error('[page] Load failed:', e.errorCode, e.errorDescription);
 });
 
-// On dom-ready: clear loading glow immediately, then detect page background color.
+// On dom-ready: detect page background color.
 // Background detection prevents the white flash when loading pages in dark mode.
 webview.addEventListener('dom-ready', async () => {
-  // End loading state IMMEDIATELY — don't wait for async bg detection.
-  // This MUST be synchronous at the top of dom-ready so the glow always
-  // clears promptly, even if executeJavaScript hangs or never resolves.
-  webview.classList.add('ready');
-  webview.classList.remove('loading');
-  if (showSource === 'loading') {
-    scheduleHide();
-  }
-  DEBUG && console.log('[page] dom-ready: loading glow cleared');
-
-  // Detect background color (cosmetic — must not block loading state)
+  // Detect background color (cosmetic)
   try {
     const bgResult = await webview.executeJavaScript(`
       (function() {
@@ -1070,31 +1093,10 @@ webview.addEventListener('dom-ready', async () => {
   }
 });
 
-// Re-add loading glow on new navigations (but keep webview visible — don't reset opacity)
-webview.addEventListener('did-start-loading', () => {
-  // Only show loading glow if we're not already displaying content
-  // (avoid flash on in-page navigations)
-  if (!webview.classList.contains('ready')) {
-    webview.classList.add('loading');
-  }
-  DEBUG && console.log('[page] did-start-loading');
-});
-
-// Fallback: ensure loading glow stops even if dom-ready doesn't fire
-webview.addEventListener('did-stop-loading', () => {
-  if (webview.classList.contains('loading')) {
-    webview.classList.remove('loading');
-    webview.classList.add('ready');
-    if (showSource === 'loading') {
-      scheduleHide();
-    }
-    DEBUG && console.log('[page] did-stop-loading: removed loading glow (fallback)');
-  }
-});
-
-// --- OpenSearch discovery & page:loaded event ---
+// --- OpenSearch discovery, loading lifecycle & page:loaded event ---
 
 webview.addEventListener('did-finish-load', async () => {
+  loadingLifecycle.stopLoading();
   const pageUrl = webview.getURL();
   if (!pageUrl) return;
   if (!pageUrl.startsWith('http://') && !pageUrl.startsWith('https://')) return;
