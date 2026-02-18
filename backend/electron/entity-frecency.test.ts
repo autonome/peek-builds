@@ -539,37 +539,35 @@ describe('Entity Regex Extraction Filters', () => {
     });
   });
 
-  // ─── Date: valid context SHOULD produce date entities ─────────────
-
-  describe('dates: meaningful context SHOULD produce date entities', () => {
-    it('should detect date with event context "Team Meeting"', () => {
+  // Date regex extraction was intentionally disabled (too noisy).
+  // These tests now verify that no dates are returned via regex.
+  describe('dates: regex extraction disabled (no date entities from regex)', () => {
+    it('should NOT extract date via regex even with meaningful context', () => {
       const text = 'Team Meeting 2026-02-10';
       const result = extractRegexEntities(text, 'https://example.com');
       const dates = result.filter((e: any) => e.entityType === 'date');
-      assert.ok(dates.length >= 1, 'Date with "Team Meeting" context should be detected');
-      assert.ok(dates[0].name.includes('Team Meeting'), 'Name should include context');
-      assert.ok(dates[0].name.includes('2026-02-10'), 'Name should include date');
+      assert.strictEqual(dates.length, 0, 'Date regex extraction is disabled');
     });
 
-    it('should detect date with "Project Deadline" context', () => {
+    it('should NOT extract date with "Project Deadline" context', () => {
       const text = 'Project Deadline 2026-03-15';
       const result = extractRegexEntities(text, 'https://example.com');
       const dates = result.filter((e: any) => e.entityType === 'date');
-      assert.ok(dates.length >= 1, 'Date with "Project Deadline" context should be detected');
+      assert.strictEqual(dates.length, 0, 'Date regex extraction is disabled');
     });
 
-    it('should detect date with "Conference Talk" context (US format)', () => {
+    it('should NOT extract date with US format via regex', () => {
       const text = 'Conference Talk February 15, 2026';
       const result = extractRegexEntities(text, 'https://example.com');
       const dates = result.filter((e: any) => e.entityType === 'date');
-      assert.ok(dates.length >= 1, 'Date with "Conference Talk" context should be detected');
+      assert.strictEqual(dates.length, 0, 'Date regex extraction is disabled');
     });
 
-    it('should detect date with "Invoice Due Date:" label', () => {
+    it('should NOT extract slash-format date via regex', () => {
       const text = 'Invoice Due Date: 02/10/2026';
       const result = extractRegexEntities(text, 'https://example.com');
       const dates = result.filter((e: any) => e.entityType === 'date');
-      assert.ok(dates.length >= 1, 'Date with "Invoice Due Date" context should be detected');
+      assert.strictEqual(dates.length, 0, 'Date regex extraction is disabled');
     });
   });
 });
