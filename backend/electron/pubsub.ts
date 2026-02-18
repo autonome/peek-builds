@@ -1,10 +1,15 @@
 /**
- * PubSub messaging system for cross-process communication
+ * PubSub messaging system for cross-process communication (Electron main process)
  *
  * Handles:
  * - Topic-based publish/subscribe
  * - Scope-based message filtering (SYSTEM, SELF, GLOBAL)
  * - Extension window broadcasting (via callback)
+ *
+ * NOTE: The scope/topic logic is mirrored in app/lib/pubsub.js (the shared
+ * renderer-layer PubSub engine). This file stays separate because the main
+ * process acts as an IPC hub and cannot import ES modules from app/lib/.
+ * If you change scope semantics here, update app/lib/pubsub.js too.
  */
 
 // Message scopes
