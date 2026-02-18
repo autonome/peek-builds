@@ -518,7 +518,6 @@ fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<Stri
                 .as_ref()
                 .map(|m| serde_json::to_string(m).unwrap_or_else(|_| "{}".to_string())),
             sync_id: Some(server_item.id.clone()),
-            sync_source: Some("server".to_string()),
             ..Default::default()
         };
 
