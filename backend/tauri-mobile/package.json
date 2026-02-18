@@ -36,14 +36,14 @@
     "xcode:build": "rm -rf /tmp/peek-xcodebuild-sim && cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild-sim -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean build"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.9.1",
-    "@tauri-apps/plugin-opener": "^2",
-    "@tauri-apps/plugin-store": "^2.4.1",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-store": "^2.4.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "^2.10.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
