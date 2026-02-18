@@ -2,16 +2,9 @@
 //!
 //! Mirrors the Electron `file-save-dialog` and `file-open-dialog` IPC handlers.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::Path;
 use tauri_plugin_dialog::DialogExt;
-
-/// Filter for file dialogs (e.g., { name: "JSON", extensions: ["json"] })
-#[derive(Debug, Deserialize)]
-pub struct DialogFilter {
-    pub name: String,
-    pub extensions: Vec<String>,
-}
 
 // ── file-save-dialog ────────────────────────────────────────────────
 
@@ -60,17 +53,15 @@ pub async fn file_save_dialog(
         builder = builder.set_file_name(name);
     }
 
-    // Show dialog (blocking on async channel)
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    // Show dialog using std::sync channel (consistent with extensions.rs pattern)
+    let (tx, rx) = std::sync::mpsc::channel();
     builder.save_file(move |path| {
         let _ = tx.send(path);
     });
 
-    let file_path = rx.await.map_err(|e| format!("Dialog channel error: {}", e))?;
-
-    match file_path {
-        Some(path) => {
-            let path_str = path.to_string_lossy().to_string();
+    match rx.recv() {
+        Ok(Some(file_path)) => {
+            let path_str = file_path.to_string();
             // Write content to the selected path
             if let Err(e) = std::fs::write(&path_str, &content) {
                 return Ok(FileSaveResponse {
@@ -87,11 +78,17 @@ pub async fn file_save_dialog(
                 error: None,
             })
         }
-        None => Ok(FileSaveResponse {
+        Ok(None) => Ok(FileSaveResponse {
             success: false,
             path: None,
             canceled: Some(true),
             error: None,
+        }),
+        Err(_) => Ok(FileSaveResponse {
+            success: false,
+            path: None,
+            canceled: None,
+            error: Some("Dialog error".to_string()),
         }),
     }
 }
@@ -139,16 +136,14 @@ pub async fn file_open_dialog(
         .add_filter("Documents", &["pdf", "doc", "docx", "rtf"]);
 
     // Show dialog
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = std::sync::mpsc::channel();
     builder.pick_file(move |path| {
         let _ = tx.send(path);
     });
 
-    let file_path = rx.await.map_err(|e| format!("Dialog channel error: {}", e))?;
-
-    match file_path {
-        Some(selected) => {
-            let path_str = selected.to_string_lossy().to_string();
+    match rx.recv() {
+        Ok(Some(selected)) => {
+            let path_str = selected.to_string();
             let path = Path::new(&path_str);
 
             let file_name = path
@@ -191,11 +186,17 @@ pub async fn file_open_dialog(
                 error: None,
             })
         }
-        None => Ok(FileOpenResponse {
+        Ok(None) => Ok(FileOpenResponse {
             success: false,
             data: None,
             canceled: Some(true),
             error: None,
+        }),
+        Err(_) => Ok(FileOpenResponse {
+            success: false,
+            data: None,
+            canceled: None,
+            error: Some("Dialog error".to_string()),
         }),
     }
 }
