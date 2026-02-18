@@ -9,6 +9,8 @@
  * Captures all visible user windows and writes to extension_settings
  * using synchronous better-sqlite3 APIs (safe for before-quit handler).
  * On startup, reads the snapshot and recreates windows.
+ *
+ * NOTE: Pure logic shared copy lives in app/lib/session.js for frontend/Tauri use.
  */
 
 import { BrowserWindow, dialog, screen } from 'electron';
