@@ -6,13 +6,15 @@
  *
  * @element peek-grid-toolbar
  *
- * @prop {string} viewMode - 'columns' | 'list' | 'masonry', default 'columns'
+ * @prop {string} viewMode - 'columns' | 'list' | 'masonry' | 'freeform', default 'columns'
+ * @prop {boolean} freeformEditing - Whether freeform edit mode is active
  * @prop {string} sortBy - Current sort key
  * @prop {string} sortDirection - 'asc' | 'desc'
  * @prop {Array} sortOptions - [{value, label}]
  *
  * @fires view-mode-change - When view mode changes. Detail: { mode }
  * @fires sort-change - When sort changes. Detail: { sortBy, sortDirection }
+ * @fires freeform-editing-change - When freeform edit toggle changes. Detail: { editing }
  */
 
 import { html, css } from 'lit';
@@ -23,7 +25,8 @@ export class PeekGridToolbar extends PeekElement {
     viewMode: { type: String, attribute: 'view-mode', reflect: true },
     sortBy: { type: String, attribute: 'sort-by' },
     sortDirection: { type: String, attribute: 'sort-direction' },
-    sortOptions: { type: Array }
+    sortOptions: { type: Array },
+    freeformEditing: { type: Boolean, attribute: 'freeform-editing', reflect: true }
   };
 
   static styles = [
@@ -143,6 +146,33 @@ export class PeekGridToolbar extends PeekElement {
         color: #fff;
         border-color: var(--theme-accent, #007aff);
       }
+
+      .edit-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--peek-btn-height-sm, 28px);
+        height: var(--peek-btn-height-sm, 28px);
+        padding: 0;
+        margin-left: 4px;
+        border: 1px solid var(--theme-border, #e0e0e0);
+        border-radius: var(--peek-radius-sm);
+        background: var(--theme-bg-secondary, #fff);
+        color: var(--theme-text-muted, #999);
+        cursor: pointer;
+        transition: background var(--peek-transition-fast), color var(--peek-transition-fast);
+      }
+
+      .edit-toggle:hover {
+        background: var(--theme-bg-tertiary, #f5f5f5);
+        color: var(--theme-text, #333);
+      }
+
+      .edit-toggle.active {
+        background: var(--theme-accent, #007aff);
+        color: #fff;
+        border-color: var(--theme-accent, #007aff);
+      }
     `
   ];
 
@@ -152,6 +182,7 @@ export class PeekGridToolbar extends PeekElement {
     this.sortBy = '';
     this.sortDirection = 'asc';
     this.sortOptions = [];
+    this.freeformEditing = false;
   }
 
   _handleSortChange(e) {
@@ -167,6 +198,11 @@ export class PeekGridToolbar extends PeekElement {
   _handleViewMode(mode) {
     this.viewMode = mode;
     this.emit('view-mode-change', { mode });
+  }
+
+  _handleEditToggle() {
+    this.freeformEditing = !this.freeformEditing;
+    this.emit('freeform-editing-change', { editing: this.freeformEditing });
   }
 
   render() {
@@ -234,6 +270,29 @@ export class PeekGridToolbar extends PeekElement {
               <rect x="8" y="7" width="5" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/>
             </svg>
           </button>
+          <button
+            class="view-btn ${this.viewMode === 'freeform' ? 'active' : ''}"
+            title="Freeform view"
+            @click=${() => this._handleViewMode('freeform')}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <rect x="1" y="1" width="4" height="3" rx="0.5" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="7" y="2" width="6" height="4" rx="0.5" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="2" y="6" width="5" height="4" rx="0.5" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="9" y="8" width="4" height="5" rx="0.5" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+          </button>
+          ${this.viewMode === 'freeform' ? html`
+            <button
+              class="edit-toggle ${this.freeformEditing ? 'active' : ''}"
+              title="${this.freeformEditing ? 'Exit edit mode' : 'Edit layout'}"
+              @click=${this._handleEditToggle}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M10.5 1.5L12.5 3.5L4.5 11.5L1.5 12.5L2.5 9.5L10.5 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          ` : ''}
         </div>
       </div>
     `;
