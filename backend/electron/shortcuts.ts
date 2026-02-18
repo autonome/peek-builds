@@ -6,6 +6,8 @@
  * - Local shortcuts (only work when app has focus)
  * - Mode-conditional shortcuts (only trigger in specific modes)
  * - Shortcut parsing and matching
+ *
+ * NOTE: Shared copy lives in app/lib/shortcuts.js for frontend/Tauri use.
  */
 
 import { DEBUG } from './config.js';
