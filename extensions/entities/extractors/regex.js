@@ -208,60 +208,10 @@ export function extractRegexEntities(text, url) {
     });
   }
 
-  // Extract dates WITH context only - standalone dates are noise.
-  // A date must be associated with a nearby event name, deadline, or meaningful label.
-  for (const pattern of DATE_PATTERNS) {
-    pattern.lastIndex = 0;
-    let dateMatch;
-    const seenDates = new Set();
-    while ((dateMatch = pattern.exec(text)) !== null) {
-      const normalized = dateMatch[0].trim();
-      if (seenDates.has(normalized.toLowerCase())) continue;
-      seenDates.add(normalized.toLowerCase());
-
-      const context = extractDateContext(text, dateMatch.index);
-      if (context) {
-        entities.push({
-          name: `${context} ${normalized}`,
-          entityType: 'date',
-          confidence: 0.8,
-          extractor: 'regex',
-          attributes: { originalText: normalized, context: context },
-          sourceUrl: url
-        });
-      }
-      // If no context found, skip this date — it's noise
-    }
-  }
-
-  // Extract prices WITH context only - standalone prices are noise.
-  // A price must be associated with a nearby product/service name.
-  PRICE_CONTEXT_RE.lastIndex = 0;
-  let priceMatch;
-  const seenPrices = new Set();
-  while ((priceMatch = PRICE_CONTEXT_RE.exec(text)) !== null) {
-    const priceText = priceMatch[0].trim();
-    if (seenPrices.has(priceText)) continue;
-    seenPrices.add(priceText);
-
-    const productName = extractPriceContext(text, priceMatch.index);
-    if (productName) {
-      // Create a meaningful price entity: "ProductName — $X.XX"
-      entities.push({
-        name: `${productName} ${priceText}`,
-        entityType: 'price',
-        confidence: 0.85,
-        extractor: 'regex',
-        attributes: {
-          price: priceText,
-          product: productName,
-          originalText: priceText
-        },
-        sourceUrl: url
-      });
-    }
-    // If no product context found, skip this price — it's noise
-  }
+  // Date and price regex extraction DISABLED — too noisy.
+  // The date regex pulls surrounding garbage text as "context" (e.g. sports match titles).
+  // The price regex matches currency codes in non-price contexts (e.g. "2025 AUD" as a price).
+  // Dates and prices from structured data (JSON-LD) are still extracted by other extractors.
 
   // Extract street addresses
   ADDRESS_RE.lastIndex = 0;
