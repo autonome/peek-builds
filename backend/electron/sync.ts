@@ -251,6 +251,7 @@ async function serverFetch<T>(
       'X-Peek-Client': 'desktop',
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: AbortSignal.timeout(15000),
   });
 
   if (!response.ok) {
