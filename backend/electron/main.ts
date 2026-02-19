@@ -277,10 +277,25 @@ export async function initialize(): Promise<void> {
               // Context may be cleaned up already during shutdown
             }
 
+            // For canvas pages, convert window bounds back to webview bounds
+            // (window-open will re-add canvas margins when reopening)
+            let saveBounds = lastBounds;
+            if (lastBounds && isWebUrl) {
+              const CANVAS_MARGIN = 8;
+              const CANVAS_TRIGGER_ZONE = 8;
+              const CANVAS_NAVBAR_HEIGHT = 36;
+              saveBounds = {
+                x: lastBounds.x + CANVAS_MARGIN,
+                y: lastBounds.y + CANVAS_TRIGGER_ZONE + CANVAS_NAVBAR_HEIGHT,
+                width: lastBounds.width - CANVAS_MARGIN * 2,
+                height: lastBounds.height - CANVAS_TRIGGER_ZONE - CANVAS_MARGIN - CANVAS_NAVBAR_HEIGHT,
+              };
+            }
+
             pushClosedWindow({
               url: address,
               source: windowData.source,
-              bounds: lastBounds,
+              bounds: saveBounds,
               groupMode,
               timestamp: Date.now(),
             });
