@@ -25,9 +25,17 @@ function openEditor(params) {
       const qs = new URLSearchParams(params).toString();
       if (qs) url += '?' + qs;
     }
+
+    // Use item-specific key so each item gets its own window.
+    // If editing the same item again, the existing window is reused and focused.
+    // Blank editors (no itemId) get a unique key so multiple can coexist.
+    const key = params?.itemId
+      ? `editor-${params.itemId}`
+      : `editor-${Date.now()}`;
+
     api.window.open(url, {
       role: 'workspace',
-      key: 'editor-home',
+      key,
       width: 800,
       height: 1000,
       title: 'Editor'
