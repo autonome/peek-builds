@@ -4,9 +4,113 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Fri, 13 Feb 2026 16:15:03 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 19 Feb 2026 16:38:31 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-02-19</title>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-19</guid>
+      <pubDate>Thu, 19 Feb 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Desktop - Themes<br>
+<ul><li>feat(themes): implement themes-as-extensions Phase 1+2 — unified lifecycle and cmd palette switching (213b)</li><br>
+<li style="margin-left:1em">Themes are CSS-only extensions served via peek://theme/ protocol</li><br>
+<li style="margin-left:1em">Switch themes from command palette, auto-discovers installed theme extensions</li><br>
+<li style="margin-left:1em">Includes default "Peek" theme with bundled fonts</li><br>
+<li>feat(theme): add 七十二候 micro-seasons theme with traditional Japanese colors (d031)</li><br>
+<li style="margin-left:1em">Colors change automatically every ~5 days based on Japan's 72 micro-seasons calendar</li><br>
+<li style="margin-left:1em">Uses 伝統色 (traditional Japanese colors) with automatic dark mode derivation via color-mix()</li><br>
+<li>fix(themes): copy fonts to theme-peek extension and fix font URLs (da4b)</li><br>
+<li>fix(editor): improve syntax highlighting readability in dark mode (de99)</li><br>
+</ul><br>
+Desktop - Groups<br>
+<ul><li>feat(groups): add workspace persistence — save and restore window layouts per group (1a25)</li><br>
+<li>feat(groups): add quick wins — close, search scope, switch, pin (b8a6)</li><br>
+<li style="margin-left:1em">Close all windows in group, scope search to group, switch between groups, pin windows</li><br>
+<li>test(groups): add unit tests for groups quick wins (805d)</li><br>
+</ul><br>
+Desktop - Widget System<br>
+<ul><li>feat(sheets): add widget sheet extension with freeform layout (9644)</li><br>
+<li>feat(hud): migrate HUD to widget sheet system with individual widget pages (4ec6)</li><br>
+<li>feat(extensions): add widget demo extension (7aeb)</li><br>
+<li>feat(grid): add freeform layout mode with drag/resize editing (6f05)</li><br>
+<li style="margin-left:1em">New "freeform" viewMode for peek-grid — drag to move, edge-drag to resize, snap-to-grid</li><br>
+</ul><br>
+Desktop - Editor<br>
+<ul><li>feat(editor): add vim :set wrap/nowrap, :set number/nonumber, and :q command (4750)</li><br>
+<li>feat(editor): persist vim :set settings (wrap, lineNumbers) across sessions (ab30)</li><br>
+<li>fix(editor): support multiple simultaneous editor instances (a3be)</li><br>
+</ul><br>
+Desktop - Page View<br>
+<ul><li>feat(page): show loading indicator for in-page webview navigations (538f)</li><br>
+<li>fix(page): rewrite loading indicator — separate lifecycle from visual effect (847d)</li><br>
+<li>fix(page): ensure page loading glow clears when page finishes loading (1630)</li><br>
+</ul><br>
+Desktop - Entity Recognition<br>
+<ul><li>feat(entities): add Phase 1 entity validation framework (64f7)</li><br>
+<li>test(entities): add unit tests for name-validator module (d81c)</li><br>
+</ul><br>
+Desktop - Tauri<br>
+<ul><li>feat(tauri): add system tray with click-to-show (c469)</li><br>
+<li>feat(tauri): add net-fetch proxy and file dialog commands (83f5)</li><br>
+</ul><br>
+Desktop - Refactoring<br>
+<ul><li>refactor: extract shared modules to app/lib — pubsub, izui, frecency, shortcuts, session (da44, 9ff2, 10f0, e267, 7ed8)</li><br>
+<li style="margin-left:1em">Platform-agnostic implementations shared between Electron and Tauri backends</li><br>
+</ul><br>
+Desktop - Fixes<br>
+<ul><li>fix(drag): use !important CSS classes for hold/drag cursor feedback (6e86)</li><br>
+<li>fix(sync): make sync now fire-and-forget + add 15s timeout (96ed, 73f9)</li><br>
+<li>fix: handle macOS open command with local file paths (1ae8)</li><br>
+<li>fix: prevent opening app directory as file:// URL on startup (e12b)</li><br>
+<li>fix(ext): use Promise.allSettled for extension loading so one failure doesn't block all commands (d031)</li><br>
+</ul><br>
+Testing<br>
+<ul><li>fix(tests): resolve pre-existing unit test failures across 4 test suites (a961)</li></ul></p>]]></description>
+    </item>
+    <item>
+      <title>2026-02-16</title>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-16</guid>
+      <pubDate>Mon, 16 Feb 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Desktop - Command Palette<br>
+<ul><li>feat(cmd): generic command chaining with pipe system (597)</li><br>
+<li>feat(cmd): replace embedded chain editor with popup window system (572)</li><br>
+<li>feat(cmd): add parameter suggestions to command palette (693)</li><br>
+<li>feat(cmd): add noun registration API for declarative command generation (191)</li><br>
+<li>fix(cmd): remove download cmd, fix save filename, fix dialog parent, unify hashtag extraction (5b95)</li><br>
+<li>fix(cmd): preserve noun routing metadata in command registry pipeline (39a4)</li><br>
+</ul><br>
+Desktop - Entity Recognition<br>
+<ul><li>feat(entities): add observation frequency ranking — Phase 1 (803)</li><br>
+<li>feat(entities): add thumbs up/down feedback for entity quality scoring (c0e)</li><br>
+</ul><br>
+Desktop - Tags<br>
+<ul><li>feat(tags): add rename and delete tag operations (ac2)</li><br>
+<li>fix(tags): add protocol 404 logging, handle all item types, fix filter counts (403e)</li><br>
+</ul><br>
+Desktop - Display Switching<br>
+<ul><li>refactor(display-watcher): replace 3-phase algorithm with safety-net-only approach (afa)</li><br>
+<li style="margin-left:1em">Gutted 881-line 3-phase algorithm, replaced with 304-line single-pass safety net</li><br>
+<li style="margin-left:1em">Lets macOS handle display migration natively, only rescues genuinely orphaned windows</li><br>
+</ul><br>
+Desktop - Page View & Dragging<br>
+<ul><li>fix(page): filter Cmd+L/R/[/] pubsub by windowId so only active page window responds (657)</li><br>
+<li>fix(page): fully end drag on webview mouseup to prevent overlay blocking clicks (a7b)</li><br>
+<li>fix(page): handle webview mousemove during active drag for window movement (ac37)</li><br>
+<li>fix(drag): remove data-no-drag from extension window bodies to restore hold-to-drag (63c1)</li><br>
+</ul><br>
+Desktop - Auth & URLs<br>
+<ul><li>feat(auth): OAuth popup bridge and flow improvements (c93)</li><br>
+<li>fix(url): wait for frontend ready and session restore before processing external URLs (e7ab)</li><br>
+</ul><br>
+Testing<br>
+<ul><li>test(cmd): add completer unit tests; fix tag # prefix stripping (610)</li><br>
+<li>test(cmd): add integration tests for command execution through pubsub (e11)</li><br>
+<li>test(cmd): add command chaining pipe system tests (566c)</li><br>
+<li>test(oauth): add OAuth bridge unit tests (77b)</li><br>
+<li>fix(test): fix 4 stale test expectations in desktop smoke tests (4d9)</li></ul></p>]]></description>
+    </item>
     <item>
       <title>2026-02-13</title>
       <link>https://tangled.org/burrito.space/peek</link>

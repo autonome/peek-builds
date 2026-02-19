@@ -13,6 +13,64 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-19
+
+Desktop - Themes
+- [x] feat(themes): implement themes-as-extensions Phase 1+2 — unified lifecycle and cmd palette switching (213b)
+  - Themes are CSS-only extensions served via peek://theme/ protocol
+  - Switch themes from command palette, auto-discovers installed theme extensions
+  - Includes default "Peek" theme with bundled fonts
+- [x] feat(theme): add 七十二候 micro-seasons theme with traditional Japanese colors (d031)
+  - Colors change automatically every ~5 days based on Japan's 72 micro-seasons calendar
+  - Uses 伝統色 (traditional Japanese colors) with automatic dark mode derivation via color-mix()
+- [x] fix(themes): copy fonts to theme-peek extension and fix font URLs (da4b)
+- [x] fix(editor): improve syntax highlighting readability in dark mode (de99)
+
+Desktop - Groups
+- [x] feat(groups): add workspace persistence — save and restore window layouts per group (1a25)
+- [x] feat(groups): add quick wins — close, search scope, switch, pin (b8a6)
+  - Close all windows in group, scope search to group, switch between groups, pin windows
+- [x] test(groups): add unit tests for groups quick wins (805d)
+
+Desktop - Widget System
+- [x] feat(sheets): add widget sheet extension with freeform layout (9644)
+- [x] feat(hud): migrate HUD to widget sheet system with individual widget pages (4ec6)
+- [x] feat(extensions): add widget demo extension (7aeb)
+- [x] feat(grid): add freeform layout mode with drag/resize editing (6f05)
+  - New "freeform" viewMode for peek-grid — drag to move, edge-drag to resize, snap-to-grid
+
+Desktop - Editor
+- [x] feat(editor): add vim :set wrap/nowrap, :set number/nonumber, and :q command (4750)
+- [x] feat(editor): persist vim :set settings (wrap, lineNumbers) across sessions (ab30)
+- [x] fix(editor): support multiple simultaneous editor instances (a3be)
+
+Desktop - Page View
+- [x] feat(page): show loading indicator for in-page webview navigations (538f)
+- [x] fix(page): rewrite loading indicator — separate lifecycle from visual effect (847d)
+- [x] fix(page): ensure page loading glow clears when page finishes loading (1630)
+
+Desktop - Entity Recognition
+- [x] feat(entities): add Phase 1 entity validation framework (64f7)
+- [x] test(entities): add unit tests for name-validator module (d81c)
+
+Desktop - Tauri
+- [x] feat(tauri): add system tray with click-to-show (c469)
+- [x] feat(tauri): add net-fetch proxy and file dialog commands (83f5)
+
+Desktop - Refactoring
+- [x] refactor: extract shared modules to app/lib — pubsub, izui, frecency, shortcuts, session (da44, 9ff2, 10f0, e267, 7ed8)
+  - Platform-agnostic implementations shared between Electron and Tauri backends
+
+Desktop - Fixes
+- [x] fix(drag): use !important CSS classes for hold/drag cursor feedback (6e86)
+- [x] fix(sync): make sync now fire-and-forget + add 15s timeout (96ed, 73f9)
+- [x] fix: handle macOS open command with local file paths (1ae8)
+- [x] fix: prevent opening app directory as file:// URL on startup (e12b)
+- [x] fix(ext): use Promise.allSettled for extension loading so one failure doesn't block all commands (d031)
+
+Testing
+- [x] fix(tests): resolve pre-existing unit test failures across 4 test suites (a961)
+
 ## 2026-02-16
 
 Desktop - Command Palette
