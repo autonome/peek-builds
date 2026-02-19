@@ -266,7 +266,13 @@ async function extractCurrentPage() {
     return;
   }
 
-  const activeWindow = windowList.windows[0];
+  // Use the last focused visible window (not just first in list)
+  let activeWindow = windowList.windows[0];
+  const focusedId = await api.window.getFocusedVisibleWindowId();
+  if (focusedId) {
+    const focused = windowList.windows.find(w => w.id === focusedId);
+    if (focused) activeWindow = focused;
+  }
   const url = activeWindow.url;
 
   if (!url || !url.startsWith('http')) {

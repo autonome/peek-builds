@@ -25,8 +25,8 @@ const extensionPaths = new Map<string, string>();
 // Theme path cache: themeId -> filesystem path
 const themePaths = new Map<string, string>();
 
-// Active theme ID (defaults to basic)
-let activeThemeId = 'basic';
+// Active theme ID (defaults to peek)
+let activeThemeId = 'peek';
 
 // Root directory (set during init)
 let rootDir: string;
@@ -329,6 +329,41 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
           console.error(`[protocol] FILE NOT FOUND: ${absolutePath} (requested: ${req.url})`);
           return new Response('Not Found', { status: 404 });
         }
+
+        // For variables.css: prepend peek theme as base layer so other themes
+        // only need to override what they change (colors, etc.). Peek's fonts,
+        // typography, and other defaults cascade automatically.
+        if (themePath === 'variables.css' && themeId !== 'peek') {
+          const peekBasePath = getThemePath('peek');
+          const peekCssPath = peekBasePath ? path.resolve(peekBasePath, 'variables.css') : null;
+
+          if (peekCssPath && fs.existsSync(peekCssPath)) {
+            let baseCss = fs.readFileSync(peekCssPath, 'utf-8');
+            // Rewrite relative font URLs to point to peek's theme path
+            baseCss = baseCss.replace(
+              /url\(["']?\.\//g,
+              'url("peek://theme/peek/'
+            );
+            // Fix closing quotes for rewritten URLs
+            baseCss = baseCss.replace(
+              /peek:\/\/theme\/peek\/([^"')]+)["']?\)/g,
+              'peek://theme/peek/$1")'
+            );
+            const themeCss = fs.readFileSync(absolutePath, 'utf-8');
+            const combined = `/* Base: peek theme defaults */\n${baseCss}\n\n/* Active theme: ${themeId} */\n${themeCss}\n`;
+
+            return new Response(combined, {
+              status: 200,
+              headers: {
+                'Content-Type': 'text/css',
+                'Cache-Control': 'no-store, no-cache, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+              }
+            });
+          }
+        }
+
         const fileURL = pathToFileURL(absolutePath).toString();
         const response = await net.fetch(fileURL);
         const body = await response.arrayBuffer();

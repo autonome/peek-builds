@@ -1708,6 +1708,13 @@ export function registerThemeHandlers(): void {
       }
     }).filter(Boolean);
 
+    // Sort: 'peek' first (default theme), then alphabetically
+    themes.sort((a: any, b: any) => {
+      if (a.id === 'peek') return -1;
+      if (b.id === 'peek') return 1;
+      return a.name.localeCompare(b.name);
+    });
+
     return { themes };
   });
 

@@ -70,7 +70,13 @@ const getActiveWindow = async () => {
   if (!result.success || !result.windows.length) {
     return null;
   }
-  // Return the first non-internal window
+  // Use the last focused visible window (survives cmd palette focus changes)
+  const focusedId = await api.window.getFocusedVisibleWindowId();
+  if (focusedId) {
+    const focused = result.windows.find(w => w.id === focusedId);
+    if (focused) return focused;
+  }
+  // Fall back to first window if no focused window found
   return result.windows[0];
 };
 

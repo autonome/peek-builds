@@ -60,9 +60,7 @@
   --theme-surface-border: 1px solid rgba(0, 0, 0, 0.10);
   --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.06);
 
-  /* Typography — system fonts, colors-only theme */
-  --theme-font-sans: system-ui, sans-serif;
-  --theme-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, monospace;
+  /* Typography: inherited from peek base layer — colors-only theme */
 }
 
 /* ===================================================================
@@ -294,8 +292,8 @@
     --base00: #1a1918;
     --base01: #2a2825;
     --base02: #3a3835;
-    --base03: #5a5752;
-    --base04: #8a8680;
+    --base03: #7a7770;  /* Muted text — warm grey, readable on dark bg */
+    --base04: #a5a098;  /* Secondary text — warm grey, good contrast */
     --base05: #f0ede8;
     --base06: #faf8f4;
     --base07: #ffffff;
@@ -345,8 +343,8 @@
   --base00: #1a1918;
   --base01: #2a2825;
   --base02: #3a3835;
-  --base03: #5a5752;
-  --base04: #8a8680;
+  --base03: #7a7770;  /* Muted text — warm grey, readable on dark bg */
+  --base04: #a5a098;  /* Secondary text — warm grey, good contrast */
   --base05: #f0ede8;
   --base06: #faf8f4;
   --base07: #ffffff;
