@@ -1,0 +1,12 @@
+{
+  "id": "shichijuni",
+  "type": "theme",
+  "name": "七十二候 Shichijūnikō",
+  "version": "1.0.0",
+  "description": "Colors change with Japan's 72 micro-seasons, using traditional Japanese colors (伝統色)",
+  "author": "Peek",
+  "builtin": true,
+  "colorSchemes": ["light", "dark"],
+  "defaultScheme": "system",
+  "variables": "./variables.css"
+}

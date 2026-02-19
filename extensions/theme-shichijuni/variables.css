@@ -1,0 +1,365 @@
+/**
+ * 七十二候 Shichijūnikō — Japan's 72 Micro-Seasons Theme
+ *
+ * Colors change every ~5 days following the traditional Japanese calendar,
+ * using colors from the 伝統色 (dentōshoku) palette.
+ *
+ * The preload.js sets data-microseason="0"–"71" on <html> based on the current date.
+ * Each micro-season has a unique primary accent; supporting accents shift
+ * gradually through 6 seasonal arcs.
+ *
+ * Micro-seasons begin at Risshun (立春, ~Feb 4) and cycle through the year.
+ */
+
+/* ========== Light Mode (default) ========== */
+:root {
+  /* Warm washi-paper grayscale */
+  --base00: #f8f7f4;  /* Background — warm rice paper */
+  --base01: #ffffff;  /* Card/panel background */
+  --base02: #e8e4de;  /* Selection, borders */
+  --base03: #a09a90;  /* Muted text */
+  --base04: #706a60;  /* Secondary text */
+  --base05: #2d2b28;  /* Default foreground */
+  --base06: #1a1917;  /* Dark foreground */
+  --base07: #0f0e0d;  /* Darkest */
+
+  /* Season accent tokens (overridden per micro-season) */
+  --season-red: #B94047;
+  --season-orange: #C39143;
+  --season-yellow: #DEB068;
+  --season-green: #6B9362;
+  --season-cyan: #81C7D4;
+  --season-primary: #2792C3;
+  --season-purple: #BAB8D3;
+  --season-brown: #6A432D;
+
+  /* Base16 accents reference season tokens */
+  --base08: var(--season-red);
+  --base09: var(--season-orange);
+  --base0A: var(--season-yellow);
+  --base0B: var(--season-green);
+  --base0C: var(--season-cyan);
+  --base0D: var(--season-primary);
+  --base0E: var(--season-purple);
+  --base0F: var(--season-brown);
+
+  /* Semantic Aliases */
+  --theme-bg: var(--base00);
+  --theme-bg-secondary: var(--base01);
+  --theme-bg-tertiary: var(--base02);
+  --theme-text: var(--base05);
+  --theme-text-secondary: var(--base04);
+  --theme-text-muted: var(--base03);
+  --theme-border: var(--base02);
+  --theme-accent: var(--base0D);
+  --theme-success: var(--base0B);
+  --theme-warning: var(--base0A);
+  --theme-danger: var(--base08);
+
+  /* Surface */
+  --theme-surface-border: 1px solid rgba(0, 0, 0, 0.10);
+  --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+  /* Typography — system fonts, colors-only theme */
+  --theme-font-sans: system-ui, sans-serif;
+  --theme-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, monospace;
+}
+
+/* ===================================================================
+   SEASONAL ARCS — supporting accent colors (shared within each arc)
+   =================================================================== */
+
+/* Arc 1: 春の目覚め Spring Awakening — seasons 0–11 (Feb 4 – Apr 3)
+   Ice melting, first birdsong, peach blossoms, cherry blossoms */
+[data-microseason="0"], [data-microseason="1"], [data-microseason="2"],
+[data-microseason="3"], [data-microseason="4"], [data-microseason="5"],
+[data-microseason="6"], [data-microseason="7"], [data-microseason="8"],
+[data-microseason="9"], [data-microseason="10"], [data-microseason="11"] {
+  --season-red: #B94047;     /* 臙脂 Enji — rouge */
+  --season-orange: #C39143;  /* 黄土 Ōdo — ochre */
+  --season-yellow: #DEB068;  /* 飴 Ame — amber */
+  --season-green: #6B9362;   /* 若竹 Wakatake — young bamboo */
+  --season-cyan: #81C7D4;    /* 水 Mizu — water */
+  --season-purple: #BAB8D3;  /* 藤 Fuji — wisteria */
+  --season-brown: #6A432D;   /* 檜皮 Hiwada — cypress bark */
+}
+
+/* Arc 2: 春から夏へ Spring to Summer — seasons 12–23 (Apr 4 – Jun 4)
+   Swallows, rainbows, peonies, frogs, bamboo shoots */
+[data-microseason="12"], [data-microseason="13"], [data-microseason="14"],
+[data-microseason="15"], [data-microseason="16"], [data-microseason="17"],
+[data-microseason="18"], [data-microseason="19"], [data-microseason="20"],
+[data-microseason="21"], [data-microseason="22"], [data-microseason="23"] {
+  --season-red: #D7003A;     /* 紅 Kurenai — crimson */
+  --season-orange: #EE7800;  /* 橙 Daidai — orange */
+  --season-yellow: #F8B500;  /* 山吹 Yamabuki — kerria gold */
+  --season-green: #3EB370;   /* 翠 Midori — emerald */
+  --season-cyan: #00A3AF;    /* 浅葱 Asagi — light blue-green */
+  --season-purple: #7058A3;  /* 菫 Sumire — violet */
+  --season-brown: #D57835;   /* 朽葉 Kuchiba — fallen leaves */
+}
+
+/* Arc 3: 盛夏 Full Summer — seasons 24–35 (Jun 5 – Aug 6)
+   Fireflies, irises, lotus, warm winds, great rains */
+[data-microseason="24"], [data-microseason="25"], [data-microseason="26"],
+[data-microseason="27"], [data-microseason="28"], [data-microseason="29"],
+[data-microseason="30"], [data-microseason="31"], [data-microseason="32"],
+[data-microseason="33"], [data-microseason="34"], [data-microseason="35"] {
+  --season-red: #D7003A;     /* 紅 Kurenai — crimson */
+  --season-orange: #EB6101;  /* 朱 Shu — vermillion */
+  --season-yellow: #E6B422;  /* 金 Kin — gold */
+  --season-green: #007B43;   /* 常磐 Tokiwa — evergreen */
+  --season-cyan: #008899;    /* 納戸 Nando — storage blue */
+  --season-purple: #884898;  /* 紫 Murasaki — purple */
+  --season-brown: #6F514C;   /* 煤竹 Susutake — sooty bamboo */
+}
+
+/* Arc 4: 夏から秋へ Summer to Autumn — seasons 36–47 (Aug 7 – Oct 2)
+   Cool winds, cicadas, dew, swallows leaving */
+[data-microseason="36"], [data-microseason="37"], [data-microseason="38"],
+[data-microseason="39"], [data-microseason="40"], [data-microseason="41"],
+[data-microseason="42"], [data-microseason="43"], [data-microseason="44"],
+[data-microseason="45"], [data-microseason="46"], [data-microseason="47"] {
+  --season-red: #B7282E;     /* 茜 Akane — madder red */
+  --season-orange: #C88D36;  /* 枇杷 Biwa — loquat */
+  --season-yellow: #E6B422;  /* 金 Kin — gold */
+  --season-green: #928C36;   /* 鶯 Uguisu — warbler olive */
+  --season-cyan: #7EBEA5;    /* 青磁 Seiji — celadon */
+  --season-purple: #C4A3BF;  /* 薄紫 Usumurasaki — light purple */
+  --season-brown: #A58F86;   /* 胡桃 Kurumi — walnut */
+}
+
+/* Arc 5: 秋深まる Deep Autumn — seasons 48–59 (Oct 3 – Dec 1)
+   Chrysanthemums, frost, maples, camellias, north wind */
+[data-microseason="48"], [data-microseason="49"], [data-microseason="50"],
+[data-microseason="51"], [data-microseason="52"], [data-microseason="53"],
+[data-microseason="54"], [data-microseason="55"], [data-microseason="56"],
+[data-microseason="57"], [data-microseason="58"], [data-microseason="59"] {
+  --season-red: #7E2639;     /* 蘇芳 Suō — dark red */
+  --season-orange: #BF783A;  /* 琥珀 Kohaku — amber */
+  --season-yellow: #DEB068;  /* 飴 Ame — honey amber */
+  --season-green: #707C74;   /* 利休鼠 Rikyūnezumi — tea grey */
+  --season-cyan: #81C7D4;    /* 水 Mizu — water */
+  --season-purple: #5654A2;  /* 群青 Gunjō — ultramarine */
+  --season-brown: #762F07;   /* 栗 Kuri — chestnut */
+}
+
+/* Arc 6: 冬籠り Winter Retreat — seasons 60–71 (Dec 2 – Feb 3)
+   Bears hibernate, salmon, snow, ice, first signs of spring */
+[data-microseason="60"], [data-microseason="61"], [data-microseason="62"],
+[data-microseason="63"], [data-microseason="64"], [data-microseason="65"],
+[data-microseason="66"], [data-microseason="67"], [data-microseason="68"],
+[data-microseason="69"], [data-microseason="70"], [data-microseason="71"] {
+  --season-red: #B94047;     /* 臙脂 Enji — rouge */
+  --season-orange: #9B6900;  /* 狐 Kitsune — fox */
+  --season-yellow: #C39143;  /* 黄土 Ōdo — ochre */
+  --season-green: #00552E;   /* 深緑 Fukamidori — deep green */
+  --season-cyan: #81C7D4;    /* 水 Mizu — water */
+  --season-purple: #223A70;  /* 紺 Kon — dark navy */
+  --season-brown: #6A432D;   /* 檜皮 Hiwada — cypress bark */
+}
+
+/* ===================================================================
+   INDIVIDUAL MICRO-SEASON PRIMARY COLORS
+   Each season's signature color from the 伝統色 palette
+   =================================================================== */
+
+/* ── 立春 Risshun — Beginning of Spring ── */
+[data-microseason="0"]  { --season-primary: #2792C3; }  /* 縹 Hanada — clear sky over melting ice */
+[data-microseason="1"]  { --season-primary: #928C36; }  /* 鶯 Uguisu — bush warbler olive */
+[data-microseason="2"]  { --season-primary: #81C7D4; }  /* 水 Mizu — fish emerging from ice */
+
+/* ── 雨水 Usui — Rain Water ── */
+[data-microseason="3"]  { --season-primary: #6B9362; }  /* 若竹 Wakatake — rain moistens earth */
+[data-microseason="4"]  { --season-primary: #BAB8D3; }  /* 藤 Fuji — lingering mist */
+[data-microseason="5"]  { --season-primary: #AACF53; }  /* 萌黄 Moegi — first sprouts */
+
+/* ── 啓蟄 Keichitsu — Awakening of Insects ── */
+[data-microseason="6"]  { --season-primary: #3EB370; }  /* 翠 Midori — earth awakening */
+[data-microseason="7"]  { --season-primary: #F58F98; }  /* 桃 Momo — peach blossoms */
+[data-microseason="8"]  { --season-primary: #E7609E; }  /* 牡丹 Botan — butterflies emerging */
+
+/* ── 春分 Shunbun — Spring Equinox ── */
+[data-microseason="9"]  { --season-primary: #EB6101; }  /* 朱 Shu — sparrow's warmth */
+[data-microseason="10"] { --season-primary: #F2666C; }  /* 薄紅 Usubeni — cherry blossoms */
+[data-microseason="11"] { --season-primary: #5654A2; }  /* 群青 Gunjō — thunder sky */
+
+/* ── 清明 Seimei — Clear and Bright ── */
+[data-microseason="12"] { --season-primary: #1E50A2; }  /* 瑠璃 Ruri — swallows in lapis sky */
+[data-microseason="13"] { --season-primary: #2792C3; }  /* 縹 Hanada — geese in open sky */
+[data-microseason="14"] { --season-primary: #E95295; }  /* 躑躅 Tsutsuji — first rainbow */
+
+/* ── 穀雨 Kokuu — Grain Rain ── */
+[data-microseason="15"] { --season-primary: #B0CA71; }  /* 苗 Nae — reeds sprouting */
+[data-microseason="16"] { --season-primary: #AACF53; }  /* 萌黄 Moegi — rice seedlings */
+[data-microseason="17"] { --season-primary: #E7609E; }  /* 牡丹 Botan — peonies bloom */
+
+/* ── 立夏 Rikka — Beginning of Summer ── */
+[data-microseason="18"] { --season-primary: #3EB370; }  /* 翠 Midori — frogs in paddy fields */
+[data-microseason="19"] { --season-primary: #007B43; }  /* 常磐 Tokiwa — rich earth */
+[data-microseason="20"] { --season-primary: #6B9362; }  /* 若竹 Wakatake — bamboo shoots */
+
+/* ── 小満 Shōman — Grain Buds ── */
+[data-microseason="21"] { --season-primary: #C5C56A; }  /* 抹茶 Matcha — silkworms on mulberry */
+[data-microseason="22"] { --season-primary: #EB6101; }  /* 朱 Shu — safflowers bloom */
+[data-microseason="23"] { --season-primary: #E6B422; }  /* 金 Kin — golden wheat */
+
+/* ── 芒種 Bōshu — Grain in Ear ── */
+[data-microseason="24"] { --season-primary: #65A16E; }  /* 松 Matsu — mantis in foliage */
+[data-microseason="25"] { --season-primary: #C3D825; }  /* 若草 Wakakusa — luminous fireflies */
+[data-microseason="26"] { --season-primary: #C88D36; }  /* 枇杷 Biwa — plums turning gold */
+
+/* ── 夏至 Geshi — Summer Solstice ── */
+[data-microseason="27"] { --season-primary: #BF783A; }  /* 琥珀 Kohaku — withering amber */
+[data-microseason="28"] { --season-primary: #674196; }  /* 菖蒲 Ayame — irises bloom */
+[data-microseason="29"] { --season-primary: #3EB370; }  /* 翠 Midori — crow-dipper sprouts */
+
+/* ── 小暑 Shōsho — Minor Heat ── */
+[data-microseason="30"] { --season-primary: #EB6101; }  /* 朱 Shu — warm winds */
+[data-microseason="31"] { --season-primary: #F5B1AA; }  /* 珊瑚 Sango — lotus blossoms */
+[data-microseason="32"] { --season-primary: #165E83; }  /* 藍 Ai — hawk in indigo sky */
+
+/* ── 大暑 Taisho — Major Heat ── */
+[data-microseason="33"] { --season-primary: #884898; }  /* 紫 Murasaki — paulownia flowers */
+[data-microseason="34"] { --season-primary: #007B43; }  /* 常磐 Tokiwa — humid lush green */
+[data-microseason="35"] { --season-primary: #1E50A2; }  /* 瑠璃 Ruri — deep rain blue */
+
+/* ── 立秋 Risshū — Beginning of Autumn ── */
+[data-microseason="36"] { --season-primary: #7EBEA5; }  /* 青磁 Seiji — cool celadon winds */
+[data-microseason="37"] { --season-primary: #C4A3BF; }  /* 薄紫 Usumurasaki — evening cicadas */
+[data-microseason="38"] { --season-primary: #97867C; }  /* 銀鼠 Ginnezumi — thick fog */
+
+/* ── 処暑 Shosho — End of Heat ── */
+[data-microseason="39"] { --season-primary: #F5B1AA; }  /* 珊瑚 Sango — cotton blooms */
+[data-microseason="40"] { --season-primary: #707C74; }  /* 利休鼠 Rikyūnezumi — heat subsides */
+[data-microseason="41"] { --season-primary: #E6B422; }  /* 金 Kin — golden rice */
+
+/* ── 白露 Hakuro — White Dew ── */
+[data-microseason="42"] { --season-primary: #BAB8D3; }  /* 藤 Fuji — morning dew */
+[data-microseason="43"] { --season-primary: #928C36; }  /* 鶯 Uguisu — wagtail song */
+[data-microseason="44"] { --season-primary: #1E50A2; }  /* 瑠璃 Ruri — swallows depart */
+
+/* ── 秋分 Shūbun — Autumn Equinox ── */
+[data-microseason="45"] { --season-primary: #5654A2; }  /* 群青 Gunjō — thunder ceases */
+[data-microseason="46"] { --season-primary: #6F514C; }  /* 煤竹 Susutake — insects underground */
+[data-microseason="47"] { --season-primary: #C39143; }  /* 黄土 Ōdo — fields drain, ochre earth */
+
+/* ── 寒露 Kanro — Cold Dew ── */
+[data-microseason="48"] { --season-primary: #97867C; }  /* 銀鼠 Ginnezumi — grey autumn sky */
+[data-microseason="49"] { --season-primary: #F8B500; }  /* 山吹 Yamabuki — chrysanthemums */
+[data-microseason="50"] { --season-primary: #6F514C; }  /* 煤竹 Susutake — quiet crickets */
+
+/* ── 霜降 Sōkō — Frost Falls ── */
+[data-microseason="51"] { --season-primary: #BAB8D3; }  /* 藤 Fuji — frosty lavender */
+[data-microseason="52"] { --season-primary: #7D7D7D; }  /* 鼠 Nezumi — autumn rain grey */
+[data-microseason="53"] { --season-primary: #D57835; }  /* 朽葉 Kuchiba — maple leaves turn */
+
+/* ── 立冬 Rittō — Beginning of Winter ── */
+[data-microseason="54"] { --season-primary: #D7003A; }  /* 紅 Kurenai — camellia red */
+[data-microseason="55"] { --season-primary: #7D7D7D; }  /* 鼠 Nezumi — frozen earth */
+[data-microseason="56"] { --season-primary: #F8B500; }  /* 山吹 Yamabuki — daffodils */
+
+/* ── 小雪 Shōsetsu — Minor Snow ── */
+[data-microseason="57"] { --season-primary: #5654A2; }  /* 群青 Gunjō — rainbows hide */
+[data-microseason="58"] { --season-primary: #97867C; }  /* 銀鼠 Ginnezumi — bare branches */
+[data-microseason="59"] { --season-primary: #EE7800; }  /* 橙 Daidai — citrus yellows */
+
+/* ── 大雪 Taisetsu — Major Snow ── */
+[data-microseason="60"] { --season-primary: #223A70; }  /* 紺 Kon — deep winter navy */
+[data-microseason="61"] { --season-primary: #6A432D; }  /* 檜皮 Hiwada — hibernation brown */
+[data-microseason="62"] { --season-primary: #EB6101; }  /* 朱 Shu — salmon red */
+
+/* ── 冬至 Tōji — Winter Solstice ── */
+[data-microseason="63"] { --season-primary: #007B43; }  /* 常磐 Tokiwa — green amidst snow */
+[data-microseason="64"] { --season-primary: #A58F86; }  /* 胡桃 Kurumi — deer antler tan */
+[data-microseason="65"] { --season-primary: #81C7D4; }  /* 水 Mizu — snow and ice */
+
+/* ── 小寒 Shōkan — Minor Cold ── */
+[data-microseason="66"] { --season-primary: #65A16E; }  /* 松 Matsu — parsley green */
+[data-microseason="67"] { --season-primary: #2792C3; }  /* 縹 Hanada — springs thaw */
+[data-microseason="68"] { --season-primary: #3EB370; }  /* 翠 Midori — pheasant green */
+
+/* ── 大寒 Daikan — Major Cold ── */
+[data-microseason="69"] { --season-primary: #AACF53; }  /* 萌黄 Moegi — butterbur buds */
+[data-microseason="70"] { --season-primary: #165E83; }  /* 藍 Ai — deep frozen blue */
+[data-microseason="71"] { --season-primary: #BF783A; }  /* 琥珀 Kohaku — amber warmth returns */
+
+
+/* ===================================================================
+   DARK MODE — system preference
+   Grayscale inverts; accents brighten via color-mix
+   =================================================================== */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --base00: #1a1918;
+    --base01: #2a2825;
+    --base02: #3a3835;
+    --base03: #5a5752;
+    --base04: #8a8680;
+    --base05: #f0ede8;
+    --base06: #faf8f4;
+    --base07: #ffffff;
+
+    --base08: color-mix(in oklch, var(--season-red), white 18%);
+    --base09: color-mix(in oklch, var(--season-orange), white 18%);
+    --base0A: color-mix(in oklch, var(--season-yellow), white 12%);
+    --base0B: color-mix(in oklch, var(--season-green), white 18%);
+    --base0C: color-mix(in oklch, var(--season-cyan), white 12%);
+    --base0D: color-mix(in oklch, var(--season-primary), white 18%);
+    --base0E: color-mix(in oklch, var(--season-purple), white 18%);
+    --base0F: color-mix(in oklch, var(--season-brown), white 18%);
+
+    --theme-surface-border: 1px solid rgba(255, 255, 255, 0.15);
+    --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  }
+}
+
+
+/* ========== Forced Light Mode ========== */
+[data-theme="light"] {
+  --base00: #f8f7f4;
+  --base01: #ffffff;
+  --base02: #e8e4de;
+  --base03: #a09a90;
+  --base04: #706a60;
+  --base05: #2d2b28;
+  --base06: #1a1917;
+  --base07: #0f0e0d;
+
+  --base08: var(--season-red);
+  --base09: var(--season-orange);
+  --base0A: var(--season-yellow);
+  --base0B: var(--season-green);
+  --base0C: var(--season-cyan);
+  --base0D: var(--season-primary);
+  --base0E: var(--season-purple);
+  --base0F: var(--season-brown);
+
+  --theme-surface-border: 1px solid rgba(0, 0, 0, 0.10);
+  --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+
+/* ========== Forced Dark Mode ========== */
+[data-theme="dark"] {
+  --base00: #1a1918;
+  --base01: #2a2825;
+  --base02: #3a3835;
+  --base03: #5a5752;
+  --base04: #8a8680;
+  --base05: #f0ede8;
+  --base06: #faf8f4;
+  --base07: #ffffff;
+
+  --base08: color-mix(in oklch, var(--season-red), white 18%);
+  --base09: color-mix(in oklch, var(--season-orange), white 18%);
+  --base0A: color-mix(in oklch, var(--season-yellow), white 12%);
+  --base0B: color-mix(in oklch, var(--season-green), white 18%);
+  --base0C: color-mix(in oklch, var(--season-cyan), white 12%);
+  --base0D: color-mix(in oklch, var(--season-primary), white 18%);
+  --base0E: color-mix(in oklch, var(--season-purple), white 18%);
+  --base0F: color-mix(in oklch, var(--season-brown), white 18%);
+
+  --theme-surface-border: 1px solid rgba(255, 255, 255, 0.15);
+  --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}

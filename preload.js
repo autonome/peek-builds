@@ -1064,6 +1064,36 @@ let windowColorSchemeOverride = null;
   }
 })();
 
+// Set data-microseason attribute for season-aware themes (e.g. 七十二候)
+(() => { try {
+  // 72 microseason start dates [month, day], starting from Risshun (Feb 4)
+  const S = [
+    [2,4],[2,9],[2,14],[2,19],[2,24],[3,1],
+    [3,6],[3,11],[3,16],[3,21],[3,26],[3,31],
+    [4,5],[4,10],[4,15],[4,20],[4,25],[4,30],
+    [5,5],[5,10],[5,15],[5,21],[5,26],[5,31],
+    [6,5],[6,11],[6,16],[6,21],[6,26],[7,1],
+    [7,7],[7,12],[7,17],[7,23],[7,28],[8,2],
+    [8,7],[8,12],[8,18],[8,23],[8,28],[9,2],
+    [9,7],[9,12],[9,17],[9,23],[9,28],[10,3],
+    [10,8],[10,13],[10,18],[10,23],[10,28],[11,2],
+    [11,7],[11,12],[11,17],[11,22],[11,27],[12,2],
+    [12,7],[12,12],[12,17],[12,22],[12,27],[1,1],
+    [1,5],[1,10],[1,15],[1,20],[1,25],[1,30]
+  ];
+  // Normalize dates to "season year" starting Feb 4 = day 0
+  const dim = [0,31,28,31,30,31,30,31,31,30,31,30,31];
+  const doy = (m, d) => { let t = d; for (let i = 1; i < m; i++) t += dim[i]; return t; };
+  const toSD = (m, d) => (doy(m, d) - 35 + 365) % 365; // 35 = doy(2,4)
+  const now = new Date();
+  const key = toSD(now.getMonth() + 1, now.getDate());
+  let idx = 0;
+  for (let i = S.length - 1; i >= 0; i--) {
+    if (key >= toSD(S[i][0], S[i][1])) { idx = i; break; }
+  }
+  document.documentElement.setAttribute('data-microseason', String(idx));
+} catch (e) { console.error('[preload] microseason error:', e); } })();
+
 // Auto-apply persisted color scheme preference for this URL
 window.addEventListener('DOMContentLoaded', async () => {
   try {
@@ -1094,7 +1124,6 @@ window.addEventListener('DOMContentLoaded', async () => {
  */
 function reloadStylesheets() {
   const timestamp = Date.now();
-
   // Reload <link> stylesheets by removing and re-adding them
   // This is more aggressive than just changing href and ensures @imports are re-fetched
   document.querySelectorAll('link[rel="stylesheet"]').forEach(link => {

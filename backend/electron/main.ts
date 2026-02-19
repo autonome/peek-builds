@@ -471,7 +471,7 @@ export async function loadEnabledExtensions(): Promise<number> {
   const enabledBuiltinIds = otherBuiltinIds.filter(id => isBuiltinExtensionEnabled(id));
 
   const parallelStart = Date.now();
-  await Promise.all(enabledBuiltinIds.map(id => createExtensionWindow(id)));
+  await Promise.allSettled(enabledBuiltinIds.map(id => createExtensionWindow(id)));
   DEBUG && console.log(`[ext:timing] parallel (${enabledBuiltinIds.join(',')}): ${Date.now() - parallelStart}ms`);
 
   // Load external extensions in parallel
@@ -484,7 +484,7 @@ export async function loadEnabledExtensions(): Promise<number> {
 
   if (enabledExternalExts.length > 0) {
     const extExtStart = Date.now();
-    await Promise.all(enabledExternalExts.map(ext => createExtensionWindow(ext.id)));
+    await Promise.allSettled(enabledExternalExts.map(ext => createExtensionWindow(ext.id)));
     DEBUG && console.log(`[ext:timing] external: ${Date.now() - extExtStart}ms`);
   }
 
@@ -658,14 +658,18 @@ export async function loadExtensions(): Promise<number> {
 
   // Load external built-in extensions (like 'example') as separate windows
   for (const extId of externalBuiltinIds) {
-    await createExtensionWindow(extId);
+    try { await createExtensionWindow(extId); } catch (e) {
+      console.error(`[ext] Failed to load external built-in extension ${extId}:`, e);
+    }
   }
 
   // Load external extensions from datastore as separate windows
   for (const ext of enabledExternalExts) {
     if (!extensionWindows.has(ext.id)) {
       registerExtensionPath(ext.id, ext.path!);
-      await createExtensionWindow(ext.id);
+      try { await createExtensionWindow(ext.id); } catch (e) {
+        console.error(`[ext] Failed to load external extension ${ext.id}:`, e);
+      }
     }
   }
 
