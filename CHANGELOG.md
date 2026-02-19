@@ -16,468 +16,379 @@ Newly done items go here, grouped under level-2 headings by week (date = Monday 
 ## 2026-02-19
 
 Desktop - Themes
-- [x] feat(themes): implement themes-as-extensions Phase 1+2 — unified lifecycle and cmd palette switching (213b)
-  - Themes are CSS-only extensions served via peek://theme/ protocol
-  - Switch themes from command palette, auto-discovers installed theme extensions
-  - Includes default "Peek" theme with bundled fonts
-- [x] feat(theme): add 七十二候 micro-seasons theme with traditional Japanese colors (d031)
-  - Colors change automatically every ~5 days based on Japan's 72 micro-seasons calendar
-  - Uses 伝統色 (traditional Japanese colors) with automatic dark mode derivation via color-mix()
-- [x] fix(themes): copy fonts to theme-peek extension and fix font URLs (da4b)
-- [x] fix(editor): improve syntax highlighting readability in dark mode (de99)
+- [x] Switchable themes from command palette — themes are now installable CSS extensions ([213b](https://tangled.org/burrito.space/peek/commit/213b4794a5f6dac0f29da22b9317c41fd23563d9))
+- [x] Add 七十二候 micro-seasons theme — colors change automatically every ~5 days based on Japan's 72 seasons calendar ([d031](https://tangled.org/burrito.space/peek/commit/d031c4f42b804bbe2442c1169069264c6ecfa326))
+- [x] Fix theme font loading and URLs ([da4b](https://tangled.org/burrito.space/peek/commit/da4b78bf3077013c31ba650f02dba8a0b393eff9))
+- [x] Improve syntax highlighting readability in dark mode ([de99](https://tangled.org/burrito.space/peek/commit/de993e4710b2c02369c0a0ef378c908f6e11f583))
 
 Desktop - Groups
-- [x] feat(groups): add workspace persistence — save and restore window layouts per group (1a25)
-- [x] feat(groups): add quick wins — close, search scope, switch, pin (b8a6)
-  - Close all windows in group, scope search to group, switch between groups, pin windows
-- [x] test(groups): add unit tests for groups quick wins (805d)
+- [x] Save and restore window layouts per group ([1a25](https://tangled.org/burrito.space/peek/commit/1a25f1d8742a52ec3e849f99b9465cafc61f3089))
+- [x] Close all windows in group, scope search to group, switch between groups, pin windows ([b8a6](https://tangled.org/burrito.space/peek/commit/b8a6befeb2eff51b5638aa4b790b77a74c4ddf52))
+- [x] Add unit tests for group quick wins ([805d](https://tangled.org/burrito.space/peek/commit/805d0993e4c4edc294b57bd463bcfef71d9f0266))
 
 Desktop - Widget System
-- [x] feat(sheets): add widget sheet extension with freeform layout (9644)
-- [x] feat(hud): migrate HUD to widget sheet system with individual widget pages (4ec6)
-- [x] feat(extensions): add widget demo extension (7aeb)
-- [x] feat(grid): add freeform layout mode with drag/resize editing (6f05)
-  - New "freeform" viewMode for peek-grid — drag to move, edge-drag to resize, snap-to-grid
+- [x] Add widget sheet extension with freeform layout ([9644](https://tangled.org/burrito.space/peek/commit/96449d04269ac0a14740bad03067ddf2e784b6e3))
+- [x] Migrate HUD to widget sheet system with individual widget pages ([4ec6](https://tangled.org/burrito.space/peek/commit/4ec60504040874495d9439636db38513188aad46))
+- [x] Add widget demo extension ([7aeb](https://tangled.org/burrito.space/peek/commit/7aeb1baa90812f18a26699035eab6487294c78fd))
+- [x] Add freeform layout mode with drag-to-move, edge-drag-to-resize, and snap-to-grid ([6f05](https://tangled.org/burrito.space/peek/commit/6f05c81f835653363d7f5df6ede6f48878495031))
 
 Desktop - Editor
-- [x] feat(editor): add vim :set wrap/nowrap, :set number/nonumber, and :q command (4750)
-- [x] feat(editor): persist vim :set settings (wrap, lineNumbers) across sessions (ab30)
-- [x] fix(editor): support multiple simultaneous editor instances (a3be)
+- [x] Add vim :set wrap/nowrap, :set number/nonumber, and :q command ([4750](https://tangled.org/burrito.space/peek/commit/4750ab83412366fa303bd4756fab3c393aebaaf8))
+- [x] Persist vim :set settings across sessions ([ab30](https://tangled.org/burrito.space/peek/commit/ab30313bf529b5065a06a1e55517c2a1c7edff35))
+- [x] Support multiple simultaneous editor instances ([a3be](https://tangled.org/burrito.space/peek/commit/a3beea130920c0f4da96ee99d4021ab673a576b9))
 
 Desktop - Page View
-- [x] feat(page): show loading indicator for in-page webview navigations (538f)
-- [x] fix(page): rewrite loading indicator — separate lifecycle from visual effect (847d)
-- [x] fix(page): ensure page loading glow clears when page finishes loading (1630)
+- [x] Show loading indicator for in-page navigations ([538f](https://tangled.org/burrito.space/peek/commit/538f3769aa6cba57af1c12cb57cb14437527a4db))
+- [x] Rewrite loading indicator for reliability ([847d](https://tangled.org/burrito.space/peek/commit/847dd119d0b540cd96f9fa1d9a6bdbd0c6fb2a95))
+- [x] Ensure loading glow clears when page finishes loading ([1630](https://tangled.org/burrito.space/peek/commit/16304f58514b40a14cf040e31826699e83dc93a6))
 
 Desktop - Entity Recognition
-- [x] feat(entities): add Phase 1 entity validation framework (64f7)
-- [x] test(entities): add unit tests for name-validator module (d81c)
+- [x] Add entity validation framework ([64f7](https://tangled.org/burrito.space/peek/commit/64f7a7a470aa06fd7576607113b04cfa9adfbb1c))
+- [x] Add unit tests for name-validator module ([d81c](https://tangled.org/burrito.space/peek/commit/d81c07d73229f5920d1f253b220e2d4fa35d9578))
 
 Desktop - Tauri
-- [x] feat(tauri): add system tray with click-to-show (c469)
-- [x] feat(tauri): add net-fetch proxy and file dialog commands (83f5)
+- [x] Add system tray with click-to-show ([c469](https://tangled.org/burrito.space/peek/commit/c469d9da5ea67e513eb0467bda8550f3f10e1c1c))
+- [x] Add net-fetch proxy and file dialog commands ([83f5](https://tangled.org/burrito.space/peek/commit/83f5a1d261ff53a8d91407131c60218ba2eb2971))
 
 Desktop - Refactoring
-- [x] refactor: extract shared modules to app/lib — pubsub, izui, frecency, shortcuts, session (da44, 9ff2, 10f0, e267, 7ed8)
-  - Platform-agnostic implementations shared between Electron and Tauri backends
+- [x] Extract shared modules to app/lib for platform-agnostic use between Electron and Tauri ([da44](https://tangled.org/burrito.space/peek/commit/da44fd3dd4ea7db548b9894687e8cefa18efbe64), [9ff2](https://tangled.org/burrito.space/peek/commit/9ff26e737bf254facffdcc47ec708ec5ef88db23), [10f0](https://tangled.org/burrito.space/peek/commit/10f0bfc0855ac5934ec1f6c7f6843fc5efd0025e), [e267](https://tangled.org/burrito.space/peek/commit/e267e2661139e7ebad0e91ac7e458af05a3502ba), [7ed8](https://tangled.org/burrito.space/peek/commit/7ed8b22556f1e2fbbe26c3cc833956f7cc29a270))
 
 Desktop - Fixes
-- [x] fix(drag): use !important CSS classes for hold/drag cursor feedback (6e86)
-- [x] fix(sync): make sync now fire-and-forget + add 15s timeout (96ed, 73f9)
-- [x] fix: handle macOS open command with local file paths (1ae8)
-- [x] fix: prevent opening app directory as file:// URL on startup (e12b)
-- [x] fix(ext): use Promise.allSettled for extension loading so one failure doesn't block all commands (d031)
+- [x] Fix hold/drag cursor feedback CSS ([6e86](https://tangled.org/burrito.space/peek/commit/6e862be638d70eac3fa1163c6c1dd7e14b11b8f5))
+- [x] Make sync fire-and-forget with 15s timeout ([96ed](https://tangled.org/burrito.space/peek/commit/96edd06a18c374926e515b703d6193116fe2c19d), [73f9](https://tangled.org/burrito.space/peek/commit/73f9896fd1aa5c6b0b683cafa9d58ec12528be6c))
+- [x] Handle macOS open command with local file paths ([1ae8](https://tangled.org/burrito.space/peek/commit/1ae8101e0554cf9d2e17db11ee94b9aabc58e8c7))
+- [x] Prevent opening app directory as file:// URL on startup ([e12b](https://tangled.org/burrito.space/peek/commit/e12bef73e27699ed8cc7b53da178fc2a247b198b))
+- [x] Use Promise.allSettled for extension loading so one failure doesn't block all commands ([d031](https://tangled.org/burrito.space/peek/commit/d031c4f42b804bbe2442c1169069264c6ecfa326))
 
 Testing
-- [x] fix(tests): resolve pre-existing unit test failures across 4 test suites (a961)
+- [x] Resolve pre-existing unit test failures across 4 test suites ([a961](https://tangled.org/burrito.space/peek/commit/a9610b631d66db1a190ab49332cc06667fad3ef9))
 
 ## 2026-02-16
 
 Desktop - Command Palette
-- [x] feat(cmd): generic command chaining with pipe system (597)
-- [x] feat(cmd): replace embedded chain editor with popup window system (572)
-- [x] feat(cmd): add parameter suggestions to command palette (693)
-- [x] feat(cmd): add noun registration API for declarative command generation (191)
-- [x] fix(cmd): remove download cmd, fix save filename, fix dialog parent, unify hashtag extraction (5b95)
-- [x] fix(cmd): preserve noun routing metadata in command registry pipeline (39a4)
+- [x] Generic command chaining with pipe system ([5975](https://tangled.org/burrito.space/peek/commit/5975f593ff109df82daf56b47233cf6910db89d3))
+- [x] Replace embedded chain editor with popup window system ([5729](https://tangled.org/burrito.space/peek/commit/5729822b4748acc4bf98c9563d4f7c2a17ae2435))
+- [x] Add parameter suggestions to command palette ([693d](https://tangled.org/burrito.space/peek/commit/693de4ad13de5edf49643088a724d2788936aca6))
+- [x] Add noun registration API for declarative command generation ([191f](https://tangled.org/burrito.space/peek/commit/191fb02212c460355702d619f264fa5801edb6b3))
+- [x] Remove download cmd, fix save filename, fix dialog parent, unify hashtag extraction ([5b95](https://tangled.org/burrito.space/peek/commit/5b95d1af28ec91787778989f5d0f4d8b34435769))
+- [x] Preserve noun routing metadata in command registry pipeline ([39a4](https://tangled.org/burrito.space/peek/commit/39a45314a629b9083163e03a2e59162836266e31))
 
 Desktop - Entity Recognition
-- [x] feat(entities): add observation frequency ranking — Phase 1 (803)
-- [x] feat(entities): add thumbs up/down feedback for entity quality scoring (c0e)
+- [x] Add observation frequency ranking for entities ([8031](https://tangled.org/burrito.space/peek/commit/80313a9eb1da5e586e5d5d50823c0f88a23f57b9))
+- [x] Add thumbs up/down feedback for entity quality scoring ([c0e5](https://tangled.org/burrito.space/peek/commit/c0e5afab57ec4749b29ab35c5ab526b24912720b))
 
 Desktop - Tags
-- [x] feat(tags): add rename and delete tag operations (ac2)
-- [x] fix(tags): add protocol 404 logging, handle all item types, fix filter counts (403e)
+- [x] Add rename and delete tag operations ([ac2a](https://tangled.org/burrito.space/peek/commit/ac2a86fb419412483cbaa784108526e15067642e))
+- [x] Fix protocol 404 logging, handle all item types, fix filter counts ([403e](https://tangled.org/burrito.space/peek/commit/403ea5b151149ef10cd2a22b61838cf7fa3b02a8))
 
 Desktop - Display Switching
-- [x] refactor(display-watcher): replace 3-phase algorithm with safety-net-only approach (afa)
-  - Gutted 881-line 3-phase algorithm, replaced with 304-line single-pass safety net
-  - Lets macOS handle display migration natively, only rescues genuinely orphaned windows
+- [x] Simplify display-watcher to safety-net-only approach — let macOS handle display migration natively, only rescue orphaned windows ([afae](https://tangled.org/burrito.space/peek/commit/afae1e4af08491ae69b6feb6dab9c6f1fa7cae10))
 
 Desktop - Page View & Dragging
-- [x] fix(page): filter Cmd+L/R/[/] pubsub by windowId so only active page window responds (657)
-- [x] fix(page): fully end drag on webview mouseup to prevent overlay blocking clicks (a7b)
-- [x] fix(page): handle webview mousemove during active drag for window movement (ac37)
-- [x] fix(drag): remove data-no-drag from extension window bodies to restore hold-to-drag (63c1)
+- [x] Fix keyboard shortcuts responding in wrong page window ([6573](https://tangled.org/burrito.space/peek/commit/65735c4d27ac2411d62d9c32c4b6c4494e28e0ba))
+- [x] Fix drag ending on webview mouseup to prevent overlay blocking clicks ([a7b8](https://tangled.org/burrito.space/peek/commit/a7b8948d19f2fec4c239bf51217421dda79d4b80))
+- [x] Fix webview mousemove during active drag for window movement ([ac37](https://tangled.org/burrito.space/peek/commit/ac37674d8b52be9359f4aa1706d86dca11c8ec72))
+- [x] Restore hold-to-drag in extension windows ([63c1](https://tangled.org/burrito.space/peek/commit/63c17b27bd19b3c8f9a288ba491271054a31b450))
 
 Desktop - Auth & URLs
-- [x] feat(auth): OAuth popup bridge and flow improvements (c93)
-- [x] fix(url): wait for frontend ready and session restore before processing external URLs (e7ab)
+- [x] Improve OAuth popup bridge and flow ([c93a](https://tangled.org/burrito.space/peek/commit/c93a46dc3ed7ce977e1227f8e3f8ce02152e4695))
+- [x] Wait for frontend ready and session restore before processing external URLs ([e7ab](https://tangled.org/burrito.space/peek/commit/e7ab8092a3cdde2dd2ba99de18b7fd1babc4a3c2))
 
 Testing
-- [x] test(cmd): add completer unit tests; fix tag # prefix stripping (610)
-- [x] test(cmd): add integration tests for command execution through pubsub (e11)
-- [x] test(cmd): add command chaining pipe system tests (566c)
-- [x] test(oauth): add OAuth bridge unit tests (77b)
-- [x] fix(test): fix 4 stale test expectations in desktop smoke tests (4d9)
+- [x] Add completer unit tests; fix tag # prefix stripping ([6102](https://tangled.org/burrito.space/peek/commit/61020b937d52bd87cfad5425f77167e65421c3c1))
+- [x] Add integration tests for command execution through pubsub ([e11d](https://tangled.org/burrito.space/peek/commit/e11daddb41f2c53cbba0ecbae40b0e71e1ec4cb0))
+- [x] Add command chaining pipe system tests ([566c](https://tangled.org/burrito.space/peek/commit/566c9ec7028c8197426369b93f148090aa2e7087))
+- [x] Add OAuth bridge unit tests ([77b0](https://tangled.org/burrito.space/peek/commit/77b0f1972afb51f6e0c271bf8abaff09e80a8020))
+- [x] Fix 4 stale test expectations in desktop smoke tests ([4d96](https://tangled.org/burrito.space/peek/commit/4d9683f93f590c58fc823024fddcc65f38b29183))
 
 ## 2026-02-13
 
 Desktop - Session Restore
-- [x] feat(session): implement full session save/restore system (Phases 1-4) (0e8afccd, f270c56d, d0150877, d2fb834a)
-  - Phase 1: Snapshot all windows on quit (position, size, URL, mode)
-  - Phase 2: Restore windows on startup with confirmation dialog
-  - Phase 3: Autosave timer and manual session commands
-  - Phase 4: Crash recovery dialog and error handling
-- [x] fix(session): save settings windows, strip stale params on restore, fix display-watcher race conditions (d12bd2b9)
-- [x] fix(session): suppress display-watcher during session restore to preserve window positions (c32b73df)
-- [x] fix(session): handle SIGINT/SIGTERM as clean shutdowns to prevent false crash dialog (f56f5624, 8ab6d36d, 16a2d4bc)
-- [x] fix(session): synchronous SIGINT save and correct canvas page bounds (2df8a733)
-- [x] fix(session): open startup feature when restore is declined or fails (0f280143)
+- [x] Full session save/restore — snapshot windows on quit, restore on startup with confirmation, autosave timer, crash recovery dialog ([0e8a](https://tangled.org/burrito.space/peek/commit/0e8afccdff0075b9151b3dbd40609f53f16a8521), [f270](https://tangled.org/burrito.space/peek/commit/f270c56db43c1799a0a6c8dd801a00a2419124e3), [d015](https://tangled.org/burrito.space/peek/commit/d0150877ced2ff5e02d7414b3c6c08cd404e0f17), [d2fb](https://tangled.org/burrito.space/peek/commit/d2fb834abcd81e1a7d23898b4875f996f8899c52))
+- [x] Save settings windows, strip stale params on restore, fix display-watcher race conditions ([d12b](https://tangled.org/burrito.space/peek/commit/d12bd2b93d553c124f508fe37bbd6f7d325f4362))
+- [x] Suppress display-watcher during session restore to preserve window positions ([c32b](https://tangled.org/burrito.space/peek/commit/c32b73dfaf9ef4f497623452d7f919be28194392))
+- [x] Treat SIGINT/SIGTERM as clean shutdowns to prevent false crash dialog ([f56f](https://tangled.org/burrito.space/peek/commit/f56f5624550c93ef1e93f60392496a70b6dc393f), [8ab6](https://tangled.org/burrito.space/peek/commit/8ab6d36de9d593b894ef92893dc59b6af751ba3b), [16a2](https://tangled.org/burrito.space/peek/commit/16a2d4bcabce898ceb850ae3258965c384d71b89))
+- [x] Fix synchronous SIGINT save and correct canvas page bounds ([2df8](https://tangled.org/burrito.space/peek/commit/2df8a7339298b2b3c30f81168eef6b0bfabf4299))
+- [x] Open startup feature when restore is declined or fails ([0f28](https://tangled.org/burrito.space/peek/commit/0f280143d148e3bf25cd870b39cfaef528939d0a))
 
 Desktop - Display Switching
-- [x] feat(display): reposition windows when displays change (d732fa79)
-  - Pre-debounce bounds capture preserves window positions before OS moves them
-  - Group-based distance scaling for proportional repositioning
-- [x] fix(display-watcher): add home display tracking to restore windows after display reconnect (60b0798d)
-- [x] fix(display): use group-based distance scaling for window repositioning (11166190)
+- [x] Reposition windows when displays change — preserves positions before OS moves them ([d732](https://tangled.org/burrito.space/peek/commit/d732fa7912f47f70d32fde3b932f5842705fcc38))
+- [x] Track home display to restore windows after display reconnect ([60b0](https://tangled.org/burrito.space/peek/commit/60b0798db24bc9b6b571a30106a1392b453eae1f))
+- [x] Use group-based distance scaling for window repositioning ([1116](https://tangled.org/burrito.space/peek/commit/11166190d9066226b760225731477215c690a1c7))
 
 Desktop - Entity Recognition
-- [x] feat(entities): show source pages in entity list and add detail pane with full metadata (12feb902)
-- [x] fix(entities): improve detection coverage and reduce price noise (82b70037)
-- [x] fix(entities): migrate out standalone price entities lacking product context (383202ae)
-- [x] fix(entities): require context for date entities, migrate out standalone dates (6ada27ba)
+- [x] Show source pages in entity list and add detail pane with full metadata ([12fe](https://tangled.org/burrito.space/peek/commit/12feb9024640dc6a132b2080ae85012307407c78))
+- [x] Improve detection coverage and reduce price noise ([82b7](https://tangled.org/burrito.space/peek/commit/82b700377bbc902113c276d7eb50a5df59812d92))
+- [x] Remove standalone price entities lacking product context ([3832](https://tangled.org/burrito.space/peek/commit/383202ae65eb33aebafb52b01d4dd46579a6060b))
+- [x] Require context for date entities, remove standalone dates ([6ada](https://tangled.org/burrito.space/peek/commit/6ada27ba19445ed4dc1c076961336ace34b0c83e))
 
 Desktop - Command Palette
-- [x] feat(cmd): add command chaining flow for list notes, markdown, download, save as note (04ef4c8a)
-- [x] feat(cmd): add "open file" command with chaining + fix note inline tag extraction (0717e87b)
-- [x] fix(cmd): remove web search fallback on Enter — require explicit command match (49c6e5ec)
-- [x] fix(cmd,perf): sort history by frecency, use targeted queries for URL lookups (0873e5ee)
-- [x] fix(cmd): restore web page URLs in frecency suggestions (65baa072)
-- [x] fix(cmd): ESC clears text first, Shift-Tab cycles backward, fix frecency tracking (8f6b41a8)
-- [x] fix(cmd): register IZUI escape handler so ESC clears text before closing (80592eb0)
-- [x] fix(cmd): remove prefix feedback that caused adaptive sort cross-contamination (5ceb0517)
-- [x] fix(cmd): add deterministic tiebreaker to command palette sort for consistent autocomplete (566b63a8)
+- [x] Add command chaining flow for list notes, markdown, download, save as note ([04ef](https://tangled.org/burrito.space/peek/commit/04ef4c8aaf106cb8ef8c5110abbda841b940f1b7))
+- [x] Add "open file" command with chaining and fix note inline tag extraction ([0717](https://tangled.org/burrito.space/peek/commit/0717e87b6898b822075effa65d75beb4c9043120))
+- [x] Require explicit command match on Enter — remove web search fallback ([49c6](https://tangled.org/burrito.space/peek/commit/49c6e5ec4027e472af606462fcaeef8044cfdc77))
+- [x] Sort history by frecency, use targeted queries for URL lookups ([0873](https://tangled.org/burrito.space/peek/commit/0873e5ee688ec0a53440382fd88ccd681323a0f8))
+- [x] Restore web page URLs in frecency suggestions ([65ba](https://tangled.org/burrito.space/peek/commit/65baa072eef50d9b1ef7c69ad4e03e33116af346))
+- [x] ESC clears text first, Shift-Tab cycles backward, fix frecency tracking ([8f6b](https://tangled.org/burrito.space/peek/commit/8f6b41a8db9dc7ca85a1a696f3af4cca74915ac7))
+- [x] Register IZUI escape handler so ESC clears text before closing ([8059](https://tangled.org/burrito.space/peek/commit/80592eb03a143100ddaaa3a4f32db2d95eabc3cc))
+- [x] Remove prefix feedback that caused adaptive sort cross-contamination ([5ceb](https://tangled.org/burrito.space/peek/commit/5ceb05172fdfaf0c779ac6f23547a6e56567e123))
+- [x] Add deterministic tiebreaker to sort for consistent autocomplete ([566b](https://tangled.org/burrito.space/peek/commit/566b63a8df0b21056b8157670216a668602e1855))
 
 Desktop - Page View & Navigation
-- [x] feat(page): replace fullscreen transparent window with minimal page host (c543e38b)
-- [x] fix(page): eliminate navbar show/hide webview jump (43c9353e, 982f6a10, 083fbdf9, bd0449db)
-- [x] fix(page): restore webview drag with mousedown/mouseup bridge from guest page (63cd1414)
-- [x] fix(page): remove broken click-through code that activated unrelated windows (10f29146)
+- [x] Replace fullscreen transparent window with minimal page host ([c543](https://tangled.org/burrito.space/peek/commit/c543e38bf36d79a2c448e3e860157a4a34da388c))
+- [x] Eliminate navbar show/hide webview jump ([43c9](https://tangled.org/burrito.space/peek/commit/43c9353ec1523cd67d3c848ec5536561ad1e797b), [982f](https://tangled.org/burrito.space/peek/commit/982f6a10ac4ed9b7ab383e09b4889aa8224d8262), [083f](https://tangled.org/burrito.space/peek/commit/083fbdf90c90c9b717c259887ae4c22adebae84e), [bd04](https://tangled.org/burrito.space/peek/commit/bd0449db6277a60577ccbc0e6a37afb58adb433c))
+- [x] Restore webview drag with mousedown/mouseup bridge from guest page ([63cd](https://tangled.org/burrito.space/peek/commit/63cd141464c98f54e17ad475248208c356957c8a))
+- [x] Remove broken click-through code that activated unrelated windows ([10f2](https://tangled.org/burrito.space/peek/commit/10f29146d98c2cf25b8c63de56de3cfc85b712a9))
 
 Desktop - Window Dragging
-- [x] fix(drag): rewrite window drag system v3 — unified, faster, works everywhere (5a7c7899, fa58f66b, 1f815b61)
+- [x] Rewrite window drag system — unified, faster, works everywhere ([5a7c](https://tangled.org/burrito.space/peek/commit/5a7c7899116f7501f40ca99cbe1b6ed8c93031f3), [fa58](https://tangled.org/burrito.space/peek/commit/fa58f66b384faf13746f8aa3e2bca266fdde3530), [1f81](https://tangled.org/burrito.space/peek/commit/1f815b618a836270b1b444cf9cbfc13c6373a884))
 
 Desktop - HUD & Groups
-- [x] fix(hud): hide on app blur using did-resign-active (be05026c)
-- [x] fix(groups): fix group creation via inline form (141829f7)
-- [x] fix(tags): restore reactivity on sync and data changes (60eb36df)
-- [x] fix(tags/groups/cmd): fix item icons, group creation form, and tagset detection (5b0ca938)
+- [x] Hide HUD on app blur ([be05](https://tangled.org/burrito.space/peek/commit/be05026c3fe8bf9d28c28c05490fc16c3a75a204))
+- [x] Fix group creation via inline form ([1418](https://tangled.org/burrito.space/peek/commit/141829f79561a67556fb231fe89197de795cde09))
+- [x] Restore tags reactivity on sync and data changes ([60eb](https://tangled.org/burrito.space/peek/commit/60eb36df2fc0febad130ac8ce104ce756649cc91))
+- [x] Fix item icons, group creation form, and tagset detection ([5b0c](https://tangled.org/burrito.space/peek/commit/5b0ca9380c3217a63a66853858ab24dccb5d088f))
 
 Desktop - Dark Mode & Settings
-- [x] fix(darkmode): respect OS color scheme in system mode (6813ea5f)
-- [x] fix(websearch): fix suggestions, default engine setting, and settings UI (bcaeb205)
-- [x] feat(websearch): add Kagi as built-in search engine (e7d05c94)
-- [x] fix(settings): add descriptions and human-readable labels to core settings (0bfe87b9)
-- [x] fix(settings): quit shortcut default reset, editor portrait, datastore table fix (f6a16ad4)
+- [x] Respect OS color scheme in system dark mode ([6813](https://tangled.org/burrito.space/peek/commit/6813ea5f2e3fb51f11942470c1b706976e985afd))
+- [x] Fix web search suggestions, default engine setting, and settings UI ([bcae](https://tangled.org/burrito.space/peek/commit/bcaeb2051189ac03e9c06279cfe87a49c33a730c))
+- [x] Add Kagi as built-in search engine ([e7d0](https://tangled.org/burrito.space/peek/commit/e7d05c943f84b04b521fdce849312e5f05574a78))
+- [x] Add descriptions and human-readable labels to core settings ([0bfe](https://tangled.org/burrito.space/peek/commit/0bfe87b9e109ded26ea92c90a0adc9629f29bf3a))
+- [x] Fix quit shortcut default reset, editor portrait, datastore table ([f6a1](https://tangled.org/burrito.space/peek/commit/f6a16ad4a2d060b01ac213b6154bc02aee4f371b))
 
 Desktop - Fixes
-- [x] fix(mode,window): fix mode leak into global scope and bring existing windows to front (9b783b6b)
-- [x] fix(shortcuts): silence spurious warnings when unregistering global shortcuts during shutdown (7941b5f6)
-- [x] fix(cmd): ensure command registration after extensions loaded (3f9df015)
-- [x] refactor(cmd): remove cmd:ready/query boilerplate, register commands directly (f7306de6)
-- [x] feat(components): add sorting and view modes to card grid toolbar (83a85332)
-- [x] fix(rss): use tangled.org URLs, fix localsearch manifest loading (06afcb89)
+- [x] Fix mode leak into global scope and bring existing windows to front ([9b78](https://tangled.org/burrito.space/peek/commit/9b783b6b8e544458af64e6129a190fe6b218d436))
+- [x] Silence spurious warnings when unregistering global shortcuts during shutdown ([7941](https://tangled.org/burrito.space/peek/commit/7941b5f670a2e4c764736ab9baff94c287a643b6))
+- [x] Ensure command registration after extensions loaded ([3f9d](https://tangled.org/burrito.space/peek/commit/3f9df0153f85a43f3ed392d5bd07357b801dfa33))
+- [x] Simplify command registration — remove boilerplate ([f730](https://tangled.org/burrito.space/peek/commit/f7306de6a6086d45fe56ce76bb5e27612ab593c1))
+- [x] Add sorting and view modes to card grid toolbar ([83a8](https://tangled.org/burrito.space/peek/commit/83a8533205ca3eaf796046a61b627b925dae997f))
+- [x] Use tangled.org URLs for RSS, fix localsearch manifest loading ([06af](https://tangled.org/burrito.space/peek/commit/06afcb89112a6ff4dfa9e707f9aeeff057c489f2))
 
 Testing
-- [x] test(session): add 67 real integration tests for session save/restore (49f094f7)
-- [x] test(display-watcher): add tests for pre-debounce capture, suppress timer cancellation, and isRemoval flag (fd56204f)
-- [x] test: add 94 new unit tests and fix 3 E2E test failures (2251f86f)
+- [x] Add 67 real integration tests for session save/restore ([49f0](https://tangled.org/burrito.space/peek/commit/49f094f7fa698dadd2745c802de1015dcc9f30a3))
+- [x] Add display-watcher tests for pre-debounce capture, suppress timer, and isRemoval flag ([fd56](https://tangled.org/burrito.space/peek/commit/fd56204f81d78dcbb6b586aaea0ef97441eecbd8))
+- [x] Add 94 new unit tests and fix 3 E2E test failures ([2251](https://tangled.org/burrito.space/peek/commit/2251f86f43643a9b308cac6fa46dbf593141cfb3))
 
 ## 2026-02-11
 
 Desktop - New Extensions
-- [x] feat(websearch): implement web search extension with OpenSearch discovery and suggestions (bf488889)
-  - Search from command palette with live suggestions from multiple engines
-  - Auto-discovers OpenSearch endpoints on visited pages
-  - Widget notification in page view when OpenSearch engine found
-- [x] feat(search): implement unified search extension (4b95973d)
-- [x] feat(pagestream): implement vertical history stream extension (35f9afcc)
+- [x] Web search extension — search from command palette with live suggestions, auto-discovers OpenSearch endpoints on visited pages ([bf48](https://tangled.org/burrito.space/peek/commit/bf488889b77d22dd6b17d3613597379ba2b15737))
+- [x] Unified search extension ([4b95](https://tangled.org/burrito.space/peek/commit/4b95973d39a9ab252cce55b8402fbed674d742c4))
+- [x] Vertical history stream extension ([35f9](https://tangled.org/burrito.space/peek/commit/35f9afccca7020cee7762bb603ee68709949dcea))
 
 Desktop - History Unification
-- [x] refactor(history): unify address/visit system into items table (6 phases) (475e97fe..6f90f258)
-  - Phase 1-2: Remove dual-write, redirect renderer address APIs to items
-  - Phase 3-4: IPC compatibility layer, update tests and URL normalization
-  - Phase 5-6: Update Tauri backend, remove legacy address/visit code and types
+- [x] Unify address/visit system into items table — remove dual-write, redirect APIs, update Tauri backend, remove legacy code ([475e](https://tangled.org/burrito.space/peek/commit/475e97feb695d45e1253e03cd05e1b8a2d1982d7)..[6f90](https://tangled.org/burrito.space/peek/commit/6f90f258e36b729608a49b178db50894478f628f))
 
 Desktop - Dark Mode
-- [x] feat(darkmode): implement 3-tier dark mode system for web pages (ef242dde)
-  - Tier 1 (System): Sets prefers-color-scheme: dark for all webviews
-  - Tier 2 (Force): Chromium WebContentsForceDark with CIELAB inversion
-  - Settings UI with Off/System/Force selector
+- [x] 3-tier dark mode for web pages — System (prefers-color-scheme), Force (Chromium CIELAB inversion), with settings UI ([ef24](https://tangled.org/burrito.space/peek/commit/ef242dde9d5829fdb5342d1ba7781bc0e9767485))
 
 Desktop - Page View & Navigation
-- [x] feat(page): add browser navigation hotkeys and editable URL bar (52a99ec7)
-  - Cmd+R reload, Cmd+[/] back/forward, Cmd+L to edit URL
-- [x] feat(page): add widget system with OpenSearch discovery notification (ce5ae4bb)
-- [x] fix(page): improve drag-from-anywhere with long-press detection and all-corner resize (d135cfa6)
-- [x] fix(page): apply background detection to non-canvas web pages (e1ac7b6f)
-- [x] fix(nav): restore full-width navbar — remove floating bubble design (7769f1e1)
-- [x] fix(titles): fix Loading... title bug, add page content extraction and URL metadata enrichment (61ca6f00)
-  - Filter "Loading..." from stored titles across all code paths
-  - Add extract-page-content IPC handler for live page HTML extraction
-  - URL item metadata enrichment with OG tags, description, favicon
+- [x] Browser navigation hotkeys and editable URL bar — Cmd+R reload, Cmd+[/] back/forward, Cmd+L to edit URL ([52a9](https://tangled.org/burrito.space/peek/commit/52a99ec7c345ba5bd9cfc37036848d29ca0294ae))
+- [x] Widget system with OpenSearch discovery notification ([ce5a](https://tangled.org/burrito.space/peek/commit/ce5ae4bb7d118320c02ae80a00af9793a5749bcf))
+- [x] Improve drag-from-anywhere with long-press detection and all-corner resize ([d135](https://tangled.org/burrito.space/peek/commit/d135cfa61cc3563cb597987ebf7b55eea5e3d03c))
+- [x] Apply background detection to non-canvas web pages ([e1ac](https://tangled.org/burrito.space/peek/commit/e1ac7b6f8920944019cbca21aaf1188b25592bd2))
+- [x] Restore full-width navbar — remove floating bubble design ([7769](https://tangled.org/burrito.space/peek/commit/7769f1e19c6f74cb5fd18493c42bbaecc8a59644))
+- [x] Fix Loading... title bug, add page content extraction and URL metadata enrichment ([61ca](https://tangled.org/burrito.space/peek/commit/61ca6f009ba9ad357e09f310770fa5cdf2940b9c))
 
 Desktop - Tags & Editor
-- [x] feat(tags): embed editor in detail pane for inline note editing (a575013e)
-  - Replace modal with inline detail view, ESC navigation between list and detail
-  - Vim status/command bar overlaid on editor, respects vim mode preference
-- [x] feat(tags): add content search with tag combo filtering, pin selected tags in sidebar (d005d3dd)
-- [x] fix(editor,tags): fix note command blank editor, tags reactivity, and editor height (cb4d5e10)
-  - New notes create datastore items immediately for autosave
-  - Tags UI subscribes to item:updated events for live reactivity
-- [x] fix(editor): forward ESC to vim in insert/visual mode before IZUI handles it (7b866e87)
-- [x] fix(tags): editor layout, vim status bar positioning, and focus ring cleanup (08483e4e, 3100ec71, 3a072f24)
+- [x] Embed editor in detail pane for inline note editing with vim status bar ([a575](https://tangled.org/burrito.space/peek/commit/a575013e7000b50db91235fa09b67104ea5293d2))
+- [x] Content search with tag combo filtering, pin selected tags in sidebar ([d005](https://tangled.org/burrito.space/peek/commit/d005d3dd966595778c482c2ce8f555ffb8550ca6))
+- [x] Fix note command blank editor, tags reactivity, and editor height ([cb4d](https://tangled.org/burrito.space/peek/commit/cb4d5e10b8d4a27c6529945e00efea2bed701fc0))
+- [x] Forward ESC to vim in insert/visual mode before IZUI handles it ([7b86](https://tangled.org/burrito.space/peek/commit/7b866e87a87e357bd1482e5d8e5775f9702c5d81))
+- [x] Fix editor layout, vim status bar positioning, and focus ring cleanup ([0848](https://tangled.org/burrito.space/peek/commit/08483e4ef820d8eece5fc28f7c113690ff002c82), [3100](https://tangled.org/burrito.space/peek/commit/3100ec71fc60978bc7cc89da1c1a5f8bf82f4e11), [3a07](https://tangled.org/burrito.space/peek/commit/3a072f24678bb375a193b04ea7fdb05b92d546be))
 
 Desktop - Shortcuts & Commands
-- [x] feat(shortcuts): implement dual hotkey registration — local Cmd+ alongside global Opt+ (545e95b4)
-  - Cmd+K (palette), Cmd+E (editor), Cmd+T (tags), Cmd+G (groups), Cmd+H (HUD)
-  - Fix: Cmd+Q quit, Cmd+, settings (were incorrectly using Opt+)
-- [x] feat(api): implement commands.list() to query registered commands via pubsub (696c7859)
-- [x] fix(cmd): fix frecency/adaptive sorting in command palette (2f6da3fd)
-  - Unified weighted ranking combining adaptive score and frecency
-  - Cross-query adaptive feedback for substring matches
+- [x] Dual hotkey registration — local Cmd+ alongside global Opt+ for palette, editor, tags, groups, HUD ([545e](https://tangled.org/burrito.space/peek/commit/545e95b47d436171406bc01c3783ac7d1e5ca382))
+- [x] Query registered commands via pubsub ([696c](https://tangled.org/burrito.space/peek/commit/696c7859c3b10bb81a8ea741dbb65e595bbe3af3))
+- [x] Fix frecency/adaptive sorting in command palette ([2f6d](https://tangled.org/burrito.space/peek/commit/2f6da3fd76ba4780daf8e0626bd45e9a50b1dd5e))
 
 Desktop - Settings & Extensions
-- [x] fix(settings): rework extensions settings — rename sections, unify layout, add options buttons (cb540409)
-  - Rename: Features (Peek extensions) vs Extensions (bundled webextensions)
-  - Options button for extensions with options pages
-- [x] fix(settings): dynamically list all builtin extensions in Features section (90fe93d0)
-- [x] feat(chrome-ext): generic settings/UI system for bundled Chrome extensions (edbf5169)
-- [x] feat(adblocker): migrate from @cliqz/adblocker-electron to @ghostery/adblocker-electron (93b44561)
+- [x] Rework extensions settings — separate Features vs Extensions sections, add options buttons ([cb54](https://tangled.org/burrito.space/peek/commit/cb54040945458d258ed48f9951820998ebdd6e75))
+- [x] Dynamically list all builtin extensions in Features section ([90fe](https://tangled.org/burrito.space/peek/commit/90fe93d0fea4d2286ab6099ffd097e40205e1fef))
+- [x] Generic settings/UI system for bundled Chrome extensions ([edbf](https://tangled.org/burrito.space/peek/commit/edbf5169a396539ed2d94df1b873690d168d7b7a))
+- [x] Migrate ad blocker from @cliqz to @ghostery ([93b4](https://tangled.org/burrito.space/peek/commit/93b445613d086b8f1d4caea934d5e466a0b975a6))
 
 Desktop - Fixes
-- [x] fix(windows): HUD focus stealing, chrome ext options styling, duplicate group cards (47686da7)
-- [x] fix(groups): prevent duplicate windows/URLs, fix race conditions and title resolution (20cb9956)
-- [x] fix(hud): resolve extension disabled by settings key collision (671df42e)
-- [x] fix(context): resolve window ID from caller when null, set mode before loadURL (c1d77f28)
-- [x] fix(entities): align UI with groups/tags component and theme patterns (c5df43bc)
-- [x] fix(scripts): align UI with groups/tags component and theme patterns (50c639ff)
-- [x] fix(editor): use extension settings API for vim mode, audit localStorage usage (3962110b)
-- [x] fix(build): pin Node version to 24.11.1 to match Electron 40 (96c05941)
+- [x] Fix HUD focus stealing, chrome ext options styling, duplicate group cards ([4768](https://tangled.org/burrito.space/peek/commit/47686da71893feb30b286fbc5e45021e6f442e07))
+- [x] Prevent duplicate windows/URLs, fix race conditions and title resolution ([20cb](https://tangled.org/burrito.space/peek/commit/20cb9956145d94e57a902a1976e1bd56a1242d4b))
+- [x] Resolve extension disabled by settings key collision ([671d](https://tangled.org/burrito.space/peek/commit/671df42e33f9b08db4a058e98e8e4e6f7bdbddad))
+- [x] Resolve window ID from caller when null, set mode before loadURL ([c1d7](https://tangled.org/burrito.space/peek/commit/c1d77f286c8ba45015514d6a836bf4a13df7f66a))
+- [x] Align entity and script UIs with groups/tags component patterns ([c5df](https://tangled.org/burrito.space/peek/commit/c5df43bcf9d5f28dd1dbf129fe47612346c26b6f), [50c6](https://tangled.org/burrito.space/peek/commit/50c639ff3a591181e8bd6b10b8bfdd8f906406a3))
+- [x] Use extension settings API for vim mode, audit localStorage usage ([3962](https://tangled.org/burrito.space/peek/commit/3962110b5db93447fd6b95379281de6a0223a203))
+- [x] Pin Node version to 24.11.1 to match Electron 40 ([96c0](https://tangled.org/burrito.space/peek/commit/96c05941d16a0989f7407b00a63cda2994e52d24))
 
 Testing
-- [x] test(history): add unified URL/history tests for unification refactor (d3ac05f7)
-- [x] test(entities): add comprehensive test data for entity recognition (d710d039)
+- [x] Add unified URL/history tests for unification refactor ([d3ac](https://tangled.org/burrito.space/peek/commit/d3ac05f7135ead6685d7c8ddb50ba378c2e700b9))
+- [x] Add comprehensive test data for entity recognition ([d710](https://tangled.org/burrito.space/peek/commit/d710d039355e4e355c0c3e26844753c8c6d4e245))
 
 ## 2026-02-09
 
 Desktop - IZUI Role-Based Redesign
-- [x] feat(izui): systemic ESC handling, peek-component migrations, HUD test fixes (21d59cc0)
-  - Migrated peek-card, peek-grid, peek-list to shared peek-components
-  - Unified ESC key handling across all window types
-  - Fixed HUD test infrastructure
-- [x] feat(izui): implement role-based window policy (Phase 1-2) (3fbcade9)
-  - Replaced session-based transient/active detection with deterministic role system
-  - Five roles: root, child-content, child-tool, hud, transient
-  - Role assigned at window creation, governs ESC behavior and lifecycle
-- [x] feat(izui): complete role-based migration (Phase 3-6) (8528f053)
-  - Migrated all window creation sites to use role-based policy
-  - Removed legacy IzuiStateCoordinator session tracking
-  - ESC behavior fully determined by window role
-- [x] fix(izui): promote content to child-content when opened from parent window (92d359c5)
-- [x] fix(izui): promote transient session on app focus, fix startup role (055b77ed)
+- [x] Unified ESC handling, migrate components to shared peek-components, fix HUD tests ([21d5](https://tangled.org/burrito.space/peek/commit/21d59cc00e8516382e0425f2442019ff915936e5))
+- [x] Role-based window policy — five deterministic roles (root, child-content, child-tool, hud, transient) govern ESC behavior and lifecycle ([3fbc](https://tangled.org/burrito.space/peek/commit/3fbcade9a47b8375e0e10d15bf693104587433f3))
+- [x] Complete role-based migration — all window creation uses role policy, remove legacy session tracking ([8528](https://tangled.org/burrito.space/peek/commit/8528f053e1ef930b191eb2b834180eb84475851c))
+- [x] Promote content to child-content when opened from parent window ([92d3](https://tangled.org/burrito.space/peek/commit/92d359c5c5ecdf8baa6aca5cdcc3fb81c34c7921))
+- [x] Promote transient session on app focus, fix startup role ([055b](https://tangled.org/burrito.space/peek/commit/055b77ed748ccce030da378d116e1d8c503bf659))
 
 Desktop - Navigation & UI
-- [x] fix(nav): restore floating nav bar — remove embedded regression (93060df3)
-- [x] fix(peek-card): delegate click/focus through shadow DOM boundary (b15c6434)
-- [x] feat(tags): migrate tags UI to shared peek-components (3145a08a)
-  - Tags extension uses peek-card, peek-grid from shared component library
-  - Consistent styling across all card-based views
-- [x] fix(config): align startupFeature schema default with actual default (aab2b20b)
-- [x] fix(external-url): delay URL processing to ensure app activation completes (f0d1e5bd)
+- [x] Restore floating nav bar — remove embedded regression ([9306](https://tangled.org/burrito.space/peek/commit/93060df349c11e0bae011121552a1901ec02c068))
+- [x] Delegate click/focus through shadow DOM boundary in peek-card ([b15c](https://tangled.org/burrito.space/peek/commit/b15c6434bd885e0e00b31ce2ef62e670c282232c))
+- [x] Migrate tags UI to shared peek-components for consistent styling ([3145](https://tangled.org/burrito.space/peek/commit/3145a08ad2604f17424b26604e8d1b003c4aacf9))
+- [x] Align startupFeature schema default with actual default ([aab2](https://tangled.org/burrito.space/peek/commit/aab2b20b8a365fdb47c28554c9cbbf9062010ed2))
+- [x] Delay URL processing to ensure app activation completes ([f0d1](https://tangled.org/burrito.space/peek/commit/f0d1e5bd1289caf470e9a6a9d793414abb3ae6a1))
 
 Desktop - Entity Recognition
-- [x] feat(entities): implement Phase 1 entity recognition extension (ae0cd811)
-  - Extract entities (people, places, dates, etc.) from saved items
-  - Extensible matcher and store architecture
-  - Unit tests for extractors, matcher, and store
+- [x] Entity recognition extension — extract entities (people, places, dates, etc.) from saved items with extensible matcher and store ([ae0c](https://tangled.org/burrito.space/peek/commit/ae0cd81109117239e4ad4ac0f30366246a1e94b9))
 
 Desktop - HUD & Groups
-- [x] fix(hud): populate mode, active window, and stats fields (be18f49f)
-- [x] fix(groups): preserve group context through page navigation (1d69ce8f)
-- [x] fix(datastore): disable FK checks during entity type migration (98025bcc)
+- [x] Populate HUD mode, active window, and stats fields ([be18](https://tangled.org/burrito.space/peek/commit/be18f49f540738aab4bcd11cb2ab3f2c388ffd2e))
+- [x] Preserve group context through page navigation ([1d69](https://tangled.org/burrito.space/peek/commit/1d69ce8fd81c9fc23faac81368fb004d7bb82d9a))
+- [x] Disable FK checks during entity type migration ([9802](https://tangled.org/burrito.space/peek/commit/98025bcca6309076ea578a32b287d81091295a55))
 
 Desktop - Shortcuts & Page
-- [x] fix(shortcuts): guard ev.reply() against destroyed senders + add roundtrip tests (49b626e9)
-- [x] fix(shortcuts): use BrowserWindow ID not WebContents ID for shortcut callbacks (d6fe8cbf)
-- [x] fix(shortcuts): resolve stale IPC reference in global shortcut callbacks (221d5a44)
-- [x] fix(page): content-sized BrowserWindow instead of fullscreen canvas (2eb7a703)
+- [x] Guard ev.reply() against destroyed senders and add roundtrip tests ([49b6](https://tangled.org/burrito.space/peek/commit/49b626e9c92523f39dc190d8024770e84737d17d))
+- [x] Use BrowserWindow ID not WebContents ID for shortcut callbacks ([d6fe](https://tangled.org/burrito.space/peek/commit/d6fe8cbfe845cd081eb712d6add07b4b08dab227))
+- [x] Resolve stale IPC reference in global shortcut callbacks ([221d](https://tangled.org/burrito.space/peek/commit/221d5a442d970de8a1db07dfd4f5816b607a60f2))
+- [x] Content-sized BrowserWindow instead of fullscreen canvas ([2eb7](https://tangled.org/burrito.space/peek/commit/2eb7a7037b92ef3d9a3961a39de2774fbf41ecff))
 
 Desktop - Command Bar
-- [x] fix(cmd): restore URL detection for domains without protocol (youtube.com) (8abf13b6)
+- [x] Restore URL detection for domains without protocol (youtube.com) ([8abf](https://tangled.org/burrito.space/peek/commit/8abf13b6300b6735ff748d65a71145f584972fed))
 
-Sync Architecture - syncSource Migration
-- [x] feat(sync): Phase 1 - separate sync pull from user operations (b3cbb47e)
-  - Sync pull is now architecturally separate from user-facing operations
-  - Server _sync metadata preserved naturally without guards
-- [x] refactor(sync): remove syncSource from unified sync module and update docs (3ffa9bf1)
-  - Removed syncSource column from schema and all datastore code
-  - Replaced with device ID tracking via _sync metadata in item metadata JSON
-- [x] refactor(mobile): remove active sync_source usage from iOS sync (3ca335f0)
-- [x] feat(mobile): add device ID and _sync metadata to mobile backend (abc40815)
+Sync Architecture
+- [x] Separate sync pull from user operations — server metadata preserved naturally ([b3cb](https://tangled.org/burrito.space/peek/commit/b3cbb47e44fa6fb766c98a1e87547d86f2fce87c))
+- [x] Remove syncSource from schema, replace with device ID tracking via _sync metadata ([3ffa](https://tangled.org/burrito.space/peek/commit/3ffa9bf15275feeafcb1fcef5cfce0013276d7db))
+- [x] Remove sync_source usage from iOS sync ([3ca3](https://tangled.org/burrito.space/peek/commit/3ca335f097031f0d227d9d4984274f019a53f05d))
+- [x] Add device ID and _sync metadata to mobile backend ([abc4](https://tangled.org/burrito.space/peek/commit/abc408159b76a74cf8712ab42e6c6f572b9f9ebc))
 
 Mobile / iOS
-- [x] feat(ios): native inline WKWebView + fix dev build pipeline (ac1154e7)
-- [x] fix(ios): separate dev/release build paths and enable media autoplay (50444786)
-- [x] fix(mobile): prevent white flash when opening inline webview (edc1b5b9)
-- [x] fix(mobile): tighten header layout alignment (6f639e85)
-- [x] fix(ui): editor overlays fill to keyboard, tagset cards use tag chips (bb032a08)
-- [x] fix(mobile): replace Once::call_once with retryable Mutex for DB init (bb02d535)
-- [x] feat(mobile): hide from:history items from default list view (c6acfc60)
-- [x] fix(build): separate derivedDataPath for simulator and device builds (d6870291)
-- [x] fix(build): add --standalone flag to embed real frontend in iOS builds (90c7f5d8)
+- [x] Native inline WKWebView and fix dev build pipeline ([ac11](https://tangled.org/burrito.space/peek/commit/ac1154e70ac137d8c4079ebfd90fbf504c951f9e))
+- [x] Separate dev/release build paths and enable media autoplay ([5044](https://tangled.org/burrito.space/peek/commit/5044478650895bf02ea44ab07247a1437de290c4))
+- [x] Prevent white flash when opening inline webview ([edc1](https://tangled.org/burrito.space/peek/commit/edc1b5b97953a149f48bdea6f7b02e5a00e1b26a))
+- [x] Tighten header layout alignment ([6f63](https://tangled.org/burrito.space/peek/commit/6f639e85a362d16b7a3a0d40d55d2369fb679929))
+- [x] Editor overlays fill to keyboard, tagset cards use tag chips ([bb03](https://tangled.org/burrito.space/peek/commit/bb032a08cc463712f90feff4d66d2e79c89ff534))
+- [x] Replace Once::call_once with retryable Mutex for DB init ([bb02](https://tangled.org/burrito.space/peek/commit/bb02d53584824cc53a8231b5edf603798a309933))
+- [x] Hide from:history items from default list view ([c6ac](https://tangled.org/burrito.space/peek/commit/c6acfc60))
+- [x] Separate derivedDataPath for simulator and device builds ([d687](https://tangled.org/burrito.space/peek/commit/d687029109f05f5d20cebeb6b3c459e1f86469fe))
+- [x] Add --standalone flag to embed real frontend in iOS builds ([90c7](https://tangled.org/burrito.space/peek/commit/90c7f5d80c3c7333c51c4838a3b04597b4dff348))
 
 Testing
-- [x] test(cmd): add comprehensive URL detection tests for command panel (ccc5a13b)
-- [x] test(server): add syncSource migration simulation tests (72731acf)
-- [x] test(entities): add unit tests for extractors, matcher, and store (8759b707)
-- [x] test(groups): add mode context propagation tests (5fbcc1ca)
-- [x] feat(test): deterministic profile IDs via PEEK_PROFILE_ID env var (7c61aa6e)
-- [x] fix(test): run unit tests under Electron's Node to match native module ABI (e1e0c7c5)
-- [x] fix(server): enable single-user mode for e2e tests (c6c249b5)
+- [x] Add comprehensive URL detection tests for command panel ([ccc5](https://tangled.org/burrito.space/peek/commit/ccc5a13b2af9dff5333de06918bd9b89595dcd30))
+- [x] Add syncSource migration simulation tests ([7273](https://tangled.org/burrito.space/peek/commit/72731acf9cd9d3be88c0a1f8f5f92217c023ce70))
+- [x] Add unit tests for entity extractors, matcher, and store ([8759](https://tangled.org/burrito.space/peek/commit/8759b7070b4d9fb4703d9b3533a2b3b3d6c22a69))
+- [x] Add mode context propagation tests ([5fbc](https://tangled.org/burrito.space/peek/commit/5fbcc1cae400d44fba0007d77155937b7e03b7a7))
+- [x] Deterministic profile IDs via PEEK_PROFILE_ID env var ([7c61](https://tangled.org/burrito.space/peek/commit/7c61aa6e47e5d0b03b63918b68134c449d99b867))
+- [x] Run unit tests under Electron's Node to match native module ABI ([e1e0](https://tangled.org/burrito.space/peek/commit/e1e0c7c5c989c296fc75adf8f493ada592443caa))
+- [x] Enable single-user mode for e2e tests ([c6c2](https://tangled.org/burrito.space/peek/commit/c6c249b52830b6efd18b2d91ea2eaad6e3bc94f6))
 
 ## 2026-02-02
 
 Desktop - IZUI (Inverted Zooming User Interface)
-- [x] feat(izui): implement IZUI state machine for transient vs active window behavior (457ce41d)
-  - Centralized `IzuiStateCoordinator` manages session-based state tracking
-  - Fixes cmd bar stuck on "group" mode when invoked transiently
-  - Fixes ESC from overlay showing groups instead of returning to previous app
-  - Transient state propagates to child windows (cmd -> overlay)
-  - Uses `isFocused()` for accurate system focus detection
-  - KeepLive windows re-evaluate transient state on each show
-  - Added `api.izui.*` renderer API for querying state
-  - 54 unit tests with dependency injection for testability
-  - See `docs/izui.md` for full documentation
-- [x] fix(izui): OS-level focus for transient detection + graceful test shutdown (e1764328)
-  - Transient detection uses OS-level app focus (`app.isFocused`) instead of window visibility
-  - Tests use graceful `app.quit()` instead of SIGTERM/SIGKILL (no more crash dialogs)
-  - 5 new IZUI behavior tests for real app focus scenarios
-- [x] refactor(izui): passive backend window manager - extensions use api.window.open() directly (188894c4)
-  - Backend no longer creates windows for extensions; extensions open their own via API
-  - Simplifies window lifecycle and reduces coupling
-- [x] fix(izui): child windows always close on ESC + center windows on screen (b0d07b89)
-  - ESC policy: child windows always close, active root windows do not
-  - All new windows centered on screen at creation
-- [x] fix(izui): visibility-based transient detection + active mode ESC protection (d74b62b5)
-- [x] feat(izui): center child windows over parent window (bd947dbc)
-  - Parent window position/size used to calculate centered placement
-  - Focus restored to parent on child close
-- [x] fix(izui): renderer-driven escape lifecycle for navigate mode windows (dc470b7f)
-- [x] fix(izui): fix ESC navigation, window drag, and navbar cleanup (3ca4841b)
-- [x] fix(izui): fix transient detection race condition (d634a52b)
-- [x] fix: clean up modes, remove overlay, fix IZUI navigation stack (6be5fc45)
-- [x] fix(groups): filter peek:// URLs and fix IZUI stack navigation (70ab1706)
-- [x] cleanup(overlay): remove vestigial overlay references and rename events (16402840)
-- [x] fix(main): remove non-existent overlay from CONSOLIDATED_EXTENSION_IDS (518c4406)
+- [x] IZUI state machine for transient vs active window behavior — centralized state tracking, ESC behavior depends on context ([457c](https://tangled.org/burrito.space/peek/commit/457ce41d3dd96dc2447951347ce5047f85d87029))
+- [x] OS-level focus for transient detection, graceful test shutdown ([e176](https://tangled.org/burrito.space/peek/commit/e17643284ffa2e175fa4d48aca1b973382a60b96))
+- [x] Passive backend window manager — extensions open their own windows via API ([1888](https://tangled.org/burrito.space/peek/commit/188894c4855996600fbbb1702a592b6a2b6be035))
+- [x] Child windows always close on ESC, new windows centered on screen ([b0d0](https://tangled.org/burrito.space/peek/commit/b0d07b893143dff7da8fdebc2669e0520c01a2a8))
+- [x] Visibility-based transient detection and active mode ESC protection ([d74b](https://tangled.org/burrito.space/peek/commit/d74b62b550f87d05a927a1f5e3fee75b82159355))
+- [x] Center child windows over parent window, restore focus on close ([bd94](https://tangled.org/burrito.space/peek/commit/bd947dbcbcd76009990571d8292f283d81268cd1))
+- [x] Renderer-driven escape lifecycle for navigate mode windows ([dc47](https://tangled.org/burrito.space/peek/commit/dc470b7fe05f1b83c77f66e4ffe0b38522848919))
+- [x] Fix ESC navigation, window drag, and navbar cleanup ([3ca4](https://tangled.org/burrito.space/peek/commit/3ca4841b6a279c6280d9673632b64f6433e88f45))
+- [x] Fix transient detection race condition ([d634](https://tangled.org/burrito.space/peek/commit/d634a52bd07f2b64112e5a7d6cd3e60119a5a959))
+- [x] Clean up modes, remove overlay, fix IZUI navigation stack ([6be5](https://tangled.org/burrito.space/peek/commit/6be5fc453d88914a3536d66cc6ecb80e5118d731))
+- [x] Filter peek:// URLs and fix IZUI stack navigation ([70ab](https://tangled.org/burrito.space/peek/commit/70ab1706b21a2456b0f5896a60ac5acf0e23c5d2))
+- [x] Remove vestigial overlay references and rename events ([1640](https://tangled.org/burrito.space/peek/commit/164028401acd7efb18e149270868cb6ca3ddf220))
+- [x] Remove non-existent overlay from consolidated extension IDs ([518c](https://tangled.org/burrito.space/peek/commit/518c44065a4b23cd221bca9f1e054eeb5ea6a7c9))
 
 Desktop - Reactivity & Events
-- [x] feat(reactivity): add tag-centric events for real-time UI updates (8c229cdf)
-  - `tag:created`, `tag:item-added`, `tag:item-removed` events
-  - Extensions can subscribe to tag changes for live UI updates
-- [x] feat(reactivity): item CRUD events, debouncing, history/feeds subscriptions (1d351083)
-  - `item:created`, `item:updated`, `item:deleted` events
-  - Debounced event emission to prevent UI thrashing
-  - History and feeds extensions subscribe to relevant events
-- [x] feat(datastore): implement item_events table and CRUD operations (78950782)
-- [x] feat(preload): expose item_events API to renderer (f8f85ebc)
+- [x] Tag-centric events for real-time UI updates — tag:created, tag:item-added, tag:item-removed ([8c22](https://tangled.org/burrito.space/peek/commit/8c229cdf68c32bb51332f49c7feb6093b7201a2e))
+- [x] Item CRUD events with debouncing, history/feeds subscriptions ([1d35](https://tangled.org/burrito.space/peek/commit/1d351083780203bd00166ecf0d800167f5d038bb))
+- [x] Implement item_events table and CRUD operations ([7895](https://tangled.org/burrito.space/peek/commit/78950782d132b1f3e2fc25b5e76fd10dbdb52759))
+- [x] Expose item_events API to renderer ([f8f8](https://tangled.org/burrito.space/peek/commit/f8f85ebcba23b323d93c38bd97a4308c7472301d))
 
 Desktop - Window Management
-- [x] feat(window): add overlay mode for transient full-screen views (0727112b)
-- [x] fix(windows): hide other windows AFTER windows view opens (37ee7d43)
-- [x] fix(windows): ESC always closes, remove fallback emoji (3fddd1a6)
-- [x] refactor(windows): transparent bg with groups/tags card style (414e2139)
-- [x] refactor(windows): use peek-card and peek-grid components (666efa8d)
-- [x] fix(windows): use correct path for component imports (8b6686e4)
+- [x] Add overlay mode for transient full-screen views ([0727](https://tangled.org/burrito.space/peek/commit/0727112b71e08949c5c85ab1f4ae11eb4e5f519c))
+- [x] Hide other windows after windows view opens ([37ee](https://tangled.org/burrito.space/peek/commit/37ee7d4361aa10d5f320a4d41c7985837b2a75c4))
+- [x] ESC always closes windows, remove fallback emoji ([3fdd](https://tangled.org/burrito.space/peek/commit/3fddd1a6beaaeb2d9032c5a697d2a1b3814726c3))
+- [x] Transparent background with groups/tags card style ([414e](https://tangled.org/burrito.space/peek/commit/414e2139f66fa276266fe53e27f4b8c563c8301d))
+- [x] Use peek-card and peek-grid components for windows ([666e](https://tangled.org/burrito.space/peek/commit/666efa8d77ddf47fa81f214cff5e8564db06d074))
+- [x] Fix component import paths ([8b66](https://tangled.org/burrito.space/peek/commit/8b6686e4809a891ee9db6007fb5c79d7ab059b3d))
 
 Desktop - Architecture & Modes
-- [x] feat(context): add app-wide context API for extensible mode management (196a12d0)
-- [x] refactor(modes): remove modes.ts, consolidate into context API and datastore (5943e223)
-- [x] refactor(modes): remove settings mode and minor modes (simplify to page/group/default) (eab54a3f)
-- [x] feat(schema): add feeds and series architecture (8688c501)
-- [x] feat(feeds): add feed reader extension and API documentation (44c5b507)
+- [x] App-wide context API for extensible mode management ([196a](https://tangled.org/burrito.space/peek/commit/196a12d063dcb5c6eafca5a2e9c40b9b1ab4c474))
+- [x] Consolidate modes into context API and datastore ([5943](https://tangled.org/burrito.space/peek/commit/5943e2232e66658377ba0843d607f7ee0101f605))
+- [x] Simplify to page/group/default modes ([eab5](https://tangled.org/burrito.space/peek/commit/eab54a3ff2b29957873ecd224dd419f8d8185511))
+- [x] Add feeds and series architecture ([8688](https://tangled.org/burrito.space/peek/commit/8688c50133ebac280772bca4173b5ee99cd4a61b))
+- [x] Add feed reader extension ([44c5](https://tangled.org/burrito.space/peek/commit/44c5b507a1d0f879ba60c68de0b1e529bc5feed9))
 
 Desktop - Editor & Commands
-- [x] feat(editor): implement note editing flow with autosave (0ae56bb7)
-- [x] feat(cmd): restore mode indicator to command bar (from orphaned commits) (917640ca)
-  - Shows current mode (page/group/settings)
-  - Click to cycle through modes
-  - Auto-hides when in default mode
-- [x] feat(cmd): add Sync now command for manual sync trigger (18d02d2c)
-- [x] refactor(cmd): use connector pattern for edit and note commands (48465f72)
-- [x] fix(cmd): url command returns error instead of opening editor when no URL provided (5141fb07)
+- [x] Note editing flow with autosave ([0ae5](https://tangled.org/burrito.space/peek/commit/0ae56bb7c9586de0c2c9cf14245148ae9de2ecfd))
+- [x] Restore mode indicator to command bar — shows current mode, click to cycle ([9176](https://tangled.org/burrito.space/peek/commit/917640cacdb7e6f016cdd7e5a4dec3434a198d4b))
+- [x] Add "Sync now" command for manual sync trigger ([18d0](https://tangled.org/burrito.space/peek/commit/18d02d2cd3d65f60537a1d1622923c0696029999))
+- [x] Use connector pattern for edit and note commands ([4846](https://tangled.org/burrito.space/peek/commit/48465f72a50e5b801a71e9c09c4262dff0636ebb))
+- [x] URL command returns error instead of opening editor when no URL provided ([5141](https://tangled.org/burrito.space/peek/commit/5141fb07b095f117552fd8ce461ac318f5907219))
 
 Desktop - UI & Components
-- [x] feat(components): add glass-morphism tokens and component modes (7b2e52dc)
-- [x] fix(ui): center card headers, disable URL input autocapitalize, fix dev script (aa578e0d)
-- [x] fix(page): set default background on webview content when page has none (9fc274ab)
-  - Respects system theme (dark/light)
-  - Only applies when page doesn't set its own background
-- [x] fix(page): use trackNavigation for URL visit recording (f2677891)
+- [x] Add glass-morphism tokens and component modes ([7b2e](https://tangled.org/burrito.space/peek/commit/7b2e52dca752a2c46920364667e0f58a42360ba2))
+- [x] Center card headers, disable URL input autocapitalize, fix dev script ([aa57](https://tangled.org/burrito.space/peek/commit/aa578e0d91539d6f4d7b6e177e993106e9e9b226))
+- [x] Set default background on webview content when page has none — respects system theme ([9fc2](https://tangled.org/burrito.space/peek/commit/9fc274ab7ffc402f4409769023bed2bfcb439d3e))
+- [x] Use trackNavigation for URL visit recording ([f267](https://tangled.org/burrito.space/peek/commit/f267789149b2418d4e58d90f24da86c023bf930f))
 
 Desktop - Profiles & Startup
-- [x] feat(profiles): add Chromium session partition isolation per profile (2d704158)
-- [x] fix(profiles): register peek:// protocol on profile session (cd80de8d)
-- [x] fix(startup): respect startupFeature pref instead of always opening settings (5b920fab)
+- [x] Chromium session partition isolation per profile ([2d70](https://tangled.org/burrito.space/peek/commit/2d704158814b911fd76579febe03ea6119e596ea))
+- [x] Register peek:// protocol on profile session ([cd80](https://tangled.org/burrito.space/peek/commit/cd80de8d23562964ac212b240f49813535f9b1d3))
+- [x] Respect startupFeature pref instead of always opening settings ([5b92](https://tangled.org/burrito.space/peek/commit/5b920fab23aa7c30105f3e435931a0d25092fa70))
 
 Desktop - Fixes
-- [x] fix: ESC handling for Active mode windows (IZUI policy compliance)
-- [x] fix: add getFocusedVisibleWindowId API for modal window targeting
-- [x] fix: add trackNavigation API for unified page load tracking
-- [x] fix: update test to use peek://ext/cmd/panel.html (correct URL after cleanup)
-- [x] fix: window-list returns actual URLs from peek://app/page containers
-- [x] fix: mode detection from URL in window creation
-- [x] fix: add native module check script (prevents NODE_MODULE_VERSION mismatch)
-- [x] fix: unit tests run under Electron's Node (ELECTRON_RUN_AS_NODE=1) to match native module ABI
-- [x] fix(ipc): cast address to string for type safety (32a7f8a0)
-- [x] fix(ipc): sanitize window params to prevent serialization crash (fca6a26f)
-- [x] fix(build): exclude tmp/ agent workspaces from electron-builder (f0f26e31)
-- [x] fix(build): electron-builder uses yml config via extends (4620155f)
-- [x] fix(url): normalize trailing slash on bare domain URLs (3c2bbd61)
+- [x] ESC handling for Active mode windows (IZUI policy compliance)
+- [x] Add getFocusedVisibleWindowId API for modal window targeting
+- [x] Add trackNavigation API for unified page load tracking
+- [x] Update test to use peek://ext/cmd/panel.html
+- [x] Window-list returns actual URLs from peek://app/page containers
+- [x] Mode detection from URL in window creation
+- [x] Add native module check script (prevents NODE_MODULE_VERSION mismatch)
+- [x] Unit tests run under Electron's Node to match native module ABI
+- [x] Cast address to string for type safety ([32a7](https://tangled.org/burrito.space/peek/commit/32a7f8a0b97b12718211cc4cd39264cea5a6de49))
+- [x] Sanitize window params to prevent serialization crash ([fca6](https://tangled.org/burrito.space/peek/commit/fca6a26f963623bc04a94bc2361cb9e4f49a2678))
+- [x] Exclude tmp/ agent workspaces from electron-builder ([f0f2](https://tangled.org/burrito.space/peek/commit/f0f26e312d0174f2d6a304ed8638145d09a2c94b))
+- [x] Electron-builder uses yml config via extends ([4620](https://tangled.org/burrito.space/peek/commit/4620155f4f96c9a42bdf00211967efa547063e19))
+- [x] Normalize trailing slash on bare domain URLs ([3c2b](https://tangled.org/burrito.space/peek/commit/3c2bbd619327e7cb6dfbba027ce1805d5873e0b2))
 
 Mobile / iOS
-- [x] feat(mobile): add URL action icons with native WKWebView + visit tracking (ee06ef99)
-  - Open in Browser: opens URL in Safari
-  - Open in Webview: opens URL in embedded native WKWebView
-  - Track visits when URLs are loaded/navigated in webview
-- [x] fix(webview-plugin): simplify Swift integration with direct FFI (18258830)
-- [x] feat(mobile): fix native webview and restore icon system (1b641ed1)
-- [x] fix(ios): require hold gesture for pull-to-refresh (prevents accidental triggers) (0efb4445)
-- [x] feat(ios): bottom sheet webview + research docs (80fb7d8f)
-- [x] feat(webview): card-expansion iframe overlay replaces native bottom sheet (eb43f135)
-- [x] fix(ios): silence linker warnings and remove unused default icons (8cd36323)
-- [x] fix(ios): UX polish pass - 18 fixes for editor, share extension, layout, build (cf5fe38b)
-- [x] fix(ios): UX polish - 13 fixes for share sheet, editor, keyboard, sorting, filters (956fdcb8)
-- [x] fix(ui): maximize editor card space - tighter padding, remove separator, expand to edges (2a0fc4bf)
-- [x] fix(ui): undo/redo at top, reduce gaps, add webview link for text items (90d76c51)
-- [x] fix(share): commit pending tag text when Done is tapped (712a5108)
-- [x] fix(build): use dynamic DerivedData path for sim:install (94420c17)
+- [x] URL action icons with native WKWebView + visit tracking — open in Safari or embedded webview ([ee06](https://tangled.org/burrito.space/peek/commit/ee06ef990eb2bad8a17de65708a088198625e7f7))
+- [x] Simplify Swift webview integration with direct FFI ([1825](https://tangled.org/burrito.space/peek/commit/182588302aef990b8ced2c8b4bd1143ba813653f))
+- [x] Fix native webview and restore icon system ([1b64](https://tangled.org/burrito.space/peek/commit/1b641ed1fdd510c83847c8cf213cc14eac5e1319))
+- [x] Require hold gesture for pull-to-refresh to prevent accidental triggers ([0efb](https://tangled.org/burrito.space/peek/commit/0efb444539dba1d4cc7ed5cbd68815978ee2a5b0))
+- [x] Bottom sheet webview ([80fb](https://tangled.org/burrito.space/peek/commit/80fb7d8f9f3df9d064720c4801c91af0898e611f))
+- [x] Card-expansion iframe overlay replaces native bottom sheet ([eb43](https://tangled.org/burrito.space/peek/commit/eb43f135aaf8ed51c69dff6d7726cf995bf0c3ed))
+- [x] Silence linker warnings and remove unused default icons ([8cd3](https://tangled.org/burrito.space/peek/commit/8cd36323c9173e18559108b909718589433bbcda))
+- [x] UX polish pass — 18 fixes for editor, share extension, layout, build ([cf5f](https://tangled.org/burrito.space/peek/commit/cf5fe38b9cf9148fb2b506085aced75a0871221f))
+- [x] UX polish — 13 fixes for share sheet, editor, keyboard, sorting, filters ([956f](https://tangled.org/burrito.space/peek/commit/956fdcb80b723c155a25195e6a6aa55e9a35b336))
+- [x] Maximize editor card space — tighter padding, expand to edges ([2a0f](https://tangled.org/burrito.space/peek/commit/2a0fc4bf7c778068a7a76bee723410d98a44265b))
+- [x] Undo/redo at top, reduce gaps, add webview link for text items ([90d7](https://tangled.org/burrito.space/peek/commit/90d76c5178864b8d313333b0a6507b64ff1eaf6b))
+- [x] Commit pending tag text when Done is tapped ([712a](https://tangled.org/burrito.space/peek/commit/712a5108ebca84bfa96143b6dfd12d0725a79b54))
+- [x] Use dynamic DerivedData path for sim:install ([9442](https://tangled.org/burrito.space/peek/commit/94420c1731e25992049d270b48b6a0626f13a54e))
 
 Testing
-- [x] feat(tests): add Playwright browser extension e2e tests
-- [x] fix(tests): improve extension ID detection and shared instance handling
-- [x] fix(tests): remove Firefox Playwright support (not supported by Playwright)
-- [x] test: add integration tests for tag-centric events (ed9dd17a)
+- [x] Add Playwright browser extension e2e tests
+- [x] Improve extension ID detection and shared instance handling
+- [x] Remove Firefox Playwright support (not supported by Playwright)
+- [x] Add integration tests for tag-centric events ([ed9d](https://tangled.org/burrito.space/peek/commit/ed9dd17a41ba94b54faae75cd595934f2e9cecb2))
 
 Refactoring
-- [x] refactor(extensions): move tag and tagset commands to tags extension (d6636aaa)
-- [x] refactor(extensions): create files extension with csv and save commands (435cc952)
-- [x] refactor(extensions): create sync extension with sync command (e5867452)
+- [x] Move tag and tagset commands to tags extension ([d663](https://tangled.org/burrito.space/peek/commit/d6636aaa3087c2ec7bcf817363f16a9b7c901244))
+- [x] Create files extension with csv and save commands ([435c](https://tangled.org/burrito.space/peek/commit/435cc952196795389322bda8f9f9d48b176c4340))
+- [x] Create sync extension with sync command ([e586](https://tangled.org/burrito.space/peek/commit/e5867452459b6c136b01c663d1237cc3c05a4899))
 
 Datastore & UI
-- [x] fix(datastore): show addresses/visits/tags stats with safe error handling
-- [x] fix(datastore): extract stats from result.data wrapper
-- [x] chore: clean up settings and diagnostic UI
+- [x] Show addresses/visits/tags stats with safe error handling
+- [x] Extract stats from result.data wrapper
+- [x] Clean up settings and diagnostic UI
 
 Code Cleanup
-- [x] chore: remove vestigial app/cmd/ directory (24 files, replaced by extensions/cmd/)
-- [x] chore: remove app/scripts/ (disabled feature with missing HTML files)
-- [x] chore: remove dead functions from app/index.js (uninitFeature, initIframeFeature)
-- [x] chore: remove Cmd and Scripts entries from app/config.js (non-existent URLs)
-- [x] chore: simplify app/features.js (all features are now extensions)
-- [x] chore: remove commented-out sendToWindow/onMessage APIs from preload.js
-- [x] chore: remove 7 unused IPC handlers from ipc.ts (~155 lines)
+- [x] Remove vestigial app/cmd/ directory (24 files, replaced by extensions/cmd/)
+- [x] Remove app/scripts/ (disabled feature with missing HTML files)
+- [x] Remove dead functions from app/index.js
+- [x] Remove Cmd and Scripts entries from app/config.js
+- [x] Simplify app/features.js (all features are now extensions)
+- [x] Remove commented-out sendToWindow/onMessage APIs from preload.js
+- [x] Remove 7 unused IPC handlers from ipc.ts (~155 lines)
 
 ## 2026-01-26
 

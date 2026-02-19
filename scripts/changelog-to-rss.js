@@ -64,8 +64,8 @@ function parseItems(text) {
     // Title: use the heading text (may include more than just the date)
     const title = heading;
 
-    // Convert markdown body to simple HTML for RSS description
-    const description = markdownToSimpleHtml(body);
+    // Convert markdown body to plain text for RSS description
+    const description = markdownToPlainText(body);
 
     items.push({ title, date, dateStr, description });
   }
@@ -73,41 +73,25 @@ function parseItems(text) {
   return items;
 }
 
-// Minimal markdown to HTML conversion for RSS descriptions
-function markdownToSimpleHtml(md) {
-  let html = md
-    // Headings (### and below, since ## are already split out)
-    .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    // Bold
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    // Italic
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    // Inline code
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-    // List items (- [x] and - [ ] and plain -)
-    .replace(/^- \[x\] (.+)$/gm, '<li>$1</li>')
-    .replace(/^- \[ \] (.+)$/gm, '<li>$1</li>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    // Indented list items (  - )
-    .replace(/^  - (.+)$/gm, '<li style="margin-left:1em">$1</li>')
-    // Wrap consecutive <li> in <ul>
-    .replace(/((?:<li[^>]*>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
-    // Paragraphs (double newline)
-    .replace(/\n\n+/g, '</p><p>')
-    // Single newlines to <br>
-    .replace(/\n/g, '<br>\n');
+// Convert markdown to plain text for RSS descriptions
+function markdownToPlainText(md) {
+  let text = md
+    // Convert markdown links to "text (URL)" format
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+    // Remove checkboxes
+    .replace(/^- \[x\] /gm, '- ')
+    .replace(/^- \[ \] /gm, '- ')
+    // Remove bold markers
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    // Remove italic markers
+    .replace(/\*(.+?)\*/g, '$1')
+    // Remove inline code backticks
+    .replace(/`([^`]+)`/g, '$1')
+    // Collapse multiple blank lines
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
-  // Wrap in paragraph if not empty
-  if (html.trim()) {
-    html = '<p>' + html + '</p>';
-  }
-  // Clean up empty paragraphs
-  html = html.replace(/<p>\s*<\/p>/g, '');
-
-  return html;
+  return text;
 }
 
 // Escape XML special characters
@@ -157,7 +141,7 @@ function generateRss(meta, items) {
       <link>${escapeXml(meta.link || '')}</link>
       <guid isPermaLink="false">${escapeXml(guid)}</guid>
       <pubDate>${pubDate}</pubDate>
-      <description><![CDATA[${item.description}]]></description>
+      <description>${escapeXml(item.description)}</description>
     </item>
 `;
   }
