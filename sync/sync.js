@@ -188,18 +188,22 @@ export class SyncEngine {
     }
 
     await this.resetSyncStateIfServerChanged(config.serverUrl);
-    const startTime = Date.now();
 
     const pullResult = await this.pullFromServer();
     await this.saveSyncServerConfig(config.serverUrl);
     const pushResult = await this.pushToServer();
-    await this.setConfig({ lastSyncTime: startTime });
+
+    // Record sync time AFTER push completes so the high-water mark is after
+    // any server-side timestamps set during push — prevents echoing back
+    // items we just pushed on the next pull.
+    const syncTime = Date.now();
+    await this.setConfig({ lastSyncTime: syncTime });
 
     return {
       pulled: pullResult.pulled,
       pushed: pushResult.pushed,
       conflicts: pullResult.conflicts,
-      lastSyncTime: startTime,
+      lastSyncTime: syncTime,
     };
   }
 

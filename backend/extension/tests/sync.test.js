@@ -257,6 +257,78 @@ describe('sync', () => {
       const postIdx = requestLog.findIndex(r => r.method === 'POST');
       assert.ok(getIdx < postIdx);
     });
+
+    it('should not echo back pushed items on next sync', async () => {
+      // Simulate the scenario:
+      // 1. Sync 1: push local items to server
+      // 2. Sync 2: pull should NOT return those same items
+      //
+      // Bug: if lastSyncTime is captured BEFORE push, the server's updatedAt
+      // on pushed items is AFTER lastSyncTime, so they echo back on next pull.
+
+      // Create local items that need pushing
+      await data.addItem('url', { content: 'https://echo-1.com' });
+      await data.addItem('url', { content: 'https://echo-2.com' });
+      await data.addItem('text', { content: 'Echo test note' });
+
+      // Track server-side state: items pushed to server get updatedAt = now
+      const serverItems = [];
+      let syncCount = 0;
+
+      mockFetchHandler = async (url, opts) => {
+        const urlStr = url.toString();
+        if (opts && opts.method === 'POST') {
+          // Server saves item with updatedAt = now (like real server does)
+          const body = JSON.parse(opts.body);
+          const serverUpdatedAt = Date.now();
+          serverItems.push({
+            id: `server-${serverItems.length}`,
+            type: body.type,
+            content: body.content,
+            tags: body.tags || [],
+            metadata: body.metadata || null,
+            createdAt: serverUpdatedAt,
+            updatedAt: serverUpdatedAt,
+          });
+          return jsonResponse({ id: `server-${serverItems.length - 1}`, created: true });
+        }
+
+        // GET /items/since/:timestamp — return items with updatedAt > since
+        // URL uses ISO timestamps like /items/since/2026-02-19T12:34:56.789Z
+        const sinceMatch = urlStr.match(/\/items\/since\/([^?&]+)/);
+        if (sinceMatch) {
+          const sinceStr = decodeURIComponent(sinceMatch[1]);
+          const since = /^\d+$/.test(sinceStr)
+            ? parseInt(sinceStr, 10)
+            : new Date(sinceStr).getTime();
+          const matching = serverItems.filter(i => i.updatedAt > since);
+          syncCount++;
+          return jsonResponse({ items: matching });
+        }
+
+        return jsonResponse({ items: [] });
+      };
+
+      // Sync 1: pull (nothing), then push 3 items
+      const result1 = await sync.syncAll();
+      assert.equal(result1.pushed, 3, 'Sync 1 should push 3 items');
+
+      // Sync 2: pull should NOT echo back items we just pushed
+      // Reset mock to not accept more pushes (items already synced)
+      const origHandler = mockFetchHandler;
+      mockFetchHandler = async (url, opts) => {
+        if (opts && opts.method === 'POST') {
+          return jsonResponse({ id: 'no-push', created: false });
+        }
+        return origHandler(url, opts);
+      };
+
+      const result2 = await sync.syncAll();
+      assert.equal(result2.pulled, 0,
+        `Sync 2 pulled ${result2.pulled} items — expected 0. ` +
+        `Pushed items are echoing back because lastSyncTime is set before push.`
+      );
+    });
   });
 
   // ==================== Status ====================
@@ -328,9 +400,9 @@ describe('sync', () => {
 
       // Verify sync markers are intact
       const items = await data.queryItems();
-      const item = items.find(i => i.content === 'Stable item');
-      assert.equal(item.syncId, 'server-sc-2');
-      assert.ok(item.syncedAt > 0, 'Should still have syncedAt timestamp');
+      const stableItem = items.find(i => i.content === 'Stable item');
+      assert.equal(stableItem.syncId, 'server-sc-2');
+      assert.ok(stableItem.syncedAt > 0, 'Should still have syncedAt timestamp');
     });
 
     it('should not reset on first run (no stored config)', async () => {
@@ -350,9 +422,9 @@ describe('sync', () => {
 
       // Sync markers should be intact
       const items = await data.queryItems();
-      const item = items.find(i => i.content === 'Legacy item');
-      assert.equal(item.syncId, 'server-legacy-1');
-      assert.ok(item.syncedAt > 0, 'Should still have syncedAt timestamp');
+      const legacyItem = items.find(i => i.content === 'Legacy item');
+      assert.equal(legacyItem.syncId, 'server-legacy-1');
+      assert.ok(legacyItem.syncedAt > 0, 'Should still have syncedAt timestamp');
     });
   });
 });

@@ -719,7 +719,6 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
   }
 
   const config = getSyncConfig();
-  const startTime = Date.now();
 
   DEBUG && console.log('[sync] Starting full sync...');
 
@@ -737,9 +736,12 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     const pushResult = await pushToServer(serverUrl, apiKey, config.lastSyncTime);
     pushed = pushResult.pushed;
 
-    // Update last sync time and remember current server config
+    // Update last sync time AFTER push completes — using Date.now() ensures
+    // the high-water mark is after any server-side timestamps set during push,
+    // preventing the next pull from echoing back items we just pushed.
+    const syncTime = Date.now();
     const activeProfile = getActiveProfile();
-    updateLastSyncTime(activeProfile.id, startTime);
+    updateLastSyncTime(activeProfile.id, syncTime);
     saveSyncServerConfig(serverUrl);
 
     DEBUG && console.log(`[sync] Sync complete: ${pulled} pulled, ${pushed} pushed, ${conflicts} conflicts`);
@@ -748,7 +750,7 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
       pulled,
       pushed,
       conflicts,
-      lastSyncTime: startTime,
+      lastSyncTime: syncTime,
     };
   } catch (error) {
     DEBUG && console.error('[sync] Sync failed:', error);
