@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateModeForNavigation } from './datastore.js';
-import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath } from './protocol.js';
+import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions } from './extensions.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
@@ -256,33 +256,112 @@ export function discoverBuiltinExtensions(extensionsDir: string): void {
 }
 
 /**
- * Discover and register built-in themes
+ * Required CSS variables that every theme must define.
+ * Used by validateThemeCSS() to verify theme completeness.
  */
-export function discoverBuiltinThemes(themesDir: string): void {
-  if (!fs.existsSync(themesDir)) {
-    DEBUG && console.log('Themes directory not found:', themesDir);
-    return;
+const REQUIRED_THEME_VARIABLES = [
+  // Base16 colors
+  '--base00', '--base01', '--base02', '--base03',
+  '--base04', '--base05', '--base06', '--base07',
+  '--base08', '--base09', '--base0A', '--base0B',
+  '--base0C', '--base0D', '--base0E', '--base0F',
+  // Semantic aliases
+  '--theme-bg', '--theme-bg-secondary', '--theme-bg-tertiary',
+  '--theme-text', '--theme-text-secondary', '--theme-text-muted',
+  '--theme-border', '--theme-accent',
+  '--theme-success', '--theme-warning', '--theme-danger',
+  // Surface tokens
+  '--theme-surface-border', '--theme-surface-ring',
+  // Typography
+  '--theme-font-sans', '--theme-font-mono',
+];
+
+/**
+ * Validate that a theme CSS file defines all required variables.
+ * Returns { valid: true } or { valid: false, missing: string[] }
+ */
+export function validateThemeCSS(cssPath: string): { valid: boolean; missing?: string[] } {
+  if (!fs.existsSync(cssPath)) {
+    return { valid: false, missing: REQUIRED_THEME_VARIABLES };
   }
 
-  const entries = fs.readdirSync(themesDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+  const css = fs.readFileSync(cssPath, 'utf-8');
+  const missing = REQUIRED_THEME_VARIABLES.filter(v => !css.includes(v));
 
-    const themePath = path.join(themesDir, entry.name);
-    const manifestPath = path.join(themePath, 'manifest.json');
+  if (missing.length > 0) {
+    return { valid: false, missing };
+  }
+  return { valid: true };
+}
 
-    if (!fs.existsSync(manifestPath)) {
-      DEBUG && console.log('Theme missing manifest.json:', entry.name);
-      continue;
+/**
+ * Discover and register built-in themes.
+ * Scans the extensions directory for manifests with "type": "theme".
+ * Also scans a legacy themes directory for backward compatibility.
+ */
+export function discoverBuiltinThemes(extensionsDir: string, legacyThemesDir?: string): void {
+  // Scan extensions directory for theme-type extensions
+  if (fs.existsSync(extensionsDir)) {
+    const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const themePath = path.join(extensionsDir, entry.name);
+      const manifestPath = path.join(themePath, 'manifest.json');
+
+      if (!fs.existsSync(manifestPath)) continue;
+
+      try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+
+        // Only register extensions with type: "theme"
+        if (manifest.type !== 'theme') continue;
+
+        const themeId = manifest.id || entry.name;
+
+        // Validate theme CSS on discovery
+        const variablesFile = manifest.variables || './variables.css';
+        const cssPath = path.join(themePath, variablesFile.replace(/^\.\//, ''));
+        const validation = validateThemeCSS(cssPath);
+        if (!validation.valid) {
+          console.warn(`[theme] Theme ${themeId} missing required variables:`, validation.missing);
+          // Still register it — warn but don't block built-in themes
+        }
+
+        registerThemePath(themeId, themePath);
+        DEBUG && console.log('Discovered theme extension:', themeId);
+      } catch (err) {
+        console.error('Failed to load theme manifest:', entry.name, err);
+      }
     }
+  }
 
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-      const themeId = manifest.id || entry.name;
-      registerThemePath(themeId, themePath);
-      DEBUG && console.log('Discovered theme:', themeId);
-    } catch (err) {
-      console.error('Failed to load theme manifest:', entry.name, err);
+  // Legacy fallback: scan old themes/ directory for themes not yet migrated
+  if (legacyThemesDir && fs.existsSync(legacyThemesDir)) {
+    const entries = fs.readdirSync(legacyThemesDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const themePath = path.join(legacyThemesDir, entry.name);
+      const manifestPath = path.join(themePath, 'manifest.json');
+
+      if (!fs.existsSync(manifestPath)) continue;
+
+      try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+        const themeId = manifest.id || entry.name;
+
+        // Skip if already registered from extensions directory
+        if (getRegisteredThemeIds().includes(themeId)) {
+          DEBUG && console.log('Theme already registered from extensions, skipping legacy:', themeId);
+          continue;
+        }
+
+        registerThemePath(themeId, themePath);
+        DEBUG && console.log('Discovered legacy theme:', themeId);
+      } catch (err) {
+        console.error('Failed to load legacy theme manifest:', entry.name, err);
+      }
     }
   }
 }

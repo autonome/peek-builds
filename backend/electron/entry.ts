@@ -453,8 +453,8 @@ const onReady = async () => {
     }
   }
 
-  // Discover and register built-in themes from themes/ folder
-  discoverBuiltinThemes(path.join(ROOT_DIR, 'themes'));
+  // Discover and register built-in themes from extensions/ (type: "theme") with legacy themes/ fallback
+  discoverBuiltinThemes(path.join(ROOT_DIR, 'extensions'), path.join(ROOT_DIR, 'themes'));
 
   // Initialize bundled web extensions infrastructure
   const chromeExtensionsDir = path.join(ROOT_DIR, 'resources', 'chrome-extensions');

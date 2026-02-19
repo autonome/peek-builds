@@ -103,6 +103,7 @@ import {
   removeWindow,
   findWindowByKey,
   getAllWindows,
+  validateThemeCSS,
 } from './main.js';
 
 import {
@@ -1755,9 +1756,18 @@ export function registerThemeHandlers(): void {
 
       // Check for variables.css (or whatever the manifest points to)
       const variablesFile = manifest.variables || 'variables.css';
-      const variablesPath = path.join(themePath, variablesFile);
+      const variablesPath = path.join(themePath, variablesFile.replace(/^\.\//, ''));
       if (!fs.existsSync(variablesPath)) {
         return { success: false, error: `Theme CSS file not found: ${variablesFile}` };
+      }
+
+      // Validate that all required Base16 variables and semantic aliases are present
+      const validation = validateThemeCSS(variablesPath);
+      if (!validation.valid) {
+        return {
+          success: false,
+          error: `Theme CSS missing required variables: ${validation.missing!.join(', ')}`
+        };
       }
 
       return {
@@ -1787,6 +1797,17 @@ export function registerThemeHandlers(): void {
       const manifestContent = fs.readFileSync(manifestPath, 'utf-8');
       const manifest = JSON.parse(manifestContent);
       const id = manifest.id || manifest.name || `theme_${Date.now()}`;
+
+      // Validate theme CSS has all required variables
+      const variablesFile = manifest.variables || 'variables.css';
+      const cssPath = path.join(themePath, variablesFile.replace(/^\.\//, ''));
+      const validation = validateThemeCSS(cssPath);
+      if (!validation.valid) {
+        return {
+          success: false,
+          error: `Theme CSS missing required variables: ${validation.missing!.join(', ')}`
+        };
+      }
 
       // Check if already exists
       const existing = db.prepare('SELECT * FROM themes WHERE id = ?').get(id);
@@ -1841,6 +1862,12 @@ export function registerThemeHandlers(): void {
       // Don't allow removing builtin themes
       if (existing.builtin === 1) {
         return { success: false, error: 'Cannot remove built-in theme' };
+      }
+
+      // Prevent removing the active theme — at least one theme must always be enabled
+      const activeId = getActiveThemeId();
+      if (themeId === activeId) {
+        return { success: false, error: 'Cannot remove the active theme. Switch to another theme first.' };
       }
 
       // Remove from database

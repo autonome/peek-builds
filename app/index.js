@@ -296,6 +296,65 @@ const registerExtensionCommands = () => {
     execute: cycleTheme
   });
 
+  // Theme switcher — list all installed themes, or switch directly by name
+  api.commands.register({
+    name: 'theme',
+    description: 'Switch theme — type a theme name or pick from list',
+    execute: async (ctx) => {
+      const search = (ctx.search || '').trim().toLowerCase();
+
+      // Get all available themes
+      const listResult = await api.theme.list();
+      if (!listResult.themes || listResult.themes.length === 0) {
+        return { output: 'No themes available', mimeType: 'text/plain' };
+      }
+
+      const themes = listResult.themes;
+      const currentState = await api.theme.get();
+      const currentId = currentState.themeId;
+
+      // If the user typed a search term, try to match a theme name directly
+      if (search) {
+        const exactMatch = themes.find(t =>
+          t.id.toLowerCase() === search || t.name.toLowerCase() === search
+        );
+        if (exactMatch) {
+          const result = await api.theme.setTheme(exactMatch.id);
+          if (result.success) {
+            return { output: `Theme: ${exactMatch.name}`, mimeType: 'text/plain' };
+          } else {
+            return { output: `Failed: ${result.error}`, mimeType: 'text/plain' };
+          }
+        }
+
+        // Partial match — filter and list
+        const matches = themes.filter(t =>
+          t.id.toLowerCase().includes(search) || t.name.toLowerCase().includes(search)
+        );
+        if (matches.length === 1) {
+          const result = await api.theme.setTheme(matches[0].id);
+          if (result.success) {
+            return { output: `Theme: ${matches[0].name}`, mimeType: 'text/plain' };
+          }
+        }
+        if (matches.length === 0) {
+          return { output: `No theme matching "${search}"`, mimeType: 'text/plain' };
+        }
+      }
+
+      // No search or ambiguous — list all themes with current indicator
+      const lines = themes.map(t => {
+        const marker = t.id === currentId ? ' (active)' : '';
+        return `${t.name}${marker} — ${t.description || t.id}`;
+      });
+
+      return {
+        output: 'Installed themes:\n' + lines.join('\n'),
+        mimeType: 'text/plain'
+      };
+    }
+  });
+
   // ---- Per-Window Theme Commands ----
 
   api.commands.register({

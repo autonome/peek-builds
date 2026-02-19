@@ -1,0 +1,12 @@
+{
+  "id": "basic",
+  "type": "theme",
+  "name": "Basic",
+  "version": "1.0.0",
+  "description": "Clean, minimal theme with light and dark variants",
+  "author": "Peek",
+  "builtin": true,
+  "colorSchemes": ["light", "dark"],
+  "defaultScheme": "system",
+  "variables": "./variables.css"
+}

@@ -13,11 +13,13 @@ import { getDb } from './datastore.js';
 
 export interface ExtensionManifest {
   id?: string;
+  type?: 'theme' | 'extension';
   shortname?: string;
   name?: string;
   description?: string;
   version?: string;
   background?: string;
+  builtin?: boolean;
   settingsSchema?: string;
   schemas?: {
     prefs?: unknown;
@@ -55,6 +57,9 @@ export function discoverExtensions(basePath: string): DiscoveredExtension[] {
 
     try {
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as ExtensionManifest;
+
+      // Skip theme extensions — they are handled by discoverBuiltinThemes
+      if (manifest.type === 'theme') continue;
 
       // Use manifest.id or folder name as fallback
       const id = manifest.id || manifest.shortname || entry.name;

@@ -182,6 +182,7 @@ export {
   registerActivateHandler,
   requestSingleInstance,
   quitApp,
+  validateThemeCSS,
 } from './main.js';
 
 export type { AppConfig } from './main.js';
