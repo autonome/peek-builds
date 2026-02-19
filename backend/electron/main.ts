@@ -1294,7 +1294,8 @@ function filePathToUrl(filePath: string): string | null {
   try {
     // Resolve to absolute path (handles relative paths)
     const resolved = path.resolve(filePath);
-    if (fs.existsSync(resolved)) {
+    // Only accept files, not directories
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
       return pathToFileURL(resolved).href;
     }
   } catch {
@@ -1375,7 +1376,9 @@ export function handleCliUrl(): void {
   for (const arg of process.argv.slice(1)) {
     if (arg.startsWith('-')) continue;
     // Skip the app directory/entry point itself
-    if (arg === app.getAppPath() || arg.endsWith('.js')) continue;
+    if (arg === app.getAppPath() || arg === '.' || arg.endsWith('.js')) continue;
+    // Skip if arg resolves to the app path (handles relative paths, trailing slashes)
+    try { if (path.resolve(arg) === path.resolve(app.getAppPath())) continue; } catch {}
     const fileUrl = filePathToUrl(arg);
     if (fileUrl) {
       DEBUG && console.log('CLI file path:', arg, '->', fileUrl);
