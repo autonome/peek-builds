@@ -543,6 +543,12 @@ const init = async () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
+  // Subscribe to pin change events for reactive updates
+  api.subscribe('group:pin-changed', (msg) => {
+    debug && console.log('[groups] group:pin-changed event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
   // Set up create group UI
   setupCreateGroup();
 
@@ -648,7 +654,25 @@ const loadAddressesForTag = async (tagId) => {
     const urlItems = result.data.filter(item =>
       item.type === 'url' && isWebUrl(item.content)
     );
-    state.addresses = deduplicateByUrl(urlItems);
+    let addresses = deduplicateByUrl(urlItems);
+
+    // Load pinned items for this group and annotate
+    try {
+      const pinsResult = await api.settings.getExtKey('groups', `pins:${tagId}`);
+      if (pinsResult.success && Array.isArray(pinsResult.data)) {
+        const pinnedSet = new Set(pinsResult.data);
+        addresses = addresses.map(addr => ({
+          ...addr,
+          _pinned: pinnedSet.has(addr.id)
+        }));
+        // Sort pinned items first
+        addresses.sort((a, b) => (b._pinned ? 1 : 0) - (a._pinned ? 1 : 0));
+      }
+    } catch (err) {
+      debug && console.log('[groups] Failed to load pins for tag:', err);
+    }
+
+    state.addresses = addresses;
     debug && console.log('Loaded URL items for tag:', state.addresses.length);
   } else {
     console.error('Failed to load addresses:', result.error);
@@ -986,6 +1010,16 @@ const createAddressCard = (address) => {
 
   header.appendChild(favicon);
   header.appendChild(title);
+
+  // Show pin indicator if item is pinned in this group
+  if (address._pinned) {
+    const pinBadge = document.createElement('span');
+    pinBadge.className = 'pin-badge';
+    pinBadge.textContent = 'pinned';
+    pinBadge.style.cssText = 'font-size:10px;padding:2px 6px;border-radius:8px;background:rgba(255,180,60,0.3);color:rgba(255,200,100,0.9);flex-shrink:0;';
+    header.appendChild(pinBadge);
+  }
+
   card.appendChild(header);
 
   // Footer slot: visit count (matching group card structure)

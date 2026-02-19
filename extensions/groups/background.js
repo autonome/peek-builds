@@ -30,6 +30,9 @@ let groupsWindowId = null;
 let activeGroupId = null;
 let activeGroupName = null;
 
+// Track suspended (hidden) group windows: groupId -> [windowId, ...]
+const suspendedGroups = new Map();
+
 /**
  * Load settings from datastore
  * @returns {Promise<{prefs: object}>}
@@ -133,6 +136,290 @@ const exitGroupMode = async (groupId) => {
   } catch (err) {
     console.error('[ext:groups] Failed to exit group mode:', err);
   }
+};
+
+/**
+ * Resolve the current group from the active context or last focused window.
+ * Returns { groupId, groupName } or null.
+ */
+const resolveCurrentGroup = async () => {
+  if (activeGroupId) {
+    return { groupId: activeGroupId, groupName: activeGroupName };
+  }
+
+  try {
+    const targetWindowId = await api.window.getFocusedVisibleWindowId();
+    if (targetWindowId) {
+      const modeResult = await api.context.get('mode', targetWindowId);
+      if (modeResult.success && modeResult.data?.value === 'group' && modeResult.data.metadata?.groupId) {
+        return {
+          groupId: modeResult.data.metadata.groupId,
+          groupName: modeResult.data.metadata.groupName || ''
+        };
+      }
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] Failed to resolve current group:', err);
+  }
+
+  return null;
+};
+
+// ===== Close/Suspend Group =====
+
+/**
+ * Close (suspend) a group — hide all windows in the group context.
+ * Saves window IDs so they can be restored later.
+ * If no groupId given, uses the active group from the last focused window.
+ */
+const closeGroup = async (groupId = null, groupName = null) => {
+  // Resolve group from active context if not specified
+  if (!groupId) {
+    const current = await resolveCurrentGroup();
+    if (current) {
+      groupId = current.groupId;
+      groupName = current.groupName;
+    }
+  }
+
+  if (!groupId) {
+    return { success: false, error: 'No active group to close' };
+  }
+
+  // Save workspace layouts before hiding
+  try {
+    if (api.session?.saveGroupWorkspaces) {
+      await api.session.saveGroupWorkspaces();
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] Failed to save workspace before close:', err);
+  }
+
+  // Get all windows in this group
+  const result = await api.context.getWindowsInGroup(groupId);
+  if (!result.success || !result.data || result.data.length === 0) {
+    return { success: false, error: 'No windows found in group' };
+  }
+
+  const windowIds = result.data;
+  const hiddenIds = [];
+
+  // Hide each window
+  for (const windowId of windowIds) {
+    try {
+      await api.window.hide(windowId);
+      hiddenIds.push(windowId);
+    } catch (err) {
+      debug && console.log(`[ext:groups] Failed to hide window ${windowId}:`, err);
+    }
+  }
+
+  // Track suspended windows for restore
+  suspendedGroups.set(groupId, hiddenIds);
+
+  // Clear active group tracking if this was the active group
+  if (activeGroupId === groupId) {
+    activeGroupId = null;
+    activeGroupName = null;
+  }
+
+  console.log(`[ext:groups] Closed group "${groupName || groupId}": hid ${hiddenIds.length} window(s)`);
+  return { success: true, count: hiddenIds.length, groupId, groupName };
+};
+
+/**
+ * Restore a suspended group — show all hidden windows.
+ * Falls back to opening the group fresh if windows were destroyed.
+ */
+const restoreGroup = async (groupId, groupName = null) => {
+  const hiddenIds = suspendedGroups.get(groupId);
+
+  if (!hiddenIds || hiddenIds.length === 0) {
+    // No suspended windows — open the group fresh
+    if (groupName) {
+      return openGroup(groupName);
+    }
+    return { success: false, error: 'Group not suspended and no name to open' };
+  }
+
+  let restoredCount = 0;
+  const failedIds = [];
+
+  for (const windowId of hiddenIds) {
+    try {
+      // Check if window still exists
+      const exists = await api.window.exists(windowId);
+      if (exists?.exists) {
+        await api.window.show(windowId);
+        restoredCount++;
+      } else {
+        failedIds.push(windowId);
+      }
+    } catch (err) {
+      debug && console.log(`[ext:groups] Failed to show window ${windowId}:`, err);
+      failedIds.push(windowId);
+    }
+  }
+
+  // Clean up tracking
+  suspendedGroups.delete(groupId);
+
+  // If some windows were destroyed, re-open the group to fill in gaps
+  if (failedIds.length > 0 && groupName) {
+    console.log(`[ext:groups] ${failedIds.length} windows destroyed while suspended, re-opening group`);
+    return openGroup(groupName);
+  }
+
+  // Update active group
+  activeGroupId = groupId;
+  activeGroupName = groupName;
+
+  console.log(`[ext:groups] Restored group "${groupName || groupId}": showed ${restoredCount} window(s)`);
+  return { success: true, count: restoredCount };
+};
+
+// ===== Switch Group =====
+
+/**
+ * Switch from the current group to a target group.
+ * Closes (suspends) the current group, then opens (or restores) the target.
+ */
+const switchGroup = async (targetGroupName) => {
+  if (!targetGroupName) {
+    return { success: false, error: 'Usage: switch group <name>' };
+  }
+
+  // Resolve target group
+  const tagsResult = await api.datastore.getTagsByFrecency();
+  if (!tagsResult.success) {
+    return { success: false, error: 'Failed to get tags' };
+  }
+
+  const targetTag = tagsResult.data.find(t => t.name.toLowerCase() === targetGroupName.toLowerCase());
+  if (!targetTag) {
+    return { success: false, error: `Group "${targetGroupName}" not found` };
+  }
+
+  // Close current group (if any)
+  const current = await resolveCurrentGroup();
+  if (current && current.groupId !== targetTag.id) {
+    await closeGroup(current.groupId, current.groupName);
+  }
+
+  // Restore or open target group
+  const result = await restoreGroup(targetTag.id, targetTag.name);
+  console.log(`[ext:groups] Switched to group "${targetGroupName}"`);
+  return result;
+};
+
+// ===== Pin Items =====
+
+/**
+ * Get pinned item IDs for a group.
+ * Stored in extension_settings as 'pins:<groupId>'.
+ */
+const getPinnedItems = async (groupId) => {
+  try {
+    const result = await api.settings.getExtKey('groups', `pins:${groupId}`);
+    if (result.success && result.data) {
+      return Array.isArray(result.data) ? result.data : [];
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] Failed to load pins:', err);
+  }
+  return [];
+};
+
+/**
+ * Save pinned item IDs for a group.
+ */
+const savePinnedItems = async (groupId, pinnedItemIds) => {
+  try {
+    await api.settings.setKey(`pins:${groupId}`, pinnedItemIds);
+  } catch (err) {
+    console.error('[ext:groups] Failed to save pins:', err);
+  }
+};
+
+/**
+ * Pin an item (URL) in a group. The item must already be tagged with the group.
+ * If no groupId is specified, uses the active group context.
+ */
+const pinItem = async (url, groupId = null) => {
+  // Resolve group from context
+  if (!groupId) {
+    const current = await resolveCurrentGroup();
+    if (current) {
+      groupId = current.groupId;
+    }
+  }
+
+  if (!groupId) {
+    return { success: false, error: 'No active group context — open a group first' };
+  }
+
+  if (!url) {
+    return { success: false, error: 'Usage: pin <url>' };
+  }
+
+  // Find the item for this URL
+  const item = await getOrCreateUrlItem(url);
+  if (!item) {
+    return { success: false, error: 'Failed to find or create item for URL' };
+  }
+
+  // Load current pins and add
+  const pins = await getPinnedItems(groupId);
+  if (!pins.includes(item.id)) {
+    pins.push(item.id);
+    await savePinnedItems(groupId, pins);
+  }
+
+  // Publish event for UI reactivity
+  api.publish('group:pin-changed', { groupId, itemId: item.id, pinned: true }, api.scopes.GLOBAL);
+
+  console.log(`[ext:groups] Pinned item "${url}" in group ${groupId}`);
+  return { success: true, itemId: item.id, groupId };
+};
+
+/**
+ * Unpin an item from a group.
+ */
+const unpinItem = async (url, groupId = null) => {
+  if (!groupId) {
+    const current = await resolveCurrentGroup();
+    if (current) {
+      groupId = current.groupId;
+    }
+  }
+
+  if (!groupId) {
+    return { success: false, error: 'No active group context' };
+  }
+
+  if (!url) {
+    return { success: false, error: 'Usage: unpin <url>' };
+  }
+
+  // Find the item
+  const item = await getOrCreateUrlItem(url);
+  if (!item) {
+    return { success: false, error: 'Item not found' };
+  }
+
+  // Remove from pins
+  const pins = await getPinnedItems(groupId);
+  const idx = pins.indexOf(item.id);
+  if (idx !== -1) {
+    pins.splice(idx, 1);
+    await savePinnedItems(groupId, pins);
+  }
+
+  // Publish event for UI reactivity
+  api.publish('group:pin-changed', { groupId, itemId: item.id, pinned: false }, api.scopes.GLOBAL);
+
+  console.log(`[ext:groups] Unpinned item "${url}" from group ${groupId}`);
+  return { success: true, itemId: item.id, groupId };
 };
 
 // ===== Command helpers =====
@@ -297,6 +584,10 @@ const openGroup = async (groupName) => {
     return { success: false, error: 'Group is empty' };
   }
 
+  // Load pinned items — these always open even if not in workspace snapshot
+  const pinnedItemIds = await getPinnedItems(tag.id);
+  const pinnedSet = new Set(pinnedItemIds);
+
   // Track active group for mode inheritance
   activeGroupId = tag.id;
   activeGroupName = tag.name;
@@ -309,15 +600,18 @@ const openGroup = async (groupName) => {
     if (wsResult.success && wsResult.data) {
       const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;
       if (snapshot.version === 1 && Array.isArray(snapshot.windows)) {
-        // Build URL → bounds map
+        // Build URL -> bounds map
         savedBoundsMap = new Map();
         for (const w of snapshot.windows) {
           if (w.url && w.bounds) {
             savedBoundsMap.set(normalizeUrlForCompare(w.url), { bounds: w.bounds, zOrder: w.zOrder ?? 0 });
           }
         }
-        // Sort items by saved z-order (highest zOrder = opened later = on top)
+        // Sort items: pinned first, then by saved z-order (highest zOrder = opened later = on top)
         sortedUrlItems = [...urlItems].sort((a, b) => {
+          const aPinned = pinnedSet.has(a.id) ? 1 : 0;
+          const bPinned = pinnedSet.has(b.id) ? 1 : 0;
+          if (aPinned !== bPinned) return bPinned - aPinned; // pinned first
           const aZ = savedBoundsMap.get(normalizeUrlForCompare(a._openUrl))?.zOrder ?? 0;
           const bZ = savedBoundsMap.get(normalizeUrlForCompare(b._openUrl))?.zOrder ?? 0;
           return bZ - aZ;
@@ -388,6 +682,9 @@ const initCommands = () => {
     description: 'Saved tab groups',
 
     query: async ({ search }) => {
+      // Group-scoped search: when in group mode, filter items by the active group tag
+      const current = await resolveCurrentGroup();
+
       const groups = await getAllGroups();
       const withCounts = await Promise.all(groups.map(async g => {
         const result = await api.datastore.getItemsByTag(g.id);
@@ -399,15 +696,32 @@ const initCommands = () => {
         const s = search.toLowerCase();
         filtered = filtered.filter(g => g.name.toLowerCase().includes(s));
       }
+
+      // If in group mode, highlight the active group by moving it to the top
+      if (current) {
+        const activeIdx = filtered.findIndex(g => g.id === current.groupId);
+        if (activeIdx > 0) {
+          const [active] = filtered.splice(activeIdx, 1);
+          active.name = `${active.name} (active)`;
+          filtered.unshift(active);
+        }
+      }
+
       if (filtered.length === 0) {
         return { output: 'No groups found.', mimeType: 'text/plain' };
       }
+
+      // Add search scope indicator when in group mode
+      const title = current
+        ? `Groups (${filtered.length}) [scope: ${current.groupName}]`
+        : `Groups (${filtered.length})`;
+
       return {
         success: true,
         output: {
           data: filtered,
           mimeType: 'application/json',
-          title: `Groups (${filtered.length})`
+          title
         }
       };
     },
@@ -427,11 +741,116 @@ const initCommands = () => {
   });
 
   console.log('[ext:groups] Noun registered: groups');
+
+  // ===== Standalone commands (close, switch, pin, unpin) =====
+  // These use direct pubsub registration since the noun system
+  // only supports query/browse/open/create capabilities.
+
+  // "close group" — hide all windows in the current group
+  api.subscribe('cmd:execute:close group', async (msg) => {
+    const result = await closeGroup();
+    if (msg.expectResult && msg.resultTopic) {
+      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+  api.publish('cmd:register', {
+    name: 'close group',
+    description: 'Hide all windows in the current group (restore later)',
+    source: 'groups',
+    scope: 'global',
+    accepts: [],
+    produces: [],
+    params: []
+  }, api.scopes.GLOBAL);
+
+  // "switch group <name>" — close current group, open target
+  api.subscribe('cmd:execute:switch group', async (msg) => {
+    const result = await switchGroup(msg.search?.trim());
+    if (msg.expectResult && msg.resultTopic) {
+      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+  api.publish('cmd:register', {
+    name: 'switch group',
+    description: 'Close current group and open another',
+    source: 'groups',
+    scope: 'global',
+    accepts: [],
+    produces: [],
+    params: [{ name: 'name', type: 'tag', required: true, description: 'Target group name' }]
+  }, api.scopes.GLOBAL);
+
+  // "restore group <name>" — show suspended group windows
+  api.subscribe('cmd:execute:restore group', async (msg) => {
+    const name = msg.search?.trim();
+    if (!name) {
+      if (msg.expectResult && msg.resultTopic) {
+        api.publish(msg.resultTopic, { success: false, error: 'Usage: restore group <name>' }, api.scopes.GLOBAL);
+      }
+      return;
+    }
+    // Resolve group
+    const tagsResult = await api.datastore.getTagsByFrecency();
+    const tag = tagsResult.success ? tagsResult.data.find(t => t.name.toLowerCase() === name.toLowerCase()) : null;
+    const result = tag ? await restoreGroup(tag.id, tag.name) : { success: false, error: 'Group not found' };
+    if (msg.expectResult && msg.resultTopic) {
+      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+  api.publish('cmd:register', {
+    name: 'restore group',
+    description: 'Restore a previously closed (suspended) group',
+    source: 'groups',
+    scope: 'global',
+    accepts: [],
+    produces: [],
+    params: [{ name: 'name', type: 'tag', required: true, description: 'Group name to restore' }]
+  }, api.scopes.GLOBAL);
+
+  // "pin <url>" — mark a URL as pinned in the current group
+  api.subscribe('cmd:execute:pin', async (msg) => {
+    const result = await pinItem(msg.search?.trim());
+    if (msg.expectResult && msg.resultTopic) {
+      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+  api.publish('cmd:register', {
+    name: 'pin',
+    description: 'Pin a URL in the current group (always opens with group)',
+    source: 'groups',
+    scope: 'global',
+    accepts: [],
+    produces: [],
+    params: [{ name: 'url', type: 'string', required: true, description: 'URL to pin' }]
+  }, api.scopes.GLOBAL);
+
+  // "unpin <url>" — remove pin from a URL in the current group
+  api.subscribe('cmd:execute:unpin', async (msg) => {
+    const result = await unpinItem(msg.search?.trim());
+    if (msg.expectResult && msg.resultTopic) {
+      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+  api.publish('cmd:register', {
+    name: 'unpin',
+    description: 'Unpin a URL from the current group',
+    source: 'groups',
+    scope: 'global',
+    accepts: [],
+    produces: [],
+    params: [{ name: 'url', type: 'string', required: true, description: 'URL to unpin' }]
+  }, api.scopes.GLOBAL);
+
+  console.log('[ext:groups] Standalone commands registered: close group, switch group, restore group, pin, unpin');
 };
 
 const uninitCommands = () => {
   unregisterNoun('groups');
-  console.log('[ext:groups] Noun unregistered: groups');
+  // Unregister standalone commands
+  for (const name of ['close group', 'switch group', 'restore group', 'pin', 'unpin']) {
+    api.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+  }
+  console.log('[ext:groups] Noun and commands unregistered: groups');
 };
 
 const init = async () => {
