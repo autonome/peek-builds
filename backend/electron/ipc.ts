@@ -2123,7 +2123,7 @@ export function registerWindowHandlers(): void {
     }
 
     // Check if this is a web page that will use the transparent canvas
-    const isWebPage = url.startsWith('http://') || url.startsWith('https://');
+    const isWebPage = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file:///');
 
     // Determine if this web page should use the fullscreen transparent canvas model.
     // Canvas pages get a fullscreen transparent BrowserWindow where all UI elements

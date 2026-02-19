@@ -8,6 +8,7 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateModeForNavigation } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath } from './protocol.js';
@@ -1207,6 +1208,23 @@ export function notifySessionRestoreDone(): void {
 }
 
 /**
+ * Convert a local file path to a file:// URL.
+ * Returns null if the path doesn't exist on disk.
+ */
+function filePathToUrl(filePath: string): string | null {
+  try {
+    // Resolve to absolute path (handles relative paths)
+    const resolved = path.resolve(filePath);
+    if (fs.existsSync(resolved)) {
+      return pathToFileURL(resolved).href;
+    }
+  } catch {
+    // Not a valid path
+  }
+  return null;
+}
+
+/**
  * Register external URL event handlers
  * Must be called before app.ready for open-url, and in onReady for second-instance
  */
@@ -1216,6 +1234,18 @@ export function registerExternalUrlHandlers(): void {
     event.preventDefault();
     handleExternalUrl(url, 'os');
   });
+
+  // macOS: handle open-file event (e.g., `open -a Peek /path/to/file`)
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    DEBUG && console.log('open-file event:', filePath);
+    const fileUrl = filePathToUrl(filePath);
+    if (fileUrl) {
+      handleExternalUrl(fileUrl, 'os');
+    } else {
+      console.error('open-file: path does not exist:', filePath);
+    }
+  });
 }
 
 /**
@@ -1224,27 +1254,55 @@ export function registerExternalUrlHandlers(): void {
  */
 export function registerSecondInstanceHandler(): void {
   app.on('second-instance', (_event, argv) => {
+    // Look for URLs first
     const url = argv.find(arg =>
       arg.startsWith('http://') || arg.startsWith('https://')
     );
     if (url) {
       DEBUG && console.log('second-instance URL:', url);
       handleExternalUrl(url, 'os');
+      return;
+    }
+
+    // Look for file paths (skip flags and the executable path)
+    for (const arg of argv.slice(1)) {
+      if (arg.startsWith('-')) continue;
+      const fileUrl = filePathToUrl(arg);
+      if (fileUrl) {
+        DEBUG && console.log('second-instance file path:', arg, '->', fileUrl);
+        handleExternalUrl(fileUrl, 'os');
+        return;
+      }
     }
   });
 }
 
 /**
- * Check for URL in CLI arguments and handle it.
+ * Check for URL or file path in CLI arguments and handle it.
  * Uses handleExternalUrl which queues until frontend + session restore are ready.
  */
 export function handleCliUrl(): void {
+  // Look for URLs first
   const urlArg = process.argv.find(arg =>
     arg.startsWith('http://') || arg.startsWith('https://')
   );
   if (urlArg) {
     DEBUG && console.log('CLI URL argument:', urlArg);
     handleExternalUrl(urlArg, 'cli');
+    return;
+  }
+
+  // Look for file paths (skip flags, electron path, and the app path)
+  for (const arg of process.argv.slice(1)) {
+    if (arg.startsWith('-')) continue;
+    // Skip the app directory/entry point itself
+    if (arg === app.getAppPath() || arg.endsWith('.js')) continue;
+    const fileUrl = filePathToUrl(arg);
+    if (fileUrl) {
+      DEBUG && console.log('CLI file path:', arg, '->', fileUrl);
+      handleExternalUrl(fileUrl, 'cli');
+      return;
+    }
   }
 }
 
