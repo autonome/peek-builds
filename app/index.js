@@ -608,6 +608,39 @@ const init = async () => {
     }
   });
 
+  // Handle reopen-last-closed-window requests from main process
+  api.subscribe('window:reopen-request', async (msg) => {
+    log('core', 'window:reopen-request', msg);
+    const { url, options } = msg;
+
+    try {
+      await windowManager.createWindow(url, {
+        ...options,
+        trackingSource: options?.trackingSource || 'reopen',
+        trackingSourceId: options?.trackingSourceId || 'last-closed',
+      });
+    } catch (error) {
+      log.error('core', 'Error reopening window:', error);
+    }
+  });
+
+  // Register "reopen closed window" command for the command palette
+  api.subscribe('cmd:execute:reopen closed window', async (msg) => {
+    const result = await api.invoke('window-reopen-last-closed');
+    if (msg.expectResult && msg.resultTopic) {
+      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+  api.publish('cmd:register', {
+    name: 'reopen closed window',
+    description: 'Reopen the last closed window (Cmd+Shift+T)',
+    source: 'system',
+    scope: 'global',
+    accepts: [],
+    produces: [],
+    params: []
+  }, api.scopes.GLOBAL);
+
   // Signal to main process that frontend subscribers are ready.
   // This unblocks pending external URLs that arrived during startup.
   api.invoke('frontend-ready').catch(err => {

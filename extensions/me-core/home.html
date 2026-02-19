@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'; connect-src https: http:; img-src https: data:;">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>Me</title>
+    <link rel="stylesheet" type="text/css" href="home.css">
+    <script type="module">
+      import 'peek://app/components/peek-input.js';
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Login view -->
+      <div id="login-view" class="view">
+        <div class="login-card">
+          <h1 class="login-title">Connect your identity</h1>
+          <p class="login-subtitle">
+            Sign in with your AT Protocol account (Bluesky).
+          </p>
+
+          <div class="search-wrap">
+            <input
+              type="text"
+              id="handle-input"
+              class="input"
+              placeholder="Search your handle..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="search-results" class="search-results"></div>
+          </div>
+
+          <div id="selected-account" class="selected-account" style="display:none"></div>
+
+          <div id="login-error" class="error" style="display:none"></div>
+          <div id="login-loading" class="loading" style="display:none">Connecting...</div>
+        </div>
+      </div>
+
+      <!-- Logged-in view -->
+      <div id="account-view" class="view" style="display:none">
+        <div class="account-layout">
+          <!-- Sidebar -->
+          <div class="sidebar">
+            <div class="sidebar-account">
+              <div id="account-info" class="account-info"></div>
+            </div>
+            <nav class="sidebar-nav">
+              <div class="nav-item active" data-panel="my-lexicons">
+                <span class="nav-icon">&#9776;</span>
+                My Lexicons
+              </div>
+              <div class="nav-item" data-panel="explore">
+                <span class="nav-icon">&#9906;</span>
+                Explore Lexicons
+              </div>
+            </nav>
+            <div class="sidebar-footer">
+              <button id="logout-btn" class="btn btn-danger btn-sm">Disconnect</button>
+            </div>
+          </div>
+
+          <!-- Content area -->
+          <div class="content-area">
+            <!-- My Lexicons panel -->
+            <div id="panel-my-lexicons" class="panel active">
+              <div class="panel-header">
+                <h2 class="panel-title">My Lexicons</h2>
+                <p class="panel-subtitle">Collections of records in your AT Protocol repo</p>
+              </div>
+              <div id="collections-list" class="collections-list">
+                <div class="loading">Loading collections...</div>
+              </div>
+            </div>
+
+            <!-- Explore Lexicons panel -->
+            <div id="panel-explore" class="panel" style="display:none">
+              <div class="panel-header">
+                <h2 class="panel-title">Explore Lexicons</h2>
+                <p class="panel-subtitle">Browse known AT Protocol lexicons from the network</p>
+              </div>
+              <div class="explore-search">
+                <peek-input
+                  id="lexicon-search"
+                  type="search"
+                  placeholder="Filter lexicons..."
+                ></peek-input>
+              </div>
+              <div id="explore-list" class="explore-list">
+                <div class="loading">Loading lexicon directory...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="home.js"></script>
+  </body>
+</html>

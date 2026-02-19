@@ -1814,6 +1814,12 @@ api.escape = {
   }
 };
 
+// OAuth loopback server — available to all pages including extensions
+api.oauth = {
+  startLoopback: (options) => ipcRenderer.invoke('oauth-start-loopback', options),
+  awaitCallback: (port) => ipcRenderer.invoke('oauth-await-callback', { port }),
+};
+
 // Escape handler - responds to backend's escape query
 // The backend intercepts ESC on keyDown via before-input-event and calls e.preventDefault(),
 // so the DOM keydown event never reaches the page. This means peek-dialog's own keydown

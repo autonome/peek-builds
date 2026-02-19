@@ -1,0 +1,8 @@
+{
+  "id": "me-core",
+  "shortname": "me",
+  "name": "Me",
+  "description": "Your AT Protocol identity and data",
+  "version": "1.0.0",
+  "background": "background.html"
+}

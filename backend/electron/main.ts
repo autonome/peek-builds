@@ -10,7 +10,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateModeForNavigation } from './datastore.js';
+import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateModeForNavigation, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions } from './extensions.js';
 import { initTray } from './tray.js';
@@ -72,6 +72,19 @@ const windowRegistry = new Map<number, {
   source: string;
   params: Record<string, unknown>;
 }>();
+
+// Recently closed windows stack (in-memory, most recent last)
+const MAX_CLOSED_WINDOWS = 20;
+
+interface ClosedWindowEntry {
+  url: string;           // Original URL (not the peek:// rewritten one)
+  source: string;
+  bounds: { x: number; y: number; width: number; height: number } | null;
+  groupMode: { groupId: string; groupName: string; color?: string } | null;
+  timestamp: number;
+}
+
+const closedWindowStack: ClosedWindowEntry[] = [];
 
 /**
  * Initialize the application configuration
@@ -182,6 +195,18 @@ export async function initialize(): Promise<void> {
   app.on('browser-window-created', (_, window) => {
     const windowId = window.id;
 
+    // Capture window bounds before the window is destroyed (for reopen-last-closed)
+    let lastBounds: { x: number; y: number; width: number; height: number } | null = null;
+    window.on('close', () => {
+      try {
+        if (!window.isDestroyed()) {
+          lastBounds = window.getBounds();
+        }
+      } catch {
+        // Ignore errors during shutdown
+      }
+    });
+
     // Handle window close
     // Wrapped in try-catch to prevent errors during shutdown from stalling the quit sequence.
     // During app.quit(), windows close concurrently and some may already be destroyed.
@@ -226,6 +251,40 @@ export async function initialize(): Promise<void> {
             id: windowId,
             source: windowData.source
           });
+
+          // Save to closed window stack for reopen-last-closed
+          // Only save user-facing content windows with web URLs (not background, modals, palettes, etc.)
+          const address = windowData.params.address as string | undefined;
+          const role = windowData.params.role as string | undefined;
+          const isKeepLive = windowData.params.keepLive === true;
+          const isModal = windowData.params.modal === true;
+          const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
+          const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
+
+          if (isWebUrl && isContentRole && !isKeepLive && !isModal) {
+            // Check for group mode context
+            let groupMode: ClosedWindowEntry['groupMode'] = null;
+            try {
+              const modeEntry = getContextEntry('mode', windowId);
+              if (modeEntry && modeEntry.value === 'group' && modeEntry.metadata) {
+                groupMode = {
+                  groupId: modeEntry.metadata.groupId as string,
+                  groupName: modeEntry.metadata.groupName as string,
+                  color: modeEntry.metadata.color as string | undefined,
+                };
+              }
+            } catch {
+              // Context may be cleaned up already during shutdown
+            }
+
+            pushClosedWindow({
+              url: address,
+              source: windowData.source,
+              bounds: lastBounds,
+              groupMode,
+              timestamp: Date.now(),
+            });
+          }
         }
 
         windowRegistry.delete(windowId);
@@ -937,6 +996,33 @@ export function getChildWindows(source: string): Array<{ id: number; data: { sou
  */
 export function getAllWindows(): Array<[number, { source: string; params: Record<string, unknown> }]> {
   return Array.from(windowRegistry.entries());
+}
+
+/**
+ * Push a closed window entry onto the stack
+ */
+export function pushClosedWindow(entry: ClosedWindowEntry): void {
+  closedWindowStack.push(entry);
+  if (closedWindowStack.length > MAX_CLOSED_WINDOWS) {
+    closedWindowStack.shift();
+  }
+  DEBUG && console.log('[reopen] Pushed closed window:', entry.url, 'stack size:', closedWindowStack.length);
+}
+
+/**
+ * Pop the most recently closed window from the stack
+ */
+export function popClosedWindow(): ClosedWindowEntry | undefined {
+  const entry = closedWindowStack.pop();
+  DEBUG && console.log('[reopen] Popped closed window:', entry?.url, 'stack size:', closedWindowStack.length);
+  return entry;
+}
+
+/**
+ * Get the number of closed windows in the stack
+ */
+export function getClosedWindowCount(): number {
+  return closedWindowStack.length;
 }
 
 /**

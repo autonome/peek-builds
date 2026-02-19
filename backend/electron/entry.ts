@@ -52,6 +52,7 @@ import {
   // IPC
   registerAllHandlers,
   restoreSavedTheme,
+  reopenLastClosedWindow,
   // Database
   getDb,
   // Config
@@ -641,6 +642,11 @@ const onReady = async () => {
   // Will be updated when prefs arrive
   _quitShortcut = strings.defaults.quitShortcut;
   registerLocalShortcut(_quitShortcut, 'system', onQuit);
+
+  // Register reopen-last-closed-window shortcut (Cmd+Shift+T / Ctrl+Shift+T)
+  registerLocalShortcut('CommandOrControl+Shift+T', 'system', () => {
+    reopenLastClosedWindow();
+  });
 
   // Mark app as ready and process any URLs that arrived during startup
   setAppReady();

@@ -8,6 +8,7 @@
 import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell, webContents, net } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createLoopbackServer } from './oauth-loopback.js';
 
 import {
   // Datastore operations
@@ -104,6 +105,8 @@ import {
   findWindowByKey,
   getAllWindows,
   validateThemeCSS,
+  popClosedWindow,
+  getClosedWindowCount,
 } from './main.js';
 
 import {
@@ -2082,6 +2085,47 @@ function registerDarkModeSettingHandlers(): void {
 }
 
 /**
+ * Reopen the most recently closed window.
+ * Called from both the IPC handler and the keyboard shortcut.
+ * Uses pubsub to request the background window open the URL
+ * (so we get full window-open logic including canvas, mode detection, etc.)
+ */
+export function reopenLastClosedWindow(): { success: boolean; url?: string; error?: string } {
+  const entry = popClosedWindow();
+  if (!entry) {
+    DEBUG && console.log('[reopen] No closed windows to reopen');
+    return { success: false, error: 'No closed windows to reopen' };
+  }
+
+  DEBUG && console.log('[reopen] Reopening:', entry.url, 'bounds:', entry.bounds);
+
+  // Build options to restore window state
+  const options: Record<string, unknown> = {
+    trackingSource: 'reopen',
+    trackingSourceId: 'last-closed',
+  };
+
+  if (entry.bounds) {
+    options.x = entry.bounds.x;
+    options.y = entry.bounds.y;
+    options.width = entry.bounds.width;
+    options.height = entry.bounds.height;
+  }
+
+  if (entry.groupMode) {
+    options.groupMode = entry.groupMode;
+  }
+
+  // Publish event for the background window to pick up and open
+  publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:reopen-request', {
+    url: entry.url,
+    options,
+  });
+
+  return { success: true, url: entry.url };
+}
+
+/**
  * Register window management IPC handlers
  */
 const pendingWindowKeys = new Set<string>();
@@ -3020,6 +3064,11 @@ export function registerWindowHandlers(): void {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
     }
+  });
+
+  // Reopen last closed window
+  ipcMain.handle('window-reopen-last-closed', async () => {
+    return reopenLastClosedWindow();
   });
 
   ipcMain.handle('window-hide', async (_ev, msg) => {
@@ -4094,6 +4143,39 @@ export function registerMiscHandlers(onQuit: () => void): void {
         return { success: false, error: fetchMessage };
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // ============================================================================
+  // OAuth Loopback Server
+  // ============================================================================
+
+  const pendingOAuthFlows = new Map<number, { waitForCallback: () => Promise<{ params: Record<string, string> }>; cancel: () => void }>();
+
+  ipcMain.handle('oauth-start-loopback', async (_ev, options?: { callbackPath?: string; timeoutMs?: number }) => {
+    try {
+      const server = await createLoopbackServer(options);
+      pendingOAuthFlows.set(server.port, { waitForCallback: server.waitForCallback, cancel: server.cancel });
+      return { success: true, port: server.port };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('oauth-await-callback', async (_ev, data: { port: number }) => {
+    try {
+      const flow = pendingOAuthFlows.get(data.port);
+      if (!flow) {
+        return { success: false, error: 'No pending OAuth flow for this port' };
+      }
+      const result = await flow.waitForCallback();
+      pendingOAuthFlows.delete(data.port);
+      return { success: true, params: result.params };
+    } catch (error) {
+      pendingOAuthFlows.delete(data.port);
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
     }
