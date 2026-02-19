@@ -226,11 +226,13 @@ async function createDpopProof(keyPair, method, url, nonce, ath) {
     jwk: cleanPublicJwk,
   };
 
+  const now = Math.floor(Date.now() / 1000);
   const payload = {
     jti: generateJti(),
     htm: method,
     htu: url,
-    iat: Math.floor(Date.now() / 1000),
+    iat: now,
+    exp: now + 120,
   };
   if (nonce) payload.nonce = nonce;
   if (ath) payload.ath = ath;
@@ -461,6 +463,7 @@ export async function loginWithOAuth(handle) {
       tokenEndpoint,
       pdsUrl,
       dpopKeyPairJwk,
+      clientId,
       sub: tokenData.sub || did,
     };
   } catch (err) {
@@ -522,10 +525,15 @@ async function tokenExchange(tokenEndpoint, body, dpopKeyPair, nonce) {
 export async function refreshOAuthSession(session) {
   const dpopKeyPair = await importKeyPair(session.dpopKeyPairJwk);
 
+  // Use the same client_id from login (includes the original port in redirect_uri).
+  // Fall back to a portless URL for sessions created before clientId was stored.
+  const clientId = session.clientId
+    || `http://localhost?redirect_uri=${encodeURIComponent('http://127.0.0.1/callback')}&scope=${encodeURIComponent('atproto transition:generic')}`;
+
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: session.refreshToken,
-    client_id: `http://localhost?redirect_uri=${encodeURIComponent('http://127.0.0.1/callback')}&scope=${encodeURIComponent('atproto transition:generic')}`,
+    client_id: clientId,
   });
 
   const tokenData = await tokenExchange(session.tokenEndpoint, body, dpopKeyPair);
@@ -572,8 +580,8 @@ export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = nul
     },
   });
 
-  // Handle DPoP nonce requirement
-  if (res.status === 401) {
+  // Handle DPoP nonce requirement (can come as 400 or 401)
+  if (!res.ok) {
     const dpopNonce = res.headers.get('DPoP-Nonce');
     if (dpopNonce) {
       dpopProof = await createDpopProof(dpopKeyPair, 'GET', url, dpopNonce, ath);
@@ -604,7 +612,7 @@ export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = nul
       });
 
       // Handle nonce on retry
-      if (res.status === 401) {
+      if (!res.ok) {
         const retryNonce = res.headers.get('DPoP-Nonce');
         if (retryNonce) {
           dpopProof = await createDpopProof(dpopKeyPair, 'GET', url, retryNonce, newAth);
@@ -616,14 +624,14 @@ export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = nul
           });
         }
       }
-    } catch {
-      // Refresh failed, throw the original 401
+    } catch (refreshErr) {
+      console.error('[atproto] Token refresh failed:', refreshErr.message);
     }
   }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `XRPC ${nsid} failed (${res.status})`);
+    throw new Error(err.message || err.error || `XRPC GET ${nsid} failed (${res.status})`);
   }
 
   return res.json();
@@ -655,8 +663,8 @@ export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
     body: JSON.stringify(body),
   });
 
-  // Handle DPoP nonce requirement
-  if (res.status === 401) {
+  // Handle DPoP nonce requirement (can come as 400 or 401)
+  if (!res.ok) {
     const dpopNonce = res.headers.get('DPoP-Nonce');
     if (dpopNonce) {
       dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, dpopNonce, ath);
@@ -693,7 +701,7 @@ export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
       });
 
       // Handle nonce on retry
-      if (res.status === 401) {
+      if (!res.ok) {
         const retryNonce = res.headers.get('DPoP-Nonce');
         if (retryNonce) {
           dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, retryNonce, newAth);
@@ -708,8 +716,8 @@ export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
           });
         }
       }
-    } catch {
-      // Refresh failed, throw the original 401
+    } catch (refreshErr) {
+      console.error('[atproto] Token refresh failed:', refreshErr.message);
     }
   }
 
@@ -745,8 +753,8 @@ export async function uploadBlob(session, data, mimeType, onSessionRefresh = nul
     body: data,
   });
 
-  // Handle DPoP nonce
-  if (res.status === 401) {
+  // Handle DPoP nonce (can come as 400 or 401)
+  if (!res.ok) {
     const dpopNonce = res.headers.get('DPoP-Nonce');
     if (dpopNonce) {
       dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, dpopNonce, ath);
@@ -780,8 +788,8 @@ export async function uploadBlob(session, data, mimeType, onSessionRefresh = nul
         },
         body: data,
       });
-    } catch {
-      // Refresh failed
+    } catch (refreshErr) {
+      console.error('[atproto] Token refresh failed:', refreshErr.message);
     }
   }
 
