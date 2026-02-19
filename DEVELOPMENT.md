@@ -135,6 +135,7 @@ extensions/
 ├── editor/               # Item CRUD: add, edit content, delete
 ├── example/              # Hello world example
 ├── groups/
+├── me-core/              # AT Protocol identity and data browser
 ├── peeks/
 ├── slides/
 └── tags/                 # Tag browsing, filtering, tag editing on items
@@ -249,6 +250,37 @@ The editor extension (`extensions/editor/`) is the canonical surface for creatin
 - `editor:open` — open editor with a specific item for editing. Payload: `{ itemId }`
 - `editor:add` — open editor in add mode. Payload: `{ type?, content?, url? }`
 - `editor:changed` — published after any create/update/delete, so other views can refresh. Payload: `{ action, itemId }`
+
+### Me Extension (AT Protocol Identity)
+
+The me-core extension (`extensions/me-core/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
+
+**Files:**
+- `background.js` — Extension lifecycle, session management, pubsub API for the home UI
+- `atproto.js` — AT Protocol helpers: OAuth (PKCE + DPoP via loopback server), XRPC requests, blob upload
+- `home.js` / `home.html` — Main UI: login, sidebar navigation, three content panels
+- `lexicon-ui.js` — Dynamic form generation from lexicon schemas with multi-layer resolution
+- `home.css` — Styles for the home UI
+
+**Key concepts:**
+
+- **OAuth login** — PKCE + DPoP flow using `api.oauth.startLoopbackServer()`. Actor search uses the public Bluesky API (`app.bsky.actor.searchActorsTypeahead`). Session (tokens, DID, PDS URL) and profile are persisted via `api.settings`.
+- **My Lexicons** — Lists all collections in the user's AT Protocol repo with record counts via `com.atproto.repo.describeRepo` and `com.atproto.repo.listRecords`.
+- **Explore Lexicons** — Fetches the full lexicon directory from `lexidex.bsky.dev` (scrapes domain pages for NSIDs). Includes hardcoded extras from `standard.site`. Cached in `api.settings` with 24-hour TTL and background refresh.
+- **Create Record** — Searchable lexicon picker, then auto-generated form from the lexicon schema or raw JSON mode. Schema resolution is layered: in-memory cache, persisted cache, GitHub raw URLs (known mappings for `app.bsky`, `com.atproto`, etc.), Lexicon Store API (`api.lexicon.store`), fallback to raw JSON.
+- **Recent lexicons** — Successfully created record types appear as sidebar shortcuts. Persisted via `api.settings`. Removable with [x].
+- **Token refresh** — XRPC requests auto-refresh expired tokens using DPoP-bound refresh tokens. The `onSessionRefresh` callback updates the stored session.
+
+**Pubsub topics:**
+- `me:get-session` / `me:session-state` — UI requests current session
+- `me:search-actors` / `me:search-actors:response` — Actor typeahead search
+- `me:do-login` / `me:session-changed` / `me:login-error` — Login flow
+- `me:do-logout` / `me:session-changed` — Logout
+- `me:get-collections` / `me:collections:response` — Fetch repo collections
+- `me:search-lexicons` / `me:search-lexicons:response` — Explore lexicon directory
+- `me:create-record` / `me:create-record:response` — Create a record
+
+**Command:** `me:core` — opens the identity panel window (`peek://ext/me-core/home.html`).
 
 ### Cmd Commands (Item Creation)
 

@@ -346,6 +346,67 @@ body {
   flex-shrink: 0;
 }
 
+/* Recent lexicons in sidebar */
+.recent-lexicons {
+  border-top: 1px solid var(--base02);
+  padding-top: 4px;
+}
+
+.recent-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--base04);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 16px 2px;
+}
+
+.recent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--base04);
+  cursor: pointer;
+  transition: all 0.1s;
+  user-select: none;
+}
+
+.recent-item:hover {
+  color: var(--base05);
+  background: var(--base02);
+}
+
+.recent-item-name {
+  font-family: var(--theme-font-sans);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-item-remove {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--base04);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.recent-item:hover .recent-item-remove {
+  display: block;
+}
+
+.recent-item-remove:hover {
+  color: var(--base08);
+}
+
 .sidebar-footer {
   padding: 12px 16px;
   border-top: 1px solid var(--base02);
@@ -363,6 +424,14 @@ body {
   overflow-y: auto;
   padding: 24px;
   min-width: 0;
+}
+
+/* When create panel is active, content-area becomes a flex container with no overflow
+   so the panel's internal scroll works properly */
+.content-area:has(.create-panel.active) {
+  display: flex;
+  flex-direction: column;
+  overflow-y: hidden;
 }
 
 /* Panels */
@@ -505,10 +574,26 @@ body {
   cursor: pointer;
 }
 
-.collection-nsid {
+.collection-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.collection-friendly {
   font-size: 13px;
-  font-family: var(--theme-font-mono, monospace);
+  font-weight: 500;
   color: var(--base05);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.collection-nsid {
+  font-size: 11px;
+  font-family: var(--theme-font-mono, monospace);
+  color: var(--base04);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -577,7 +662,198 @@ body {
   padding: 4px 0 8px;
 }
 
-/* ==================== Create Record Panel ==================== */
+/* ==================== Create Panel (dedicated nav) ==================== */
+
+.create-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.create-panel.active {
+  display: flex !important;
+}
+
+.create-panel-header {
+  flex-shrink: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--base02);
+  margin-bottom: 0;
+}
+
+.create-panel-header .panel-title {
+  margin-bottom: 4px;
+}
+
+.create-panel-header .panel-subtitle {
+  margin-bottom: 12px;
+}
+
+/* Lexicon picker */
+.lexicon-picker {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.picker-results {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.picker-results.visible {
+  display: block;
+}
+
+.picker-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--base04);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 14px 4px;
+  background: var(--base01);
+  position: sticky;
+  top: 0;
+}
+
+.picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 13px;
+  color: var(--base05);
+}
+
+.picker-item-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.picker-item-friendly {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--base05);
+}
+
+.picker-item-nsid {
+  font-size: 11px;
+  font-family: var(--theme-font-mono, monospace);
+  color: var(--base04);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.picker-item:hover,
+.picker-item.active {
+  background: var(--base02);
+}
+
+.picker-item-badge {
+  font-size: 10px;
+  font-family: var(--theme-font-sans);
+  color: var(--base0B);
+  background: color-mix(in srgb, var(--base0B) 15%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.picker-selected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--theme-font-mono, monospace);
+  color: var(--base05);
+}
+
+.picker-selected-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.picker-selected-friendly {
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--theme-font-sans);
+  color: var(--base05);
+}
+
+.picker-selected-nsid {
+  font-size: 11px;
+  font-family: var(--theme-font-mono, monospace);
+  color: var(--base04);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-selected-clear {
+  background: none;
+  border: none;
+  color: var(--base04);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.picker-selected-clear:hover {
+  color: var(--base05);
+}
+
+/* Scrollable form body */
+.create-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 0;
+  min-height: 0;
+}
+
+.create-panel-empty {
+  color: var(--base04);
+  font-size: 13px;
+  padding: 32px 0;
+  text-align: center;
+}
+
+/* Fixed footer */
+.create-panel-footer {
+  flex-shrink: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--base02);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ==================== Create Record Panel (detail view) ==================== */
 
 .btn-back {
   background: none;
@@ -598,6 +874,22 @@ body {
 .btn-back:hover {
   color: var(--base05);
   background: var(--base02);
+}
+
+/* Create record header friendly name */
+.create-record-friendly {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--base05);
+}
+
+.create-record-nsid-sub {
+  display: block;
+  font-size: 12px;
+  font-family: var(--theme-font-mono, monospace);
+  color: var(--base04);
+  margin-top: 2px;
 }
 
 /* Mode toggle */

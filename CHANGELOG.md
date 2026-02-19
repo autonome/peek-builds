@@ -13,6 +13,21 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-20
+
+Desktop - AT Protocol Identity (me-core)
+- [x] Add AT Protocol identity extension — connect your Bluesky/AT Protocol account via OAuth PKCE+DPoP ([b549](https://tangled.org/burrito.space/peek/commit/b549fa8a), [ea7b](https://tangled.org/burrito.space/peek/commit/ea7ba305))
+- [x] Add lexicon browser — explore all known AT Protocol lexicons, view your repo's collections with record counts ([ba52](https://tangled.org/burrito.space/peek/commit/ba528419))
+- [x] Add record creation — auto-generated forms from lexicon schemas, create records directly from the app ([93fc](https://tangled.org/burrito.space/peek/commit/93fc3561), [b9a4](https://tangled.org/burrito.space/peek/commit/b9a485e1))
+- [x] Add recent lexicons sidebar — shortcuts for frequently used record types ([260c](https://tangled.org/burrito.space/peek/commit/260cf397))
+- [x] Persist lexicon directory and schemas to survive restarts ([3ba9](https://tangled.org/burrito.space/peek/commit/3ba994f0))
+
+Desktop - Windows
+- [x] Add reopen-last-closed-window with Cmd+Shift+T and command palette ([579c](https://tangled.org/burrito.space/peek/commit/579c9926))
+
+Desktop - Extensions
+- [x] Enable cross-origin fetch for extensions — extensions can now fetch from https:// origins ([5051](https://tangled.org/burrito.space/peek/commit/505123ab))
+
 ## 2026-02-19
 
 Desktop - Themes

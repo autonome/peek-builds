@@ -435,6 +435,17 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 3. Or type `windows` in the command palette.
 4. Click a window to switch to it.
 
+### Reopen Last Closed Window
+
+**Summary:** Reopen the most recently closed window, restoring its URL. Works like the familiar browser shortcut.
+
+**Where in UI:** Keyboard shortcut or command palette.
+
+**How to try it:**
+1. Close a page window.
+2. Press `Cmd+Shift+T` to reopen it.
+3. Or type `reopen` in the command palette.
+
 ### Center Window / Center All Windows
 
 **Summary:** Center the active window (or all windows) on their respective displays.
@@ -645,7 +656,20 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 
 ---
 
-## Extensions (Advanced / Hidden)
+## Extensions
+
+### AT Protocol Identity (me-core)
+
+**Summary:** Connect your Bluesky/AT Protocol account via OAuth. Browse all known AT Protocol lexicons, view your repo's collections with record counts, and create records directly from auto-generated forms. Includes a recent lexicons sidebar for quick access to frequently used record types.
+
+**Where in UI:** Command palette or extension window.
+
+**How to try it:**
+1. Type `open me` in the command palette to open the Me extension.
+2. Click "Login" and authenticate with your Bluesky/AT Protocol account via OAuth.
+3. Once connected, your handle and profile appear. Use the sidebar to browse "My Lexicons" (your repo's collections) or "Explore Lexicons" (all known lexicons).
+4. Click a lexicon to view its schema. Click "Create Record" to open an auto-generated form based on the lexicon schema.
+5. Recently used lexicons appear in the sidebar for quick access.
 
 ### Help Docs (Easter Egg)
 
@@ -698,6 +722,7 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 | `Cmd+G` | Open groups browser |
 | `Cmd+H` | Toggle HUD overlay |
 | `Cmd+,` | Open settings |
+| `Cmd+Shift+T` | Reopen last closed window |
 | `Cmd+Shift+S` | Open scripts manager |
 | `Cmd+Q` | Quit (configurable) |
 
@@ -775,4 +800,6 @@ All commands accessible from `Option+Space` or `Cmd+K`:
 | `markdown` | Convert JSON to markdown (chain) |
 | `save [filename]` | Save chain output to file |
 | `save as note` | Save chain output as a note |
+| `reopen` | Reopen last closed window |
+| `open me` | Open AT Protocol identity extension |
 | `lists` | Produce sample list data (chain demo) |

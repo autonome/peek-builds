@@ -30,6 +30,57 @@ const GITHUB_MAPPINGS = {
 
 const schemaCache = new Map();
 const pendingResolves = new Map();
+let persistedSchemasLoaded = false;
+
+const LEXICON_SCHEMAS_KEY = 'lexiconSchemas';
+
+/**
+ * Load persisted schemas from settings into the in-memory cache.
+ * Called once on first cache miss.
+ */
+async function loadPersistedSchemas() {
+  if (persistedSchemasLoaded) return;
+  persistedSchemasLoaded = true;
+
+  try {
+    if (typeof window !== 'undefined' && window.app?.settings) {
+      const result = await window.app.settings.getKey(LEXICON_SCHEMAS_KEY);
+      if (result.success && result.data && typeof result.data === 'object') {
+        let count = 0;
+        for (const [nsid, entry] of Object.entries(result.data)) {
+          if (entry && entry.schema && !schemaCache.has(nsid)) {
+            schemaCache.set(nsid, entry.schema);
+            count++;
+          }
+        }
+        if (count > 0) {
+          console.log(`[lexicon-ui] Restored ${count} lexicon schemas from persisted cache`);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[lexicon-ui] Failed to load persisted schemas:', err);
+  }
+}
+
+/**
+ * Persist a resolved schema to settings storage.
+ */
+async function persistSchema(nsid, schema) {
+  try {
+    if (typeof window !== 'undefined' && window.app?.settings) {
+      // Load existing persisted data, merge in the new schema
+      const result = await window.app.settings.getKey(LEXICON_SCHEMAS_KEY);
+      const existing = (result.success && result.data && typeof result.data === 'object')
+        ? result.data
+        : {};
+      existing[nsid] = { schema, fetchedAt: Date.now() };
+      await window.app.settings.setKey(LEXICON_SCHEMAS_KEY, existing);
+    }
+  } catch (err) {
+    console.warn(`[lexicon-ui] Failed to persist schema for ${nsid}:`, err);
+  }
+}
 
 /**
  * Convert an NSID to a file path for GitHub resolution.
@@ -53,20 +104,29 @@ function githubUrl(nsid) {
 
 /**
  * Resolve a lexicon schema by NSID.
- * Uses layered resolution: cache -> GitHub -> Lexicon Store.
+ * Uses layered resolution: memory cache -> persisted cache -> GitHub -> Lexicon Store.
  *
  * @param {string} nsid
  * @returns {Promise<Object|null>} The lexicon JSON object, or null if not found.
  */
 export async function resolveLexicon(nsid) {
   if (schemaCache.has(nsid)) return schemaCache.get(nsid);
+
+  // On first miss, load persisted schemas into memory
+  await loadPersistedSchemas();
+  if (schemaCache.has(nsid)) return schemaCache.get(nsid);
+
   if (pendingResolves.has(nsid)) return pendingResolves.get(nsid);
 
   const promise = _doResolve(nsid);
   pendingResolves.set(nsid, promise);
   try {
     const result = await promise;
-    if (result) schemaCache.set(nsid, result);
+    if (result) {
+      schemaCache.set(nsid, result);
+      // Persist to settings in background (don't block)
+      persistSchema(nsid, result).catch(() => {});
+    }
     return result;
   } finally {
     pendingResolves.delete(nsid);
@@ -1182,6 +1242,60 @@ export function parseRawJson(container, nsid) {
   const parsed = JSON.parse(textarea.value);
   parsed.$type = nsid;
   return parsed;
+}
+
+// ============================================================================
+// NSID Friendly Name Utility
+// ============================================================================
+
+/**
+ * Well-known AT Protocol lexicon NSIDs mapped to human-readable names.
+ */
+const FRIENDLY_NAMES = {
+  'app.bsky.feed.post': 'Post',
+  'app.bsky.feed.like': 'Like',
+  'app.bsky.feed.repost': 'Repost',
+  'app.bsky.feed.generator': 'Feed Generator',
+  'app.bsky.feed.threadgate': 'Thread Gate',
+  'app.bsky.feed.postgate': 'Post Gate',
+  'app.bsky.graph.follow': 'Follow',
+  'app.bsky.graph.block': 'Block',
+  'app.bsky.graph.list': 'List',
+  'app.bsky.graph.listitem': 'List Item',
+  'app.bsky.graph.listblock': 'List Block',
+  'app.bsky.graph.starterpack': 'Starter Pack',
+  'app.bsky.actor.profile': 'Profile',
+  'app.bsky.labeler.service': 'Labeler',
+  'chat.bsky.actor.declaration': 'Chat Settings',
+  'com.whtwnd.blog.entry': 'Blog Entry',
+  'blue.linkat.board': 'Board',
+  'fyi.frontpage.post': 'Frontpage Post',
+  'site.standard.publication': 'Publication',
+  'site.standard.document': 'Document',
+  'site.standard.graph.subscription': 'Subscription',
+};
+
+/**
+ * Convert an AT Protocol NSID to a human-readable friendly name.
+ *
+ * Uses a tiered strategy:
+ * 1. Hardcoded lookup for well-known lexicons
+ * 2. Smart parsing fallback: takes the last NSID segment,
+ *    splits camelCase, and title-cases the result.
+ *
+ * @param {string} nsid - The lexicon NSID (e.g. "app.bsky.feed.post")
+ * @returns {string} A human-readable name (e.g. "Post")
+ */
+export function nsidToFriendlyName(nsid) {
+  if (FRIENDLY_NAMES[nsid]) return FRIENDLY_NAMES[nsid];
+
+  const parts = nsid.split('.');
+  const last = parts[parts.length - 1];
+
+  // Split camelCase and capitalize
+  return last
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, c => c.toUpperCase());
 }
 
 // ============================================================================

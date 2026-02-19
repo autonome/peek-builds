@@ -99,79 +99,126 @@ function onSessionRefresh(refreshedSession) {
 let lexiconCache = null; // Array of { nsid, domain }
 let lexiconCacheLoading = false;
 
+const LEXICON_DIR_KEY = 'lexiconDirectory';
+const LEXICON_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Fetch the lexicon directory from network (lexidex.bsky.dev).
+ * Returns the array and persists it to settings.
+ */
+async function fetchLexiconDirectoryFromNetwork() {
+  // Step 1: Fetch homepage to get domain list
+  const homeRes = await fetch('https://lexidex.bsky.dev/');
+
+  if (!homeRes.ok) {
+    throw new Error(`Failed to fetch lexidex: ${homeRes.status}`);
+  }
+
+  const homeHtml = await homeRes.text();
+
+  // Parse domains from homepage: <a href="/domain/xxx">
+  const domainRegex = /href="\/domain\/([^"]+)"/g;
+  const domains = [];
+  let match;
+  while ((match = domainRegex.exec(homeHtml)) !== null) {
+    domains.push(match[1]);
+  }
+
+  if (domains.length === 0) {
+    throw new Error('No domains found on lexidex');
+  }
+
+  // Step 2: Fetch each domain page in parallel
+  const allLexicons = [];
+  const domainFetches = domains.map(async (domain) => {
+    try {
+      const res = await fetch(`https://lexidex.bsky.dev/domain/${domain}`);
+
+      if (!res.ok) return;
+
+      const html = await res.text();
+
+      // Parse lexicon NSIDs: <a href="/lexicon/NSID">NSID</a>
+      const lexRegex = /href="\/lexicon\/([^"]+)"/g;
+      let m;
+      while ((m = lexRegex.exec(html)) !== null) {
+        allLexicons.push({ nsid: m[1], domain });
+      }
+    } catch (err) {
+      console.warn(`[me] Failed to fetch lexidex domain ${domain}:`, err);
+    }
+  });
+
+  await Promise.all(domainFetches);
+
+  // Add known lexicons not yet indexed by lexidex
+  const EXTRA_LEXICONS = [
+    { nsid: 'site.standard.publication', domain: 'standard.site' },
+    { nsid: 'site.standard.document', domain: 'standard.site' },
+    { nsid: 'site.standard.graph.subscription', domain: 'standard.site' },
+  ];
+  for (const extra of EXTRA_LEXICONS) {
+    if (!allLexicons.some(l => l.nsid === extra.nsid)) {
+      allLexicons.push(extra);
+    }
+  }
+
+  // Sort by NSID
+  allLexicons.sort((a, b) => a.nsid.localeCompare(b.nsid));
+
+  // Persist to settings
+  if (api) {
+    try {
+      await api.settings.setKey(LEXICON_DIR_KEY, {
+        lexicons: allLexicons,
+        fetchedAt: Date.now(),
+      });
+    } catch (err) {
+      console.warn('[me] Failed to persist lexicon directory:', err);
+    }
+  }
+
+  lexiconCache = allLexicons;
+  console.log(`[me] Loaded ${allLexicons.length} lexicons from ${domains.length} domains`);
+  return allLexicons;
+}
+
 /**
  * Fetch and parse the lexidex directory.
- * Strategy: fetch homepage for domain list, then fetch each domain page for lexicon NSIDs.
+ * Uses persisted cache for instant loading, with background refresh if stale.
  */
 async function fetchLexiconDirectory() {
   if (lexiconCache) return lexiconCache;
   if (lexiconCacheLoading) return null;
 
-  lexiconCacheLoading = true;
+  // Check persisted cache first
+  if (api) {
+    try {
+      const result = await api.settings.getKey(LEXICON_DIR_KEY);
+      if (result.success && result.data && result.data.lexicons) {
+        lexiconCache = result.data.lexicons;
+        console.log(`[me] Restored ${lexiconCache.length} lexicons from persisted cache`);
 
-  try {
-    // Step 1: Fetch homepage to get domain list
-    const homeRes = await fetch('https://lexidex.bsky.dev/');
-
-    if (!homeRes.ok) {
-      throw new Error(`Failed to fetch lexidex: ${homeRes.status}`);
-    }
-
-    const homeHtml = await homeRes.text();
-
-    // Parse domains from homepage: <a href="/domain/xxx">
-    const domainRegex = /href="\/domain\/([^"]+)"/g;
-    const domains = [];
-    let match;
-    while ((match = domainRegex.exec(homeHtml)) !== null) {
-      domains.push(match[1]);
-    }
-
-    if (domains.length === 0) {
-      throw new Error('No domains found on lexidex');
-    }
-
-    // Step 2: Fetch each domain page in parallel
-    const allLexicons = [];
-    const domainFetches = domains.map(async (domain) => {
-      try {
-        const res = await fetch(`https://lexidex.bsky.dev/domain/${domain}`);
-
-        if (!res.ok) return;
-
-        const html = await res.text();
-
-        // Parse lexicon NSIDs: <a href="/lexicon/NSID">NSID</a>
-        const lexRegex = /href="\/lexicon\/([^"]+)"/g;
-        let m;
-        while ((m = lexRegex.exec(html)) !== null) {
-          allLexicons.push({ nsid: m[1], domain });
+        // If stale, refresh in background (don't block)
+        const age = Date.now() - (result.data.fetchedAt || 0);
+        if (age > LEXICON_DIR_MAX_AGE_MS) {
+          console.log('[me] Lexicon directory cache is stale, refreshing in background...');
+          fetchLexiconDirectoryFromNetwork().catch(err => {
+            console.warn('[me] Background lexicon directory refresh failed:', err);
+          });
         }
-      } catch (err) {
-        console.warn(`[me] Failed to fetch lexidex domain ${domain}:`, err);
-      }
-    });
 
-    await Promise.all(domainFetches);
-
-    // Add known lexicons not yet indexed by lexidex
-    const EXTRA_LEXICONS = [
-      { nsid: 'site.standard.publication', domain: 'standard.site' },
-      { nsid: 'site.standard.document', domain: 'standard.site' },
-      { nsid: 'site.standard.graph.subscription', domain: 'standard.site' },
-    ];
-    for (const extra of EXTRA_LEXICONS) {
-      if (!allLexicons.some(l => l.nsid === extra.nsid)) {
-        allLexicons.push(extra);
+        return lexiconCache;
       }
+    } catch (err) {
+      console.warn('[me] Failed to load persisted lexicon directory:', err);
     }
+  }
 
-    // Sort by NSID
-    allLexicons.sort((a, b) => a.nsid.localeCompare(b.nsid));
-
-    lexiconCache = allLexicons;
-    console.log(`[me] Loaded ${allLexicons.length} lexicons from ${domains.length} domains`);
-    return lexiconCache;
+  // No persisted cache — fetch from network
+  lexiconCacheLoading = true;
+  try {
+    return await fetchLexiconDirectoryFromNetwork();
   } catch (err) {
     console.error('[me] Lexicon directory fetch failed:', err);
     throw err;

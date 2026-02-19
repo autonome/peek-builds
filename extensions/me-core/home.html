@@ -58,6 +58,11 @@
                 <span class="nav-icon">&#9906;</span>
                 Explore Lexicons
               </div>
+              <div class="nav-item" data-panel="create">
+                <span class="nav-icon">&#9998;</span>
+                Create Record
+              </div>
+              <div id="recent-lexicons" class="recent-lexicons"></div>
             </nav>
             <div class="sidebar-footer">
               <button id="logout-btn" class="btn btn-danger btn-sm">Disconnect</button>
@@ -102,7 +107,49 @@
               </div>
             </div>
 
-            <!-- Create Record panel -->
+            <!-- Create (dedicated nav panel) -->
+            <div id="panel-create" class="panel create-panel" style="display:none">
+              <div class="create-panel-header">
+                <h2 class="panel-title">Create Record</h2>
+                <p class="panel-subtitle">Pick a lexicon and fill in the fields</p>
+                <div class="lexicon-picker">
+                  <input
+                    type="text"
+                    id="lexicon-picker-input"
+                    class="input"
+                    placeholder="Search lexicons..."
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <div id="lexicon-picker-results" class="picker-results"></div>
+                  <div id="lexicon-picker-selected" class="picker-selected" style="display:none"></div>
+                </div>
+                <!-- Mode toggle: Form / Raw JSON -->
+                <div id="create-panel-mode-toggle" class="create-mode-toggle" style="display:none">
+                  <button id="create-panel-mode-form" class="mode-btn active">Form</button>
+                  <button id="create-panel-mode-json" class="mode-btn">Raw JSON</button>
+                </div>
+              </div>
+
+              <div class="create-panel-body">
+                <div id="create-panel-schema-loading" class="loading" style="display:none">
+                  Loading lexicon schema...
+                </div>
+                <div id="create-panel-schema-error" class="error" style="display:none"></div>
+                <div id="create-panel-form-container"></div>
+                <div id="create-panel-json-container" style="display:none"></div>
+                <div id="create-panel-empty" class="create-panel-empty">
+                  Select a lexicon above to get started
+                </div>
+              </div>
+
+              <div id="create-panel-footer" class="create-panel-footer" style="display:none">
+                <button id="create-panel-submit-btn" class="btn btn-primary">Create Record</button>
+                <div id="create-panel-submit-status" class="submit-status" style="display:none"></div>
+              </div>
+            </div>
+
+            <!-- Create Record panel (detail view from My Lexicons / Explore) -->
             <div id="panel-create-record" class="panel" style="display:none">
               <div class="panel-header">
                 <div class="panel-header-row">
