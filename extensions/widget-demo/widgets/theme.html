@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+  <title>Color Theme Widget</title>
+  <link rel="stylesheet" type="text/css" href="widget.css">
+  <style>
+    .palette-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .palette-row-label {
+      font-size: 10px;
+      color: #666;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .swatch {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: border-color 0.15s, transform 0.1s;
+      flex-shrink: 0;
+    }
+
+    .swatch:hover {
+      transform: scale(1.1);
+    }
+
+    .swatch.selected {
+      border-color: #fff;
+    }
+
+    .accent-preview {
+      margin-top: auto;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      text-align: center;
+      transition: background 0.2s, color 0.2s;
+      flex-shrink: 0;
+    }
+
+    .current-section {
+      margin-bottom: 8px;
+    }
+
+    .current-colors {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .current-color {
+      height: 16px;
+      flex: 1;
+      min-width: 20px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget">
+    <div class="widget-header">Color Theme</div>
+    <div class="widget-body">
+      <div class="current-section">
+        <div class="palette-row-label">Current palette</div>
+        <div id="current-colors" class="current-colors"></div>
+      </div>
+
+      <div>
+        <div class="palette-row-label">Accent color</div>
+        <div id="accent-palette" class="palette-row"></div>
+      </div>
+
+      <div id="preview" class="accent-preview">
+        Preview text with accent
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const api = window.app;
+    const SETTINGS_KEY = 'accent_color';
+
+    const accentPalette = document.getElementById('accent-palette');
+    const previewEl = document.getElementById('preview');
+    const currentColorsEl = document.getElementById('current-colors');
+
+    // Accent color options
+    const ACCENTS = [
+      { name: 'Blue',    color: '#4a9eff' },
+      { name: 'Purple',  color: '#a78bfa' },
+      { name: 'Pink',    color: '#f472b6' },
+      { name: 'Red',     color: '#ef4444' },
+      { name: 'Orange',  color: '#f59e0b' },
+      { name: 'Green',   color: '#34d399' },
+      { name: 'Teal',    color: '#2dd4bf' },
+      { name: 'Cyan',    color: '#22d3ee' },
+      { name: 'White',   color: '#e0e0e0' },
+    ];
+
+    // Base dark theme palette
+    const BASE_PALETTE = [
+      '#1a1a1a',
+      '#222222',
+      '#2a2a2a',
+      '#333333',
+      '#555555',
+      '#888888',
+      '#bbbbbb',
+      '#e0e0e0',
+    ];
+
+    let selectedAccent = ACCENTS[0].color;
+
+    // Render the base palette display
+    const renderCurrentPalette = () => {
+      currentColorsEl.innerHTML = '';
+      BASE_PALETTE.forEach(color => {
+        const el = document.createElement('div');
+        el.className = 'current-color';
+        el.style.background = color;
+        currentColorsEl.appendChild(el);
+      });
+
+      // Add accent as last swatch
+      const accentEl = document.createElement('div');
+      accentEl.className = 'current-color';
+      accentEl.style.background = selectedAccent;
+      accentEl.style.minWidth = '30px';
+      currentColorsEl.appendChild(accentEl);
+    };
+
+    // Render accent color picker
+    const renderAccentPalette = () => {
+      accentPalette.innerHTML = '';
+      ACCENTS.forEach(accent => {
+        const swatch = document.createElement('div');
+        swatch.className = 'swatch' + (accent.color === selectedAccent ? ' selected' : '');
+        swatch.style.background = accent.color;
+        swatch.title = accent.name;
+        swatch.addEventListener('click', () => selectAccent(accent.color));
+        accentPalette.appendChild(swatch);
+      });
+    };
+
+    const updatePreview = () => {
+      previewEl.style.background = selectedAccent + '22';
+      previewEl.style.color = selectedAccent;
+      previewEl.style.border = `1px solid ${selectedAccent}44`;
+    };
+
+    const selectAccent = async (color) => {
+      selectedAccent = color;
+      renderAccentPalette();
+      renderCurrentPalette();
+      updatePreview();
+
+      if (api?.settings?.setKey) {
+        await api.settings.setKey(SETTINGS_KEY, color);
+      }
+    };
+
+    // Load saved accent
+    const init = async () => {
+      if (api?.settings?.getKey) {
+        try {
+          const result = await api.settings.getKey(SETTINGS_KEY);
+          if (result.success && result.data) {
+            selectedAccent = result.data;
+          }
+        } catch (err) {
+          console.log('[widget-demo:theme] Failed to load accent:', err);
+        }
+      }
+
+      renderCurrentPalette();
+      renderAccentPalette();
+      updatePreview();
+    };
+
+    init();
+  </script>
+</body>
+</html>

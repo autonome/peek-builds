@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+  <title>Quick Note Widget</title>
+  <link rel="stylesheet" type="text/css" href="widget.css">
+  <style>
+    .note-area {
+      flex: 1;
+      min-height: 0;
+    }
+
+    .note-area textarea {
+      width: 100%;
+      height: 100%;
+      background: #222;
+      color: #e0e0e0;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 8px;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.5;
+      resize: none;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .note-area textarea:focus {
+      border-color: #555;
+    }
+
+    .note-area textarea::placeholder {
+      color: #555;
+    }
+
+    .note-status {
+      font-size: 10px;
+      color: #555;
+      text-align: right;
+      margin-top: 4px;
+      height: 14px;
+      flex-shrink: 0;
+    }
+
+    .note-status.saved {
+      color: #6a8;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget">
+    <div class="widget-header">Quick Note</div>
+    <div class="widget-body">
+      <div class="note-area">
+        <textarea id="note" placeholder="Type a note..."></textarea>
+      </div>
+      <div id="status" class="note-status"></div>
+    </div>
+  </div>
+
+  <script>
+    const api = window.app;
+    const SETTINGS_KEY = 'note_content';
+
+    const noteEl = document.getElementById('note');
+    const statusEl = document.getElementById('status');
+
+    let saveTimer = null;
+
+    const saveNote = async () => {
+      if (api?.settings?.setKey) {
+        try {
+          await api.settings.setKey(SETTINGS_KEY, noteEl.value);
+          statusEl.textContent = 'Saved';
+          statusEl.classList.add('saved');
+          setTimeout(() => {
+            statusEl.textContent = '';
+            statusEl.classList.remove('saved');
+          }, 1500);
+        } catch (err) {
+          console.log('[widget-demo:note] Failed to save:', err);
+          statusEl.textContent = 'Save failed';
+        }
+      }
+    };
+
+    noteEl.addEventListener('input', () => {
+      clearTimeout(saveTimer);
+      statusEl.textContent = '';
+      statusEl.classList.remove('saved');
+      saveTimer = setTimeout(saveNote, 800);
+    });
+
+    // Load saved note
+    const init = async () => {
+      if (api?.settings?.getKey) {
+        try {
+          const result = await api.settings.getKey(SETTINGS_KEY);
+          if (result.success && result.data !== undefined && result.data !== null) {
+            noteEl.value = String(result.data);
+          }
+        } catch (err) {
+          console.log('[widget-demo:note] Failed to load note:', err);
+        }
+      }
+    };
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+  <title>Widget Demo</title>
+
+  <!-- Import map for resolving bare module specifiers -->
+  <script type="importmap">
+  {
+    "imports": {
+      "lit": "peek://node_modules/lit/index.js",
+      "lit/": "peek://node_modules/lit/",
+      "lit-html": "peek://node_modules/lit-html/lit-html.js",
+      "lit-html/": "peek://node_modules/lit-html/",
+      "lit-element": "peek://node_modules/lit-element/lit-element.js",
+      "lit-element/": "peek://node_modules/lit-element/",
+      "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+      "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+    }
+  }
+  </script>
+
+  <!-- Import peek-components -->
+  <script type="module">
+    import 'peek://app/components/peek-card.js';
+    import 'peek://app/components/peek-grid.js';
+  </script>
+
+  <style>
+    @import url('peek://theme/variables.css');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #111;
+      font-family: var(--theme-font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    #sheet-container {
+      width: 100%;
+      height: 100%;
+      padding: 10px;
+      overflow: auto;
+    }
+
+    .sheet-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 6px 12px;
+    }
+
+    .sheet-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #ccc;
+    }
+
+    .sheet-subtitle {
+      font-size: 11px;
+      color: #666;
+      margin-left: 8px;
+    }
+
+    .sheet-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .sheet-actions button {
+      background: #2a2a2a;
+      color: #aaa;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .sheet-actions button:hover {
+      background: #333;
+      color: #ccc;
+    }
+
+    .sheet-actions button.active {
+      background: #335;
+      border-color: #558;
+      color: #aaf;
+    }
+
+    peek-grid {
+      width: 100%;
+      height: calc(100% - 48px);
+    }
+
+    .widget-webview {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="sheet-container">
+    <div class="sheet-header">
+      <div>
+        <span class="sheet-title">Widget Demo</span>
+        <span class="sheet-subtitle">Drag and resize widgets in edit mode</span>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn-edit">Edit</button>
+      </div>
+    </div>
+    <peek-grid class="demo-grid" view-mode="freeform" freeform-snap="8" gap="0"></peek-grid>
+  </div>
+
+  <script type="module" src="sheet.js"></script>
+</body>
+</html>

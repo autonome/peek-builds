@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+  <title>Counter Widget</title>
+  <link rel="stylesheet" type="text/css" href="widget.css">
+  <style>
+    .counter-value {
+      font-size: 48px;
+      font-weight: 200;
+      color: #fff;
+      text-align: center;
+      line-height: 1.2;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .counter-controls {
+      display: flex;
+      gap: 8px;
+      margin-top: auto;
+      padding-top: 8px;
+    }
+
+    .counter-controls button {
+      flex: 1;
+      padding: 6px;
+      font-size: 16px;
+      font-weight: 400;
+    }
+
+    .counter-controls .btn-reset {
+      flex: 0;
+      padding: 6px 12px;
+      font-size: 10px;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget">
+    <div class="widget-header">Counter</div>
+    <div class="widget-body">
+      <div id="count" class="counter-value">0</div>
+      <div class="counter-controls">
+        <button id="btn-dec">-</button>
+        <button id="btn-reset" class="btn-reset">Reset</button>
+        <button id="btn-inc">+</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const api = window.app;
+    const SETTINGS_KEY = 'counter_value';
+
+    let count = 0;
+    const countEl = document.getElementById('count');
+
+    const updateDisplay = () => {
+      countEl.textContent = count;
+    };
+
+    const saveCount = async () => {
+      if (api?.settings?.setKey) {
+        await api.settings.setKey(SETTINGS_KEY, count);
+      }
+    };
+
+    document.getElementById('btn-inc').addEventListener('click', () => {
+      count++;
+      updateDisplay();
+      saveCount();
+    });
+
+    document.getElementById('btn-dec').addEventListener('click', () => {
+      count--;
+      updateDisplay();
+      saveCount();
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      count = 0;
+      updateDisplay();
+      saveCount();
+    });
+
+    // Load saved count
+    const init = async () => {
+      if (api?.settings?.getKey) {
+        try {
+          const result = await api.settings.getKey(SETTINGS_KEY);
+          if (result.success && result.data !== undefined && result.data !== null) {
+            count = Number(result.data) || 0;
+            updateDisplay();
+          }
+        } catch (err) {
+          console.log('[widget-demo:counter] Failed to load count:', err);
+        }
+      }
+    };
+
+    init();
+  </script>
+</body>
+</html>

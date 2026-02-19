@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+  <title>Bookmarks Widget</title>
+  <link rel="stylesheet" type="text/css" href="widget.css">
+  <style>
+    .bookmark-grid {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+      gap: 6px;
+      overflow-y: auto;
+      padding: 2px;
+    }
+
+    .bookmark-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 4px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .bookmark-item:hover {
+      background: #2a2a2a;
+    }
+
+    .bookmark-favicon {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      background: #2a2a2a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .bookmark-favicon img {
+      width: 16px;
+      height: 16px;
+      border-radius: 2px;
+    }
+
+    .bookmark-label {
+      font-size: 10px;
+      color: #aaa;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+      line-height: 1.3;
+    }
+
+    .bookmark-empty {
+      color: #555;
+      font-size: 11px;
+      text-align: center;
+      padding: 20px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .bookmark-add {
+      margin-top: auto;
+      padding-top: 6px;
+      flex-shrink: 0;
+      display: flex;
+      gap: 4px;
+    }
+
+    .bookmark-add input {
+      flex: 1;
+      background: #222;
+      color: #e0e0e0;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 11px;
+      font-family: inherit;
+      outline: none;
+    }
+
+    .bookmark-add input:focus {
+      border-color: #555;
+    }
+
+    .bookmark-add input::placeholder {
+      color: #555;
+    }
+
+    .bookmark-add button {
+      font-size: 11px;
+      padding: 3px 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget">
+    <div class="widget-header">Bookmarks</div>
+    <div class="widget-body">
+      <div id="grid" class="bookmark-grid"></div>
+      <div class="bookmark-add">
+        <input id="url-input" type="text" placeholder="https://...">
+        <button id="btn-add">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const api = window.app;
+    const SETTINGS_KEY = 'bookmarks';
+
+    const gridEl = document.getElementById('grid');
+    const urlInput = document.getElementById('url-input');
+    const btnAdd = document.getElementById('btn-add');
+
+    // Default bookmarks for first run
+    const DEFAULT_BOOKMARKS = [
+      { url: 'https://github.com', label: 'GitHub' },
+      { url: 'https://news.ycombinator.com', label: 'HN' },
+      { url: 'https://wikipedia.org', label: 'Wikipedia' },
+      { url: 'https://developer.mozilla.org', label: 'MDN' },
+    ];
+
+    let bookmarks = [];
+
+    const getFaviconUrl = (url) => {
+      try {
+        const u = new URL(url);
+        return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=32`;
+      } catch {
+        return null;
+      }
+    };
+
+    const getInitial = (label) => {
+      return (label || '?')[0].toUpperCase();
+    };
+
+    const renderBookmarks = () => {
+      gridEl.innerHTML = '';
+
+      if (bookmarks.length === 0) {
+        gridEl.innerHTML = '<div class="bookmark-empty">No bookmarks yet<br><span style="font-size:10px;color:#444">Add a URL below</span></div>';
+        return;
+      }
+
+      bookmarks.forEach((bm, index) => {
+        const item = document.createElement('a');
+        item.className = 'bookmark-item';
+        item.href = '#';
+        item.title = bm.url;
+
+        const faviconUrl = getFaviconUrl(bm.url);
+        const faviconEl = document.createElement('div');
+        faviconEl.className = 'bookmark-favicon';
+
+        if (faviconUrl) {
+          const img = document.createElement('img');
+          img.src = faviconUrl;
+          img.onerror = () => { faviconEl.textContent = getInitial(bm.label); img.remove(); };
+          faviconEl.appendChild(img);
+        } else {
+          faviconEl.textContent = getInitial(bm.label);
+        }
+
+        const label = document.createElement('div');
+        label.className = 'bookmark-label';
+        label.textContent = bm.label || bm.url;
+
+        item.appendChild(faviconEl);
+        item.appendChild(label);
+
+        item.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (api?.window?.open) {
+            api.window.open(bm.url);
+          }
+        });
+
+        // Right-click to remove
+        item.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          bookmarks.splice(index, 1);
+          renderBookmarks();
+          saveBookmarks();
+        });
+
+        gridEl.appendChild(item);
+      });
+    };
+
+    const saveBookmarks = async () => {
+      if (api?.settings?.setKey) {
+        await api.settings.setKey(SETTINGS_KEY, bookmarks);
+      }
+    };
+
+    const addBookmark = () => {
+      let url = urlInput.value.trim();
+      if (!url) return;
+
+      // Add protocol if missing
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+      }
+
+      try {
+        const u = new URL(url);
+        const label = u.hostname.replace('www.', '');
+        bookmarks.push({ url, label });
+        renderBookmarks();
+        saveBookmarks();
+        urlInput.value = '';
+      } catch {
+        urlInput.style.borderColor = '#a55';
+        setTimeout(() => { urlInput.style.borderColor = ''; }, 1000);
+      }
+    };
+
+    btnAdd.addEventListener('click', addBookmark);
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addBookmark();
+    });
+
+    // Load saved bookmarks
+    const init = async () => {
+      if (api?.settings?.getKey) {
+        try {
+          const result = await api.settings.getKey(SETTINGS_KEY);
+          if (result.success && Array.isArray(result.data)) {
+            bookmarks = result.data;
+          } else {
+            bookmarks = DEFAULT_BOOKMARKS;
+            saveBookmarks();
+          }
+        } catch (err) {
+          console.log('[widget-demo:bookmarks] Failed to load:', err);
+          bookmarks = DEFAULT_BOOKMARKS;
+        }
+      } else {
+        bookmarks = DEFAULT_BOOKMARKS;
+      }
+      renderBookmarks();
+    };
+
+    init();
+  </script>
+</body>
+</html>

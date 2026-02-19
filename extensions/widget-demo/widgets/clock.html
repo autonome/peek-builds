@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+  <title>Clock Widget</title>
+  <link rel="stylesheet" type="text/css" href="widget.css">
+  <style>
+    .clock-time {
+      font-size: 32px;
+      font-weight: 300;
+      letter-spacing: -0.5px;
+      color: #fff;
+      line-height: 1.2;
+    }
+
+    .clock-seconds {
+      font-size: 16px;
+      font-weight: 300;
+      color: #666;
+      vertical-align: super;
+      margin-left: 2px;
+    }
+
+    .clock-date {
+      font-size: 12px;
+      color: #888;
+      margin-top: 4px;
+    }
+
+    .clock-format {
+      margin-top: auto;
+      padding-top: 8px;
+    }
+
+    .clock-format button {
+      font-size: 10px;
+      padding: 2px 8px;
+      opacity: 0.5;
+      transition: opacity 0.15s, background 0.15s;
+    }
+
+    .clock-format button:hover {
+      opacity: 0.8;
+    }
+
+    .clock-format button.active {
+      opacity: 1;
+      background: #333;
+      border-color: #555;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget">
+    <div class="widget-header">Clock</div>
+    <div class="widget-body">
+      <div class="clock-time">
+        <span id="time">--:--</span><span id="seconds" class="clock-seconds"></span>
+      </div>
+      <div id="date" class="clock-date"></div>
+      <div class="clock-format">
+        <button id="btn-12h" class="active">12h</button>
+        <button id="btn-24h">24h</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const api = window.app;
+    const SETTINGS_KEY = 'clock_format';
+
+    let use24h = false;
+
+    const timeEl = document.getElementById('time');
+    const secondsEl = document.getElementById('seconds');
+    const dateEl = document.getElementById('date');
+    const btn12h = document.getElementById('btn-12h');
+    const btn24h = document.getElementById('btn-24h');
+
+    const updateClock = () => {
+      const now = new Date();
+
+      let hours = now.getHours();
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+
+      if (use24h) {
+        timeEl.textContent = `${String(hours).padStart(2, '0')}:${minutes}`;
+      } else {
+        const period = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12 || 12;
+        timeEl.textContent = `${hours}:${minutes} ${period}`;
+      }
+
+      secondsEl.textContent = seconds;
+
+      const options = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' };
+      dateEl.textContent = now.toLocaleDateString(undefined, options);
+    };
+
+    const setFormat = async (is24h) => {
+      use24h = is24h;
+      btn12h.classList.toggle('active', !is24h);
+      btn24h.classList.toggle('active', is24h);
+      updateClock();
+
+      if (api?.settings?.setKey) {
+        await api.settings.setKey(SETTINGS_KEY, is24h ? '24h' : '12h');
+      }
+    };
+
+    btn12h.addEventListener('click', () => setFormat(false));
+    btn24h.addEventListener('click', () => setFormat(true));
+
+    // Load saved format
+    const loadFormat = async () => {
+      if (api?.settings?.getKey) {
+        try {
+          const result = await api.settings.getKey(SETTINGS_KEY);
+          if (result.success && result.data) {
+            use24h = result.data === '24h';
+            btn12h.classList.toggle('active', !use24h);
+            btn24h.classList.toggle('active', use24h);
+          }
+        } catch (err) {
+          console.log('[widget-demo:clock] Failed to load format:', err);
+        }
+      }
+    };
+
+    loadFormat();
+    updateClock();
+    setInterval(updateClock, 1000);
+  </script>
+</body>
+</html>

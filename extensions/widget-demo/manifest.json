@@ -1,0 +1,9 @@
+{
+  "id": "widget-demo",
+  "shortname": "widget-demo",
+  "name": "Widget Demo",
+  "description": "Demonstration extension showcasing widget sheet capabilities",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": true
+}
