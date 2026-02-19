@@ -9,8 +9,8 @@ import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput, foldGutter, foldService, codeFolding, foldAll, unfoldAll, foldEffect, unfoldEffect, foldedRanges, foldable } from '@codemirror/language';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle, bracketMatching, indentOnInput, foldGutter, foldService, codeFolding, foldAll, unfoldAll, foldEffect, unfoldEffect, foldedRanges, foldable } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 import { vim, Vim, getCM } from '@replit/codemirror-vim';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 
@@ -445,6 +445,96 @@ Vim.defineOption('number', true, 'boolean', undefined, (value, cm) => {
 });
 
 /**
+ * Peek syntax highlighting style.
+ *
+ * Uses CSS custom properties so colors adapt to light/dark mode automatically.
+ * Replaces CodeMirror's defaultHighlightStyle which uses hardcoded colors
+ * that are unreadable on dark backgrounds.
+ */
+const peekHighlightStyle = HighlightStyle.define([
+  // Headings — bright and prominent
+  { tag: tags.heading, color: 'var(--base0D)', fontWeight: '600' },
+  { tag: tags.heading1, color: 'var(--base0D)', fontWeight: '700', fontSize: '1.4em' },
+  { tag: tags.heading2, color: 'var(--base0D)', fontWeight: '600', fontSize: '1.2em' },
+  { tag: tags.heading3, color: 'var(--base0D)', fontWeight: '600', fontSize: '1.1em' },
+
+  // Markdown processing markers (# symbols, ``` fences, etc.)
+  { tag: tags.processingInstruction, color: 'var(--base04)' },
+
+  // Links and URLs — cyan for good contrast in both modes
+  { tag: tags.link, color: 'var(--base0C)', textDecoration: 'underline' },
+  { tag: tags.url, color: 'var(--base0C)' },
+
+  // Emphasis
+  { tag: tags.emphasis, color: 'var(--base0E)', fontStyle: 'italic' },
+  { tag: tags.strong, color: 'var(--base0A)', fontWeight: '600' },
+  { tag: tags.strikethrough, color: 'var(--base03)', textDecoration: 'line-through' },
+
+  // Code / monospace
+  { tag: tags.monospace, color: 'var(--base0B)' },
+
+  // Quotes
+  { tag: tags.quote, color: 'var(--base04)', fontStyle: 'italic' },
+
+  // List markers
+  { tag: tags.list, color: 'var(--base09)' },
+
+  // Comments
+  { tag: tags.comment, color: 'var(--base03)', fontStyle: 'italic' },
+  { tag: tags.blockComment, color: 'var(--base03)', fontStyle: 'italic' },
+  { tag: tags.lineComment, color: 'var(--base03)', fontStyle: 'italic' },
+
+  // Strings
+  { tag: tags.string, color: 'var(--base0B)' },
+
+  // Keywords
+  { tag: tags.keyword, color: 'var(--base0E)' },
+
+  // Numbers
+  { tag: tags.number, color: 'var(--base09)' },
+
+  // Operators
+  { tag: tags.operator, color: 'var(--base05)' },
+
+  // Punctuation / brackets
+  { tag: tags.punctuation, color: 'var(--base04)' },
+  { tag: tags.bracket, color: 'var(--base04)' },
+  { tag: tags.squareBracket, color: 'var(--base04)' },
+  { tag: tags.paren, color: 'var(--base04)' },
+  { tag: tags.brace, color: 'var(--base04)' },
+
+  // Definitions and variables
+  { tag: tags.definition(tags.variableName), color: 'var(--base08)' },
+  { tag: tags.variableName, color: 'var(--base05)' },
+  { tag: tags.function(tags.variableName), color: 'var(--base0D)' },
+
+  // Types
+  { tag: tags.typeName, color: 'var(--base0A)' },
+  { tag: tags.className, color: 'var(--base0A)' },
+  { tag: tags.namespace, color: 'var(--base0A)' },
+
+  // Tags (HTML/XML)
+  { tag: tags.tagName, color: 'var(--base08)' },
+  { tag: tags.attributeName, color: 'var(--base09)' },
+  { tag: tags.attributeValue, color: 'var(--base0B)' },
+
+  // Content — meta and separator
+  { tag: tags.meta, color: 'var(--base04)' },
+  { tag: tags.separator, color: 'var(--base03)' },
+
+  // Atom (booleans, null, etc.)
+  { tag: tags.atom, color: 'var(--base09)' },
+  { tag: tags.bool, color: 'var(--base09)' },
+  { tag: tags.null, color: 'var(--base09)' },
+
+  // Label
+  { tag: tags.labelName, color: 'var(--base0D)' },
+
+  // Content (catch-all for untyped content)
+  { tag: tags.content, color: 'var(--base05)' },
+]);
+
+/**
  * Create a peek-themed CodeMirror theme using CSS variables
  */
 const peekTheme = EditorView.theme({
@@ -519,7 +609,7 @@ const peekTheme = EditorView.theme({
     borderRadius: '3px',
   },
   '.cm-quote': {
-    color: 'var(--base03)',
+    color: 'var(--base04)',
     fontStyle: 'italic',
   },
   '.cm-list': {
@@ -620,6 +710,7 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
 
     // Language support
     markdown({ base: markdownLanguage }),
+    syntaxHighlighting(peekHighlightStyle),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
 
     // Folding support (required for vim fold commands)
