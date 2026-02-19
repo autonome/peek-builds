@@ -8,7 +8,18 @@
  * - me:do-logout / me:session-changed — logout
  * - me:get-collections / me:collections:response — fetch lexicons
  * - me:search-lexicons / me:search-lexicons:response — explore lexicons
+ * - me:create-record / me:create-record:response — create a record
  */
+
+import {
+  resolveLexicon,
+  getRecordSchema,
+  isRecordType,
+  generateForm,
+  collectFormData,
+  createRawJsonEditor,
+  parseRawJson,
+} from './lexicon-ui.js';
 
 const api = window.app;
 
@@ -30,23 +41,35 @@ let state = {
   loading: false,
   error: null,
   // Nav / panels
-  activePanel: 'my-lexicons', // 'my-lexicons' | 'explore'
+  activePanel: 'my-lexicons', // 'my-lexicons' | 'explore' | 'create-record'
+  previousPanel: null,
+  // My lexicons filter
+  myLexiconsFilter: '',
   // Explore lexicons
   exploreLexicons: null, // null = not loaded, [] = loaded
   exploreFilter: '',
   exploreLoading: false,
   exploreError: null,
+  // Create record
+  createNsid: null,
+  createLexicon: null,
+  createSchema: null,
+  createMode: 'form', // 'form' | 'json'
+  createSubmitting: false,
 };
 
 // DOM refs
 let handleInput, searchResultsEl, selectedAccountEl;
 let loginError, loginLoading;
 let loginView, accountView, accountInfo, collectionsListEl, logoutBtn;
-let exploreListEl, lexiconSearchEl;
+let exploreListEl, lexiconSearchEl, myLexiconsSearchEl;
+// Create record DOM refs
+let createFormContainer, createJsonContainer, createSchemaLoading, createSchemaError;
+let createSubmitArea, createSubmitBtn, createSubmitStatus, createRecordNsidEl;
+let modeFormBtn, modeJsonBtn, createRecordBackBtn;
 
 // Debounce timer for search
 let searchTimer = null;
-let exploreFilterTimer = null;
 
 // ============================================================================
 // Init
@@ -66,6 +89,20 @@ async function init() {
   logoutBtn = document.getElementById('logout-btn');
   exploreListEl = document.getElementById('explore-list');
   lexiconSearchEl = document.getElementById('lexicon-search');
+  myLexiconsSearchEl = document.getElementById('my-lexicons-search');
+
+  // Create record refs
+  createFormContainer = document.getElementById('create-form-container');
+  createJsonContainer = document.getElementById('create-json-container');
+  createSchemaLoading = document.getElementById('create-schema-loading');
+  createSchemaError = document.getElementById('create-schema-error');
+  createSubmitArea = document.getElementById('create-submit-area');
+  createSubmitBtn = document.getElementById('create-submit-btn');
+  createSubmitStatus = document.getElementById('create-submit-status');
+  createRecordNsidEl = document.getElementById('create-record-nsid');
+  modeFormBtn = document.getElementById('mode-form');
+  modeJsonBtn = document.getElementById('mode-json');
+  createRecordBackBtn = document.getElementById('create-record-back');
 
   // Set up event listeners
   setupEventListeners();
@@ -75,6 +112,9 @@ async function init() {
 
   // Set up PubSub listeners
   setupPubSub();
+
+  // Set up create record UI
+  setupCreateRecord();
 
   // Request current session state from background
   api.publish('me:get-session', {}, api.scopes.GLOBAL);
@@ -90,6 +130,12 @@ async function init() {
 // ============================================================================
 
 function handleEscape() {
+  // If in create-record panel, go back
+  if (state.activePanel === 'create-record') {
+    goBackFromCreate();
+    return { handled: true };
+  }
+
   // If search results are visible, close them
   if (state.searchVisible) {
     state.searchVisible = false;
@@ -182,15 +228,19 @@ function setupNav() {
     });
   });
 
-  // Explore search input — peek-input fires native input event through shadow DOM
+  // My Lexicons filter
+  if (myLexiconsSearchEl) {
+    myLexiconsSearchEl.addEventListener('input', () => {
+      state.myLexiconsFilter = (myLexiconsSearchEl.value || '').trim().toLowerCase();
+      renderCollections();
+    });
+  }
+
+  // Explore search filter
   if (lexiconSearchEl) {
     lexiconSearchEl.addEventListener('input', () => {
-      const query = (lexiconSearchEl.value || '').trim().toLowerCase();
-      state.exploreFilter = query;
-      if (exploreFilterTimer) clearTimeout(exploreFilterTimer);
-      exploreFilterTimer = setTimeout(() => {
-        renderExploreLexicons();
-      }, 100);
+      state.exploreFilter = (lexiconSearchEl.value || '').trim().toLowerCase();
+      renderExploreLexicons();
     });
   }
 }
@@ -198,7 +248,7 @@ function setupNav() {
 function switchPanel(panel) {
   state.activePanel = panel;
 
-  // Update nav items
+  // Update nav items (don't highlight for create-record — it's a sub-panel)
   document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.toggle('active', item.dataset.panel === panel);
   });
@@ -237,12 +287,12 @@ function renderExploreLexicons() {
   }
 
   if (state.exploreError) {
-    exploreListEl.innerHTML = `<div class="explore-error">${escapeHtml(state.exploreError)}</div>`;
+    exploreListEl.innerHTML = `<div class="error">${escapeHtml(state.exploreError)}</div>`;
     return;
   }
 
   if (!state.exploreLexicons || state.exploreLexicons.length === 0) {
-    exploreListEl.innerHTML = '<div class="explore-empty">No lexicons found</div>';
+    exploreListEl.innerHTML = '<div class="collections-empty">No lexicons found</div>';
     return;
   }
 
@@ -253,7 +303,7 @@ function renderExploreLexicons() {
     : state.exploreLexicons;
 
   if (filtered.length === 0) {
-    exploreListEl.innerHTML = `<div class="explore-empty">No lexicons matching "${escapeHtml(filter)}"</div>`;
+    exploreListEl.innerHTML = `<div class="collections-empty">No lexicons matching "${escapeHtml(filter)}"</div>`;
     return;
   }
 
@@ -269,20 +319,27 @@ function renderExploreLexicons() {
 
   const groupsHtml = Object.entries(groups).map(([domain, lexicons]) => {
     const items = lexicons.map(lex => `
-      <div class="explore-item" title="${escapeHtml(lex.nsid)}">
-        <span class="explore-nsid">${escapeHtml(lex.nsid)}</span>
+      <div class="collection-item clickable" data-nsid="${escapeHtml(lex.nsid)}">
+        <span class="collection-nsid">${escapeHtml(lex.nsid)}</span>
+        <span class="collection-action">Create</span>
       </div>
     `).join('');
 
     return `
-      <div class="explore-domain-group">
-        <div class="explore-domain-label">${escapeHtml(domain)}</div>
-        ${items}
-      </div>
+      <div class="domain-group-label">${escapeHtml(domain)}</div>
+      ${items}
     `;
   }).join('');
 
   exploreListEl.innerHTML = statsHtml + groupsHtml;
+
+  // Attach click handlers for "Create" action
+  exploreListEl.querySelectorAll('.collection-item.clickable').forEach(el => {
+    el.addEventListener('click', () => {
+      const nsid = el.dataset.nsid;
+      if (nsid) openCreateRecord(nsid, 'explore');
+    });
+  });
 }
 
 // ============================================================================
@@ -361,6 +418,30 @@ function setupPubSub() {
       state.exploreLexicons = msg.lexicons || [];
     }
     renderExploreLexicons();
+  }, api.scopes.GLOBAL);
+
+  // Create record response
+  api.subscribe('me:create-record:response', (msg) => {
+    state.createSubmitting = false;
+    createSubmitBtn.disabled = false;
+    createSubmitBtn.textContent = 'Create Record';
+
+    if (msg.error) {
+      createSubmitStatus.className = 'submit-status error';
+      createSubmitStatus.textContent = msg.error;
+      createSubmitStatus.style.display = '';
+    } else {
+      createSubmitStatus.className = 'submit-status success';
+      const validationNote = msg.validationStatus === 'unknown' ? ' (unvalidated)' : '';
+      createSubmitStatus.innerHTML = `
+        Record created successfully${validationNote}
+        <div class="record-uri">${escapeHtml(msg.uri)}</div>
+      `;
+      createSubmitStatus.style.display = '';
+
+      // Refresh collections in background
+      api.publish('me:get-collections', {}, api.scopes.GLOBAL);
+    }
   }, api.scopes.GLOBAL);
 }
 
@@ -537,15 +618,205 @@ function renderCollections() {
     return;
   }
 
-  collectionsListEl.innerHTML = state.collections.map(col => {
+  const filter = state.myLexiconsFilter;
+  const filtered = filter
+    ? state.collections.filter(col => col.nsid.toLowerCase().includes(filter))
+    : state.collections;
+
+  if (filtered.length === 0) {
+    collectionsListEl.innerHTML = `<div class="collections-empty">No lexicons matching "${escapeHtml(filter)}"</div>`;
+    return;
+  }
+
+  collectionsListEl.innerHTML = filtered.map(col => {
     const countLabel = col.hasMore ? `${col.count}+` : String(col.count);
     return `
-      <div class="collection-item">
+      <div class="collection-item clickable" data-nsid="${escapeHtml(col.nsid)}">
         <span class="collection-nsid">${escapeHtml(col.nsid)}</span>
-        <span class="collection-count">${countLabel}</span>
+        <div class="collection-right">
+          <span class="collection-count">${countLabel}</span>
+          <span class="collection-action">Create</span>
+        </div>
       </div>
     `;
   }).join('');
+
+  // Attach click handlers for "Create" action
+  collectionsListEl.querySelectorAll('.collection-item.clickable').forEach(el => {
+    el.addEventListener('click', () => {
+      const nsid = el.dataset.nsid;
+      if (nsid) openCreateRecord(nsid, 'my-lexicons');
+    });
+  });
+}
+
+// ============================================================================
+// Create Record
+// ============================================================================
+
+function setupCreateRecord() {
+  // Back button
+  createRecordBackBtn.addEventListener('click', goBackFromCreate);
+
+  // Mode toggle
+  modeFormBtn.addEventListener('click', () => {
+    state.createMode = 'form';
+    modeFormBtn.classList.add('active');
+    modeJsonBtn.classList.remove('active');
+    createFormContainer.style.display = '';
+    createJsonContainer.style.display = 'none';
+  });
+
+  modeJsonBtn.addEventListener('click', () => {
+    state.createMode = 'json';
+    modeJsonBtn.classList.add('active');
+    modeFormBtn.classList.remove('active');
+    createFormContainer.style.display = 'none';
+    createJsonContainer.style.display = '';
+    // Lazy-init the JSON editor
+    if (createJsonContainer.children.length === 0 && state.createNsid) {
+      const editor = createRawJsonEditor(state.createNsid);
+      createJsonContainer.appendChild(editor);
+    }
+  });
+
+  // Submit button
+  createSubmitBtn.addEventListener('click', handleCreateSubmit);
+}
+
+/**
+ * Open the create record panel for a given NSID.
+ */
+async function openCreateRecord(nsid, fromPanel) {
+  state.previousPanel = fromPanel;
+  state.createNsid = nsid;
+  state.createLexicon = null;
+  state.createSchema = null;
+  state.createMode = 'form';
+  state.createSubmitting = false;
+
+  // Reset UI
+  createRecordNsidEl.textContent = nsid;
+  createFormContainer.innerHTML = '';
+  createJsonContainer.innerHTML = '';
+  createSchemaLoading.style.display = '';
+  createSchemaError.style.display = 'none';
+  createSubmitArea.style.display = 'none';
+  createSubmitStatus.style.display = 'none';
+  modeFormBtn.classList.add('active');
+  modeJsonBtn.classList.remove('active');
+  createFormContainer.style.display = '';
+  createJsonContainer.style.display = 'none';
+
+  // Switch to create-record panel
+  switchPanel('create-record');
+
+  // Fetch the lexicon schema
+  try {
+    const lexicon = await resolveLexicon(nsid);
+    createSchemaLoading.style.display = 'none';
+
+    if (!lexicon) {
+      // Could not resolve — show JSON editor only
+      createSchemaError.textContent = 'Could not resolve lexicon schema. Use Raw JSON mode to create a record.';
+      createSchemaError.style.display = '';
+      modeJsonBtn.click();
+      createSubmitArea.style.display = '';
+      return;
+    }
+
+    state.createLexicon = lexicon;
+    const schema = getRecordSchema(lexicon);
+
+    if (!schema) {
+      createSchemaError.textContent = 'This lexicon does not define a record type. It may be a query or procedure.';
+      createSchemaError.style.display = '';
+      // Still allow JSON mode
+      modeJsonBtn.click();
+      createSubmitArea.style.display = '';
+      return;
+    }
+
+    state.createSchema = schema;
+
+    // Generate the form
+    const form = await generateForm(nsid, schema, lexicon, {
+      autoFillCreatedAt: true,
+    });
+    createFormContainer.appendChild(form);
+
+    // Show submit area
+    createSubmitArea.style.display = '';
+
+  } catch (err) {
+    createSchemaLoading.style.display = 'none';
+    createSchemaError.textContent = `Failed to load schema: ${err.message}`;
+    createSchemaError.style.display = '';
+    // Allow JSON fallback
+    createSubmitArea.style.display = '';
+  }
+}
+
+function goBackFromCreate() {
+  const target = state.previousPanel || 'my-lexicons';
+  state.createNsid = null;
+  state.createLexicon = null;
+  state.createSchema = null;
+  switchPanel(target);
+}
+
+/**
+ * Handle the create record submit action.
+ */
+async function handleCreateSubmit() {
+  if (state.createSubmitting || !state.createNsid) return;
+
+  state.createSubmitting = true;
+  createSubmitBtn.disabled = true;
+  createSubmitBtn.textContent = 'Creating...';
+  createSubmitStatus.style.display = 'none';
+
+  try {
+    let record;
+
+    if (state.createMode === 'json') {
+      // Parse from JSON editor
+      record = parseRawJson(createJsonContainer, state.createNsid);
+    } else {
+      // Collect from generated form
+      const form = createFormContainer.querySelector('.lexicon-form');
+      if (!form) {
+        throw new Error('No form found. Switch to Raw JSON mode.');
+      }
+      record = await collectFormData(form, state.createSchema, state.createLexicon, state.createNsid);
+    }
+
+    // Validate required fields
+    if (state.createSchema && state.createMode === 'form') {
+      const required = state.createSchema.required || [];
+      const missing = required.filter(f => {
+        const val = record[f];
+        return val === undefined || val === null || val === '';
+      });
+      if (missing.length > 0) {
+        throw new Error(`Required fields missing: ${missing.join(', ')}`);
+      }
+    }
+
+    // Send to background for creation
+    api.publish('me:create-record', {
+      collection: state.createNsid,
+      record,
+    }, api.scopes.GLOBAL);
+
+  } catch (err) {
+    state.createSubmitting = false;
+    createSubmitBtn.disabled = false;
+    createSubmitBtn.textContent = 'Create Record';
+    createSubmitStatus.className = 'submit-status error';
+    createSubmitStatus.textContent = err.message;
+    createSubmitStatus.style.display = '';
+  }
 }
 
 // ============================================================================

@@ -72,6 +72,13 @@
                 <h2 class="panel-title">My Lexicons</h2>
                 <p class="panel-subtitle">Collections of records in your AT Protocol repo</p>
               </div>
+              <div class="filter-search">
+                <peek-input
+                  id="my-lexicons-search"
+                  type="search"
+                  placeholder="Filter..."
+                ></peek-input>
+              </div>
               <div id="collections-list" class="collections-list">
                 <div class="loading">Loading collections...</div>
               </div>
@@ -83,14 +90,14 @@
                 <h2 class="panel-title">Explore Lexicons</h2>
                 <p class="panel-subtitle">Browse known AT Protocol lexicons from the network</p>
               </div>
-              <div class="explore-search">
+              <div class="filter-search">
                 <peek-input
                   id="lexicon-search"
                   type="search"
-                  placeholder="Filter lexicons..."
+                  placeholder="Filter..."
                 ></peek-input>
               </div>
-              <div id="explore-list" class="explore-list">
+              <div id="explore-list" class="collections-list">
                 <div class="loading">Loading lexicon directory...</div>
               </div>
             </div>

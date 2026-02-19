@@ -378,6 +378,12 @@ body {
   margin-bottom: 16px;
 }
 
+.panel-header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .panel-title {
   font-size: 16px;
   font-weight: 600;
@@ -388,6 +394,7 @@ body {
 .panel-subtitle {
   font-size: 13px;
   color: var(--base04);
+  font-family: var(--theme-font-mono, monospace);
 }
 
 /* ==================== Account View ==================== */
@@ -494,6 +501,10 @@ body {
   background: var(--base02);
 }
 
+.collection-item.clickable {
+  cursor: pointer;
+}
+
 .collection-nsid {
   font-size: 13px;
   font-family: var(--theme-font-mono, monospace);
@@ -504,14 +515,32 @@ body {
   white-space: nowrap;
 }
 
+.collection-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .collection-count {
   font-size: 12px;
   color: var(--base04);
   flex-shrink: 0;
-  margin-left: 12px;
   padding: 2px 8px;
   background: var(--base02);
   border-radius: 10px;
+}
+
+.collection-action {
+  font-size: 12px;
+  color: var(--base0D);
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-weight: 500;
+}
+
+.collection-item.clickable:hover .collection-action {
+  opacity: 1;
 }
 
 .collections-empty {
@@ -521,89 +550,428 @@ body {
   text-align: center;
 }
 
-/* ==================== Explore Lexicons Panel ==================== */
+/* ==================== Shared filter search ==================== */
 
-.explore-search {
-  margin-bottom: 16px;
-}
-
-.explore-search peek-input {
-  width: 100%;
-}
-
-.explore-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.explore-domain-group {
+.filter-search {
   margin-bottom: 12px;
 }
 
-.explore-domain-label {
+.filter-search peek-input {
+  width: 100%;
+}
+
+/* ==================== Explore Lexicons Panel ==================== */
+
+.domain-group-label {
   font-size: 11px;
   font-weight: 600;
   color: var(--base04);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 6px 14px 4px;
-}
-
-.explore-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 14px;
-  background: var(--base01);
-  border-radius: 6px;
-  transition: background 0.1s;
-  cursor: default;
-}
-
-.explore-item:hover {
-  background: var(--base02);
-}
-
-.explore-nsid {
-  font-size: 13px;
-  font-family: var(--theme-font-mono, monospace);
-  color: var(--base05);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.explore-domain-badge {
-  font-size: 11px;
-  color: var(--base04);
-  flex-shrink: 0;
-  margin-left: 12px;
-  padding: 2px 8px;
-  background: var(--base02);
-  border-radius: 10px;
-}
-
-.explore-empty {
-  color: var(--base04);
-  font-size: 13px;
-  padding: 16px 0;
-  text-align: center;
+  padding: 8px 14px 4px;
 }
 
 .explore-stats {
   font-size: 12px;
   color: var(--base04);
-  padding: 8px 0;
+  padding: 4px 0 8px;
 }
 
-.explore-error {
-  margin-top: 8px;
+/* ==================== Create Record Panel ==================== */
+
+.btn-back {
+  background: none;
+  border: 1px solid var(--base02);
+  color: var(--base04);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-back:hover {
+  color: var(--base05);
+  background: var(--base02);
+}
+
+/* Mode toggle */
+.create-mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.mode-btn {
+  background: none;
+  border: none;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-family: var(--theme-font-sans);
+  color: var(--base04);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-btn:not(:last-child) {
+  border-right: 1px solid var(--base02);
+}
+
+.mode-btn.active {
+  background: var(--base02);
+  color: var(--base05);
+  font-weight: 500;
+}
+
+.mode-btn:hover:not(.active) {
+  color: var(--base05);
+}
+
+/* Submit area */
+.submit-area {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--base02);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.submit-status {
+  font-size: 13px;
   padding: 10px 14px;
+  border-radius: 8px;
+}
+
+.submit-status.error {
   background: color-mix(in srgb, var(--base08) 15%, transparent);
   border: 1px solid var(--base08);
-  border-radius: 8px;
   color: var(--base08);
+}
+
+.submit-status.success {
+  background: color-mix(in srgb, var(--base0B) 15%, transparent);
+  border: 1px solid var(--base0B);
+  color: var(--base0B);
+}
+
+.record-uri {
+  font-family: var(--theme-font-mono, monospace);
+  font-size: 11px;
+  margin-top: 4px;
+  word-break: break-all;
+  opacity: 0.8;
+}
+
+/* ==================== Lexicon Form (Dynamic) ==================== */
+
+.lexicon-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-field.nested {
+  padding-left: 16px;
+  border-left: 2px solid var(--base02);
+}
+
+.field-label {
   font-size: 13px;
+  font-weight: 500;
+  color: var(--base05);
+}
+
+.required-mark {
+  color: var(--base08);
+  font-weight: 600;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--base04);
+  line-height: 1.4;
+}
+
+.form-message {
+  font-size: 13px;
+  color: var(--base04);
+  padding: 12px 0;
+}
+
+/* Form inputs */
+.form-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--theme-font-sans);
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  color: var(--base05);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.form-input:focus {
+  border-color: var(--base0D);
+}
+
+.form-input::placeholder {
+  color: var(--base03);
+}
+
+.form-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--theme-font-sans);
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  color: var(--base05);
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.15s;
+  min-height: 60px;
+}
+
+.form-textarea:focus {
+  border-color: var(--base0D);
+}
+
+.form-textarea::placeholder {
+  color: var(--base03);
+}
+
+.form-textarea.json-editor {
+  font-family: var(--theme-font-mono, monospace);
+  font-size: 12px;
+  min-height: 200px;
+  tab-size: 2;
+}
+
+.form-textarea.json-fallback {
+  font-family: var(--theme-font-mono, monospace);
+  font-size: 12px;
+}
+
+.form-select {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--theme-font-sans);
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  color: var(--base05);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
+.form-select:focus {
+  border-color: var(--base0D);
+}
+
+.form-file {
+  font-size: 13px;
+  color: var(--base04);
+}
+
+.form-file::file-selector-button {
+  background: var(--base02);
+  color: var(--base05);
+  border: 1px solid var(--base03);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+.form-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--base0D);
+}
+
+/* Textarea character counter */
+.textarea-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.char-counter {
+  font-size: 11px;
+  color: var(--base04);
+  text-align: right;
+}
+
+.char-counter.over-limit {
+  color: var(--base08);
+  font-weight: 600;
+}
+
+/* Checkbox wrap */
+.checkbox-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-label {
+  font-size: 13px;
+  color: var(--base05);
+  cursor: pointer;
+}
+
+/* Blob upload */
+.blob-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.blob-info {
+  font-size: 11px;
+  color: var(--base04);
+}
+
+/* Dropdown with "Other" option */
+.dropdown-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.other-input {
+  margin-top: 0;
+}
+
+/* Union field */
+.union-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.union-selector {
+  max-width: 300px;
+}
+
+.union-subform {
+  padding-left: 16px;
+  border-left: 2px solid var(--base0D);
+}
+
+/* Array field */
+.array-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.array-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.array-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.array-item .form-input,
+.array-item .form-textarea,
+.array-item .form-select {
+  flex: 1;
+}
+
+.btn-add-item {
+  background: none;
+  border: 1px dashed var(--base03);
+  color: var(--base04);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: var(--theme-font-sans);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  width: fit-content;
+}
+
+.btn-add-item:hover:not(:disabled) {
+  color: var(--base0D);
+  border-color: var(--base0D);
+}
+
+.btn-add-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-remove-item {
+  background: none;
+  border: 1px solid var(--base02);
+  color: var(--base08);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--theme-font-sans);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.btn-remove-item:hover {
+  background: color-mix(in srgb, var(--base08) 15%, transparent);
+}
+
+.array-counter {
+  font-size: 11px;
+  color: var(--base04);
+}
+
+/* Object field (nested) */
+.object-field {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--base01) 50%, transparent);
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+}
+
+/* Raw JSON editor */
+.raw-json-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

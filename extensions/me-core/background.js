@@ -154,6 +154,18 @@ async function fetchLexiconDirectory() {
 
     await Promise.all(domainFetches);
 
+    // Add known lexicons not yet indexed by lexidex
+    const EXTRA_LEXICONS = [
+      { nsid: 'site.standard.publication', domain: 'standard.site' },
+      { nsid: 'site.standard.document', domain: 'standard.site' },
+      { nsid: 'site.standard.graph.subscription', domain: 'standard.site' },
+    ];
+    for (const extra of EXTRA_LEXICONS) {
+      if (!allLexicons.some(l => l.nsid === extra.nsid)) {
+        allLexicons.push(extra);
+      }
+    }
+
     // Sort by NSID
     allLexicons.sort((a, b) => a.nsid.localeCompare(b.nsid));
 
