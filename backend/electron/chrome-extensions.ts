@@ -100,6 +100,9 @@ export interface ChromeExtensionSetting {
   updatedAt: number;
 }
 
+// Extensions that are disabled by default (must be explicitly enabled by user)
+const DISABLED_BY_DEFAULT = new Set(['proton-pass']);
+
 // Module state
 let extensionsDir: string | null = null;
 const discoveredExtensions: Map<string, ChromeExtensionInfo> = new Map();
@@ -297,8 +300,8 @@ export async function loadEnabledChromeExtensions(): Promise<void> {
   for (const [extId, extInfo] of discoveredExtensions) {
     const setting = getExtensionSetting(extId);
 
-    // Default to enabled if no setting exists
-    const enabled = setting ? setting.enabled : true;
+    // Default to enabled unless in the disabled-by-default list
+    const enabled = setting ? setting.enabled : !DISABLED_BY_DEFAULT.has(extId);
 
     if (enabled) {
       await loadExtension(extInfo);
@@ -336,7 +339,7 @@ export function getChromeExtensions(): Array<{
 
   for (const [extId, extInfo] of discoveredExtensions) {
     const setting = getExtensionSetting(extId);
-    const enabled = setting ? setting.enabled : true;
+    const enabled = setting ? setting.enabled : !DISABLED_BY_DEFAULT.has(extId);
     const loaded = loadedExtensions.has(extId);
     const hasOptionsPage = !!(extInfo.manifest.options_ui?.page || extInfo.manifest.options_page);
 
@@ -395,7 +398,7 @@ export async function disableChromeExtension(extId: string): Promise<boolean> {
  */
 export function isChromeExtensionEnabled(extId: string): boolean {
   const setting = getExtensionSetting(extId);
-  return setting ? setting.enabled : true; // Default to enabled
+  return setting ? setting.enabled : !DISABLED_BY_DEFAULT.has(extId);
 }
 
 /**
