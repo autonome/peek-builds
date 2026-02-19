@@ -2247,9 +2247,9 @@ window.addEventListener('load', () => {
       document.body.style.userSelect = '';
       document.body.style.webkitUserSelect = '';
     }
-    // Reset cursor if it was set to 'grab' (hold ready) or 'grabbing' (dragging)
+    // Remove cursor classes
     if (wasDragging || wasHoldReady) {
-      document.body.style.cursor = '';
+      document.body.classList.remove('hold-ready');
     }
     positionPromise = null;
     if (wasDragging) {
@@ -2320,7 +2320,7 @@ window.addEventListener('load', () => {
       windowOriginX = pos.x;
       windowOriginY = pos.y;
       holdReady = true;
-      document.body.style.cursor = 'grab';
+      document.body.classList.add('hold-ready');
 
       console.log('[DRAG] HOLD READY (cursor→grab) origin=(' + dragOriginX + ',' + dragOriginY +
         ') window=(' + windowOriginX + ',' + windowOriginY + ')');
@@ -2355,7 +2355,7 @@ window.addEventListener('load', () => {
 
       holdReady = false;
       isDragging = true;
-      document.body.style.cursor = 'grabbing';
+      document.body.classList.remove('hold-ready');
       document.body.classList.add('is-dragging');
       window.getSelection()?.removeAllRanges();
       document.body.style.userSelect = 'none';
@@ -2431,6 +2431,14 @@ window.addEventListener('load', () => {
     } catch (err) {
       console.warn('[DRAG] failed to read prefs, using default hold delay:', err);
     }
+
+    // Inject drag cursor styles with !important to override element-level cursor rules
+    const dragStyle = document.createElement('style');
+    dragStyle.textContent = `
+      body.hold-ready, body.hold-ready * { cursor: grab !important; }
+      body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
+    `;
+    document.head.appendChild(dragStyle);
 
     // Capture-phase on document for mousedown (need e.target for shouldBlockDrag).
     // Capture-phase on window for mousemove/mouseup (survive fast cursor escape).
