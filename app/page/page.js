@@ -349,6 +349,38 @@ loadingLifecycle.onChange((state) => {
 initWebview();
 loadingLifecycle.startLoading();
 
+// --- In-page navigation loading indicator ---
+// When the user clicks a link inside the webview, show the same loading glow.
+// Filter out trivial navigations (hash changes, same-page anchors).
+
+webview.addEventListener('did-start-navigation', (e) => {
+  // Only track main frame navigations
+  if (!e.isMainFrame) return;
+  // Skip same-page anchor / hash-only navigations
+  try {
+    const currentUrl = webview.getURL();
+    if (currentUrl && e.url) {
+      const current = new URL(currentUrl);
+      const next = new URL(e.url);
+      // Same origin + path, only hash differs → skip
+      if (current.origin === next.origin &&
+          current.pathname === next.pathname &&
+          current.search === next.search &&
+          next.hash !== current.hash) {
+        return;
+      }
+    }
+  } catch (_) {
+    // URL parsing failed, proceed with showing indicator
+  }
+  DEBUG && console.log('[page] Navigation started (in-webview):', e.url);
+  loadingLifecycle.startLoading();
+});
+
+webview.addEventListener('did-stop-loading', () => {
+  loadingLifecycle.stopLoading();
+});
+
 // --- Custom drag ---
 // Two modes:
 //   1. Navbar background: instant drag (no hold delay)
@@ -1037,8 +1069,9 @@ webview.addEventListener('did-navigate-in-page', (e) => {
 });
 
 webview.addEventListener('did-fail-load', (e) => {
-  if (e.errorCode === -3) return;
+  if (e.errorCode === -3) return; // Aborted navigation (e.g. replaced by new nav)
   console.error('[page] Load failed:', e.errorCode, e.errorDescription);
+  loadingLifecycle.stopLoading();
 });
 
 // On dom-ready: detect page background color.
