@@ -2,6 +2,9 @@
  * HUD Extension Background Script
  *
  * Always-on-top overlay showing current mode, IZUI state, and window context.
+ * Uses the widget sheet system — each piece of HUD info is an individual
+ * widget page rendered via webview in a peek-grid freeform layout.
+ *
  * Runs in isolated extension process (peek://ext/hud/background.html)
  */
 
@@ -12,6 +15,59 @@ console.log('[ext:hud] background init');
 
 const HUD_ADDRESS = 'peek://ext/hud/hud.html';
 const STORAGE_KEY = 'hud_enabled';
+const HUD_SHEET_KEY = 'hud_sheet';
+
+// Default HUD sheet layout — arranges widget pages vertically
+const WIDGET_WIDTH = 220;
+const WIDGET_HEIGHT = 40;
+const WIDGET_GAP = 2;
+
+const DEFAULT_HUD_WIDGETS = [
+  { id: 'mode',   url: 'peek://ext/hud/widgets/mode.html' },
+  { id: 'izui',   url: 'peek://ext/hud/widgets/izui.html' },
+  { id: 'window', url: 'peek://ext/hud/widgets/window.html' },
+  { id: 'stats',  url: 'peek://ext/hud/widgets/stats.html' }
+];
+
+/**
+ * Build the default HUD sheet config
+ * Arranges widgets in a vertical stack
+ */
+const buildDefaultSheetConfig = () => {
+  const items = DEFAULT_HUD_WIDGETS.map((widget, index) => ({
+    id: widget.id,
+    url: widget.url,
+    x: 0,
+    y: index * (WIDGET_HEIGHT + WIDGET_GAP),
+    width: WIDGET_WIDTH,
+    height: WIDGET_HEIGHT
+  }));
+
+  return {
+    version: 1,
+    name: 'HUD',
+    createdAt: Date.now(),
+    items
+  };
+};
+
+/**
+ * Ensure the HUD sheet config exists in extension_settings.
+ * Creates a default config if none exists.
+ */
+const ensureSheetConfig = async () => {
+  const result = await api.settings.getKey(HUD_SHEET_KEY);
+  if (result.success && result.data) {
+    debug && console.log('[ext:hud] HUD sheet config already exists');
+    return result.data;
+  }
+
+  // Create default config
+  const config = buildDefaultSheetConfig();
+  await api.settings.setKey(HUD_SHEET_KEY, config);
+  console.log('[ext:hud] Created default HUD sheet config with', config.items.length, 'widgets');
+  return config;
+};
 
 // Track HUD state
 let hudEnabled = false;
@@ -71,6 +127,23 @@ const saveState = (enabled) => {
 };
 
 /**
+ * Calculate HUD window size from sheet config
+ */
+const getHudWindowSize = (config) => {
+  let maxRight = 0;
+  let maxBottom = 0;
+  for (const item of config.items) {
+    maxRight = Math.max(maxRight, item.x + item.width);
+    maxBottom = Math.max(maxBottom, item.y + item.height);
+  }
+  // Add container padding (10px each side) + border
+  return {
+    width: maxRight + 22,
+    height: maxBottom + 22
+  };
+};
+
+/**
  * Open the HUD window
  */
 const openHud = async () => {
@@ -85,10 +158,14 @@ const openHud = async () => {
     hudWindowId = null;
   }
 
+  // Ensure sheet config exists before opening
+  const config = await ensureSheetConfig();
+  const size = getHudWindowSize(config);
+
   const params = {
     key: HUD_ADDRESS,
-    width: 240,
-    height: 300,
+    width: size.width,
+    height: size.height,
     x: 20,
     y: 20,
     transparent: true,
@@ -223,6 +300,9 @@ const init = async () => {
 
   // Load persisted state
   await loadState();
+
+  // Ensure HUD sheet config exists (create default if needed)
+  await ensureSheetConfig();
 
   // Register shortcut
   initShortcut();

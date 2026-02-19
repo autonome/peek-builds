@@ -6,33 +6,32 @@
     <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
     <title>HUD</title>
     <link rel="stylesheet" type="text/css" href="styles.css">
+
+    <!-- Import map for resolving bare module specifiers -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <!-- Import peek-components -->
+    <script type="module">
+      import 'peek://app/components/peek-card.js';
+      import 'peek://app/components/peek-grid.js';
+    </script>
   </head>
   <body>
     <div id="hud-container">
-      <div id="group-accent" class="group-accent" style="display: none;"></div>
-      <div id="group-banner" class="group-banner" style="display: none;">
-        <div id="group-name" class="group-name"></div>
-      </div>
-
-      <div class="hud-section">
-        <div class="hud-label">Mode</div>
-        <div id="mode-value" class="hud-value">-</div>
-      </div>
-
-      <div class="hud-section">
-        <div class="hud-label">IZUI State</div>
-        <div id="izui-value" class="hud-value">-</div>
-      </div>
-
-      <div class="hud-section">
-        <div class="hud-label">Active Window</div>
-        <div id="window-title" class="hud-value hud-truncate">-</div>
-      </div>
-
-      <div class="hud-section">
-        <div class="hud-label">Stats</div>
-        <div id="stats-value" class="hud-value hud-small">-</div>
-      </div>
+      <peek-grid class="hud-grid" view-mode="freeform" freeform-snap="0" gap="0"></peek-grid>
     </div>
 
     <script type="module" src="hud.js"></script>
