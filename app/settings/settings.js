@@ -228,7 +228,7 @@ const renderThemesSettings = async () => {
 
   // Get current theme state
   const themeState = await api.theme.get();
-  const activeThemeId = themeState?.themeId || 'basic';
+  const activeThemeId = themeState?.themeId || 'peek';
   const colorScheme = themeState?.colorScheme || 'system';
 
   // Color scheme selector at top
@@ -386,7 +386,7 @@ const renderThemesSettings = async () => {
     try {
       const result = await api.theme.getAll();
       const currentTheme = await api.theme.get();
-      const activeId = currentTheme?.themeId || 'basic';
+      const activeId = currentTheme?.themeId || 'peek';
 
       loading.remove();
 
