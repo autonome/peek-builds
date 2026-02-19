@@ -11,14 +11,14 @@
 /* ServerMono font */
 @font-face {
   font-family: "ServerMono";
-  src: url("peek://app/themes/peek/fonts/ServerMono-Regular.woff2") format("woff2");
+  src: url("./fonts/ServerMono-Regular.woff2") format("woff2");
   font-weight: normal;
   font-style: normal;
 }
 
 @font-face {
   font-family: "ServerMono";
-  src: url("peek://app/themes/peek/fonts/ServerMono-Regular-Italic.woff2") format("woff2");
+  src: url("./fonts/ServerMono-Regular-Italic.woff2") format("woff2");
   font-weight: normal;
   font-style: italic;
 }
