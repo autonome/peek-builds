@@ -59,11 +59,29 @@
       }
     }
 
+    /* Fade background in from transparent to avoid bright flash */
+    @keyframes bg-fade-in {
+      from { background-color: transparent; }
+      to   { background-color: rgba(255, 255, 255, 0.95); }
+    }
+
+    @keyframes bg-fade-in-dark {
+      from { background-color: transparent; }
+      to   { background-color: rgba(30, 30, 30, 0.95); }
+    }
+
     webview.loading {
       opacity: 1;
       background-color: rgba(255, 255, 255, 0.95);
-      animation: loading-glow 1.2s ease-in-out infinite;
+      animation: bg-fade-in 0.3s ease forwards, loading-glow 1.2s ease-in-out 0.3s infinite;
       overflow: visible;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      webview.loading {
+        background-color: rgba(30, 30, 30, 0.95);
+        animation: bg-fade-in-dark 0.3s ease forwards, loading-glow 1.2s ease-in-out 0.3s infinite;
+      }
     }
 
     /* Default visible state (after loading completes) */
