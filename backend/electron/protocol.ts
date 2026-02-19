@@ -102,7 +102,7 @@ export function registerScheme(): void {
       secure: true,
       supportFetchAPI: true,
       bypassCSP: true,
-      corsEnabled: true,
+      corsEnabled: false,
       allowServiceWorkers: false
     }
   }]);

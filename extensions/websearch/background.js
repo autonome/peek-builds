@@ -213,24 +213,24 @@ const fetchSuggestions = async (engine, query, signal) => {
   const url = buildSearchUrl(engine.suggestUrl, query.trim());
 
   try {
-    // Use api.net.fetch to proxy through main process, bypassing CORS restrictions.
-    // Extension pages (peek://) making fetch() to https:// origins are blocked by CORS
-    // since search suggestion APIs may not include Access-Control-Allow-Origin headers.
-    const result = await api.net.fetch(url, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' },
-      timeout: 3000,
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    if (signal) signal.addEventListener('abort', () => controller.abort());
 
-    // Check for abort (signal may have been triggered while waiting)
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
     if (signal && signal.aborted) return [];
 
-    if (!result.success) {
-      debug && console.log('[ext:websearch] Suggestion fetch failed:', result.error);
+    if (!res.ok) {
+      debug && console.log('[ext:websearch] Suggestion fetch failed:', res.status);
       return [];
     }
 
-    const data = JSON.parse(result.data);
+    const data = await res.json();
 
     // OpenSearch suggestion format: ["query", ["suggestion1", "suggestion2"]]
     if (Array.isArray(data) && data.length >= 2 && Array.isArray(data[1])) {

@@ -14,6 +14,8 @@ import {
   getCollections,
   getAllCollectionCounts,
   getProfile,
+  xrpcPost,
+  uploadBlob,
 } from './atproto.js';
 
 // Feature detection
@@ -109,20 +111,19 @@ async function fetchLexiconDirectory() {
 
   try {
     // Step 1: Fetch homepage to get domain list
-    const homeResult = await api.net.fetch('https://lexidex.bsky.dev/', {
-      method: 'GET',
-      timeout: 10000,
-    });
+    const homeRes = await fetch('https://lexidex.bsky.dev/');
 
-    if (!homeResult.success) {
-      throw new Error(`Failed to fetch lexidex: ${homeResult.error || homeResult.status}`);
+    if (!homeRes.ok) {
+      throw new Error(`Failed to fetch lexidex: ${homeRes.status}`);
     }
+
+    const homeHtml = await homeRes.text();
 
     // Parse domains from homepage: <a href="/domain/xxx">
     const domainRegex = /href="\/domain\/([^"]+)"/g;
     const domains = [];
     let match;
-    while ((match = domainRegex.exec(homeResult.data)) !== null) {
+    while ((match = domainRegex.exec(homeHtml)) !== null) {
       domains.push(match[1]);
     }
 
@@ -134,17 +135,16 @@ async function fetchLexiconDirectory() {
     const allLexicons = [];
     const domainFetches = domains.map(async (domain) => {
       try {
-        const result = await api.net.fetch(`https://lexidex.bsky.dev/domain/${domain}`, {
-          method: 'GET',
-          timeout: 10000,
-        });
+        const res = await fetch(`https://lexidex.bsky.dev/domain/${domain}`);
 
-        if (!result.success) return;
+        if (!res.ok) return;
+
+        const html = await res.text();
 
         // Parse lexicon NSIDs: <a href="/lexicon/NSID">NSID</a>
         const lexRegex = /href="\/lexicon\/([^"]+)"/g;
         let m;
-        while ((m = lexRegex.exec(result.data)) !== null) {
+        while ((m = lexRegex.exec(html)) !== null) {
           allLexicons.push({ nsid: m[1], domain });
         }
       } catch (err) {
@@ -353,6 +353,49 @@ function setupPubSub() {
       api.publish('me:collections:response', { error: err.message }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
+
+  // Home UI requests record creation
+  api.subscribe('me:create-record', async (msg) => {
+    if (!currentSession) {
+      api.publish('me:create-record:response', { error: 'Not logged in' }, api.scopes.GLOBAL);
+      return;
+    }
+    try {
+      const { collection, record } = msg;
+
+      // Handle blob uploads if any field has __file marker
+      const processedRecord = await processBlobs(record);
+
+      const result = await xrpcPost(currentSession, 'com.atproto.repo.createRecord', {
+        repo: currentSession.did,
+        collection,
+        record: processedRecord,
+      }, onSessionRefresh);
+
+      await saveSession();
+      api.publish('me:create-record:response', {
+        success: true,
+        uri: result.uri,
+        cid: result.cid,
+        validationStatus: result.validationStatus,
+      }, api.scopes.GLOBAL);
+      console.log('[me] Record created:', result.uri);
+    } catch (err) {
+      api.publish('me:create-record:response', { error: err.message }, api.scopes.GLOBAL);
+      console.error('[me] Record creation failed:', err);
+    }
+  }, api.scopes.GLOBAL);
+}
+
+/**
+ * Process a record object, uploading any blob fields.
+ * Blob fields are marked with { __file: File } during form collection.
+ * This is handled in the home UI before sending to background.
+ */
+async function processBlobs(record) {
+  // For now, blobs are uploaded by the UI before sending.
+  // This is a passthrough in case we need server-side processing later.
+  return record;
 }
 
 // ============================================================================

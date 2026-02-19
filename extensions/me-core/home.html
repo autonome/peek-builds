@@ -8,6 +8,8 @@
     <link rel="stylesheet" type="text/css" href="home.css">
     <script type="module">
       import 'peek://app/components/peek-input.js';
+      import 'peek://app/components/peek-button.js';
+      import 'peek://app/components/peek-select.js';
     </script>
   </head>
   <body>
@@ -90,6 +92,43 @@
               </div>
               <div id="explore-list" class="explore-list">
                 <div class="loading">Loading lexicon directory...</div>
+              </div>
+            </div>
+
+            <!-- Create Record panel -->
+            <div id="panel-create-record" class="panel" style="display:none">
+              <div class="panel-header">
+                <div class="panel-header-row">
+                  <button id="create-record-back" class="btn-back" title="Back">&larr;</button>
+                  <div>
+                    <h2 class="panel-title">Create Record</h2>
+                    <p class="panel-subtitle" id="create-record-nsid"></p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Mode toggle: Form / Raw JSON -->
+              <div class="create-mode-toggle">
+                <button id="mode-form" class="mode-btn active">Form</button>
+                <button id="mode-json" class="mode-btn">Raw JSON</button>
+              </div>
+
+              <!-- Schema loading state -->
+              <div id="create-schema-loading" class="loading" style="display:none">
+                Loading lexicon schema...
+              </div>
+              <div id="create-schema-error" class="error" style="display:none"></div>
+
+              <!-- Dynamic form container -->
+              <div id="create-form-container"></div>
+
+              <!-- Raw JSON editor container -->
+              <div id="create-json-container" style="display:none"></div>
+
+              <!-- Submit area -->
+              <div id="create-submit-area" class="submit-area" style="display:none">
+                <button id="create-submit-btn" class="btn btn-primary">Create Record</button>
+                <div id="create-submit-status" class="submit-status"></div>
               </div>
             </div>
           </div>

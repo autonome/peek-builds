@@ -629,6 +629,170 @@ export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = nul
   return res.json();
 }
 
+/**
+ * Make an authenticated POST request to the user's PDS using DPoP tokens.
+ * Automatically retries once with a refreshed token on 401.
+ *
+ * @param {OAuthSession} session
+ * @param {string} nsid - XRPC method
+ * @param {Object} body - JSON body
+ * @param {function} [onSessionRefresh] - Called with updated session on token refresh
+ * @returns {Promise<Object>} Response data
+ */
+export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
+  const url = `${session.pdsUrl}/xrpc/${nsid}`;
+  const dpopKeyPair = await importKeyPair(session.dpopKeyPairJwk);
+  const ath = await computeAth(session.accessToken);
+  let dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, undefined, ath);
+
+  let res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `DPoP ${session.accessToken}`,
+      'DPoP': dpopProof,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  // Handle DPoP nonce requirement
+  if (res.status === 401) {
+    const dpopNonce = res.headers.get('DPoP-Nonce');
+    if (dpopNonce) {
+      dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, dpopNonce, ath);
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `DPoP ${session.accessToken}`,
+          'DPoP': dpopProof,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    }
+  }
+
+  // Retry once on 401 (expired token)
+  if (res.status === 401 && session.refreshToken) {
+    try {
+      const refreshed = await refreshOAuthSession(session);
+      Object.assign(session, refreshed);
+      if (onSessionRefresh) onSessionRefresh(refreshed);
+
+      const newAth = await computeAth(refreshed.accessToken);
+      dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, undefined, newAth);
+
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `DPoP ${refreshed.accessToken}`,
+          'DPoP': dpopProof,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      // Handle nonce on retry
+      if (res.status === 401) {
+        const retryNonce = res.headers.get('DPoP-Nonce');
+        if (retryNonce) {
+          dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, retryNonce, newAth);
+          res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `DPoP ${refreshed.accessToken}`,
+              'DPoP': dpopProof,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          });
+        }
+      }
+    } catch {
+      // Refresh failed, throw the original 401
+    }
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || `XRPC POST ${nsid} failed (${res.status})`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Upload a blob to the user's PDS.
+ * @param {OAuthSession} session
+ * @param {ArrayBuffer|Uint8Array} data - The binary data
+ * @param {string} mimeType - MIME type (e.g., 'image/jpeg')
+ * @param {function} [onSessionRefresh]
+ * @returns {Promise<Object>} - { blob: { $type: "blob", ref: { $link }, mimeType, size } }
+ */
+export async function uploadBlob(session, data, mimeType, onSessionRefresh = null) {
+  const url = `${session.pdsUrl}/xrpc/com.atproto.repo.uploadBlob`;
+  const dpopKeyPair = await importKeyPair(session.dpopKeyPairJwk);
+  const ath = await computeAth(session.accessToken);
+  let dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, undefined, ath);
+
+  let res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `DPoP ${session.accessToken}`,
+      'DPoP': dpopProof,
+      'Content-Type': mimeType,
+    },
+    body: data,
+  });
+
+  // Handle DPoP nonce
+  if (res.status === 401) {
+    const dpopNonce = res.headers.get('DPoP-Nonce');
+    if (dpopNonce) {
+      dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, dpopNonce, ath);
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `DPoP ${session.accessToken}`,
+          'DPoP': dpopProof,
+          'Content-Type': mimeType,
+        },
+        body: data,
+      });
+    }
+  }
+
+  // Token refresh retry
+  if (res.status === 401 && session.refreshToken) {
+    try {
+      const refreshed = await refreshOAuthSession(session);
+      Object.assign(session, refreshed);
+      if (onSessionRefresh) onSessionRefresh(refreshed);
+
+      const newAth = await computeAth(refreshed.accessToken);
+      dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, undefined, newAth);
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `DPoP ${refreshed.accessToken}`,
+          'DPoP': dpopProof,
+          'Content-Type': mimeType,
+        },
+        body: data,
+      });
+    } catch {
+      // Refresh failed
+    }
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Blob upload failed (${res.status})`);
+  }
+
+  return res.json();
+}
+
 // ============================================================================
 // Repo / Lexicon helpers
 // ============================================================================

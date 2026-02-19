@@ -468,6 +468,11 @@ export async function createExtensionWindow(extId: string): Promise<BrowserWindo
     webPreferences: {
       preload: config.preloadPath,
       session: profileSession,
+      // Disable same-origin policy so extensions can fetch() cross-origin.
+      // These windows only load trusted extension code (peek://ext/{id}/...) —
+      // never user-provided URLs. corsEnabled:false on the scheme isn't sufficient
+      // for peek://ext origins (only peek://app gets implicit cross-origin access).
+      webSecurity: false,
     }
   });
 

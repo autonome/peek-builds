@@ -63,6 +63,29 @@ test.describe('Settings @desktop', () => {
 });
 
 // ============================================================================
+// Cross-Origin Fetch Tests (uses shared app)
+// ============================================================================
+
+test.describe('Cross-Origin Fetch @desktop', () => {
+  test('peek:// pages can fetch from https:// origins', async () => {
+    // peek:// scheme has corsEnabled: false, so fetch() to external origins should work.
+    // If corsEnabled were true, this would throw "Failed to fetch" due to CORS.
+    const result = await sharedBgWindow.evaluate(async () => {
+      try {
+        const res = await fetch('https://public.api.bsky.app/xrpc/_health');
+        return { ok: res.ok, status: res.status, error: null };
+      } catch (err: any) {
+        return { ok: false, status: 0, error: err.message };
+      }
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe(200);
+  });
+});
+
+// ============================================================================
 // Command Palette Tests (uses shared app)
 // ============================================================================
 
