@@ -315,29 +315,58 @@ peek-grid[view-mode="masonry"] peek-card {
 .entity-source {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   margin-top: 6px;
   font-size: 11px;
   color: var(--base04);
   min-width: 0;
 }
 
-.entity-source .source-icon {
-  flex-shrink: 0;
-  opacity: 0.6;
+.entity-source .source-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
 }
 
-.entity-source .source-title {
-  color: var(--base0D);
-  cursor: pointer;
+.entity-source .source-page-title {
+  color: var(--base05);
+  font-size: 11px;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
 }
 
-.entity-source .source-title:hover {
-  text-decoration: underline;
+.entity-source .source-url {
+  color: var(--base04);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.entity-source .source-open-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: var(--base02);
+  border: 1px solid var(--base02);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.entity-source .source-open-btn:hover {
+  background: var(--base03);
+  color: var(--base05);
+  border-color: var(--base03);
 }
 
 .entity-source .source-count {

@@ -420,15 +420,21 @@ async function renderEntities() {
     let sourceHtml = '';
     if (observations.length > 0) {
       const firstObs = observations[0];
-      const sourceTitle = firstObs.pageTitle || truncate(firstObs.url, 40);
+      const sourceTitle = firstObs.pageTitle || '';
+      const displayUrl = truncate(firstObs.url, 50);
       const sourceCount = observations.length;
       sourceHtml = `<div class="entity-source">
-        <svg class="source-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-          <polyline points="15 3 21 3 21 9"></polyline>
-          <line x1="10" y1="14" x2="21" y2="3"></line>
-        </svg>
-        <span class="source-title" data-url="${escapeHtml(firstObs.url)}">${escapeHtml(truncate(sourceTitle, 35))}</span>
+        <div class="source-info">
+          ${sourceTitle ? `<span class="source-page-title">${escapeHtml(truncate(sourceTitle, 40))}</span>` : ''}
+          <span class="source-url">${escapeHtml(displayUrl)}</span>
+        </div>
+        <button class="source-open-btn" data-url="${escapeHtml(firstObs.url)}" title="Open source page">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+        </button>
         ${sourceCount > 1 ? `<span class="source-count">+${sourceCount - 1} more</span>` : ''}
       </div>`;
     }
@@ -499,10 +505,10 @@ async function renderEntities() {
         return;
       }
 
-      const sourceLink = e.target.closest('.source-title[data-url]');
-      if (sourceLink) {
+      const sourceBtn = e.target.closest('.source-open-btn[data-url]');
+      if (sourceBtn) {
         e.stopPropagation();
-        openSourceUrl(sourceLink.dataset.url);
+        openSourceUrl(sourceBtn.dataset.url);
         return;
       }
       // Otherwise open detail view
