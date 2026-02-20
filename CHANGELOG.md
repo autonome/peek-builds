@@ -21,6 +21,7 @@ Desktop - AT Protocol Identity (me-core)
 - [x] Add record creation — auto-generated forms from lexicon schemas, create records directly from the app ([93fc](https://tangled.org/burrito.space/peek/commit/93fc3561), [b9a4](https://tangled.org/burrito.space/peek/commit/b9a485e1))
 - [x] Add recent lexicons sidebar — shortcuts for frequently used record types ([260c](https://tangled.org/burrito.space/peek/commit/260cf397))
 - [x] Persist lexicon directory and schemas to survive restarts ([3ba9](https://tangled.org/burrito.space/peek/commit/3ba994f0))
+- [x] Add chain-form popup — create records directly from command palette without opening full panel ([ba78](https://tangled.org/burrito.space/peek/commit/ba7814e4), [1eec](https://tangled.org/burrito.space/peek/commit/1eec6c47))
 
 Desktop - Windows
 - [x] Add reopen-last-closed-window with Cmd+Shift+T and command palette ([579c](https://tangled.org/burrito.space/peek/commit/579c9926))
