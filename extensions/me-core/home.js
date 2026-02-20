@@ -480,6 +480,17 @@ function setupPubSub() {
     renderExploreLexicons();
   }, api.scopes.GLOBAL);
 
+  // Open create panel with a specific lexicon (from command palette)
+  api.subscribe('me:open-create', (msg) => {
+    if (!state.authenticated) return;
+    if (msg.nsid) {
+      switchPanel('create');
+      selectPickerLexicon(msg.nsid);
+    } else {
+      switchPanel('create');
+    }
+  }, api.scopes.GLOBAL);
+
   // Create record response — handles both detail panel and dedicated create panel
   api.subscribe('me:create-record:response', (msg) => {
     // Determine which panel is active and update accordingly
@@ -1293,12 +1304,16 @@ function addRecentLexicon(nsid) {
   state.recentLexicons.sort();
   saveRecentLexicons();
   renderRecentLexicons();
+  // Notify background to re-register shortcut commands
+  api.publish('me:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
 }
 
 function removeRecentLexicon(nsid) {
   state.recentLexicons = state.recentLexicons.filter(n => n !== nsid);
   saveRecentLexicons();
   renderRecentLexicons();
+  // Notify background to re-register shortcut commands
+  api.publish('me:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
 }
 
 function renderRecentLexicons() {

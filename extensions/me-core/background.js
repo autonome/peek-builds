@@ -458,6 +458,90 @@ async function processBlobs(record) {
 }
 
 // ============================================================================
+// Recent lexicons cache (for registering shortcut commands)
+// ============================================================================
+
+const RECENT_LEXICONS_KEY = 'recentLexicons';
+let recentLexiconCommands = []; // Track registered shortcut command names for cleanup
+
+/**
+ * Load recent lexicons from settings and register shortcut commands.
+ */
+async function loadAndRegisterRecentLexicons() {
+  if (!api) return;
+  try {
+    const result = await api.settings.getKey(RECENT_LEXICONS_KEY);
+    if (result.success && Array.isArray(result.data)) {
+      registerRecentLexiconCommands(result.data);
+    }
+  } catch {}
+}
+
+/**
+ * Register individual shortcut commands for recent lexicons.
+ * e.g. "app.bsky.feed.post" becomes command "post"
+ */
+function registerRecentLexiconCommands(nsids) {
+  // Unregister old shortcut commands
+  for (const name of recentLexiconCommands) {
+    try { api.commands.unregister(name); } catch {}
+  }
+  recentLexiconCommands = [];
+
+  // Track short names to avoid duplicates
+  const usedNames = new Set();
+
+  for (const nsid of nsids) {
+    const parts = nsid.split('.');
+    // Use last segment as the short name, e.g. "post" from "app.bsky.feed.post"
+    let shortName = parts[parts.length - 1];
+
+    // If duplicate, use last two segments, e.g. "feed.post"
+    if (usedNames.has(shortName)) {
+      shortName = parts.slice(-2).join('.');
+    }
+    // If still duplicate, use full NSID
+    if (usedNames.has(shortName)) {
+      shortName = nsid;
+    }
+    usedNames.add(shortName);
+
+    const cmdName = `me:${shortName}`;
+    api.commands.register({
+      name: cmdName,
+      description: `Create ${nsid} record`,
+      execute: () => {
+        openMeWithLexicon(nsid);
+        return { success: true };
+      },
+    });
+    recentLexiconCommands.push(cmdName);
+  }
+
+  if (recentLexiconCommands.length > 0) {
+    console.log('[me] Registered shortcut commands:', recentLexiconCommands.join(', '));
+  }
+}
+
+/**
+ * Open the Me home window with the Create panel pre-loaded for a specific lexicon.
+ */
+function openMeWithLexicon(nsid) {
+  if (!hasPeekAPI) return;
+  api.window.open('peek://ext/me-core/home.html', {
+    role: 'workspace',
+    key: 'me-home',
+    width: 860,
+    height: 620,
+    title: 'Me',
+  });
+  // Publish after a short delay to let the window load
+  setTimeout(() => {
+    api.publish('me:open-create', { nsid }, api.scopes.GLOBAL);
+  }, 300);
+}
+
+// ============================================================================
 // Extension lifecycle
 // ============================================================================
 
@@ -474,6 +558,88 @@ const extension = {
       execute: () => {
         openMe();
         return { success: true };
+      },
+    });
+
+    // me:create — list lexicons or open create panel for a specific NSID
+    api.commands.register({
+      name: 'me:create',
+      description: 'Create an AT Protocol record',
+      execute: async (ctx) => {
+        if (!currentSession) {
+          openMe();
+          return { success: false, message: 'Not logged in. Opening login...' };
+        }
+
+        // If a specific NSID is given as search text, go directly to it
+        if (ctx.search) {
+          const searchLower = ctx.search.toLowerCase();
+          // Check if it looks like a full NSID (has at least 3 dot-separated segments)
+          if (searchLower.split('.').length >= 3) {
+            openMeWithLexicon(ctx.search);
+            return { success: true };
+          }
+        }
+
+        // Build combined list: user collections + explore directory
+        const items = [];
+        const seen = new Set();
+
+        // User's own collections
+        try {
+          const collections = await getCollections(currentSession, onSessionRefresh);
+          const counts = await getAllCollectionCounts(currentSession, collections, onSessionRefresh);
+          await saveSession();
+          for (const col of counts) {
+            const countLabel = col.hasMore ? `${col.count}+` : String(col.count);
+            items.push({
+              name: col.nsid,
+              nsid: col.nsid,
+              label: `${col.nsid} (${countLabel} records)`,
+              source: 'repo',
+            });
+            seen.add(col.nsid);
+          }
+        } catch (err) {
+          console.warn('[me] Failed to load collections for me:create:', err);
+        }
+
+        // Explore directory lexicons
+        try {
+          const lexicons = await fetchLexiconDirectory();
+          if (lexicons) {
+            for (const lex of lexicons) {
+              if (seen.has(lex.nsid)) continue;
+              // If search filter provided, apply it
+              if (ctx.search && !lex.nsid.toLowerCase().includes(ctx.search.toLowerCase())) continue;
+              items.push({
+                name: lex.nsid,
+                nsid: lex.nsid,
+                label: `${lex.nsid} (${lex.domain})`,
+                source: 'directory',
+              });
+              seen.add(lex.nsid);
+            }
+          }
+        } catch (err) {
+          console.warn('[me] Failed to load lexicon directory for me:create:', err);
+        }
+
+        if (items.length === 0) {
+          // No items found, just open the create panel
+          openMeWithLexicon('');
+          return { success: true, message: 'Opening create panel...' };
+        }
+
+        // Return as output selection list
+        return {
+          success: true,
+          output: {
+            data: items,
+            mimeType: 'application/x-atproto-lexicon',
+            title: `${items.length} lexicons available`,
+          },
+        };
       },
     });
 
@@ -510,6 +676,16 @@ const extension = {
     // Set up pubsub for UI communication
     setupPubSub();
 
+    // Load recent lexicons and register shortcut commands
+    await loadAndRegisterRecentLexicons();
+
+    // Listen for recent lexicons changes to re-register shortcut commands
+    api.subscribe('me:recent-lexicons-changed', (msg) => {
+      if (Array.isArray(msg.nsids)) {
+        registerRecentLexiconCommands(msg.nsids);
+      }
+    }, api.scopes.GLOBAL);
+
     console.log('[me] Extension loaded', currentSession ? `(session: @${currentSession.handle})` : '(no session)');
   },
 
@@ -517,6 +693,11 @@ const extension = {
     console.log('[me] Cleaning up...');
     if (hasPeekAPI) {
       api.commands.unregister('me:core');
+      api.commands.unregister('me:create');
+      for (const name of recentLexiconCommands) {
+        try { api.commands.unregister(name); } catch {}
+      }
+      recentLexiconCommands = [];
     }
   },
 };

@@ -444,7 +444,7 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 **How to try it:**
 1. Close a page window.
 2. Press `Cmd+Shift+T` to reopen it.
-3. Or type `reopen` in the command palette.
+3. Or type `reopen closed window` in the command palette.
 
 ### Center Window / Center All Windows
 
@@ -660,16 +660,19 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 
 ### AT Protocol Identity (me-core)
 
-**Summary:** Connect your Bluesky/AT Protocol account via OAuth. Browse all known AT Protocol lexicons, view your repo's collections with record counts, and create records directly from auto-generated forms. Includes a recent lexicons sidebar for quick access to frequently used record types.
+**Summary:** Connect your Bluesky/AT Protocol account via OAuth (PKCE + DPoP). Browse your repo's collections with record counts, explore the full lexicon directory from the network, and create records with auto-generated forms or raw JSON. Recently used lexicon types appear as sidebar shortcuts.
 
-**Where in UI:** Command palette or extension window.
+**Where in UI:** Command palette (`me:core`) or the Me panel window.
 
 **How to try it:**
-1. Type `open me` in the command palette to open the Me extension.
-2. Click "Login" and authenticate with your Bluesky/AT Protocol account via OAuth.
-3. Once connected, your handle and profile appear. Use the sidebar to browse "My Lexicons" (your repo's collections) or "Explore Lexicons" (all known lexicons).
-4. Click a lexicon to view its schema. Click "Create Record" to open an auto-generated form based on the lexicon schema.
-5. Recently used lexicons appear in the sidebar for quick access.
+1. Type `me:core` in the command palette. The Me panel opens with a login screen.
+2. Start typing your Bluesky handle (e.g., `alice.bsky.social`). Typeahead search results appear from the public API.
+3. Select your account and click "Connect". A browser window opens for OAuth authorization.
+4. After authorizing, the panel shows your profile (avatar, display name, DID) with a sidebar navigation.
+5. **My Lexicons** (default view) -- lists every collection in your AT Protocol repo with record counts. Use the filter box to narrow by NSID.
+6. **Explore Lexicons** -- browse the full directory of known lexicons from lexidex.bsky.dev plus standard.site extras. Cached locally with 24-hour background refresh.
+7. **Create Record** -- search for a lexicon, select it, and fill in an auto-generated form based on the schema. Toggle to "Raw JSON" mode for full control. Supports blob uploads for image fields.
+8. Successfully created record types appear as sidebar shortcuts under the navigation. Click to jump back, or [x] to remove.
 
 ### Help Docs (Easter Egg)
 
@@ -800,6 +803,6 @@ All commands accessible from `Option+Space` or `Cmd+K`:
 | `markdown` | Convert JSON to markdown (chain) |
 | `save [filename]` | Save chain output to file |
 | `save as note` | Save chain output as a note |
-| `reopen` | Reopen last closed window |
-| `open me` | Open AT Protocol identity extension |
+| `reopen closed window` | Reopen last closed window |
+| `me:core` | Open AT Protocol identity extension |
 | `lists` | Produce sample list data (chain demo) |
