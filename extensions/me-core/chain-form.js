@@ -80,6 +80,7 @@ function publishResult(data) {
     sessionId,
     data: data || null,
     mimeType: 'application/json',
+    done: true,
   }, api.scopes.GLOBAL);
 }
 

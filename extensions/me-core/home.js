@@ -162,6 +162,14 @@ async function init() {
   // Load recent lexicons from storage
   loadRecentLexicons();
 
+  // Listen for recent lexicons changes from background (e.g. chain-form submissions)
+  api.subscribe('me:recent-lexicons-changed', (msg) => {
+    if (Array.isArray(msg.nsids)) {
+      state.recentLexicons = msg.nsids;
+      renderRecentLexicons();
+    }
+  }, api.scopes.GLOBAL);
+
   // Request current session state from background
   api.publish('me:get-session', {}, api.scopes.GLOBAL);
 

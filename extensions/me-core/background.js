@@ -439,6 +439,9 @@ function setupPubSub() {
         validationStatus: result.validationStatus,
       }, api.scopes.GLOBAL);
       console.log('[me] Record created:', result.uri);
+
+      // Add to recent lexicons
+      addRecentLexiconFromBackground(collection);
     } catch (err) {
       api.publish('me:create-record:response', { error: err.message }, api.scopes.GLOBAL);
       console.error('[me] Record creation failed:', err);
@@ -530,6 +533,23 @@ async function loadAndRegisterNewCommands() {
     }
   } catch {}
   rebuildNewCommands();
+}
+
+/**
+ * Add an NSID to recent lexicons from background (after record creation).
+ * Persists to settings and rebuilds commands.
+ */
+async function addRecentLexiconFromBackground(nsid) {
+  if (!api || !nsid) return;
+  if (knownRecentNsids.includes(nsid)) return;
+  knownRecentNsids.push(nsid);
+  knownRecentNsids.sort();
+  try {
+    await api.settings.setKey(RECENT_LEXICONS_KEY, knownRecentNsids);
+  } catch {}
+  rebuildNewCommands();
+  // Notify any open home UI to refresh sidebar
+  api.publish('me:recent-lexicons-changed', { nsids: knownRecentNsids }, api.scopes.GLOBAL);
 }
 
 /**

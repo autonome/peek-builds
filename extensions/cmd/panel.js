@@ -1114,7 +1114,13 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
     chainPopupActive = false;
     chainPopupWindowId = null;
 
-    log('cmd:panel', 'Received chain popup result, length:', (msg.data || '').length);
+    log('cmd:panel', 'Received chain popup result, length:', (msg.data || '').length, 'done:', !!msg.done);
+
+    // If the popup signals it's done (e.g. record created), close the panel
+    if (msg.done) {
+      shutdown();
+      return;
+    }
 
     // Update chain context with returned data
     state.chainContext.data = msg.data;
