@@ -458,55 +458,124 @@ async function processBlobs(record) {
 }
 
 // ============================================================================
-// Recent lexicons cache (for registering shortcut commands)
+// "new" command system — register "new {FriendlyName}" for known lexicons
 // ============================================================================
 
 const RECENT_LEXICONS_KEY = 'recentLexicons';
-let recentLexiconCommands = []; // Track registered shortcut command names for cleanup
+let registeredNewCommands = []; // Track registered "new ..." command names for cleanup
+let knownCollectionNsids = []; // NSIDs from user's repo collections
+let knownRecentNsids = []; // NSIDs from user's recent lexicons
 
 /**
- * Load recent lexicons from settings and register shortcut commands.
+ * Well-known AT Protocol lexicon NSIDs mapped to human-readable names.
+ * Duplicated from lexicon-ui.js since background.js can't easily import it.
  */
-async function loadAndRegisterRecentLexicons() {
+const FRIENDLY_NAMES = {
+  'app.bsky.feed.post': 'Post',
+  'app.bsky.feed.like': 'Like',
+  'app.bsky.feed.repost': 'Repost',
+  'app.bsky.feed.generator': 'Feed Generator',
+  'app.bsky.feed.threadgate': 'Thread Gate',
+  'app.bsky.feed.postgate': 'Post Gate',
+  'app.bsky.graph.follow': 'Follow',
+  'app.bsky.graph.block': 'Block',
+  'app.bsky.graph.list': 'List',
+  'app.bsky.graph.listitem': 'List Item',
+  'app.bsky.graph.listblock': 'List Block',
+  'app.bsky.graph.starterpack': 'Starter Pack',
+  'app.bsky.actor.profile': 'Profile',
+  'app.bsky.labeler.service': 'Labeler',
+  'chat.bsky.actor.declaration': 'Chat Settings',
+  'com.whtwnd.blog.entry': 'Blog Entry',
+  'blue.linkat.board': 'Board',
+  'fyi.frontpage.post': 'Frontpage Post',
+  'site.standard.publication': 'Publication',
+  'site.standard.document': 'Document',
+  'site.standard.graph.subscription': 'Subscription',
+};
+
+/**
+ * Convert an NSID to a friendly name.
+ * Uses hardcoded lookup, then falls back to camelCase splitting of the last segment.
+ */
+function nsidToFriendlyName(nsid) {
+  if (FRIENDLY_NAMES[nsid]) return FRIENDLY_NAMES[nsid];
+  const parts = nsid.split('.');
+  const last = parts[parts.length - 1];
+  return last
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, c => c.toUpperCase());
+}
+
+/**
+ * Extract a short domain label from an NSID for disambiguation.
+ * e.g. "app.bsky.feed.post" -> "bsky", "fyi.frontpage.post" -> "frontpage"
+ */
+function nsidDomainLabel(nsid) {
+  const parts = nsid.split('.');
+  // Use the second segment which is usually the most identifying part
+  // e.g. app.bsky -> "bsky", fyi.frontpage -> "frontpage", site.standard -> "standard"
+  return parts.length >= 2 ? parts[1] : parts[0];
+}
+
+/**
+ * Load recent lexicons from settings and re-register "new" commands.
+ */
+async function loadAndRegisterNewCommands() {
   if (!api) return;
   try {
     const result = await api.settings.getKey(RECENT_LEXICONS_KEY);
     if (result.success && Array.isArray(result.data)) {
-      registerRecentLexiconCommands(result.data);
+      knownRecentNsids = result.data;
     }
   } catch {}
+  rebuildNewCommands();
 }
 
 /**
- * Register individual shortcut commands for recent lexicons.
- * e.g. "app.bsky.feed.post" becomes command "post"
+ * Rebuild all "new ..." commands from the combined set of
+ * recent lexicons and repo collections, with deduplication
+ * and friendly-name collision handling.
  */
-function registerRecentLexiconCommands(nsids) {
-  // Unregister old shortcut commands
-  for (const name of recentLexiconCommands) {
+function rebuildNewCommands() {
+  if (!api) return;
+
+  // Unregister old commands
+  for (const name of registeredNewCommands) {
     try { api.commands.unregister(name); } catch {}
   }
-  recentLexiconCommands = [];
+  registeredNewCommands = [];
 
-  // Track short names to avoid duplicates
-  const usedNames = new Set();
+  // Deduplicate NSIDs from both sources
+  const allNsids = [...new Set([...knownRecentNsids, ...knownCollectionNsids])];
 
-  for (const nsid of nsids) {
-    const parts = nsid.split('.');
-    // Use last segment as the short name, e.g. "post" from "app.bsky.feed.post"
-    let shortName = parts[parts.length - 1];
+  if (allNsids.length === 0) return;
 
-    // If duplicate, use last two segments, e.g. "feed.post"
-    if (usedNames.has(shortName)) {
-      shortName = parts.slice(-2).join('.');
+  // Build friendly name -> [nsid, ...] map to detect collisions
+  const nameToNsids = new Map();
+  for (const nsid of allNsids) {
+    const friendly = nsidToFriendlyName(nsid);
+    if (!nameToNsids.has(friendly)) {
+      nameToNsids.set(friendly, []);
     }
-    // If still duplicate, use full NSID
-    if (usedNames.has(shortName)) {
-      shortName = nsid;
-    }
-    usedNames.add(shortName);
+    nameToNsids.get(friendly).push(nsid);
+  }
 
-    const cmdName = `me:${shortName}`;
+  // Register each NSID as a "new {FriendlyName}" command
+  for (const nsid of allNsids) {
+    const friendly = nsidToFriendlyName(nsid);
+    const siblings = nameToNsids.get(friendly);
+
+    // Disambiguate if multiple NSIDs produce the same friendly name
+    let displayName;
+    if (siblings.length > 1) {
+      displayName = `${friendly} (${nsidDomainLabel(nsid)})`;
+    } else {
+      displayName = friendly;
+    }
+
+    // Include the full NSID in the command name so the palette can match on it
+    const cmdName = `new ${displayName} — ${nsid}`;
     api.commands.register({
       name: cmdName,
       description: `Create ${nsid} record`,
@@ -515,11 +584,11 @@ function registerRecentLexiconCommands(nsids) {
         return { success: true };
       },
     });
-    recentLexiconCommands.push(cmdName);
+    registeredNewCommands.push(cmdName);
   }
 
-  if (recentLexiconCommands.length > 0) {
-    console.log('[me] Registered shortcut commands:', recentLexiconCommands.join(', '));
+  if (registeredNewCommands.length > 0) {
+    console.log('[me] Registered "new" commands:', registeredNewCommands.length);
   }
 }
 
@@ -561,85 +630,25 @@ const extension = {
       },
     });
 
-    // me:create — list lexicons or open create panel for a specific NSID
+    // Base "new" command — opens create panel, optionally with a specific NSID
     api.commands.register({
-      name: 'me:create',
-      description: 'Create an AT Protocol record',
+      name: 'new',
+      description: 'Create a new AT Protocol record',
       execute: async (ctx) => {
         if (!currentSession) {
           openMe();
           return { success: false, message: 'Not logged in. Opening login...' };
         }
 
-        // If a specific NSID is given as search text, go directly to it
-        if (ctx.search) {
-          const searchLower = ctx.search.toLowerCase();
-          // Check if it looks like a full NSID (has at least 3 dot-separated segments)
-          if (searchLower.split('.').length >= 3) {
-            openMeWithLexicon(ctx.search);
-            return { success: true };
-          }
+        // If search text contains a dotted NSID, open directly with that lexicon
+        if (ctx.search && ctx.search.includes('.')) {
+          openMeWithLexicon(ctx.search.trim());
+          return { success: true };
         }
 
-        // Build combined list: user collections + explore directory
-        const items = [];
-        const seen = new Set();
-
-        // User's own collections
-        try {
-          const collections = await getCollections(currentSession, onSessionRefresh);
-          const counts = await getAllCollectionCounts(currentSession, collections, onSessionRefresh);
-          await saveSession();
-          for (const col of counts) {
-            const countLabel = col.hasMore ? `${col.count}+` : String(col.count);
-            items.push({
-              name: col.nsid,
-              nsid: col.nsid,
-              label: `${col.nsid} (${countLabel} records)`,
-              source: 'repo',
-            });
-            seen.add(col.nsid);
-          }
-        } catch (err) {
-          console.warn('[me] Failed to load collections for me:create:', err);
-        }
-
-        // Explore directory lexicons
-        try {
-          const lexicons = await fetchLexiconDirectory();
-          if (lexicons) {
-            for (const lex of lexicons) {
-              if (seen.has(lex.nsid)) continue;
-              // If search filter provided, apply it
-              if (ctx.search && !lex.nsid.toLowerCase().includes(ctx.search.toLowerCase())) continue;
-              items.push({
-                name: lex.nsid,
-                nsid: lex.nsid,
-                label: `${lex.nsid} (${lex.domain})`,
-                source: 'directory',
-              });
-              seen.add(lex.nsid);
-            }
-          }
-        } catch (err) {
-          console.warn('[me] Failed to load lexicon directory for me:create:', err);
-        }
-
-        if (items.length === 0) {
-          // No items found, just open the create panel
-          openMeWithLexicon('');
-          return { success: true, message: 'Opening create panel...' };
-        }
-
-        // Return as output selection list
-        return {
-          success: true,
-          output: {
-            data: items,
-            mimeType: 'application/x-atproto-lexicon',
-            title: `${items.length} lexicons available`,
-          },
-        };
+        // No specific NSID — open the Create panel with its built-in picker
+        openMeWithLexicon('');
+        return { success: true };
       },
     });
 
@@ -676,13 +685,22 @@ const extension = {
     // Set up pubsub for UI communication
     setupPubSub();
 
-    // Load recent lexicons and register shortcut commands
-    await loadAndRegisterRecentLexicons();
+    // Load recent lexicons and register "new" commands
+    await loadAndRegisterNewCommands();
 
-    // Listen for recent lexicons changes to re-register shortcut commands
+    // Listen for recent lexicons changes to re-register "new" commands
     api.subscribe('me:recent-lexicons-changed', (msg) => {
       if (Array.isArray(msg.nsids)) {
-        registerRecentLexiconCommands(msg.nsids);
+        knownRecentNsids = msg.nsids;
+        rebuildNewCommands();
+      }
+    }, api.scopes.GLOBAL);
+
+    // Listen for collections responses to register "new" commands for repo collections
+    api.subscribe('me:collections:response', (msg) => {
+      if (Array.isArray(msg.collections)) {
+        knownCollectionNsids = msg.collections.map(c => c.nsid);
+        rebuildNewCommands();
       }
     }, api.scopes.GLOBAL);
 
@@ -693,11 +711,11 @@ const extension = {
     console.log('[me] Cleaning up...');
     if (hasPeekAPI) {
       api.commands.unregister('me:core');
-      api.commands.unregister('me:create');
-      for (const name of recentLexiconCommands) {
+      api.commands.unregister('new');
+      for (const name of registeredNewCommands) {
         try { api.commands.unregister(name); } catch {}
       }
-      recentLexiconCommands = [];
+      registeredNewCommands = [];
     }
   },
 };
