@@ -580,8 +580,19 @@ function rebuildNewCommands() {
       name: cmdName,
       description: `Create ${nsid} record`,
       execute: () => {
-        openMeWithLexicon(nsid);
-        return { success: true };
+        if (!currentSession) {
+          openMe();
+          return { success: false, message: 'Not logged in. Opening login...' };
+        }
+        return {
+          success: true,
+          output: {
+            data: { nsid },
+            mimeType: 'application/x-lexicon-form',
+            title: displayName,
+            interactive: 'peek://ext/me-core/chain-form.html',
+          },
+        };
       },
     });
     registeredNewCommands.push(cmdName);
@@ -640,10 +651,19 @@ const extension = {
           return { success: false, message: 'Not logged in. Opening login...' };
         }
 
-        // If search text contains a dotted NSID, open directly with that lexicon
+        // If search text contains a dotted NSID, open chain form popup
         if (ctx.search && ctx.search.includes('.')) {
-          openMeWithLexicon(ctx.search.trim());
-          return { success: true };
+          const nsid = ctx.search.trim();
+          const friendlyName = nsidToFriendlyName(nsid);
+          return {
+            success: true,
+            output: {
+              data: { nsid },
+              mimeType: 'application/x-lexicon-form',
+              title: friendlyName,
+              interactive: 'peek://ext/me-core/chain-form.html',
+            },
+          };
         }
 
         // No specific NSID — open the Create panel with its built-in picker
