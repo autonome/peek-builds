@@ -75,54 +75,29 @@ let hudWindowId = null;
 let appFocused = true; // assume focused at startup
 
 /**
- * Load HUD enabled state from extension settings API, fallback to localStorage cache
+ * Load HUD enabled state from localStorage
  */
 const loadState = async () => {
-  if (api?.settings?.getKey) {
-    try {
-      const result = await api.settings.getKey('overlay_visible');
-      if (result.success && result.data !== undefined && result.data !== null) {
-        hudEnabled = !!result.data;
-        console.log('[ext:hud] Loaded state from datastore - enabled:', hudEnabled);
-        return hudEnabled;
-      }
-    } catch (err) {
-      console.log('[ext:hud] Failed to load from datastore, falling back to localStorage:', err);
-    }
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    hudEnabled = stored === 'true';
+    console.log('[ext:hud] Loaded state from localStorage - enabled:', hudEnabled);
+  } catch (err) {
+    console.log('[ext:hud] Failed to load state from localStorage:', err);
   }
-  // Fallback to localStorage cache
-  const stored = localStorage.getItem(STORAGE_KEY);
-  hudEnabled = stored === 'true';
-  console.log('[ext:hud] Loaded state from localStorage fallback - enabled:', hudEnabled);
   return hudEnabled;
 };
 
 /**
- * Save HUD enabled state to extension settings API and localStorage cache
+ * Save HUD enabled state to localStorage
  */
 const saveState = (enabled) => {
   hudEnabled = enabled;
-
-  // Write to localStorage as fast cache
   try {
     localStorage.setItem(STORAGE_KEY, String(enabled));
+    console.log('[ext:hud] Saved state to localStorage - enabled:', enabled);
   } catch (err) {
-    debug && console.log('[ext:hud] Failed to cache state to localStorage:', err);
-  }
-
-  // Write to extension settings API (datastore) as source of truth
-  if (api?.settings?.setKey) {
-    api.settings.setKey('overlay_visible', enabled).then(result => {
-      if (result.success) {
-        console.log('[ext:hud] Saved state to datastore - overlay_visible:', enabled);
-      } else {
-        console.error('[ext:hud] Failed to save state to datastore:', result.error);
-      }
-    }).catch(err => {
-      console.error('[ext:hud] Failed to save state to datastore:', err);
-    });
-  } else {
-    console.log('[ext:hud] Saved state to localStorage only - enabled:', enabled);
+    console.error('[ext:hud] Failed to save state to localStorage:', err);
   }
 };
 

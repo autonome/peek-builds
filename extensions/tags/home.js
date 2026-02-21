@@ -306,12 +306,10 @@ const handleEscape = () => {
  */
 const loadViewPrefs = async () => {
   try {
-    if (api?.settings?.getKey) {
-      const result = await api.settings.getKey('viewPrefs');
-      if (result.success && result.data) {
-        viewPrefs = { ...viewPrefs, ...result.data };
-        debug && console.log('[tags] Loaded viewPrefs:', viewPrefs);
-      }
+    const stored = localStorage.getItem('viewPrefs');
+    if (stored) {
+      viewPrefs = { ...viewPrefs, ...JSON.parse(stored) };
+      debug && console.log('[tags] Loaded viewPrefs:', viewPrefs);
     }
   } catch (err) {
     debug && console.log('[tags] Failed to load viewPrefs:', err);
@@ -323,9 +321,7 @@ const loadViewPrefs = async () => {
  */
 const saveViewPrefs = async () => {
   try {
-    if (api?.settings?.setKey) {
-      await api.settings.setKey('viewPrefs', viewPrefs);
-    }
+    localStorage.setItem('viewPrefs', JSON.stringify(viewPrefs));
   } catch (err) {
     debug && console.log('[tags] Failed to save viewPrefs:', err);
   }

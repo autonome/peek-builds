@@ -52,11 +52,9 @@ const TYPE_ICONS = {
 
 async function loadViewPrefs() {
   try {
-    if (api?.settings?.getKey) {
-      const result = await api.settings.getKey('viewPrefs');
-      if (result.success && result.data) {
-        viewPrefs = { ...viewPrefs, ...result.data };
-      }
+    const stored = localStorage.getItem('viewPrefs');
+    if (stored) {
+      viewPrefs = { ...viewPrefs, ...JSON.parse(stored) };
     }
   } catch (err) {
     // ignore
@@ -65,9 +63,7 @@ async function loadViewPrefs() {
 
 async function saveViewPrefs() {
   try {
-    if (api?.settings?.setKey) {
-      await api.settings.setKey('viewPrefs', viewPrefs);
-    }
+    localStorage.setItem('viewPrefs', JSON.stringify(viewPrefs));
   } catch (err) {
     // ignore
   }

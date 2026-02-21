@@ -23,21 +23,13 @@ let appFocused = true;
  * Load enabled state
  */
 const loadState = async () => {
-  if (api?.settings?.getKey) {
-    try {
-      const result = await api.settings.getKey('overlay_visible');
-      if (result.success && result.data !== undefined && result.data !== null) {
-        enabled = !!result.data;
-        console.log('[ext:helpdocs] Loaded state from datastore - enabled:', enabled);
-        return enabled;
-      }
-    } catch (err) {
-      console.log('[ext:helpdocs] Failed to load from datastore:', err);
-    }
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    enabled = stored === 'true'; // Default disabled
+    console.log('[ext:helpdocs] Loaded state from localStorage - enabled:', enabled);
+  } catch (err) {
+    console.log('[ext:helpdocs] Failed to load state from localStorage:', err);
   }
-  const stored = localStorage.getItem(STORAGE_KEY);
-  enabled = stored === 'true'; // Default disabled
-  console.log('[ext:helpdocs] Loaded state - enabled:', enabled);
   return enabled;
 };
 
@@ -48,13 +40,9 @@ const saveState = (value) => {
   enabled = value;
   try {
     localStorage.setItem(STORAGE_KEY, String(value));
+    console.log('[ext:helpdocs] Saved state to localStorage - enabled:', value);
   } catch (err) {
-    debug && console.log('[ext:helpdocs] Failed to cache state:', err);
-  }
-  if (api?.settings?.setKey) {
-    api.settings.setKey('overlay_visible', value).catch(err => {
-      console.error('[ext:helpdocs] Failed to save state:', err);
-    });
+    console.error('[ext:helpdocs] Failed to save state to localStorage:', err);
   }
 };
 

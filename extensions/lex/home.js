@@ -27,9 +27,35 @@ import {
   listRecords,
   getRecord,
   deleteRecord,
+  getLatestCommit,
 } from './atproto.js';
 
 const api = window.app;
+
+// ============================================================================
+// BroadcastChannel for intra-extension messaging (home.js <-> background.js)
+// ============================================================================
+
+const lexChannel = new BroadcastChannel('lex');
+const lexChannelHandlers = {};
+
+lexChannel.onmessage = (e) => {
+  const { topic, data } = e.data;
+  if (lexChannelHandlers[topic]) {
+    for (const handler of lexChannelHandlers[topic]) {
+      handler(data);
+    }
+  }
+};
+
+function onChannel(topic, handler) {
+  if (!lexChannelHandlers[topic]) lexChannelHandlers[topic] = [];
+  lexChannelHandlers[topic].push(handler);
+}
+
+function emitChannel(topic, data) {
+  lexChannel.postMessage({ topic, data });
+}
 
 // ============================================================================
 // Session state (previously in background.js)
@@ -193,6 +219,218 @@ async function fetchLexiconDirectory() {
     throw err;
   } finally {
     lexiconCacheLoading = false;
+  }
+}
+
+// ============================================================================
+// Record Cache (localStorage-based)
+// ============================================================================
+
+const CACHE_PREFIX = 'lex:records:';
+const REPO_REV_KEY = 'lex:repoRev';
+const SYNC_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+let syncIntervalId = null;
+let lastSyncTime = 0;
+
+/**
+ * Get cached records for a collection from localStorage.
+ * @param {string} collection
+ * @returns {{records: Array, cursor: string|null, lastSync: number}|null}
+ */
+function getCachedRecords(collection) {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + collection);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write records for a collection to localStorage cache.
+ * @param {string} collection
+ * @param {Array} records
+ * @param {string|null} cursor
+ */
+function setCachedRecords(collection, records, cursor) {
+  try {
+    localStorage.setItem(CACHE_PREFIX + collection, JSON.stringify({
+      records,
+      cursor,
+      lastSync: Date.now(),
+    }));
+  } catch (err) {
+    console.warn('[lex] Failed to write record cache:', err);
+  }
+}
+
+/**
+ * Remove cached records for a collection.
+ * @param {string} collection
+ */
+function clearCachedRecords(collection) {
+  try {
+    localStorage.removeItem(CACHE_PREFIX + collection);
+  } catch {}
+}
+
+/**
+ * Get the stored repo rev (commit CID).
+ * @returns {string|null}
+ */
+function getStoredRepoRev() {
+  try {
+    return localStorage.getItem(REPO_REV_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Store the repo rev (commit CID).
+ * @param {string} rev
+ */
+function setStoredRepoRev(rev) {
+  try {
+    localStorage.setItem(REPO_REV_KEY, rev);
+  } catch {}
+}
+
+/**
+ * Check if the repo has changed by comparing commit revs.
+ * @param {Object} session
+ * @returns {Promise<{changed: boolean, rev: string|null}>}
+ */
+async function checkForChanges(session) {
+  try {
+    const result = await getLatestCommit(session, onSessionRefresh);
+    const currentRev = result.rev;
+    const storedRev = getStoredRepoRev();
+
+    if (!storedRev || storedRev !== currentRev) {
+      setStoredRepoRev(currentRev);
+      return { changed: true, rev: currentRev };
+    }
+    return { changed: false, rev: currentRev };
+  } catch (err) {
+    console.warn('[lex] Failed to check repo rev:', err);
+    return { changed: false, rev: null };
+  }
+}
+
+/**
+ * Fully re-fetch a collection's records and update the cache.
+ * Fetches all pages up to a reasonable limit.
+ * @param {Object} session
+ * @param {string} collection
+ * @returns {Promise<{records: Array, cursor: string|null}>}
+ */
+async function syncCollection(session, collection) {
+  let allRecords = [];
+  let cursor = null;
+
+  // Fetch up to 500 records (5 pages of 100)
+  for (let i = 0; i < 5; i++) {
+    const result = await listRecords(session, collection, { limit: 100, cursor }, onSessionRefresh);
+    allRecords = allRecords.concat(result.records);
+    cursor = result.cursor;
+    if (!cursor) break;
+  }
+
+  setCachedRecords(collection, allRecords, cursor);
+  return { records: allRecords, cursor };
+}
+
+/**
+ * Check repo rev and re-sync stale collections.
+ * Called on the periodic poll interval.
+ */
+async function syncPoll() {
+  if (!currentSession) return;
+
+  const { changed } = await checkForChanges(currentSession);
+  lastSyncTime = Date.now();
+  updateSyncIndicator();
+
+  if (!changed) {
+    console.log('[lex] Repo unchanged, skipping sync');
+    return;
+  }
+
+  console.log('[lex] Repo changed, re-syncing current collection');
+
+  // If we're viewing a records list, refresh it
+  if (state.activePanel === 'records' && state.recordsNsid) {
+    await refreshCurrentRecordsList();
+  }
+}
+
+/**
+ * Start the periodic sync poll.
+ */
+function startSyncPoll() {
+  if (syncIntervalId) return;
+  syncIntervalId = setInterval(syncPoll, SYNC_POLL_INTERVAL_MS);
+  console.log('[lex] Started sync poll (every 5 min)');
+}
+
+/**
+ * Stop the periodic sync poll.
+ */
+function stopSyncPoll() {
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+    syncIntervalId = null;
+  }
+}
+
+/**
+ * Update the "last synced" indicator in the records panel.
+ */
+function updateSyncIndicator() {
+  const el = document.getElementById('records-sync-status');
+  if (!el) return;
+
+  if (!lastSyncTime) {
+    el.textContent = '';
+    return;
+  }
+
+  const ago = Date.now() - lastSyncTime;
+  let text;
+  if (ago < 60000) {
+    text = 'just now';
+  } else if (ago < 3600000) {
+    const mins = Math.floor(ago / 60000);
+    text = `${mins} min${mins !== 1 ? 's' : ''} ago`;
+  } else {
+    const hrs = Math.floor(ago / 3600000);
+    text = `${hrs} hr${hrs !== 1 ? 's' : ''} ago`;
+  }
+  el.textContent = `synced ${text}`;
+}
+
+/**
+ * Refresh the currently viewed records list from the PDS (background fetch).
+ */
+async function refreshCurrentRecordsList() {
+  if (!currentSession || !state.recordsNsid) return;
+
+  try {
+    const { records, cursor } = await syncCollection(currentSession, state.recordsNsid);
+    await saveSession();
+
+    state.recordsList = records;
+    state.recordsCursor = cursor;
+    state.recordsLoading = false;
+
+    renderRecordsList();
+    lastSyncTime = Date.now();
+    updateSyncIndicator();
+  } catch (err) {
+    console.warn('[lex] Background records refresh failed:', err);
   }
 }
 
@@ -370,7 +608,7 @@ async function init() {
   loadRecentLexicons();
 
   // Listen for open-create from command palette (via background commands)
-  api.subscribe('lex:open-create', (msg) => {
+  onChannel('lex:open-create', (msg) => {
     if (!state.authenticated) return;
     if (msg.nsid) {
       switchPanel('create');
@@ -378,7 +616,7 @@ async function init() {
     } else {
       switchPanel('create');
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Load session from storage directly
   await loadSession();
@@ -412,6 +650,14 @@ async function init() {
   if (api.escape) {
     api.escape.onEscape(handleEscape);
   }
+
+  // Start sync poll if authenticated
+  if (currentSession) {
+    startSyncPoll();
+  }
+
+  // Update "last synced" text every 30s
+  setInterval(updateSyncIndicator, 30000);
 }
 
 // ============================================================================
@@ -529,14 +775,26 @@ function setupEventListeners() {
   // Logout button — call clearSession directly
   logoutBtn.addEventListener('click', async () => {
     await clearSession();
+    stopSyncPoll();
     state.authenticated = false;
     state.handle = null;
     state.did = null;
     state.pdsUrl = null;
     state.profile = null;
     state.collections = null;
+    // Clear localStorage cache
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith(CACHE_PREFIX) || key === REPO_REV_KEY)) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch {}
     // Notify background (for command state) and other windows
-    api.publish('lex:session-changed', { authenticated: false }, api.scopes.GLOBAL);
+    emitChannel('lex:session-changed', { authenticated: false });
     showLoginView();
   });
 }
@@ -781,6 +1039,9 @@ function showAccountView() {
 
   // Fetch collections directly
   fetchCollections();
+
+  // Start periodic sync
+  startSyncPoll();
 }
 
 async function fetchCollections() {
@@ -1127,6 +1388,10 @@ async function handleCreateSubmit() {
     createSubmitStatus.style.display = '';
 
     console.log('[lex] Record created:', result.uri);
+
+    // Invalidate cache for this collection and update repo rev
+    if (state.createNsid) clearCachedRecords(state.createNsid);
+    checkForChanges(currentSession).catch(() => {});
 
     // Refresh collections and add to recent
     fetchCollections();
@@ -1535,6 +1800,7 @@ function setupRecordsPanel() {
 
 /**
  * Open the records list for a collection.
+ * Shows cached records instantly, then fetches fresh data in background.
  */
 async function openRecordsList(nsid) {
   state.previousPanel = 'my-lexicons';
@@ -1547,12 +1813,41 @@ async function openRecordsList(nsid) {
   const friendly = nsidToFriendlyName(nsid);
   recordsTitleEl.textContent = friendly;
   recordsNsidEl.textContent = nsid;
-  recordsListEl.innerHTML = '<div class="loading">Loading records...</div>';
   recordsPaginationEl.style.display = 'none';
 
   switchPanel('records');
 
-  await loadRecordsPage();
+  // Check cache first for instant display
+  const cached = getCachedRecords(nsid);
+  if (cached && cached.records && cached.records.length > 0) {
+    state.recordsList = cached.records;
+    state.recordsCursor = cached.cursor;
+    state.recordsLoading = false;
+    lastSyncTime = cached.lastSync || 0;
+    renderRecordsList();
+    updateSyncIndicator();
+
+    // Show subtle refreshing indicator
+    const syncEl = document.getElementById('records-sync-status');
+    if (syncEl) syncEl.textContent = 'refreshing...';
+
+    // Fetch fresh data in background
+    refreshCurrentRecordsList().catch(err => {
+      console.warn('[lex] Background refresh failed:', err);
+      // Keep showing cached data
+      if (syncEl) updateSyncIndicator();
+    });
+  } else {
+    // No cache — show loading and fetch
+    recordsListEl.innerHTML = '<div class="loading">Loading records...</div>';
+    await loadRecordsPage();
+    // Cache the result
+    if (state.recordsList.length > 0) {
+      setCachedRecords(nsid, state.recordsList, state.recordsCursor);
+      lastSyncTime = Date.now();
+      updateSyncIndicator();
+    }
+  }
 }
 
 async function loadRecordsPage() {
@@ -1574,6 +1869,11 @@ async function loadRecordsPage() {
     state.recordsLoading = false;
 
     renderRecordsList();
+
+    // Update cache with current full list
+    setCachedRecords(state.recordsNsid, state.recordsList, state.recordsCursor);
+    lastSyncTime = Date.now();
+    updateSyncIndicator();
   } catch (err) {
     state.recordsLoading = false;
     recordsListEl.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
@@ -1926,8 +2226,14 @@ async function handleDeleteRecord() {
     await deleteRecord(currentSession, state.recordsNsid, rkey, onSessionRefresh);
     await saveSession();
 
-    // Remove from local list
+    // Remove from local list and update cache
     state.recordsList = state.recordsList.filter(r => r.uri !== state.recordDetailUri);
+    if (state.recordsNsid) {
+      setCachedRecords(state.recordsNsid, state.recordsList, state.recordsCursor);
+    }
+
+    // Update repo rev
+    checkForChanges(currentSession).catch(() => {});
 
     // Go back to records list and refresh
     goBackFromRecordDetail();

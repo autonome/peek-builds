@@ -918,3 +918,15 @@ export async function deleteRecord(session, collection, rkey, onSessionRefresh =
     rkey,
   }, onSessionRefresh);
 }
+
+/**
+ * Get the latest commit rev for a repo (used for change detection).
+ * @param {OAuthSession} session
+ * @param {function} [onSessionRefresh]
+ * @returns {Promise<{cid: string, rev: string}>}
+ */
+export async function getLatestCommit(session, onSessionRefresh = null) {
+  return xrpcGet(session, 'com.atproto.sync.getLatestCommit', {
+    did: session.did,
+  }, onSessionRefresh);
+}
