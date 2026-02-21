@@ -2,14 +2,14 @@
  * Chain Form — compact lexicon record form popup for cmd palette chaining.
  *
  * Opened by the cmd panel's openChainPopup() as a modal child window.
- * Receives content (nsid + session info) via pubsub, renders a dynamic form,
- * and creates the record via the lex:create-record pubsub channel.
+ * Receives content (nsid) via pubsub, resolves the lexicon schema,
+ * generates a dynamic form, and creates the record directly via atproto.js.
  *
  * Protocol:
  *   1. Reads sessionId, mimeType, title from URL params
  *   2. Subscribes to 'chain-popup:content' to receive { nsid } (matched by sessionId)
  *   3. Resolves the lexicon schema and generates the form
- *   4. On submit, publishes 'lex:create-record' to the background
+ *   4. On submit, calls xrpcPost directly (no background needed)
  *   5. On success, publishes 'chain-popup:result' to signal completion
  *   6. On Escape, closes without creating
  */
@@ -24,6 +24,10 @@ import {
   nsidToFriendlyName,
 } from './lexicon-ui.js';
 
+import {
+  xrpcPost,
+} from './atproto.js';
+
 const api = window.app;
 
 // Read URL params
@@ -31,6 +35,38 @@ const params = new URLSearchParams(window.location.search);
 const sessionId = params.get('sessionId');
 const mimeType = params.get('mimeType') || 'application/x-lexicon-form';
 const title = params.get('title') || 'New Record';
+
+// Session state — loaded from extension storage
+let currentSession = null;
+
+const STORAGE_KEY = 'session';
+
+async function loadSession() {
+  if (!api) return;
+  try {
+    const result = await api.settings.getKey(STORAGE_KEY);
+    if (result.success && result.data) {
+      currentSession = result.data;
+      console.log('[chain-form] Restored session for', currentSession.handle);
+    }
+  } catch (err) {
+    console.warn('[chain-form] Failed to load session:', err);
+  }
+}
+
+async function saveSession() {
+  if (!api || !currentSession) return;
+  try {
+    await api.settings.setKey(STORAGE_KEY, currentSession);
+  } catch (err) {
+    console.warn('[chain-form] Failed to save session:', err);
+  }
+}
+
+function onSessionRefresh(refreshedSession) {
+  currentSession = refreshedSession;
+  saveSession();
+}
 
 // State
 let currentNsid = null;
@@ -147,10 +183,16 @@ async function loadForm(nsid) {
 }
 
 /**
- * Handle form submission
+ * Handle form submission — calls xrpcPost directly.
  */
 async function handleSubmit() {
   if (submitting || !currentNsid) return;
+
+  if (!currentSession) {
+    showStatus('Error: Not logged in. Open Lexicon Studio to connect your account.', 'error');
+    return;
+  }
+
   submitting = true;
   btnSubmit.disabled = true;
   btnSubmit.textContent = 'Creating...';
@@ -171,30 +213,14 @@ async function handleSubmit() {
 
     console.log('[chain-form] Creating record:', currentNsid, record);
 
-    // Create record via background pubsub
-    const result = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Record creation timed out'));
-      }, 30000);
+    // Create record directly via atproto
+    const result = await xrpcPost(currentSession, 'com.atproto.repo.createRecord', {
+      repo: currentSession.did,
+      collection: currentNsid,
+      record,
+    }, onSessionRefresh);
 
-      // Listen for the response
-      const unsub = api.subscribe('lex:create-record:response', (msg) => {
-        clearTimeout(timeout);
-        // Unsubscribe not directly available, but the handler won't fire again
-        // since we resolve/reject immediately
-        if (msg.error) {
-          reject(new Error(msg.error));
-        } else {
-          resolve(msg);
-        }
-      }, api.scopes.GLOBAL);
-
-      // Send the create request
-      api.publish('lex:create-record', {
-        collection: currentNsid,
-        record,
-      }, api.scopes.GLOBAL);
-    });
+    await saveSession();
 
     // Show success
     let successMsg = 'Record created successfully!';
@@ -203,6 +229,11 @@ async function handleSubmit() {
     }
     showStatus(successMsg, 'success');
     btnSubmit.textContent = 'Created!';
+
+    console.log('[chain-form] Record created:', result.uri);
+
+    // Notify home UI to update recent lexicons
+    api.publish('lex:recent-lexicons-changed', { nsids: [currentNsid] }, api.scopes.GLOBAL);
 
     // Publish result to cmd panel and auto-close after delay
     setTimeout(() => {
@@ -259,10 +290,18 @@ document.addEventListener('keydown', (e) => {
 // Initialize
 // ============================================================================
 
-function init() {
+async function init() {
   if (!sessionId) {
     console.error('[chain-form] No sessionId in URL params');
     showStatus('Missing session ID', 'error');
+    return;
+  }
+
+  // Load session from storage first
+  await loadSession();
+
+  if (!currentSession) {
+    showStatus('Not logged in. Open Lexicon Studio to connect your account.', 'error');
     return;
   }
 

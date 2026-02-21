@@ -1,14 +1,8 @@
 /**
  * Lexicon Studio Home — AT Protocol identity and data browser UI
  *
- * Communicates with background.js via PubSub messages:
- * - lex:get-session / lex:session-state — get current session
- * - lex:search-actors / lex:search-actors:response — typeahead search
- * - lex:do-login / lex:session-changed / lex:login-error — login flow
- * - lex:do-logout / lex:session-changed — logout
- * - lex:get-collections / lex:collections:response — fetch lexicons
- * - lex:search-lexicons / lex:search-lexicons:response — explore lexicons
- * - lex:create-record / lex:create-record:response — create a record
+ * All session management, XRPC calls, and OAuth logic are handled directly
+ * in this file (via atproto.js imports). No background page needed.
  */
 
 import {
@@ -22,7 +16,182 @@ import {
   nsidToFriendlyName,
 } from './lexicon-ui.js';
 
+import {
+  searchActors,
+  loginWithOAuth,
+  getCollections,
+  getAllCollectionCounts,
+  getProfile,
+  xrpcPost,
+  uploadBlob,
+} from './atproto.js';
+
 const api = window.app;
+
+// ============================================================================
+// Session state (previously in background.js)
+// ============================================================================
+
+let currentSession = null;
+let currentProfile = null;
+
+const STORAGE_KEY = 'session';
+const PROFILE_KEY = 'profile';
+
+async function saveSession() {
+  if (!api) return;
+  try {
+    await api.settings.setKey(STORAGE_KEY, currentSession);
+    if (currentProfile) {
+      await api.settings.setKey(PROFILE_KEY, currentProfile);
+    }
+  } catch (err) {
+    console.warn('[lex] Failed to save session:', err);
+  }
+}
+
+async function loadSession() {
+  if (!api) return;
+  try {
+    const result = await api.settings.getKey(STORAGE_KEY);
+    if (result.success && result.data) {
+      currentSession = result.data;
+      console.log('[lex] Restored session for', currentSession.handle);
+    }
+    const profileResult = await api.settings.getKey(PROFILE_KEY);
+    if (profileResult.success && profileResult.data) {
+      currentProfile = profileResult.data;
+    }
+  } catch (err) {
+    console.warn('[lex] Failed to load session:', err);
+  }
+}
+
+async function clearSession() {
+  currentSession = null;
+  currentProfile = null;
+  if (api) {
+    try {
+      await api.settings.setKey(STORAGE_KEY, null);
+      await api.settings.setKey(PROFILE_KEY, null);
+    } catch (err) {
+      console.warn('[lex] Failed to clear session:', err);
+    }
+  }
+}
+
+function onSessionRefresh(refreshedSession) {
+  currentSession = refreshedSession;
+  saveSession();
+}
+
+// ============================================================================
+// Lexicon directory (lexidex) cache
+// ============================================================================
+
+let lexiconCache = null;
+let lexiconCacheLoading = false;
+
+const LEXICON_DIR_KEY = 'lexiconDirectory';
+const LEXICON_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+async function fetchLexiconDirectoryFromNetwork() {
+  const homeRes = await fetch('https://lexidex.bsky.dev/');
+  if (!homeRes.ok) throw new Error(`Failed to fetch lexidex: ${homeRes.status}`);
+
+  const homeHtml = await homeRes.text();
+  const domainRegex = /href="\/domain\/([^"]+)"/g;
+  const domains = [];
+  let match;
+  while ((match = domainRegex.exec(homeHtml)) !== null) {
+    domains.push(match[1]);
+  }
+
+  if (domains.length === 0) throw new Error('No domains found on lexidex');
+
+  const allLexicons = [];
+  const domainFetches = domains.map(async (domain) => {
+    try {
+      const res = await fetch(`https://lexidex.bsky.dev/domain/${domain}`);
+      if (!res.ok) return;
+      const html = await res.text();
+      const lexRegex = /href="\/lexicon\/([^"]+)"/g;
+      let m;
+      while ((m = lexRegex.exec(html)) !== null) {
+        allLexicons.push({ nsid: m[1], domain });
+      }
+    } catch (err) {
+      console.warn(`[lex] Failed to fetch lexidex domain ${domain}:`, err);
+    }
+  });
+
+  await Promise.all(domainFetches);
+
+  const EXTRA_LEXICONS = [
+    { nsid: 'site.standard.publication', domain: 'standard.site' },
+    { nsid: 'site.standard.document', domain: 'standard.site' },
+    { nsid: 'site.standard.graph.subscription', domain: 'standard.site' },
+  ];
+  for (const extra of EXTRA_LEXICONS) {
+    if (!allLexicons.some(l => l.nsid === extra.nsid)) {
+      allLexicons.push(extra);
+    }
+  }
+
+  allLexicons.sort((a, b) => a.nsid.localeCompare(b.nsid));
+
+  if (api) {
+    try {
+      await api.settings.setKey(LEXICON_DIR_KEY, {
+        lexicons: allLexicons,
+        fetchedAt: Date.now(),
+      });
+    } catch (err) {
+      console.warn('[lex] Failed to persist lexicon directory:', err);
+    }
+  }
+
+  lexiconCache = allLexicons;
+  console.log(`[lex] Loaded ${allLexicons.length} lexicons from ${domains.length} domains`);
+  return allLexicons;
+}
+
+async function fetchLexiconDirectory() {
+  if (lexiconCache) return lexiconCache;
+  if (lexiconCacheLoading) return null;
+
+  if (api) {
+    try {
+      const result = await api.settings.getKey(LEXICON_DIR_KEY);
+      if (result.success && result.data && result.data.lexicons) {
+        lexiconCache = result.data.lexicons;
+        console.log(`[lex] Restored ${lexiconCache.length} lexicons from persisted cache`);
+
+        const age = Date.now() - (result.data.fetchedAt || 0);
+        if (age > LEXICON_DIR_MAX_AGE_MS) {
+          console.log('[lex] Lexicon directory cache is stale, refreshing in background...');
+          fetchLexiconDirectoryFromNetwork().catch(err => {
+            console.warn('[lex] Background lexicon directory refresh failed:', err);
+          });
+        }
+
+        return lexiconCache;
+      }
+    } catch (err) {
+      console.warn('[lex] Failed to load persisted lexicon directory:', err);
+    }
+  }
+
+  lexiconCacheLoading = true;
+  try {
+    return await fetchLexiconDirectoryFromNetwork();
+  } catch (err) {
+    console.error('[lex] Lexicon directory fetch failed:', err);
+    throw err;
+  } finally {
+    lexiconCacheLoading = false;
+  }
+}
 
 // ============================================================================
 // State
@@ -150,9 +319,6 @@ async function init() {
   // Set up nav listeners
   setupNav();
 
-  // Set up PubSub listeners
-  setupPubSub();
-
   // Set up create record UI (detail panel)
   setupCreateRecord();
 
@@ -162,16 +328,44 @@ async function init() {
   // Load recent lexicons from storage
   loadRecentLexicons();
 
-  // Listen for recent lexicons changes from background (e.g. chain-form submissions)
-  api.subscribe('lex:recent-lexicons-changed', (msg) => {
-    if (Array.isArray(msg.nsids)) {
-      state.recentLexicons = msg.nsids;
-      renderRecentLexicons();
+  // Listen for open-create from command palette (via background commands)
+  api.subscribe('lex:open-create', (msg) => {
+    if (!state.authenticated) return;
+    if (msg.nsid) {
+      switchPanel('create');
+      selectPickerLexicon(msg.nsid);
+    } else {
+      switchPanel('create');
     }
   }, api.scopes.GLOBAL);
 
-  // Request current session state from background
-  api.publish('lex:get-session', {}, api.scopes.GLOBAL);
+  // Load session from storage directly
+  await loadSession();
+
+  if (currentSession) {
+    // Session exists — show account view
+    state.authenticated = true;
+    state.handle = currentSession.handle;
+    state.did = currentSession.did;
+    state.pdsUrl = currentSession.pdsUrl;
+    state.profile = currentProfile;
+    showAccountView();
+
+    // Refresh profile in background
+    try {
+      const profile = await getProfile(currentSession.did);
+      if (profile) {
+        currentProfile = profile;
+        state.profile = profile;
+        await saveSession();
+        renderAccountInfo();
+      }
+    } catch {
+      // Best-effort
+    }
+  } else {
+    showLoginView();
+  }
 
   // Register escape handler
   if (api.escape) {
@@ -222,7 +416,7 @@ function handleEscape() {
 // ============================================================================
 
 function setupEventListeners() {
-  // Handle input for typeahead search
+  // Handle input for typeahead search — call searchActors directly
   handleInput.addEventListener('input', (e) => {
     const query = e.target.value.trim();
     if (searchTimer) clearTimeout(searchTimer);
@@ -235,8 +429,16 @@ function setupEventListeners() {
       return;
     }
 
-    searchTimer = setTimeout(() => {
-      api.publish('lex:search-actors', { query }, api.scopes.GLOBAL);
+    searchTimer = setTimeout(async () => {
+      try {
+        const results = await searchActors(query);
+        state.searchResults = results || [];
+        state.searchVisible = state.searchResults.length > 0;
+        state.activeIndex = -1;
+        renderSearchResults();
+      } catch (err) {
+        console.warn('[lex] Search failed:', err);
+      }
     }, 250);
   });
 
@@ -271,9 +473,18 @@ function setupEventListeners() {
     }, 200);
   });
 
-  // Logout button
-  logoutBtn.addEventListener('click', () => {
-    api.publish('lex:do-logout', {}, api.scopes.GLOBAL);
+  // Logout button — call clearSession directly
+  logoutBtn.addEventListener('click', async () => {
+    await clearSession();
+    state.authenticated = false;
+    state.handle = null;
+    state.did = null;
+    state.pdsUrl = null;
+    state.profile = null;
+    state.collections = null;
+    // Notify background (for command state) and other windows
+    api.publish('lex:session-changed', { authenticated: false }, api.scopes.GLOBAL);
+    showLoginView();
   });
 }
 
@@ -310,7 +521,7 @@ function setupNav() {
 function switchPanel(panel) {
   state.activePanel = panel;
 
-  // Update nav items (don't highlight for create-record — it's a sub-panel)
+  // Update nav items (don't highlight for create-record -- it's a sub-panel)
   document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.toggle('active', item.dataset.panel === panel);
   });
@@ -333,11 +544,21 @@ function switchPanel(panel) {
   }
 }
 
-function loadExploreLexicons() {
+async function loadExploreLexicons() {
   state.exploreLoading = true;
   state.exploreError = null;
   exploreListEl.innerHTML = '<div class="loading">Loading lexicon directory...</div>';
-  api.publish('lex:search-lexicons', {}, api.scopes.GLOBAL);
+
+  try {
+    const lexicons = await fetchLexiconDirectory();
+    state.exploreLoading = false;
+    state.exploreLexicons = lexicons || [];
+    renderExploreLexicons();
+  } catch (err) {
+    state.exploreLoading = false;
+    state.exploreError = err.message;
+    renderExploreLexicons();
+  }
 }
 
 function renderExploreLexicons() {
@@ -411,145 +632,7 @@ function renderExploreLexicons() {
 }
 
 // ============================================================================
-// PubSub
-// ============================================================================
-
-function setupPubSub() {
-  // Session state response (initial load)
-  api.subscribe('lex:session-state', (msg) => {
-    state.authenticated = msg.authenticated;
-    if (msg.authenticated) {
-      state.handle = msg.handle;
-      state.did = msg.did;
-      state.pdsUrl = msg.pdsUrl;
-      state.profile = msg.profile;
-      showAccountView();
-    } else {
-      showLoginView();
-    }
-  }, api.scopes.GLOBAL);
-
-  // Session changed (login/logout)
-  api.subscribe('lex:session-changed', (msg) => {
-    state.loading = false;
-    state.error = null;
-
-    if (msg.authenticated) {
-      state.authenticated = true;
-      state.handle = msg.handle;
-      state.did = msg.did;
-      state.pdsUrl = msg.pdsUrl;
-      state.profile = msg.profile;
-      showAccountView();
-    } else {
-      state.authenticated = false;
-      state.handle = null;
-      state.did = null;
-      state.pdsUrl = null;
-      state.profile = null;
-      state.collections = null;
-      showLoginView();
-    }
-  }, api.scopes.GLOBAL);
-
-  // Login error
-  api.subscribe('lex:login-error', (msg) => {
-    state.loading = false;
-    state.error = msg.message;
-    renderLoginState();
-  }, api.scopes.GLOBAL);
-
-  // Search results
-  api.subscribe('lex:search-actors:response', (msg) => {
-    state.searchResults = msg.results || [];
-    state.searchVisible = state.searchResults.length > 0;
-    state.activeIndex = -1;
-    renderSearchResults();
-  }, api.scopes.GLOBAL);
-
-  // Collections response
-  api.subscribe('lex:collections:response', (msg) => {
-    if (msg.error) {
-      collectionsListEl.innerHTML = `<div class="error">${escapeHtml(msg.error)}</div>`;
-      return;
-    }
-    state.collections = msg.collections || [];
-    renderCollections();
-  }, api.scopes.GLOBAL);
-
-  // Explore lexicons response
-  api.subscribe('lex:search-lexicons:response', (msg) => {
-    state.exploreLoading = false;
-    if (msg.error) {
-      state.exploreError = msg.error;
-    } else {
-      state.exploreLexicons = msg.lexicons || [];
-    }
-    renderExploreLexicons();
-  }, api.scopes.GLOBAL);
-
-  // Open create panel with a specific lexicon (from command palette)
-  api.subscribe('lex:open-create', (msg) => {
-    if (!state.authenticated) return;
-    if (msg.nsid) {
-      switchPanel('create');
-      selectPickerLexicon(msg.nsid);
-    } else {
-      switchPanel('create');
-    }
-  }, api.scopes.GLOBAL);
-
-  // Create record response — handles both detail panel and dedicated create panel
-  api.subscribe('lex:create-record:response', (msg) => {
-    // Determine which panel is active and update accordingly
-    const isCreatePanel = state.activePanel === 'create';
-
-    if (isCreatePanel) {
-      state.cpSubmitting = false;
-      cpSubmitBtn.disabled = false;
-      cpSubmitBtn.textContent = 'Create Record';
-
-      if (msg.error) {
-        cpSubmitStatus.className = 'submit-status error';
-        cpSubmitStatus.textContent = msg.error;
-        cpSubmitStatus.style.display = '';
-      } else {
-        cpSubmitStatus.className = 'submit-status success';
-        const validationNote = msg.validationStatus === 'unknown' ? ' (unvalidated)' : '';
-        cpSubmitStatus.innerHTML = `
-          Record created successfully${validationNote}
-          <div class="record-uri">${escapeHtml(msg.uri)}</div>
-        `;
-        cpSubmitStatus.style.display = '';
-        api.publish('lex:get-collections', {}, api.scopes.GLOBAL);
-        if (state.cpNsid) addRecentLexicon(state.cpNsid);
-      }
-    } else {
-      state.createSubmitting = false;
-      createSubmitBtn.disabled = false;
-      createSubmitBtn.textContent = 'Create Record';
-
-      if (msg.error) {
-        createSubmitStatus.className = 'submit-status error';
-        createSubmitStatus.textContent = msg.error;
-        createSubmitStatus.style.display = '';
-      } else {
-        createSubmitStatus.className = 'submit-status success';
-        const validationNote = msg.validationStatus === 'unknown' ? ' (unvalidated)' : '';
-        createSubmitStatus.innerHTML = `
-          Record created successfully${validationNote}
-          <div class="record-uri">${escapeHtml(msg.uri)}</div>
-        `;
-        createSubmitStatus.style.display = '';
-        api.publish('lex:get-collections', {}, api.scopes.GLOBAL);
-        if (state.createNsid) addRecentLexicon(state.createNsid);
-      }
-    }
-  }, api.scopes.GLOBAL);
-}
-
-// ============================================================================
-// Actions
+// Actions (direct calls instead of pubsub)
 // ============================================================================
 
 function selectActor(actor) {
@@ -577,16 +660,45 @@ function clearActorSelection() {
   handleInput.focus();
 }
 
-function doLogin() {
+async function doLogin() {
   if (!state.selectedActor) return;
 
   state.loading = true;
   state.error = null;
   renderLoginState();
 
-  api.publish('lex:do-login', {
-    handle: state.selectedActor.handle,
-  }, api.scopes.GLOBAL);
+  try {
+    currentSession = await loginWithOAuth(state.selectedActor.handle);
+
+    // Fetch profile
+    currentProfile = await getProfile(currentSession.did);
+
+    await saveSession();
+
+    state.loading = false;
+    state.authenticated = true;
+    state.handle = currentSession.handle;
+    state.did = currentSession.did;
+    state.pdsUrl = currentSession.pdsUrl;
+    state.profile = currentProfile;
+
+    // Notify background (for command state) and other windows
+    api.publish('lex:session-changed', {
+      authenticated: true,
+      handle: currentSession.handle,
+      did: currentSession.did,
+      pdsUrl: currentSession.pdsUrl,
+      profile: currentProfile,
+    }, api.scopes.GLOBAL);
+
+    showAccountView();
+    console.log('[lex] Logged in as', currentSession.handle);
+  } catch (err) {
+    state.loading = false;
+    state.error = err.message;
+    renderLoginState();
+    console.error('[lex] Login failed:', err);
+  }
 }
 
 // ============================================================================
@@ -614,10 +726,30 @@ function showAccountView() {
 
   renderAccountInfo();
 
-  // Fetch collections
+  // Fetch collections directly
+  fetchCollections();
+}
+
+async function fetchCollections() {
+  if (!currentSession) return;
+
   state.collections = null;
   collectionsListEl.innerHTML = '<div class="loading">Loading collections...</div>';
-  api.publish('lex:get-collections', {}, api.scopes.GLOBAL);
+
+  try {
+    const collections = await getCollections(currentSession, onSessionRefresh);
+    const counts = await getAllCollectionCounts(currentSession, collections, onSessionRefresh);
+    await saveSession();
+    state.collections = counts;
+    renderCollections();
+
+    // Notify background to update "new" commands with repo collections
+    api.publish('lex:collections-loaded', {
+      collections: counts.map(c => c.nsid),
+    }, api.scopes.GLOBAL);
+  } catch (err) {
+    collectionsListEl.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  }
 }
 
 function renderSearchResults() {
@@ -802,7 +934,7 @@ async function openCreateRecord(nsid, fromPanel) {
   state.createMode = 'form';
   state.createSubmitting = false;
 
-  // Reset UI — show friendly name as title, NSID as subtitle
+  // Reset UI
   const friendly = nsidToFriendlyName(nsid);
   createRecordNsidEl.innerHTML = `
     <span class="create-record-friendly">${escapeHtml(friendly)}</span>
@@ -828,7 +960,6 @@ async function openCreateRecord(nsid, fromPanel) {
     createSchemaLoading.style.display = 'none';
 
     if (!lexicon) {
-      // Could not resolve — show JSON editor only
       createSchemaError.textContent = 'Could not resolve lexicon schema. Use Raw JSON mode to create a record.';
       createSchemaError.style.display = '';
       modeJsonBtn.click();
@@ -842,7 +973,6 @@ async function openCreateRecord(nsid, fromPanel) {
     if (!schema) {
       createSchemaError.textContent = 'This lexicon does not define a record type. It may be a query or procedure.';
       createSchemaError.style.display = '';
-      // Still allow JSON mode
       modeJsonBtn.click();
       createSubmitArea.style.display = '';
       return;
@@ -877,10 +1007,10 @@ function goBackFromCreate() {
 }
 
 /**
- * Handle the create record submit action.
+ * Handle the create record submit action — calls xrpcPost directly.
  */
 async function handleCreateSubmit() {
-  if (state.createSubmitting || !state.createNsid) return;
+  if (state.createSubmitting || !state.createNsid || !currentSession) return;
 
   state.createSubmitting = true;
   createSubmitBtn.disabled = true;
@@ -891,10 +1021,8 @@ async function handleCreateSubmit() {
     let record;
 
     if (state.createMode === 'json') {
-      // Parse from JSON editor
       record = parseRawJson(createJsonContainer, state.createNsid);
     } else {
-      // Collect from generated form
       const form = createFormContainer.querySelector('.lexicon-form');
       if (!form) {
         throw new Error('No form found. Switch to Raw JSON mode.');
@@ -914,11 +1042,33 @@ async function handleCreateSubmit() {
       }
     }
 
-    // Send to background for creation
-    api.publish('lex:create-record', {
+    // Create record directly via atproto
+    const result = await xrpcPost(currentSession, 'com.atproto.repo.createRecord', {
+      repo: currentSession.did,
       collection: state.createNsid,
       record,
-    }, api.scopes.GLOBAL);
+    }, onSessionRefresh);
+
+    await saveSession();
+
+    // Show success
+    state.createSubmitting = false;
+    createSubmitBtn.disabled = false;
+    createSubmitBtn.textContent = 'Create Record';
+
+    const validationNote = result.validationStatus === 'unknown' ? ' (unvalidated)' : '';
+    createSubmitStatus.className = 'submit-status success';
+    createSubmitStatus.innerHTML = `
+      Record created successfully${validationNote}
+      <div class="record-uri">${escapeHtml(result.uri)}</div>
+    `;
+    createSubmitStatus.style.display = '';
+
+    console.log('[lex] Record created:', result.uri);
+
+    // Refresh collections and add to recent
+    fetchCollections();
+    if (state.createNsid) addRecentLexicon(state.createNsid);
 
   } catch (err) {
     state.createSubmitting = false;
@@ -927,6 +1077,7 @@ async function handleCreateSubmit() {
     createSubmitStatus.className = 'submit-status error';
     createSubmitStatus.textContent = err.message;
     createSubmitStatus.style.display = '';
+    console.error('[lex] Record creation failed:', err);
   }
 }
 
@@ -935,7 +1086,7 @@ async function handleCreateSubmit() {
 // ============================================================================
 
 function setupCreatePanel() {
-  // Picker input — filter as you type
+  // Picker input
   pickerInput.addEventListener('input', () => {
     state.pickerFilter = pickerInput.value.trim().toLowerCase();
     renderPickerResults();
@@ -1011,10 +1162,6 @@ function setupCreatePanel() {
   cpSubmitBtn.addEventListener('click', handleCreatePanelSubmit);
 }
 
-/**
- * Build the combined list of lexicons for the picker.
- * User's collections first (with badge), then explore directory.
- */
 function getPickerItems() {
   const filter = state.pickerFilter;
   const results = [];
@@ -1047,7 +1194,6 @@ function renderPickerResults() {
   const items = getPickerItems();
 
   if (items.length === 0 && !state.pickerFilter) {
-    // Nothing loaded yet
     if (state.exploreLoading) {
       pickerResults.innerHTML = '<div class="loading" style="padding: 12px 14px;">Loading lexicons...</div>';
       pickerResults.classList.add('visible');
@@ -1090,7 +1236,6 @@ function renderPickerResults() {
   }
 
   if (other.length > 0) {
-    // Limit to 50 results to avoid a huge list
     const shown = other.slice(0, 50);
     html += '<div class="picker-group-label">All lexicons</div>';
     html += shown.map(item => {
@@ -1239,8 +1384,11 @@ function clearPickerSelection() {
   pickerInput.focus();
 }
 
+/**
+ * Handle the create panel submit — calls xrpcPost directly.
+ */
 async function handleCreatePanelSubmit() {
-  if (state.cpSubmitting || !state.cpNsid) return;
+  if (state.cpSubmitting || !state.cpNsid || !currentSession) return;
 
   state.cpSubmitting = true;
   cpSubmitBtn.disabled = true;
@@ -1270,10 +1418,34 @@ async function handleCreatePanelSubmit() {
       }
     }
 
-    api.publish('lex:create-record', {
+    // Create record directly via atproto
+    const result = await xrpcPost(currentSession, 'com.atproto.repo.createRecord', {
+      repo: currentSession.did,
       collection: state.cpNsid,
       record,
-    }, api.scopes.GLOBAL);
+    }, onSessionRefresh);
+
+    await saveSession();
+
+    // Show success
+    state.cpSubmitting = false;
+    cpSubmitBtn.disabled = false;
+    cpSubmitBtn.textContent = 'Create Record';
+
+    const validationNote = result.validationStatus === 'unknown' ? ' (unvalidated)' : '';
+    cpSubmitStatus.className = 'submit-status success';
+    cpSubmitStatus.innerHTML = `
+      Record created successfully${validationNote}
+      <div class="record-uri">${escapeHtml(result.uri)}</div>
+    `;
+    cpSubmitStatus.style.display = '';
+
+    console.log('[lex] Record created:', result.uri);
+
+    // Refresh collections and add to recent
+    fetchCollections();
+    if (state.cpNsid) addRecentLexicon(state.cpNsid);
+
   } catch (err) {
     state.cpSubmitting = false;
     cpSubmitBtn.disabled = false;
@@ -1281,6 +1453,7 @@ async function handleCreatePanelSubmit() {
     cpSubmitStatus.className = 'submit-status error';
     cpSubmitStatus.textContent = err.message;
     cpSubmitStatus.style.display = '';
+    console.error('[lex] Record creation failed:', err);
   }
 }
 
