@@ -1,14 +1,14 @@
 /**
- * Me Home — AT Protocol identity and data browser UI
+ * Lexicon Studio Home — AT Protocol identity and data browser UI
  *
  * Communicates with background.js via PubSub messages:
- * - me:get-session / me:session-state — get current session
- * - me:search-actors / me:search-actors:response — typeahead search
- * - me:do-login / me:session-changed / me:login-error — login flow
- * - me:do-logout / me:session-changed — logout
- * - me:get-collections / me:collections:response — fetch lexicons
- * - me:search-lexicons / me:search-lexicons:response — explore lexicons
- * - me:create-record / me:create-record:response — create a record
+ * - lex:get-session / lex:session-state — get current session
+ * - lex:search-actors / lex:search-actors:response — typeahead search
+ * - lex:do-login / lex:session-changed / lex:login-error — login flow
+ * - lex:do-logout / lex:session-changed — logout
+ * - lex:get-collections / lex:collections:response — fetch lexicons
+ * - lex:search-lexicons / lex:search-lexicons:response — explore lexicons
+ * - lex:create-record / lex:create-record:response — create a record
  */
 
 import {
@@ -163,7 +163,7 @@ async function init() {
   loadRecentLexicons();
 
   // Listen for recent lexicons changes from background (e.g. chain-form submissions)
-  api.subscribe('me:recent-lexicons-changed', (msg) => {
+  api.subscribe('lex:recent-lexicons-changed', (msg) => {
     if (Array.isArray(msg.nsids)) {
       state.recentLexicons = msg.nsids;
       renderRecentLexicons();
@@ -171,7 +171,7 @@ async function init() {
   }, api.scopes.GLOBAL);
 
   // Request current session state from background
-  api.publish('me:get-session', {}, api.scopes.GLOBAL);
+  api.publish('lex:get-session', {}, api.scopes.GLOBAL);
 
   // Register escape handler
   if (api.escape) {
@@ -236,7 +236,7 @@ function setupEventListeners() {
     }
 
     searchTimer = setTimeout(() => {
-      api.publish('me:search-actors', { query }, api.scopes.GLOBAL);
+      api.publish('lex:search-actors', { query }, api.scopes.GLOBAL);
     }, 250);
   });
 
@@ -273,7 +273,7 @@ function setupEventListeners() {
 
   // Logout button
   logoutBtn.addEventListener('click', () => {
-    api.publish('me:do-logout', {}, api.scopes.GLOBAL);
+    api.publish('lex:do-logout', {}, api.scopes.GLOBAL);
   });
 }
 
@@ -337,7 +337,7 @@ function loadExploreLexicons() {
   state.exploreLoading = true;
   state.exploreError = null;
   exploreListEl.innerHTML = '<div class="loading">Loading lexicon directory...</div>';
-  api.publish('me:search-lexicons', {}, api.scopes.GLOBAL);
+  api.publish('lex:search-lexicons', {}, api.scopes.GLOBAL);
 }
 
 function renderExploreLexicons() {
@@ -416,7 +416,7 @@ function renderExploreLexicons() {
 
 function setupPubSub() {
   // Session state response (initial load)
-  api.subscribe('me:session-state', (msg) => {
+  api.subscribe('lex:session-state', (msg) => {
     state.authenticated = msg.authenticated;
     if (msg.authenticated) {
       state.handle = msg.handle;
@@ -430,7 +430,7 @@ function setupPubSub() {
   }, api.scopes.GLOBAL);
 
   // Session changed (login/logout)
-  api.subscribe('me:session-changed', (msg) => {
+  api.subscribe('lex:session-changed', (msg) => {
     state.loading = false;
     state.error = null;
 
@@ -453,14 +453,14 @@ function setupPubSub() {
   }, api.scopes.GLOBAL);
 
   // Login error
-  api.subscribe('me:login-error', (msg) => {
+  api.subscribe('lex:login-error', (msg) => {
     state.loading = false;
     state.error = msg.message;
     renderLoginState();
   }, api.scopes.GLOBAL);
 
   // Search results
-  api.subscribe('me:search-actors:response', (msg) => {
+  api.subscribe('lex:search-actors:response', (msg) => {
     state.searchResults = msg.results || [];
     state.searchVisible = state.searchResults.length > 0;
     state.activeIndex = -1;
@@ -468,7 +468,7 @@ function setupPubSub() {
   }, api.scopes.GLOBAL);
 
   // Collections response
-  api.subscribe('me:collections:response', (msg) => {
+  api.subscribe('lex:collections:response', (msg) => {
     if (msg.error) {
       collectionsListEl.innerHTML = `<div class="error">${escapeHtml(msg.error)}</div>`;
       return;
@@ -478,7 +478,7 @@ function setupPubSub() {
   }, api.scopes.GLOBAL);
 
   // Explore lexicons response
-  api.subscribe('me:search-lexicons:response', (msg) => {
+  api.subscribe('lex:search-lexicons:response', (msg) => {
     state.exploreLoading = false;
     if (msg.error) {
       state.exploreError = msg.error;
@@ -489,7 +489,7 @@ function setupPubSub() {
   }, api.scopes.GLOBAL);
 
   // Open create panel with a specific lexicon (from command palette)
-  api.subscribe('me:open-create', (msg) => {
+  api.subscribe('lex:open-create', (msg) => {
     if (!state.authenticated) return;
     if (msg.nsid) {
       switchPanel('create');
@@ -500,7 +500,7 @@ function setupPubSub() {
   }, api.scopes.GLOBAL);
 
   // Create record response — handles both detail panel and dedicated create panel
-  api.subscribe('me:create-record:response', (msg) => {
+  api.subscribe('lex:create-record:response', (msg) => {
     // Determine which panel is active and update accordingly
     const isCreatePanel = state.activePanel === 'create';
 
@@ -521,7 +521,7 @@ function setupPubSub() {
           <div class="record-uri">${escapeHtml(msg.uri)}</div>
         `;
         cpSubmitStatus.style.display = '';
-        api.publish('me:get-collections', {}, api.scopes.GLOBAL);
+        api.publish('lex:get-collections', {}, api.scopes.GLOBAL);
         if (state.cpNsid) addRecentLexicon(state.cpNsid);
       }
     } else {
@@ -541,7 +541,7 @@ function setupPubSub() {
           <div class="record-uri">${escapeHtml(msg.uri)}</div>
         `;
         createSubmitStatus.style.display = '';
-        api.publish('me:get-collections', {}, api.scopes.GLOBAL);
+        api.publish('lex:get-collections', {}, api.scopes.GLOBAL);
         if (state.createNsid) addRecentLexicon(state.createNsid);
       }
     }
@@ -584,7 +584,7 @@ function doLogin() {
   state.error = null;
   renderLoginState();
 
-  api.publish('me:do-login', {
+  api.publish('lex:do-login', {
     handle: state.selectedActor.handle,
   }, api.scopes.GLOBAL);
 }
@@ -617,7 +617,7 @@ function showAccountView() {
   // Fetch collections
   state.collections = null;
   collectionsListEl.innerHTML = '<div class="loading">Loading collections...</div>';
-  api.publish('me:get-collections', {}, api.scopes.GLOBAL);
+  api.publish('lex:get-collections', {}, api.scopes.GLOBAL);
 }
 
 function renderSearchResults() {
@@ -915,7 +915,7 @@ async function handleCreateSubmit() {
     }
 
     // Send to background for creation
-    api.publish('me:create-record', {
+    api.publish('lex:create-record', {
       collection: state.createNsid,
       record,
     }, api.scopes.GLOBAL);
@@ -1270,7 +1270,7 @@ async function handleCreatePanelSubmit() {
       }
     }
 
-    api.publish('me:create-record', {
+    api.publish('lex:create-record', {
       collection: state.cpNsid,
       record,
     }, api.scopes.GLOBAL);
@@ -1313,7 +1313,7 @@ function addRecentLexicon(nsid) {
   saveRecentLexicons();
   renderRecentLexicons();
   // Notify background to re-register shortcut commands
-  api.publish('me:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
+  api.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
 }
 
 function removeRecentLexicon(nsid) {
@@ -1321,7 +1321,7 @@ function removeRecentLexicon(nsid) {
   saveRecentLexicons();
   renderRecentLexicons();
   // Notify background to re-register shortcut commands
-  api.publish('me:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
+  api.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
 }
 
 function renderRecentLexicons() {

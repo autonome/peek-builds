@@ -1,11 +1,11 @@
 /**
- * Me Extension — AT Protocol identity and data browser
+ * Lexicon Studio Extension — AT Protocol identity and data browser
  *
  * Provides:
  * - Login via AT Protocol OAuth (PKCE + DPoP)
  * - View repo collections (lexicons) with record counts
  * - Account search with typeahead
- * - Commands: me login, me logout, me status, me lexicons
+ * - Commands: lexicon studio, new
  */
 
 import {
@@ -43,7 +43,7 @@ async function saveSession() {
       await api.settings.setKey(PROFILE_KEY, currentProfile);
     }
   } catch (err) {
-    console.warn('[me] Failed to save session:', err);
+    console.warn('[lex] Failed to save session:', err);
   }
 }
 
@@ -56,14 +56,14 @@ async function loadSession() {
     const result = await api.settings.getKey(STORAGE_KEY);
     if (result.success && result.data) {
       currentSession = result.data;
-      console.log('[me] Restored session for', currentSession.handle);
+      console.log('[lex] Restored session for', currentSession.handle);
     }
     const profileResult = await api.settings.getKey(PROFILE_KEY);
     if (profileResult.success && profileResult.data) {
       currentProfile = profileResult.data;
     }
   } catch (err) {
-    console.warn('[me] Failed to load session:', err);
+    console.warn('[lex] Failed to load session:', err);
   }
 }
 
@@ -78,7 +78,7 @@ async function clearSession() {
       await api.settings.setKey(STORAGE_KEY, null);
       await api.settings.setKey(PROFILE_KEY, null);
     } catch (err) {
-      console.warn('[me] Failed to clear session:', err);
+      console.warn('[lex] Failed to clear session:', err);
     }
   }
 }
@@ -145,7 +145,7 @@ async function fetchLexiconDirectoryFromNetwork() {
         allLexicons.push({ nsid: m[1], domain });
       }
     } catch (err) {
-      console.warn(`[me] Failed to fetch lexidex domain ${domain}:`, err);
+      console.warn(`[lex] Failed to fetch lexidex domain ${domain}:`, err);
     }
   });
 
@@ -174,12 +174,12 @@ async function fetchLexiconDirectoryFromNetwork() {
         fetchedAt: Date.now(),
       });
     } catch (err) {
-      console.warn('[me] Failed to persist lexicon directory:', err);
+      console.warn('[lex] Failed to persist lexicon directory:', err);
     }
   }
 
   lexiconCache = allLexicons;
-  console.log(`[me] Loaded ${allLexicons.length} lexicons from ${domains.length} domains`);
+  console.log(`[lex] Loaded ${allLexicons.length} lexicons from ${domains.length} domains`);
   return allLexicons;
 }
 
@@ -197,21 +197,21 @@ async function fetchLexiconDirectory() {
       const result = await api.settings.getKey(LEXICON_DIR_KEY);
       if (result.success && result.data && result.data.lexicons) {
         lexiconCache = result.data.lexicons;
-        console.log(`[me] Restored ${lexiconCache.length} lexicons from persisted cache`);
+        console.log(`[lex] Restored ${lexiconCache.length} lexicons from persisted cache`);
 
         // If stale, refresh in background (don't block)
         const age = Date.now() - (result.data.fetchedAt || 0);
         if (age > LEXICON_DIR_MAX_AGE_MS) {
-          console.log('[me] Lexicon directory cache is stale, refreshing in background...');
+          console.log('[lex] Lexicon directory cache is stale, refreshing in background...');
           fetchLexiconDirectoryFromNetwork().catch(err => {
-            console.warn('[me] Background lexicon directory refresh failed:', err);
+            console.warn('[lex] Background lexicon directory refresh failed:', err);
           });
         }
 
         return lexiconCache;
       }
     } catch (err) {
-      console.warn('[me] Failed to load persisted lexicon directory:', err);
+      console.warn('[lex] Failed to load persisted lexicon directory:', err);
     }
   }
 
@@ -220,7 +220,7 @@ async function fetchLexiconDirectory() {
   try {
     return await fetchLexiconDirectoryFromNetwork();
   } catch (err) {
-    console.error('[me] Lexicon directory fetch failed:', err);
+    console.error('[lex] Lexicon directory fetch failed:', err);
     throw err;
   } finally {
     lexiconCacheLoading = false;
@@ -236,9 +236,9 @@ async function fetchLexiconDirectory() {
  */
 function openMe() {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/me-core/home.html', {
+    api.window.open('peek://ext/lex/home.html', {
       role: 'workspace',
-      key: 'me-home',
+      key: 'lex-home',
       width: 860,
       height: 620,
       title: 'Lexicon Studio',
@@ -263,7 +263,7 @@ async function executeLogout(ctx) {
   }
   const handle = currentSession.handle;
   await clearSession();
-  api.publish('me:session-changed', { authenticated: false }, api.scopes.GLOBAL);
+  api.publish('lex:session-changed', { authenticated: false }, api.scopes.GLOBAL);
   return { success: true, message: `Logged out from @${handle}` };
 }
 
@@ -274,7 +274,7 @@ async function executeStatus(ctx) {
   if (!currentSession) {
     return {
       success: true,
-      output: 'Not logged in. Use "me login" to connect your AT Protocol account.',
+      output: 'Not logged in. Use "lexicon studio" to connect your AT Protocol account.',
       mimeType: 'text/plain',
     };
   }
@@ -300,7 +300,7 @@ async function executeStatus(ctx) {
  */
 async function executeLexicons(ctx) {
   if (!currentSession) {
-    return { success: false, message: 'Not logged in. Use "me login" first.' };
+    return { success: false, message: 'Not logged in. Use "lexicon studio" first.' };
   }
 
   try {
@@ -334,9 +334,9 @@ function setupPubSub() {
   if (!api) return;
 
   // Home UI requests session state
-  api.subscribe('me:get-session', async () => {
+  api.subscribe('lex:get-session', async () => {
     if (currentSession) {
-      api.publish('me:session-state', {
+      api.publish('lex:session-state', {
         authenticated: true,
         handle: currentSession.handle,
         did: currentSession.did,
@@ -344,20 +344,20 @@ function setupPubSub() {
         profile: currentProfile,
       }, api.scopes.GLOBAL);
     } else {
-      api.publish('me:session-state', {
+      api.publish('lex:session-state', {
         authenticated: false,
       }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
 
   // Home UI requests actor search
-  api.subscribe('me:search-actors', async (msg) => {
+  api.subscribe('lex:search-actors', async (msg) => {
     const results = await searchActors(msg.query);
-    api.publish('me:search-actors:response', { results }, api.scopes.GLOBAL);
+    api.publish('lex:search-actors:response', { results }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   // Home UI requests login via OAuth
-  api.subscribe('me:do-login', async (msg) => {
+  api.subscribe('lex:do-login', async (msg) => {
     try {
       currentSession = await loginWithOAuth(msg.handle);
 
@@ -366,7 +366,7 @@ function setupPubSub() {
 
       await saveSession();
 
-      api.publish('me:session-changed', {
+      api.publish('lex:session-changed', {
         authenticated: true,
         handle: currentSession.handle,
         did: currentSession.did,
@@ -374,49 +374,49 @@ function setupPubSub() {
         profile: currentProfile,
       }, api.scopes.GLOBAL);
 
-      console.log('[me] Logged in as', currentSession.handle);
+      console.log('[lex] Logged in as', currentSession.handle);
     } catch (err) {
-      api.publish('me:login-error', { message: err.message }, api.scopes.GLOBAL);
-      console.error('[me] Login failed:', err);
+      api.publish('lex:login-error', { message: err.message }, api.scopes.GLOBAL);
+      console.error('[lex] Login failed:', err);
     }
   }, api.scopes.GLOBAL);
 
   // Home UI requests logout
-  api.subscribe('me:do-logout', async () => {
+  api.subscribe('lex:do-logout', async () => {
     await clearSession();
-    api.publish('me:session-changed', { authenticated: false }, api.scopes.GLOBAL);
+    api.publish('lex:session-changed', { authenticated: false }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   // Home UI requests explore lexicons (lexidex directory)
-  api.subscribe('me:search-lexicons', async () => {
+  api.subscribe('lex:search-lexicons', async () => {
     try {
       const lexicons = await fetchLexiconDirectory();
-      api.publish('me:search-lexicons:response', { lexicons: lexicons || [] }, api.scopes.GLOBAL);
+      api.publish('lex:search-lexicons:response', { lexicons: lexicons || [] }, api.scopes.GLOBAL);
     } catch (err) {
-      api.publish('me:search-lexicons:response', { error: err.message }, api.scopes.GLOBAL);
+      api.publish('lex:search-lexicons:response', { error: err.message }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
 
   // Home UI requests collections/lexicons
-  api.subscribe('me:get-collections', async () => {
+  api.subscribe('lex:get-collections', async () => {
     if (!currentSession) {
-      api.publish('me:collections:response', { error: 'Not logged in' }, api.scopes.GLOBAL);
+      api.publish('lex:collections:response', { error: 'Not logged in' }, api.scopes.GLOBAL);
       return;
     }
     try {
       const collections = await getCollections(currentSession, onSessionRefresh);
       const counts = await getAllCollectionCounts(currentSession, collections, onSessionRefresh);
       await saveSession();
-      api.publish('me:collections:response', { collections: counts }, api.scopes.GLOBAL);
+      api.publish('lex:collections:response', { collections: counts }, api.scopes.GLOBAL);
     } catch (err) {
-      api.publish('me:collections:response', { error: err.message }, api.scopes.GLOBAL);
+      api.publish('lex:collections:response', { error: err.message }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
 
   // Home UI requests record creation
-  api.subscribe('me:create-record', async (msg) => {
+  api.subscribe('lex:create-record', async (msg) => {
     if (!currentSession) {
-      api.publish('me:create-record:response', { error: 'Not logged in' }, api.scopes.GLOBAL);
+      api.publish('lex:create-record:response', { error: 'Not logged in' }, api.scopes.GLOBAL);
       return;
     }
     try {
@@ -432,19 +432,19 @@ function setupPubSub() {
       }, onSessionRefresh);
 
       await saveSession();
-      api.publish('me:create-record:response', {
+      api.publish('lex:create-record:response', {
         success: true,
         uri: result.uri,
         cid: result.cid,
         validationStatus: result.validationStatus,
       }, api.scopes.GLOBAL);
-      console.log('[me] Record created:', result.uri);
+      console.log('[lex] Record created:', result.uri);
 
       // Add to recent lexicons
       addRecentLexiconFromBackground(collection);
     } catch (err) {
-      api.publish('me:create-record:response', { error: err.message }, api.scopes.GLOBAL);
-      console.error('[me] Record creation failed:', err);
+      api.publish('lex:create-record:response', { error: err.message }, api.scopes.GLOBAL);
+      console.error('[lex] Record creation failed:', err);
     }
   }, api.scopes.GLOBAL);
 }
@@ -549,7 +549,7 @@ async function addRecentLexiconFromBackground(nsid) {
   } catch {}
   rebuildNewCommands();
   // Notify any open home UI to refresh sidebar
-  api.publish('me:recent-lexicons-changed', { nsids: knownRecentNsids }, api.scopes.GLOBAL);
+  api.publish('lex:recent-lexicons-changed', { nsids: knownRecentNsids }, api.scopes.GLOBAL);
 }
 
 /**
@@ -610,7 +610,7 @@ function rebuildNewCommands() {
             data: { nsid },
             mimeType: 'application/x-lexicon-form',
             title: displayName,
-            interactive: 'peek://ext/me-core/chain-form.html',
+            interactive: 'peek://ext/lex/chain-form.html',
           },
         };
       },
@@ -619,7 +619,7 @@ function rebuildNewCommands() {
   }
 
   if (registeredNewCommands.length > 0) {
-    console.log('[me] Registered "new" commands:', registeredNewCommands.length);
+    console.log('[lex] Registered "new" commands:', registeredNewCommands.length);
   }
 }
 
@@ -628,16 +628,16 @@ function rebuildNewCommands() {
  */
 function openMeWithLexicon(nsid) {
   if (!hasPeekAPI) return;
-  api.window.open('peek://ext/me-core/home.html', {
+  api.window.open('peek://ext/lex/home.html', {
     role: 'workspace',
-    key: 'me-home',
+    key: 'lex-home',
     width: 860,
     height: 620,
     title: 'Lexicon Studio',
   });
   // Publish after a short delay to let the window load
   setTimeout(() => {
-    api.publish('me:open-create', { nsid }, api.scopes.GLOBAL);
+    api.publish('lex:open-create', { nsid }, api.scopes.GLOBAL);
   }, 300);
 }
 
@@ -646,7 +646,7 @@ function openMeWithLexicon(nsid) {
 // ============================================================================
 
 const extension = {
-  id: 'me-core',
+  id: 'lex',
   labels: {
     name: 'Lexicon Studio',
   },
@@ -681,7 +681,7 @@ const extension = {
               data: { nsid },
               mimeType: 'application/x-lexicon-form',
               title: friendlyName,
-              interactive: 'peek://ext/me-core/chain-form.html',
+              interactive: 'peek://ext/lex/chain-form.html',
             },
           };
         }
@@ -692,14 +692,14 @@ const extension = {
       },
     });
 
-    console.log('[me] Commands registered');
+    console.log('[lex] Commands registered');
   },
 
   async init() {
-    console.log('[me] Initializing...');
+    console.log('[lex] Initializing...');
 
     if (!hasPeekAPI) {
-      console.log('[me] Running without Peek API — limited functionality');
+      console.log('[lex] Running without Peek API — limited functionality');
       return;
     }
 
@@ -729,7 +729,7 @@ const extension = {
     await loadAndRegisterNewCommands();
 
     // Listen for recent lexicons changes to re-register "new" commands
-    api.subscribe('me:recent-lexicons-changed', (msg) => {
+    api.subscribe('lex:recent-lexicons-changed', (msg) => {
       if (Array.isArray(msg.nsids)) {
         knownRecentNsids = msg.nsids;
         rebuildNewCommands();
@@ -737,18 +737,18 @@ const extension = {
     }, api.scopes.GLOBAL);
 
     // Listen for collections responses to register "new" commands for repo collections
-    api.subscribe('me:collections:response', (msg) => {
+    api.subscribe('lex:collections:response', (msg) => {
       if (Array.isArray(msg.collections)) {
         knownCollectionNsids = msg.collections.map(c => c.nsid);
         rebuildNewCommands();
       }
     }, api.scopes.GLOBAL);
 
-    console.log('[me] Extension loaded', currentSession ? `(session: @${currentSession.handle})` : '(no session)');
+    console.log('[lex] Extension loaded', currentSession ? `(session: @${currentSession.handle})` : '(no session)');
   },
 
   uninit() {
-    console.log('[me] Cleaning up...');
+    console.log('[lex] Cleaning up...');
     if (hasPeekAPI) {
       api.commands.unregister('lexicon studio');
       api.commands.unregister('new');

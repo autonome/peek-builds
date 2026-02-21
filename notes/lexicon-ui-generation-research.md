@@ -1,7 +1,7 @@
 # Research: Generating UIs from AT Protocol Lexicons
 
 **Date:** 2026-02-19
-**Goal:** Enable users to select any lexicon and get an auto-generated form to create and publish records to their AT Protocol repo, all from within Peek's me:core extension.
+**Goal:** Enable users to select any lexicon and get an auto-generated form to create and publish records to their AT Protocol repo, all from within Peek's lex extension.
 
 ---
 
@@ -13,7 +13,7 @@
 4. [Creating Records via XRPC](#4-creating-records-via-xrpc)
 5. [Practical Considerations](#5-practical-considerations)
 6. [Existing Prior Art](#6-existing-prior-art)
-7. [Proposed Architecture for me:core](#7-proposed-architecture-for-mecore)
+7. [Proposed Architecture for lex](#7-proposed-architecture-for-lex)
 8. [Phased Implementation Plan](#8-phased-implementation-plan)
 9. [Open Questions and Gotchas](#9-open-questions-and-gotchas)
 
@@ -410,7 +410,7 @@ Where NSID `app.bsky.feed.post` becomes path `app/bsky/feed/post.json`.
 **Pros:** Reliable for known lexicons, no DNS needed.
 **Cons:** Only works for lexicons we know about, hardcoded mapping.
 
-#### Strategy D: lexidex.bsky.dev (Already Implemented in me:core)
+#### Strategy D: lexidex.bsky.dev (Already Implemented in lex)
 
 The existing `fetchLexiconDirectory()` in `background.js` scrapes lexidex.bsky.dev for a list of known NSIDs grouped by domain. This gives us NSID discovery but NOT the actual schema definitions.
 
@@ -862,12 +862,12 @@ Community-curated list of known lexicons and their apps/repos. Key entries:
 
 ---
 
-## 7. Proposed Architecture for me:core
+## 7. Proposed Architecture for lex
 
 ### Component Overview
 
 ```
-me:core extension
+lex extension
 ├── background.js          (existing — session mgmt, pubsub)
 ├── atproto.js             (existing — OAuth, XRPC GET)
 ├── lexicon-resolver.js    (NEW — fetch & cache lexicon schemas)

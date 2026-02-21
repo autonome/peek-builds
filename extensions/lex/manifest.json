@@ -1,7 +1,7 @@
 {
-  "id": "me-core",
-  "shortname": "me",
-  "name": "Me",
+  "id": "lex",
+  "shortname": "lex",
+  "name": "Lexicon Studio",
   "description": "Your AT Protocol identity and data",
   "version": "1.0.0",
   "background": "background.html"

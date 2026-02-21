@@ -3,13 +3,13 @@
  *
  * Opened by the cmd panel's openChainPopup() as a modal child window.
  * Receives content (nsid + session info) via pubsub, renders a dynamic form,
- * and creates the record via the me:create-record pubsub channel.
+ * and creates the record via the lex:create-record pubsub channel.
  *
  * Protocol:
  *   1. Reads sessionId, mimeType, title from URL params
  *   2. Subscribes to 'chain-popup:content' to receive { nsid } (matched by sessionId)
  *   3. Resolves the lexicon schema and generates the form
- *   4. On submit, publishes 'me:create-record' to the background
+ *   4. On submit, publishes 'lex:create-record' to the background
  *   5. On success, publishes 'chain-popup:result' to signal completion
  *   6. On Escape, closes without creating
  */
@@ -178,7 +178,7 @@ async function handleSubmit() {
       }, 30000);
 
       // Listen for the response
-      const unsub = api.subscribe('me:create-record:response', (msg) => {
+      const unsub = api.subscribe('lex:create-record:response', (msg) => {
         clearTimeout(timeout);
         // Unsubscribe not directly available, but the handler won't fire again
         // since we resolve/reject immediately
@@ -190,7 +190,7 @@ async function handleSubmit() {
       }, api.scopes.GLOBAL);
 
       // Send the create request
-      api.publish('me:create-record', {
+      api.publish('lex:create-record', {
         collection: currentNsid,
         record,
       }, api.scopes.GLOBAL);

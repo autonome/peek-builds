@@ -12,7 +12,7 @@
       <link>https://tangled.org/burrito.space/peek</link>
       <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-20</guid>
       <pubDate>Fri, 20 Feb 2026 12:00:00 GMT</pubDate>
-      <description>Desktop - AT Protocol Identity (me-core)
+      <description>Desktop - AT Protocol Identity (lex)
 - Add AT Protocol identity extension — connect your Bluesky/AT Protocol account via OAuth PKCE+DPoP (b549 (https://tangled.org/burrito.space/peek/commit/b549fa8a), ea7b (https://tangled.org/burrito.space/peek/commit/ea7ba305))
 - Add lexicon browser — explore all known AT Protocol lexicons, view your repo&apos;s collections with record counts (ba52 (https://tangled.org/burrito.space/peek/commit/ba528419))
 - Add record creation — auto-generated forms from lexicon schemas, create records directly from the app (93fc (https://tangled.org/burrito.space/peek/commit/93fc3561), b9a4 (https://tangled.org/burrito.space/peek/commit/b9a485e1))

@@ -135,7 +135,7 @@ extensions/
 ├── editor/               # Item CRUD: add, edit content, delete
 ├── example/              # Hello world example
 ├── groups/
-├── me-core/              # Lexicon Studio — AT Protocol identity and data browser
+├── lex/                  # Lexicon Studio — AT Protocol identity and data browser
 ├── peeks/
 ├── slides/
 └── tags/                 # Tag browsing, filtering, tag editing on items
@@ -253,7 +253,7 @@ The editor extension (`extensions/editor/`) is the canonical surface for creatin
 
 ### Lexicon Studio (AT Protocol Identity)
 
-The Lexicon Studio extension (`extensions/me-core/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
+The Lexicon Studio extension (`extensions/lex/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
 
 **Files:**
 - `background.js` — Extension lifecycle, session management, pubsub API for the home UI
@@ -272,15 +272,15 @@ The Lexicon Studio extension (`extensions/me-core/`) connects Peek to the AT Pro
 - **Token refresh** — XRPC requests auto-refresh expired tokens using DPoP-bound refresh tokens. The `onSessionRefresh` callback updates the stored session.
 
 **Pubsub topics:**
-- `me:get-session` / `me:session-state` — UI requests current session
-- `me:search-actors` / `me:search-actors:response` — Actor typeahead search
-- `me:do-login` / `me:session-changed` / `me:login-error` — Login flow
-- `me:do-logout` / `me:session-changed` — Logout
-- `me:get-collections` / `me:collections:response` — Fetch repo collections
-- `me:search-lexicons` / `me:search-lexicons:response` — Explore lexicon directory
-- `me:create-record` / `me:create-record:response` — Create a record
+- `lex:get-session` / `lex:session-state` — UI requests current session
+- `lex:search-actors` / `lex:search-actors:response` — Actor typeahead search
+- `lex:do-login` / `lex:session-changed` / `lex:login-error` — Login flow
+- `lex:do-logout` / `lex:session-changed` — Logout
+- `lex:get-collections` / `lex:collections:response` — Fetch repo collections
+- `lex:search-lexicons` / `lex:search-lexicons:response` — Explore lexicon directory
+- `lex:create-record` / `lex:create-record:response` — Create a record
 
-**Command:** `lexicon studio` — opens the identity panel window (`peek://ext/me-core/home.html`).
+**Command:** `lexicon studio` — opens the identity panel window (`peek://ext/lex/home.html`).
 
 ### Cmd Commands (Item Creation)
 
