@@ -1056,7 +1056,16 @@ function goBackFromCreate() {
   state.createNsid = null;
   state.createLexicon = null;
   state.createSchema = null;
-  switchPanel(target);
+  // If coming back to records, refresh the list
+  if (target === 'records' && state.recordsNsid) {
+    switchPanel('records');
+    // Reload records to show newly created ones
+    state.recordsList = [];
+    state.recordsCursor = null;
+    loadRecordsPage();
+  } else {
+    switchPanel(target);
+  }
 }
 
 /**
@@ -1507,6 +1516,454 @@ async function handleCreatePanelSubmit() {
     cpSubmitStatus.textContent = err.message;
     cpSubmitStatus.style.display = '';
     console.error('[lex] Record creation failed:', err);
+  }
+}
+
+// ============================================================================
+// Records List Panel
+// ============================================================================
+
+function setupRecordsPanel() {
+  recordsBackBtn.addEventListener('click', goBackFromRecords);
+  recordsCreateBtn.addEventListener('click', () => {
+    if (state.recordsNsid) {
+      openCreateRecord(state.recordsNsid, 'records');
+    }
+  });
+  recordsLoadMoreBtn.addEventListener('click', loadMoreRecords);
+}
+
+/**
+ * Open the records list for a collection.
+ */
+async function openRecordsList(nsid) {
+  state.previousPanel = 'my-lexicons';
+  state.recordsNsid = nsid;
+  state.recordsList = [];
+  state.recordsCursor = null;
+  state.recordsLoading = true;
+
+  // Update header
+  const friendly = nsidToFriendlyName(nsid);
+  recordsTitleEl.textContent = friendly;
+  recordsNsidEl.textContent = nsid;
+  recordsListEl.innerHTML = '<div class="loading">Loading records...</div>';
+  recordsPaginationEl.style.display = 'none';
+
+  switchPanel('records');
+
+  await loadRecordsPage();
+}
+
+async function loadRecordsPage() {
+  if (!currentSession || !state.recordsNsid) return;
+
+  state.recordsLoading = true;
+
+  try {
+    const result = await listRecords(
+      currentSession,
+      state.recordsNsid,
+      { limit: 50, cursor: state.recordsCursor },
+      onSessionRefresh
+    );
+    await saveSession();
+
+    state.recordsList = state.recordsList.concat(result.records);
+    state.recordsCursor = result.cursor;
+    state.recordsLoading = false;
+
+    renderRecordsList();
+  } catch (err) {
+    state.recordsLoading = false;
+    recordsListEl.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function loadMoreRecords() {
+  if (state.recordsLoading || !state.recordsCursor) return;
+  recordsLoadMoreBtn.disabled = true;
+  recordsLoadMoreBtn.textContent = 'Loading...';
+  await loadRecordsPage();
+  recordsLoadMoreBtn.disabled = false;
+  recordsLoadMoreBtn.textContent = 'Load more';
+}
+
+function renderRecordsList() {
+  if (!state.recordsList || state.recordsList.length === 0) {
+    recordsListEl.innerHTML = '<div class="records-empty">No records in this collection</div>';
+    recordsPaginationEl.style.display = 'none';
+    return;
+  }
+
+  recordsListEl.innerHTML = state.recordsList.map(rec => {
+    const uri = rec.uri || '';
+    const rkey = rkeyFromUri(uri);
+    const preview = getRecordPreview(rec.value);
+    const dateStr = getRecordDate(rec.value);
+
+    return `
+      <div class="record-item" data-uri="${escapeHtml(uri)}" data-rkey="${escapeHtml(rkey)}">
+        <div class="record-item-main">
+          <span class="record-item-rkey">${escapeHtml(rkey)}</span>
+          ${preview ? `<span class="record-item-preview">${escapeHtml(preview)}</span>` : ''}
+        </div>
+        <div class="record-item-meta">
+          ${dateStr ? `<span class="record-item-date">${escapeHtml(dateStr)}</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Show/hide pagination
+  if (state.recordsCursor) {
+    recordsPaginationEl.style.display = '';
+  } else {
+    recordsPaginationEl.style.display = 'none';
+  }
+
+  // Click handlers
+  recordsListEl.querySelectorAll('.record-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const uri = el.dataset.uri;
+      const rkey = el.dataset.rkey;
+      if (uri && rkey) openRecordDetail(uri, rkey);
+    });
+  });
+}
+
+function goBackFromRecords() {
+  state.recordsNsid = null;
+  state.recordsList = [];
+  state.recordsCursor = null;
+  switchPanel('my-lexicons');
+}
+
+/**
+ * Extract the rkey (last segment) from an AT URI.
+ * at://did:plc:xxx/app.bsky.feed.post/3abc123 -> 3abc123
+ */
+function rkeyFromUri(uri) {
+  if (!uri) return '';
+  const parts = uri.split('/');
+  return parts[parts.length - 1] || '';
+}
+
+/**
+ * Generate a preview string for a record value.
+ * Looks for common fields: text, title, name, description, displayName, subject.
+ */
+function getRecordPreview(value) {
+  if (!value || typeof value !== 'object') return '';
+
+  // Try common text fields
+  for (const key of ['text', 'title', 'name', 'displayName', 'description', 'summary']) {
+    if (typeof value[key] === 'string' && value[key].trim()) {
+      const text = value[key].trim();
+      return text.length > 120 ? text.substring(0, 120) + '...' : text;
+    }
+  }
+
+  // For records with a subject (likes, reposts, etc.)
+  if (value.subject) {
+    if (typeof value.subject === 'string') return value.subject;
+    if (value.subject.uri) return value.subject.uri;
+  }
+
+  // For follows
+  if (value.subject && typeof value.subject === 'string') {
+    return value.subject;
+  }
+
+  // $type as fallback context
+  if (value.$type) return value.$type;
+
+  return '';
+}
+
+/**
+ * Format a date from record value (createdAt or indexedAt).
+ */
+function getRecordDate(value) {
+  if (!value || typeof value !== 'object') return '';
+
+  const dateStr = value.createdAt || value.indexedAt;
+  if (!dateStr) return '';
+
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
+// ============================================================================
+// Record Detail Panel
+// ============================================================================
+
+function setupRecordDetailPanel() {
+  recordDetailBackBtn.addEventListener('click', goBackFromRecordDetail);
+  recordDeleteBtn.addEventListener('click', handleDeleteRecord);
+}
+
+/**
+ * Open the detail view for a single record.
+ */
+async function openRecordDetail(uri, rkey) {
+  state.previousPanel = 'records';
+  state.recordDetailUri = uri;
+  state.recordDetailValue = null;
+  state.recordDetailCid = null;
+  state.recordDetailDeleting = false;
+
+  recordDetailTitleEl.textContent = rkey;
+  recordDetailUriEl.textContent = uri;
+  recordDetailContentEl.innerHTML = '<div class="loading">Loading record...</div>';
+  recordDeleteBtn.style.display = '';
+  recordDeleteBtn.disabled = false;
+  recordDeleteBtn.textContent = 'Delete';
+
+  switchPanel('record-detail');
+
+  try {
+    const record = await getRecord(
+      currentSession,
+      state.recordsNsid,
+      rkey,
+      onSessionRefresh
+    );
+    await saveSession();
+
+    state.recordDetailValue = record.value;
+    state.recordDetailCid = record.cid;
+
+    renderRecordDetail();
+  } catch (err) {
+    recordDetailContentEl.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderRecordDetail() {
+  if (!state.recordDetailValue) {
+    recordDetailContentEl.innerHTML = '<div class="records-empty">No record data</div>';
+    return;
+  }
+
+  const value = state.recordDetailValue;
+  let html = '';
+
+  // Metadata section
+  html += `
+    <div class="record-detail-section">
+      <div class="record-detail-section-title">Metadata</div>
+      <div class="record-detail-meta">
+        <div class="record-meta-row">
+          <span class="record-meta-label">URI</span>
+          <span class="record-meta-value">${escapeHtml(state.recordDetailUri)}</span>
+        </div>
+        ${state.recordDetailCid ? `
+        <div class="record-meta-row">
+          <span class="record-meta-label">CID</span>
+          <span class="record-meta-value">${escapeHtml(state.recordDetailCid)}</span>
+        </div>
+        ` : ''}
+        ${value.$type ? `
+        <div class="record-meta-row">
+          <span class="record-meta-label">Type</span>
+          <span class="record-meta-value">${escapeHtml(value.$type)}</span>
+        </div>
+        ` : ''}
+        ${value.createdAt ? `
+        <div class="record-meta-row">
+          <span class="record-meta-label">Created</span>
+          <span class="record-meta-value">${escapeHtml(formatDateTime(value.createdAt))}</span>
+        </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+
+  // Fields section - render each field
+  html += `
+    <div class="record-detail-section">
+      <div class="record-detail-section-title">Fields</div>
+      ${renderRecordFields(value)}
+    </div>
+  `;
+
+  // Raw JSON section
+  html += `
+    <div class="record-detail-section">
+      <div class="record-detail-section-title">Raw JSON</div>
+      <div class="record-json-view">${escapeHtml(JSON.stringify(value, null, 2))}</div>
+    </div>
+  `;
+
+  recordDetailContentEl.innerHTML = html;
+}
+
+/**
+ * Render record fields as a structured view.
+ * Skips $type and createdAt (shown in metadata).
+ */
+function renderRecordFields(value) {
+  if (!value || typeof value !== 'object') return '';
+
+  const skipKeys = new Set(['$type', 'createdAt']);
+  const entries = Object.entries(value).filter(([k]) => !skipKeys.has(k));
+
+  if (entries.length === 0) {
+    return '<div class="records-empty">No fields</div>';
+  }
+
+  return entries.map(([key, val]) => {
+    return `
+      <div class="record-field">
+        <span class="record-field-name">${escapeHtml(key)}</span>
+        <div class="record-field-value">${renderFieldValue(val, key)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+/**
+ * Render a single field value with appropriate formatting.
+ */
+function renderFieldValue(val, key) {
+  if (val === null || val === undefined) {
+    return '<span style="color: var(--base04); font-style: italic;">null</span>';
+  }
+
+  if (typeof val === 'string') {
+    // Check if it's a URL
+    if (val.match(/^https?:\/\//)) {
+      return `<a href="${escapeHtml(val)}" target="_blank" rel="noopener">${escapeHtml(val)}</a>`;
+    }
+    // Check if it's an AT URI
+    if (val.startsWith('at://')) {
+      return `<span style="font-family: var(--theme-font-mono, monospace); font-size: 12px;">${escapeHtml(val)}</span>`;
+    }
+    // Check if it's a DID
+    if (val.startsWith('did:')) {
+      return `<span style="font-family: var(--theme-font-mono, monospace); font-size: 12px;">${escapeHtml(val)}</span>`;
+    }
+    // Check if it's a datetime
+    if (val.match(/^\d{4}-\d{2}-\d{2}T/)) {
+      return escapeHtml(formatDateTime(val));
+    }
+    // Regular string
+    return escapeHtml(val);
+  }
+
+  if (typeof val === 'number' || typeof val === 'boolean') {
+    return `<span style="color: var(--base0E);">${escapeHtml(String(val))}</span>`;
+  }
+
+  if (Array.isArray(val)) {
+    if (val.length === 0) {
+      return '<span style="color: var(--base04); font-style: italic;">[]</span>';
+    }
+    // Render array items
+    return `<div class="record-field-object">${val.map((item, i) => {
+      if (typeof item === 'object' && item !== null) {
+        return `<div style="margin-bottom: 8px; padding-bottom: 8px; ${i < val.length - 1 ? 'border-bottom: 1px solid var(--base02);' : ''}">${renderRecordFields(item)}</div>`;
+      }
+      return `<div>${renderFieldValue(item, String(i))}</div>`;
+    }).join('')}</div>`;
+  }
+
+  if (typeof val === 'object') {
+    // Check for blob ref
+    if (val.$type === 'blob' || val.ref?.$link || val.cid) {
+      const link = val.ref?.$link || val.cid;
+      const mimeType = val.mimeType || '';
+      if (link && mimeType.startsWith('image/') && currentSession) {
+        const blobUrl = `${currentSession.pdsUrl}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(currentSession.did)}&cid=${encodeURIComponent(link)}`;
+        return `<img src="${escapeHtml(blobUrl)}" alt="blob" loading="lazy" />`;
+      }
+      return `<span style="font-family: var(--theme-font-mono, monospace); font-size: 12px;">${escapeHtml(mimeType)} blob: ${escapeHtml(link || 'unknown')}</span>`;
+    }
+
+    // Render nested object
+    return `<div class="record-field-object">${renderRecordFields(val)}</div>`;
+  }
+
+  return escapeHtml(String(val));
+}
+
+function goBackFromRecordDetail() {
+  switchPanel('records');
+}
+
+/**
+ * Handle delete record button.
+ */
+async function handleDeleteRecord() {
+  if (state.recordDetailDeleting || !state.recordDetailUri || !state.recordsNsid || !currentSession) return;
+
+  // If the button says "Delete", switch to confirmation mode
+  if (recordDeleteBtn.textContent === 'Delete') {
+    recordDeleteBtn.textContent = 'Confirm Delete';
+    recordDeleteBtn.classList.add('confirming');
+    // Auto-reset after 3 seconds
+    setTimeout(() => {
+      if (recordDeleteBtn.textContent === 'Confirm Delete') {
+        recordDeleteBtn.textContent = 'Delete';
+        recordDeleteBtn.classList.remove('confirming');
+      }
+    }, 3000);
+    return;
+  }
+
+  state.recordDetailDeleting = true;
+  recordDeleteBtn.disabled = true;
+  recordDeleteBtn.textContent = 'Deleting...';
+
+  try {
+    const rkey = rkeyFromUri(state.recordDetailUri);
+    await deleteRecord(currentSession, state.recordsNsid, rkey, onSessionRefresh);
+    await saveSession();
+
+    // Remove from local list
+    state.recordsList = state.recordsList.filter(r => r.uri !== state.recordDetailUri);
+
+    // Go back to records list and refresh
+    goBackFromRecordDetail();
+    renderRecordsList();
+
+    // Refresh collection counts
+    fetchCollections();
+  } catch (err) {
+    state.recordDetailDeleting = false;
+    recordDeleteBtn.disabled = false;
+    recordDeleteBtn.textContent = 'Delete';
+    recordDeleteBtn.classList.remove('confirming');
+    // Show error in the detail content
+    const errorEl = document.createElement('div');
+    errorEl.className = 'error';
+    errorEl.textContent = `Delete failed: ${err.message}`;
+    recordDetailContentEl.prepend(errorEl);
+  }
+}
+
+/**
+ * Format a datetime string.
+ */
+function formatDateTime(isoStr) {
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return isoStr;
+    return d.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return isoStr;
   }
 }
 
