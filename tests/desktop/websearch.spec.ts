@@ -35,7 +35,7 @@ test.beforeAll(async () => {
 
 async function openWebSearch(bgWindow: Page): Promise<{ searchWindow: Page; windowId: number }> {
   const result = await bgWindow.evaluate(async () => {
-    return await (window as any).app.window.open('peek://ext/websearch/home.html', {
+    return await (window as any).app.window.open('peek://websearch/home.html', {
       width: 600,
       height: 500
     });

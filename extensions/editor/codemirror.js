@@ -12,7 +12,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle, bracketMatching, indentOnInput, foldGutter, foldService, codeFolding, foldAll, unfoldAll, foldEffect, unfoldEffect, foldedRanges, foldable } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { vim, Vim, getCM } from '@replit/codemirror-vim';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { searchKeymap } from '@codemirror/search';
 
 // Compartments for runtime-reconfigurable extensions
 const vimCompartment = new Compartment();
@@ -698,7 +698,6 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
     bracketMatching(),
     highlightActiveLine(),
     highlightActiveLineGutter(),
-    highlightSelectionMatches(),
 
     // Keymaps
     keymap.of([

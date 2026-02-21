@@ -30,11 +30,21 @@ import {
 
 const api = window.app;
 
-// BroadcastChannel for intra-extension messaging
-const lexChannel = new BroadcastChannel('lex');
+// BroadcastChannel for intra-extension messaging (falls back to IPC if unavailable)
+let lexChannel = null;
+
+try {
+  lexChannel = new BroadcastChannel('lex');
+} catch (err) {
+  console.warn('[chain-form] BroadcastChannel unavailable, using IPC fallback:', err.message);
+}
 
 function emitChannel(topic, data) {
-  lexChannel.postMessage({ topic, data });
+  if (lexChannel) {
+    lexChannel.postMessage({ topic, data });
+  } else {
+    api.publish(topic, data, api.scopes.GLOBAL);
+  }
 }
 
 // Read URL params

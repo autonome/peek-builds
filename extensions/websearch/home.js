@@ -12,26 +12,39 @@ const api = window.app;
 const debug = api.debug;
 
 // ===== BroadcastChannel for intra-extension messaging =====
+// Falls back to IPC pubsub if BroadcastChannel is unavailable (e.g., custom protocol origins)
 
-const wsChannel = new BroadcastChannel('websearch');
+let wsChannel = null;
 const wsChannelHandlers = {};
 
-wsChannel.onmessage = (e) => {
-  const { topic, data } = e.data;
-  if (wsChannelHandlers[topic]) {
-    for (const handler of wsChannelHandlers[topic]) {
-      handler(data);
+try {
+  wsChannel = new BroadcastChannel('websearch');
+  wsChannel.onmessage = (e) => {
+    const { topic, data } = e.data;
+    if (wsChannelHandlers[topic]) {
+      for (const handler of wsChannelHandlers[topic]) {
+        handler(data);
+      }
     }
-  }
-};
+  };
+} catch (err) {
+  console.warn('[websearch] BroadcastChannel unavailable, using IPC fallback:', err.message);
+}
 
 function onChannel(topic, handler) {
   if (!wsChannelHandlers[topic]) wsChannelHandlers[topic] = [];
   wsChannelHandlers[topic].push(handler);
+  if (!wsChannel) {
+    api.subscribe(topic, handler, api.scopes.GLOBAL);
+  }
 }
 
 function emitChannel(topic, data) {
-  wsChannel.postMessage({ topic, data });
+  if (wsChannel) {
+    wsChannel.postMessage({ topic, data });
+  } else {
+    api.publish(topic, data, api.scopes.GLOBAL);
+  }
 }
 
 // ===== Utilities =====

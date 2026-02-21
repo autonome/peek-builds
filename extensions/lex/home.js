@@ -36,25 +36,35 @@ const api = window.app;
 // BroadcastChannel for intra-extension messaging (home.js <-> background.js)
 // ============================================================================
 
-const lexChannel = new BroadcastChannel('lex');
+let lexChannel = null;
 const lexChannelHandlers = {};
 
-lexChannel.onmessage = (e) => {
-  const { topic, data } = e.data;
-  if (lexChannelHandlers[topic]) {
-    for (const handler of lexChannelHandlers[topic]) {
-      handler(data);
+try {
+  lexChannel = new BroadcastChannel('lex');
+  lexChannel.onmessage = (e) => {
+    const { topic, data } = e.data;
+    if (lexChannelHandlers[topic]) {
+      for (const handler of lexChannelHandlers[topic]) {
+        handler(data);
+      }
     }
-  }
-};
+  };
+} catch (err) {
+  console.warn('[lex] BroadcastChannel unavailable, using IPC fallback:', err.message);
+}
 
 function onChannel(topic, handler) {
   if (!lexChannelHandlers[topic]) lexChannelHandlers[topic] = [];
   lexChannelHandlers[topic].push(handler);
+  if (!lexChannel) api.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
-  lexChannel.postMessage({ topic, data });
+  if (lexChannel) {
+    lexChannel.postMessage({ topic, data });
+  } else {
+    api.publish(topic, data, api.scopes.GLOBAL);
+  }
 }
 
 // ============================================================================

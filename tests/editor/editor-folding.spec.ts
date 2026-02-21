@@ -974,6 +974,99 @@ test.describe('Editor Folding @editor', () => {
       await page.keyboard.press('Escape');
     });
   });
+
+  // ==========================================================================
+  // Selection Behavior — no matching-text highlights on other lines
+  // ==========================================================================
+
+  test.describe('Selection Behavior', () => {
+    test.beforeEach(async () => {
+      await page.evaluate(() => {
+        window.setVimMode(false);
+        window.unfoldAll();
+      });
+      await page.waitForTimeout(50);
+    });
+
+    test('selecting text does not highlight matching text on other lines', async () => {
+      // The test content has repeated words like "content", "Level", "fold", etc.
+      // Select one occurrence and verify no cm-selectionMatch decorations appear.
+
+      const matchCount = await page.evaluate(() => {
+        const doc = window.editorView.state.doc;
+
+        // Find the word "content" on a line, select it
+        for (let i = 1; i <= doc.lines; i++) {
+          const line = doc.line(i);
+          const idx = line.text.indexOf('content');
+          if (idx !== -1) {
+            // Select "content" on this line
+            window.selectRange(line.from + idx, line.from + idx + 'content'.length);
+            break;
+          }
+        }
+
+        // Return how many selection-match highlights exist
+        return window.getSelectionMatchCount();
+      });
+
+      // There should be zero cm-selectionMatch highlights —
+      // highlightSelectionMatches is disabled, so no other occurrences
+      // of "content" should be highlighted.
+      expect(matchCount).toBe(0);
+    });
+
+    test('selection only highlights the selected range itself', async () => {
+      const result = await page.evaluate(() => {
+        const doc = window.editorView.state.doc;
+
+        // Select "Level" which appears many times in headers
+        for (let i = 1; i <= doc.lines; i++) {
+          const line = doc.line(i);
+          const idx = line.text.indexOf('Level');
+          if (idx !== -1) {
+            window.selectRange(line.from + idx, line.from + idx + 'Level'.length);
+            break;
+          }
+        }
+
+        // Check for selection-match decorations (should be none)
+        const selectionMatches = window.getSelectionMatchCount();
+
+        // Check that cm-selectionBackground exists (the actual selection)
+        const selectionBackgrounds = document.querySelectorAll('.cm-selectionBackground').length;
+
+        return { selectionMatches, selectionBackgrounds };
+      });
+
+      // No matching-text highlights on other lines
+      expect(result.selectionMatches).toBe(0);
+      // The actual selection background should exist
+      expect(result.selectionBackgrounds).toBeGreaterThan(0);
+    });
+
+    test('multi-word selection does not highlight matches elsewhere', async () => {
+      const matchCount = await page.evaluate(() => {
+        const doc = window.editorView.state.doc;
+
+        // Select "fold" which appears in many places
+        for (let i = 1; i <= doc.lines; i++) {
+          const line = doc.line(i);
+          const idx = line.text.toLowerCase().indexOf('fold');
+          if (idx !== -1) {
+            // Find the actual case-sensitive text
+            const actualText = line.text.substring(idx, idx + 4);
+            window.selectRange(line.from + idx, line.from + idx + 4);
+            break;
+          }
+        }
+
+        return window.getSelectionMatchCount();
+      });
+
+      expect(matchCount).toBe(0);
+    });
+  });
 });
 
 // TypeScript declarations
@@ -988,5 +1081,7 @@ declare global {
     setVimMode: (enabled: boolean) => void;
     getCursorLine: () => number;
     setCursorLine: (lineNum: number) => void;
+    selectRange: (from: number, to: number) => void;
+    getSelectionMatchCount: () => number;
   }
 }

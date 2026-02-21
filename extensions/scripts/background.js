@@ -18,26 +18,37 @@ import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 const api = window.app;
 
 // ===== BroadcastChannel for intra-extension messaging =====
+// Falls back to IPC pubsub if BroadcastChannel is unavailable (e.g., custom protocol origins)
 
-const scriptsChannel = new BroadcastChannel('scripts');
+let scriptsChannel = null;
 const scriptsChannelHandlers = {};
 
-scriptsChannel.onmessage = (e) => {
-  const { topic, data } = e.data;
-  if (scriptsChannelHandlers[topic]) {
-    for (const handler of scriptsChannelHandlers[topic]) {
-      handler(data);
+try {
+  scriptsChannel = new BroadcastChannel('scripts');
+  scriptsChannel.onmessage = (e) => {
+    const { topic, data } = e.data;
+    if (scriptsChannelHandlers[topic]) {
+      for (const handler of scriptsChannelHandlers[topic]) {
+        handler(data);
+      }
     }
-  }
-};
+  };
+} catch (err) {
+  console.warn('[scripts] BroadcastChannel unavailable, using IPC fallback:', err.message);
+}
 
 function onChannel(topic, handler) {
   if (!scriptsChannelHandlers[topic]) scriptsChannelHandlers[topic] = [];
   scriptsChannelHandlers[topic].push(handler);
+  if (!scriptsChannel) api.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
-  scriptsChannel.postMessage({ topic, data });
+  if (scriptsChannel) {
+    scriptsChannel.postMessage({ topic, data });
+  } else {
+    api.publish(topic, data, api.scopes.GLOBAL);
+  }
 }
 
 console.log('[ext:scripts] background loaded');
@@ -87,7 +98,7 @@ const generateId = () => {
 const openScriptsManager = (params = {}) => {
   console.log('[ext:scripts] Opening scripts manager', params);
 
-  let url = 'peek://ext/scripts/manager.html';
+  let url = 'peek://scripts/manager.html';
   if (params.scriptId) {
     url += `?scriptId=${params.scriptId}`;
   }

@@ -156,7 +156,7 @@
       unfoldEffect
     } from '@codemirror/language';
     import { vim, Vim, getCM } from '@replit/codemirror-vim';
-    import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+    import { searchKeymap } from '@codemirror/search';
 
     // Helper: Find folded range at a position
     function findFoldedRangeAt(state, pos) {
@@ -660,7 +660,6 @@ End of test document.
       bracketMatching(),
       highlightActiveLine(),
       highlightActiveLineGutter(),
-      highlightSelectionMatches(),
 
       keymap.of([
         ...defaultKeymap,
@@ -900,6 +899,18 @@ End of test document.
     document.getElementById('unfold-all').addEventListener('click', () => {
       window.unfoldAll();
     });
+
+    // Select a range of text in the editor
+    window.selectRange = (from, to) => {
+      view.dispatch({
+        selection: { anchor: from, head: to },
+      });
+    };
+
+    // Get the number of selection-match highlights (cm-selectionMatch class)
+    window.getSelectionMatchCount = () => {
+      return document.querySelectorAll('.cm-selectionMatch').length;
+    };
 
     // Signal ready
     document.body.dataset.ready = 'true';

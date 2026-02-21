@@ -17,25 +17,35 @@ const api = hasPeekAPI ? window.app : null;
 // BroadcastChannel for intra-extension messaging (background.js <-> home.js)
 // ============================================================================
 
-const lexChannel = new BroadcastChannel('lex');
+let lexChannel = null;
 const lexChannelHandlers = {};
 
-lexChannel.onmessage = (e) => {
-  const { topic, data } = e.data;
-  if (lexChannelHandlers[topic]) {
-    for (const handler of lexChannelHandlers[topic]) {
-      handler(data);
+try {
+  lexChannel = new BroadcastChannel('lex');
+  lexChannel.onmessage = (e) => {
+    const { topic, data } = e.data;
+    if (lexChannelHandlers[topic]) {
+      for (const handler of lexChannelHandlers[topic]) {
+        handler(data);
+      }
     }
-  }
-};
+  };
+} catch (err) {
+  console.warn('[lex] BroadcastChannel unavailable, using IPC fallback:', err.message);
+}
 
 function onChannel(topic, handler) {
   if (!lexChannelHandlers[topic]) lexChannelHandlers[topic] = [];
   lexChannelHandlers[topic].push(handler);
+  if (!lexChannel) api.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
-  lexChannel.postMessage({ topic, data });
+  if (lexChannel) {
+    lexChannel.postMessage({ topic, data });
+  } else {
+    api.publish(topic, data, api.scopes.GLOBAL);
+  }
 }
 
 // ============================================================================
@@ -65,7 +75,7 @@ async function loadSession() {
 
 function openMe() {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/lex/home.html', {
+    api.window.open('peek://lex/home.html', {
       role: 'workspace',
       key: 'lex-home',
       width: 860,
@@ -77,7 +87,7 @@ function openMe() {
 
 function openMeWithLexicon(nsid) {
   if (!hasPeekAPI) return;
-  api.window.open('peek://ext/lex/home.html', {
+  api.window.open('peek://lex/home.html', {
     role: 'workspace',
     key: 'lex-home',
     width: 860,
@@ -199,7 +209,7 @@ function rebuildNewCommands() {
             data: { nsid },
             mimeType: 'application/x-lexicon-form',
             title: displayName,
-            interactive: 'peek://ext/lex/chain-form.html',
+            interactive: 'peek://lex/chain-form.html',
           },
         };
       },
@@ -252,7 +262,7 @@ const extension = {
               data: { nsid },
               mimeType: 'application/x-lexicon-form',
               title: friendlyName,
-              interactive: 'peek://ext/lex/chain-form.html',
+              interactive: 'peek://lex/chain-form.html',
             },
           };
         }
