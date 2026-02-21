@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateModeForNavigation, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
-import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions } from './extensions.js';
+import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
@@ -329,6 +329,163 @@ export function discoverBuiltinExtensions(extensionsDir: string): void {
   }
 }
 
+// Track extensions with declarative-only commands (no background page needed)
+const declarativeExtensions = new Set<string>();
+
+/**
+ * Check if an extension has background: false in its manifest,
+ * meaning it only uses declarative commands/shortcuts and doesn't need
+ * a background page.
+ */
+export function isDeclarativeOnly(extId: string): boolean {
+  return declarativeExtensions.has(extId);
+}
+
+/**
+ * Register declarative commands and shortcuts from extension manifests.
+ *
+ * Called after cmd extension is loaded (so the command registry is ready).
+ * Extensions with `"background": false` in their manifest declare commands
+ * and shortcuts in the manifest itself. The main process registers them
+ * directly without creating a background page.
+ *
+ * Supported action types:
+ * - "window": Open a window with the specified URL
+ * - "publish": Publish a pubsub message
+ */
+export function registerDeclarativeCommands(): void {
+  const registeredExtIds = getRegisteredExtensionIds();
+
+  for (const extId of registeredExtIds) {
+    if (!isBuiltinExtensionEnabled(extId)) continue;
+
+    const extPath = getExtensionPath(extId);
+    if (!extPath) continue;
+
+    const manifest = loadExtensionManifest(extPath);
+    if (!manifest) continue;
+
+    // Only process extensions that explicitly opt out of background pages
+    if (manifest.background !== false) continue;
+
+    const commands = manifest.commands || [];
+    const shortcuts = manifest.shortcuts || [];
+
+    if (commands.length === 0 && shortcuts.length === 0) continue;
+
+    DEBUG && console.log(`[ext:declarative] Registering declarative commands for ${extId}: ${commands.length} commands, ${shortcuts.length} shortcuts`);
+
+    // Mark this extension as declarative-only
+    declarativeExtensions.add(extId);
+
+    // Register each command
+    for (const cmd of commands) {
+      registerDeclarativeCommand(extId, cmd);
+    }
+
+    // Register each shortcut
+    for (const shortcut of shortcuts) {
+      registerDeclarativeShortcut(extId, shortcut, commands);
+    }
+  }
+}
+
+/**
+ * Register a single declarative command.
+ * Sets up a pubsub subscription for cmd:execute:{name} and publishes
+ * the command metadata to the cmd registry.
+ */
+function registerDeclarativeCommand(extId: string, cmd: ManifestCommand): void {
+  const source = `peek://ext/${extId}/`;
+
+  // Subscribe to execution requests from the cmd panel
+  subscribe(source, scopes.GLOBAL, `cmd:execute:${cmd.name}`, (msg: unknown) => {
+    DEBUG && console.log(`[ext:declarative] Executing command: ${cmd.name}`);
+    executeDeclarativeAction(cmd, msg as Record<string, unknown>);
+  });
+
+  // Register the command with the cmd extension's registry
+  publish(source, scopes.GLOBAL, 'cmd:register', {
+    name: cmd.name,
+    description: cmd.description || '',
+    source,
+    scope: cmd.scope || 'global',
+    modes: cmd.modes || [],
+  });
+
+  DEBUG && console.log(`[ext:declarative] Registered command: ${cmd.name} (${cmd.action.type})`);
+}
+
+/**
+ * Register a single declarative shortcut.
+ * Maps the shortcut keys to execute the associated command's action.
+ */
+function registerDeclarativeShortcut(extId: string, shortcut: ManifestShortcut, commands: ManifestCommand[]): void {
+  const source = `peek://ext/${extId}/`;
+
+  // Find the associated command
+  const cmd = commands.find(c => c.name === shortcut.command);
+  if (!cmd) {
+    console.error(`[ext:declarative] Shortcut references unknown command: ${shortcut.command} in ${extId}`);
+    return;
+  }
+
+  const callback = () => {
+    DEBUG && console.log(`[ext:declarative] Shortcut triggered: ${shortcut.keys} -> ${shortcut.command}`);
+    executeDeclarativeAction(cmd, {});
+  };
+
+  if (shortcut.global) {
+    registerGlobalShortcut(shortcut.keys, source, callback);
+  } else {
+    const modeConditions = shortcut.mode ? { majorMode: shortcut.mode as any } : undefined;
+    registerLocalShortcut(shortcut.keys, source, callback, modeConditions);
+  }
+
+  DEBUG && console.log(`[ext:declarative] Registered ${shortcut.global ? 'global' : 'local'} shortcut: ${shortcut.keys} -> ${shortcut.command}`);
+}
+
+/**
+ * Execute a declarative command action.
+ */
+function executeDeclarativeAction(cmd: ManifestCommand, ctx: Record<string, unknown>): void {
+  const action = cmd.action;
+
+  switch (action.type) {
+    case 'window': {
+      // Open a window with the specified URL
+      const url = action.url;
+      const options = action.options || {};
+      DEBUG && console.log(`[ext:declarative] Opening window: ${url}`);
+
+      // Use window:reopen-request which app/index.js already handles
+      // (creates a window via windowManager.createWindow)
+      publish(getSystemAddress(), scopes.GLOBAL, 'window:reopen-request', {
+        url,
+        options: {
+          ...options,
+          trackingSource: 'declarative',
+          trackingSourceId: cmd.name,
+        },
+      });
+      break;
+    }
+
+    case 'publish': {
+      // Publish a pubsub message
+      const topic = action.topic;
+      const data = { ...(action.data || {}), ...ctx };
+      DEBUG && console.log(`[ext:declarative] Publishing: ${topic}`);
+      publish(getSystemAddress(), scopes.GLOBAL, topic, data);
+      break;
+    }
+
+    default: {
+      console.error(`[ext:declarative] Unknown action type: ${(action as any).type}`);
+    }
+  }
+}
+
 /**
  * Required CSS variables that every theme must define.
  * Used by validateThemeCSS() to verify theme completeness.
@@ -545,9 +702,12 @@ export async function loadEnabledExtensions(): Promise<number> {
   // Phase 2: Commands - other extensions should register commands
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
 
-  // Load remaining built-in extensions in parallel
+  // Register declarative commands/shortcuts from manifests (after cmd is ready)
+  registerDeclarativeCommands();
+
+  // Load remaining built-in extensions in parallel (skip declarative-only)
   const otherBuiltinIds = builtinExtIds.filter(id => id !== 'cmd');
-  const enabledBuiltinIds = otherBuiltinIds.filter(id => isBuiltinExtensionEnabled(id));
+  const enabledBuiltinIds = otherBuiltinIds.filter(id => isBuiltinExtensionEnabled(id) && !isDeclarativeOnly(id));
 
   const parallelStart = Date.now();
   await Promise.allSettled(enabledBuiltinIds.map(id => createExtensionWindow(id)));
@@ -660,8 +820,11 @@ async function loadExtensionsConsolidated(): Promise<number> {
   // Phase 2: Commands
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
 
-  // Load remaining extensions
-  const otherIds = allExtIds.filter(id => id !== 'cmd');
+  // Register declarative commands/shortcuts from manifests (after cmd is ready)
+  registerDeclarativeCommands();
+
+  // Load remaining extensions (skip declarative-only)
+  const otherIds = allExtIds.filter(id => id !== 'cmd' && !isDeclarativeOnly(id));
   for (const extId of otherIds) {
     host.webContents.send('ext:load', { id: extId, url: `peek://${extId}/background.html` });
   }
@@ -722,8 +885,11 @@ export async function loadExtensions(): Promise<number> {
     // Phase 2: Commands
     publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
 
-    // Load remaining consolidated extensions
-    const otherConsolidatedIds = consolidatedIds.filter(id => id !== 'cmd');
+    // Register declarative commands/shortcuts from manifests (after cmd is ready)
+    registerDeclarativeCommands();
+
+    // Load remaining consolidated extensions (skip declarative-only ones)
+    const otherConsolidatedIds = consolidatedIds.filter(id => id !== 'cmd' && !isDeclarativeOnly(id));
     for (const extId of otherConsolidatedIds) {
       host.webContents.send('ext:load', { id: extId, url: `peek://${extId}/background.html` });
     }
@@ -733,10 +899,15 @@ export async function loadExtensions(): Promise<number> {
   } else {
     // Phase 2: Commands (even if no consolidated)
     publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
+
+    // Register declarative commands/shortcuts from manifests
+    registerDeclarativeCommands();
   }
 
   // Load external built-in extensions (like 'example') as separate windows
+  // Skip declarative-only extensions — they don't need background pages
   for (const extId of externalBuiltinIds) {
+    if (isDeclarativeOnly(extId)) continue;
     try { await createExtensionWindow(extId); } catch (e) {
       console.error(`[ext] Failed to load external built-in extension ${extId}:`, e);
     }
@@ -797,6 +968,20 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
         status: entry.status
       });
     }
+  }
+
+  // Add declarative-only extensions (no background page, but still active)
+  for (const extId of declarativeExtensions) {
+    // Skip if already included (shouldn't happen, but be safe)
+    if (running.some(r => r.id === extId)) continue;
+
+    const extPath = getExtensionPath(extId);
+    const manifest = extPath ? loadExtensionManifest(extPath) : null;
+    running.push({
+      id: extId,
+      manifest: manifest || { id: extId },
+      status: 'running'
+    });
   }
 
   return running;

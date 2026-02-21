@@ -859,3 +859,62 @@ export async function getAllCollectionCounts(session, collections, onSessionRefr
     .map(r => r.value)
     .sort((a, b) => b.count - a.count);
 }
+
+/**
+ * List records in a collection with pagination.
+ * @param {OAuthSession} session
+ * @param {string} collection - Collection NSID
+ * @param {Object} [opts]
+ * @param {number} [opts.limit=50] - Max records per page (max 100)
+ * @param {string} [opts.cursor] - Pagination cursor
+ * @param {boolean} [opts.reverse] - Reverse sort order
+ * @param {function} [onSessionRefresh]
+ * @returns {Promise<{records: Array<{uri: string, cid: string, value: Object}>, cursor?: string}>}
+ */
+export async function listRecords(session, collection, opts = {}, onSessionRefresh = null) {
+  const params = {
+    repo: session.did,
+    collection,
+    limit: Math.min(opts.limit || 50, 100),
+  };
+  if (opts.cursor) params.cursor = opts.cursor;
+  if (opts.reverse) params.reverse = 'true';
+
+  const data = await xrpcGet(session, 'com.atproto.repo.listRecords', params, onSessionRefresh);
+  return {
+    records: data.records || [],
+    cursor: data.cursor || null,
+  };
+}
+
+/**
+ * Get a single record by collection and rkey.
+ * @param {OAuthSession} session
+ * @param {string} collection - Collection NSID
+ * @param {string} rkey - Record key
+ * @param {function} [onSessionRefresh]
+ * @returns {Promise<{uri: string, cid: string, value: Object}>}
+ */
+export async function getRecord(session, collection, rkey, onSessionRefresh = null) {
+  return xrpcGet(session, 'com.atproto.repo.getRecord', {
+    repo: session.did,
+    collection,
+    rkey,
+  }, onSessionRefresh);
+}
+
+/**
+ * Delete a record by collection and rkey.
+ * @param {OAuthSession} session
+ * @param {string} collection - Collection NSID
+ * @param {string} rkey - Record key
+ * @param {function} [onSessionRefresh]
+ * @returns {Promise<Object>}
+ */
+export async function deleteRecord(session, collection, rkey, onSessionRefresh = null) {
+  return xrpcPost(session, 'com.atproto.repo.deleteRecord', {
+    repo: session.did,
+    collection,
+    rkey,
+  }, onSessionRefresh);
+}

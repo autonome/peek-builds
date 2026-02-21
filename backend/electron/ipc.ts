@@ -4186,6 +4186,34 @@ export function registerMiscHandlers(onQuit: () => void): void {
  * Register sync-related IPC handlers
  */
 export function registerSyncHandlers(): void {
+  // Handle declarative sync trigger (from manifest-declared commands)
+  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'sync:manual-trigger', async () => {
+    DEBUG && console.log('[sync] Manual sync triggered via declarative command');
+    try {
+      const config = getSyncConfig();
+      if (!config.serverUrl || !config.apiKey) {
+        DEBUG && console.log('[sync] Sync not configured, skipping manual trigger');
+        return;
+      }
+
+      const result = await syncAll(config.serverUrl, config.apiKey);
+
+      // Notify all windows that sync pulled new data so they can refresh
+      if (result.pulled > 0) {
+        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'sync:pull-completed', {
+          pulled: result.pulled,
+          pushed: result.pushed,
+          conflicts: result.conflicts
+        });
+      }
+
+      DEBUG && console.log('[sync] Manual sync completed:', result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[sync] Manual sync failed:', message);
+    }
+  });
+
   // Get sync configuration
   ipcMain.handle('sync-get-config', async () => {
     try {

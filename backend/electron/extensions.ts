@@ -11,6 +11,38 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDb } from './datastore.js';
 
+// Declarative command action types
+export interface CommandActionWindow {
+  type: 'window';
+  url: string;
+  options?: Record<string, unknown>;
+}
+
+export interface CommandActionPublish {
+  type: 'publish';
+  topic: string;
+  data?: Record<string, unknown>;
+}
+
+export type CommandAction = CommandActionWindow | CommandActionPublish;
+
+// Declarative command definition in manifest.json
+export interface ManifestCommand {
+  name: string;
+  description?: string;
+  action: CommandAction;
+  scope?: 'global' | 'window' | 'page';
+  modes?: string[];
+}
+
+// Declarative shortcut definition in manifest.json
+export interface ManifestShortcut {
+  keys: string;
+  command: string;
+  global?: boolean;
+  mode?: string;
+}
+
 export interface ExtensionManifest {
   id?: string;
   type?: 'theme' | 'extension';
@@ -18,8 +50,10 @@ export interface ExtensionManifest {
   name?: string;
   description?: string;
   version?: string;
-  background?: string;
+  background?: string | false;
   builtin?: boolean;
+  commands?: ManifestCommand[];
+  shortcuts?: ManifestShortcut[];
   settingsSchema?: string;
   schemas?: {
     prefs?: unknown;

@@ -1267,3 +1267,227 @@ body {
   flex-direction: column;
   gap: 4px;
 }
+
+/* ==================== Records List Panel ==================== */
+
+.panel-header-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.records-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.record-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--base01);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s;
+  gap: 12px;
+}
+
+.record-item:hover {
+  background: var(--base02);
+}
+
+.record-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.record-item-rkey {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--base05);
+  font-family: var(--theme-font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.record-item-preview {
+  font-size: 12px;
+  color: var(--base04);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.record-item-date {
+  font-size: 11px;
+  color: var(--base04);
+  white-space: nowrap;
+}
+
+/* Pagination */
+.records-pagination {
+  padding: 12px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.records-empty {
+  color: var(--base04);
+  font-size: 13px;
+  padding: 24px 0;
+  text-align: center;
+}
+
+/* ==================== Record Detail Panel ==================== */
+
+.record-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.record-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.record-detail-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--base04);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.record-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--base01);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.record-meta-row {
+  display: flex;
+  gap: 8px;
+}
+
+.record-meta-label {
+  color: var(--base04);
+  flex-shrink: 0;
+  min-width: 60px;
+}
+
+.record-meta-value {
+  color: var(--base05);
+  font-family: var(--theme-font-mono, monospace);
+  font-size: 11px;
+  word-break: break-all;
+  min-width: 0;
+}
+
+/* Record fields rendered from schema */
+.record-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 14px;
+  background: var(--base01);
+  border-radius: 6px;
+}
+
+.record-field-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--base04);
+}
+
+.record-field-value {
+  font-size: 13px;
+  color: var(--base05);
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.record-field-value a {
+  color: var(--base0D);
+  text-decoration: none;
+}
+
+.record-field-value a:hover {
+  text-decoration: underline;
+}
+
+.record-field-value img {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+/* Nested object display */
+.record-field-object {
+  padding: 8px 12px;
+  background: var(--base00);
+  border: 1px solid var(--base02);
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+/* JSON fallback display */
+.record-json-view {
+  padding: 12px 14px;
+  background: var(--base01);
+  border-radius: 6px;
+  font-family: var(--theme-font-mono, monospace);
+  font-size: 12px;
+  color: var(--base05);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+/* Delete confirmation */
+.delete-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--base08) 10%, transparent);
+  border: 1px solid var(--base08);
+  border-radius: 6px;
+  margin-top: 8px;
+}
+
+.delete-confirm-text {
+  font-size: 13px;
+  color: var(--base08);
+}
+
+.delete-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}

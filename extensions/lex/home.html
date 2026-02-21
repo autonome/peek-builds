@@ -149,6 +149,41 @@
               </div>
             </div>
 
+            <!-- Records List panel (detail view from My Lexicons) -->
+            <div id="panel-records" class="panel" style="display:none">
+              <div class="panel-header">
+                <div class="panel-header-row">
+                  <button id="records-back" class="btn-back" title="Back">&larr;</button>
+                  <div class="panel-header-content">
+                    <h2 class="panel-title" id="records-title">Records</h2>
+                    <p class="panel-subtitle" id="records-nsid"></p>
+                  </div>
+                  <button id="records-create-btn" class="btn btn-sm btn-primary">+ Create</button>
+                </div>
+              </div>
+              <div id="records-list" class="records-list">
+                <div class="loading">Loading records...</div>
+              </div>
+              <div id="records-pagination" class="records-pagination" style="display:none">
+                <button id="records-load-more" class="btn btn-sm">Load more</button>
+              </div>
+            </div>
+
+            <!-- Record Detail panel -->
+            <div id="panel-record-detail" class="panel" style="display:none">
+              <div class="panel-header">
+                <div class="panel-header-row">
+                  <button id="record-detail-back" class="btn-back" title="Back">&larr;</button>
+                  <div class="panel-header-content">
+                    <h2 class="panel-title" id="record-detail-title">Record</h2>
+                    <p class="panel-subtitle" id="record-detail-uri"></p>
+                  </div>
+                  <button id="record-delete-btn" class="btn btn-sm btn-danger">Delete</button>
+                </div>
+              </div>
+              <div id="record-detail-content" class="record-detail-content"></div>
+            </div>
+
             <!-- Create Record panel (detail view from My Lexicons / Explore) -->
             <div id="panel-create-record" class="panel" style="display:none">
               <div class="panel-header">

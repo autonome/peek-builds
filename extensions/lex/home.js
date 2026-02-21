@@ -24,6 +24,9 @@ import {
   getProfile,
   xrpcPost,
   uploadBlob,
+  listRecords,
+  getRecord,
+  deleteRecord,
 } from './atproto.js';
 
 const api = window.app;
@@ -237,6 +240,16 @@ let state = {
   pickerFilter: '',
   pickerVisible: false,
   pickerActiveIndex: -1,
+  // Records list
+  recordsNsid: null,
+  recordsList: [],
+  recordsCursor: null,
+  recordsLoading: false,
+  // Record detail
+  recordDetailUri: null,
+  recordDetailValue: null,
+  recordDetailCid: null,
+  recordDetailDeleting: false,
 };
 
 // DOM refs
@@ -251,6 +264,14 @@ let modeFormBtn, modeJsonBtn, createRecordBackBtn;
 
 // Recent lexicons DOM ref
 let recentLexiconsEl;
+
+// Records list DOM refs
+let recordsBackBtn, recordsTitleEl, recordsNsidEl, recordsCreateBtn;
+let recordsListEl, recordsPaginationEl, recordsLoadMoreBtn;
+
+// Record detail DOM refs
+let recordDetailBackBtn, recordDetailTitleEl, recordDetailUriEl;
+let recordDetailContentEl, recordDeleteBtn;
 
 // Create panel DOM refs (dedicated nav panel)
 let pickerInput, pickerResults, pickerSelected;
@@ -297,6 +318,22 @@ async function init() {
   // Recent lexicons ref
   recentLexiconsEl = document.getElementById('recent-lexicons');
 
+  // Records list refs
+  recordsBackBtn = document.getElementById('records-back');
+  recordsTitleEl = document.getElementById('records-title');
+  recordsNsidEl = document.getElementById('records-nsid');
+  recordsCreateBtn = document.getElementById('records-create-btn');
+  recordsListEl = document.getElementById('records-list');
+  recordsPaginationEl = document.getElementById('records-pagination');
+  recordsLoadMoreBtn = document.getElementById('records-load-more');
+
+  // Record detail refs
+  recordDetailBackBtn = document.getElementById('record-detail-back');
+  recordDetailTitleEl = document.getElementById('record-detail-title');
+  recordDetailUriEl = document.getElementById('record-detail-uri');
+  recordDetailContentEl = document.getElementById('record-detail-content');
+  recordDeleteBtn = document.getElementById('record-delete-btn');
+
   // Create panel (dedicated nav) refs
   pickerInput = document.getElementById('lexicon-picker-input');
   pickerResults = document.getElementById('lexicon-picker-results');
@@ -324,6 +361,10 @@ async function init() {
 
   // Set up create panel (dedicated nav)
   setupCreatePanel();
+
+  // Set up records panels
+  setupRecordsPanel();
+  setupRecordDetailPanel();
 
   // Load recent lexicons from storage
   loadRecentLexicons();
@@ -383,6 +424,18 @@ function handleEscape() {
     state.pickerVisible = false;
     pickerResults.classList.remove('visible');
     pickerResults.innerHTML = '';
+    return { handled: true };
+  }
+
+  // If in record-detail panel, go back to records list
+  if (state.activePanel === 'record-detail') {
+    goBackFromRecordDetail();
+    return { handled: true };
+  }
+
+  // If in records panel, go back to my-lexicons
+  if (state.activePanel === 'records') {
+    goBackFromRecords();
     return { handled: true };
   }
 
@@ -874,17 +927,17 @@ function renderCollections() {
         </div>
         <div class="collection-right">
           <span class="collection-count">${countLabel}</span>
-          <span class="collection-action">Create</span>
+          <span class="collection-action">View</span>
         </div>
       </div>
     `;
   }).join('');
 
-  // Attach click handlers for "Create" action
+  // Attach click handlers to browse records
   collectionsListEl.querySelectorAll('.collection-item.clickable').forEach(el => {
     el.addEventListener('click', () => {
       const nsid = el.dataset.nsid;
-      if (nsid) openCreateRecord(nsid, 'my-lexicons');
+      if (nsid) openRecordsList(nsid);
     });
   });
 }

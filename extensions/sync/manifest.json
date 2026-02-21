@@ -1,8 +1,15 @@
 {
   "id": "sync",
   "name": "Sync",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sync commands and functionality",
-  "background": "background.html",
-  "builtin": true
+  "background": false,
+  "builtin": true,
+  "commands": [
+    {
+      "name": "Sync now",
+      "description": "Trigger manual sync with server",
+      "action": { "type": "publish", "topic": "sync:manual-trigger" }
+    }
+  ]
 }
