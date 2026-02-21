@@ -13,6 +13,7 @@ import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle, bracketMatch
 import { tags } from '@lezer/highlight';
 import { vim, Vim, getCM } from '@replit/codemirror-vim';
 import { searchKeymap } from '@codemirror/search';
+import { clickableLinks } from './links.js';
 
 // Compartments for runtime-reconfigurable extensions
 const vimCompartment = new Compartment();
@@ -715,6 +716,9 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
     // Folding support (required for vim fold commands)
     codeFolding(),
     folditallFoldService,
+
+    // Clickable links (Cmd+click to open URLs)
+    clickableLinks(),
 
     // Theming
     themeCompartment.of(peekTheme),
