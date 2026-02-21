@@ -135,7 +135,7 @@ extensions/
 ├── editor/               # Item CRUD: add, edit content, delete
 ├── example/              # Hello world example
 ├── groups/
-├── me-core/              # AT Protocol identity and data browser
+├── me-core/              # Lexicon Studio — AT Protocol identity and data browser
 ├── peeks/
 ├── slides/
 └── tags/                 # Tag browsing, filtering, tag editing on items
@@ -251,9 +251,9 @@ The editor extension (`extensions/editor/`) is the canonical surface for creatin
 - `editor:add` — open editor in add mode. Payload: `{ type?, content?, url? }`
 - `editor:changed` — published after any create/update/delete, so other views can refresh. Payload: `{ action, itemId }`
 
-### Me Extension (AT Protocol Identity)
+### Lexicon Studio (AT Protocol Identity)
 
-The me-core extension (`extensions/me-core/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
+The Lexicon Studio extension (`extensions/me-core/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
 
 **Files:**
 - `background.js` — Extension lifecycle, session management, pubsub API for the home UI
@@ -280,7 +280,7 @@ The me-core extension (`extensions/me-core/`) connects Peek to the AT Protocol (
 - `me:search-lexicons` / `me:search-lexicons:response` — Explore lexicon directory
 - `me:create-record` / `me:create-record:response` — Create a record
 
-**Command:** `me:core` — opens the identity panel window (`peek://ext/me-core/home.html`).
+**Command:** `lexicon studio` — opens the identity panel window (`peek://ext/me-core/home.html`).
 
 ### Cmd Commands (Item Creation)
 

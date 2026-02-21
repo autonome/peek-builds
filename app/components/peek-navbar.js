@@ -40,6 +40,8 @@ export class PeekNavbar extends PeekElement {
     canGoBack: { type: Boolean, attribute: 'can-go-back' },
     canGoForward: { type: Boolean, attribute: 'can-go-forward' },
     visible: { type: Boolean, reflect: true },
+    /** When true, a loading spinner is shown in the URL input */
+    loading: { type: Boolean },
     /** When true, component registers its own document-level keyboard shortcuts
      * (Cmd+L, Cmd+R, Cmd+[, Cmd+]). Set to false if the host manages these. */
     shortcuts: { type: Boolean },
@@ -128,6 +130,36 @@ export class PeekNavbar extends PeekElement {
         background: var(--theme-bg, rgba(128, 128, 128, 0.22));
         color: var(--theme-text, #e0e0e0);
       }
+
+      .url-container {
+        flex: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+        min-width: 0;
+      }
+
+      .url-container .url-text {
+        flex: 1;
+        padding-right: 28px;
+      }
+
+      .loading-spinner {
+        position: absolute;
+        right: 8px;
+        width: 14px;
+        height: 14px;
+        border: 1.5px solid var(--theme-text-muted, #666);
+        border-top-color: var(--theme-accent, #007aff);
+        border-radius: 50%;
+        animation: navbar-spin 0.7s linear infinite;
+        flex-shrink: 0;
+        pointer-events: none;
+      }
+
+      @keyframes navbar-spin {
+        to { transform: rotate(360deg); }
+      }
     `
   ];
 
@@ -137,6 +169,7 @@ export class PeekNavbar extends PeekElement {
     this.canGoBack = false;
     this.canGoForward = false;
     this.visible = false;
+    this.loading = false;
     this.shortcuts = true;
     this._handleKeydown = this._handleKeydown.bind(this);
   }
@@ -280,16 +313,19 @@ export class PeekNavbar extends PeekElement {
           title="Reload (Cmd+R)"
           @click=${(e) => { e.stopPropagation(); this.emit('reload'); }}
         >&#8635;</button>
-        <input
-          type="text"
-          class="url-text"
-          .value=${this.url || ''}
-          spellcheck="false"
-          autocomplete="off"
-          @keydown=${this._onUrlKeydown}
-          @focus=${this._onUrlFocus}
-          @mousedown=${this._onUrlMousedown}
-        >
+        <div class="url-container">
+          <input
+            type="text"
+            class="url-text"
+            .value=${this.url || ''}
+            spellcheck="false"
+            autocomplete="off"
+            @keydown=${this._onUrlKeydown}
+            @focus=${this._onUrlFocus}
+            @mousedown=${this._onUrlMousedown}
+          >
+          ${this.loading ? html`<div class="loading-spinner"></div>` : ''}
+        </div>
       </div>
     `;
   }

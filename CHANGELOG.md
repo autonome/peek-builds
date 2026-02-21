@@ -15,7 +15,7 @@ Newly done items go here, grouped under level-2 headings by week (date = Monday 
 
 ## 2026-02-20
 
-Desktop - AT Protocol Identity (me-core)
+Desktop - Lexicon Studio (AT Protocol Identity)
 - [x] Add AT Protocol identity extension — connect your Bluesky/AT Protocol account via OAuth PKCE+DPoP ([b549](https://tangled.org/burrito.space/peek/commit/b549fa8a), [ea7b](https://tangled.org/burrito.space/peek/commit/ea7ba305))
 - [x] Add lexicon browser — explore all known AT Protocol lexicons, view your repo's collections with record counts ([ba52](https://tangled.org/burrito.space/peek/commit/ba528419))
 - [x] Add record creation — auto-generated forms from lexicon schemas, create records directly from the app ([93fc](https://tangled.org/burrito.space/peek/commit/93fc3561), [b9a4](https://tangled.org/burrito.space/peek/commit/b9a485e1))

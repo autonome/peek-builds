@@ -336,13 +336,21 @@ const loadingLifecycle = {
 };
 
 // Visual effect module — applies/removes CSS classes based on lifecycle state
+// Also shows/hides navbar with loading spinner during page load.
 loadingLifecycle.onChange((state) => {
   if (state === 'loading') {
     webview.classList.add('loading');
     webview.classList.remove('loaded');
+    navbar.loading = true;
+    show({ source: 'loading' });
   } else if (state === 'loaded') {
     webview.classList.remove('loading');
     webview.classList.add('loaded');
+    navbar.loading = false;
+    // Only auto-hide if the navbar was shown by loading (not by user hover/shortcut)
+    if (showSource === 'loading') {
+      hide();
+    }
   }
 });
 
@@ -853,6 +861,8 @@ function show(opts) {
 
 function hide() {
   if (isDragging || holdDragPending) return;
+  // Don't hide while page is loading — navbar stays visible with spinner
+  if (loadingLifecycle.state === 'loading') return;
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;

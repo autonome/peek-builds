@@ -47,15 +47,21 @@
       transition: opacity 0.15s ease, box-shadow 0.4s ease, background-color 0.3s ease;
     }
 
-    /* Loading indicator: blue pulsing glow while page loads */
+    /* Loading indicator: themed pulsing glow while page loads.
+     * Uses --theme-accent for color, with --loading-glow-color as intermediary
+     * so the color adapts to the active theme. */
+    webview {
+      --loading-glow-color: var(--theme-accent, #007aff);
+    }
+
     @keyframes loading-glow {
       0%, 100% {
-        box-shadow: 0 0 8px 2px rgba(100, 150, 255, 0.15),
-                    0 0 20px 6px rgba(100, 150, 255, 0.06);
+        box-shadow: 0 0 4px 1px color-mix(in srgb, var(--loading-glow-color) 15%, transparent),
+                    0 0 10px 3px color-mix(in srgb, var(--loading-glow-color) 6%, transparent);
       }
       50% {
-        box-shadow: 0 0 14px 4px rgba(100, 150, 255, 0.55),
-                    0 0 30px 10px rgba(100, 150, 255, 0.2);
+        box-shadow: 0 0 8px 2px color-mix(in srgb, var(--loading-glow-color) 40%, transparent),
+                    0 0 16px 5px color-mix(in srgb, var(--loading-glow-color) 15%, transparent);
       }
     }
 

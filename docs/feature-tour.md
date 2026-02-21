@@ -658,14 +658,14 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 
 ## Extensions
 
-### AT Protocol Identity (me-core)
+### Lexicon Studio (AT Protocol Identity)
 
 **Summary:** Connect your Bluesky/AT Protocol account via OAuth (PKCE + DPoP). Browse your repo's collections with record counts, explore the full lexicon directory from the network, and create records with auto-generated forms or raw JSON. Recently used lexicon types appear as sidebar shortcuts.
 
-**Where in UI:** Command palette (`me:core`) or the Me panel window.
+**Where in UI:** Command palette (`lexicon studio`) or the Lexicon Studio panel window.
 
 **How to try it:**
-1. Type `me:core` in the command palette. The Me panel opens with a login screen.
+1. Type `lexicon studio` in the command palette. The Lexicon Studio panel opens with a login screen.
 2. Start typing your Bluesky handle (e.g., `alice.bsky.social`). Typeahead search results appear from the public API.
 3. Select your account and click "Connect". A browser window opens for OAuth authorization.
 4. After authorizing, the panel shows your profile (avatar, display name, DID) with a sidebar navigation.
@@ -804,5 +804,5 @@ All commands accessible from `Option+Space` or `Cmd+K`:
 | `save [filename]` | Save chain output to file |
 | `save as note` | Save chain output as a note |
 | `reopen closed window` | Reopen last closed window |
-| `me:core` | Open AT Protocol identity extension |
+| `lexicon studio` | Open AT Protocol identity extension |
 | `lists` | Produce sample list data (chain demo) |

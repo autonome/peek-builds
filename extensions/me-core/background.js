@@ -241,7 +241,7 @@ function openMe() {
       key: 'me-home',
       width: 860,
       height: 620,
-      title: 'Me',
+      title: 'Lexicon Studio',
     });
   }
 }
@@ -633,7 +633,7 @@ function openMeWithLexicon(nsid) {
     key: 'me-home',
     width: 860,
     height: 620,
-    title: 'Me',
+    title: 'Lexicon Studio',
   });
   // Publish after a short delay to let the window load
   setTimeout(() => {
@@ -648,12 +648,12 @@ function openMeWithLexicon(nsid) {
 const extension = {
   id: 'me-core',
   labels: {
-    name: 'Me',
+    name: 'Lexicon Studio',
   },
 
   registerCommands() {
     api.commands.register({
-      name: 'me:core',
+      name: 'lexicon studio',
       description: 'Open AT Protocol identity panel',
       execute: () => {
         openMe();
@@ -750,7 +750,7 @@ const extension = {
   uninit() {
     console.log('[me] Cleaning up...');
     if (hasPeekAPI) {
-      api.commands.unregister('me:core');
+      api.commands.unregister('lexicon studio');
       api.commands.unregister('new');
       for (const name of registeredNewCommands) {
         try { api.commands.unregister(name); } catch {}
