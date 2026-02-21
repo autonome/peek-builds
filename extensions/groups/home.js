@@ -1018,12 +1018,32 @@ const createAddressCard = (address) => {
 
   card.appendChild(header);
 
-  // Footer slot: visit count (matching group card structure)
+  // Footer slot: URL + visit count
   const footer = document.createElement('div');
   footer.slot = 'footer';
   footer.className = 'card-meta';
+  footer.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;';
+
+  // Show URL (unless title already IS the URL)
+  if (addressUrl && displayTitle !== addressUrl) {
+    const urlSpan = document.createElement('span');
+    urlSpan.className = 'card-url';
+    try {
+      const u = new URL(addressUrl);
+      urlSpan.textContent = u.hostname + (u.pathname !== '/' ? u.pathname : '');
+    } catch {
+      urlSpan.textContent = addressUrl;
+    }
+    urlSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;opacity:0.7;';
+    footer.appendChild(urlSpan);
+  }
+
   const visitCount = address.visitCount || 0;
-  footer.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
+  const visitSpan = document.createElement('span');
+  visitSpan.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
+  visitSpan.style.flexShrink = '0';
+  footer.appendChild(visitSpan);
+
   card.appendChild(footer);
 
   // Click to open address - backend handles centering and parent tracking

@@ -50,6 +50,9 @@ TODO-mine.md
 # Device backups (use ~/sync/peek-backups/ instead)
 device-backup-*/
 
+# Chrome extension resources (large binaries)
+resources/chrome-extensions/
+
 # Experimental/unused files
 babel.config.json
 webpack.config.js
