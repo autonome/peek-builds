@@ -22,11 +22,13 @@ const WIDGET_WIDTH = 220;
 const WIDGET_HEIGHT = 40;
 const WIDGET_GAP = 2;
 
+const STATS_WIDGET_HEIGHT = 120; // taller for 6 metric rows
+
 const DEFAULT_HUD_WIDGETS = [
   { id: 'mode',   url: 'peek://ext/hud/widgets/mode.html' },
   { id: 'izui',   url: 'peek://ext/hud/widgets/izui.html' },
   { id: 'window', url: 'peek://ext/hud/widgets/window.html' },
-  { id: 'stats',  url: 'peek://ext/hud/widgets/stats.html' }
+  { id: 'stats',  url: 'peek://ext/hud/widgets/stats.html', height: STATS_WIDGET_HEIGHT }
 ];
 
 /**
@@ -34,17 +36,23 @@ const DEFAULT_HUD_WIDGETS = [
  * Arranges widgets in a vertical stack
  */
 const buildDefaultSheetConfig = () => {
-  const items = DEFAULT_HUD_WIDGETS.map((widget, index) => ({
-    id: widget.id,
-    url: widget.url,
-    x: 0,
-    y: index * (WIDGET_HEIGHT + WIDGET_GAP),
-    width: WIDGET_WIDTH,
-    height: WIDGET_HEIGHT
-  }));
+  let y = 0;
+  const items = DEFAULT_HUD_WIDGETS.map((widget) => {
+    const h = widget.height || WIDGET_HEIGHT;
+    const item = {
+      id: widget.id,
+      url: widget.url,
+      x: 0,
+      y,
+      width: WIDGET_WIDTH,
+      height: h
+    };
+    y += h + WIDGET_GAP;
+    return item;
+  });
 
   return {
-    version: 1,
+    version: 2,
     name: 'HUD',
     createdAt: Date.now(),
     items
@@ -55,17 +63,23 @@ const buildDefaultSheetConfig = () => {
  * Ensure the HUD sheet config exists in extension_settings.
  * Creates a default config if none exists.
  */
+const CURRENT_CONFIG_VERSION = 2;
+
 const ensureSheetConfig = async () => {
   const result = await api.settings.getKey(HUD_SHEET_KEY);
   if (result.success && result.data) {
-    debug && console.log('[ext:hud] HUD sheet config already exists');
-    return result.data;
+    // Upgrade config if version is outdated
+    if (result.data.version && result.data.version >= CURRENT_CONFIG_VERSION) {
+      debug && console.log('[ext:hud] HUD sheet config already exists (v' + result.data.version + ')');
+      return result.data;
+    }
+    console.log('[ext:hud] Upgrading HUD sheet config from v' + (result.data.version || 1) + ' to v' + CURRENT_CONFIG_VERSION);
   }
 
-  // Create default config
+  // Create default config (or upgrade)
   const config = buildDefaultSheetConfig();
   await api.settings.setKey(HUD_SHEET_KEY, config);
-  console.log('[ext:hud] Created default HUD sheet config with', config.items.length, 'widgets');
+  console.log('[ext:hud] Created default HUD sheet config v' + CURRENT_CONFIG_VERSION + ' with', config.items.length, 'widgets');
   return config;
 };
 

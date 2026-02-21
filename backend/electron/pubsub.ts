@@ -30,6 +30,13 @@ const topics = new Map<string, Map<string, (msg: unknown) => void>>();
 // Callback for broadcasting to extension windows
 let extensionBroadcaster: ((topic: string, msg: unknown, source: string) => void) | null = null;
 
+// Session stats tracking
+const sessionStats = {
+  messagesPublished: 0,
+  messagesDelivered: 0,
+  topicsUsed: new Set<string>(),  // topics that had at least one publish this session
+};
+
 /**
  * Extract pseudo-host from a peek:// URL
  * e.g., 'peek://app/foo.html' -> 'app'
@@ -71,11 +78,16 @@ export function setExtensionBroadcaster(
  * Publish a message to a topic
  */
 export function publish(source: string, scope: Scope, topic: string, msg: unknown): void {
+  // Track session stats
+  sessionStats.messagesPublished++;
+  sessionStats.topicsUsed.add(topic);
+
   // Route to traditional subscribers (via IPC callbacks)
   if (topics.has(topic)) {
     const t = topics.get(topic)!;
     for (const [subSource, cb] of t) {
       if (scopeCheck(source, subSource, scope)) {
+        sessionStats.messagesDelivered++;
         cb(msg);
       }
     }
@@ -129,4 +141,21 @@ export function unsubscribeAll(source: string): void {
  */
 export function getSystemAddress(): string {
   return SYSTEM_ADDRESS;
+}
+
+/**
+ * Get pubsub session statistics
+ */
+export function getStats(): {
+  topicsRegistered: number;
+  topicsUsedThisSession: number;
+  messagesPublished: number;
+  messagesDelivered: number;
+} {
+  return {
+    topicsRegistered: topics.size,
+    topicsUsedThisSession: sessionStats.topicsUsed.size,
+    messagesPublished: sessionStats.messagesPublished,
+    messagesDelivered: sessionStats.messagesDelivered,
+  };
 }

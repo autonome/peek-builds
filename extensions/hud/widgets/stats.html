@@ -6,11 +6,28 @@
     <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
     <title>Stats</title>
     <link rel="stylesheet" type="text/css" href="widget.css">
+    <style>
+      .stats-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1px 10px;
+        font-size: 10px;
+        line-height: 1.6;
+      }
+      .stats-grid .stat-label {
+        color: rgba(255, 255, 255, 0.3);
+      }
+      .stats-grid .stat-value {
+        color: rgba(255, 255, 255, 0.5);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
   </head>
   <body>
     <div class="widget">
-      <div class="widget-label">Stats</div>
-      <div id="stats-value" class="widget-value widget-value-small">-</div>
+      <div class="widget-label">Performance</div>
+      <div id="stats-content" class="stats-grid">-</div>
     </div>
 
     <script type="module" src="stats.js"></script>

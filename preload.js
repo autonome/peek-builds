@@ -232,6 +232,13 @@ api.subscribe = (topic, callback, scope = api.scopes.SELF) => {
   });
 };
 
+api.pubsub = {
+  stats: () => {
+    DEBUG && console.log('pubsub.stats');
+    return ipcRenderer.invoke('pubsub-stats');
+  }
+};
+
 api.window = {
   open: (url, options = {}) => {
     DEBUG && console.log('window.open', url, options);

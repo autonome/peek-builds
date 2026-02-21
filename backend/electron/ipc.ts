@@ -145,6 +145,7 @@ import {
   subscribe,
   scopes as PubSubScopes,
   getSystemAddress,
+  getStats as getPubSubStats,
 } from './pubsub.js';
 
 import {
@@ -3533,6 +3534,7 @@ export function registerWindowHandlers(): void {
         url: string;
         title: string;
         source: string;
+        visible: boolean;
         params: Record<string, unknown>;
       }> = [];
 
@@ -3582,6 +3584,7 @@ export function registerWindowHandlers(): void {
             url,
             title: win.getTitle(),
             source: winData.source,
+            visible: win.isVisible(),
             params: safeParams
           });
         }
@@ -3593,6 +3596,11 @@ export function registerWindowHandlers(): void {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message, windows: [] };
     }
+  });
+
+  // PubSub stats
+  ipcMain.handle('pubsub-stats', async () => {
+    return { success: true, data: getPubSubStats() };
   });
 
   // ========================================================================
