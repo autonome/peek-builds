@@ -3227,6 +3227,62 @@ export function registerWindowHandlers(): void {
     }
   });
 
+  ipcMain.handle('window-maximize', async (ev, msg) => {
+    DEBUG && console.log('window-maximize', msg);
+
+    try {
+      let win: BrowserWindow | null = null;
+      if (msg?.id) {
+        win = BrowserWindow.fromId(msg.id);
+      } else {
+        const wc = ev.sender;
+        win = BrowserWindow.fromWebContents(wc);
+      }
+
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+
+      if (win.isMaximized()) {
+        win.unmaximize();
+      } else {
+        win.maximize();
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to maximize window:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('window-fullscreen', async (ev, msg) => {
+    DEBUG && console.log('window-fullscreen', msg);
+
+    try {
+      let win: BrowserWindow | null = null;
+      if (msg?.id) {
+        win = BrowserWindow.fromId(msg.id);
+      } else {
+        const wc = ev.sender;
+        win = BrowserWindow.fromWebContents(wc);
+      }
+
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+
+      win.setFullScreen(!win.isFullScreen());
+
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to toggle fullscreen:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   ipcMain.handle('window-resize', async (ev, msg) => {
     DEBUG && console.log('window-resize', msg);
 

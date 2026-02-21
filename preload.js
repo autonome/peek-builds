@@ -375,6 +375,14 @@ api.window = {
   centerAll: () => {
     DEBUG && console.log('window.centerAll');
     return ipcRenderer.invoke('window-center-all');
+  },
+  maximize: (id) => {
+    DEBUG && console.log('window.maximize', id);
+    return ipcRenderer.invoke('window-maximize', { source: sourceAddress, id });
+  },
+  fullscreen: (id) => {
+    DEBUG && console.log('window.fullscreen', id);
+    return ipcRenderer.invoke('window-fullscreen', { source: sourceAddress, id });
   }
 };
 
