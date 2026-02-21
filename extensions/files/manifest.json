@@ -4,5 +4,32 @@
   "version": "1.0.0",
   "description": "File and format commands (CSV, save)",
   "background": "background.html",
-  "builtin": true
+  "builtin": true,
+  "commands": [
+    {
+      "name": "open file",
+      "description": "Open a file from disk (native file picker)",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "csv",
+      "description": "Convert JSON to CSV format",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "save",
+      "description": "Save data to a file (save dialog)",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "markdown",
+      "description": "Format items as a markdown document",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "save as note",
+      "description": "Save text content as a new note in the datastore",
+      "action": { "type": "execute" }
+    }
+  ]
 }

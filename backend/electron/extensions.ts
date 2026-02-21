@@ -24,7 +24,11 @@ export interface CommandActionPublish {
   data?: Record<string, unknown>;
 }
 
-export type CommandAction = CommandActionWindow | CommandActionPublish;
+export interface CommandActionExecute {
+  type: 'execute';
+}
+
+export type CommandAction = CommandActionWindow | CommandActionPublish | CommandActionExecute;
 
 // Declarative command definition in manifest.json
 export interface ManifestCommand {
@@ -52,6 +56,7 @@ export interface ExtensionManifest {
   version?: string;
   background?: string | false;
   builtin?: boolean;
+  lazy?: boolean;  // If true, extension iframe is not loaded at startup; loaded on first command use
   commands?: ManifestCommand[];
   shortcuts?: ManifestShortcut[];
   settingsSchema?: string;

@@ -21,6 +21,9 @@ let currentSettings = {
   prefs: defaults.prefs
 };
 
+// Track the windows overlay window ID for show/hide reuse
+let windowsViewId = null;
+
 /**
  * Load settings from datastore
  */
@@ -35,9 +38,22 @@ const loadSettings = async () => {
 };
 
 /**
- * Open the Windows view (maximized, transparent overlay)
+ * Open or show the Windows view (maximized, transparent overlay).
+ * On first call, creates the window. On subsequent calls, shows it
+ * if it still exists (faster perceived perf — no cold-start).
  */
 const openWindowsView = async () => {
+  // Try to show existing window first
+  if (windowsViewId) {
+    const exists = await api.window.exists(windowsViewId);
+    if (exists.success && exists.data) {
+      await api.window.show(windowsViewId);
+      debug && console.log('[ext:windows] Windows view shown (reused):', windowsViewId);
+      return;
+    }
+    windowsViewId = null;
+  }
+
   const params = {
     // IZUI role
     role: 'overlay',
@@ -56,13 +72,15 @@ const openWindowsView = async () => {
     trackingSourceId: 'main'
   };
 
-  api.window.open(address, params)
-    .then(window => {
-      debug && console.log('[ext:windows] Windows view opened:', window);
-    })
-    .catch(error => {
-      console.error('[ext:windows] Failed to open windows view:', error);
-    });
+  try {
+    const result = await api.window.open(address, params);
+    if (result.success) {
+      windowsViewId = result.id;
+      debug && console.log('[ext:windows] Windows view created:', windowsViewId);
+    }
+  } catch (error) {
+    console.error('[ext:windows] Failed to open windows view:', error);
+  }
 };
 
 // ===== Command definitions =====
@@ -150,6 +168,14 @@ const init = async () => {
 
   // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
+
+  // Track when the windows view is closed so we know to recreate it
+  api.subscribe('window:closed', async (msg) => {
+    if (msg?.id === windowsViewId) {
+      debug && console.log('[ext:windows] Windows view closed');
+      windowsViewId = null;
+    }
+  }, api.scopes.GLOBAL);
 };
 
 const uninit = () => {

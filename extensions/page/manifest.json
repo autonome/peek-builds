@@ -4,5 +4,17 @@
   "version": "1.0.0",
   "description": "Page and window commands",
   "background": "background.html",
-  "builtin": true
+  "builtin": true,
+  "commands": [
+    {
+      "name": "open",
+      "description": "Open a URL in a new window",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "modal",
+      "description": "Open a URL in a modal window that hides on blur or escape",
+      "action": { "type": "execute" }
+    }
+  ]
 }

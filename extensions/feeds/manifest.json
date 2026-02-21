@@ -5,5 +5,28 @@
   "description": "Simple RSS/Atom feed reader demonstrating the series and feeds APIs",
   "version": "1.0.0",
   "background": "background.html",
-  "settingsSchema": "./settings-schema.json"
+  "settingsSchema": "./settings-schema.json",
+  "commands": [
+    {
+      "name": "open feeds",
+      "description": "Open the feed reader",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/feeds/feeds.html",
+        "options": { "key": "feeds-reader", "width": 900, "height": 700, "title": "Feed Reader" }
+      }
+    },
+    {
+      "name": "refresh feeds",
+      "description": "Refresh all feeds",
+      "action": { "type": "execute" }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+Shift+F",
+      "command": "open feeds",
+      "global": true
+    }
+  ]
 }

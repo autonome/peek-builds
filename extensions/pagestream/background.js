@@ -56,6 +56,17 @@ const openPagestreamWindow = async () => {
   if (isOpeningPagestream) return;
   isOpeningPagestream = true;
   try {
+    // Try to show existing window first (faster perceived perf)
+    if (pagestreamWindowId) {
+      const exists = await api.window.exists(pagestreamWindowId);
+      if (exists.success && exists.data) {
+        await api.window.show(pagestreamWindowId);
+        debug && console.log('[ext:pagestream] Pagestream window shown (reused):', pagestreamWindowId);
+        return;
+      }
+      pagestreamWindowId = null;
+    }
+
     let screenW = 1440, screenH = 900;
     try {
       screenW = window.screen.availWidth || window.screen.width || 1440;

@@ -5,5 +5,22 @@
   "description": "Widget sheets with freeform card layouts hosting webviews",
   "version": "1.0.0",
   "background": "background.html",
-  "builtin": true
+  "builtin": true,
+  "commands": [
+    {
+      "name": "sheets",
+      "description": "List all widget sheets",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "new sheet",
+      "description": "Create a new widget sheet",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "open sheet",
+      "description": "Open an existing widget sheet by name",
+      "action": { "type": "execute" }
+    }
+  ]
 }

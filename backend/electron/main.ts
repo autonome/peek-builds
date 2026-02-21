@@ -61,7 +61,15 @@ let extensionHostWindow: BrowserWindow | null = null;
 
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
-const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'localsearch', 'peeks', 'slides', 'websearch', 'windows'];
+const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'localsearch', 'peeks', 'slides', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts'];
+
+// Extensions that must load eagerly (not lazy) — needed at startup
+const EAGER_EXTENSION_IDS = new Set(['cmd', 'editor', 'groups', 'hud', 'localsearch', 'pagestream', 'windows']);
+
+// Track which lazy extensions have been loaded
+const lazyExtensionLoaded = new Set<string>();
+// Pending lazy load callbacks (extId -> resolve[])
+const lazyLoadCallbacks = new Map<string, Array<() => void>>();
 
 // Dev extensions loaded via --load-extension CLI flag
 // These are transient (not persisted) and always have devtools open
@@ -487,6 +495,135 @@ function executeDeclarativeAction(cmd: ManifestCommand, ctx: Record<string, unkn
 }
 
 /**
+ * Load a lazy extension on demand.
+ * Sends ext:lazy-load to the extension host and waits for ext:lazy-ready.
+ * Returns a promise that resolves when the extension is loaded and ready.
+ */
+function loadLazyExtension(extId: string): Promise<void> {
+  if (lazyExtensionLoaded.has(extId)) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve) => {
+    // Queue the callback
+    if (!lazyLoadCallbacks.has(extId)) {
+      lazyLoadCallbacks.set(extId, []);
+    }
+    lazyLoadCallbacks.get(extId)!.push(resolve);
+
+    // Only send load request once (first callback triggers it)
+    if (lazyLoadCallbacks.get(extId)!.length === 1) {
+      if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
+        DEBUG && console.log(`[ext:lazy] Loading lazy extension: ${extId}`);
+        extensionHostWindow.webContents.send('ext:lazy-load', {
+          id: extId,
+          url: `peek://${extId}/background.html`
+        });
+      } else {
+        console.error(`[ext:lazy] Extension host not available for lazy loading: ${extId}`);
+        resolve(); // Resolve anyway to avoid hanging
+      }
+    }
+  });
+}
+
+/**
+ * Handle ext:lazy-ready IPC from extension host.
+ * Called when a lazy-loaded extension iframe has finished loading.
+ */
+function handleLazyExtensionReady(extId: string): void {
+  DEBUG && console.log(`[ext:lazy] Extension ready: ${extId}`);
+  lazyExtensionLoaded.add(extId);
+
+  // Resolve all pending callbacks
+  const callbacks = lazyLoadCallbacks.get(extId) || [];
+  lazyLoadCallbacks.delete(extId);
+
+  // Give the extension a moment to register its commands before replaying
+  setTimeout(() => {
+    for (const cb of callbacks) {
+      cb();
+    }
+  }, 200);
+}
+
+/**
+ * Register a lazy command stub.
+ * When the command is invoked, the extension is loaded first, then the
+ * command is re-published for the extension's own handler to pick up.
+ */
+function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
+  const source = `peek://ext/${extId}/`;
+
+  // Subscribe to execution requests — on first invoke, load the extension
+  subscribe(source, scopes.GLOBAL, `cmd:execute:${cmd.name}`, async (msg: unknown) => {
+    DEBUG && console.log(`[ext:lazy] Lazy command invoked: ${cmd.name}, loading extension: ${extId}`);
+
+    // Load the extension if not already loaded
+    await loadLazyExtension(extId);
+
+    // The extension has now loaded and registered its own command handler.
+    // Re-publish the execute event so the extension's handler picks it up.
+    // (The extension's background.js registers its own cmd:execute:{name} handler)
+    DEBUG && console.log(`[ext:lazy] Extension ${extId} loaded, command ${cmd.name} will be handled by extension`);
+  });
+
+  // Register the command metadata with the cmd registry
+  publish(source, scopes.GLOBAL, 'cmd:register', {
+    name: cmd.name,
+    description: cmd.description || '',
+    source,
+    scope: cmd.scope || 'global',
+    modes: cmd.modes || [],
+  });
+
+  DEBUG && console.log(`[ext:lazy] Registered lazy command: ${cmd.name} (extension: ${extId})`);
+}
+
+/**
+ * Register declarative commands and shortcuts from lazy extension manifests.
+ * For extensions marked as lazy, registers command stubs that load the extension
+ * on first use. For declarative actions (window/publish), registers them directly.
+ */
+export function registerLazyExtensionCommands(): void {
+  const registeredExtIds = getRegisteredExtensionIds();
+
+  for (const extId of registeredExtIds) {
+    if (!isBuiltinExtensionEnabled(extId)) continue;
+    if (EAGER_EXTENSION_IDS.has(extId)) continue; // Eager extensions handle their own commands
+    if (declarativeExtensions.has(extId)) continue; // Already declarative (background: false)
+
+    const extPath = getExtensionPath(extId);
+    if (!extPath) continue;
+
+    const manifest = loadExtensionManifest(extPath);
+    if (!manifest) continue;
+
+    // Only process consolidated extensions that have declared commands
+    if (!CONSOLIDATED_EXTENSION_IDS.includes(extId)) continue;
+    const commands = manifest.commands || [];
+    const shortcuts = manifest.shortcuts || [];
+    if (commands.length === 0 && shortcuts.length === 0) continue;
+
+    DEBUG && console.log(`[ext:lazy] Registering lazy commands for ${extId}: ${commands.length} commands, ${shortcuts.length} shortcuts`);
+
+    for (const cmd of commands) {
+      if (cmd.action.type === 'execute') {
+        // Execute type: register a lazy stub that loads the extension on first use
+        registerLazyCommand(extId, cmd);
+      } else {
+        // Window/publish type: register declaratively (no extension loading needed)
+        registerDeclarativeCommand(extId, cmd);
+      }
+    }
+
+    for (const shortcut of shortcuts) {
+      registerDeclarativeShortcut(extId, shortcut, commands);
+    }
+  }
+}
+
+/**
  * Required CSS variables that every theme must define.
  * Used by validateThemeCSS() to verify theme completeness.
  */
@@ -758,6 +895,10 @@ async function createExtensionHostWindow(): Promise<BrowserWindow> {
       preload: config.preloadPath,
       session: profileSession,
       nodeIntegrationInSubFrames: true,  // Preload runs in iframes too
+      // Disable same-origin policy so extension iframes can fetch() cross-origin.
+      // Required by entities extension which fetches page content for extraction.
+      // All iframes only load trusted extension code (peek://ext/{id}/...).
+      webSecurity: false,
     }
   });
 
@@ -872,6 +1013,14 @@ export async function loadExtensions(): Promise<number> {
   // Phase 1: Early
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
 
+  // Listen for lazy extension ready signals (via pubsub from extension host)
+  subscribe(getSystemAddress(), scopes.GLOBAL, 'ext:lazy-ready', (msg: unknown) => {
+    const { id } = msg as { id: string };
+    if (id) {
+      handleLazyExtensionReady(id);
+    }
+  });
+
   // Create extension host window for consolidated extensions
   if (consolidatedIds.length > 0) {
     const host = await createExtensionHostWindow();
@@ -888,9 +1037,29 @@ export async function loadExtensions(): Promise<number> {
     // Register declarative commands/shortcuts from manifests (after cmd is ready)
     registerDeclarativeCommands();
 
-    // Load remaining consolidated extensions (skip declarative-only ones)
-    const otherConsolidatedIds = consolidatedIds.filter(id => id !== 'cmd' && !isDeclarativeOnly(id));
+    // Register lazy extension commands from manifests (after cmd is ready)
+    registerLazyExtensionCommands();
+
+    // Load remaining consolidated extensions — skip declarative-only and lazy ones
+    const otherConsolidatedIds = consolidatedIds.filter(id =>
+      id !== 'cmd' && !isDeclarativeOnly(id) && EAGER_EXTENSION_IDS.has(id)
+    );
     for (const extId of otherConsolidatedIds) {
+      host.webContents.send('ext:load', { id: extId, url: `peek://${extId}/background.html` });
+    }
+
+    // Also load non-eager consolidated extensions that don't have manifest commands
+    // (they need their background page to register commands at runtime)
+    const nonEagerWithoutManifestCmds = consolidatedIds.filter(id => {
+      if (id === 'cmd' || isDeclarativeOnly(id) || EAGER_EXTENSION_IDS.has(id)) return false;
+      const extPath = getExtensionPath(id);
+      if (!extPath) return false;
+      const manifest = loadExtensionManifest(extPath);
+      if (!manifest) return false;
+      // If no commands declared in manifest, must load eagerly to register its own commands
+      return !manifest.commands || manifest.commands.length === 0;
+    });
+    for (const extId of nonEagerWithoutManifestCmds) {
       host.webContents.send('ext:load', { id: extId, url: `peek://${extId}/background.html` });
     }
 
@@ -902,6 +1071,9 @@ export async function loadExtensions(): Promise<number> {
 
     // Register declarative commands/shortcuts from manifests
     registerDeclarativeCommands();
+
+    // Register lazy extension commands
+    registerLazyExtensionCommands();
   }
 
   // Load external built-in extensions (like 'example') as separate windows

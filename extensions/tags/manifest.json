@@ -5,5 +5,47 @@
   "description": "Tag visualization and management",
   "version": "1.0.0",
   "background": "background.html",
-  "builtin": true
+  "builtin": true,
+  "commands": [
+    {
+      "name": "tag",
+      "description": "Add tags to the active window URL",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "tags",
+      "description": "Show tags for the active window URL (or all tags by frecency)",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "untag",
+      "description": "Remove tags from the active window URL",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "tagset",
+      "description": "Create a tagset with specified tags",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "open tags",
+      "description": "Open the tags browser",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/tags/home.html",
+        "options": { "role": "workspace", "key": "tags-home", "width": 900, "height": 700, "title": "Tags" }
+      }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+t",
+      "command": "open tags",
+      "global": true
+    },
+    {
+      "keys": "CommandOrControl+T",
+      "command": "open tags"
+    }
+  ]
 }

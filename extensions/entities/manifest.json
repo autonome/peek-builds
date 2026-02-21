@@ -4,5 +4,12 @@
   "name": "Entity Recognition",
   "description": "Automatically extracts and indexes entities (people, places, orgs, events) from visited pages",
   "version": "1.0.0",
-  "background": "background.html"
+  "background": "background.html",
+  "commands": [
+    {
+      "name": "extract entities",
+      "description": "Extract entities from current page",
+      "action": { "type": "execute" }
+    }
+  ]
 }

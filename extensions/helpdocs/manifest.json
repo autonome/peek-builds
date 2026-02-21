@@ -5,5 +5,12 @@
   "description": "Helpful documentation and assistance features",
   "version": "1.0.0",
   "background": "background.html",
-  "builtin": true
+  "builtin": true,
+  "commands": [
+    {
+      "name": "help docs",
+      "description": "Toggle help documentation overlay",
+      "action": { "type": "execute" }
+    }
+  ]
 }

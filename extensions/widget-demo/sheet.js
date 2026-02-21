@@ -13,18 +13,58 @@ const debug = api.debug;
 
 const DEMO_SHEET_KEY = 'demo_sheet';
 
+// Widget definitions with default layout (same as was in background.js)
+const DEMO_WIDGETS = [
+  { id: 'clock',     url: 'peek://ext/widget-demo/widgets/clock.html',     width: 200, height: 160 },
+  { id: 'counter',   url: 'peek://ext/widget-demo/widgets/counter.html',   width: 200, height: 160 },
+  { id: 'note',      url: 'peek://ext/widget-demo/widgets/note.html',      width: 280, height: 220 },
+  { id: 'bookmarks', url: 'peek://ext/widget-demo/widgets/bookmarks.html', width: 280, height: 220 },
+  { id: 'theme',     url: 'peek://ext/widget-demo/widgets/theme.html',     width: 280, height: 200 },
+];
+
+/**
+ * Build the default demo sheet config.
+ * Arranges widgets in a 2-column grid layout.
+ */
+const buildDefaultSheetConfig = () => {
+  const COL_GAP = 16;
+  const ROW_GAP = 16;
+  const MARGIN = 16;
+
+  const items = [
+    { ...DEMO_WIDGETS[0], x: MARGIN, y: MARGIN },
+    { ...DEMO_WIDGETS[1], x: MARGIN, y: MARGIN + 160 + ROW_GAP },
+    { ...DEMO_WIDGETS[2], x: MARGIN + 200 + COL_GAP, y: MARGIN },
+    { ...DEMO_WIDGETS[3], x: MARGIN + 200 + COL_GAP, y: MARGIN + 220 + ROW_GAP },
+    { ...DEMO_WIDGETS[4], x: MARGIN, y: MARGIN + 220 + ROW_GAP + 220 + ROW_GAP },
+  ];
+
+  return {
+    version: 1,
+    name: 'Widget Demo',
+    createdAt: Date.now(),
+    items
+  };
+};
+
 let sheetConfig = null;
 let editing = false;
 
 /**
- * Load demo sheet config from extension_settings
+ * Load demo sheet config from extension_settings.
+ * Creates default config if none exists (lazy init, no background page needed).
  */
 const loadSheetConfig = async () => {
   const result = await api.settings.getKey(DEMO_SHEET_KEY);
   if (result.success && result.data) {
     return result.data;
   }
-  return null;
+
+  // No config exists — create default (previously done in background.js)
+  const config = buildDefaultSheetConfig();
+  await api.settings.setKey(DEMO_SHEET_KEY, config);
+  console.log('[widget-demo] Created default demo sheet config with', config.items.length, 'widgets');
+  return config;
 };
 
 /**
