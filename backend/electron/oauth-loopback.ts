@@ -14,7 +14,8 @@ const SUCCESS_HTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Authorization Complete</title>
 <style>body{font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a1a;color:#e0e0e0}
 .card{text-align:center;padding:2rem}.check{font-size:3rem;margin-bottom:1rem}</style></head>
-<body><div class="card"><div class="check">&#10003;</div><p>Authorization complete. You can close this window.</p></div></body></html>`;
+<body><div class="card"><div class="check">&#10003;</div><p>Authorization complete. Closing...</p></div>
+<script>setTimeout(function(){window.close()},500)</script></body></html>`;
 
 interface LoopbackServer {
   port: number;
