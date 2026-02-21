@@ -164,7 +164,10 @@ const openHud = async () => {
     resizable: false,
     frame: false,
     escapeMode: 'ignore',
-    title: 'HUD'
+    title: 'HUD',
+    webPreferences: {
+      webviewTag: true
+    }
   };
 
   try {

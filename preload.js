@@ -2162,6 +2162,14 @@ if (isCore) {
       ipcRenderer.on(channel, (event, ...args) => {
         callback(...args);
       });
+    },
+    /**
+     * Send an IPC message to the main process
+     * @param {string} channel - IPC channel to send on
+     * @param {*} data - Data to send
+     */
+    send: (channel, data) => {
+      ipcRenderer.send(channel, data);
     }
   };
 }

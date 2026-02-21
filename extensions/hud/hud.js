@@ -35,10 +35,11 @@ const createWidgetCard = (item) => {
   card.dataset.id = item.id;
 
   // Webview hosting the widget page
+  // Preload is injected automatically by the main process (will-attach-webview handler)
+  // for peek:// URLs, giving widgets access to window.app API.
   const webview = document.createElement('webview');
   webview.className = 'widget-webview';
   webview.src = item.url;
-  webview.setAttribute('nodeintegration', '');
   card.appendChild(webview);
 
   return card;

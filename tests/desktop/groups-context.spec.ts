@@ -346,7 +346,6 @@ test.describe('Group Mode Context @desktop', () => {
 
     const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
     expect(hudWindow).toBeTruthy();
-    await hudWindow.waitForSelector('#mode-value', { timeout: 5000 });
 
     const { groupsWindow, windowId } = await openGroupsHome(sharedBgWindow);
 
@@ -360,13 +359,45 @@ test.describe('Group Mode Context @desktop', () => {
       // Give HUD time to update via subscription
       await sleep(500);
 
-      // Verify HUD shows group mode with group name
-      const modeText = await hudWindow.$eval('#mode-value', (el: Element) => el.textContent);
+      // Verify HUD shows group mode with group name (via mode widget webview)
+      const start = Date.now();
+      let modeText: string | null = null;
+      while (Date.now() - start < 10000) {
+        try {
+          modeText = await hudWindow.evaluate(async () => {
+            const webviews = document.querySelectorAll('webview');
+            for (const wv of webviews) {
+              if (wv.src && wv.src.includes('widgets/mode.html')) {
+                try {
+                  return await (wv as any).executeJavaScript(
+                    'document.getElementById("mode-value")?.textContent || null'
+                  );
+                } catch { return null; }
+              }
+            }
+            return null;
+          });
+          if (modeText && modeText.includes(groupName)) break;
+        } catch { /* page not ready */ }
+        await sleep(200);
+      }
       expect(modeText).toContain('group');
       expect(modeText).toContain(groupName);
 
-      // Verify the group mode CSS class is applied
-      const modeClasses = await hudWindow.$eval('#mode-value', (el: Element) => el.className);
+      // Verify the group mode CSS class is applied (via webview)
+      const modeClasses = await hudWindow.evaluate(async () => {
+        const webviews = document.querySelectorAll('webview');
+        for (const wv of webviews) {
+          if (wv.src && wv.src.includes('widgets/mode.html')) {
+            try {
+              return await (wv as any).executeJavaScript(
+                'document.getElementById("mode-value")?.className || ""'
+              );
+            } catch { return ''; }
+          }
+        }
+        return '';
+      });
       expect(modeClasses).toContain('mode-group');
     } finally {
       await closeWindow(sharedBgWindow, windowId);

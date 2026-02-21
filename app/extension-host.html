@@ -58,6 +58,10 @@
 
         iframe.onload = () => {
           console.log('[ext:host] Extension loaded:', id);
+          // Signal to main process that this iframe is ready via direct IPC
+          if (api.ipc && api.ipc.send) {
+            api.ipc.send('ext:iframe-ready', { id });
+          }
           resolve();
         };
 

@@ -14,21 +14,29 @@
     {
       "name": "csv",
       "description": "Convert JSON to CSV format",
+      "accepts": ["application/json"],
+      "produces": ["text/csv"],
       "action": { "type": "execute" }
     },
     {
       "name": "save",
       "description": "Save data to a file (save dialog)",
+      "accepts": ["*/*"],
+      "produces": [],
       "action": { "type": "execute" }
     },
     {
       "name": "markdown",
       "description": "Format items as a markdown document",
+      "accepts": ["application/json"],
+      "produces": ["text/markdown"],
       "action": { "type": "execute" }
     },
     {
       "name": "save as note",
       "description": "Save text content as a new note in the datastore",
+      "accepts": ["text/plain", "text/markdown", "text/html"],
+      "produces": [],
       "action": { "type": "execute" }
     }
   ]

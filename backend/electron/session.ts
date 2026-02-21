@@ -16,6 +16,7 @@
 import { BrowserWindow, dialog, screen } from 'electron';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow } from './main.js';
+import { getRegisteredExtensionIds } from './protocol.js';
 
 import { publish, scopes as PubSubScopes, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
@@ -192,6 +193,17 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     // Extract real URL from page containers
     const realUrl = extractRealUrl(url);
 
+    // Skip windows for unknown extensions (stale from renames/removals)
+    const extMatch = realUrl.match(/^peek:\/\/ext\/([^/]+)/);
+    if (extMatch) {
+      const extId = extMatch[1];
+      const knownIds = getRegisteredExtensionIds();
+      if (!knownIds.includes(extId)) {
+        DEBUG && console.log(`[session:save] Skipping stale extension window ${id}: ${extId}`);
+        continue;
+      }
+    }
+
     // For canvas pages (web URLs in peek://app/page container), use the webview
     // bounds from URL params, not the fullscreen transparent BrowserWindow bounds.
     const canvasBounds = extractCanvasBounds(url);
@@ -334,6 +346,18 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
   // Must have a URL
   if (!descriptor.url || typeof descriptor.url !== 'string' || descriptor.url.trim() === '') {
     return false;
+  }
+
+  // Validate extension URLs reference a known extension
+  // (e.g. peek://ext/me:core/... from a renamed extension would be stale)
+  const extMatch = descriptor.url.match(/^peek:\/\/ext\/([^/]+)/);
+  if (extMatch) {
+    const extId = extMatch[1];
+    const knownIds = getRegisteredExtensionIds();
+    if (!knownIds.includes(extId)) {
+      DEBUG && console.log(`[session] Filtering stale extension window: ${extId}`);
+      return false;
+    }
   }
 
   return true;

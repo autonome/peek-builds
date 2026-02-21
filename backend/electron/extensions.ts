@@ -37,6 +37,8 @@ export interface ManifestCommand {
   action: CommandAction;
   scope?: 'global' | 'window' | 'page';
   modes?: string[];
+  accepts?: string[];
+  produces?: string[];
 }
 
 // Declarative shortcut definition in manifest.json

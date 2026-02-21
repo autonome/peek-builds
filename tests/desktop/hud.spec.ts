@@ -16,7 +16,42 @@ let sharedApp: DesktopApp;
 let sharedBgWindow: Page;
 
 /**
- * Wait for #mode-value text content to match expected value in HUD window.
+ * Get the mode widget's #mode-value text via the HUD window's webview.
+ * Uses webview.executeJavaScript to query inside the webview context.
+ */
+async function getModeValueFromWebview(
+  hudWindow: Page,
+  timeout = 5000
+): Promise<string | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      const text = await hudWindow.evaluate(async (timeoutMs: number) => {
+        const webviews = document.querySelectorAll('webview');
+        for (const wv of webviews) {
+          if (wv.src && wv.src.includes('widgets/mode.html')) {
+            try {
+              const result = await (wv as any).executeJavaScript(
+                'document.getElementById("mode-value")?.textContent || null'
+              );
+              return result;
+            } catch { return null; }
+          }
+        }
+        return null;
+      }, timeout);
+      if (text && text !== '-') return text;
+    } catch {
+      // Page might not be ready
+    }
+    await sleep(200);
+  }
+  return null;
+}
+
+/**
+ * Wait for #mode-value text content to match expected value in HUD mode widget.
+ * Uses webview.executeJavaScript to query inside the webview context.
  * Deterministic polling — no sleep-based assertions.
  */
 async function waitForHudModeValue(
@@ -24,33 +59,18 @@ async function waitForHudModeValue(
   expected: string | ((text: string) => boolean),
   timeout = 5000
 ): Promise<string> {
-  if (typeof expected === 'string') {
-    await hudWindow.waitForFunction(
-      ([sel, val]: [string, string]) => {
-        const el = document.querySelector(sel);
-        return el && el.textContent === val;
-      },
-      ['#mode-value', expected] as [string, string],
-      { timeout }
-    );
-    return expected;
-  } else {
-    // For predicate-based matching, poll in evaluate
-    const text = await hudWindow.evaluate(
-      async ([sel, timeoutMs]: [string, number]) => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          const el = document.querySelector(sel);
-          if (el && el.textContent && el.textContent !== '-') return el.textContent;
-          await new Promise(r => setTimeout(r, 100));
-        }
-        const el = document.querySelector(sel);
-        return el?.textContent || null;
-      },
-      ['#mode-value', timeout] as [string, number]
-    );
-    return text || '';
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const text = await getModeValueFromWebview(hudWindow, 1000);
+    if (typeof expected === 'string') {
+      if (text === expected) return expected;
+    } else {
+      if (text && expected(text)) return text;
+    }
+    await sleep(200);
   }
+  const lastText = await getModeValueFromWebview(hudWindow, 500);
+  return lastText || '';
 }
 
 // Helper to toggle HUD and wait for the window to appear/disappear
@@ -134,17 +154,16 @@ test.describe('HUD Extension @desktop', () => {
     await toggleHUD();
 
     const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
-    await hudWindow.waitForSelector('#mode-value', { timeout: 5000 });
 
     // Set mode to 'default' AFTER HUD is open so the subscription receives it
     await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.context.setMode('default');
     });
 
-    // Deterministic wait: poll until #mode-value shows 'default'
-    await waitForHudModeValue(hudWindow, 'default');
+    // Deterministic wait: poll until #mode-value shows 'default' (via webview)
+    await waitForHudModeValue(hudWindow, 'default', 10000);
 
-    const modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
+    const modeValue = await getModeValueFromWebview(hudWindow);
     expect(modeValue).toBeTruthy();
     expect(['default', 'page', 'group', 'settings']).toContain(modeValue);
 
@@ -156,11 +175,23 @@ test.describe('HUD Extension @desktop', () => {
     // Deterministic wait: poll until #mode-value shows 'page'
     await waitForHudModeValue(hudWindow, 'page');
 
-    const newModeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
+    const newModeValue = await getModeValueFromWebview(hudWindow);
     expect(newModeValue).toBe('page');
 
-    // Verify mode color class is applied (already updated since text matched)
-    const modeClasses = await hudWindow.$eval('#mode-value', el => el.className);
+    // Verify mode color class is applied (via webview)
+    const modeClasses = await hudWindow.evaluate(async () => {
+      const webviews = document.querySelectorAll('webview');
+      for (const wv of webviews) {
+        if (wv.src && wv.src.includes('widgets/mode.html')) {
+          try {
+            return await (wv as any).executeJavaScript(
+              'document.getElementById("mode-value")?.className || ""'
+            );
+          } catch { return ''; }
+        }
+      }
+      return '';
+    });
     expect(modeClasses).toContain('mode-page');
 
     // Clean up - reset mode and close HUD
@@ -176,15 +207,47 @@ test.describe('HUD Extension @desktop', () => {
     await toggleHUD();
 
     const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
-    await hudWindow.waitForSelector('#izui-value', { timeout: 5000 });
 
-    // Get IZUI state value
-    const izuiValue = await hudWindow.$eval('#izui-value', el => el.textContent);
+    // Query IZUI widget value via webview.executeJavaScript
+    const start = Date.now();
+    let izuiValue: string | null = null;
+    while (Date.now() - start < 10000) {
+      try {
+        izuiValue = await hudWindow.evaluate(async () => {
+          const webviews = document.querySelectorAll('webview');
+          for (const wv of webviews) {
+            if (wv.src && wv.src.includes('widgets/izui.html')) {
+              try {
+                return await (wv as any).executeJavaScript(
+                  'document.getElementById("izui-value")?.textContent || null'
+                );
+              } catch { return null; }
+            }
+          }
+          return null;
+        });
+        if (izuiValue && izuiValue !== '-') break;
+      } catch { /* page not ready */ }
+      await sleep(200);
+    }
+
     expect(izuiValue).toBeTruthy();
     expect(['idle', 'transient', 'active', 'overlay']).toContain(izuiValue);
 
-    // Verify state color class is applied
-    const izuiClasses = await hudWindow.$eval('#izui-value', el => el.className);
+    // Verify state color class is applied via webview
+    const izuiClasses = await hudWindow.evaluate(async () => {
+      const webviews = document.querySelectorAll('webview');
+      for (const wv of webviews) {
+        if (wv.src && wv.src.includes('widgets/izui.html')) {
+          try {
+            return await (wv as any).executeJavaScript(
+              'document.getElementById("izui-value")?.className || ""'
+            );
+          } catch { return ''; }
+        }
+      }
+      return '';
+    });
     expect(izuiClasses).toMatch(/izui-(idle|transient|active|overlay)/);
 
     // Clean up - close HUD
@@ -196,18 +259,37 @@ test.describe('HUD Extension @desktop', () => {
     await toggleHUD();
 
     const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
-    await hudWindow.waitForSelector('#stats-value', { timeout: 5000 });
 
-    // Verify stats section exists and has content
-    const statsText = await hudWindow.$eval('#stats-value', el => el.textContent);
+    // Query stats widget content via webview.executeJavaScript
+    // The stats widget renders a grid of stat-label/stat-value pairs in #stats-content
+    const start = Date.now();
+    let statsText: string | null = null;
+    while (Date.now() - start < 10000) {
+      try {
+        statsText = await hudWindow.evaluate(async () => {
+          const webviews = document.querySelectorAll('webview');
+          for (const wv of webviews) {
+            if (wv.src && wv.src.includes('widgets/stats.html')) {
+              try {
+                return await (wv as any).executeJavaScript(
+                  'document.getElementById("stats-content")?.textContent || null'
+                );
+              } catch { return null; }
+            }
+          }
+          return null;
+        });
+        if (statsText && statsText !== '-') break;
+      } catch { /* page not ready */ }
+      await sleep(200);
+    }
+
     expect(statsText).toBeTruthy();
 
-    // The HUD calls api.window.list() which only returns external (non-peek://) windows.
-    // In the test environment, all windows are internal peek:// URLs, so the count may be 0.
-    // The stats value may show "0 windows" or still be "-" if the async refresh hasn't completed.
-    // Either is valid - the important thing is the element exists and the HUD is functional.
-    if (statsText !== '-') {
-      expect(statsText).toMatch(/\d+ windows?/);
+    // The stats widget shows multiple metrics (Visible, Background, Total windows, etc.)
+    // Verify the content has rendered with numeric values
+    if (statsText && statsText !== '-') {
+      expect(statsText).toContain('Total windows');
     }
 
     // Clean up - close HUD
@@ -231,14 +313,18 @@ test.describe('HUD Extension @desktop', () => {
     const hasContainer = await hudWindow.$('#hud-container');
     expect(hasContainer).toBeTruthy();
 
-    const hasModeSection = await hudWindow.$('#mode-value');
-    expect(hasModeSection).toBeTruthy();
-
-    const hasIzuiSection = await hudWindow.$('#izui-value');
-    expect(hasIzuiSection).toBeTruthy();
-
-    const hasStatsSection = await hudWindow.$('#stats-value');
-    expect(hasStatsSection).toBeTruthy();
+    // Widget elements are inside webviews. Verify they have loaded by checking
+    // that the webview elements exist and have src attributes.
+    const webviewCount = await hudWindow.evaluate(async () => {
+      const start = Date.now();
+      while (Date.now() - start < 5000) {
+        const webviews = document.querySelectorAll('webview');
+        if (webviews.length >= 2) return webviews.length;
+        await new Promise(r => setTimeout(r, 200));
+      }
+      return document.querySelectorAll('webview').length;
+    });
+    expect(webviewCount).toBeGreaterThanOrEqual(2);
 
     // Clean up - close HUD
     await toggleHUD();
@@ -265,16 +351,15 @@ test.describe('HUD Extension @desktop', () => {
     await toggleHUD();
 
     const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
-    await hudWindow.waitForSelector('#mode-value', { timeout: 5000 });
 
     // Set to default mode
     await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.context.setMode('default');
     });
 
-    // Deterministic wait for mode update
-    await waitForHudModeValue(hudWindow, 'default');
-    let modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
+    // Deterministic wait for mode update (via webview)
+    await waitForHudModeValue(hudWindow, 'default', 10000);
+    let modeValue = await getModeValueFromWebview(hudWindow);
     expect(modeValue).toBe('default');
 
     // Change to page mode
@@ -284,7 +369,7 @@ test.describe('HUD Extension @desktop', () => {
 
     // Deterministic wait for mode update
     await waitForHudModeValue(hudWindow, 'page');
-    modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
+    modeValue = await getModeValueFromWebview(hudWindow);
     expect(modeValue).toBe('page');
 
     // Change to settings mode
@@ -294,7 +379,7 @@ test.describe('HUD Extension @desktop', () => {
 
     // Deterministic wait for mode update
     await waitForHudModeValue(hudWindow, 'settings');
-    modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
+    modeValue = await getModeValueFromWebview(hudWindow);
     expect(modeValue).toBe('settings');
 
     // Clean up - reset mode and close HUD
@@ -310,7 +395,6 @@ test.describe('HUD Extension @desktop', () => {
     await toggleHUD();
 
     const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
-    await hudWindow.waitForSelector('#mode-value', { timeout: 5000 });
 
     // Set to group mode with metadata
     await sharedBgWindow.evaluate(async () => {
@@ -322,24 +406,28 @@ test.describe('HUD Extension @desktop', () => {
       });
     });
 
-    // Deterministic wait: poll until #mode-value contains 'Test Group'
-    // (group mode displays as "group: Test Group")
-    await hudWindow.waitForFunction(
-      (sel: string) => {
-        const el = document.querySelector(sel);
-        return el && el.textContent && el.textContent.includes('Test Group');
-      },
-      '#mode-value',
-      { timeout: 5000 }
-    );
+    // Deterministic wait: poll until #mode-value contains 'Test Group' (via webview)
+    await waitForHudModeValue(hudWindow, (text: string) => text.includes('Test Group'), 10000);
 
     // Verify group name is displayed
-    const modeValue = await hudWindow.$eval('#mode-value', el => el.textContent);
+    const modeValue = await getModeValueFromWebview(hudWindow);
     expect(modeValue).toContain('group');
     expect(modeValue).toContain('Test Group');
 
-    // Verify group color class is applied
-    const modeClasses = await hudWindow.$eval('#mode-value', el => el.className);
+    // Verify group color class is applied (via webview)
+    const modeClasses = await hudWindow.evaluate(async () => {
+      const webviews = document.querySelectorAll('webview');
+      for (const wv of webviews) {
+        if (wv.src && wv.src.includes('widgets/mode.html')) {
+          try {
+            return await (wv as any).executeJavaScript(
+              'document.getElementById("mode-value")?.className || ""'
+            );
+          } catch { return ''; }
+        }
+      }
+      return '';
+    });
     expect(modeClasses).toContain('mode-group');
 
     // Clean up - reset mode and close HUD

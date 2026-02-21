@@ -137,6 +137,18 @@ const systemAddress = getSystemAddress();
 // Initialize backend config with runtime values
 setPreloadPath(preloadPath);
 
+// Inject preload into <webview> elements that load peek:// URLs.
+// This gives internal widget pages (e.g., HUD widgets) access to window.app API
+// while leaving external web content webviews untouched.
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (_wvEvent, webPreferences, params) => {
+    if (params.src && params.src.startsWith('peek://')) {
+      webPreferences.preload = preloadPath;
+      DEBUG && console.log(`[webview] Injecting preload for peek:// webview: ${params.src}`);
+    }
+  });
+});
+
 const strings = {
   defaults: {
     quitShortcut: 'CommandOrControl+Q'

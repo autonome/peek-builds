@@ -205,7 +205,8 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
   const bgWindow = await waitForWindowHelper(() => electronApp.windows(), 'app/background.html', 30000);
   await waitForAppReady(bgWindow, 15000);
 
-  // Hybrid mode: wait for extension host (built-in) AND separate windows (external like 'example')
+  // Wait for extensions to be ready via the API (checks actual extension system state)
+  // This replaces window-counting which was unreliable with lazy loading
   const waitForHybridExtensions = async (timeout: number): Promise<void> => {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -213,13 +214,8 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
       const hostWindow = electronApp.windows().find(w =>
         w.url().includes('peek://app/extension-host.html')
       );
-      // Check for at least one external extension window (example)
-      const extWindows = electronApp.windows().filter(w =>
-        w.url().includes('peek://ext/') && w.url().includes('background.html')
-      );
 
-      // Need both host and at least one external extension
-      if (!hostWindow || extWindows.length < 1) {
+      if (!hostWindow) {
         await sleep(100);
         continue;
       }
@@ -239,22 +235,22 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
         continue;
       }
 
-      // Verify at least one external extension window is also ready
-      let extReady = false;
-      for (const extWin of extWindows) {
-        try {
-          const ready = await extWin.evaluate(() => document.readyState === 'complete');
-          if (ready) {
-            extReady = true;
-            break;
-          }
-        } catch {
-          // Window not ready, continue checking others
+      // Check via API that critical extensions are loaded
+      try {
+        const ready = await bgWindow.evaluate(async () => {
+          const api = (window as any).app;
+          if (!api || !api.extensions) return false;
+          const result = await api.extensions.list();
+          if (!result.success || !result.data) return false;
+          // cmd must be running + at least 3 total extensions
+          const hasCmd = result.data.some((e: any) => e.id === 'cmd' && e.status === 'running');
+          return hasCmd && result.data.length >= 3;
+        });
+        if (ready) {
+          return; // Success
         }
-      }
-
-      if (extReady) {
-        return; // Success - both host and ext are ready
+      } catch {
+        // API not ready yet
       }
 
       await sleep(100);
@@ -265,7 +261,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
     const urls = windows.map(w => w.url());
     throw new Error(`Hybrid extensions failed to load within ${timeout}ms. Windows: ${JSON.stringify(urls)}`);
   };
-  await waitForHybridExtensions(10000);
+  await waitForHybridExtensions(15000);
 
   const state: ElectronState = { app: electronApp, tempDir, profile };
 

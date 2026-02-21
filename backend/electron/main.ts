@@ -15,7 +15,7 @@ import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, 
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
-import { scopes, publish, subscribe, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
+import { scopes, publish, subscribe, unsubscribe, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
 import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, DEBUG } from './config.js';
 import { trackWindow } from './display-watcher.js';
 import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
@@ -68,6 +68,8 @@ const EAGER_EXTENSION_IDS = new Set(['cmd', 'editor', 'groups', 'hud', 'localsea
 
 // Track which lazy extensions have been loaded
 const lazyExtensionLoaded = new Set<string>();
+// Track which consolidated extensions have actually loaded (eager or lazy)
+const loadedConsolidatedExtensions = new Set<string>();
 // Pending lazy load callbacks (extId -> resolve[])
 const lazyLoadCallbacks = new Map<string, Array<() => void>>();
 
@@ -515,9 +517,17 @@ function loadLazyExtension(extId: string): Promise<void> {
     if (lazyLoadCallbacks.get(extId)!.length === 1) {
       if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
         DEBUG && console.log(`[ext:lazy] Loading lazy extension: ${extId}`);
-        extensionHostWindow.webContents.send('ext:lazy-load', {
-          id: extId,
-          url: `peek://${extId}/background.html`
+        // Create iframe directly via executeJavaScript (bypasses IPC/contextBridge)
+        extensionHostWindow.webContents.executeJavaScript(`
+          (function() {
+            if (document.getElementById('ext-${extId}')) return;
+            var iframe = document.createElement('iframe');
+            iframe.src = 'peek://${extId}/background.html';
+            iframe.id = 'ext-${extId}';
+            document.getElementById('extensions').appendChild(iframe);
+          })();
+        `).catch((err) => {
+          console.error(`[ext:lazy] Failed to create iframe for ${extId}:`, err);
         });
       } else {
         console.error(`[ext:lazy] Extension host not available for lazy loading: ${extId}`);
@@ -534,6 +544,7 @@ function loadLazyExtension(extId: string): Promise<void> {
 function handleLazyExtensionReady(extId: string): void {
   DEBUG && console.log(`[ext:lazy] Extension ready: ${extId}`);
   lazyExtensionLoaded.add(extId);
+  loadedConsolidatedExtensions.add(extId);
 
   // Resolve all pending callbacks
   const callbacks = lazyLoadCallbacks.get(extId) || [];
@@ -553,28 +564,33 @@ function handleLazyExtensionReady(extId: string): void {
  * command is re-published for the extension's own handler to pick up.
  */
 function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
-  const source = `peek://ext/${extId}/`;
+  const stubSource = `peek://ext/${extId}/lazy-stub`;
 
   // Subscribe to execution requests — on first invoke, load the extension
-  subscribe(source, scopes.GLOBAL, `cmd:execute:${cmd.name}`, async (msg: unknown) => {
+  subscribe(stubSource, scopes.GLOBAL, `cmd:execute:${cmd.name}`, async (msg: unknown) => {
     DEBUG && console.log(`[ext:lazy] Lazy command invoked: ${cmd.name}, loading extension: ${extId}`);
 
     // Load the extension if not already loaded
     await loadLazyExtension(extId);
 
-    // The extension has now loaded and registered its own command handler.
-    // Re-publish the execute event so the extension's handler picks it up.
-    // (The extension's background.js registers its own cmd:execute:{name} handler)
-    DEBUG && console.log(`[ext:lazy] Extension ${extId} loaded, command ${cmd.name} will be handled by extension`);
+    // Unsubscribe this stub so it doesn't catch the re-published event
+    unsubscribe(stubSource, `cmd:execute:${cmd.name}`);
+
+    // Re-publish the execute event so the extension's own handler picks it up
+    DEBUG && console.log(`[ext:lazy] Extension ${extId} loaded, re-publishing command: ${cmd.name}`);
+    publish(stubSource, scopes.GLOBAL, `cmd:execute:${cmd.name}`, msg);
   });
 
   // Register the command metadata with the cmd registry
-  publish(source, scopes.GLOBAL, 'cmd:register', {
+  const extSource = `peek://ext/${extId}/`;
+  publish(extSource, scopes.GLOBAL, 'cmd:register', {
     name: cmd.name,
     description: cmd.description || '',
-    source,
+    source: extSource,
     scope: cmd.scope || 'global',
     modes: cmd.modes || [],
+    accepts: cmd.accepts || [],
+    produces: cmd.produces || [],
   });
 
   DEBUG && console.log(`[ext:lazy] Registered lazy command: ${cmd.name} (extension: ${extId})`);
@@ -912,6 +928,42 @@ async function createExtensionHostWindow(): Promise<BrowserWindow> {
     console.error(`[ext:host] Failed to load: ${errorCode} ${errorDescription}`);
   });
 
+  // Track iframe loading via did-frame-finish-load events
+  // This fires for each sub-frame (iframe) when it finishes loading
+  win.webContents.on('did-frame-finish-load', (_event, isMainFrame) => {
+    if (isMainFrame) return; // Skip the extension host page itself
+    // Check all frames to see which extensions have loaded
+    try {
+      const frames = win.webContents.mainFrame.frames;
+      for (const frame of frames) {
+        const url = frame.url;
+        // Extract extension ID from peek://{extId}/background.html
+        const match = url.match(/^peek:\/\/([^/]+)\/background\.html/);
+        if (match) {
+          const extId = match[1];
+          if (!loadedConsolidatedExtensions.has(extId)) {
+            loadedConsolidatedExtensions.add(extId);
+            DEBUG && console.log(`[ext:host] Frame loaded: ${extId} (${loadedConsolidatedExtensions.size} total)`);
+
+            // Handle lazy extension ready callbacks
+            if (lazyLoadCallbacks.has(extId)) {
+              lazyExtensionLoaded.add(extId);
+              const callbacks = lazyLoadCallbacks.get(extId) || [];
+              lazyLoadCallbacks.delete(extId);
+              // Give the extension a moment to register its commands before replaying
+              setTimeout(() => {
+                for (const cb of callbacks) cb();
+              }, 200);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Frame enumeration can fail if window is being destroyed
+      DEBUG && console.log('[ext:host] Frame enumeration error:', err);
+    }
+  });
+
   await win.loadURL('peek://app/extension-host.html');
 
   extensionHostWindow = win;
@@ -1013,21 +1065,52 @@ export async function loadExtensions(): Promise<number> {
   // Phase 1: Early
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
 
-  // Listen for lazy extension ready signals (via pubsub from extension host)
-  subscribe(getSystemAddress(), scopes.GLOBAL, 'ext:lazy-ready', (msg: unknown) => {
-    const { id } = msg as { id: string };
-    if (id) {
-      handleLazyExtensionReady(id);
-    }
-  });
+  // Helper: wait for an extension to appear in loadedConsolidatedExtensions
+  // (populated by did-frame-finish-load handler in createExtensionHostWindow)
+  const waitForExtLoaded = (extId: string, timeoutMs: number): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      if (loadedConsolidatedExtensions.has(extId)) { resolve(); return; }
+      const interval = setInterval(() => {
+        if (loadedConsolidatedExtensions.has(extId)) {
+          clearInterval(interval);
+          clearTimeout(timeout);
+          resolve();
+        }
+      }, 10);
+      const timeout = setTimeout(() => {
+        clearInterval(interval);
+        loadedConsolidatedExtensions.add(extId); // Fallback
+        DEBUG && console.log(`[ext] Timeout waiting for ${extId}, marking as loaded (fallback)`);
+        resolve();
+      }, timeoutMs);
+    });
+  };
+
+  // Helper: create iframe in extension host via executeJavaScript
+  // This bypasses IPC/contextBridge for reliability
+  const loadExtInHost = (host: BrowserWindow, id: string, url: string): void => {
+    host.webContents.executeJavaScript(`
+      (function() {
+        if (document.getElementById('ext-${id}')) return;
+        var iframe = document.createElement('iframe');
+        iframe.src = '${url}';
+        iframe.id = 'ext-${id}';
+        document.getElementById('extensions').appendChild(iframe);
+      })();
+    `).catch((err: Error) => {
+      console.error('[ext:host] Failed to create iframe for', id, err);
+    });
+  };
 
   // Create extension host window for consolidated extensions
   if (consolidatedIds.length > 0) {
     const host = await createExtensionHostWindow();
 
-    // Load cmd first (command registry)
+    // Load cmd first (command registry) and wait for it to be ready
     if (consolidatedIds.includes('cmd')) {
-      host.webContents.send('ext:load', { id: 'cmd', url: 'peek://cmd/background.html' });
+      loadExtInHost(host, 'cmd', 'peek://cmd/background.html');
+      await waitForExtLoaded('cmd', 5000);
+      // Small additional delay to ensure cmd's pubsub subscribers are registered
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
@@ -1045,7 +1128,7 @@ export async function loadExtensions(): Promise<number> {
       id !== 'cmd' && !isDeclarativeOnly(id) && EAGER_EXTENSION_IDS.has(id)
     );
     for (const extId of otherConsolidatedIds) {
-      host.webContents.send('ext:load', { id: extId, url: `peek://${extId}/background.html` });
+      loadExtInHost(host, extId, `peek://${extId}/background.html`);
     }
 
     // Also load non-eager consolidated extensions that don't have manifest commands
@@ -1060,11 +1143,14 @@ export async function loadExtensions(): Promise<number> {
       return !manifest.commands || manifest.commands.length === 0;
     });
     for (const extId of nonEagerWithoutManifestCmds) {
-      host.webContents.send('ext:load', { id: extId, url: `peek://${extId}/background.html` });
+      loadExtInHost(host, extId, `peek://${extId}/background.html`);
     }
 
-    // Wait for consolidated extensions to load
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Wait for all eager consolidated extensions to load via did-frame-finish-load
+    const allEagerIds = [...otherConsolidatedIds, ...nonEagerWithoutManifestCmds];
+    if (allEagerIds.length > 0) {
+      await Promise.all(allEagerIds.map(id => waitForExtLoaded(id, 10000)));
+    }
   } else {
     // Phase 2: Commands (even if no consolidated)
     publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
@@ -1115,19 +1201,18 @@ export async function loadExtensions(): Promise<number> {
 export function getRunningExtensions(): Array<{ id: string; manifest: unknown; status: string }> {
   const running: Array<{ id: string; manifest: unknown; status: string }> = [];
 
-  // Add consolidated extensions (in extension host iframes)
+  // Add consolidated extensions that have actually loaded (in extension host iframes)
   if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
     for (const extId of CONSOLIDATED_EXTENSION_IDS) {
-      if (isBuiltinExtensionEnabled(extId)) {
-        // loadExtensionManifest expects a path, not an ID
-        const extPath = getExtensionPath(extId);
-        const manifest = extPath ? loadExtensionManifest(extPath) : null;
-        running.push({
-          id: extId,
-          manifest: manifest || { id: extId },
-          status: 'running'
-        });
-      }
+      if (!isBuiltinExtensionEnabled(extId)) continue;
+      if (!loadedConsolidatedExtensions.has(extId)) continue;
+      const extPath = getExtensionPath(extId);
+      const manifest = extPath ? loadExtensionManifest(extPath) : null;
+      running.push({
+        id: extId,
+        manifest: manifest || { id: extId },
+        status: 'running'
+      });
     }
   }
 
