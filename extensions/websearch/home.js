@@ -11,6 +11,29 @@
 const api = window.app;
 const debug = api.debug;
 
+// ===== BroadcastChannel for intra-extension messaging =====
+
+const wsChannel = new BroadcastChannel('websearch');
+const wsChannelHandlers = {};
+
+wsChannel.onmessage = (e) => {
+  const { topic, data } = e.data;
+  if (wsChannelHandlers[topic]) {
+    for (const handler of wsChannelHandlers[topic]) {
+      handler(data);
+    }
+  }
+};
+
+function onChannel(topic, handler) {
+  if (!wsChannelHandlers[topic]) wsChannelHandlers[topic] = [];
+  wsChannelHandlers[topic].push(handler);
+}
+
+function emitChannel(topic, data) {
+  wsChannel.postMessage({ topic, data });
+}
+
 // ===== Utilities =====
 
 /**
@@ -58,7 +81,7 @@ window._websearchState = state;
  * Request engine list from background
  */
 const requestEngines = () => {
-  api.publish('websearch:engine-request', { action: 'list' }, api.scopes.GLOBAL);
+  emitChannel('websearch:engine-request', { action: 'list' });
 };
 
 /**
@@ -72,10 +95,10 @@ const requestSuggestions = debounce((query) => {
     return;
   }
 
-  api.publish('websearch:request-suggestions', {
+  emitChannel('websearch:request-suggestions', {
     query: query.trim(),
     engineId: state.currentEngine?.id || state.defaultEngineId
-  }, api.scopes.GLOBAL);
+  });
 }, 300);
 
 /**
@@ -429,9 +452,9 @@ const init = async () => {
   // Register escape handler
   api.escape.onEscape(handleEscape);
 
-  // Subscribe to events
-  api.subscribe('websearch:suggestions', handleSuggestions, api.scopes.GLOBAL);
-  api.subscribe('websearch:engines-list', handleEnginesList, api.scopes.GLOBAL);
+  // Subscribe to events via BroadcastChannel
+  onChannel('websearch:suggestions', handleSuggestions);
+  onChannel('websearch:engines-list', handleEnginesList);
 
   // Set up search input
   const searchInput = document.getElementById('search-input');

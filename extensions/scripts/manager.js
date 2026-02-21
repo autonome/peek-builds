@@ -11,6 +11,29 @@ import { scriptExecutor } from './script-executor.js';
 
 const api = window.app;
 
+// ===== BroadcastChannel for intra-extension messaging =====
+
+const scriptsChannel = new BroadcastChannel('scripts');
+const scriptsChannelHandlers = {};
+
+scriptsChannel.onmessage = (e) => {
+  const { topic, data } = e.data;
+  if (scriptsChannelHandlers[topic]) {
+    for (const handler of scriptsChannelHandlers[topic]) {
+      handler(data);
+    }
+  }
+};
+
+function onChannel(topic, handler) {
+  if (!scriptsChannelHandlers[topic]) scriptsChannelHandlers[topic] = [];
+  scriptsChannelHandlers[topic].push(handler);
+}
+
+function emitChannel(topic, data) {
+  scriptsChannel.postMessage({ topic, data });
+}
+
 // UI Elements
 let scriptsList;
 let editorForm;
@@ -64,10 +87,10 @@ async function init() {
   // Load scripts from backend
   await loadScripts();
 
-  // Subscribe to updates
-  api.subscribe('scripts:created', () => loadScripts(), api.scopes.GLOBAL);
-  api.subscribe('scripts:updated', () => loadScripts(), api.scopes.GLOBAL);
-  api.subscribe('scripts:deleted', () => loadScripts(), api.scopes.GLOBAL);
+  // Subscribe to updates via BroadcastChannel
+  onChannel('scripts:created', () => loadScripts());
+  onChannel('scripts:updated', () => loadScripts());
+  onChannel('scripts:deleted', () => loadScripts());
 
   // Check URL params for scriptId
   const params = new URLSearchParams(window.location.search);
@@ -87,15 +110,15 @@ async function init() {
  */
 async function loadScripts() {
   return new Promise((resolve) => {
-    api.subscribe('scripts:get-all:response', (msg) => {
+    onChannel('scripts:get-all:response', (msg) => {
       if (msg.success) {
         scripts = msg.data || [];
         renderScriptsList();
         resolve();
       }
-    }, api.scopes.GLOBAL);
+    });
 
-    api.publish('scripts:get-all', {}, api.scopes.GLOBAL);
+    emitChannel('scripts:get-all', {});
   });
 }
 
@@ -183,18 +206,18 @@ function selectScript(script) {
  */
 async function handleNewScript() {
   return new Promise((resolve) => {
-    api.subscribe('scripts:create:response', async (msg) => {
+    onChannel('scripts:create:response', async (msg) => {
       if (msg.success) {
         await loadScripts();
         selectScript(msg.data);
         resolve();
       }
-    }, api.scopes.GLOBAL);
+    });
 
-    api.publish('scripts:create', {
+    emitChannel('scripts:create', {
       name: 'New Script',
       code: '// Your script here\nconst h1 = document.querySelector(\'h1\');\nreturn { title: h1?.textContent || \'No h1 found\' };'
-    }, api.scopes.GLOBAL);
+    });
   });
 }
 
@@ -234,7 +257,7 @@ async function handleDelete() {
   }
 
   return new Promise((resolve) => {
-    api.subscribe('scripts:delete:response', async (msg) => {
+    onChannel('scripts:delete:response', async (msg) => {
       if (msg.success) {
         currentScript = null;
         originalScript = null;
@@ -249,11 +272,11 @@ async function handleDelete() {
 
         resolve();
       }
-    }, api.scopes.GLOBAL);
+    });
 
-    api.publish('scripts:delete', {
+    emitChannel('scripts:delete', {
       scriptId: currentScript.id
-    }, api.scopes.GLOBAL);
+    });
   });
 }
 
@@ -305,7 +328,7 @@ async function handleTest() {
  */
 async function updateScriptField(scriptId, updates) {
   return new Promise((resolve) => {
-    api.subscribe('scripts:update:response', async (msg) => {
+    onChannel('scripts:update:response', async (msg) => {
       if (msg.success) {
         await loadScripts();
         if (currentScript && currentScript.id === scriptId) {
@@ -317,12 +340,12 @@ async function updateScriptField(scriptId, updates) {
         }
         resolve();
       }
-    }, api.scopes.GLOBAL);
+    });
 
-    api.publish('scripts:update', {
+    emitChannel('scripts:update', {
       scriptId,
       updates
-    }, api.scopes.GLOBAL);
+    });
   });
 }
 

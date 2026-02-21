@@ -124,66 +124,68 @@ test.describe('Web Search Extension @desktop', () => {
   });
 
   test('built-in engines are available via settings', async () => {
-    // Request engines list via pub/sub and check the response
-    const engines = await sharedBgWindow.evaluate(async () => {
-      return new Promise<any[]>((resolve) => {
-        const app = (window as any).app;
-        let resolved = false;
-        app.subscribe('websearch:engines-list', (msg: any) => {
-          if (resolved) return;
-          resolved = true;
-          resolve(msg.engines || []);
-        }, app.scopes.GLOBAL);
+    // Open a search window and check the engines populated via BroadcastChannel
+    const { searchWindow, windowId } = await openWebSearch(sharedBgWindow);
 
-        app.publish('websearch:engine-request', { action: 'list' }, app.scopes.GLOBAL);
-
-        // Timeout fallback
-        setTimeout(() => { if (!resolved) { resolved = true; resolve([]); } }, 5000);
+    try {
+      // Wait for engines to be populated in the search window state
+      const engines = await searchWindow.evaluate(async () => {
+        const start = Date.now();
+        while (Date.now() - start < 5000) {
+          const s = (window as any)._websearchState;
+          if (s && s.engines && s.engines.length >= 5) {
+            return s.engines;
+          }
+          await new Promise(r => setTimeout(r, 200));
+        }
+        return (window as any)._websearchState?.engines || [];
       });
-    });
 
-    expect(engines.length).toBeGreaterThanOrEqual(5);
+      expect(engines.length).toBeGreaterThanOrEqual(5);
 
-    const ids = engines.map((e: any) => e.id);
-    expect(ids).toContain('google');
-    expect(ids).toContain('duckduckgo');
-    expect(ids).toContain('bing');
-    expect(ids).toContain('wikipedia');
-    expect(ids).toContain('kagi');
+      const ids = engines.map((e: any) => e.id);
+      expect(ids).toContain('google');
+      expect(ids).toContain('duckduckgo');
+      expect(ids).toContain('bing');
+      expect(ids).toContain('wikipedia');
+      expect(ids).toContain('kagi');
+    } finally {
+      await closeWindow(sharedBgWindow, windowId);
+    }
   });
 
   test('search URL construction works correctly', async () => {
-    // Test that search URLs are built correctly by checking the engine data
-    const engineData = await sharedBgWindow.evaluate(async () => {
-      return new Promise<any>((resolve) => {
-        const app = (window as any).app;
-        let resolved = false;
-        app.subscribe('websearch:engines-list', (msg: any) => {
-          if (resolved) return;
-          resolved = true;
-          const google = (msg.engines || []).find((e: any) => e.id === 'google');
-          if (google) {
-            // Manually construct a search URL to verify the template
-            const query = 'test query';
-            const url = google.searchUrl.replace('{searchTerms}', encodeURIComponent(query));
-            resolve({
-              template: google.searchUrl,
-              constructed: url,
-              hasPlaceholder: google.searchUrl.includes('{searchTerms}')
-            });
-          } else {
-            resolve(null);
+    // Open a search window and check engine data via BroadcastChannel-populated state
+    const { searchWindow, windowId } = await openWebSearch(sharedBgWindow);
+
+    try {
+      const engineData = await searchWindow.evaluate(async () => {
+        const start = Date.now();
+        while (Date.now() - start < 5000) {
+          const s = (window as any)._websearchState;
+          if (s && s.engines && s.engines.length > 0) {
+            const google = s.engines.find((e: any) => e.id === 'google');
+            if (google) {
+              const query = 'test query';
+              const url = google.searchUrl.replace('{searchTerms}', encodeURIComponent(query));
+              return {
+                template: google.searchUrl,
+                constructed: url,
+                hasPlaceholder: google.searchUrl.includes('{searchTerms}')
+              };
+            }
           }
-        }, app.scopes.GLOBAL);
-
-        app.publish('websearch:engine-request', { action: 'list' }, app.scopes.GLOBAL);
-        setTimeout(() => { if (!resolved) { resolved = true; resolve(null); } }, 5000);
+          await new Promise(r => setTimeout(r, 200));
+        }
+        return null;
       });
-    });
 
-    expect(engineData).toBeTruthy();
-    expect(engineData.hasPlaceholder).toBe(true);
-    expect(engineData.constructed).toBe('https://www.google.com/search?q=test%20query');
+      expect(engineData).toBeTruthy();
+      expect(engineData.hasPlaceholder).toBe(true);
+      expect(engineData.constructed).toBe('https://www.google.com/search?q=test%20query');
+    } finally {
+      await closeWindow(sharedBgWindow, windowId);
+    }
   });
 
   test('search window opens and shows UI elements', async () => {
@@ -246,22 +248,26 @@ test.describe('Web Search Extension @desktop', () => {
   });
 
   test('default engine is DuckDuckGo (privacy default)', async () => {
-    const defaultEngine = await sharedBgWindow.evaluate(async () => {
-      return new Promise<string>((resolve) => {
-        const app = (window as any).app;
-        let resolved = false;
-        app.subscribe('websearch:engines-list', (msg: any) => {
-          if (resolved) return;
-          resolved = true;
-          resolve(msg.defaultEngineId || '');
-        }, app.scopes.GLOBAL);
+    // Open a search window and check the default engine via BroadcastChannel-populated state
+    const { searchWindow, windowId } = await openWebSearch(sharedBgWindow);
 
-        app.publish('websearch:engine-request', { action: 'list' }, app.scopes.GLOBAL);
-        setTimeout(() => { if (!resolved) { resolved = true; resolve(''); } }, 5000);
+    try {
+      const defaultEngineId = await searchWindow.evaluate(async () => {
+        const start = Date.now();
+        while (Date.now() - start < 5000) {
+          const s = (window as any)._websearchState;
+          if (s && s.defaultEngineId) {
+            return s.defaultEngineId;
+          }
+          await new Promise(r => setTimeout(r, 200));
+        }
+        return (window as any)._websearchState?.defaultEngineId || '';
       });
-    });
 
-    expect(defaultEngine).toBe('duckduckgo');
+      expect(defaultEngineId).toBe('duckduckgo');
+    } finally {
+      await closeWindow(sharedBgWindow, windowId);
+    }
   });
 
   test('engine list shows in search window when no query', async () => {

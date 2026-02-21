@@ -994,13 +994,13 @@ async function doLogin() {
     state.profile = currentProfile;
 
     // Notify background (for command state) and other windows
-    api.publish('lex:session-changed', {
+    emitChannel('lex:session-changed', {
       authenticated: true,
       handle: currentSession.handle,
       did: currentSession.did,
       pdsUrl: currentSession.pdsUrl,
       profile: currentProfile,
-    }, api.scopes.GLOBAL);
+    });
 
     showAccountView();
     console.log('[lex] Logged in as', currentSession.handle);
@@ -1058,9 +1058,9 @@ async function fetchCollections() {
     renderCollections();
 
     // Notify background to update "new" commands with repo collections
-    api.publish('lex:collections-loaded', {
+    emitChannel('lex:collections-loaded', {
       collections: counts.map(c => c.nsid),
-    }, api.scopes.GLOBAL);
+    });
   } catch (err) {
     collectionsListEl.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
   }
@@ -1769,6 +1769,10 @@ async function handleCreatePanelSubmit() {
 
     console.log('[lex] Record created:', result.uri);
 
+    // Invalidate cache for this collection and update repo rev
+    if (state.cpNsid) clearCachedRecords(state.cpNsid);
+    checkForChanges(currentSession).catch(() => {});
+
     // Refresh collections and add to recent
     fetchCollections();
     if (state.cpNsid) addRecentLexicon(state.cpNsid);
@@ -1796,6 +1800,24 @@ function setupRecordsPanel() {
     }
   });
   recordsLoadMoreBtn.addEventListener('click', loadMoreRecords);
+
+  // Manual refresh button
+  const refreshBtn = document.getElementById('records-refresh-btn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      if (!currentSession || !state.recordsNsid) return;
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add('spinning');
+      const syncEl = document.getElementById('records-sync-status');
+      if (syncEl) syncEl.textContent = 'refreshing...';
+      try {
+        await refreshCurrentRecordsList();
+      } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove('spinning');
+      }
+    });
+  }
 }
 
 /**
@@ -2302,7 +2324,7 @@ function addRecentLexicon(nsid) {
   saveRecentLexicons();
   renderRecentLexicons();
   // Notify background to re-register shortcut commands
-  api.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
+  emitChannel('lex:recent-lexicons-changed', { nsids: state.recentLexicons });
 }
 
 function removeRecentLexicon(nsid) {
@@ -2310,7 +2332,7 @@ function removeRecentLexicon(nsid) {
   saveRecentLexicons();
   renderRecentLexicons();
   // Notify background to re-register shortcut commands
-  api.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
+  emitChannel('lex:recent-lexicons-changed', { nsids: state.recentLexicons });
 }
 
 function renderRecentLexicons() {

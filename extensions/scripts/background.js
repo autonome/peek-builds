@@ -17,6 +17,29 @@ import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
 
+// ===== BroadcastChannel for intra-extension messaging =====
+
+const scriptsChannel = new BroadcastChannel('scripts');
+const scriptsChannelHandlers = {};
+
+scriptsChannel.onmessage = (e) => {
+  const { topic, data } = e.data;
+  if (scriptsChannelHandlers[topic]) {
+    for (const handler of scriptsChannelHandlers[topic]) {
+      handler(data);
+    }
+  }
+};
+
+function onChannel(topic, handler) {
+  if (!scriptsChannelHandlers[topic]) scriptsChannelHandlers[topic] = [];
+  scriptsChannelHandlers[topic].push(handler);
+}
+
+function emitChannel(topic, data) {
+  scriptsChannel.postMessage({ topic, data });
+}
+
 console.log('[ext:scripts] background loaded');
 
 // Default settings
@@ -98,8 +121,8 @@ const createScript = async (scriptData) => {
   currentSettings.scripts.push(script);
   await saveSettings(currentSettings);
 
-  // Notify listeners
-  api.publish('scripts:created', { script }, api.scopes.GLOBAL);
+  // Notify listeners via BroadcastChannel
+  emitChannel('scripts:created', { script });
 
   return { success: true, data: script };
 };
@@ -121,8 +144,8 @@ const updateScript = async (scriptId, updates) => {
 
   await saveSettings(currentSettings);
 
-  // Notify listeners
-  api.publish('scripts:updated', { scriptId, script: currentSettings.scripts[scriptIndex] }, api.scopes.GLOBAL);
+  // Notify listeners via BroadcastChannel
+  emitChannel('scripts:updated', { scriptId, script: currentSettings.scripts[scriptIndex] });
 
   return { success: true, data: currentSettings.scripts[scriptIndex] };
 };
@@ -139,8 +162,8 @@ const deleteScript = async (scriptId) => {
   currentSettings.scripts.splice(scriptIndex, 1);
   await saveSettings(currentSettings);
 
-  // Notify listeners
-  api.publish('scripts:deleted', { scriptId }, api.scopes.GLOBAL);
+  // Notify listeners via BroadcastChannel
+  emitChannel('scripts:deleted', { scriptId });
 
   return { success: true };
 };
@@ -282,35 +305,36 @@ const init = async () => {
   // Register global shortcut Command+Shift+S
   api.shortcuts.register('Command+Shift+S', () => openScriptsManager());
 
-  // API for other extensions/pages to interact with scripts
-  api.subscribe('scripts:create', async (msg) => {
+  // API for manager UI via BroadcastChannel
+  onChannel('scripts:create', async (msg) => {
     const result = await createScript(msg);
-    api.publish('scripts:create:response', result, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    emitChannel('scripts:create:response', result);
+  });
 
-  api.subscribe('scripts:update', async (msg) => {
+  onChannel('scripts:update', async (msg) => {
     const result = await updateScript(msg.scriptId, msg.updates);
-    api.publish('scripts:update:response', result, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    emitChannel('scripts:update:response', result);
+  });
 
-  api.subscribe('scripts:delete', async (msg) => {
+  onChannel('scripts:delete', async (msg) => {
     const result = await deleteScript(msg.scriptId);
-    api.publish('scripts:delete:response', result, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    emitChannel('scripts:delete:response', result);
+  });
 
+  onChannel('scripts:get-all', async () => {
+    const result = await getScripts();
+    emitChannel('scripts:get-all:response', result);
+  });
+
+  onChannel('scripts:get', async (msg) => {
+    const result = await getScript(msg.scriptId);
+    emitChannel('scripts:get:response', result);
+  });
+
+  // Keep scripts:execute on IPC for cross-extension access
   api.subscribe('scripts:execute', async (msg) => {
     const result = await executeScript(msg.scriptId, msg.context);
     api.publish('scripts:execute:response', result, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
-
-  api.subscribe('scripts:get-all', async () => {
-    const result = await getScripts();
-    api.publish('scripts:get-all:response', result, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
-
-  api.subscribe('scripts:get', async (msg) => {
-    const result = await getScript(msg.scriptId);
-    api.publish('scripts:get:response', result, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   console.log('[ext:scripts] Extension loaded');

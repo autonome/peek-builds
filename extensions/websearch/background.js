@@ -19,6 +19,29 @@ const debug = api.debug;
 
 console.log('[ext:websearch] background', labels.name);
 
+// ===== BroadcastChannel for intra-extension messaging =====
+
+const wsChannel = new BroadcastChannel('websearch');
+const wsChannelHandlers = {};
+
+wsChannel.onmessage = (e) => {
+  const { topic, data } = e.data;
+  if (wsChannelHandlers[topic]) {
+    for (const handler of wsChannelHandlers[topic]) {
+      handler(data);
+    }
+  }
+};
+
+function onChannel(topic, handler) {
+  if (!wsChannelHandlers[topic]) wsChannelHandlers[topic] = [];
+  wsChannelHandlers[topic].push(handler);
+}
+
+function emitChannel(topic, data) {
+  wsChannel.postMessage({ topic, data });
+}
+
 // Extension content is served from peek://ext/websearch/
 const address = 'peek://ext/websearch/home.html';
 
@@ -578,13 +601,13 @@ const handleSuggestionRequest = async (msg) => {
     currentSuggestionAbortController.signal
   );
 
-  // Publish suggestions response
-  api.publish('websearch:suggestions', {
+  // Publish suggestions response via BroadcastChannel
+  emitChannel('websearch:suggestions', {
     query: msg.query,
     engineId: engine.id,
     engineName: engine.name,
     suggestions
-  }, api.scopes.GLOBAL);
+  });
 };
 
 /**
@@ -595,7 +618,7 @@ const handleEngineRequest = async (msg) => {
 
   switch (msg.action) {
     case 'list':
-      api.publish('websearch:engines-list', {
+      emitChannel('websearch:engines-list', {
         engines: engines.map(e => ({
           id: e.id,
           name: e.name,
@@ -609,7 +632,7 @@ const handleEngineRequest = async (msg) => {
           isDefault: e.id === currentSettings.prefs.defaultEngine
         })),
         defaultEngineId: currentSettings.prefs.defaultEngine
-      }, api.scopes.GLOBAL);
+      });
       break;
 
     case 'add':
@@ -628,7 +651,7 @@ const handleEngineRequest = async (msg) => {
       if (msg.engineId && getEngine(msg.engineId)) {
         currentSettings.prefs.defaultEngine = msg.engineId;
         await saveSettings(currentSettings);
-        api.publish('websearch:settings-changed', currentSettings, api.scopes.GLOBAL);
+        api.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
       }
       break;
 
@@ -664,11 +687,11 @@ const init = async () => {
   // Listen for page load events for OpenSearch discovery
   api.subscribe('page:loaded', handlePageLoaded, api.scopes.GLOBAL);
 
-  // Listen for suggestion requests
-  api.subscribe('websearch:request-suggestions', handleSuggestionRequest, api.scopes.GLOBAL);
+  // Listen for suggestion requests via BroadcastChannel
+  onChannel('websearch:request-suggestions', handleSuggestionRequest);
 
-  // Listen for engine management requests
-  api.subscribe('websearch:engine-request', handleEngineRequest, api.scopes.GLOBAL);
+  // Listen for engine management requests via BroadcastChannel
+  onChannel('websearch:engine-request', handleEngineRequest);
 
   // Listen for window close events
   api.subscribe('window:closed', async (msg) => {
@@ -686,7 +709,7 @@ const init = async () => {
     currentSettings = await loadSettings();
     await loadEngines();
     initCommands();
-  }, api.scopes.GLOBAL);
+  }, api.scopes.SELF);
 
   // Listen for settings updates from Settings UI
   api.subscribe('websearch:settings-update', async (msg) => {
@@ -715,7 +738,7 @@ const init = async () => {
       await loadEngines();
       initCommands();
 
-      api.publish('websearch:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
     } catch (err) {
       console.error('[ext:websearch] settings-update error:', err);
     }

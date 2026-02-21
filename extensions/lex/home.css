@@ -1278,6 +1278,50 @@ body {
   min-width: 0;
 }
 
+.records-sync-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 0 0 0;
+}
+
+.records-sync-status {
+  font-size: 11px;
+  color: var(--base04);
+}
+
+.btn-refresh {
+  background: none;
+  border: 1px solid var(--base03);
+  border-radius: 4px;
+  color: var(--base04);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.btn-refresh:hover {
+  color: var(--base05);
+  border-color: var(--base04);
+}
+
+.btn-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-refresh.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .records-list {
   display: flex;
   flex-direction: column;

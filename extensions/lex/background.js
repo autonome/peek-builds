@@ -14,6 +14,31 @@ const hasPeekAPI = typeof window.app !== 'undefined';
 const api = hasPeekAPI ? window.app : null;
 
 // ============================================================================
+// BroadcastChannel for intra-extension messaging (background.js <-> home.js)
+// ============================================================================
+
+const lexChannel = new BroadcastChannel('lex');
+const lexChannelHandlers = {};
+
+lexChannel.onmessage = (e) => {
+  const { topic, data } = e.data;
+  if (lexChannelHandlers[topic]) {
+    for (const handler of lexChannelHandlers[topic]) {
+      handler(data);
+    }
+  }
+};
+
+function onChannel(topic, handler) {
+  if (!lexChannelHandlers[topic]) lexChannelHandlers[topic] = [];
+  lexChannelHandlers[topic].push(handler);
+}
+
+function emitChannel(topic, data) {
+  lexChannel.postMessage({ topic, data });
+}
+
+// ============================================================================
 // Session state (read-only, loaded from storage for command auth checks)
 // ============================================================================
 
@@ -61,7 +86,7 @@ function openMeWithLexicon(nsid) {
   });
   // Publish after a short delay to let the window load
   setTimeout(() => {
-    api.publish('lex:open-create', { nsid }, api.scopes.GLOBAL);
+    emitChannel('lex:open-create', { nsid });
   }, 300);
 }
 
@@ -259,17 +284,17 @@ const extension = {
     await loadAndRegisterNewCommands();
 
     // Listen for session changes from home.js
-    api.subscribe('lex:session-changed', (msg) => {
+    onChannel('lex:session-changed', (msg) => {
       if (msg.authenticated) {
         // Reload session from storage to get full session data
         loadSession();
       } else {
         currentSession = null;
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Listen for recent lexicons changes from home.js / chain-form.js
-    api.subscribe('lex:recent-lexicons-changed', (msg) => {
+    onChannel('lex:recent-lexicons-changed', (msg) => {
       if (Array.isArray(msg.nsids)) {
         // Merge new nsids into known recent
         for (const nsid of msg.nsids) {
@@ -280,15 +305,15 @@ const extension = {
         knownRecentNsids.sort();
         rebuildNewCommands();
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Listen for collections loaded from home.js
-    api.subscribe('lex:collections-loaded', (msg) => {
+    onChannel('lex:collections-loaded', (msg) => {
       if (Array.isArray(msg.collections)) {
         knownCollectionNsids = msg.collections;
         rebuildNewCommands();
       }
-    }, api.scopes.GLOBAL);
+    });
 
     console.log('[lex:bg] Extension loaded', currentSession ? `(session: @${currentSession.handle})` : '(no session)');
   },

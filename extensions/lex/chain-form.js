@@ -30,6 +30,13 @@ import {
 
 const api = window.app;
 
+// BroadcastChannel for intra-extension messaging
+const lexChannel = new BroadcastChannel('lex');
+
+function emitChannel(topic, data) {
+  lexChannel.postMessage({ topic, data });
+}
+
 // Read URL params
 const params = new URLSearchParams(window.location.search);
 const sessionId = params.get('sessionId');
@@ -233,7 +240,7 @@ async function handleSubmit() {
     console.log('[chain-form] Record created:', result.uri);
 
     // Notify home UI to update recent lexicons
-    api.publish('lex:recent-lexicons-changed', { nsids: [currentNsid] }, api.scopes.GLOBAL);
+    emitChannel('lex:recent-lexicons-changed', { nsids: [currentNsid] });
 
     // Publish result to cmd panel and auto-close after delay
     setTimeout(() => {
