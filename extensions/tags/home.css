@@ -27,7 +27,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--base02);
   background: var(--base00);
 }
@@ -35,11 +35,11 @@ body {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .header-title {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--base05);
 }
@@ -84,15 +84,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   background: var(--base0D);
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
   color: var(--base00);
   transition: all 0.15s;
-  margin-left: 8px;
+  margin-left: 6px;
   flex-shrink: 0;
 }
 
@@ -109,11 +109,11 @@ body {
 .filter-btn {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
+  gap: 3px;
+  padding: 4px 7px;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
   color: var(--base04);
   transition: all 0.15s;
@@ -133,8 +133,8 @@ body {
 }
 
 .filter-btn.active {
-  color: var(--base0D);
-  background: var(--base01);
+  color: var(--base05);
+  background: var(--base02);
 }
 
 .filter-btn.active svg {
@@ -152,14 +152,14 @@ body {
 
 /* Search */
 .search-container {
-  padding: 16px 24px;
+  padding: 8px 16px;
 }
 
 peek-input.search-input {
   width: 100%;
   --peek-input-bg: var(--base01);
   --peek-input-border: var(--base02);
-  --peek-input-height: 40px;
+  --peek-input-height: 32px;
 }
 
 /* Content wrapper - sidebar + main */
@@ -171,20 +171,20 @@ peek-input.search-input {
 
 /* Tag sidebar */
 .tag-sidebar {
-  width: 200px;
+  width: 180px;
   border-right: 1px solid var(--base02);
-  padding: 16px;
+  padding: 10px;
   overflow-y: auto;
   flex-shrink: 0;
 }
 
 .sidebar-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--base04);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .tag-list {
@@ -196,12 +196,12 @@ peek-input.search-input {
 .tag-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 5px;
+  padding: 4px 8px;
   background: var(--base01);
   border: 1px solid var(--base02);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: 5px;
+  font-size: 12px;
   color: var(--base05);
   cursor: pointer;
   transition: all 0.15s;
@@ -227,17 +227,18 @@ peek-input.search-input {
 }
 
 .tag-chip.selected {
-  background: var(--base0D);
-  border-color: var(--base0D);
-  color: var(--base00);
+  background: color-mix(in srgb, var(--base0D) 20%, var(--base01));
+  border-color: color-mix(in srgb, var(--base0D) 40%, transparent);
+  color: var(--base05);
 }
 
 .tag-chip.selected .tag-count {
-  opacity: 0.9;
+  opacity: 0.8;
 }
 
 .tag-chip .tag-check {
   flex-shrink: 0;
+  color: var(--base0D);
 }
 
 /* Separator between selected and unselected tags */
@@ -251,7 +252,7 @@ peek-input.search-input {
 .items-container {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 24px;
+  padding: 10px 16px;
   display: flex;
   flex-direction: column;
 }
@@ -273,20 +274,21 @@ peek-input.search-input {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
-  background: var(--base0D);
-  border-radius: 12px;
-  font-size: 12px;
-  color: var(--base00);
+  padding: 3px 8px;
+  background: color-mix(in srgb, var(--base0D) 20%, var(--base01));
+  border: 1px solid color-mix(in srgb, var(--base0D) 30%, transparent);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--base05);
   font-weight: 500;
 }
 
 .selected-tag-chip .remove-selected-tag {
   background: none;
   border: none;
-  color: var(--base00);
+  color: var(--base04);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
   padding: 0;
   opacity: 0.8;
@@ -300,11 +302,11 @@ peek-input.search-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   background: transparent;
   border: 1px solid var(--base03);
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
   color: var(--base04);
   padding: 0;
@@ -318,20 +320,20 @@ peek-input.search-input {
 
 .tag-gear-btn.active {
   background: var(--base02);
-  color: var(--base0D);
-  border-color: var(--base0D);
+  color: var(--base05);
+  border-color: var(--base03);
 }
 
 /* Tag management panel */
 .tag-manage-panel {
   display: none;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 6px 10px;
   background: var(--base01);
   border: 1px solid var(--base02);
-  border-radius: 6px;
-  margin-bottom: 8px;
+  border-radius: 5px;
+  margin-bottom: 6px;
 }
 
 .tag-manage-panel.visible {
@@ -340,8 +342,8 @@ peek-input.search-input {
 
 .tag-manage-panel input {
   flex: 1;
-  padding: 6px 10px;
-  font-size: 13px;
+  padding: 4px 8px;
+  font-size: 12px;
   font-family: var(--theme-font-sans);
   background: var(--base00);
   border: 1px solid var(--base02);
@@ -356,8 +358,8 @@ peek-input.search-input {
 }
 
 .tag-manage-panel button {
-  padding: 6px 12px;
-  font-size: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
   font-weight: 500;
   border: none;
   border-radius: 4px;
@@ -388,8 +390,8 @@ peek-input.search-input {
 .sidebar-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: 4px;
+  margin-bottom: 8px;
 }
 
 .sidebar-header .sidebar-title {
@@ -401,8 +403,8 @@ peek-input.search-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -421,12 +423,12 @@ peek-input.search-input {
 .sidebar-sort-btn.active {
   background: var(--base01);
   border-color: var(--base02);
-  color: var(--base0D);
+  color: var(--base05);
 }
 
 /* Grid toolbar */
 peek-grid-toolbar.grid-toolbar {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   --theme-bg-secondary: var(--base01);
   --theme-border: var(--base02);
   --theme-text: var(--base05);
@@ -437,17 +439,17 @@ peek-grid-toolbar.grid-toolbar {
 
 /* Cards grid - peek-grid custom properties */
 peek-grid.cards {
-  --peek-grid-min-item-width: 240px;
-  --peek-grid-gap: 8px;
+  --peek-grid-min-item-width: 220px;
+  --peek-grid-gap: 6px;
 }
 
 /* Card customization - peek-card custom properties */
 peek-card {
   --peek-card-bg: var(--base01);
   --peek-card-border: transparent;
-  --peek-card-radius: 8px;
-  --peek-card-padding: 10px;
-  --peek-card-gap: 6px;
+  --peek-card-radius: 6px;
+  --peek-card-padding: 8px;
+  --peek-card-gap: 4px;
 }
 
 peek-card[selected] {
@@ -458,16 +460,17 @@ peek-card[selected] {
 .card-header {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
 }
 
 .card-favicon {
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
   flex-shrink: 0;
   background: var(--base02);
   object-fit: contain;
+  margin-top: 1px;
 }
 
 .card-content {
@@ -476,35 +479,36 @@ peek-card[selected] {
 }
 
 .card-title {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--base05);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.3;
 }
 
 .card-url {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--base04);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 /* Card tags */
 .card-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px;
 }
 
 .card-tag {
-  padding: 2px 8px;
+  padding: 1px 6px;
   background: var(--base02);
-  border-radius: 10px;
-  font-size: 11px;
+  border-radius: 8px;
+  font-size: 10px;
   color: var(--base04);
   cursor: pointer;
   transition: all 0.15s;
@@ -538,9 +542,9 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 .empty-state {
   grid-column: 1 / -1;
   text-align: center;
-  padding: 48px 24px;
+  padding: 32px 16px;
   color: var(--base03);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 /* Card open button - opens URL in webview */
@@ -548,11 +552,11 @@ peek-grid.cards[view-mode="masonry"] peek-card {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   background: var(--base02);
   border: 1px solid var(--base03);
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
   color: var(--base04);
   flex-shrink: 0;
@@ -580,17 +584,17 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 .detail-header {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  padding: 16px 0;
+  gap: 10px;
+  padding: 10px 0;
   border-bottom: 1px solid var(--base02);
-  margin-bottom: 20px;
+  margin-bottom: 14px;
   flex-shrink: 0;
 }
 
 .detail-favicon {
-  width: 36px;
-  height: 36px;
-  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
   background: var(--base02);
   object-fit: contain;
   flex-shrink: 0;
@@ -602,7 +606,7 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 }
 
 .detail-title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--base05);
   word-break: break-word;
@@ -621,8 +625,8 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 /* Detail actions row */
 .detail-actions {
   display: flex;
-  gap: 8px;
-  margin-bottom: 20px;
+  gap: 6px;
+  margin-bottom: 14px;
   flex-shrink: 0;
 }
 
@@ -632,7 +636,7 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 
 /* Embedded editor section (for text items) */
 .detail-editor-section {
-  margin-bottom: 20px;
+  margin-bottom: 14px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -726,45 +730,46 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 
 /* Detail sections (tags) */
 .detail-section {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   flex-shrink: 0;
 }
 
 .detail-label {
   display: block;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--base04);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 /* Current tags */
 .current-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  min-height: 32px;
+  gap: 4px;
+  min-height: 24px;
 }
 
 .current-tag {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--base0D);
-  border-radius: 12px;
-  font-size: 12px;
-  color: var(--base00);
+  gap: 3px;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--base0D) 20%, var(--base01));
+  border: 1px solid color-mix(in srgb, var(--base0D) 30%, transparent);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--base05);
 }
 
 .current-tag .remove-tag {
   background: none;
   border: none;
-  color: var(--base00);
+  color: var(--base04);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
   padding: 0;
   opacity: 0.8;
@@ -788,8 +793,8 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 
 .new-tag-input {
   flex: 1;
-  padding: 8px 12px;
-  font-size: 13px;
+  padding: 5px 8px;
+  font-size: 12px;
   font-family: var(--theme-font-sans);
   background: var(--base01);
   border: 1px solid var(--base02);
@@ -807,11 +812,11 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 }
 
 .add-tag-btn {
-  padding: 8px 16px;
+  padding: 5px 12px;
   background: var(--base0D);
   border: none;
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: 5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--base00);
   cursor: pointer;
@@ -826,15 +831,15 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 .available-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .available-tag {
-  padding: 6px 10px;
+  padding: 3px 8px;
   background: var(--base01);
   border: 1px solid var(--base02);
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: 10px;
+  font-size: 11px;
   color: var(--base05);
   cursor: pointer;
   transition: all 0.15s;

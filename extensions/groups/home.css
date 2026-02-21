@@ -22,7 +22,7 @@ body {
 
 /* Search */
 .search-container {
-  padding: 24px 24px 0 24px;
+  padding: 12px 16px 0 16px;
 }
 
 .search-row {
@@ -40,11 +40,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   background: var(--base0D);
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
   color: var(--base00);
   transition: all 0.15s;
@@ -67,7 +67,7 @@ body {
   width: 100%;
   --peek-input-bg: var(--base01);
   --peek-input-border: var(--base02);
-  --peek-input-height: 40px;
+  --peek-input-height: 32px;
 }
 
 .create-group-actions {
@@ -82,17 +82,17 @@ peek-input.search-input {
   width: 100%;
   --peek-input-bg: var(--base01);
   --peek-input-border: var(--base02);
-  --peek-input-height: 44px;
+  --peek-input-height: 32px;
 }
 
 peek-input.search-input::part(input) {
   color: var(--base05);
-  font-size: 15px;
+  font-size: 13px;
 }
 
 /* Grid toolbar */
 peek-grid-toolbar.grid-toolbar {
-  padding: 0 24px;
+  padding: 0 16px;
   --theme-bg-secondary: var(--base01);
   --theme-border: var(--base02);
   --theme-text: var(--base05);
@@ -103,7 +103,7 @@ peek-grid-toolbar.grid-toolbar {
 
 /* Cards container - peek-grid handles layout */
 .cards {
-  padding: 24px;
+  padding: 12px 16px;
 }
 
 /* Component customization for peek-card - shared across all cards */
@@ -111,10 +111,10 @@ peek-card {
   --peek-card-bg: var(--base01);
   --peek-card-hover-bg: var(--base02);
   --peek-card-border: transparent;
-  --peek-card-radius: 8px;
-  --peek-card-padding: 12px;
-  --peek-card-gap: 8px;
-  max-width: 300px;
+  --peek-card-radius: 6px;
+  --peek-card-padding: 8px;
+  --peek-card-gap: 4px;
+  max-width: 260px;
 }
 
 peek-card[selected] {
@@ -129,27 +129,27 @@ peek-card[selected]:hover {
 
 /* Group card slotted content */
 .group-card .color-dot {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 /* Address card slotted content */
 .address-card .card-favicon {
   width: 12px;
   height: 12px;
-  border-radius: 4px;
+  border-radius: 3px;
   flex-shrink: 0;
   background: var(--base02);
   object-fit: contain;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 /* Shared slotted content styles */
 .card-title {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--base05);
   white-space: nowrap;
@@ -158,7 +158,7 @@ peek-card[selected]:hover {
 }
 
 .card-meta {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--base03);
 }
 
@@ -176,9 +176,9 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 .empty-state {
   grid-column: 1 / -1;
   text-align: center;
-  padding: 48px 24px;
+  padding: 32px 16px;
   color: var(--base03);
-  font-size: 15px;
+  font-size: 13px;
 }
 
 /* All Tags toggle section */
@@ -192,11 +192,11 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 .all-tags-btn {
   background: none;
   border: 1px solid var(--base02);
-  border-radius: 6px;
+  border-radius: 5px;
   color: var(--base04);
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
-  padding: 6px 12px;
+  padding: 4px 10px;
   transition: all 0.15s;
 }
 
@@ -220,8 +220,8 @@ peek-card.unpromoted-tag:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   background: var(--base02);
   border: 1px solid var(--base03);
   border-radius: 4px;

@@ -1094,7 +1094,7 @@ const renderTagSidebar = () => {
     }
 
     const checkIcon = isSelected
-      ? '<svg class="tag-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+      ? '<svg class="tag-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
       : '';
 
     chip.innerHTML = `
@@ -1236,7 +1236,7 @@ const createItemCard = (item) => {
   // Build the open button for items with URLs (both url type and notes with URLs)
   const openBtnHtml = itemUrl
     ? `<button class="card-open-btn" data-url="${escapeHtml(itemUrl)}" title="Open page">` +
-      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+      `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
       `<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>` +
       `<polyline points="15 3 21 3 21 9"></polyline>` +
       `<line x1="10" y1="14" x2="21" y2="3"></line>` +
