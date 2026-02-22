@@ -33,42 +33,155 @@ import {
 const api = window.app;
 
 // ============================================================================
-// BroadcastChannel for intra-extension messaging (home.js <-> background.js)
+// "new" command system
 // ============================================================================
 
-let lexChannel = null;
-const lexChannelHandlers = {};
+let registeredNewCommands = [];
+let knownCollectionNsids = [];
+let knownRecentNsids = [];
 
-try {
-  lexChannel = new BroadcastChannel('lex');
-  lexChannel.onmessage = (e) => {
-    const { topic, data } = e.data;
-    if (lexChannelHandlers[topic]) {
-      for (const handler of lexChannelHandlers[topic]) {
-        handler(data);
-      }
-    }
-  };
-} catch (err) {
-  console.warn('[lex] BroadcastChannel unavailable, using IPC fallback:', err.message);
+function nsidDomainLabel(nsid) {
+  const parts = nsid.split('.');
+  return parts.length >= 2 ? parts[1] : parts[0];
 }
 
-function onChannel(topic, handler) {
-  if (!lexChannelHandlers[topic]) lexChannelHandlers[topic] = [];
-  lexChannelHandlers[topic].push(handler);
-  if (!lexChannel) api.subscribe(topic, handler, api.scopes.GLOBAL);
-}
+function rebuildNewCommands() {
+  // Unregister old commands
+  for (const name of registeredNewCommands) {
+    try { api.commands.unregister(name); } catch {}
+  }
+  registeredNewCommands = [];
 
-function emitChannel(topic, data) {
-  if (lexChannel) {
-    lexChannel.postMessage({ topic, data });
-  } else {
-    api.publish(topic, data, api.scopes.GLOBAL);
+  const allNsids = [...new Set([...knownRecentNsids, ...knownCollectionNsids])];
+  if (allNsids.length === 0) return;
+
+  const nameToNsids = new Map();
+  for (const nsid of allNsids) {
+    const friendly = nsidToFriendlyName(nsid);
+    if (!nameToNsids.has(friendly)) nameToNsids.set(friendly, []);
+    nameToNsids.get(friendly).push(nsid);
+  }
+
+  for (const nsid of allNsids) {
+    const friendly = nsidToFriendlyName(nsid);
+    const siblings = nameToNsids.get(friendly);
+    const displayName = siblings.length > 1 ? `${friendly} (${nsidDomainLabel(nsid)})` : friendly;
+    const cmdName = `new ${displayName} — ${nsid}`;
+
+    api.commands.register({
+      name: cmdName,
+      description: `Create ${nsid} record`,
+      execute: () => {
+        if (!currentSession) {
+          openLexWindow();
+          return { success: false, message: 'Not logged in. Opening login...' };
+        }
+        return {
+          success: true,
+          output: {
+            data: { nsid },
+            mimeType: 'application/x-lexicon-form',
+            title: displayName,
+            interactive: 'peek://lex/chain-form.html',
+          },
+        };
+      },
+    });
+    registeredNewCommands.push(cmdName);
   }
 }
 
+function openLexWindow() {
+  api.window.open('peek://lex/home.html', {
+    role: 'workspace',
+    key: 'lex-home',
+    width: 860,
+    height: 620,
+    title: 'Lexicon Studio',
+    webPreferences: { webSecurity: false },
+  });
+}
+
+function openLexWindowWithLexicon(nsid) {
+  openLexWindow();
+  // If already loaded, handle directly; otherwise delay for window load
+  if (state.authenticated && nsid) {
+    switchPanel('create');
+    selectPickerLexicon(nsid);
+  }
+}
+
+function registerCommands() {
+  api.commands.register({
+    name: 'lexicon studio',
+    description: 'Open AT Protocol identity panel',
+    execute: () => {
+      openLexWindow();
+      return { success: true };
+    },
+  });
+
+  api.commands.register({
+    name: 'new',
+    description: 'Create a new AT Protocol record',
+    execute: async (ctx) => {
+      if (!currentSession) {
+        openLexWindow();
+        return { success: false, message: 'Not logged in. Opening login...' };
+      }
+      if (ctx.search && ctx.search.includes('.')) {
+        const nsid = ctx.search.trim();
+        const friendlyName = nsidToFriendlyName(nsid);
+        return {
+          success: true,
+          output: {
+            data: { nsid },
+            mimeType: 'application/x-lexicon-form',
+            title: friendlyName,
+            interactive: 'peek://lex/chain-form.html',
+          },
+        };
+      }
+      openLexWindowWithLexicon('');
+      return { success: true };
+    },
+  });
+
+  // Load recent nsids and build "new {Name}" commands
+  knownRecentNsids = [...(state.recentLexicons || [])];
+  rebuildNewCommands();
+}
+
+function onCollectionsChanged(nsids) {
+  knownCollectionNsids = nsids;
+  rebuildNewCommands();
+}
+
+function onRecentLexiconsChanged() {
+  knownRecentNsids = [...(state.recentLexicons || [])];
+  rebuildNewCommands();
+  // Also publish for chain-form.js (runs in separate modal window)
+  api.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
+}
+
+// Listen for recent lexicon changes from chain-form.js
+api.subscribe('lex:recent-lexicons-changed', (msg) => {
+  if (Array.isArray(msg.nsids)) {
+    for (const nsid of msg.nsids) {
+      if (!state.recentLexicons.includes(nsid)) {
+        state.recentLexicons.push(nsid);
+      }
+    }
+    state.recentLexicons.sort();
+    saveRecentLexicons();
+    renderRecentLexicons();
+    knownRecentNsids = [...state.recentLexicons];
+    rebuildNewCommands();
+  }
+}, api.scopes.GLOBAL);
+
 // ============================================================================
-// Session state (previously in background.js)
+// Session state
 // ============================================================================
 
 let currentSession = null;
@@ -617,8 +730,8 @@ async function init() {
   // Load recent lexicons from storage
   loadRecentLexicons();
 
-  // Listen for open-create from command palette (via background commands)
-  onChannel('lex:open-create', (msg) => {
+  // Listen for open-create from command palette
+  api.subscribe('lex:open-create', (msg) => {
     if (!state.authenticated) return;
     if (msg.nsid) {
       switchPanel('create');
@@ -626,10 +739,13 @@ async function init() {
     } else {
       switchPanel('create');
     }
-  });
+  }, api.scopes.GLOBAL);
 
   // Load session from storage directly
   await loadSession();
+
+  // Register commands (after session loaded so auth checks work)
+  registerCommands();
 
   if (currentSession) {
     // Session exists — show account view
@@ -803,8 +919,7 @@ function setupEventListeners() {
       }
       keysToRemove.forEach(k => localStorage.removeItem(k));
     } catch {}
-    // Notify background (for command state) and other windows
-    emitChannel('lex:session-changed', { authenticated: false });
+    // Session cleared — no commands to update (they check currentSession at execute time)
     showLoginView();
   });
 }
@@ -1003,14 +1118,7 @@ async function doLogin() {
     state.pdsUrl = currentSession.pdsUrl;
     state.profile = currentProfile;
 
-    // Notify background (for command state) and other windows
-    emitChannel('lex:session-changed', {
-      authenticated: true,
-      handle: currentSession.handle,
-      did: currentSession.did,
-      pdsUrl: currentSession.pdsUrl,
-      profile: currentProfile,
-    });
+    // Session restored — commands check currentSession at execute time
 
     showAccountView();
     console.log('[lex] Logged in as', currentSession.handle);
@@ -1067,10 +1175,8 @@ async function fetchCollections() {
     state.collections = counts;
     renderCollections();
 
-    // Notify background to update "new" commands with repo collections
-    emitChannel('lex:collections-loaded', {
-      collections: counts.map(c => c.nsid),
-    });
+    // Update "new" commands with repo collections
+    onCollectionsChanged(counts.map(c => c.nsid));
   } catch (err) {
     collectionsListEl.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
   }
@@ -2333,16 +2439,14 @@ function addRecentLexicon(nsid) {
   state.recentLexicons.sort();
   saveRecentLexicons();
   renderRecentLexicons();
-  // Notify background to re-register shortcut commands
-  emitChannel('lex:recent-lexicons-changed', { nsids: state.recentLexicons });
+  onRecentLexiconsChanged();
 }
 
 function removeRecentLexicon(nsid) {
   state.recentLexicons = state.recentLexicons.filter(n => n !== nsid);
   saveRecentLexicons();
   renderRecentLexicons();
-  // Notify background to re-register shortcut commands
-  emitChannel('lex:recent-lexicons-changed', { nsids: state.recentLexicons });
+  onRecentLexiconsChanged();
 }
 
 function renderRecentLexicons() {

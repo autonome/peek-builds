@@ -1,55 +1,20 @@
 /**
- * Background.js Logic — Unit Tests
+ * Lex Command Logic — Unit Tests
  *
- * Tests for pure logic functions used in background.js.
- * Since nsidToFriendlyName and nsidDomainLabel are not exported from background.js,
- * we re-implement them here to verify the logic patterns, and test the
- * rebuildNewCommands collision-handling algorithm.
+ * Tests for the command-building logic in home.js.
+ * nsidToFriendlyName comes from lexicon-ui.js (single source of truth).
+ * nsidDomainLabel and rebuildNewCommands logic live in home.js.
  *
  * Run with: node --test extensions/lex/tests/background-logic.test.js
  */
 
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { nsidToFriendlyName } from '../lexicon-ui.js';
 
 // ============================================================================
-// Re-implement the unexported functions from background.js for testing.
-// These MUST stay in sync with background.js — if they diverge, tests
-// become meaningless. The canonical source is background.js lines 77-113.
+// Re-implement nsidDomainLabel from home.js for testing.
 // ============================================================================
-
-const FRIENDLY_NAMES = {
-  'app.bsky.feed.post': 'Post',
-  'app.bsky.feed.like': 'Like',
-  'app.bsky.feed.repost': 'Repost',
-  'app.bsky.feed.generator': 'Feed Generator',
-  'app.bsky.feed.threadgate': 'Thread Gate',
-  'app.bsky.feed.postgate': 'Post Gate',
-  'app.bsky.graph.follow': 'Follow',
-  'app.bsky.graph.block': 'Block',
-  'app.bsky.graph.list': 'List',
-  'app.bsky.graph.listitem': 'List Item',
-  'app.bsky.graph.listblock': 'List Block',
-  'app.bsky.graph.starterpack': 'Starter Pack',
-  'app.bsky.actor.profile': 'Profile',
-  'app.bsky.labeler.service': 'Labeler',
-  'chat.bsky.actor.declaration': 'Chat Settings',
-  'com.whtwnd.blog.entry': 'Blog Entry',
-  'blue.linkat.board': 'Board',
-  'fyi.frontpage.post': 'Frontpage Post',
-  'site.standard.publication': 'Publication',
-  'site.standard.document': 'Document',
-  'site.standard.graph.subscription': 'Subscription',
-};
-
-function nsidToFriendlyName(nsid) {
-  if (FRIENDLY_NAMES[nsid]) return FRIENDLY_NAMES[nsid];
-  const parts = nsid.split('.');
-  const last = parts[parts.length - 1];
-  return last
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/^./, c => c.toUpperCase());
-}
 
 function nsidDomainLabel(nsid) {
   const parts = nsid.split('.');
@@ -57,10 +22,8 @@ function nsidDomainLabel(nsid) {
 }
 
 /**
- * Simulates the rebuildNewCommands logic from background.js.
+ * Simulates the rebuildNewCommands logic from home.js.
  * Takes a list of NSIDs and returns the command names that would be registered.
- *
- * This mirrors background.js lines 126-188.
  */
 function computeCommandNames(allNsids) {
   const nameToNsids = new Map();
@@ -140,9 +103,6 @@ describe('rebuildNewCommands collision handling', () => {
   });
 
   test('colliding friendly names get domain label disambiguation', () => {
-    // Both "app.bsky.feed.post" and "fyi.frontpage.post" map to "Post"
-    // (frontpage.post has a hardcoded name "Frontpage Post", so let's use
-    //  two unknown NSIDs that collide on the last segment)
     const commands = computeCommandNames([
       'com.alpha.feed.widget',
       'org.beta.data.widget',
@@ -160,9 +120,6 @@ describe('rebuildNewCommands collision handling', () => {
   });
 
   test('no collision when one NSID has known name and other does not', () => {
-    // "app.bsky.feed.post" -> "Post" (known)
-    // "com.example.post" -> "Post" (fallback)
-    // Both map to "Post" so they collide
     const commands = computeCommandNames([
       'app.bsky.feed.post',
       'com.example.post',
@@ -171,7 +128,6 @@ describe('rebuildNewCommands collision handling', () => {
     const bskyPost = commands.find(c => c.nsid === 'app.bsky.feed.post');
     const exPost = commands.find(c => c.nsid === 'com.example.post');
 
-    // Both should be disambiguated since they share the friendly name "Post"
     assert.equal(bskyPost.displayName, 'Post (bsky)');
     assert.equal(exPost.displayName, 'Post (example)');
   });
@@ -211,41 +167,5 @@ describe('rebuildNewCommands collision handling', () => {
     assert.equal(commands[0].displayName, 'Item (alpha)');
     assert.equal(commands[1].displayName, 'Item (beta)');
     assert.equal(commands[2].displayName, 'Item (gamma)');
-  });
-});
-
-// ============================================================================
-// Consistency check: background.js and lexicon-ui.js FRIENDLY_NAMES match
-// ============================================================================
-
-describe('FRIENDLY_NAMES consistency between background.js and lexicon-ui.js', () => {
-  test('background.js nsidToFriendlyName matches lexicon-ui.js for all known NSIDs', async () => {
-    // Import the lexicon-ui version
-    const { nsidToFriendlyName: uiFriendlyName } = await import('../lexicon-ui.js');
-
-    for (const [nsid, expected] of Object.entries(FRIENDLY_NAMES)) {
-      const bgResult = nsidToFriendlyName(nsid);
-      const uiResult = uiFriendlyName(nsid);
-      assert.equal(bgResult, uiResult,
-        `Mismatch for ${nsid}: background.js="${bgResult}", lexicon-ui.js="${uiResult}"`);
-    }
-  });
-
-  test('fallback camelCase parsing is identical between both implementations', async () => {
-    const { nsidToFriendlyName: uiFriendlyName } = await import('../lexicon-ui.js');
-
-    const unknownNsids = [
-      'com.example.myCustomRecord',
-      'org.test.superLongCamelCase',
-      'net.foo.simple',
-      'xyz.abc.someThing',
-    ];
-
-    for (const nsid of unknownNsids) {
-      const bgResult = nsidToFriendlyName(nsid);
-      const uiResult = uiFriendlyName(nsid);
-      assert.equal(bgResult, uiResult,
-        `Fallback mismatch for ${nsid}: background.js="${bgResult}", lexicon-ui.js="${uiResult}"`);
-    }
   });
 });
