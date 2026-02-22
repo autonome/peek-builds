@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
+import readerCss from "./reader.css?raw";
 
 declare const __BUILD_NUMBER__: string;
 
@@ -2917,7 +2918,46 @@ function App() {
               topOffset = inlineDiv.getBoundingClientRect().top;
             }
             console.log("[App] Opening offline reader at topOffset:", topOffset, "for item:", itemId);
-            await invoke("open_inline_webview_html", { itemId, topOffset });
+            // Fetch article content + metadata from Rust, build HTML in frontend for HMR
+            const content = await invoke<{
+              html: string;
+              title: string;
+              byline: string;
+              dir: string;
+              domain: string;
+              url: string;
+            }>("get_reader_content", { itemId });
+            const dirAttr = content.dir ? ` dir="${content.dir}"` : "";
+            const baseTag = content.url ? `<base href="${content.url.replace(/"/g, '&quot;')}">` : "";
+            const domainLink = content.url
+              ? `<a class="domain" href="${content.url.replace(/"/g, '&quot;')}">${content.domain}</a>`
+              : "";
+            const bylineHtml = content.byline
+              ? `<div class="credits">${content.byline}</div>`
+              : "";
+            const headerHtml = (content.title || content.domain)
+              ? `<div class="header">${domainLink}<h1>${content.title}</h1>${bylineHtml}</div>`
+              : "";
+            const fullHtml = `<!DOCTYPE html>
+<html${dirAttr}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+${baseTag}
+<style>
+${readerCss}
+</style>
+</head>
+<body>
+<div class="container">
+${headerHtml}
+<div class="reader-content">
+${content.html}
+</div>
+</div>
+</body>
+</html>`;
+            await invoke("show_inline_html", { html: fullHtml, topOffset, baseUrl: content.url });
             setWebviewLoaded(true);
           } catch (error) {
             console.error("[App] Failed to open offline reader:", error);

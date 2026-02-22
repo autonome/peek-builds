@@ -4388,6 +4388,81 @@ fn get_offline_content(item_id: String) -> Result<Option<String>, String> {
     }
 }
 
+/// Retrieve offline reader content + metadata for frontend HTML assembly
+#[tauri::command]
+fn get_reader_content(item_id: String) -> Result<serde_json::Value, String> {
+    let conn = get_connection()?;
+    let original_url: Option<String> = conn
+        .query_row(
+            "SELECT url FROM items WHERE id = ? AND deleted_at IS NULL",
+            params![&item_id],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let container = get_container_path()
+        .ok_or_else(|| "No container path".to_string())?;
+    let offline_dir = container.join("offline").join(&item_id);
+    let content_path = offline_dir.join("content.html");
+    if !content_path.exists() {
+        return Err("No offline content available".to_string());
+    }
+    let html = fs::read_to_string(&content_path)
+        .map_err(|e| format!("Failed to read offline content: {}", e))?;
+
+    // Load article metadata if available
+    let meta_path = offline_dir.join("meta.json");
+    let meta: serde_json::Value = if meta_path.exists() {
+        let meta_str = fs::read_to_string(&meta_path).unwrap_or_default();
+        serde_json::from_str(&meta_str).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    let title = meta["title"].as_str().unwrap_or("").to_string();
+    let byline = meta["byline"].as_str().unwrap_or("").to_string();
+    let dir = meta["dir"].as_str().unwrap_or("").to_string();
+
+    // Extract domain from URL
+    let domain = original_url.as_ref()
+        .and_then(|u| url::Url::parse(u).ok())
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .unwrap_or_default();
+
+    Ok(serde_json::json!({
+        "html": html,
+        "title": title,
+        "byline": byline,
+        "dir": dir,
+        "domain": domain,
+        "url": original_url.unwrap_or_default()
+    }))
+}
+
+/// Display pre-built HTML in the inline native WKWebView
+#[tauri::command]
+async fn show_inline_html(html: String, top_offset: f64, base_url: String) -> Result<(), String> {
+    println!("[Rust] show_inline_html called, top_offset: {}, base_url: {}", top_offset, base_url);
+
+    #[cfg(target_os = "ios")]
+    {
+        use std::ffi::CString;
+        let html_cstr = CString::new(html).map_err(|e| format!("Invalid HTML content: {}", e))?;
+        let base_url_cstr = CString::new(base_url.as_str()).map_err(|e| format!("Invalid base URL: {}", e))?;
+        let result = unsafe { webview_plugin_open_inline_html(html_cstr.as_ptr(), top_offset, base_url_cstr.as_ptr()) };
+        if result {
+            Ok(())
+        } else {
+            Err("Failed to open inline HTML webview".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (html, top_offset, base_url);
+        Ok(())
+    }
+}
+
 /// Fetch a URL, extract reader-mode content, and store to the offline directory
 async fn fetch_and_store_offline_content(item_id: &str, url: &str) -> Result<(), String> {
     println!("[Rust] Fetching offline content for item {} from {}", item_id, url);
@@ -5598,7 +5673,9 @@ pub fn run() {
             // Inline webview
             open_inline_webview,
             open_inline_webview_html,
-            close_inline_webview
+            close_inline_webview,
+            get_reader_content,
+            show_inline_html
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
