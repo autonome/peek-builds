@@ -341,9 +341,11 @@ public func webviewPluginOpenInline(urlPtr: UnsafePointer<CChar>, topOffset: Dou
 
 // C-compatible function to open inline webview with HTML string content (for offline reader mode)
 @_cdecl("webview_plugin_open_inline_html")
-public func webviewPluginOpenInlineHtml(htmlPtr: UnsafePointer<CChar>, topOffset: Double) -> Bool {
+public func webviewPluginOpenInlineHtml(htmlPtr: UnsafePointer<CChar>, topOffset: Double, baseUrlPtr: UnsafePointer<CChar>) -> Bool {
     let htmlString = String(cString: htmlPtr)
-    print("[WebviewPlugin] open_inline_html called, topOffset: \(topOffset), html length: \(htmlString.count)")
+    let baseUrlString = String(cString: baseUrlPtr)
+    let baseURL = URL(string: baseUrlString)
+    print("[WebviewPlugin] open_inline_html called, topOffset: \(topOffset), html length: \(htmlString.count), baseURL: \(baseUrlString)")
 
     DispatchQueue.main.async {
         // Remove any existing inline webview
@@ -373,7 +375,7 @@ public func webviewPluginOpenInlineHtml(htmlPtr: UnsafePointer<CChar>, topOffset
             webView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor)
         ])
 
-        webView.loadHTMLString(htmlString, baseURL: nil)
+        webView.loadHTMLString(htmlString, baseURL: baseURL)
         currentInlineWebView = webView
 
         print("[WebviewPlugin] Inline HTML webview added at topOffset: \(topOffset)")

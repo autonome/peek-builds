@@ -2447,7 +2447,7 @@ function App() {
             {offlineTag && item.tags.includes(offlineTag) && !isExpanded && (
               <button
                 className="card-action-btn"
-                onClick={(e) => openOfflineReader(item.id, e)}
+                onClick={(e) => { console.log("[App] EYE ICON TAPPED for", item.id); openOfflineReader(item.id, e); }}
                 title="Read offline"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

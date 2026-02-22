@@ -30,6 +30,7 @@
     "test:verbose": "VERBOSE=1 node tests/integration.test.js",
     "sim:launch": "xcrun simctl terminate booted com.dietrich.peek-mobile 2>/dev/null; xcrun simctl launch booted com.dietrich.peek-mobile",
     "sim:log": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\"' --level debug",
+    "sim:log:app": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\" AND messageType >= default' --style compact | grep -E '\\[App\\]|\\[Rust\\]|\\[Peek\\]|\\[WebviewPlugin\\]'",
     "sim:log:webview": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\" AND eventMessage CONTAINS \"webview\"' --style compact",
     "sim:install": "xcrun simctl install booted '/tmp/peek-xcodebuild-sim/Build/Products/debug-iphonesimulator/Peek Save.app'",
     "xcode:clean": "cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild-sim -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean",

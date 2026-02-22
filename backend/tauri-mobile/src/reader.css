@@ -1,0 +1,163 @@
+/* Reader Mode Stylesheet
+ * Based on Firefox Reader View (aboutReader.css) and Safari Reader patterns.
+ * Edit this file to customize reader appearance — no Rust rebuild needed.
+ */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0; padding: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  color: #333; background: #fff;
+  -webkit-text-size-adjust: 100%;
+}
+@media (prefers-color-scheme: dark) {
+  body { color: #e0e0e0; background: #1a1a2e; }
+}
+
+/* Container */
+.container {
+  max-width: 38em;
+  margin: 0 auto;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+/* Header */
+.header { margin-bottom: 24px; }
+.domain {
+  font-size: 0.85em;
+  color: #0095dd;
+  text-decoration: none;
+  font-family: -apple-system, sans-serif;
+}
+.header h1 {
+  font-size: 1.6em;
+  line-height: 1.25;
+  margin: 12px 0;
+  font-weight: bold;
+}
+.credits {
+  font-size: 0.9em;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* Content */
+.reader-content {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+.reader-content h1 { font-size: 1.6em; line-height: 1.25; font-weight: bold; margin: 1.2em 0 0.6em; }
+.reader-content h2 { font-size: 1.2em; line-height: 1.5; font-weight: bold; margin: 1.2em 0 0.6em; }
+.reader-content h3 { font-size: 1em; line-height: 1.66; font-weight: bold; margin: 1em 0 0.5em; }
+.reader-content p { margin: 0 0 1em; }
+
+/* Links */
+.reader-content a { color: #0095dd; text-decoration: underline; }
+.reader-content a:visited { color: #cc22ee; }
+@media (prefers-color-scheme: dark) {
+  .reader-content a { color: #6cb4ee; }
+  .reader-content a:visited { color: #cc88ff; }
+}
+
+/* Images */
+.reader-content * { max-width: 100%; height: auto; }
+.reader-content img {
+  display: block;
+  margin: 0.5em auto;
+  height: auto;
+}
+.reader-content img[width="1"],
+.reader-content img[height="1"] { display: none; } /* tracking pixels */
+
+/* Figures and captions */
+.reader-content figure { margin: 1em 0; }
+.reader-content figcaption {
+  font-size: 0.8em;
+  line-height: 1.5;
+  font-style: italic;
+  text-align: center;
+  opacity: 0.7;
+  margin-top: 0.5em;
+}
+
+/* Code */
+.reader-content code,
+.reader-content pre {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+.reader-content pre {
+  white-space: pre-wrap;
+  padding: 12px;
+  border-radius: 6px;
+  background: rgba(0,0,0,0.05);
+  overflow-x: auto;
+  margin: 1em 0;
+}
+@media (prefers-color-scheme: dark) {
+  .reader-content pre { background: rgba(255,255,255,0.08); }
+}
+.reader-content code {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  background: rgba(0,0,0,0.04);
+}
+.reader-content pre code { padding: 0; background: none; }
+@media (prefers-color-scheme: dark) {
+  .reader-content code { background: rgba(255,255,255,0.06); }
+}
+
+/* Blockquotes */
+.reader-content blockquote {
+  margin: 0 0 1em;
+  padding: 0 0 0 16px;
+  border-left: 2px solid currentColor;
+  opacity: 0.85;
+}
+
+/* Lists */
+.reader-content ul { padding-left: 30px; list-style: disc; }
+.reader-content ol { padding-left: 30px; list-style: decimal; }
+.reader-content li { margin-bottom: 0.4em; }
+
+/* Tables */
+.reader-content table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.9em;
+  word-wrap: break-word;
+}
+.reader-content th,
+.reader-content td {
+  border: 1px solid rgba(0,0,0,0.12);
+  padding: 6px 8px;
+  vertical-align: top;
+}
+.reader-content th { background: rgba(0,0,0,0.03); font-weight: bold; }
+@media (prefers-color-scheme: dark) {
+  .reader-content th,
+  .reader-content td { border-color: rgba(255,255,255,0.15); }
+  .reader-content th { background: rgba(255,255,255,0.05); }
+}
+
+/* Horizontal rules */
+.reader-content hr {
+  border: none;
+  border-top: 1px solid rgba(0,0,0,0.12);
+  margin: 2em 0;
+}
+@media (prefers-color-scheme: dark) {
+  .reader-content hr { border-color: rgba(255,255,255,0.15); }
+}
+
+/* Hide empty wrappers and trailing BRs (Safari approach) */
+.reader-content p > p:empty,
+.reader-content div > p:empty,
+.reader-content p + br,
+.reader-content p > br:only-child,
+.reader-content img + br { display: none; }
+
+/* Hidden/screen-reader elements */
+.reader-content [hidden] { display: none; }

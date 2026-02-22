@@ -15,6 +15,42 @@ fn ios_log(msg: &str) {
     println!("[Peek] {}", msg);
 }
 
+/// Sanitize reader-mode HTML: strip <style> tags, style/class attributes, script-related content.
+/// Readability.js normally strips these, but this is a safety net for the Rust port.
+fn sanitize_reader_html(html: &str) -> String {
+    // Strip <style>...</style> tags (including multiline)
+    let re_style = Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
+    let result = re_style.replace_all(html, "");
+
+    // Strip <script>...</script> tags
+    let re_script = Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
+    let result = re_script.replace_all(&result, "");
+
+    // Strip <noscript>...</noscript> tags
+    let re_noscript = Regex::new(r"(?is)<noscript[^>]*>.*?</noscript>").unwrap();
+    let result = re_noscript.replace_all(&result, "");
+
+    // Strip style="" attributes
+    let re_style_attr = Regex::new(r#"(?i)\s+style\s*=\s*"[^"]*""#).unwrap();
+    let result = re_style_attr.replace_all(&result, "");
+    let re_style_attr2 = Regex::new(r#"(?i)\s+style\s*=\s*'[^']*'"#).unwrap();
+    let result = re_style_attr2.replace_all(&result, "");
+
+    // Strip class="" attributes
+    let re_class_attr = Regex::new(r#"(?i)\s+class\s*=\s*"[^"]*""#).unwrap();
+    let result = re_class_attr.replace_all(&result, "");
+    let re_class_attr2 = Regex::new(r#"(?i)\s+class\s*=\s*'[^']*'"#).unwrap();
+    let result = re_class_attr2.replace_all(&result, "");
+
+    // Strip event handler attributes (onclick, onerror, onload, etc.)
+    let re_events = Regex::new(r#"(?i)\s+on\w+\s*=\s*"[^"]*""#).unwrap();
+    let result = re_events.replace_all(&result, "");
+    let re_events2 = Regex::new(r#"(?i)\s+on\w+\s*=\s*'[^']*'"#).unwrap();
+    let result = re_events2.replace_all(&result, "");
+
+    result.into_owned()
+}
+
 // FFI declarations for native webview on iOS
 // These symbols are provided by Swift code (WebviewPlugin.swift) at Xcode link time.
 #[cfg(target_os = "ios")]
@@ -22,7 +58,7 @@ extern "C" {
     fn webview_plugin_open(url: *const std::ffi::c_char, item_id: *const std::ffi::c_char) -> bool;
     fn webview_plugin_close();
     fn webview_plugin_open_inline(url: *const std::ffi::c_char, top_offset: f64, item_id: *const std::ffi::c_char) -> bool;
-    fn webview_plugin_open_inline_html(html: *const std::ffi::c_char, top_offset: f64) -> bool;
+    fn webview_plugin_open_inline_html(html: *const std::ffi::c_char, top_offset: f64, base_url: *const std::ffi::c_char) -> bool;
     fn webview_plugin_close_inline();
 }
 
@@ -2901,36 +2937,130 @@ async fn close_inline_webview() -> Result<(), String> {
 async fn open_inline_webview_html(item_id: String, top_offset: f64) -> Result<(), String> {
     println!("[Rust] open_inline_webview_html called for item_id: {}, top_offset: {}", item_id, top_offset);
 
-    // Read the offline content
+    // Look up the original URL for this item (needed for resolving relative image/link URLs)
+    let conn = get_connection()?;
+    let original_url: Option<String> = conn
+        .query_row(
+            "SELECT url FROM items WHERE id = ? AND deleted_at IS NULL",
+            params![&item_id],
+            |row| row.get(0),
+        )
+        .ok();
+
+    // Read the offline content and metadata
     let container = get_container_path()
         .ok_or_else(|| "No container path".to_string())?;
-    let content_path = container.join("offline").join(&item_id).join("content.html");
+    let offline_dir = container.join("offline").join(&item_id);
+    let content_path = offline_dir.join("content.html");
     if !content_path.exists() {
         return Err("No offline content available".to_string());
     }
     let html = fs::read_to_string(&content_path)
         .map_err(|e| format!("Failed to read offline content: {}", e))?;
 
-    // Wrap in a styled reader-mode shell
+    // Load article metadata if available
+    let meta_path = offline_dir.join("meta.json");
+    let meta: serde_json::Value = if meta_path.exists() {
+        let meta_str = fs::read_to_string(&meta_path).unwrap_or_default();
+        serde_json::from_str(&meta_str).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    let title = meta["title"].as_str().unwrap_or("");
+    let byline = meta["byline"].as_str().unwrap_or("");
+    let dir = meta["dir"].as_str().unwrap_or("");
+
+    // Extract domain from URL for header
+    let domain = original_url.as_ref()
+        .and_then(|u| url::Url::parse(u).ok())
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .unwrap_or_default();
+
+    // Build <base> tag so relative image/link URLs resolve against the original page
+    let base_tag = if let Some(ref url) = original_url {
+        format!(r#"<base href="{}">"#, url.replace('"', "&quot;"))
+    } else {
+        String::new()
+    };
+
+    // Dir attribute for RTL support
+    let dir_attr = if !dir.is_empty() {
+        format!(r#" dir="{}""#, dir)
+    } else {
+        String::new()
+    };
+
+    // Build header section
+    let header_html = if !title.is_empty() || !domain.is_empty() {
+        let domain_link = if let Some(ref url) = original_url {
+            format!(r#"<a class="domain" href="{}">{}</a>"#, url.replace('"', "&quot;"), domain)
+        } else {
+            String::new()
+        };
+        let byline_html = if !byline.is_empty() {
+            format!(r#"<div class="credits">{}</div>"#, byline)
+        } else {
+            String::new()
+        };
+        format!(r#"<div class="header">{}<h1>{}</h1>{}</div>"#,
+            domain_link, title, byline_html)
+    } else {
+        String::new()
+    };
+
+    // Load reader CSS: check container/offline/reader.css first (user-editable),
+    // fall back to compiled-in default from src/reader.css
+    let reader_css = {
+        let default_css = include_str!("../../src/reader.css");
+        if let Some(ref container) = Some(container.clone()) {
+            let custom_css_path = container.join("offline").join("reader.css");
+            if custom_css_path.exists() {
+                fs::read_to_string(&custom_css_path).unwrap_or_else(|_| default_css.to_string())
+            } else {
+                // Write default CSS to container so it can be edited without recompiling
+                let offline_dir = container.join("offline");
+                let _ = fs::create_dir_all(&offline_dir);
+                let _ = fs::write(&custom_css_path, default_css);
+                default_css.to_string()
+            }
+        } else {
+            default_css.to_string()
+        }
+    };
+
+    // Build reader mode HTML with external-ish CSS
     let styled_html = format!(r#"<!DOCTYPE html>
-<html><head>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<html{dir_attr}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+{base_tag}
 <style>
-body {{ font-family: -apple-system, system-ui, sans-serif; padding: 16px; line-height: 1.6; color: #333; max-width: 100%; overflow-x: hidden; }}
-img {{ max-width: 100%; height: auto; }}
-pre {{ overflow-x: auto; }}
-@media (prefers-color-scheme: dark) {{
-  body {{ background: #1a1a1a; color: #ddd; }}
-  a {{ color: #6cb4ee; }}
-}}
+{reader_css}
 </style>
-</head><body>{}</body></html>"#, html);
+</head>
+<body>
+<div class="container">
+{header_html}
+<div class="reader-content">
+{html}
+</div>
+</div>
+</body>
+</html>"#,
+    dir_attr = dir_attr,
+    base_tag = base_tag,
+    reader_css = reader_css,
+    header_html = header_html,
+    html = html);
 
     #[cfg(target_os = "ios")]
     {
         use std::ffi::CString;
         let html_cstr = CString::new(styled_html).map_err(|e| format!("Invalid HTML content: {}", e))?;
-        let result = unsafe { webview_plugin_open_inline_html(html_cstr.as_ptr(), top_offset) };
+        let base_url_str = original_url.unwrap_or_default();
+        let base_url_cstr = CString::new(base_url_str.as_str()).map_err(|e| format!("Invalid base URL: {}", e))?;
+        let result = unsafe { webview_plugin_open_inline_html(html_cstr.as_ptr(), top_offset, base_url_cstr.as_ptr()) };
         if result {
             Ok(())
         } else {
@@ -4286,6 +4416,9 @@ async fn fetch_and_store_offline_content(item_id: &str, url: &str) -> Result<(),
     let content = article.content
         .ok_or_else(|| "Readability extracted no content from page".to_string())?;
 
+    // Sanitize: strip any remaining <style> tags, style/class attributes as safety net
+    let content = sanitize_reader_html(&content);
+
     // Store to filesystem
     let container = get_container_path()
         .ok_or_else(|| "No container path".to_string())?;
@@ -4297,6 +4430,19 @@ async fn fetch_and_store_offline_content(item_id: &str, url: &str) -> Result<(),
     let size_bytes = content.len() as i64;
     fs::write(&content_path, &content)
         .map_err(|e| format!("Failed to write offline content: {}", e))?;
+
+    // Store article metadata (title, byline, etc.) for reader template
+    let meta = serde_json::json!({
+        "title": article.title,
+        "byline": article.byline,
+        "site_name": article.site_name,
+        "excerpt": article.excerpt,
+        "lang": article.lang,
+        "dir": article.dir,
+    });
+    let meta_path = offline_dir.join("meta.json");
+    fs::write(&meta_path, meta.to_string())
+        .map_err(|e| format!("Failed to write offline metadata: {}", e))?;
 
     // Update index in SQLite
     let conn = get_connection()?;
