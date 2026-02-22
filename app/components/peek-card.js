@@ -169,7 +169,7 @@ export class PeekCard extends PeekElement {
         color: var(--theme-text, #333);
       }
 
-      .header:empty {
+      .header.slot-empty {
         display: none;
       }
 
@@ -181,7 +181,7 @@ export class PeekCard extends PeekElement {
         line-height: var(--peek-leading-normal);
       }
 
-      .body:empty {
+      .body.slot-empty {
         display: none;
       }
 
@@ -200,7 +200,7 @@ export class PeekCard extends PeekElement {
         color: var(--theme-text-muted, #999);
       }
 
-      .footer:empty {
+      .footer.slot-empty {
         display: none;
       }
 
@@ -214,7 +214,7 @@ export class PeekCard extends PeekElement {
         line-height: 0;
       }
 
-      .media:empty {
+      .media.slot-empty {
         display: none;
       }
 
@@ -266,6 +266,23 @@ export class PeekCard extends PeekElement {
         </div>
       </div>
     `;
+  }
+
+  firstUpdated() {
+    // Hide sections whose slots have no assigned content
+    for (const slot of this.shadowRoot.querySelectorAll('slot')) {
+      this._updateSlotEmpty(slot);
+      slot.addEventListener('slotchange', () => this._updateSlotEmpty(slot));
+    }
+  }
+
+  _updateSlotEmpty(slot) {
+    const wrapper = slot.parentElement;
+    if (!wrapper) return;
+    const hasContent = slot.assignedNodes({ flatten: true }).some(
+      n => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent.trim())
+    );
+    wrapper.classList.toggle('slot-empty', !hasContent);
   }
 
   _handleClick(e) {

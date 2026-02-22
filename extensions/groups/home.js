@@ -106,10 +106,23 @@ const promoteTagToGroup = async (tag) => {
   meta.isGroup = true;
   const metadataStr = JSON.stringify(meta);
   try {
-    await api.datastore.setRow('tags', tag.id, {
-      ...tag,
-      metadata: metadataStr
-    });
+    // Only include valid tag table columns — exclude runtime properties like
+    // addressCount which would cause the SQL INSERT to fail
+    const tagRow = {
+      id: tag.id,
+      name: tag.name,
+      slug: tag.slug,
+      color: tag.color,
+      parentId: tag.parentId,
+      description: tag.description,
+      metadata: metadataStr,
+      createdAt: tag.createdAt,
+      updatedAt: tag.updatedAt,
+      frequency: tag.frequency,
+      lastUsed: tag.lastUsed,
+      frecencyScore: tag.frecencyScore
+    };
+    await api.datastore.setRow('tags', tag.id, tagRow);
     tag.metadata = metadataStr;
     debug && console.log('[groups] Promoted tag to group:', tag.name);
     return true;
@@ -125,15 +138,12 @@ const promoteTagToGroup = async (tag) => {
  * Returns { handled: false } if at root (groups list) and window should close
  */
 const handleEscape = () => {
-  console.log('[groups:esc] handleEscape called, view:', state.view, 'searchQuery:', state.searchQuery);
-
   // If search has content, clear it first
   const searchInput = document.querySelector('peek-input.search-input');
   if (state.searchQuery) {
     state.searchQuery = '';
     searchInput.value = '';
     renderCurrentView();
-    console.log('[groups:esc] Cleared search, returning handled: true');
     return { handled: true };
   }
 
@@ -145,11 +155,9 @@ const handleEscape = () => {
         console.error('[groups] Error navigating back to groups:', err);
       });
     }, 0);
-    console.log('[groups:esc] VIEW_ADDRESSES -> navigating to groups, returning handled: true');
     return { handled: true };
   }
   // At root (groups list) - let window close
-  console.log('[groups:esc] At root (VIEW_GROUPS), returning handled: false');
   return { handled: false };
 };
 

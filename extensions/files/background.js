@@ -12,8 +12,6 @@ const debug = api.debug;
 const id = 'files';
 const labels = { name: 'Files' };
 
-console.log('[ext:files] background', labels.name);
-
 // ===== CSV Command =====
 
 /**
@@ -147,21 +145,17 @@ const commandDefinitions = [
     produces: ['text/plain', 'text/markdown', 'text/html', 'text/csv', 'application/json'],
 
     execute: async (ctx) => {
-      console.log('[open file] execute:', ctx);
-
       try {
         const result = await api.files.open();
 
         if (!result.success) {
           if (result.canceled) {
-            console.log('[open file] User cancelled file picker');
             return { success: true, message: 'File picker cancelled' };
           }
           return { success: false, error: result.error || 'Failed to open file' };
         }
 
         const file = result.data;
-        console.log('[open file] Opened:', file.name, file.mimeType, file.size, 'bytes');
 
         // If the file is not text, we can't chain it
         if (!file.isText || file.content === null) {
@@ -209,11 +203,8 @@ const commandDefinitions = [
     produces: ['text/csv'],
 
     execute: async (ctx) => {
-      console.log('[csv] execute:', ctx);
-
       // Check if we have input data from chain
       if (!ctx.input) {
-        console.log('[csv] No input data');
         return {
           success: false,
           error: 'No input data. Use this command in a chain after a command that produces JSON.'
@@ -249,8 +240,6 @@ const commandDefinitions = [
         // Convert to CSV
         const csvOutput = jsonToCsv(data);
 
-        console.log('[csv] Converted', data.length, 'items to CSV');
-
         return {
           success: true,
           output: {
@@ -272,11 +261,8 @@ const commandDefinitions = [
     produces: [], // End of chain - doesn't produce output
 
     execute: async (ctx) => {
-      console.log('[save] execute:', ctx);
-
       // Check if we have input data from chain
       if (!ctx.input) {
-        console.log('[save] No input data');
         return {
           success: false,
           error: 'No input data. Use this command in a chain after a command that produces output.'
@@ -310,15 +296,12 @@ const commandDefinitions = [
         const result = await api.files.save(content, { filename, mimeType });
 
         if (result.canceled) {
-          console.log('[save] User cancelled save dialog');
           return { success: true, message: 'Save cancelled' };
         }
 
         if (!result.success) {
           return { success: false, error: result.error || 'Failed to save file' };
         }
-
-        console.log('[save] Saved to:', result.path);
         return {
           success: true,
           message: `Saved to ${result.path}`
@@ -338,8 +321,6 @@ const commandDefinitions = [
     produces: ['text/markdown'],
 
     execute: async (ctx) => {
-      console.log('[markdown] execute:', ctx);
-
       if (!ctx.input) {
         return {
           success: false,
@@ -495,7 +476,6 @@ const commandDefinitions = [
         });
 
         const markdownOutput = lines.join('\n');
-        console.log('[markdown] Generated markdown document,', markdownOutput.length, 'chars');
 
         return {
           success: true,
@@ -521,8 +501,6 @@ const commandDefinitions = [
     produces: ['item'], // Produces item for potential editor routing
 
     execute: async (ctx) => {
-      console.log('[save as note] execute:', ctx);
-
       if (!ctx.input) {
         return {
           success: false,
@@ -559,8 +537,6 @@ const commandDefinitions = [
         // Notify editor of the new item
         api.publish('editor:changed', { action: 'add', itemId }, api.scopes.GLOBAL);
 
-        console.log('[save as note] Created note:', itemId);
-
         return {
           success: true,
           output: {
@@ -587,7 +563,6 @@ const initCommands = () => {
     api.commands.register(cmd);
     registeredCommands.push(cmd.name);
   });
-  console.log('[ext:files] Registered commands:', registeredCommands);
 };
 
 const uninitCommands = () => {
@@ -595,18 +570,14 @@ const uninitCommands = () => {
     api.commands.unregister(name);
   });
   registeredCommands = [];
-  console.log('[ext:files] Unregistered commands');
 };
 
 const init = async () => {
-  console.log('[ext:files] init');
-
   // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 };
 
 const uninit = () => {
-  console.log('[ext:files] uninit');
   uninitCommands();
 };
 

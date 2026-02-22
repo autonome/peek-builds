@@ -11,8 +11,6 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 const api = window.app;
 const debug = api.debug;
 
-console.log('[ext:sheets] background', labels.name);
-
 // Extension content is served from peek://sheets/ (hybrid mode)
 const sheetPageUrl = 'peek://sheets/sheet.html';
 
@@ -78,7 +76,6 @@ const commandDefinitions = [
     execute: async (ctx) => {
       const sheets = await listSheets();
       if (sheets.length === 0) {
-        console.log('[ext:sheets] No sheets found');
         return { success: true, message: 'No sheets found' };
       }
 
@@ -101,7 +98,6 @@ const commandDefinitions = [
     description: 'Create a new widget sheet',
     execute: async (ctx) => {
       const name = ctx?.args || 'Untitled Sheet';
-      console.log('[ext:sheets] Creating new sheet:', name);
       const { sheetId } = await createSheet(name);
       openSheet(sheetId, name);
     }
@@ -112,7 +108,6 @@ const commandDefinitions = [
     execute: async (ctx) => {
       const sheets = await listSheets();
       if (sheets.length === 0) {
-        console.log('[ext:sheets] No sheets to open');
         return { success: true, message: 'No sheets found' };
       }
 
@@ -154,7 +149,6 @@ const initCommands = async () => {
     api.commands.register(cmd);
     registeredCommands.push(cmd.name);
   });
-  console.log('[ext:sheets] Registered commands:', registeredCommands);
 };
 
 const uninitCommands = () => {
@@ -162,16 +156,13 @@ const uninitCommands = () => {
     api.commands.unregister(name);
   });
   registeredCommands = [];
-  console.log('[ext:sheets] Unregistered commands');
 };
 
 const init = async () => {
-  console.log('[ext:sheets] init');
   initCommands();
 };
 
 const uninit = () => {
-  console.log('[ext:sheets] uninit');
   uninitCommands();
 };
 

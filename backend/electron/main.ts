@@ -64,7 +64,7 @@ let extensionHostWindow: BrowserWindow | null = null;
 const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'localsearch', 'peeks', 'slides', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
-const EAGER_EXTENSION_IDS = new Set(['cmd', 'editor', 'groups', 'hud', 'localsearch', 'pagestream', 'windows']);
+const EAGER_EXTENSION_IDS = new Set(['cmd', 'hud']);
 
 // Track which lazy extensions have been loaded
 const lazyExtensionLoaded = new Set<string>();
@@ -180,10 +180,24 @@ export async function initialize(): Promise<void> {
     (app as any).on('did-become-active', () => {
       getIzuiCoordinator().setAppFocused(true);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
+      // Show alwaysOnTop overlay windows (e.g. HUD) when app regains focus
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && win.isAlwaysOnTop() && (win as any).__hudHidden) {
+          win.show();
+          (win as any).__hudHidden = false;
+        }
+      }
     });
     (app as any).on('did-resign-active', () => {
       getIzuiCoordinator().setAppFocused(false);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
+      // Hide alwaysOnTop overlay windows (e.g. HUD) when app loses focus
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && win.isAlwaysOnTop() && win.isVisible()) {
+          win.hide();
+          (win as any).__hudHidden = true;
+        }
+      }
     });
   } else {
     // Non-macOS fallback: use browser-window-focus/blur with focused-window check
@@ -412,6 +426,9 @@ function registerDeclarativeCommand(extId: string, cmd: ManifestCommand): void {
   subscribe(source, scopes.GLOBAL, `cmd:execute:${cmd.name}`, (msg: unknown) => {
     DEBUG && console.log(`[ext:declarative] Executing command: ${cmd.name}`);
     executeDeclarativeAction(cmd, msg as Record<string, unknown>);
+    // Signal completion so the cmd panel proxy resolves immediately
+    // (publish-type actions are fire-and-forget — don't block the UI)
+    publish(source, scopes.GLOBAL, `cmd:execute:${cmd.name}:result`, { success: true });
   });
 
   // Register the command with the cmd extension's registry
@@ -442,7 +459,12 @@ function registerDeclarativeShortcut(extId: string, shortcut: ManifestShortcut, 
 
   const callback = () => {
     DEBUG && console.log(`[ext:declarative] Shortcut triggered: ${shortcut.keys} -> ${shortcut.command}`);
-    executeDeclarativeAction(cmd, {});
+    if (cmd.action.type === 'execute') {
+      // For execute-type commands, publish to cmd:execute so lazy stubs can intercept
+      publish(`peek://ext/${extId}/`, scopes.GLOBAL, `cmd:execute:${cmd.name}`, {});
+    } else {
+      executeDeclarativeAction(cmd, {});
+    }
   };
 
   if (shortcut.global) {
@@ -606,7 +628,6 @@ export function registerLazyExtensionCommands(): void {
 
   for (const extId of registeredExtIds) {
     if (!isBuiltinExtensionEnabled(extId)) continue;
-    if (EAGER_EXTENSION_IDS.has(extId)) continue; // Eager extensions handle their own commands
     if (declarativeExtensions.has(extId)) continue; // Already declarative (background: false)
 
     const extPath = getExtensionPath(extId);
@@ -620,6 +641,15 @@ export function registerLazyExtensionCommands(): void {
     const commands = manifest.commands || [];
     const shortcuts = manifest.shortcuts || [];
     if (commands.length === 0 && shortcuts.length === 0) continue;
+
+    // Eager extensions: register manifest shortcuts only (they handle their own commands)
+    if (EAGER_EXTENSION_IDS.has(extId)) {
+      DEBUG && console.log(`[ext:eager] Registering manifest shortcuts for ${extId}: ${shortcuts.length} shortcuts`);
+      for (const shortcut of shortcuts) {
+        registerDeclarativeShortcut(extId, shortcut, commands);
+      }
+      continue;
+    }
 
     DEBUG && console.log(`[ext:lazy] Registering lazy commands for ${extId}: ${commands.length} commands, ${shortcuts.length} shortcuts`);
 

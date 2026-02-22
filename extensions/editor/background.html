@@ -14,11 +14,14 @@
   const api = hasPeekAPI ? window.app : null;
   const extId = extension.id;
 
-  console.log(`[ext:${extId}] background.html loaded`);
-  console.log(`[ext:${extId}] Peek API available:`, hasPeekAPI);
-
   if (hasPeekAPI) {
     // Running as a Peek extension - full functionality
+
+    // Initialize extension BEFORE signaling ready
+    // (lazy loading waits for ext:ready, so handlers must be registered first)
+    if (extension.init) {
+      await extension.init();
+    }
 
     // Signal ready to main process
     api.publish('ext:ready', {
@@ -30,15 +33,8 @@
       }
     }, api.scopes.SYSTEM);
 
-    // Initialize extension
-    if (extension.init) {
-      console.log(`[ext:${extId}] calling init()`);
-      extension.init();
-    }
-
     // Handle shutdown request from main process
     api.subscribe('app:shutdown', () => {
-      console.log(`[ext:${extId}] received shutdown`);
       if (extension.uninit) {
         extension.uninit();
       }
@@ -46,7 +42,6 @@
 
     // Handle extension-specific shutdown
     api.subscribe(`ext:${extId}:shutdown`, () => {
-      console.log(`[ext:${extId}] received extension shutdown`);
       if (extension.uninit) {
         extension.uninit();
       }
@@ -54,8 +49,6 @@
 
   } else {
     // Running as a regular website - limited functionality
-    console.log(`[ext:${extId}] Running in standalone mode (no Peek API)`);
-
     if (extension.init) {
       extension.init();
     }

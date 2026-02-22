@@ -110,7 +110,6 @@ async function subscribeFeed(url) {
   if (existing.success) {
     const alreadySubscribed = existing.data.find(f => f.content === url);
     if (alreadySubscribed) {
-      console.log('[feeds] Already subscribed to:', url);
       return { success: false, error: 'Already subscribed to this feed' };
     }
   }
@@ -136,7 +135,6 @@ async function subscribeFeed(url) {
     });
 
     if (result.success) {
-      console.log('[feeds] Subscribed to:', title);
       // Poll immediately
       await pollFeed(result.data.id, url);
       return { success: true, data: { id: result.data.id, title, url } };
@@ -184,8 +182,6 @@ async function getFeeds() {
  * Poll a single feed for new entries
  */
 async function pollFeed(feedId, feedUrl) {
-  console.log('[feeds] Polling:', feedUrl);
-
   try {
     const response = await fetch(feedUrl);
     if (!response.ok) {
@@ -234,7 +230,6 @@ async function pollFeed(feedId, feedUrl) {
       })
     });
 
-    console.log(`[feeds] Polled ${feedUrl}: ${newCount} new entries`);
     return { success: true, newCount };
   } catch (error) {
     console.error('[feeds] Poll error:', feedUrl, error);
@@ -260,8 +255,6 @@ async function pollFeed(feedId, feedUrl) {
  */
 async function pollAllFeeds() {
   const feeds = await getFeeds();
-  console.log(`[feeds] Polling ${feeds.length} feeds...`);
-
   for (const feed of feeds) {
     await pollFeed(feed.id, feed.url);
   }
@@ -370,12 +363,9 @@ const extension = {
       execute: pollAllFeeds
     });
 
-    console.log('[feeds] Commands registered');
   },
 
   init() {
-    console.log('[feeds] Initializing...');
-
     // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 
@@ -391,7 +381,6 @@ const extension = {
     // React to feed item changes from other sources
     api.subscribe('item:created', async (msg) => {
       if (msg.itemType === 'feed') {
-        console.log('[feeds] New feed added externally, polling immediately');
         const item = await api.datastore.getItem(msg.itemId);
         if (item.success && item.data) {
           await pollFeed(msg.itemId, item.data.content);
@@ -399,17 +388,9 @@ const extension = {
       }
     }, api.scopes.GLOBAL);
 
-    api.subscribe('item:deleted', (msg) => {
-      if (msg.itemType === 'feed') {
-        console.log('[feeds] Feed removed externally:', msg.itemId);
-      }
-    }, api.scopes.GLOBAL);
-
-    console.log('[feeds] Extension loaded');
   },
 
   uninit() {
-    console.log('[feeds] Cleaning up...');
 
     if (pollTimer) {
       clearInterval(pollTimer);

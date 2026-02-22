@@ -5,13 +5,14 @@
  * Uses the widget sheet system — each piece of HUD info is an individual
  * widget page rendered via webview in a peek-grid freeform layout.
  *
+ * Commands and shortcuts are declared in manifest.json.
+ * This extension loads eagerly (needs startup state restoration).
+ *
  * Runs in isolated extension process (peek://ext/hud/background.html)
  */
 
 const api = window.app;
 const debug = api.debug;
-
-console.log('[ext:hud] background init');
 
 const HUD_ADDRESS = 'peek://ext/hud/hud.html';
 const STORAGE_KEY = 'hud_enabled';
@@ -68,18 +69,14 @@ const CURRENT_CONFIG_VERSION = 2;
 const ensureSheetConfig = async () => {
   const result = await api.settings.getKey(HUD_SHEET_KEY);
   if (result.success && result.data) {
-    // Upgrade config if version is outdated
     if (result.data.version && result.data.version >= CURRENT_CONFIG_VERSION) {
-      debug && console.log('[ext:hud] HUD sheet config already exists (v' + result.data.version + ')');
       return result.data;
     }
-    console.log('[ext:hud] Upgrading HUD sheet config from v' + (result.data.version || 1) + ' to v' + CURRENT_CONFIG_VERSION);
   }
 
   // Create default config (or upgrade)
   const config = buildDefaultSheetConfig();
   await api.settings.setKey(HUD_SHEET_KEY, config);
-  console.log('[ext:hud] Created default HUD sheet config v' + CURRENT_CONFIG_VERSION + ' with', config.items.length, 'widgets');
   return config;
 };
 
@@ -95,9 +92,8 @@ const loadState = async () => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     hudEnabled = stored === 'true';
-    console.log('[ext:hud] Loaded state from localStorage - enabled:', hudEnabled);
   } catch (err) {
-    console.log('[ext:hud] Failed to load state from localStorage:', err);
+    // localStorage unavailable
   }
   return hudEnabled;
 };
@@ -109,9 +105,8 @@ const saveState = (enabled) => {
   hudEnabled = enabled;
   try {
     localStorage.setItem(STORAGE_KEY, String(enabled));
-    console.log('[ext:hud] Saved state to localStorage - enabled:', enabled);
   } catch (err) {
-    console.error('[ext:hud] Failed to save state to localStorage:', err);
+    console.error('[ext:hud] Failed to save state:', err);
   }
 };
 
@@ -137,17 +132,14 @@ const getHudWindowSize = (config) => {
  */
 const openHud = async () => {
   if (hudWindowId) {
-    // Already open, just show it
     const exists = await api.window.exists(hudWindowId);
     if (exists.success && exists.data) {
       await api.window.show(hudWindowId);
-      console.log('[ext:hud] HUD already open, showing');
       return;
     }
     hudWindowId = null;
   }
 
-  // Ensure sheet config exists before opening
   const config = await ensureSheetConfig();
   const size = getHudWindowSize(config);
 
@@ -174,7 +166,6 @@ const openHud = async () => {
     const result = await api.window.open(HUD_ADDRESS, params);
     if (result.success) {
       hudWindowId = result.id;
-      console.log('[ext:hud] HUD opened:', hudWindowId);
     } else {
       console.error('[ext:hud] Failed to open HUD:', result.error);
     }
@@ -191,7 +182,6 @@ const showHud = async () => {
     const exists = await api.window.exists(hudWindowId);
     if (exists.success && exists.data) {
       await api.window.show(hudWindowId);
-      console.log('[ext:hud] HUD shown (app focused)');
     }
   }
 };
@@ -204,7 +194,6 @@ const hideHud = async () => {
     const exists = await api.window.exists(hudWindowId);
     if (exists.success && exists.data) {
       await api.window.hide(hudWindowId);
-      console.log('[ext:hud] HUD hidden (app blurred)');
     }
   }
 };
@@ -216,7 +205,6 @@ const closeHud = async () => {
   if (hudWindowId) {
     await api.window.close(hudWindowId);
     hudWindowId = null;
-    console.log('[ext:hud] HUD closed');
   }
 };
 
@@ -236,101 +224,39 @@ const toggleHud = async () => {
   }
 };
 
-// ===== Command definitions =====
-
-const commandDefinitions = [
-  {
-    name: 'hud',
-    description: 'Toggle HUD overlay on/off',
-    execute: async (ctx) => {
-      console.log('[ext:hud] Toggle command executed');
-      return await toggleHud();
-    }
-  }
-];
-
-// ===== Registration =====
-
-let registeredShortcut = null;
-let registeredCommands = [];
-
-const LOCAL_HUD_SHORTCUT = 'CommandOrControl+H';
-
-const initShortcut = () => {
-  const shortcut = 'Option+H';
-  api.shortcuts.register(shortcut, async () => {
-    await toggleHud();
-  }, { global: true });
-  registeredShortcut = shortcut;
-
-  // Local shortcut (Cmd+H) — works when a Peek window is focused
-  api.shortcuts.register(LOCAL_HUD_SHORTCUT, async () => {
-    await toggleHud();
-  });
-
-  console.log('[ext:hud] Registered shortcuts:', shortcut, '(global),', LOCAL_HUD_SHORTCUT, '(local)');
-};
-
-const initCommands = async () => {
-  commandDefinitions.forEach(cmd => {
-    api.commands.register(cmd);
-    registeredCommands.push(cmd.name);
-  });
-  console.log('[ext:hud] Registered commands:', registeredCommands);
-};
-
-const uninitCommands = () => {
-  registeredCommands.forEach(name => {
-    api.commands.unregister(name);
-  });
-  registeredCommands = [];
-  console.log('[ext:hud] Unregistered commands');
-};
+// ===== Lifecycle =====
 
 const init = async () => {
-  console.log('[ext:hud] init');
-
   // Load persisted state
   await loadState();
 
   // Ensure HUD sheet config exists (create default if needed)
   await ensureSheetConfig();
 
-  // Register shortcut
-  initShortcut();
+  // Register command handler — manifest declares the command,
+  // shortcuts are registered from manifest by main.ts for eager extensions
+  api.commands.register({
+    name: 'hud',
+    description: 'Toggle HUD overlay on/off',
+    execute: async () => await toggleHud()
+  });
 
-  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
-  initCommands();
+  // Shortcuts declared in manifest.json — no imperative registration needed
 
-  // Subscribe to app focus changes — hide HUD when app loses focus, show when regained
-  api.subscribe('app:focus-changed', async (msg) => {
+  // App focus hide/show is handled in the main process (did-resign-active / did-become-active)
+  // for reliability — alwaysOnTop windows are hidden/shown directly without pubsub round-trip.
+  api.subscribe('app:focus-changed', (msg) => {
     appFocused = !!msg.focused;
-    console.log('[ext:hud] App focus changed:', appFocused);
-    if (hudEnabled && hudWindowId) {
-      if (appFocused) {
-        await showHud();
-      } else {
-        await hideHud();
-      }
-    }
   }, api.scopes.GLOBAL);
 
-  // Open HUD if it was enabled
+  // Open HUD if it was enabled in a previous session
   if (hudEnabled) {
     await openHud();
   }
-
-  console.log('[ext:hud] Initialized, enabled:', hudEnabled);
 };
 
 const uninit = () => {
-  console.log('[ext:hud] uninit');
-  if (registeredShortcut) {
-    api.shortcuts.unregister(registeredShortcut, { global: true });
-    registeredShortcut = null;
-  }
-  api.shortcuts.unregister(LOCAL_HUD_SHORTCUT);
-  uninitCommands();
+  // Shortcuts are managed by manifest — no imperative unregister needed
   closeHud();
 };
 

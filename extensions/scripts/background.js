@@ -51,8 +51,6 @@ function emitChannel(topic, data) {
   }
 }
 
-console.log('[ext:scripts] background loaded');
-
 // Default settings
 const defaults = {
   scripts: []
@@ -96,8 +94,6 @@ const generateId = () => {
  * Open scripts manager UI
  */
 const openScriptsManager = (params = {}) => {
-  console.log('[ext:scripts] Opening scripts manager', params);
-
   let url = 'peek://scripts/manager.html';
   if (params.scriptId) {
     url += `?scriptId=${params.scriptId}`;
@@ -297,18 +293,14 @@ const registerCommands = () => {
     produces: 'application/json'
   });
 
-  console.log('[ext:scripts] Noun registered: scripts');
 };
 
 /**
  * Initialize the extension
  */
 const init = async () => {
-  console.log('[ext:scripts] init');
-
   // Load scripts from datastore
   currentSettings = await loadSettings();
-  console.log('[ext:scripts] Loaded', currentSettings.scripts.length, 'scripts');
 
   // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   registerCommands();
@@ -348,14 +340,12 @@ const init = async () => {
     api.publish('scripts:execute:response', result, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  console.log('[ext:scripts] Extension loaded');
 };
 
 /**
  * Cleanup
  */
 const uninit = () => {
-  console.log('[ext:scripts] Cleaning up...');
   unregisterNoun('scripts');
   api.shortcuts.unregister('Command+Shift+S');
 };

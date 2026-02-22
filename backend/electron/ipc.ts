@@ -3041,24 +3041,17 @@ export function registerWindowHandlers(): void {
   });
 
   ipcMain.handle('window-close', async (_ev, msg) => {
-    // Always log for ESC debugging
-    console.log('[ipc:window-close] called with:', msg);
-
     try {
       if (!msg.id) {
-        console.log('[ipc:window-close] no id provided');
         return { success: false, error: 'Window ID is required' };
       }
 
       const win = BrowserWindow.fromId(msg.id);
       if (!win) {
-        console.log('[ipc:window-close] window not found:', msg.id);
         return { success: false, error: 'Window not found' };
       }
 
-      console.log('[ipc:window-close] calling win.close() for window:', msg.id);
       win.close();
-      console.log('[ipc:window-close] win.close() completed for window:', msg.id);
       return { success: true };
     } catch (error) {
       console.error('[ipc:window-close] Failed to close window:', error);

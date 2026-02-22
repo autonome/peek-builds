@@ -14,7 +14,7 @@ const labels = {
   description: 'Sync commands and functionality'
 };
 
-console.log('[ext:sync] background', labels.name);
+const debug = api.debug;
 
 // ===== Command definitions =====
 
@@ -23,8 +23,6 @@ const commandDefinitions = [
     name: 'Sync now',
     description: 'Trigger manual sync with server',
     execute: () => {
-      console.log('[sync] Triggering manual sync...');
-
       if (!api?.sync?.syncAll) {
         console.error('[sync] Sync API not available');
         return { success: false, error: 'Sync API not available' };
@@ -32,10 +30,7 @@ const commandDefinitions = [
 
       // Fire and forget — don't block the cmd palette
       api.sync.syncAll().then(result => {
-        if (result.success) {
-          const { pulled, pushed, conflicts } = result.data || {};
-          console.log('[sync] Sync completed:', result.data);
-        } else {
+        if (!result.success) {
           console.error('[sync] Sync failed:', result.error);
         }
       }).catch(err => {

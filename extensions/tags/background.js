@@ -36,25 +36,10 @@ function openTags() {
  * List all tags (console output)
  */
 async function listTags() {
-  if (!hasPeekAPI) {
-    console.log('Peek API not available');
-    return;
-  }
+  if (!hasPeekAPI) return;
 
   const result = await api.datastore.getTagsByFrecency();
-  if (!result.success) {
-    console.log('Failed to get tags');
-    return { success: false };
-  }
-
-  if (result.data.length === 0) {
-    console.log('No tags yet');
-  } else {
-    console.log('All tags (by frecency):');
-    result.data.slice(0, 20).forEach(t => {
-      console.log('  -', t.name, `(used ${t.frequency}x, frecency: ${t.frecencyScore?.toFixed(1) || 0})`);
-    });
-  }
+  if (!result.success) return { success: false };
   return { success: true, tags: result.data };
 }
 
@@ -104,21 +89,16 @@ const addTagsToItem = async (itemId, tagNames) => {
   for (const rawName of tagNames) {
     const tagName = normalizeTagName(rawName);
     // Get or create the tag
-    api.log('[tag] Getting/creating tag:', tagName);
     const tagResult = await api.datastore.getOrCreateTag(tagName);
-    api.log('[tag] getOrCreateTag result:', JSON.stringify(tagResult));
     if (!tagResult.success) {
       console.error('Failed to get/create tag:', tagName, tagResult.error);
       continue;
     }
 
     const tag = tagResult.data.tag;
-    api.log('[tag] Tag id:', tag.id, 'name:', tag.name);
 
     // Link tag to item
-    api.log('[tag] Linking tag', tag.id, 'to item', itemId);
     const linkResult = await api.datastore.tagItem(itemId, tag.id);
-    api.log('[tag] tagItem result:', JSON.stringify(linkResult));
     if (!linkResult.success) {
       console.error('Failed to link tag:', tagName, linkResult.error);
       continue;
@@ -149,10 +129,7 @@ const removeTagsFromItem = async (itemId, tagNames) => {
     const tagName = normalizeTagName(rawName);
     // Find the tag by name
     const tag = tagsResult.data.find(t => t.name.toLowerCase() === tagName.toLowerCase());
-    if (!tag) {
-      console.log('Tag not found on item:', tagName);
-      continue;
-    }
+    if (!tag) continue;
 
     // Unlink tag from item
     const unlinkResult = await api.datastore.untagItem(itemId, tag.id);
@@ -188,47 +165,32 @@ const getTagsForItem = async (itemId) => {
  */
 async function executeTag(ctx) {
   // Get active window
-  api.log('tag command execute, ctx:', ctx);
   const activeWindow = await getActiveWindow();
-  api.log('tag command: activeWindow =', activeWindow);
   if (!activeWindow) {
-    api.log('No active window found');
     return { success: false, error: 'No active window' };
   }
 
   const url = activeWindow.url;
-  api.log('Tagging URL:', url);
 
   // Find item in datastore
   let item = await findItemByUrl(url);
 
   // If no item exists, create one
   if (!item) {
-    api.log('[tag] Creating new item for URL:', url);
     const addResult = await api.datastore.addItem('url', {
       content: url,
       metadata: JSON.stringify({ title: activeWindow.title || '' })
     });
-    api.log('[tag] addItem result:', JSON.stringify(addResult));
     if (!addResult.success) {
       console.error('Failed to create item:', addResult.error);
       return { success: false, error: 'Failed to create item' };
     }
     item = { id: addResult.data.id };
-    api.log('[tag] Created item with id:', item.id);
-  } else {
-    api.log('[tag] Found existing item:', item.id, 'for URL:', url);
   }
 
   // No args - show current tags
   if (!ctx.search) {
     const tags = await getTagsForItem(item.id);
-    if (tags.length === 0) {
-      console.log('No tags for:', url);
-    } else {
-      console.log('Tags for', url + ':');
-      tags.forEach(t => console.log('  -', t.name, `(frecency: ${t.frecencyScore?.toFixed(1) || 0})`));
-    }
     return { success: true, tags };
   }
 
@@ -246,7 +208,6 @@ async function executeTag(ctx) {
   const tagsToProcess = removeMode ? args.slice(1) : args;
 
   if (tagsToProcess.length === 0) {
-    console.log('No tags specified');
     return { success: false, error: 'No tags specified' };
   }
 
@@ -254,22 +215,11 @@ async function executeTag(ctx) {
   if (removeMode) {
     const results = await removeTagsFromItem(item.id, tagsToProcess);
     const removed = results.filter(r => r.removed).map(r => r.tag.name);
-    if (removed.length > 0) {
-      console.log('Removed tags:', removed.join(', '), 'from', url);
-    }
     return { success: true, removed };
   } else {
-    api.log('Adding tags to item:', item.id, 'tags:', tagsToProcess);
     const results = await addTagsToItem(item.id, tagsToProcess);
-    api.log('addTagsToItem results:', results);
     const added = results.filter(r => !r.alreadyExists).map(r => r.tag.name);
     const existing = results.filter(r => r.alreadyExists).map(r => r.tag.name);
-    if (added.length > 0) {
-      console.log('Added tags:', added.join(', '), 'to', url);
-    }
-    if (existing.length > 0) {
-      console.log('Already tagged:', existing.join(', '));
-    }
     return { success: true, added, existing };
   }
 }
@@ -281,22 +231,10 @@ async function executeTags(ctx) {
   // If search term provided, show all tags matching
   if (ctx.search) {
     const result = await api.datastore.getTagsByFrecency();
-    if (!result.success) {
-      console.log('Failed to get tags');
-      return { success: false };
-    }
+    if (!result.success) return { success: false };
 
     const filter = ctx.search.toLowerCase();
     const filtered = result.data.filter(t => t.name.toLowerCase().includes(filter));
-
-    if (filtered.length === 0) {
-      console.log('No tags matching:', ctx.search);
-    } else {
-      console.log('Tags matching "' + ctx.search + '":');
-      filtered.forEach(t => {
-        console.log('  -', t.name, `(used ${t.frequency}x, frecency: ${t.frecencyScore?.toFixed(1) || 0})`);
-      });
-    }
     return { success: true, tags: filtered };
   }
 
@@ -305,37 +243,14 @@ async function executeTags(ctx) {
   if (!activeWindow) {
     // No active window - show all tags by frecency
     const result = await api.datastore.getTagsByFrecency();
-    if (!result.success) {
-      console.log('Failed to get tags');
-      return { success: false };
-    }
-
-    if (result.data.length === 0) {
-      console.log('No tags yet');
-    } else {
-      console.log('All tags (by frecency):');
-      result.data.slice(0, 20).forEach(t => {
-        console.log('  -', t.name, `(used ${t.frequency}x, frecency: ${t.frecencyScore?.toFixed(1) || 0})`);
-      });
-    }
+    if (!result.success) return { success: false };
     return { success: true, tags: result.data };
   }
 
   const item = await findItemByUrl(activeWindow.url);
-  if (!item) {
-    console.log('No tags for:', activeWindow.url);
-    return { success: true, tags: [] };
-  }
+  if (!item) return { success: true, tags: [] };
 
   const tags = await getTagsForItem(item.id);
-
-  if (tags.length === 0) {
-    console.log('No tags for:', activeWindow.url);
-  } else {
-    console.log('Tags for', activeWindow.url + ':');
-    tags.forEach(t => console.log('  -', t.name));
-  }
-
   return { success: true, tags };
 }
 
@@ -344,7 +259,6 @@ async function executeTags(ctx) {
  */
 async function executeUntag(ctx) {
   if (!ctx.search) {
-    console.log('Usage: untag <tag1> [tag2] ...');
     return { success: false, error: 'No tags specified' };
   }
 
@@ -409,8 +323,6 @@ async function executeTagset(ctx) {
   if (ctx.search) {
     try {
       const { id, tags } = await createTagset(ctx.search);
-      console.log(`Tagset created with ID: ${id}`);
-      console.log(`Tags: ${tags.join(', ')}`);
       api.publish('editor:changed', { action: 'add', itemId: id }, api.scopes.GLOBAL);
       return { success: true, message: `Tagset created with tags: ${tags.join(', ')}` };
     } catch (error) {
@@ -497,16 +409,10 @@ const extension = {
       execute: executeTagset
     });
 
-    console.log('[tags] Commands registered');
   },
 
   init() {
-    console.log('[tags] init - Peek API available:', hasPeekAPI);
-
-    if (!hasPeekAPI) {
-      console.log('[tags] Running without Peek API - limited functionality');
-      return;
-    }
+    if (!hasPeekAPI) return;
 
     // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
@@ -516,12 +422,9 @@ const extension = {
 
     // Register local shortcut Cmd+T (works when a Peek window is focused)
     api.shortcuts.register('CommandOrControl+T', openTags);
-
-    console.log('[tags] Extension loaded');
   },
 
   uninit() {
-    console.log('[tags] Cleaning up...');
 
     if (hasPeekAPI) {
       unregisterNoun('tags');

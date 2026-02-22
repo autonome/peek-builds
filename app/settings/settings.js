@@ -6,8 +6,6 @@ import fc from '../features.js';
 const DEBUG = api.debug;
 const clear = false;
 
-console.log('loading', 'settings');
-
 // Helper: Create text/number input
 const createInput = (label, value, onChange, options = {}) => {
   const group = document.createElement('div');
@@ -3234,10 +3232,6 @@ const init = async () => {
 window.addEventListener('load', init);
 
 // No IZUI init needed — backend handles focus restoration and ESC policy via roles.
-
-window.addEventListener('blur', () => {
-  console.log('core settings blur');
-});
 
 // Listen for navigation requests from commands
 api.subscribe('settings:navigate', (msg) => {

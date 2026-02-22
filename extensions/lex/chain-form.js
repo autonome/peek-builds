@@ -114,8 +114,6 @@ function publishResult(data) {
   if (resultPublished) return;
   resultPublished = true;
 
-  console.log('[chain-form] Publishing result, sessionId:', sessionId);
-
   api.publish('chain-popup:result', {
     sessionId,
     data: data || null,
@@ -215,8 +213,6 @@ async function handleSubmit() {
       throw new Error('No form data to submit');
     }
 
-    console.log('[chain-form] Creating record:', currentNsid, record);
-
     // Create record directly via atproto
     const result = await xrpcPost(currentSession, 'com.atproto.repo.createRecord', {
       repo: currentSession.did,
@@ -309,8 +305,6 @@ async function init() {
     return;
   }
 
-  console.log('[chain-form] Waiting for content, sessionId:', sessionId);
-
   let received = false;
 
   // Subscribe for content from the cmd panel
@@ -318,8 +312,6 @@ async function init() {
     if (msg.sessionId !== sessionId) return;
     if (received) return;
     received = true;
-
-    console.log('[chain-form] Received content:', msg.data);
 
     const nsid = msg.data?.nsid;
     if (!nsid) {

@@ -162,30 +162,19 @@ const init = async () => {
  */
 const loadData = async () => {
   // Load all items (unified: addresses, texts, tagsets, images)
-  console.log('[tags] Loading items...');
   const itemsResult = await api.datastore.queryItems({});
-  console.log('[tags] queryItems result:', itemsResult.success, 'count:', itemsResult.data?.length);
   if (itemsResult.success) {
     state.items = itemsResult.data;
-    console.log('[tags] Loaded items:', state.items.length);
-    // Log first few items for debugging
-    state.items.slice(0, 3).forEach((item, i) => {
-      console.log(`[tags] Item ${i}:`, item.id, item.type, item.content?.substring(0, 50));
-    });
   } else {
     console.error('[tags] Failed to load items:', itemsResult.error);
     state.items = [];
   }
 
   // Load tags for each item
-  console.log('[tags] Loading tags for', state.items.length, 'items...');
   for (const item of state.items) {
     const tagsResult = await api.datastore.getItemTags(item.id);
     if (tagsResult.success) {
       state.itemTags.set(item.id, tagsResult.data);
-      if (tagsResult.data.length > 0) {
-        console.log('[tags] Item', item.id, 'has tags:', tagsResult.data.map(t => t.name).join(', '));
-      }
     }
   }
 
@@ -232,8 +221,6 @@ const loadTags = async () => {
  *   2. ESC in tags list -> closes window
  */
 const handleEscape = () => {
-  console.log('[tags:esc] handleEscape called, view:', state.currentView, 'searchQuery:', state.searchQuery);
-
   // If in detail view with embedded editor and vim mode is enabled,
   // check if vim is in insert mode. If so, exit insert mode instead
   // of navigating away. The preload intercepts ESC via before-input-event
@@ -244,15 +231,12 @@ const handleEscape = () => {
       if (cm && cm.state && cm.state.vim) {
         const vimState = cm.state.vim;
         if (vimState.insertMode || vimState.visualMode) {
-          console.log('[tags:esc] Vim in insert/visual mode, sending <Esc> to vim');
           Vim.handleKey(cm, '<Esc>');
           return { handled: true };
         }
-        // In normal mode, fall through to exit detail view
-        console.log('[tags:esc] Vim in normal mode, will exit detail view');
       }
     } catch (e) {
-      console.log('[tags:esc] Could not check vim state:', e);
+      // vim state unavailable, fall through
     }
   }
 
@@ -267,7 +251,6 @@ const handleEscape = () => {
     setTimeout(() => {
       showList();
     }, 0);
-    console.log('[tags:esc] VIEW_DETAIL -> navigating to list, returning handled: true');
     return { handled: true };
   }
 
@@ -276,14 +259,12 @@ const handleEscape = () => {
     state.searchQuery = '';
     searchInput.value = '';
     render();
-    console.log('[tags:esc] Cleared search, returning handled: true');
     return { handled: true };
   }
 
   // If tag filter is active, clear it
   if (state.activeTags.length > 0) {
     clearTagFilter();
-    console.log('[tags:esc] Cleared tag filter, returning handled: true');
     return { handled: true };
   }
 
@@ -292,12 +273,10 @@ const handleEscape = () => {
     state.activeFilter = 'all';
     state.selectedIndex = 0;
     render();
-    console.log('[tags:esc] Cleared type filter, returning handled: true');
     return { handled: true };
   }
 
   // Nothing to clear, let window close
-  console.log('[tags:esc] At root (VIEW_LIST), returning handled: false');
   return { handled: false };
 };
 

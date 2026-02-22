@@ -3,6 +3,11 @@
  *
  * Search across local items, tags, and history.
  *
+ * Commands and shortcuts are declared in manifest.json.
+ * This extension loads lazily on first command invocation.
+ * The shortcut key is configurable — manifest provides the default (Option+F),
+ * and if the user customizes it, the extension registers the custom key on load.
+ *
  * Runs in isolated extension process (peek://ext/localsearch/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
@@ -12,8 +17,6 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 const api = window.app;
 const debug = api.debug;
 
-console.log('[ext:localsearch] background', labels.name);
-
 // Extension content is served from peek://ext/localsearch/
 const address = 'peek://ext/localsearch/home.html';
 
@@ -22,9 +25,8 @@ let currentSettings = {
   prefs: defaults.prefs
 };
 
-// Track registered shortcut for cleanup
+// Track registered shortcut for cleanup (only used for custom shortcut keys)
 let registeredShortcut = null;
-let registeredCommands = [];
 
 /**
  * Load settings from datastore
@@ -56,22 +58,16 @@ const openSearchWindow = async () => {
   if (isOpeningSearch) return;
   isOpeningSearch = true;
   try {
-    const height = 600;
-    const width = 700;
-
     const params = {
-      // IZUI role
       role: 'workspace',
-
       key: address,
-      height,
-      width,
+      height: 600,
+      width: 700,
       trackingSource: 'cmd',
       trackingSourceId: 'search'
     };
 
-    const window = await api.window.open(address, params);
-    debug && console.log('[ext:localsearch] Search window opened:', window);
+    await api.window.open(address, params);
   } catch (error) {
     console.error('[ext:localsearch] Failed to open search window:', error);
   } finally {
@@ -79,70 +75,48 @@ const openSearchWindow = async () => {
   }
 };
 
-// ===== Command definitions =====
-
-const commandDefinitions = [
-  {
-    name: 'localsearch',
-    description: 'Search local items, tags, and history',
-    execute: async (ctx) => {
-      console.log('[ext:localsearch] Opening search window');
-      openSearchWindow();
-    }
-  }
-];
-
 // ===== Registration =====
 
+/**
+ * Register a custom shortcut key (only if different from manifest default)
+ */
 const initShortcut = (shortcut) => {
-  api.shortcuts.register(shortcut, () => {
-    openSearchWindow();
-  }, { global: true });
-  registeredShortcut = shortcut;
-};
-
-const initCommands = () => {
-  commandDefinitions.forEach(cmd => {
-    api.commands.register(cmd);
-    registeredCommands.push(cmd.name);
-  });
-  // Note: Do NOT call api.commands.flush() here — the 16ms debounce in preload
-  // ensures cmd's subscriber has time to be ready before the batch is sent.
-  // Flushing immediately can race with cmd's initialization.
-  console.log('[ext:localsearch] Registered commands:', registeredCommands);
-};
-
-const uninitCommands = () => {
-  registeredCommands.forEach(name => {
-    api.commands.unregister(name);
-  });
-  registeredCommands = [];
-  console.log('[ext:localsearch] Unregistered commands');
+  // Manifest declares Option+f as default — only register imperatively
+  // if the user has customized the shortcut key
+  if (shortcut && shortcut !== 'Option+f') {
+    api.shortcuts.register(shortcut, () => {
+      openSearchWindow();
+    }, { global: true });
+    registeredShortcut = shortcut;
+  }
 };
 
 const init = async () => {
-  console.log('[ext:localsearch] init');
-
   // Load settings from datastore
   currentSettings = await loadSettings();
 
-  initShortcut(currentSettings.prefs.shortcutKey);
+  // Register command handler — manifest declares the command,
+  // lazy stub registers metadata, this sets up the execute handler
+  api.commands.register({
+    name: 'localsearch',
+    description: 'Search local items, tags, and history',
+    execute: async () => { openSearchWindow(); }
+  });
 
-  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
-  initCommands();
+  // Register custom shortcut if user has configured one
+  initShortcut(currentSettings.prefs.shortcutKey);
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
   api.subscribe('localsearch:settings-changed', async () => {
-    console.log('[ext:localsearch] settings changed, reinitializing');
-    uninit();
+    debug && console.log('[ext:localsearch] settings changed, reinitializing');
+    uninitShortcut();
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
-    initCommands();
   }, api.scopes.GLOBAL);
 
   // Listen for settings updates from Settings UI
   api.subscribe('localsearch:settings-update', async (msg) => {
-    console.log('[ext:localsearch] settings-update received:', msg);
+    debug && console.log('[ext:localsearch] settings-update received:', msg);
 
     try {
       if (msg.data) {
@@ -158,9 +132,8 @@ const init = async () => {
 
       await saveSettings(currentSettings);
 
-      uninit();
+      uninitShortcut();
       initShortcut(currentSettings.prefs.shortcutKey);
-      initCommands();
 
       api.publish('localsearch:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
@@ -169,13 +142,15 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 };
 
-const uninit = () => {
-  console.log('[ext:localsearch] uninit');
+const uninitShortcut = () => {
   if (registeredShortcut) {
     api.shortcuts.unregister(registeredShortcut, { global: true });
     registeredShortcut = null;
   }
-  uninitCommands();
+};
+
+const uninit = () => {
+  uninitShortcut();
 };
 
 export default {

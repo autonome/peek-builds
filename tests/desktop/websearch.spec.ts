@@ -69,19 +69,65 @@ async function closeWindow(bgWindow: Page, windowId: number): Promise<void> {
 
 test.describe('Web Search Extension @desktop', () => {
 
-  test('websearch extension is loaded and running', async () => {
-    const extensionRunning = await sharedBgWindow.evaluate(async () => {
-      const result = await (window as any).app.extensions.list();
-      if (!result.success) return false;
-      return result.data.some(
-        (e: { id: string; status: string }) => e.id === 'websearch' && e.status === 'running'
-      );
+  test('websearch manifest commands are registered via lazy stub', async () => {
+    // Before extension loads, manifest commands should be available via lazy stubs
+    const hasManifestCommands = await sharedBgWindow.evaluate(async () => {
+      const start = Date.now();
+      while (Date.now() - start < 5000) {
+        const result = await (window as any).app.commands.list();
+        if (result.success && result.data) {
+          const names = result.data.map((c: { name: string }) => c.name);
+          if (names.includes('web search') && names.includes('open web search')) {
+            return true;
+          }
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+      return false;
     });
-    expect(extensionRunning).toBe(true);
+    expect(hasManifestCommands).toBe(true);
   });
 
-  test('websearch commands are registered', async () => {
-    // Wait for commands to be registered (cmd:ready may fire after extension init)
+  test('websearch extension loads on first command invocation', async () => {
+    // Trigger lazy loading by publishing cmd:execute for the command
+    const extensionLoaded = await sharedBgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      // Trigger the lazy stub — this loads the extension
+      api.publish('cmd:execute:open web search', {}, api.scopes.GLOBAL);
+
+      // Wait for the extension to be running
+      const start = Date.now();
+      while (Date.now() - start < 15000) {
+        const result = await api.extensions.list();
+        if (result.success && result.data) {
+          if (result.data.some(
+            (e: { id: string; status: string }) => e.id === 'websearch' && e.status === 'running'
+          )) return true;
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+      return false;
+    });
+    expect(extensionLoaded).toBe(true);
+
+    // Close any window that was opened by the command
+    await sleep(500);
+    const windows = sharedApp.windows();
+    for (const w of windows) {
+      if (w.url().includes('websearch/home.html')) {
+        const id = await sharedBgWindow.evaluate(async (url: string) => {
+          const result = await (window as any).app.window.list({ includeInternal: false });
+          if (!result.success) return null;
+          const win = result.windows.find((w: any) => w.url?.includes('websearch/home.html'));
+          return win?.id || null;
+        }, w.url());
+        if (id) await closeWindow(sharedBgWindow, id);
+      }
+    }
+  });
+
+  test('websearch commands are registered after loading', async () => {
+    // After lazy loading, both manifest and per-engine commands should be available
     const hasCommands = await sharedBgWindow.evaluate(async () => {
       const start = Date.now();
       while (Date.now() - start < 5000) {

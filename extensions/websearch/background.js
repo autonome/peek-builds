@@ -8,6 +8,9 @@
  * - Per-engine commands (/google, /ddg, /bing, /wiki, /kagi)
  * - A general "web search" command with engine selection
  *
+ * Commands are declared in manifest.json.
+ * This extension loads lazily on first command invocation.
+ *
  * Runs in isolated extension process (peek://ext/websearch/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
@@ -16,8 +19,6 @@ import { id, labels, schemas, storageKeys, defaults, builtinEngines } from './co
 
 const api = window.app;
 const debug = api.debug;
-
-console.log('[ext:websearch] background', labels.name);
 
 // ===== BroadcastChannel for intra-extension messaging =====
 // Falls back to IPC pubsub if BroadcastChannel is unavailable (e.g., custom protocol origins)
@@ -447,7 +448,7 @@ const discoverEngine = async (opensearchUrl, pageUrl) => {
       engine: { id: engine.id, name: engine.name, searchUrl: engine.searchUrl }
     }, api.scopes.GLOBAL);
 
-    console.log('[ext:websearch] Discovered search engine:', engine.name, 'from', pageUrl);
+    debug && console.log('[ext:websearch] Discovered search engine:', engine.name, 'from', pageUrl);
     return engine;
   } catch (err) {
     debug && console.log('[ext:websearch] OpenSearch discovery failed:', err.message);
@@ -559,7 +560,7 @@ const initCommands = () => {
   // Register engine commands
   registerEngineCommands();
 
-  console.log('[ext:websearch] Registered commands:', [...registeredCommands, ...engineCommands]);
+  debug && console.log('[ext:websearch] Registered commands:', [...registeredCommands, ...engineCommands]);
 };
 
 /**
@@ -573,7 +574,7 @@ const uninitCommands = () => {
 
   unregisterEngineCommands();
 
-  console.log('[ext:websearch] Unregistered commands');
+  debug && console.log('[ext:websearch] Unregistered commands');
 };
 
 // ===== Event Handlers =====
@@ -687,8 +688,6 @@ const handleEngineRequest = async (msg) => {
 // ===== Lifecycle =====
 
 const init = async () => {
-  console.log('[ext:websearch] init');
-
   // Load settings from datastore
   currentSettings = await loadSettings();
 
@@ -718,7 +717,7 @@ const init = async () => {
 
   // Listen for settings changes to hot-reload
   api.subscribe('websearch:settings-changed', async () => {
-    console.log('[ext:websearch] settings changed, reinitializing');
+    debug && console.log('[ext:websearch] settings changed, reinitializing');
     uninit();
     currentSettings = await loadSettings();
     await loadEngines();
@@ -727,7 +726,7 @@ const init = async () => {
 
   // Listen for settings updates from Settings UI
   api.subscribe('websearch:settings-update', async (msg) => {
-    console.log('[ext:websearch] settings-update received:', msg);
+    debug && console.log('[ext:websearch] settings-update received:', msg);
 
     try {
       if (msg.data) {
@@ -760,7 +759,6 @@ const init = async () => {
 };
 
 const uninit = () => {
-  console.log('[ext:websearch] uninit');
   uninitCommands();
 
   // Cancel any in-flight suggestion request

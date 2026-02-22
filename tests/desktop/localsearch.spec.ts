@@ -24,15 +24,10 @@ test.beforeAll(async () => {
 // Note: Do NOT call closeSharedApp() - tests share the app instance
 
 test.describe('Local Search Extension @desktop', () => {
-  test('localsearch extension loads', async () => {
-    // Verify the localsearch extension loaded by checking the extension list
-    const isLoaded = await sharedBgWindow.evaluate(async () => {
-      const api = (window as any).app;
-      const result = await api.extensions.list();
-      if (!result.success || !result.data) return false;
-      return result.data.some((e: any) => e.id === 'localsearch' && e.status === 'running');
-    });
-    expect(isLoaded).toBe(true);
+  test('localsearch command is available via lazy stub', async () => {
+    // Localsearch is lazy-loaded — the manifest command is registered by the lazy stub
+    // before the extension itself loads
+    await waitForCommand(sharedBgWindow, 'localsearch', 10000);
   });
 
   test('localsearch command is registered', async () => {

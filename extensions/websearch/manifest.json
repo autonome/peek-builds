@@ -6,5 +6,17 @@
   "version": "1.0.0",
   "background": "background.html",
   "builtin": true,
-  "settingsSchema": "./settings-schema.json"
+  "settingsSchema": "./settings-schema.json",
+  "commands": [
+    {
+      "name": "web search",
+      "description": "Search the web with your default search engine",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "open web search",
+      "description": "Open the web search window",
+      "action": { "type": "execute" }
+    }
+  ]
 }

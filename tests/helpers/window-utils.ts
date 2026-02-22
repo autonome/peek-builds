@@ -391,3 +391,22 @@ export async function queryCommandsWithRetry(
   }
   return commands as CommandInfo[];
 }
+
+/**
+ * Wait for cmd panel commands to be loaded.
+ * The panel exposes window._cmdState; this waits until commands are populated.
+ * Must be called on a cmd panel window (not the background window).
+ */
+export async function waitForPanelCommandsLoaded(
+  cmdWindow: Page,
+  timeout = 5000
+): Promise<void> {
+  await cmdWindow.waitForFunction(
+    () => {
+      const state = (window as any)._cmdState;
+      return state && Object.keys(state.commands).length > 0;
+    },
+    undefined,
+    { timeout }
+  );
+}

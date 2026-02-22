@@ -135,13 +135,8 @@ async function enrichUrlItem(url, pageMetadata) {
  * @returns {Promise<Array<Object>>} Processed entities
  */
 async function extractEntities(url, title = '') {
-  console.log('[entities] Extracting from:', url);
-
   const content = await getPageContent(url);
-  if (!content) {
-    console.log('[entities] No content available for:', url);
-    return [];
-  }
+  if (!content) return [];
 
   const html = content.html || '';
   const text = content.text || '';
@@ -170,8 +165,6 @@ async function extractEntities(url, title = '') {
     ...regexEntities,
   ];
 
-  console.log(`[entities] Raw extractions: ${allRaw.length} (JSON-LD: ${structuredDataEntities.length}, microformats: ${microformatEntities.length}, regex: ${regexEntities.length})`);
-
   if (allRaw.length === 0) return [];
 
   // Process through matcher (dedup + store)
@@ -179,8 +172,6 @@ async function extractEntities(url, title = '') {
     url,
     title: pageTitle
   }, CONFIDENCE_THRESHOLD);
-
-  console.log(`[entities] Stored: ${processed.length} entities (${processed.filter(e => e.isNew).length} new)`);
 
   return processed;
 }
@@ -261,10 +252,7 @@ function handlePageLoad(msg) {
 async function extractCurrentPage() {
   // Get the focused window
   const windowList = await api.window.list({ includeInternal: false });
-  if (!windowList.success || !windowList.windows.length) {
-    console.log('[entities] No active window to extract from');
-    return;
-  }
+  if (!windowList.success || !windowList.windows.length) return;
 
   // Use the last focused visible window (not just first in list)
   let activeWindow = windowList.windows[0];
@@ -275,16 +263,12 @@ async function extractCurrentPage() {
   }
   const url = activeWindow.url;
 
-  if (!url || !url.startsWith('http')) {
-    console.log('[entities] Active window has no extractable URL:', url);
-    return;
-  }
+  if (!url || !url.startsWith('http')) return;
 
   // Clear cooldown for manual extraction
   extractionCache.delete(url);
 
   const entities = await extractEntities(url, activeWindow.title || '');
-  console.log(`[entities] Manual extraction: ${entities.length} entities from ${url}`);
 
   return entities;
 }
@@ -360,12 +344,9 @@ const extension = {
       }
     });
 
-    console.log('[entities] Commands registered');
   },
 
   init() {
-    console.log('[entities] Initializing...');
-
     // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 
@@ -440,11 +421,9 @@ const extension = {
       }
     }, api.scopes.GLOBAL);
 
-    console.log('[entities] Extension loaded');
   },
 
   uninit() {
-    console.log('[entities] Cleaning up...');
 
     // Clear pending extraction timers
     for (const timer of pendingExtractions.values()) {

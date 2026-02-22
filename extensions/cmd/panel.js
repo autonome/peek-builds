@@ -369,6 +369,9 @@ window.addEventListener('cmd-update-commands', function(e) {
   state.commands = e.detail;
 });
 
+// Expose state for testing — allows waitForFunction to check command loading
+window._cmdState = state;
+
 async function render() {
   // Get elements
   const commandInput = document.getElementById('command-input');

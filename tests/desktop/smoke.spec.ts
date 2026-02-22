@@ -14,7 +14,7 @@ import { Page } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-import { waitForCommandResults, waitForWindowCount, waitForVisible, waitForClass, waitForResultsWithContent, waitForSelectionChange, sleep, waitForWindow, waitForExtensionsReady, queryCommandsWithRetry, waitForAppReady, waitForCommand } from '../helpers/window-utils';
+import { waitForCommandResults, waitForWindowCount, waitForVisible, waitForClass, waitForResultsWithContent, waitForSelectionChange, sleep, waitForWindow, waitForExtensionsReady, queryCommandsWithRetry, waitForAppReady, waitForCommand, waitForPanelCommandsLoaded } from '../helpers/window-utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,10 +112,11 @@ test.describe('Cmd Palette @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
-    // Wait for input to be ready
+    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow, 10000);
 
-    // Wait for commands to be loaded - type a built-in command first to verify
+    // Type a built-in command first to verify
     // Built-in commands (like 'settings') load faster than extension commands
     await cmdWindow.fill('input', 'settings');
     // Press ArrowDown to show results (panel requires this to display dropdown)
@@ -2698,8 +2699,9 @@ test.describe('Command Chaining @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
-    // Wait for input to be ready
+    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
 
     // Type 'lists' command
     await cmdWindow.fill('input', 'lists');
@@ -2756,8 +2758,11 @@ test.describe('Command Chaining @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
-    // Execute lists command
+    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Execute lists command
     await cmdWindow.fill('input', 'lists');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
@@ -2812,8 +2817,11 @@ test.describe('Command Chaining @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
-    // Execute lists command — enters chain mode directly (save accepts */*)
+    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Execute lists command — enters chain mode directly (save accepts */*)
     await cmdWindow.fill('input', 'lists');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
@@ -2870,8 +2878,11 @@ test.describe('Command Chaining @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
-    // Execute lists and select item to enter chain mode
+    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Execute lists and select item to enter chain mode
     await cmdWindow.fill('input', 'lists');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
@@ -2922,8 +2933,11 @@ test.describe('Command Chaining @desktop', () => {
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
-    // Execute lists command
+    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Execute lists command
     await cmdWindow.fill('input', 'lists');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
@@ -3395,12 +3409,13 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     // Wait for #extensions container to exist (it may be hidden, so use 'attached' state)
     await hostWindow!.waitForSelector('#extensions', { timeout: 15000, state: 'attached' });
 
-    // Wait for at least 5 iframes to load (cmd, groups, peeks, slides, windows)
+    // Wait for at least 4 eager iframes to load (cmd, groups, hud, websearch)
+    // Lazy extensions (editor, localsearch, windows, pagestream) load on first use
     await hostWindow!.waitForFunction(
       () => {
         const container = document.getElementById('extensions');
         const iframes = container ? container.querySelectorAll('iframe') : [];
-        return iframes.length >= 5;
+        return iframes.length >= 4;
       },
       { timeout: 15000 }
     );
@@ -3415,13 +3430,14 @@ test.describe('Hybrid Extension Mode @desktop', () => {
       };
     });
 
-    // Should have iframes for built-in extensions (6: cmd, groups, peeks, slides, windows, settings)
-    expect(iframeData.count).toBeGreaterThanOrEqual(5);
+    // Eager extensions: cmd (EAGER_EXTENSION_IDS), hud (EAGER_EXTENSION_IDS),
+    // plus extensions without manifest commands (peeks, slides, page, files, etc.)
+    // Lazy extensions with manifest commands (editor, groups, localsearch, pagestream,
+    // websearch, windows) load on first use
+    expect(iframeData.count).toBeGreaterThanOrEqual(4);
     expect(iframeData.srcs.some(s => s.includes('peek://cmd/'))).toBe(true);
-    expect(iframeData.srcs.some(s => s.includes('peek://groups/'))).toBe(true);
     expect(iframeData.srcs.some(s => s.includes('peek://peeks/'))).toBe(true);
     expect(iframeData.srcs.some(s => s.includes('peek://slides/'))).toBe(true);
-    expect(iframeData.srcs.some(s => s.includes('peek://windows/'))).toBe(true);
   });
 
   test('example extension loads as separate window (external)', async () => {

@@ -113,26 +113,14 @@ test.describe('Pagestream Extension @desktop', () => {
     await sleep(500);
   });
 
-  test('pagestream extension is loaded and running', async () => {
-    const extensionRunning = await sharedBgWindow.evaluate(async () => {
-      const result = await (window as any).app.extensions.list();
-      if (!result.success) return false;
-      return result.data.some(
-        (e: { id: string; status: string }) => e.id === 'pagestream' && e.status === 'running'
-      );
-    });
-    expect(extensionRunning).toBe(true);
-  });
-
-  test('pagestream commands are registered', async () => {
-    // Wait for commands to be registered (cmd:ready may fire after extension init)
-    const hasCommands = await sharedBgWindow.evaluate(async () => {
+  test('pagestream command is available via lazy stub', async () => {
+    // Pagestream is lazy-loaded — the manifest command is registered by the lazy stub
+    const hasCommand = await sharedBgWindow.evaluate(async () => {
       const start = Date.now();
-      while (Date.now() - start < 5000) {
+      while (Date.now() - start < 10000) {
         const result = await (window as any).app.commands.list();
         if (result.success && result.data) {
-          const names = result.data.map((c: { name: string }) => c.name);
-          if (names.includes('open pagestream') && names.includes('pagestream')) {
+          if (result.data.some((c: { name: string }) => c.name === 'pagestream')) {
             return true;
           }
         }
@@ -140,7 +128,26 @@ test.describe('Pagestream Extension @desktop', () => {
       }
       return false;
     });
-    expect(hasCommands).toBe(true);
+    expect(hasCommand).toBe(true);
+  });
+
+  test('pagestream command is registered via manifest', async () => {
+    // Lazy stub registers the command from manifest — check for base command
+    const hasCommand = await sharedBgWindow.evaluate(async () => {
+      const start = Date.now();
+      while (Date.now() - start < 5000) {
+        const result = await (window as any).app.commands.list();
+        if (result.success && result.data) {
+          const names = result.data.map((c: { name: string }) => c.name);
+          if (names.includes('pagestream')) {
+            return true;
+          }
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+      return false;
+    });
+    expect(hasCommand).toBe(true);
   });
 
   test('pagestream window opens and shows stream', async () => {

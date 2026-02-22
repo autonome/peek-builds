@@ -5,5 +5,23 @@
   "description": "Always-on-top heads-up display showing mode, IZUI state, and window info",
   "version": "1.0.0",
   "background": "background.html",
-  "builtin": true
+  "builtin": true,
+  "commands": [
+    {
+      "name": "hud",
+      "description": "Toggle HUD overlay on/off",
+      "action": { "type": "execute" }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+H",
+      "command": "hud",
+      "global": true
+    },
+    {
+      "keys": "CommandOrControl+H",
+      "command": "hud"
+    }
+  ]
 }

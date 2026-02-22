@@ -14,8 +14,6 @@ const labels = {
   description: 'Page and window commands'
 };
 
-console.log('[ext:page] background', labels.name);
-
 // ===== URL Validation =====
 
 /**
@@ -66,37 +64,31 @@ const commandDefinitions = [
     name: 'open',
     description: 'Open a URL in a new window',
     execute: async (ctx) => {
-      console.log('[ext:page] open command', ctx);
-
       const parts = ctx.typed.split(' ');
       parts.shift();
 
       const address = parts.shift();
 
       if (!address) {
-        console.log('[ext:page] No address provided');
         return { error: 'No address provided' };
       }
 
       // Check if the input is a valid URL and get the normalized version
       const urlResult = getValidURL(address);
       if (!urlResult.valid) {
-        console.log('[ext:page] Invalid URL:', address);
         return { error: 'Invalid URL. Must be a valid URL starting with http://, https://, or other valid protocol.' };
       }
 
       // Use the normalized URL (with protocol added if needed)
       const normalizedAddress = urlResult.url;
-      console.log('[ext:page] Using normalized URL:', normalizedAddress);
 
       try {
-        const result = await api.window.open(normalizedAddress, {
+        await api.window.open(normalizedAddress, {
           width: 800,
           height: 600,
           trackingSource: 'cmd',
           trackingSourceId: 'open'
         });
-        console.log('[ext:page] Window opened:', result);
 
         return {
           command: 'open',
@@ -116,24 +108,20 @@ const commandDefinitions = [
     name: 'modal',
     description: 'Open a URL in a modal window that hides on blur or escape',
     execute: async (ctx) => {
-      console.log('[ext:page] modal command', ctx);
-
       const parts = ctx.typed.split(' ');
       parts.shift();
 
       const address = parts.shift();
 
       if (!address) {
-        console.log('[ext:page] No address provided');
         return { error: 'No address provided' };
       }
 
       try {
-        const result = await api.window.openModal(address, {
+        await api.window.openModal(address, {
           width: 700,
           height: 500
         });
-        console.log('[ext:page] Modal window opened:', result);
       } catch (error) {
         console.error('[ext:page] Failed to open modal window:', error);
         return { error: 'Failed to open modal window: ' + error.message };
@@ -156,7 +144,6 @@ const initCommands = () => {
     api.commands.register(cmd);
     registeredCommands.push(cmd.name);
   });
-  console.log('[ext:page] Registered commands:', registeredCommands);
 };
 
 const uninitCommands = () => {
@@ -164,18 +151,14 @@ const uninitCommands = () => {
     api.commands.unregister(name);
   });
   registeredCommands = [];
-  console.log('[ext:page] Unregistered commands');
 };
 
 const init = async () => {
-  console.log('[ext:page] init');
-
   // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 };
 
 const uninit = () => {
-  console.log('[ext:page] uninit');
   uninitCommands();
 };
 

@@ -7,6 +7,9 @@
  * - Optional vim mode
  * - Resizable panels
  * - Pubsub integration
+ *
+ * Commands and shortcuts are declared in manifest.json.
+ * This extension loads lazily on first command invocation.
  */
 
 import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
@@ -51,37 +54,27 @@ const extension = {
     name: 'Editor'
   },
 
-  /**
-   * Register commands - called when cmd extension is ready
-   */
-  registerCommands() {
+  init() {
+    if (!hasPeekAPI) return;
+
+    // Register "editor" command handler — manifest declares the command,
+    // lazy stub registers metadata, this sets up the execute handler
+    api.commands.register({
+      name: 'editor',
+      description: 'Open markdown editor',
+      execute: () => openEditor()
+    });
+
+    // Register noun for browse/list commands (not in manifest)
     registerNoun({
       name: 'editor',
       singular: 'editor',
       description: 'Markdown editor',
-      skipBare: true, // No bare "editor" command
+      skipBare: true,
       browse: async () => { openEditor(); },
     });
 
-    console.log('[editor] Commands registered');
-  },
-
-  init() {
-    console.log('[editor] init - Peek API available:', hasPeekAPI);
-
-    if (!hasPeekAPI) {
-      console.log('[editor] Running without Peek API - limited functionality');
-      return;
-    }
-
-    // Register commands (cmd loads first with its subscribers ready via 100ms head start)
-    this.registerCommands();
-
-    // Register global shortcut Option+E (works when Peek is not focused)
-    api.shortcuts.register('Option+e', () => openEditor(), { global: true });
-
-    // Register local shortcut Cmd+E (works when a Peek window is focused)
-    api.shortcuts.register('CommandOrControl+E', () => openEditor());
+    // Shortcuts declared in manifest.json — no imperative registration needed
 
     // Subscribe to editor:open — open editor with optional content or itemId
     api.subscribe('editor:open', (msg) => {
@@ -99,21 +92,15 @@ const extension = {
     }, api.scopes.GLOBAL);
 
     // Subscribe to editor:add — open a new blank editor document
-    api.subscribe('editor:add', (msg) => {
-      console.log('[editor] editor:add received:', msg);
-      openEditor(); // No params = blank document
+    api.subscribe('editor:add', () => {
+      openEditor();
     }, api.scopes.GLOBAL);
-
-    console.log('[editor] Extension loaded');
   },
 
   uninit() {
-    console.log('[editor] Cleaning up...');
-
     if (hasPeekAPI) {
       unregisterNoun('editor');
-      api.shortcuts.unregister('Option+e', { global: true });
-      api.shortcuts.unregister('CommandOrControl+E');
+      // Shortcuts are managed by manifest — no imperative unregister needed
     }
   }
 };

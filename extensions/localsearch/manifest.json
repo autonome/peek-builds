@@ -5,5 +5,19 @@
   "description": "Search across local items, tags, and history",
   "version": "1.0.0",
   "background": "background.html",
-  "builtin": false
+  "builtin": false,
+  "commands": [
+    {
+      "name": "localsearch",
+      "description": "Search local items, tags, and history",
+      "action": { "type": "execute" }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+f",
+      "command": "localsearch",
+      "global": true
+    }
+  ]
 }

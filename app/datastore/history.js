@@ -28,13 +28,6 @@ export const trackNavigation = async (uri, options = {}) => {
     }
 
     const data = result.data;
-    console.log('Tracked navigation:', {
-      visitId: data.visitId,
-      itemId: data.itemId,
-      uri,
-      source: options.source
-    });
-
     return { visitId: data.visitId, itemId: data.itemId, addressId: data.itemId };
   } catch (error) {
     console.error('Error tracking navigation:', error);

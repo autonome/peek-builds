@@ -13,8 +13,6 @@ import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 const api = window.app;
 const debug = api.debug;
 
-console.log('[ext:pagestream] background', labels.name);
-
 // Extension content is served from peek://ext/pagestream/
 const address = 'peek://ext/pagestream/home.html';
 
@@ -116,17 +114,13 @@ const initCommands = () => {
     skipBare: false,
     browse: async () => { openPagestreamWindow(); },
   });
-  console.log('[ext:pagestream] Noun registered: pagestream');
 };
 
 const uninitCommands = () => {
   unregisterNoun('pagestream');
-  console.log('[ext:pagestream] Noun unregistered: pagestream');
 };
 
 const init = async () => {
-  console.log('[ext:pagestream] init');
-
   // Load settings from datastore
   currentSettings = await loadSettings();
 
@@ -146,7 +140,7 @@ const init = async () => {
 
   // Listen for settings changes to hot-reload
   api.subscribe('pagestream:settings-changed', async () => {
-    console.log('[ext:pagestream] settings changed, reinitializing');
+    debug && console.log('[ext:pagestream] settings changed, reinitializing');
     uninit();
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
@@ -155,7 +149,7 @@ const init = async () => {
 
   // Listen for settings updates from Settings UI
   api.subscribe('pagestream:settings-update', async (msg) => {
-    console.log('[ext:pagestream] settings-update received:', msg);
+    debug && console.log('[ext:pagestream] settings-update received');
 
     try {
       if (msg.data) {
@@ -183,7 +177,6 @@ const init = async () => {
 };
 
 const uninit = () => {
-  console.log('[ext:pagestream] uninit');
   if (registeredShortcut) {
     api.shortcuts.unregister(registeredShortcut, { global: true });
     registeredShortcut = null;

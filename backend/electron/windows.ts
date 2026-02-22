@@ -81,16 +81,16 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
 export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled: boolean; close?: boolean; timeout?: boolean }> {
   return new Promise((resolve) => {
     const responseChannel = `escape-response-${bw.id}-${Date.now()}`;
-    console.log(`[esc] Asking renderer to handle escape, channel: ${responseChannel}`);
+    DEBUG && console.log(`[esc] Asking renderer to handle escape, channel: ${responseChannel}`);
 
     const timeout = setTimeout(() => {
-      console.log(`[esc] Renderer timeout (500ms) - no response on ${responseChannel}`);
+      DEBUG && console.log(`[esc] Renderer timeout (500ms) - no response on ${responseChannel}`);
       ipcMain.removeAllListeners(responseChannel);
       resolve({ handled: false, timeout: true });
     }, 500);
 
     ipcMain.once(responseChannel, (_event, response) => {
-      console.log(`[esc] Renderer responded on ${responseChannel}:`, response);
+      DEBUG && console.log(`[esc] Renderer responded on ${responseChannel}:`, response);
       clearTimeout(timeout);
       resolve(response || { handled: false });
     });
@@ -129,7 +129,7 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
 
   const params = entry.params;
   const role = (params.role as string) || 'utility';
-  console.log(`[esc] ESC keyDown - window ${bw.id}, source: ${source}, role: ${role}, url: ${params.address}`);
+  DEBUG && console.log(`[esc] ESC keyDown - window ${bw.id}, source: ${source}, role: ${role}, url: ${params.address}`);
 
   // escapeMode: 'ignore' is a hard override — let ESC pass through entirely
   if (params.escapeMode === 'ignore') {
@@ -145,7 +145,7 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
   const coordinator = getIzuiCoordinator();
   const sessionState = coordinator.getState();
   const action = escPolicy(sessionState, role);
-  console.log(`[esc] escPolicy(${sessionState}, ${role}) -> ${action}`);
+  DEBUG && console.log(`[esc] escPolicy(${sessionState}, ${role}) -> ${action}`);
 
   if (action === 'close' || action === 'close-and-restore') {
     closeOrHideWindow(bw.id);
@@ -190,7 +190,7 @@ export function addEscHandler(bw: BrowserWindow): void {
         // Prevents double-fires from key propagation or OS focus changes
         const now = Date.now();
         if (now - lastEscTime < 200) {
-          console.log(`[esc] Debounced ESC keyDown on window ${bw.id} source:${source} (${now - lastEscTime}ms since last)`);
+          DEBUG && console.log(`[esc] Debounced ESC keyDown on window ${bw.id} source:${source} (${now - lastEscTime}ms since last)`);
           return;
         }
         lastEscTime = now;
@@ -213,7 +213,7 @@ export function addEscHandler(bw: BrowserWindow): void {
   // showing youtube.com) is intercepted and routed through the host window's
   // escape handling (which talks to the host renderer's preload onEscape callback).
   bw.webContents.on('did-attach-webview', (_event, guestWebContents) => {
-    console.log(`[esc] Webview guest attached to window ${bw.id}, adding ESC listener`);
+    DEBUG && console.log(`[esc] Webview guest attached to window ${bw.id}, adding ESC listener`);
     attachEscListener(guestWebContents, 'webview');
   });
 }

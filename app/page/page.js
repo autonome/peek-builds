@@ -19,7 +19,7 @@
 
 import api from '../api.js';
 
-const DEBUG = true;
+const DEBUG = false;
 
 // Cache our window ID for filtering GLOBAL pubsub messages
 let myWindowId = null;
