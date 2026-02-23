@@ -4,15 +4,62 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Fri, 20 Feb 2026 09:00:05 GMT</lastBuildDate>
+    <lastBuildDate>Mon, 23 Feb 2026 14:11:25 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-02-23</title>
+      <link>https://tangled.org/burrito.space/peek</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-23</guid>
+      <pubDate>Mon, 23 Feb 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Extensions
+- Reduce extension windows from 14 to 4 — consolidation with shared iframes, lazy loading, and show/hide instead of create/destroy (7977 (https://tangled.org/burrito.space/peek/commit/79772231))
+- Add declarative command and shortcut registration in extension manifests — no background.js needed for simple commands (42ca (https://tangled.org/burrito.space/peek/commit/42ca20ac))
+- Migrate intra-extension messaging from IPC pubsub to BroadcastChannel (7563 (https://tangled.org/burrito.space/peek/commit/7563532d))
+- Migrate UI view preferences from api.settings to localStorage (7aea (https://tangled.org/burrito.space/peek/commit/7aea1f74))
+- Fix lazy command replay, iframe ready signaling, and test updates (d1c2 (https://tangled.org/burrito.space/peek/commit/d1c2c614))
+- Fix peek-card slot handling, HUD focus tracking, test reliability (51d8 (https://tangled.org/burrito.space/peek/commit/51d859c2))
+
+Desktop - Lexicon Studio
+- Add record viewing, detail panel, and record deletion (62b4 (https://tangled.org/burrito.space/peek/commit/62b4c259))
+- Rename me-core extension to Lexicon Studio across all user-facing strings (6940 (https://tangled.org/burrito.space/peek/commit/694d061f), c3fb (https://tangled.org/burrito.space/peek/commit/c3fb9b52))
+- Eliminate background.js — make extension fully declarative with direct XRPC calls (c637 (https://tangled.org/burrito.space/peek/commit/c6375de5), 4aa1 (https://tangled.org/burrito.space/peek/commit/4aa1789b))
+- Remove Bluesky reference from login and auto-close OAuth window (65b0 (https://tangled.org/burrito.space/peek/commit/65b0906d))
+- Add unit tests for pure functions (a09d (https://tangled.org/burrito.space/peek/commit/a09d0f53))
+
+Desktop - HUD
+- Add performance metrics widget — window counts and pubsub stats (2dc8 (https://tangled.org/burrito.space/peek/commit/2dc85478))
+- Show active window info in HUD window widget (a7af (https://tangled.org/burrito.space/peek/commit/a7af389a))
+
+Desktop - Editor
+- Add clickable links extension for CodeMirror (5660 (https://tangled.org/burrito.space/peek/commit/56600693))
+- Remove highlightSelectionMatches to stop highlighting matching text on other lines (ef48 (https://tangled.org/burrito.space/peek/commit/ef48d325))
+
+Desktop - Windows
+- Add maximize window and fullscreen toggle commands (4ce0 (https://tangled.org/burrito.space/peek/commit/4ce0a233))
+- Fix external URLs with no explicit position causing NaN coordinates (1f7f (https://tangled.org/burrito.space/peek/commit/1f7f24d5))
+
+Desktop - Page View
+- Show navbar with loading spinner, tone down and theme the loading glow (fc63 (https://tangled.org/burrito.space/peek/commit/fc63631e))
+
+Desktop - UI
+- Compact UI for tags and groups, muted accent colors for dark theme (d3f0 (https://tangled.org/burrito.space/peek/commit/d3f0be32))
+- Show source URL on entity cards with open button (5ff4 (https://tangled.org/burrito.space/peek/commit/5ff490b5))
+- Show URL on address cards in group view (529f (https://tangled.org/burrito.space/peek/commit/529fc7ac))
+
+Mobile
+- Add offline reading with saved article content (0c55 (https://tangled.org/burrito.space/peek/commit/0c55e5ce))
+- Add webview navigation tracking and configurable tag settings (0c55 (https://tangled.org/burrito.space/peek/commit/0c55e5ce))
+- Hide from:history items from default list view (a0a4 (https://tangled.org/burrito.space/peek/commit/a0a47cc1))
+- Move reader CSS from Rust to frontend for HMR support (8a02 (https://tangled.org/burrito.space/peek/commit/8a02b7c9))
+- Fix markdown list auto-bulleting bugs (b9c3 (https://tangled.org/burrito.space/peek/commit/b9c3c1da))</description>
+    </item>
     <item>
       <title>2026-02-20</title>
       <link>https://tangled.org/burrito.space/peek</link>
       <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-02-20</guid>
       <pubDate>Fri, 20 Feb 2026 12:00:00 GMT</pubDate>
-      <description>Desktop - AT Protocol Identity (lex)
+      <description>Desktop - Lexicon Studio (AT Protocol Identity)
 - Add AT Protocol identity extension — connect your Bluesky/AT Protocol account via OAuth PKCE+DPoP (b549 (https://tangled.org/burrito.space/peek/commit/b549fa8a), ea7b (https://tangled.org/burrito.space/peek/commit/ea7ba305))
 - Add lexicon browser — explore all known AT Protocol lexicons, view your repo&apos;s collections with record counts (ba52 (https://tangled.org/burrito.space/peek/commit/ba528419))
 - Add record creation — auto-generated forms from lexicon schemas, create records directly from the app (93fc (https://tangled.org/burrito.space/peek/commit/93fc3561), b9a4 (https://tangled.org/burrito.space/peek/commit/b9a485e1))

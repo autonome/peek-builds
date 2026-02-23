@@ -13,6 +13,50 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-23
+
+Desktop - Extensions
+- [x] Reduce extension windows from 14 to 4 — consolidation with shared iframes, lazy loading, and show/hide instead of create/destroy ([7977](https://tangled.org/burrito.space/peek/commit/79772231))
+- [x] Add declarative command and shortcut registration in extension manifests — no background.js needed for simple commands ([42ca](https://tangled.org/burrito.space/peek/commit/42ca20ac))
+- [x] Migrate intra-extension messaging from IPC pubsub to BroadcastChannel ([7563](https://tangled.org/burrito.space/peek/commit/7563532d))
+- [x] Migrate UI view preferences from api.settings to localStorage ([7aea](https://tangled.org/burrito.space/peek/commit/7aea1f74))
+- [x] Fix lazy command replay, iframe ready signaling, and test updates ([d1c2](https://tangled.org/burrito.space/peek/commit/d1c2c614))
+- [x] Fix peek-card slot handling, HUD focus tracking, test reliability ([51d8](https://tangled.org/burrito.space/peek/commit/51d859c2))
+
+Desktop - Lexicon Studio
+- [x] Add record viewing, detail panel, and record deletion ([62b4](https://tangled.org/burrito.space/peek/commit/62b4c259))
+- [x] Rename me-core extension to Lexicon Studio across all user-facing strings ([6940](https://tangled.org/burrito.space/peek/commit/694d061f), [c3fb](https://tangled.org/burrito.space/peek/commit/c3fb9b52))
+- [x] Eliminate background.js — make extension fully declarative with direct XRPC calls ([c637](https://tangled.org/burrito.space/peek/commit/c6375de5), [4aa1](https://tangled.org/burrito.space/peek/commit/4aa1789b))
+- [x] Remove Bluesky reference from login and auto-close OAuth window ([65b0](https://tangled.org/burrito.space/peek/commit/65b0906d))
+- [x] Add unit tests for pure functions ([a09d](https://tangled.org/burrito.space/peek/commit/a09d0f53))
+
+Desktop - HUD
+- [x] Add performance metrics widget — window counts and pubsub stats ([2dc8](https://tangled.org/burrito.space/peek/commit/2dc85478))
+- [x] Show active window info in HUD window widget ([a7af](https://tangled.org/burrito.space/peek/commit/a7af389a))
+
+Desktop - Editor
+- [x] Add clickable links extension for CodeMirror ([5660](https://tangled.org/burrito.space/peek/commit/56600693))
+- [x] Remove highlightSelectionMatches to stop highlighting matching text on other lines ([ef48](https://tangled.org/burrito.space/peek/commit/ef48d325))
+
+Desktop - Windows
+- [x] Add maximize window and fullscreen toggle commands ([4ce0](https://tangled.org/burrito.space/peek/commit/4ce0a233))
+- [x] Fix external URLs with no explicit position causing NaN coordinates ([1f7f](https://tangled.org/burrito.space/peek/commit/1f7f24d5))
+
+Desktop - Page View
+- [x] Show navbar with loading spinner, tone down and theme the loading glow ([fc63](https://tangled.org/burrito.space/peek/commit/fc63631e))
+
+Desktop - UI
+- [x] Compact UI for tags and groups, muted accent colors for dark theme ([d3f0](https://tangled.org/burrito.space/peek/commit/d3f0be32))
+- [x] Show source URL on entity cards with open button ([5ff4](https://tangled.org/burrito.space/peek/commit/5ff490b5))
+- [x] Show URL on address cards in group view ([529f](https://tangled.org/burrito.space/peek/commit/529fc7ac))
+
+Mobile
+- [x] Add offline reading with saved article content ([0c55](https://tangled.org/burrito.space/peek/commit/0c55e5ce))
+- [x] Add webview navigation tracking and configurable tag settings ([0c55](https://tangled.org/burrito.space/peek/commit/0c55e5ce))
+- [x] Hide from:history items from default list view ([a0a4](https://tangled.org/burrito.space/peek/commit/a0a47cc1))
+- [x] Move reader CSS from Rust to frontend for HMR support ([8a02](https://tangled.org/burrito.space/peek/commit/8a02b7c9))
+- [x] Fix markdown list auto-bulleting bugs ([b9c3](https://tangled.org/burrito.space/peek/commit/b9c3c1da))
+
 ## 2026-02-20
 
 Desktop - Lexicon Studio (AT Protocol Identity)
