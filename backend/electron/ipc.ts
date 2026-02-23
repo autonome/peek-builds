@@ -247,6 +247,10 @@ function trackVisibleWindowFocus(win: BrowserWindow): void {
   if (url === 'peek://app/background.html' || url === 'peek://app/extension-host.html') {
     return;
   }
+  // Exclude non-focusable windows (e.g., HUD overlay)
+  if (!win.isFocusable()) {
+    return;
+  }
   // Track extension windows (peek://{id}/...) and web pages
   lastFocusedVisibleWindowId = win.id;
   DEBUG && console.log('Updated lastFocusedVisibleWindowId:', lastFocusedVisibleWindowId, url);

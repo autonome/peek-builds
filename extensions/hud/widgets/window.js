@@ -24,7 +24,7 @@ const updateDisplay = () => {
 const refreshWindowInfo = async () => {
   try {
     const [windowsResult, focusedWindowId] = await Promise.all([
-      api.window.list(),
+      api.window.list({ includeInternal: true }),
       api.window.getFocusedVisibleWindowId()
     ]);
 
