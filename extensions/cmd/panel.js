@@ -2357,26 +2357,32 @@ function updateCommandUI() {
   // For multi-word commands like "open groups", we need to check if typed text
   // matches the full command name before splitting on spaces
   let typedCommand, typedParams;
-  const trimmedTyped = state.typed.trim();
+  // Use originalTyped (what user actually typed) for highlight boundary,
+  // so Tab-cycled suggestions show the original input bold and completion dim
+  const userTyped = state.originalTyped || state.typed;
+  const trimmedUserTyped = userTyped.trim();
 
   // Check if typed text matches full command or command + params
-  if (trimmedTyped.toLowerCase() === selectedMatch.toLowerCase()) {
-    // Exact match - typed text IS the command (possibly with trailing space)
-    typedCommand = trimmedTyped;
-    typedParams = state.typed.substring(trimmedTyped.length); // Just the trailing space if any
-  } else if (state.typed.toLowerCase().startsWith(selectedMatch.toLowerCase() + ' ')) {
-    // Command with parameters - text after command name + space is params
-    typedCommand = selectedMatch;
+  if (state.typed.toLowerCase().startsWith(selectedMatch.toLowerCase() + ' ')) {
+    // Command with parameters - highlight original typed command portion, show params
+    // Use originalTyped for highlight length but state.typed for actual param text
+    typedCommand = trimmedUserTyped.toLowerCase().startsWith(selectedMatch.toLowerCase())
+      ? trimmedUserTyped.substring(0, Math.min(trimmedUserTyped.length, selectedMatch.length))
+      : trimmedUserTyped;
     typedParams = state.typed.substring(selectedMatch.length);
-  } else if (selectedMatch.toLowerCase().startsWith(trimmedTyped.toLowerCase())) {
-    // Typed text is a prefix of the command (e.g., "list n" → "list notes")
-    // Treat entire typed text as command part, no params
-    typedCommand = trimmedTyped;
+  } else if (selectedMatch.toLowerCase().startsWith(trimmedUserTyped.toLowerCase())) {
+    // Typed text is a prefix of the command (e.g., "ta" → "tags", or "list n" → "list notes")
+    // Bold the user-typed portion, dim the rest
+    typedCommand = trimmedUserTyped;
     typedParams = '';
+  } else if (trimmedUserTyped.toLowerCase() === selectedMatch.toLowerCase()) {
+    // Exact match - typed text IS the command
+    typedCommand = trimmedUserTyped;
+    typedParams = state.typed.substring(trimmedUserTyped.length);
   } else {
-    // Partial match - use first space as split point (original behavior)
-    const hasParameters = state.typed.includes(' ');
-    typedCommand = hasParameters ? state.typed.substring(0, state.typed.indexOf(' ')) : state.typed;
+    // Partial match in middle or no clear match - use first space as split point
+    const hasParameters = userTyped.includes(' ');
+    typedCommand = hasParameters ? userTyped.substring(0, userTyped.indexOf(' ')) : userTyped;
     typedParams = hasParameters ? state.typed.substring(state.typed.indexOf(' ')) : '';
   }
 
