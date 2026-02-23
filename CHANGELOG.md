@@ -38,9 +38,15 @@ Desktop - Editor
 - [x] Add clickable links extension for CodeMirror ([5660](https://tangled.org/burrito.space/peek/commit/56600693))
 - [x] Remove highlightSelectionMatches to stop highlighting matching text on other lines ([ef48](https://tangled.org/burrito.space/peek/commit/ef48d325))
 
+Desktop - Command Palette
+- [x] Fix Tab/Enter semantics — Tab fills inline suggestion text, Enter executes with correct item identity ([ced4](https://tangled.org/burrito.space/peek/commit/ced4c145))
+- [x] Fix editor:open lazy-load interceptor so edit command opens editor on first use ([0d39](https://tangled.org/burrito.space/peek/commit/0d396ba8))
+- [x] Fix cmd palette blink on hotkey — skip non-focusable windows in did-resign-active handler ([0d39](https://tangled.org/burrito.space/peek/commit/0d396ba8))
+
 Desktop - Windows
 - [x] Add maximize window and fullscreen toggle commands ([4ce0](https://tangled.org/burrito.space/peek/commit/4ce0a233))
 - [x] Fix external URLs with no explicit position causing NaN coordinates ([1f7f](https://tangled.org/burrito.space/peek/commit/1f7f24d5))
+- [x] Fix external URL opening from other apps — move single-instance lock before app.whenReady ([efa0](https://tangled.org/burrito.space/peek/commit/efa0bad6))
 
 Desktop - Page View
 - [x] Show navbar with loading spinner, tone down and theme the loading glow ([fc63](https://tangled.org/burrito.space/peek/commit/fc63631e))
