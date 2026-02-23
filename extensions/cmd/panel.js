@@ -420,6 +420,7 @@ async function render() {
 
       if (paramCandidate) {
         const cmd = state.commands[paramCandidate];
+        // Enter param mode for commands with params (provides autocomplete)
         if (cmd && cmd.params && cmd.params.length > 0) {
           enterParamMode(paramCandidate);
         } else {
@@ -861,6 +862,7 @@ function handleSpecialKey(e) {
     commandInput.value = state.typed;
 
     // Check if Tab-completed command has params → enter param mode
+    // (provides autocomplete suggestions including for connector commands)
     const cmd = state.commands[match];
     if (cmd && cmd.params && cmd.params.length > 0) {
       enterParamMode(match);
@@ -2199,12 +2201,17 @@ function acceptParamSuggestion(index) {
 
   const suggestion = state.paramSuggestions[index];
 
-  // Item-type param: open editor directly instead of inserting text
+  // Item-type param for connector commands (those with produces):
+  // Route through execute() so the command's output handling works properly
+  // (enters output selection mode, routes to editor, supports chaining, etc.)
   const cmd = state.commands[state.paramCommand];
   const paramDef = cmd && cmd.params && cmd.params[0];
   if (paramDef && paramDef.type === 'item' && suggestion._item) {
-    api.publish('editor:open', { itemId: suggestion._item.id }, api.scopes.GLOBAL);
-    setTimeout(shutdown, 100);
+    const commandName = state.paramCommand;
+    // Build typed string with the suggestion title as search text
+    const typed = commandName + ' ' + (suggestion.title || suggestion.value || '');
+    exitParamMode();
+    execute(commandName, typed);
     return;
   }
 

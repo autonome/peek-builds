@@ -138,6 +138,112 @@ test.describe('Cmd Palette @desktop', () => {
       }, openResult.id);
     }
   });
+
+  test('edit command Tab-completion shows autocomplete and opens editor', async () => {
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
+    // Create a test note so the edit command has something to autocomplete
+    const addResult = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.addItem('text', {
+        content: '# Edit Tab Test Note\nThis is a note for testing edit tab-completion.'
+      });
+    });
+    expect(addResult.success).toBe(true);
+    const noteId = addResult.data?.id;
+
+    // Open cmd panel
+    const openResult = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 50,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    expect(cmdWindow).toBeTruthy();
+
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow, 10000);
+
+    // Type "edit" and press Tab to trigger param mode
+    await cmdWindow.fill('input', 'edit');
+    // Press ArrowDown first to show results, then Tab to complete
+    await cmdWindow.keyboard.press('ArrowDown');
+    await waitForCommandResults(cmdWindow, 1, 10000);
+    await cmdWindow.keyboard.press('Tab');
+
+    // Verify param mode is active - the panel should show autocomplete suggestions
+    // The input should now be "edit " (with trailing space)
+    const paramModeActive = await cmdWindow.waitForFunction(
+      () => {
+        const state = (window as any)._cmdState;
+        return state && state.paramMode === true && state.paramCommand === 'edit';
+      },
+      undefined,
+      { timeout: 5000 }
+    );
+    expect(paramModeActive).toBeTruthy();
+
+    // Wait for param suggestions to populate (autocomplete list of notes)
+    await cmdWindow.waitForFunction(
+      () => {
+        const state = (window as any)._cmdState;
+        return state && state.paramSuggestions && state.paramSuggestions.length > 0;
+      },
+      undefined,
+      { timeout: 5000 }
+    );
+
+    // Verify results are visible with suggestion items
+    await waitForResultsWithContent(cmdWindow, 5000);
+
+    // Listen for editor:open event before selecting the suggestion
+    const editorOpenPromise = sharedBgWindow.evaluate(async () => {
+      return new Promise<any>((resolve) => {
+        const unsub = (window as any).app.subscribe('editor:open', (data: any) => {
+          unsub();
+          resolve(data);
+        }, (window as any).app.scopes.GLOBAL);
+        // Timeout after 10s
+        setTimeout(() => {
+          unsub();
+          resolve(null);
+        }, 10000);
+      });
+    });
+
+    // Press Enter to accept the first suggestion
+    // This should route through execute() and open the editor
+    await cmdWindow.keyboard.press('Enter');
+
+    // Verify editor:open was published (the command executed properly)
+    const editorOpenData = await editorOpenPromise;
+    expect(editorOpenData).toBeTruthy();
+
+    // Close cmd window if still open
+    try {
+      if (openResult.id) {
+        await sharedBgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, openResult.id);
+      }
+    } catch {
+      // Panel may have already closed via shutdown()
+    }
+
+    // Clean up the test note
+    if (noteId) {
+      await sharedBgWindow.evaluate(async (id: string) => {
+        return await (window as any).app.datastore.deleteItem(id);
+      }, noteId);
+    }
+  });
 });
 
 // ============================================================================
