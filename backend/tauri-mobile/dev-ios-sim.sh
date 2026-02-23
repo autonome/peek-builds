@@ -10,14 +10,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="$SCRIPT_DIR/src-tauri/tauri.conf.json"
 
-# Use a stable default port, only pick a random one if it's in use
+# Use a stable default port, kill any stale vite process on it first
 DEFAULT_PORT=5188
-if python3 -c "import socket; s=socket.socket(); s.bind(('',${DEFAULT_PORT})); s.close()" 2>/dev/null; then
-  PORT=$DEFAULT_PORT
-else
-  PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
-  echo "[dev] Default port $DEFAULT_PORT in use, using $PORT instead"
-fi
+lsof -ti tcp:$DEFAULT_PORT | xargs kill 2>/dev/null || true
+PORT=$DEFAULT_PORT
 echo "[dev] Using port $PORT"
 
 # Get the Mac's IP address for simulator to connect (can't use localhost in simulator)
