@@ -37,6 +37,19 @@ export interface AppConfig {
 let config: AppConfig;
 let mainWindow: BrowserWindow | null = null;
 
+// Diagnostic logger for external URL handling.
+// Writes to /tmp/ so it's always accessible regardless of userData path.
+// This can be removed once external URL handling is confirmed working.
+function urlLog(msg: string): void {
+  try {
+    const timestamp = new Date().toISOString();
+    const line = `[${timestamp}] ${msg}\n`;
+    fs.appendFileSync('/tmp/peek-url-debug.log', line);
+  } catch {
+    // Ignore write errors
+  }
+}
+
 // External URL handling state
 let _appReady = false;
 let _pendingUrls: Array<{ url: string; sourceId: string }> = [];
@@ -1761,20 +1774,24 @@ export function getBackgroundWindow(): BrowserWindow | null {
  * 2. Session restore has completed (so we don't race window creation)
  */
 export function handleExternalUrl(url: string, sourceId = 'os'): void {
+  urlLog(`handleExternalUrl: url=${url} sourceId=${sourceId} appReady=${_appReady} frontendReady=${_frontendReady} sessionRestoreDone=${_sessionRestoreDone}`);
   DEBUG && console.log('External URL received:', url, 'from:', sourceId);
 
   if (!_appReady) {
     _pendingUrls.push({ url, sourceId });
+    urlLog(`handleExternalUrl: queued (app not ready), pendingUrls=${_pendingUrls.length}`);
     return;
   }
 
   // If frontend isn't ready yet, queue and wait
   if (!_frontendReady || !_sessionRestoreDone) {
     _pendingUrls.push({ url, sourceId });
+    urlLog(`handleExternalUrl: queued (waiting for frontend/session), pendingUrls=${_pendingUrls.length}`);
     DEBUG && console.log('External URL queued (waiting for frontend/session):', url);
     return;
   }
 
+  urlLog(`handleExternalUrl: publishing immediately`);
   publishExternalUrl(url, sourceId);
 }
 
@@ -1814,8 +1831,12 @@ async function processPendingUrls(): Promise<void> {
   const urls = _pendingUrls.slice();
   _pendingUrls = [];
 
-  if (urls.length === 0) return;
+  if (urls.length === 0) {
+    urlLog('processPendingUrls: no pending URLs');
+    return;
+  }
 
+  urlLog(`processPendingUrls: processing ${urls.length} pending URL(s)`);
   DEBUG && console.log(`[url] Processing ${urls.length} pending URL(s)`);
 
   // Process sequentially with a small delay between each
@@ -1835,6 +1856,7 @@ async function processPendingUrls(): Promise<void> {
  */
 export function setAppReady(): void {
   _appReady = true;
+  urlLog(`setAppReady: pendingUrls=${_pendingUrls.length}`);
   // Kick off pending URL processing (will wait for frontend + session restore)
   processPendingUrls();
 }
@@ -1847,6 +1869,7 @@ export function setAppReady(): void {
 export function notifyFrontendReady(): void {
   if (_frontendReady) return;
   _frontendReady = true;
+  urlLog(`notifyFrontendReady: pendingUrls=${_pendingUrls.length}`);
   DEBUG && console.log('[url] Frontend ready — pubsub subscribers registered');
   if (_frontendReadyResolve) {
     _frontendReadyResolve();
@@ -1861,6 +1884,7 @@ export function notifyFrontendReady(): void {
 export function notifySessionRestoreDone(): void {
   if (_sessionRestoreDone) return;
   _sessionRestoreDone = true;
+  urlLog(`notifySessionRestoreDone: pendingUrls=${_pendingUrls.length}`);
   DEBUG && console.log('[url] Session restore done');
   if (_sessionRestoreDoneResolve) {
     _sessionRestoreDoneResolve();
@@ -1891,9 +1915,12 @@ function filePathToUrl(filePath: string): string | null {
  * Must be called before app.ready for open-url, and in onReady for second-instance
  */
 export function registerExternalUrlHandlers(): void {
+  urlLog('registerExternalUrlHandlers: registering open-url and open-file handlers');
+
   // macOS: handle open-url event
   app.on('open-url', (event, url) => {
     event.preventDefault();
+    urlLog(`open-url event fired: url=${url}`);
     handleExternalUrl(url, 'os');
   });
 
@@ -1915,12 +1942,24 @@ export function registerExternalUrlHandlers(): void {
  * Call this inside onReady after acquiring single instance lock
  */
 export function registerSecondInstanceHandler(): void {
-  app.on('second-instance', (_event, argv) => {
-    // Look for URLs first
+  app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+    urlLog(`second-instance event: argv=${JSON.stringify(argv)} additionalData=${JSON.stringify(additionalData)}`);
+
+    // Check additionalData first (set by the second instance via requestSingleInstanceLock)
+    if (additionalData && typeof additionalData === 'object' && (additionalData as any).url) {
+      const url = (additionalData as any).url as string;
+      urlLog(`second-instance: found URL in additionalData: ${url}`);
+      DEBUG && console.log('second-instance additionalData URL:', url);
+      handleExternalUrl(url, 'os');
+      return;
+    }
+
+    // Look for URLs in argv
     const url = argv.find(arg =>
       arg.startsWith('http://') || arg.startsWith('https://')
     );
     if (url) {
+      urlLog(`second-instance: found URL in argv: ${url}`);
       DEBUG && console.log('second-instance URL:', url);
       handleExternalUrl(url, 'os');
       return;
@@ -1931,11 +1970,14 @@ export function registerSecondInstanceHandler(): void {
       if (arg.startsWith('-')) continue;
       const fileUrl = filePathToUrl(arg);
       if (fileUrl) {
+        urlLog(`second-instance: found file URL in argv: ${arg} -> ${fileUrl}`);
         DEBUG && console.log('second-instance file path:', arg, '->', fileUrl);
         handleExternalUrl(fileUrl, 'os');
         return;
       }
     }
+
+    urlLog('second-instance: no URL found in argv or additionalData');
   });
 }
 
@@ -1944,11 +1986,14 @@ export function registerSecondInstanceHandler(): void {
  * Uses handleExternalUrl which queues until frontend + session restore are ready.
  */
 export function handleCliUrl(): void {
+  urlLog(`handleCliUrl: argv=${JSON.stringify(process.argv)}`);
+
   // Look for URLs first
   const urlArg = process.argv.find(arg =>
     arg.startsWith('http://') || arg.startsWith('https://')
   );
   if (urlArg) {
+    urlLog(`handleCliUrl: found URL in argv: ${urlArg}`);
     DEBUG && console.log('CLI URL argument:', urlArg);
     handleExternalUrl(urlArg, 'cli');
     return;
@@ -2009,12 +2054,25 @@ export function requestSingleInstance(): boolean {
     return true;
   }
 
-  const gotTheLock = app.requestSingleInstanceLock();
+  // Pass any URL from argv as additionalData so the primary instance receives it
+  // via the second-instance event. On macOS, `open -a Peek URL` may pass the URL
+  // as an Apple Event (handled via open-url) OR in argv, depending on the scenario.
+  const urlArg = process.argv.find(arg =>
+    arg.startsWith('http://') || arg.startsWith('https://')
+  );
+  const additionalData = urlArg ? { url: urlArg } : undefined;
+
+  urlLog(`requestSingleInstance: attempting lock, additionalData=${JSON.stringify(additionalData)}`);
+
+  const gotTheLock = app.requestSingleInstanceLock(additionalData);
   if (!gotTheLock) {
+    urlLog('requestSingleInstance: lock NOT acquired, another instance running');
     console.error('APP INSTANCE ALREADY RUNNING, QUITTING');
     app.quit();
     return false;
   }
+
+  urlLog('requestSingleInstance: lock acquired (primary instance)');
   return true;
 }
 

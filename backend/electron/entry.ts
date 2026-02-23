@@ -95,6 +95,14 @@ import {
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval } from './session.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 
+// Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
+try {
+  const ts = new Date().toISOString();
+  fs.appendFileSync('/tmp/peek-url-debug.log',
+    `[${ts}] entry.ts loaded: pid=${process.pid} argv=${JSON.stringify(process.argv)} packaged=${app.isPackaged}\n`
+  );
+} catch { /* ignore */ }
+
 // Catch unhandled errors and promise rejections without showing alert dialogs
 unhandled({
   showDialog: false,
@@ -223,6 +231,28 @@ DEBUG && console.log('PROFILE', PROFILE, app.isPackaged ? (isDevPackagedBuild() 
 
 // Set profile in backend config
 setProfile(PROFILE);
+
+// Acquire single instance lock EARLY (before app.whenReady).
+// This is critical on macOS: when a second instance is launched via
+// `open -a Peek URL`, Electron needs the lock to be held BEFORE the
+// second instance reaches app.whenReady. Otherwise, the second instance
+// processes the Apple Event (open-url) locally and then quits, losing
+// the URL. With early lock acquisition, Electron forwards the open-url
+// event to the first (primary) instance.
+if (!requestSingleInstance()) {
+  // Another instance is already running. On macOS, Electron forwards
+  // the Apple Event to the primary instance. On Windows/Linux, the
+  // second-instance event fires with argv. Either way, quit this instance.
+  // Note: app.quit() was already called inside requestSingleInstance().
+  // app.exit() terminates immediately (sync), preventing further init.
+  app.exit(0);
+  // TypeScript doesn't know app.exit() is noreturn, but it is.
+}
+
+// Windows/Linux: handle URLs when another instance tries to open.
+// Must be registered early (before app.whenReady) so the handler is
+// ready when the second-instance event fires.
+registerSecondInstanceHandler();
 
 // Profile dirs are subdir of userData dir
 // {home} / {appData} / {userData} / {profileDir}
@@ -441,13 +471,9 @@ const onReady = async () => {
   // Store startup time for reporting
   (global as Record<string, unknown>).__startupStart = startupStart;
 
-  // Ensure single instance
-  if (!requestSingleInstance()) {
-    return;
-  }
-
-  // Windows/Linux: handle URLs when another instance tries to open
-  registerSecondInstanceHandler();
+  // Note: requestSingleInstance() and registerSecondInstanceHandler()
+  // are called early (before app.whenReady) for proper URL forwarding.
+  // See the block after setProfile(PROFILE) above.
 
   // Discover and register built-in extensions from extensions/ folder
   discoverBuiltinExtensions(path.join(ROOT_DIR, 'extensions'));
