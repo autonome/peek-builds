@@ -9,7 +9,7 @@
   "settingsSchema": "./settings-schema.json",
   "commands": [
     {
-      "name": "open tag actions",
+      "name": "tag actions",
       "description": "Open the tag actions manager",
       "action": {
         "type": "window",
@@ -27,7 +27,7 @@
   "shortcuts": [
     {
       "keys": "Option+Shift+T",
-      "command": "open tag actions",
+      "command": "tag actions",
       "global": true
     }
   ]
