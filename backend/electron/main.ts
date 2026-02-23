@@ -204,9 +204,11 @@ export async function initialize(): Promise<void> {
     (app as any).on('did-resign-active', () => {
       getIzuiCoordinator().setAppFocused(false);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
-      // Hide alwaysOnTop overlay windows (e.g. HUD) when app loses focus
+      // Hide non-focusable alwaysOnTop overlay windows (e.g. HUD) when app loses focus.
+      // Skip focusable alwaysOnTop windows (e.g. cmd panel) — they have their own
+      // blur handler for hide/show and would blink (show-hide-show) if hidden here.
       for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed() && win.isAlwaysOnTop() && win.isVisible()) {
+        if (!win.isDestroyed() && win.isAlwaysOnTop() && win.isVisible() && !win.isFocusable()) {
           win.hide();
           (win as any).__hudHidden = true;
         }
@@ -680,6 +682,40 @@ export function registerLazyExtensionCommands(): void {
       registerDeclarativeShortcut(extId, shortcut, commands);
     }
   }
+}
+
+/**
+ * Register pubsub interceptors for lazy extension events.
+ * Some events (like editor:open) are published by the cmd panel before
+ * the target extension is loaded. These interceptors ensure the extension
+ * is loaded first, then re-publish the event so the extension receives it.
+ */
+export function registerLazyEventInterceptors(): void {
+  const editorEvents = ['editor:open', 'editor:add'];
+  const interceptorSource = 'peek://ext/editor/lazy-interceptor';
+
+  for (const topic of editorEvents) {
+    subscribe(interceptorSource, scopes.GLOBAL, topic, async (msg: unknown) => {
+      // If editor is already loaded, nothing to do — the extension's own handler
+      // will fire from the same publish (pubsub iterates all subscribers).
+      if (lazyExtensionLoaded.has('editor')) return;
+
+      DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired but editor not loaded, loading...`);
+
+      // Load the editor extension
+      await loadLazyExtension('editor');
+
+      // Unsubscribe this interceptor so it doesn't catch future events
+      // (the extension's own handler is now registered)
+      unsubscribe(interceptorSource, topic);
+
+      // Re-publish the event so the extension's newly-registered handler picks it up
+      DEBUG && console.log(`[ext:lazy-interceptor] Editor loaded, re-publishing ${topic}`);
+      publish(interceptorSource, scopes.GLOBAL, topic, msg);
+    });
+  }
+
+  DEBUG && console.log('[ext:lazy-interceptor] Registered editor event interceptors');
 }
 
 /**
@@ -1166,6 +1202,9 @@ export async function loadExtensions(): Promise<number> {
     // Register lazy extension commands from manifests (after cmd is ready)
     registerLazyExtensionCommands();
 
+    // Register event interceptors for lazy extensions (e.g. editor:open)
+    registerLazyEventInterceptors();
+
     // Load remaining consolidated extensions — skip declarative-only and lazy ones
     const otherConsolidatedIds = consolidatedIds.filter(id =>
       id !== 'cmd' && !isDeclarativeOnly(id) && EAGER_EXTENSION_IDS.has(id)
@@ -1203,6 +1242,9 @@ export async function loadExtensions(): Promise<number> {
 
     // Register lazy extension commands
     registerLazyExtensionCommands();
+
+    // Register event interceptors for lazy extensions (e.g. editor:open)
+    registerLazyEventInterceptors();
   }
 
   // Load external built-in extensions (like 'example') as separate windows
