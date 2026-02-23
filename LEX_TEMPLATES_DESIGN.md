@@ -18,15 +18,58 @@
 
 ### Lex Extension Architecture
 
-The lex extension lives in `extensions/lex/` and provides a "studio" interface for working with AT Protocol lexicon schemas. Based on the codebase structure:
+The lex extension lives in `extensions/lex/` and is a **fully declarative extension** (`"background": false` in manifest). No background.js — all logic runs in the UI pages directly. Files:
 
-- **`manifest.json`** -- Extension manifest declaring the lex extension's capabilities, pages, and settings within Peek's extension system.
-- **`chain-form.js`** -- The core form generation component. Handles dynamic form rendering from lexicon schema definitions. "Chain" likely refers to the chained/nested nature of lexicon definitions where objects contain refs to other definitions.
-- **Background/home scripts** -- Handle lexicon loading, parsing, and data management.
+- **`manifest.json`** -- Declares two commands: "lexicon studio" (opens workspace window) and "new" (also opens studio). Both open `peek://lex/home.html` as a workspace window with `webSecurity: false` (needed for cross-origin lexicon fetches).
+- **`home.js`** -- The main studio UI. Handles OAuth login, PDS browsing (collections, records), lexicon exploration, record creation/deletion, and the "Recent Lexicons" sidebar. Imports from `lexicon-ui.js` and `atproto.js`.
+- **`chain-form.js`** -- A compact popup form for cmd palette chaining. Opened by cmd panel's `openChainPopup()` as a modal child window. Receives an NSID via pubsub, resolves the schema, generates a form, and creates the record directly via XRPC. The "chain" refers to cmd palette chaining, not nested definitions.
+- **`lexicon-ui.js`** -- The core form generation engine. Contains: lexicon schema resolution (layered: memory cache → persisted settings → GitHub raw URLs → lexicon.store API → domain-based resolution), dynamic form generation from schemas, form data collection, rich text facet detection, and raw JSON editor fallback.
+- **`atproto.js`** -- AT Protocol client: OAuth login, XRPC calls, blob upload, record CRUD, actor search.
+- **`home.css`** -- Studio UI styling.
 
-### Current Form Generation
+### Current Form Generation (lexicon-ui.js)
 
-The current system takes a lexicon schema definition and generates an editor form automatically. This is a "raw" editor -- it maps lexicon field types directly to basic HTML form inputs without any domain-specific customization. For example, a `datetime` field gets a plain text input rather than a date picker, and a `ref` to a user DID gets a text input rather than a contact selector.
+The `generateForm(nsid, schema, lexicon, options)` function takes a lexicon record schema and produces a DOM `<form>` element. It:
+
+1. **Sorts fields**: required first, then alphabetical, `createdAt` always last
+2. **Renders each field** via `renderField()` → `renderInput()` which dispatches by type:
+   - **string**: text input, with format-specific variants: `datetime` → `datetime-local`, `uri` → url input, `did` → text with placeholder, `handle` → text, `language` → dropdown of 20 languages + custom BCP-47. Long text (maxLength > 500 or field name matches content/body/text/description) → textarea with character counter. `enum` → closed dropdown, `knownValues` → open dropdown with "Other..." option.
+   - **integer/number**: number input with min/max/step constraints
+   - **boolean**: checkbox
+   - **blob**: file upload with size info
+   - **ref**: resolves the `$ref` (local `#name` or external `nsid#name`), renders the resolved type inline. Recursive up to depth 4.
+   - **union**: type selector dropdown, then renders the selected variant's fields inline
+   - **array**: "Add item" button, renders each item's input, "Remove" buttons, item counter with optional maxLength
+   - **object**: renders nested properties recursively
+   - **unknown/bytes/fallback**: raw JSON textarea
+3. **Auto-fills** `createdAt` with current datetime
+4. **Data collection** via `collectFormData()` mirrors the rendering structure — walks the DOM collecting values by type, handles unions ($type tagging), arrays, nested objects, blob files, and datetime ISO conversion. Special-cases `app.bsky.feed.post` for rich text facet detection (URLs, @mentions, #hashtags with byte-level indexing).
+
+### Schema Resolution
+
+Lexicon schemas are resolved via a layered strategy in `resolveLexicon(nsid)`:
+1. In-memory `Map` cache
+2. Persisted cache in extension settings (`lexiconSchemas` key) — restored on first cache miss
+3. GitHub raw URLs for known prefixes: `app.bsky.*`, `com.atproto.*`, `chat.bsky.*`, `tools.ozone.*`, `fyi.frontpage.*`, `community.lexicon.*`
+4. `api.lexicon.store` REST API
+5. Domain-based resolution: NSID authority → domain → `/lexicons/{path}.json`
+
+Resolved schemas are persisted to extension settings with `fetchedAt` timestamps.
+
+### What the Studio Looks Like
+
+The home.js UI has multiple view states managed by navigation:
+- **Login/Identity panel** — OAuth login to a PDS, profile display
+- **My Lexicons** — browsable list of collections on the user's PDS with record counts
+- **Records list** — paginated record list within a collection, with delete capability
+- **Record detail** — raw JSON view of a single record
+- **Create Record** — either the generated form (via `generateForm()`) or raw JSON editor
+- **Explore** — browse known lexicon registries, search for lexicons
+- **Recent Lexicons** — sidebar section (always visible) showing recently interacted-with lexicons sorted by recency
+
+### Dynamic Command Registration
+
+The studio dynamically registers `new {FriendlyName}` commands in the cmd palette for every known collection NSID. This means users can type "new Post" or "new Follow" to get a chain-form popup for that lexicon type. Commands are rebuilt when collections change.
 
 ### AT Protocol Lexicon Format
 
@@ -425,6 +468,20 @@ This gives:
 - Published templates get the security and addressing benefits of Web Tiles
 - The fiddle UI can work at any layer
 
+### Building on lexicon-ui.js (Key Insight)
+
+The existing `renderInput()` dispatch in `lexicon-ui.js` is already a primitive widget system — it maps schema types to DOM elements. The template system should **extend this, not replace it**:
+
+1. **Edit templates** are essentially a configuration layer over `renderInput()`. Instead of the hardcoded type→input mapping, an edit template specifies which widget to use per field, plus layout. The auto-generated default becomes: "for each field, pick the widget that `renderInput()` would have picked, arrange vertically."
+
+2. **The `generateForm()` function already handles**: field sorting, required markers, descriptions, labels, auto-fill, recursive depth limits. Templates should be able to override these defaults per-field while inheriting the rest.
+
+3. **`collectFormData()` already handles**: type coercion, union $type tagging, nested objects, arrays, blob files, datetime normalization, facet detection. New widgets need to implement the same `getValue()` contract so the collection logic works unchanged.
+
+4. **Schema resolution is already solved**: `resolveLexicon()` with its layered cache handles cross-reference resolution. The template system gets this for free.
+
+The practical path: add a `templateOverrides` parameter to `generateForm()` that lets fields be remapped to different widgets, reordered, grouped into sections, or hidden. This preserves the existing auto-generation as the default while allowing progressive customization.
+
 ### MASL Evaluation Summary
 
 MASL (Metadata for Arbitrary Structures and Links) is specifically a **metadata and manifest format**, not a template definition language. It describes resources (files, blobs) with their CIDs, sizes, and MIME types. It is the manifest format for Web Tiles, not the template language itself.
@@ -523,43 +580,48 @@ app.peek.lex.templateSet (the lexicon for template sets)
 
 ### Field Type to Widget Mapping
 
-The widget system maps lexicon field types and formats to appropriate UI widgets. Each widget handles both display (detail view) and input (edit view).
+The widget system maps lexicon field types and formats to appropriate UI widgets. The "Current" column shows what `lexicon-ui.js` does today; "Template upgrade" shows what a template could specify instead.
 
-| Lexicon Type | Format/Constraint | Default Widget | Alternative Widgets |
+| Lexicon Type | Format/Constraint | Current (lexicon-ui.js) | Template Upgrade |
 |---|---|---|---|
-| `string` | (none) | `text` | `textarea`, `richtext`, `select` |
-| `string` | `maxLength > 256` | `textarea` | `richtext` |
-| `string` | `datetime` | `datetime` | `date`, `time`, `daterange` |
-| `string` | `uri` | `uri-input` | `text` |
-| `string` | `at-uri` | `at-uri-picker` | `text` |
-| `string` | `did` | `did-picker` | `handle-picker`, `text` |
-| `string` | `handle` | `handle-picker` | `text` |
-| `string` | `language` | `language-select` | `text` |
-| `string` | `enum` values | `select` | `radio` |
-| `integer` | (none) | `number` | `slider`, `rating` |
-| `integer` | `min`/`max` defined | `slider` | `number` |
-| `boolean` | (none) | `toggle` | `checkbox` |
-| `number` | (none) | `number` | `slider` |
-| `blob` | (none) | `blob-upload` | `image-upload` |
-| `bytes` | (none) | `blob-upload` | `text` (base64) |
-| `array` | items: string | `tag-picker` | `multiselect`, `text-list` |
-| `array` | items: ref | `ref-list` | `inline-editor` |
-| `ref` | (none) | `ref-picker` | `inline-editor` |
-| `union` | (none) | `union-selector` | (auto from variants) |
-| `object` | (none) | `nested-form` | `json-editor` |
+| `string` | (none) | `<input type="text">` | `richtext`, `select`, `code` |
+| `string` | long text (>500 chars or name matches content/body/text) | `<textarea>` with char counter | `richtext` with markdown toolbar |
+| `string` | `const` | `<input type="hidden">` | (keep hidden) |
+| `string` | `enum` | closed `<select>` dropdown | `radio` buttons, pill selector |
+| `string` | `knownValues` | open `<select>` + "Other..." text input | same + autocomplete |
+| `string` | `datetime` | `<input type="datetime-local" step="1">` | date picker, daterange, relative |
+| `string` | `uri` | `<input type="url">` | link preview, embed picker |
+| `string` | `at-uri` | `<input type="text">` placeholder | record picker with search |
+| `string` | `did` | `<input type="text">` placeholder | `did-picker` with avatar/search |
+| `string` | `handle` | `<input type="text">` placeholder | `handle-picker` with search |
+| `string` | `language` | 20-language `<select>` + custom BCP-47 | same (already good) |
+| `string` | `cid`, `nsid`, `tid`, `record-key` | `<input type="text">` | (keep as-is, niche types) |
+| `integer`/`number` | (none) | `<input type="number">` with min/max/step | `slider`, `rating` |
+| `boolean` | (none) | `<input type="checkbox">` | `toggle` switch |
+| `blob` | (none) | `<input type="file">` with size info | drag-drop with preview, image crop |
+| `bytes` | (none) | JSON textarea fallback | hex editor, base64 |
+| `array` | any items | "Add item" button + per-item inputs + "Remove" + counter | `tag-picker`, `multiselect`, sortable list |
+| `ref` | (none) | resolves and renders inline (recursive to depth 4) | `ref-picker` with search, inline collapse |
+| `union` | (none) | type `<select>` + renders selected variant inline | tabbed variants, visual type selector |
+| `object` | (none) | renders nested properties recursively | collapsible sections, tabs |
+| unknown/fallback | (none) | JSON `<textarea>` | `json-editor` with syntax highlighting |
 
 ### Widget Interface
 
-Each widget should implement a standard interface:
+Each widget should implement a standard interface compatible with `collectFormData()`:
 
 ```
 Widget Contract:
   - render(value, schema, options) -> DOM element
-  - getValue() -> field value
+  - getValue() -> field value  // must match what collectFieldValue() expects
   - validate(value, schema) -> { valid: boolean, errors: string[] }
   - onChange(callback) -> void
   - setReadOnly(boolean) -> void
 ```
+
+**Compatibility note**: The existing `collectFormData()` collects values by querying DOM elements (`input`, `textarea`, `select`) by name attribute. New widgets MUST either:
+- Use standard form elements with `name` attributes (simplest — works with existing collection)
+- OR register a custom collector in a widget registry that `collectFormData()` consults
 
 ### Custom Widgets
 
@@ -679,15 +741,17 @@ The following widgets should ship with the studio:
 
 ### Phase 1: Foundation (Edit Templates Only)
 
-**Goal:** Replace the default generated form with a configurable one.
+**Goal:** Make the existing form generation configurable without breaking it.
 
-- Define the `fieldDef` and `editTemplate` JSON schema
-- Build the widget registry with 10 core widgets: `text`, `textarea`, `number`, `toggle`, `select`, `date`, `datetime`, `did-picker`, `blob-upload`, `json-editor`
-- Implement auto-generation of an `editTemplate` from a lexicon schema (replacing current chain-form behavior with a configurable equivalent)
-- Add a "Customize Form" button that opens a simple field editor (reorder fields, change widgets, set labels)
-- Store custom edit templates in extension settings (local only)
+- Add a `templateOverrides` parameter to `generateForm()` in `lexicon-ui.js` — an optional JSON object that can override widget type, label, placeholder, hidden, readOnly, order, and width per field path
+- Build a widget registry that `renderInput()` consults before falling back to its hardcoded type dispatch. Initially register the existing renderers as named widgets (text, textarea, number, checkbox, select, datetime-local, file, json-fallback)
+- Add 3-4 new widgets that are clear upgrades: `toggle` (replaces checkbox for booleans), `did-picker` (search by handle, show avatar — replaces plain text input for DIDs), `richtext` (markdown toolbar — replaces plain textarea for long text)
+- Auto-generate a default `editTemplate` JSON from any lexicon schema (captures what `generateForm()` would do, as serializable JSON)
+- Add a "Customize Form" button in the studio's Create Record view that opens a simple field editor (reorder fields, change widgets, set labels)
+- Store custom edit templates in extension settings keyed by NSID
+- `chain-form.js` also reads templates via the same path — so cmd palette "new" commands get customized forms too
 
-**Validates:** Widget system works, field mapping is correct, the customization UX is usable.
+**Validates:** Widget registry works, existing forms don't break, customization UX is usable, templates serialize correctly.
 
 ### Phase 2: Fiddle UI (Two-Pane Start)
 
