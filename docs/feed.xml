@@ -4,7 +4,7 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Mon, 23 Feb 2026 14:11:25 GMT</lastBuildDate>
+    <lastBuildDate>Mon, 23 Feb 2026 19:59:56 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
@@ -35,9 +35,15 @@ Desktop - Editor
 - Add clickable links extension for CodeMirror (5660 (https://tangled.org/burrito.space/peek/commit/56600693))
 - Remove highlightSelectionMatches to stop highlighting matching text on other lines (ef48 (https://tangled.org/burrito.space/peek/commit/ef48d325))
 
+Desktop - Command Palette
+- Fix Tab/Enter semantics — Tab fills inline suggestion text, Enter executes with correct item identity (ced4 (https://tangled.org/burrito.space/peek/commit/ced4c145))
+- Fix editor:open lazy-load interceptor so edit command opens editor on first use (0d39 (https://tangled.org/burrito.space/peek/commit/0d396ba8))
+- Fix cmd palette blink on hotkey — skip non-focusable windows in did-resign-active handler (0d39 (https://tangled.org/burrito.space/peek/commit/0d396ba8))
+
 Desktop - Windows
 - Add maximize window and fullscreen toggle commands (4ce0 (https://tangled.org/burrito.space/peek/commit/4ce0a233))
 - Fix external URLs with no explicit position causing NaN coordinates (1f7f (https://tangled.org/burrito.space/peek/commit/1f7f24d5))
+- Fix external URL opening from other apps — move single-instance lock before app.whenReady (efa0 (https://tangled.org/burrito.space/peek/commit/efa0bad6))
 
 Desktop - Page View
 - Show navbar with loading spinner, tone down and theme the loading glow (fc63 (https://tangled.org/burrito.space/peek/commit/fc63631e))
