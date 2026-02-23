@@ -67,6 +67,20 @@ const commands = [
     params: [{ type: 'item', itemType: 'text' }],
 
     async execute(ctx) {
+      // If a specific item was selected from autocomplete, use it directly
+      // (avoids re-searching by text which could match the wrong item)
+      if (ctx.selectedItem) {
+        const note = ctx.selectedItem;
+        return {
+          success: true,
+          output: {
+            data: note,
+            mimeType: 'item',
+            title: getNoteTitle(note)
+          }
+        };
+      }
+
       const query = ctx.search || '';
 
       // Search for matching notes

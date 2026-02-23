@@ -828,10 +828,10 @@ function handleSpecialKey(e) {
     return;
   }
 
-  // Tab key - in param mode, accept top suggestion
+  // Tab key - in param mode, fill suggestion text (do NOT execute)
   if (e.key === 'Tab' && state.paramMode && state.paramSuggestions.length > 0) {
     const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
-    acceptParamSuggestion(idx);
+    fillParamSuggestion(idx);
     return;
   }
 
@@ -1674,7 +1674,7 @@ function cancelExecution() {
 /**
  * Executes a command
  */
-async function execute(name, typed) {
+async function execute(name, typed, extra = {}) {
   log('cmd:panel', 'execute() called with:', name, typed);
   if (!state.commands[name]) {
     log.error('cmd:panel', 'Command not found:', name);
@@ -1684,6 +1684,9 @@ async function execute(name, typed) {
 
   log('cmd:panel', 'executing cmd', name, typed);
   const context = buildExecutionContext(name, typed);
+  if (extra.selectedItem) {
+    context.selectedItem = extra.selectedItem;
+  }
   log('cmd:panel', 'execution context', context);
 
   // Delay showing execution state - only show if command takes > 150ms
@@ -2193,7 +2196,70 @@ async function updateParamSuggestions() {
 }
 
 /**
- * Accept a param suggestion at the given index
+ * Fill a param suggestion into the input without executing (Tab behavior).
+ * For item-type params, fills the title (human-readable) into the input.
+ * For other params, fills the suggestion value.
+ * Tab should ONLY complete/fill text — never execute.
+ * @param {number} index - Index in paramSuggestions to fill
+ */
+function fillParamSuggestion(index) {
+  if (index < 0 || index >= state.paramSuggestions.length) return;
+
+  const suggestion = state.paramSuggestions[index];
+  const commandInput = document.getElementById('command-input');
+  const commandName = state.paramCommand;
+
+  // For item-type params, use title (human-readable); otherwise use value
+  const cmd = state.commands[state.paramCommand];
+  const paramDef = cmd && cmd.params && cmd.params[0];
+  const fillText = (paramDef && paramDef.type === 'item' && suggestion.title)
+    ? suggestion.title
+    : suggestion.value;
+
+  // Get current text after command name
+  const typed = state.typed || '';
+  const lowerTyped = typed.toLowerCase();
+  const lowerName = commandName.toLowerCase();
+  let beforeParams = commandName + ' ';
+
+  // Get text after command name
+  let rest = '';
+  if (lowerTyped.startsWith(lowerName + ' ')) {
+    rest = typed.slice(commandName.length + 1);
+  }
+
+  // Split tokens, replace the last partial with suggestion text
+  const tokens = rest.split(/\s+/).filter(t => t.length > 0);
+  const endsWithSpace = rest.endsWith(' ') || rest === '';
+
+  if (!endsWithSpace && tokens.length > 0) {
+    // Replace the partial (last token) with suggestion text
+    tokens[tokens.length - 1] = fillText;
+  } else {
+    // No partial — append the suggestion
+    tokens.push(fillText);
+  }
+
+  // Rebuild input: command + completed tokens + trailing space
+  const newValue = beforeParams + tokens.join(' ') + ' ';
+  commandInput.value = newValue;
+  state.typed = newValue;
+
+  // Select this suggestion in the list for visual feedback
+  state.paramIndex = index;
+
+  // Cursor to end
+  setTimeout(() => {
+    commandInput.setSelectionRange(newValue.length, newValue.length);
+  }, 0);
+
+  // Refresh suggestions for the next token
+  updateParamSuggestions();
+}
+
+/**
+ * Accept a param suggestion at the given index — executes the command.
+ * Called by Enter key and click handlers.
  * @param {number} index - Index in paramSuggestions to accept
  */
 function acceptParamSuggestion(index) {
@@ -2202,16 +2268,16 @@ function acceptParamSuggestion(index) {
   const suggestion = state.paramSuggestions[index];
 
   // Item-type param for connector commands (those with produces):
-  // Route through execute() so the command's output handling works properly
-  // (enters output selection mode, routes to editor, supports chaining, etc.)
+  // Route through execute() with the selected item so the command can use it
+  // directly instead of re-searching by text (which could match the wrong item).
   const cmd = state.commands[state.paramCommand];
   const paramDef = cmd && cmd.params && cmd.params[0];
   if (paramDef && paramDef.type === 'item' && suggestion._item) {
     const commandName = state.paramCommand;
-    // Build typed string with the suggestion title as search text
     const typed = commandName + ' ' + (suggestion.title || suggestion.value || '');
+    const selectedItem = suggestion._item;
     exitParamMode();
-    execute(commandName, typed);
+    execute(commandName, typed, { selectedItem });
     return;
   }
 
