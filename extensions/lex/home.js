@@ -169,10 +169,13 @@ api.subscribe('lex:recent-lexicons-changed', (msg) => {
   if (Array.isArray(msg.nsids)) {
     for (const nsid of msg.nsids) {
       if (!state.recentLexicons.includes(nsid)) {
-        state.recentLexicons.push(nsid);
+        // Add new ones at front (most recent)
+        state.recentLexicons.unshift(nsid);
       }
     }
-    state.recentLexicons.sort();
+    if (state.recentLexicons.length > MAX_RECENT_LEXICONS) {
+      state.recentLexicons = state.recentLexicons.slice(0, MAX_RECENT_LEXICONS);
+    }
     saveRecentLexicons();
     renderRecentLexicons();
     knownRecentNsids = [...state.recentLexicons];
@@ -1384,6 +1387,9 @@ async function openCreateRecord(nsid, fromPanel) {
   // Switch to create-record panel
   switchPanel('create-record');
 
+  // Track as recently used
+  addRecentLexicon(nsid);
+
   // Fetch the lexicon schema
   try {
     const lexicon = await resolveLexicon(nsid);
@@ -1735,6 +1741,9 @@ async function selectPickerLexicon(nsid) {
   state.cpMode = 'form';
   state.cpSubmitting = false;
 
+  // Track as recently used
+  addRecentLexicon(nsid);
+
   pickerInput.style.display = 'none';
   pickerSelected.style.display = 'flex';
   const pickerFriendly = nsidToFriendlyName(nsid);
@@ -1954,6 +1963,9 @@ async function openRecordsList(nsid) {
   recordsPaginationEl.style.display = 'none';
 
   switchPanel('records');
+
+  // Track as recently used
+  addRecentLexicon(nsid);
 
   // Check cache first for instant display
   const cached = getCachedRecords(nsid);
@@ -2416,6 +2428,7 @@ function formatDateTime(isoStr) {
 // ============================================================================
 
 const RECENT_LEXICONS_KEY = 'recentLexicons';
+const MAX_RECENT_LEXICONS = 20;
 
 async function loadRecentLexicons() {
   try {
@@ -2433,10 +2446,19 @@ async function saveRecentLexicons() {
   } catch {}
 }
 
+/**
+ * Add or promote a lexicon to the front of the recent list (most recent first).
+ * Called when a lexicon is created, browsed, or viewed.
+ */
 function addRecentLexicon(nsid) {
-  if (state.recentLexicons.includes(nsid)) return;
-  state.recentLexicons.push(nsid);
-  state.recentLexicons.sort();
+  // Remove if already present (we will re-add at front)
+  state.recentLexicons = state.recentLexicons.filter(n => n !== nsid);
+  // Add to front (most recent first)
+  state.recentLexicons.unshift(nsid);
+  // Cap the list
+  if (state.recentLexicons.length > MAX_RECENT_LEXICONS) {
+    state.recentLexicons = state.recentLexicons.slice(0, MAX_RECENT_LEXICONS);
+  }
   saveRecentLexicons();
   renderRecentLexicons();
   onRecentLexiconsChanged();
@@ -2451,13 +2473,17 @@ function removeRecentLexicon(nsid) {
 
 function renderRecentLexicons() {
   if (!recentLexiconsEl) return;
+
   if (state.recentLexicons.length === 0) {
-    recentLexiconsEl.innerHTML = '';
+    recentLexiconsEl.innerHTML = `
+      <div class="recent-label">Recent Lexicons</div>
+      <div class="recent-empty">No recent lexicons yet</div>
+    `;
     return;
   }
 
   recentLexiconsEl.innerHTML = `
-    <div class="recent-label">Recent</div>
+    <div class="recent-label">Recent Lexicons</div>
     ${state.recentLexicons.map(nsid => {
       const friendly = nsidToFriendlyName(nsid);
       return `

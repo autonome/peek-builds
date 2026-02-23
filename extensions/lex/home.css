@@ -407,6 +407,13 @@ body {
   color: var(--base08);
 }
 
+.recent-empty {
+  font-size: 11px;
+  color: var(--base03);
+  padding: 6px 16px 4px;
+  font-style: italic;
+}
+
 .sidebar-footer {
   padding: 12px 16px;
   border-top: 1px solid var(--base02);

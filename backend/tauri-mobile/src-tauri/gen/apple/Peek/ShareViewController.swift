@@ -2146,8 +2146,8 @@ extension ShareViewController: UICollectionViewDelegate, UICollectionViewDataSou
 // MARK: - UITextFieldDelegate
 extension ShareViewController: UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        // Add tag when Return is pressed
-        addTagPressed()
+        // Add any pending tag text and dismiss the share UI
+        closePressed()
         return true
     }
 }
