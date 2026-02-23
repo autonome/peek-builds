@@ -1,0 +1,396 @@
+/* Import theme variables */
+@import url('peek://theme/variables.css');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--theme-font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+body {
+  background: var(--base00);
+  color: var(--base05);
+  min-height: 100vh;
+  padding: 16px;
+}
+
+/* Header bar */
+.header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--base05);
+}
+
+.add-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--base0D);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--base00);
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.add-action-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* Search */
+.search-container {
+  margin-bottom: 12px;
+}
+
+peek-input.search-input {
+  display: block;
+  width: 100%;
+  --peek-input-bg: var(--base01);
+  --peek-input-border: var(--base02);
+  --peek-input-height: 32px;
+}
+
+peek-input.search-input::part(input) {
+  color: var(--base05);
+  font-size: 13px;
+}
+
+/* Actions list */
+.actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Action card */
+.action-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-hover-bg: var(--base02);
+  --peek-card-border: transparent;
+  --peek-card-radius: 6px;
+  --peek-card-padding: 10px 12px;
+  --peek-card-gap: 4px;
+}
+
+.action-card[selected] {
+  --peek-card-bg: var(--base02);
+}
+
+.action-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.action-enabled-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.action-enabled-dot.enabled {
+  background: var(--base0B);
+}
+
+.action-enabled-dot.disabled {
+  background: var(--base03);
+}
+
+.action-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--base05);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-card-summary {
+  font-size: 11px;
+  color: var(--base04);
+  flex-shrink: 0;
+}
+
+.action-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-type-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--base02);
+  color: var(--base04);
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--base03);
+  font-size: 13px;
+}
+
+/* Presets section */
+.presets-section {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--base02);
+}
+
+.presets-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--base04);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.presets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preset-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-hover-bg: var(--base02);
+  --peek-card-border: 1px dashed var(--base02);
+  --peek-card-radius: 6px;
+  --peek-card-padding: 10px 12px;
+  --peek-card-gap: 4px;
+  opacity: 0.8;
+}
+
+.preset-card:hover {
+  opacity: 1;
+}
+
+/* Detail view */
+#detail-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--base0D);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.back-btn:hover {
+  background: var(--base01);
+}
+
+/* Form */
+.detail-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 600px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--base04);
+}
+
+.form-hint {
+  font-size: 11px;
+  color: var(--base03);
+}
+
+.form-section {
+  padding-top: 12px;
+  border-top: 1px solid var(--base02);
+}
+
+.form-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--base05);
+  margin-bottom: 12px;
+}
+
+/* Form inputs */
+.form-input {
+  --peek-input-bg: var(--base01);
+  --peek-input-border: var(--base02);
+  --peek-input-height: 32px;
+}
+
+.form-input::part(input) {
+  color: var(--base05);
+  font-size: 13px;
+}
+
+.form-select {
+  --peek-select-bg: var(--base01);
+  --peek-select-border: var(--base02);
+  --peek-select-height: 32px;
+}
+
+/* Trigger on radio group */
+.radio-group {
+  display: flex;
+  gap: 12px;
+}
+
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--base05);
+}
+
+.radio-option input[type="radio"] {
+  accent-color: var(--base0D);
+}
+
+/* Item type checkboxes */
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--base05);
+}
+
+.checkbox-option input[type="checkbox"] {
+  accent-color: var(--base0D);
+}
+
+/* Icon picker */
+.icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.icon-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  background: var(--base01);
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--base04);
+}
+
+.icon-option:hover {
+  background: var(--base02);
+  color: var(--base05);
+}
+
+.icon-option.selected {
+  border-color: var(--base0D);
+  background: var(--base0D);
+  color: var(--base00);
+}
+
+.icon-option svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Color picker */
+.color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-picker-row input[type="color"] {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  padding: 2px;
+  background: var(--base01);
+  cursor: pointer;
+}
+
+.color-preview {
+  font-size: 12px;
+  color: var(--base04);
+  font-family: monospace;
+}
+
+/* Form actions */
+.form-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 16px;
+  border-top: 1px solid var(--base02);
+}
+
+.form-actions-right {
+  display: flex;
+  gap: 8px;
+}
+
+/* Enabled switch row */
+.enabled-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}

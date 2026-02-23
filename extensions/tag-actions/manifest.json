@@ -1,0 +1,34 @@
+{
+  "id": "tag-actions",
+  "shortname": "tag-actions",
+  "name": "Tag Actions",
+  "description": "Define custom actions triggered by tags",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": true,
+  "settingsSchema": "./settings-schema.json",
+  "commands": [
+    {
+      "name": "open tag actions",
+      "description": "Open the tag actions manager",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/tag-actions/home.html",
+        "options": {
+          "role": "workspace",
+          "key": "tag-actions-home",
+          "width": 800,
+          "height": 600,
+          "title": "Tag Actions"
+        }
+      }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+Shift+T",
+      "command": "open tag actions",
+      "global": true
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "labels": {
+    "prefs": {
+      "autoExecute": "Auto-execute actions on tag add"
+    }
+  },
+  "prefs": {
+    "type": "object",
+    "properties": {
+      "autoExecute": {
+        "type": "boolean",
+        "description": "Automatically execute actions when tags are added (vs. manual trigger only)",
+        "default": true
+      }
+    }
+  },
+  "storageKeys": {
+    "PREFS": "prefs",
+    "ACTIONS": "actions"
+  },
+  "defaults": {
+    "prefs": {
+      "autoExecute": true
+    },
+    "actions": []
+  }
+}
