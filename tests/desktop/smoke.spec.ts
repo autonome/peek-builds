@@ -151,6 +151,14 @@ test.describe('Cmd Palette @desktop', () => {
     expect(addResult.success).toBe(true);
     const noteId = addResult.data?.id;
 
+    // Set up editor:open event capture BEFORE opening the cmd panel
+    await sharedBgWindow.evaluate(() => {
+      (window as any).__editorOpenCaptured = [];
+      (window as any).__editorOpenUnsub = (window as any).app.subscribe('editor:open', (data: any) => {
+        (window as any).__editorOpenCaptured.push(data);
+      }, (window as any).app.scopes.GLOBAL);
+    });
+
     // Open cmd panel
     const openResult = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
@@ -171,60 +179,46 @@ test.describe('Cmd Palette @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow, 10000);
 
-    // Type "edit" and press Tab to trigger param mode
-    await cmdWindow.fill('input', 'edit');
-    // Press ArrowDown first to show results, then Tab to complete
-    await cmdWindow.keyboard.press('ArrowDown');
-    await waitForCommandResults(cmdWindow, 1, 10000);
-    await cmdWindow.keyboard.press('Tab');
+    // Type "edit " (with space) to commit to the edit command and enter param mode
+    // (Tab would cycle to 'editor' since both "edit" and "editor" match)
+    await cmdWindow.fill('input', 'edit ');
 
-    // Verify param mode is active - the panel should show autocomplete suggestions
-    // The input should now be "edit " (with trailing space)
-    const paramModeActive = await cmdWindow.waitForFunction(
-      () => {
-        const state = (window as any)._cmdState;
-        return state && state.paramMode === true && state.paramCommand === 'edit';
-      },
-      undefined,
-      { timeout: 5000 }
-    );
-    expect(paramModeActive).toBeTruthy();
-
-    // Wait for param suggestions to populate (autocomplete list of notes)
+    // Wait for param mode and suggestions to populate
     await cmdWindow.waitForFunction(
       () => {
         const state = (window as any)._cmdState;
-        return state && state.paramSuggestions && state.paramSuggestions.length > 0;
+        return state && state.paramMode === true && state.paramCommand === 'edit'
+          && state.paramSuggestions && state.paramSuggestions.length > 0;
       },
       undefined,
-      { timeout: 5000 }
+      { timeout: 10000 }
     );
 
     // Verify results are visible with suggestion items
     await waitForResultsWithContent(cmdWindow, 5000);
 
-    // Listen for editor:open event before selecting the suggestion
-    const editorOpenPromise = sharedBgWindow.evaluate(async () => {
-      return new Promise<any>((resolve) => {
-        const unsub = (window as any).app.subscribe('editor:open', (data: any) => {
-          unsub();
-          resolve(data);
-        }, (window as any).app.scopes.GLOBAL);
-        // Timeout after 10s
-        setTimeout(() => {
-          unsub();
-          resolve(null);
-        }, 10000);
-      });
-    });
-
     // Press Enter to accept the first suggestion
-    // This should route through execute() and open the editor
+    // This executes the edit command, publishes editor:open, and closes the panel
     await cmdWindow.keyboard.press('Enter');
 
-    // Verify editor:open was published (the command executed properly)
-    const editorOpenData = await editorOpenPromise;
+    // Verify editor:open was published by polling the captured events
+    await sharedBgWindow.waitForFunction(() => {
+      return (window as any).__editorOpenCaptured && (window as any).__editorOpenCaptured.length > 0;
+    }, undefined, { timeout: 10000 });
+
+    const editorOpenData = await sharedBgWindow.evaluate(() => {
+      return (window as any).__editorOpenCaptured[0];
+    });
     expect(editorOpenData).toBeTruthy();
+
+    // Clean up event listener
+    await sharedBgWindow.evaluate(() => {
+      if ((window as any).__editorOpenUnsub) {
+        (window as any).__editorOpenUnsub();
+      }
+      delete (window as any).__editorOpenCaptured;
+      delete (window as any).__editorOpenUnsub;
+    });
 
     // Close cmd window if still open
     try {
@@ -3148,8 +3142,7 @@ test.describe('Edit Command Param Mode @desktop', () => {
   test('Tab in param mode fills text, does NOT execute', async () => {
     // Create a test note so param mode has suggestions
     const createResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.addItem({
-        type: 'text',
+      return await (window as any).app.datastore.addItem('text', {
         content: '# Tab Test Note\nThis is a note for testing Tab in param mode.'
       });
     });
@@ -3176,17 +3169,15 @@ test.describe('Edit Command Param Mode @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Type 'edit' and Tab to enter param mode
-    await cmdWindow.fill('input', 'edit');
-    await cmdWindow.keyboard.press('ArrowDown');
-    await waitForCommandResults(cmdWindow, 1, 10000);
-    await cmdWindow.keyboard.press('Tab');
+    // Type 'edit ' (with space) to commit to the edit command and enter param mode
+    // (Tab would cycle to 'editor' since both match 'edit')
+    await cmdWindow.fill('input', 'edit ');
 
-    // Verify param mode is active
-    const paramModeActive = await cmdWindow.evaluate(() => {
-      return (window as any)._cmdState.paramMode === true;
-    });
-    expect(paramModeActive).toBe(true);
+    // Wait for param mode to activate
+    await cmdWindow.waitForFunction(() => {
+      const s = (window as any)._cmdState;
+      return s.paramMode === true && s.paramCommand === 'edit';
+    }, { timeout: 5000 });
 
     // Wait for param suggestions to load (items query)
     await cmdWindow.waitForFunction(() => {
@@ -3223,8 +3214,7 @@ test.describe('Edit Command Param Mode @desktop', () => {
   test('Enter in param mode executes with correct itemId', async () => {
     // Create a test note
     const createResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.addItem({
-        type: 'text',
+      return await (window as any).app.datastore.addItem('text', {
         content: '# Enter Test Note\nThis is a note for testing Enter in param mode.'
       });
     });
@@ -3259,15 +3249,13 @@ test.describe('Edit Command Param Mode @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Type 'edit' and Tab to enter param mode
-    await cmdWindow.fill('input', 'edit');
-    await cmdWindow.keyboard.press('ArrowDown');
-    await waitForCommandResults(cmdWindow, 1, 10000);
-    await cmdWindow.keyboard.press('Tab');
+    // Type 'edit ' (with space) to commit to the edit command and enter param mode
+    await cmdWindow.fill('input', 'edit ');
 
-    // Wait for param suggestions to load
+    // Wait for param mode and suggestions to load
     await cmdWindow.waitForFunction(() => {
-      return (window as any)._cmdState.paramSuggestions.length > 0;
+      const s = (window as any)._cmdState;
+      return s.paramMode === true && s.paramCommand === 'edit' && s.paramSuggestions.length > 0;
     }, { timeout: 10000 });
 
     // Find the index of our test note in suggestions
