@@ -943,6 +943,58 @@ test.describe('External URL Opening @desktop', () => {
       }, externalWindow.id);
     }
   });
+
+  test('handleExternalUrl from main process opens URL correctly', async () => {
+    // This tests the REAL external URL path — calling handleExternalUrl from
+    // the main process, which is what happens when macOS sends an open-url event
+    // or when Peek receives a second-instance signal with a URL argument.
+    // The previous test simulates via pubsub from the renderer; this test
+    // exercises the full main-process -> pubsub -> renderer -> window-open flow.
+
+    await waitForExtensionsReady(sharedBgWindow, 15000);
+
+    // Get initial window count (include internal to see ALL windows)
+    const initialList = await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+    const initialCount = initialList.windows?.length || 0;
+
+    const testUrl = 'https://example.com/main-process-external-test';
+
+    // Call handleExternalUrl from the main process (simulates real OS open-url)
+    const mainResult = await sharedApp.evaluateMain!(({ app }) => {
+      const { handleExternalUrl } = (globalThis as any).__peek_test;
+      if (!handleExternalUrl) return { error: 'handleExternalUrl not found on __peek_test' };
+      handleExternalUrl('https://example.com/main-process-external-test', 'os');
+      return { success: true };
+    });
+
+    // Verify main process call succeeded
+    expect((mainResult as any).error).toBeUndefined();
+
+    // Wait for window with the specific URL to appear (deterministic — no count-based checks)
+    let externalWindow: any = null;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const list = await sharedBgWindow.evaluate(async () => {
+        return await (window as any).app.window.list();
+      });
+      externalWindow = list.windows?.find((w: any) =>
+        w.url && (w.url.includes('main-process-external-test') || w.url.includes(encodeURIComponent('main-process-external-test')))
+      );
+      if (externalWindow) break;
+      await sleep(100);
+    }
+
+    expect(externalWindow).toBeTruthy();
+
+    // Clean up
+    if (externalWindow) {
+      await sharedBgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, externalWindow.id);
+    }
+  });
 });
 
 // ============================================================================

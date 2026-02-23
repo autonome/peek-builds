@@ -2320,6 +2320,19 @@ export function registerWindowHandlers(): void {
       const CANVAS_MARGIN = 8;
       const CANVAS_TRIGGER_ZONE = 8;
       const CANVAS_NAVBAR_HEIGHT = 36; // Always reserve space for navbar (avoids resize jumps)
+
+      // When no explicit position is provided (e.g., external URLs, pubsub-triggered opens),
+      // compute a centered position first so canvas bounds adjustment has valid coordinates.
+      // Without this, undefined x/y produces NaN which breaks window positioning.
+      if (winOptions.x === undefined || winOptions.y === undefined) {
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenW, height: screenH } = primaryDisplay.workAreaSize;
+        const winW = winOptions.width as number || APP_DEF_WIDTH;
+        const winH = winOptions.height as number || APP_DEF_HEIGHT;
+        winOptions.x = Math.round((screenW - winW) / 2);
+        winOptions.y = Math.round((screenH - winH) / 2);
+      }
+
       // winOptions.x/y/width/height are currently the webview screen coordinates
       canvasWebviewBounds = {
         x: winOptions.x as number,

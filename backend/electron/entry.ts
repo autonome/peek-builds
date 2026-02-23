@@ -30,6 +30,7 @@ import {
   registerExternalUrlHandlers,
   registerSecondInstanceHandler,
   handleCliUrl,
+  handleExternalUrl,
   // Background window
   createBackgroundWindow,
   // App lifecycle
@@ -108,7 +109,7 @@ const ROOT_DIR = app.getAppPath();
 const DEBUG = !!process.env.DEBUG;
 
 // Expose test utilities on global for Playwright evaluateMain access
-(globalThis as any).__peek_test = { handleLocalShortcut };
+(globalThis as any).__peek_test = { handleLocalShortcut, handleExternalUrl };
 (globalThis as any).__peek_electron = { globalShortcut };
 
 // Parse --load-extension CLI arguments for dev workflow
