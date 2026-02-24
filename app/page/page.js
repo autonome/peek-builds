@@ -126,6 +126,7 @@ const resizeHandles = {
 };
 const modeIndicator = document.getElementById('mode-indicator');
 const widgetContainer = document.getElementById('widget-container');
+const centerColumn = document.getElementById('center-column');
 const pageInfoPanel = document.getElementById('page-info-panel');
 const pageInfoBody = document.getElementById('page-info-body');
 const entitiesPanel = document.getElementById('entities-panel');
@@ -165,14 +166,15 @@ navbar.addEventListener('reload', () => {
 });
 
 // --- Window bounds computation ---
-// Computes the BrowserWindow bounds from the webview screen position
+// Computes the BrowserWindow bounds from the webview screen position.
+// extraWidth is distributed symmetrically — flexbox centering keeps
+// the center column (and webview) at the same screen position.
+let extraWidth = 0;
 
 function computeWindowBounds(sb) {
-  // Window always includes space for navbar + trigger zone + margins.
-  // Navbar visibility is CSS-only — window size stays constant.
-  const winX = sb.x - MARGIN;
+  const winX = sb.x - MARGIN - extraWidth / 2;
   const winY = sb.y - TRIGGER_ZONE_HEIGHT - (NAVBAR_HEIGHT + NAVBAR_GAP);
-  const winW = sb.width + MARGIN * 2;
+  const winW = sb.width + MARGIN * 2 + extraWidth;
   const winH = sb.height + TRIGGER_ZONE_HEIGHT + MARGIN + (NAVBAR_HEIGHT + NAVBAR_GAP);
 
   return { x: Math.round(winX), y: Math.round(winY), width: Math.round(winW), height: Math.round(winH) };
@@ -196,16 +198,15 @@ function updateUrlParams() {
 }
 
 function updatePositions() {
-  // All positions are relative to the window origin (0, 0)
-  // The window layout from top to bottom (fixed — never changes):
-  //   [navbar area] (NAVBAR_HEIGHT + NAVBAR_GAP) — navbar shown/hidden via CSS
-  //   [trigger zone] (TRIGGER_ZONE_HEIGHT)
-  //   [webview] (screenBounds.height)
-  //   [bottom margin] (MARGIN)
-  // Left/right margins: MARGIN on each side
+  // Elements are positioned within the center column, which is auto-centered
+  // by flexbox. When the window is wider than needed (extraWidth > 0), the
+  // gutters absorb the extra space — no element repositioning needed.
 
   const navVisible = navbar.classList.contains('visible');
   const navOffset = NAVBAR_HEIGHT + NAVBAR_GAP;
+
+  // Set center column width so flexbox can center it
+  centerColumn.style.width = `${screenBounds.width + MARGIN * 2}px`;
 
   // Webview — positioned after navbar area + trigger zone (fixed position)
   const webviewLeft = MARGIN;
@@ -299,6 +300,20 @@ function setWindowBounds(bounds) {
   });
 }
 
+
+// --- Set extra window width (for panels, widgets, etc.) ---
+// Expands the window symmetrically. Flexbox keeps the center column in place.
+function setWindowPadding(width) {
+  width = Math.max(0, width);
+  if (width === extraWidth) return;
+  extraWidth = width;
+  if (pendingBoundsUpdate) {
+    cancelAnimationFrame(pendingBoundsUpdate);
+    pendingBoundsUpdate = null;
+  }
+  api.window.setBounds(computeWindowBounds(screenBounds));
+  DEBUG && console.log('[page] Window padding set to', width);
+}
 
 // Initial positioning
 updatePositions();

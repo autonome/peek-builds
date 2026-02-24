@@ -34,6 +34,24 @@
       background: transparent;
     }
 
+    /* Three-column flexbox layout: gutters absorb extraWidth, center column holds all content */
+    .page-layout {
+      display: flex;
+      height: 100vh;
+      width: 100%;
+    }
+
+    .left-gutter, .right-gutter {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .center-column {
+      flex: none;
+      position: relative;
+      height: 100%;
+    }
+
     /*
      * Webview — positioned by JS via updatePositions() relative to window origin.
      * The window is a tight-fitting BrowserWindow, not fullscreen.
@@ -561,45 +579,51 @@
   </style>
 </head>
 <body data-no-drag>
-  <!-- Mode indicator - shown when in group mode -->
-  <div id="mode-indicator" class="mode-indicator">
-    <span class="mode-label">page</span>
-    <span class="group-name"></span>
-  </div>
-  <div class="trigger-zone" id="trigger-zone"></div>
-  <script type="module">
-    import 'peek://app/components/peek-navbar.js';
-  </script>
-  <peek-navbar id="navbar"></peek-navbar>
-  <webview id="content" allowpopups></webview>
-  <div class="drag-overlay" id="drag-overlay"></div>
-  <div class="resize-handle" id="resize-se" data-dir="se"></div>
-  <div class="resize-handle" id="resize-sw" data-dir="sw"></div>
-  <div class="resize-handle" id="resize-ne" data-dir="ne"></div>
-  <div class="resize-handle" id="resize-nw" data-dir="nw"></div>
-  <div class="resize-handle" id="resize-nav-ne" data-dir="ne"></div>
-  <div class="resize-handle" id="resize-nav-nw" data-dir="nw"></div>
-  <!-- Page Info Panel (top-left, shown with navbar) -->
-  <div class="page-info-panel" id="page-info-panel">
-    <div class="panel-header">
-      <span class="panel-title">Page Info</span>
-    </div>
-    <div class="panel-body" id="page-info-body">
-      <div class="info-empty">Loading page info...</div>
-    </div>
-  </div>
+  <div class="page-layout">
+    <div class="left-gutter"></div>
+    <div class="center-column" id="center-column">
+      <!-- Mode indicator - shown when in group mode -->
+      <div id="mode-indicator" class="mode-indicator">
+        <span class="mode-label">page</span>
+        <span class="group-name"></span>
+      </div>
+      <div class="trigger-zone" id="trigger-zone"></div>
+      <script type="module">
+        import 'peek://app/components/peek-navbar.js';
+      </script>
+      <peek-navbar id="navbar"></peek-navbar>
+      <webview id="content" allowpopups></webview>
+      <div class="drag-overlay" id="drag-overlay"></div>
+      <div class="resize-handle" id="resize-se" data-dir="se"></div>
+      <div class="resize-handle" id="resize-sw" data-dir="sw"></div>
+      <div class="resize-handle" id="resize-ne" data-dir="ne"></div>
+      <div class="resize-handle" id="resize-nw" data-dir="nw"></div>
+      <div class="resize-handle" id="resize-nav-ne" data-dir="ne"></div>
+      <div class="resize-handle" id="resize-nav-nw" data-dir="nw"></div>
+      <!-- Page Info Panel (top-left, shown with navbar) -->
+      <div class="page-info-panel" id="page-info-panel">
+        <div class="panel-header">
+          <span class="panel-title">Page Info</span>
+        </div>
+        <div class="panel-body" id="page-info-body">
+          <div class="info-empty">Loading page info...</div>
+        </div>
+      </div>
 
-  <!-- Entities Panel (right side, shown with navbar) -->
-  <div class="entities-panel" id="entities-panel">
-    <div class="panel-header">
-      <span class="panel-title">Entities</span>
-    </div>
-    <div class="panel-body" id="entities-body">
-      <div class="entity-empty">No entities detected yet</div>
-    </div>
-  </div>
+      <!-- Entities Panel (right side, shown with navbar) -->
+      <div class="entities-panel" id="entities-panel">
+        <div class="panel-header">
+          <span class="panel-title">Entities</span>
+        </div>
+        <div class="panel-body" id="entities-body">
+          <div class="entity-empty">No entities detected yet</div>
+        </div>
+      </div>
 
-  <div class="widget-container" id="widget-container"></div>
+      <div class="widget-container" id="widget-container"></div>
+    </div>
+    <div class="right-gutter"></div>
+  </div>
   <script type="module" src="page.js"></script>
 </body>
 </html>
