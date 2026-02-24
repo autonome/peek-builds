@@ -8,6 +8,13 @@
  * - Viewing a group shows all addresses with that tag
  */
 
+import {
+  updateSelection as _updateSelection, activateSelected as _activateSelected,
+  createKeydownHandler,
+  setupToolbar as _setupToolbar,
+  createViewPrefs
+} from 'peek://app/lib/grid-nav.js';
+
 const api = window.app;
 const debug = api.debug;
 
@@ -45,11 +52,11 @@ const UNTAGGED_GROUP = {
 };
 
 // View preferences (persisted)
-let viewPrefs = {
+const { prefs: viewPrefs, load: loadViewPrefs, save: saveViewPrefs } = createViewPrefs('viewPrefs', {
   viewMode: 'columns',
   sortBy: 'name',
   sortDirection: 'asc'
-};
+});
 
 const SORT_OPTIONS_GROUPS = [
   { value: 'name', label: 'Name' },
@@ -162,180 +169,53 @@ const handleEscape = () => {
 };
 
 /**
- * Get all cards in the current view
+ * Wrappers around shared grid-nav functions, bound to local state
  */
-const getCards = () => {
-  return Array.from(document.querySelectorAll('.cards peek-card'));
-};
-
-/**
- * Update visual selection on cards
- */
-const updateSelection = () => {
-  const cards = getCards();
-  cards.forEach((card, i) => {
-    card.selected = (i === state.selectedIndex);
-  });
-
-  // Focus and scroll selected card into view
-  const selected = cards[state.selectedIndex];
-  if (selected) {
-    selected.focus();
-    selected.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
-};
-
-/**
- * Activate the currently selected card
- */
-const activateSelected = () => {
-  const cards = getCards();
-  const selected = cards[state.selectedIndex];
-  if (selected) {
-    selected.click();
-  }
-};
-
-/**
- * Get number of columns in the grid based on card positions
- */
-const getGridColumns = (cards) => {
-  if (cards.length < 2) return 1;
-  const firstTop = cards[0].getBoundingClientRect().top;
-  for (let i = 1; i < cards.length; i++) {
-    if (cards[i].getBoundingClientRect().top !== firstTop) {
-      return i;
-    }
-  }
-  return cards.length; // All on one row
-};
+const updateSelection = () => _updateSelection(state);
+const activateSelected = () => _activateSelected(state);
 
 /**
  * Handle keyboard navigation (vim-style hjkl for grid movement)
+ * Uses shared grid-nav with groups-specific hooks for search focus and new-group input bypass
  */
-const handleKeydown = (e) => {
-  const searchInput = document.querySelector('peek-input.search-input');
-  // Check if search input or its internal input is focused
-  const isSearchFocused = document.activeElement === searchInput ||
-    (searchInput && searchInput.shadowRoot?.activeElement);
+const handleKeydown = createKeydownHandler(state, {
+  shouldIgnore: (e) => {
+    // Check if the create-group input is focused — if so, let all keys through
+    const newGroupInput = document.querySelector('peek-input.new-group-input');
+    const isNewGroupFocused = document.activeElement === newGroupInput ||
+      (newGroupInput && newGroupInput.shadowRoot?.activeElement);
+    if (isNewGroupFocused) return true;
 
-  // Check if the create-group input is focused — if so, let all keys through
-  const newGroupInput = document.querySelector('peek-input.new-group-input');
-  const isNewGroupFocused = document.activeElement === newGroupInput ||
-    (newGroupInput && newGroupInput.shadowRoot?.activeElement);
-  if (isNewGroupFocused) return;
+    const searchInput = document.querySelector('peek-input.search-input');
+    const isSearchFocused = document.activeElement === searchInput ||
+      (searchInput && searchInput.shadowRoot?.activeElement);
 
-  // Focus search with / or Cmd+F
-  if ((e.key === '/' || (e.key === 'f' && (e.metaKey || e.ctrlKey))) && !isSearchFocused) {
-    e.preventDefault();
-    searchInput.focus();
-    return;
-  }
-
-  // Don't intercept when typing in search (except arrow keys and enter)
-  if (isSearchFocused && !['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
-    return;
-  }
-
-  const cards = getCards();
-  if (cards.length === 0) return;
-
-  const cols = getGridColumns(cards);
-
-  switch (e.key) {
-    case 'j':
-    case 'ArrowDown':
+    // Focus search with / or Cmd+F
+    if ((e.key === '/' || (e.key === 'f' && (e.metaKey || e.ctrlKey))) && !isSearchFocused) {
       e.preventDefault();
-      if (state.selectedIndex + cols < cards.length) {
-        state.selectedIndex += cols;
-        updateSelection();
-      }
-      break;
-    case 'k':
-    case 'ArrowUp':
-      e.preventDefault();
-      if (state.selectedIndex - cols >= 0) {
-        state.selectedIndex -= cols;
-        updateSelection();
-      }
-      break;
-    case 'h':
-    case 'ArrowLeft':
-      if (isSearchFocused) return; // Let cursor move in search
-      e.preventDefault();
-      if (state.selectedIndex > 0) {
-        state.selectedIndex--;
-        updateSelection();
-      }
-      break;
-    case 'l':
-    case 'ArrowRight':
-      if (isSearchFocused) return; // Let cursor move in search
-      e.preventDefault();
-      if (state.selectedIndex < cards.length - 1) {
-        state.selectedIndex++;
-        updateSelection();
-      }
-      break;
-    case 'Enter':
-      e.preventDefault();
-      activateSelected();
-      break;
-  }
-};
-
-/**
- * Load persisted view preferences
- */
-const loadViewPrefs = async () => {
-  try {
-    const stored = localStorage.getItem('viewPrefs');
-    if (stored) {
-      viewPrefs = { ...viewPrefs, ...JSON.parse(stored) };
-      debug && console.log('[groups] Loaded viewPrefs:', viewPrefs);
+      searchInput.focus();
+      return true;
     }
-  } catch (err) {
-    debug && console.log('[groups] Failed to load viewPrefs:', err);
-  }
-};
 
-/**
- * Save view preferences
- */
-const saveViewPrefs = async () => {
-  try {
-    localStorage.setItem('viewPrefs', JSON.stringify(viewPrefs));
-  } catch (err) {
-    debug && console.log('[groups] Failed to save viewPrefs:', err);
+    return false;
+  },
+  isInputFocused: () => {
+    const searchInput = document.querySelector('peek-input.search-input');
+    return document.activeElement === searchInput ||
+      !!(searchInput && searchInput.shadowRoot?.activeElement);
   }
-};
+});
+
 
 /**
  * Set up grid toolbar events and state
  */
 const setupToolbar = () => {
-  const toolbar = document.querySelector('.grid-toolbar');
-  const container = document.querySelector('.cards');
-  if (!toolbar) return;
-
-  toolbar.sortOptions = SORT_OPTIONS_GROUPS;
-  toolbar.sortBy = viewPrefs.sortBy;
-  toolbar.sortDirection = viewPrefs.sortDirection;
-  toolbar.viewMode = viewPrefs.viewMode;
-  container.viewMode = viewPrefs.viewMode;
-
-  toolbar.addEventListener('sort-change', (e) => {
-    viewPrefs.sortBy = e.detail.sortBy;
-    viewPrefs.sortDirection = e.detail.sortDirection;
-    saveViewPrefs();
-    renderCurrentView();
-  });
-
-  toolbar.addEventListener('view-mode-change', (e) => {
-    viewPrefs.viewMode = e.detail.mode;
-    container.viewMode = e.detail.mode;
-    saveViewPrefs();
-    renderCurrentView();
+  _setupToolbar({
+    viewPrefs,
+    sortOptions: SORT_OPTIONS_GROUPS,
+    onSave: saveViewPrefs,
+    onRender: renderCurrentView
   });
 };
 
@@ -469,7 +349,7 @@ const init = async () => {
   api.escape.onEscape(handleEscape);
 
   // Load view preferences and set up toolbar
-  await loadViewPrefs();
+  loadViewPrefs();
   setupToolbar();
 
   // Load tags from datastore

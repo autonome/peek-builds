@@ -7,6 +7,13 @@
  *   #a #b foo — items tagged "a" AND "b" with text matching "foo"
  */
 
+import {
+  updateSelection as _updateSelection,
+  createKeydownHandler,
+  setupToolbar as _setupToolbar,
+  createViewPrefs
+} from 'peek://app/lib/grid-nav.js';
+
 const api = window.app;
 const debug = api.debug;
 
@@ -21,11 +28,11 @@ let state = {
 };
 
 // View preferences
-let viewPrefs = {
+const { prefs: viewPrefs, load: loadViewPrefs, save: saveViewPrefs } = createViewPrefs('search:viewPrefs', {
   viewMode: 'list',
   sortBy: 'recent',
   sortDirection: 'desc'
-};
+});
 
 const SORT_OPTIONS = [
   { value: 'name', label: 'Name' },
@@ -364,136 +371,20 @@ const createResultCard = (item) => {
 
 // ── Keyboard navigation ────────────────────────────────────────────────
 
-const getCards = () => {
-  return Array.from(document.querySelectorAll('.cards peek-card'));
-};
+const updateSelection = () => _updateSelection(state);
 
-const updateSelection = () => {
-  const cards = getCards();
-  cards.forEach((card, i) => {
-    card.selected = (i === state.selectedIndex);
-  });
-
-  const selected = cards[state.selectedIndex];
-  if (selected) {
-    selected.focus();
-    selected.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
-};
-
-const activateSelected = () => {
-  const cards = getCards();
-  const selected = cards[state.selectedIndex];
-  if (selected) {
-    selected.click();
-  }
-};
-
-const getGridColumns = (cards) => {
-  if (cards.length < 2) return 1;
-  const firstTop = cards[0].getBoundingClientRect().top;
-  for (let i = 1; i < cards.length; i++) {
-    if (cards[i].getBoundingClientRect().top !== firstTop) {
-      return i;
-    }
-  }
-  return cards.length;
-};
-
-const handleKeydown = (e) => {
-  const cards = getCards();
-  if (cards.length === 0) return;
-
-  const cols = getGridColumns(cards);
-
-  switch (e.key) {
-    case 'j':
-    case 'ArrowDown':
-      e.preventDefault();
-      if (state.selectedIndex + cols < cards.length) {
-        state.selectedIndex += cols;
-        updateSelection();
-      }
-      break;
-    case 'k':
-    case 'ArrowUp':
-      e.preventDefault();
-      if (state.selectedIndex - cols >= 0) {
-        state.selectedIndex -= cols;
-        updateSelection();
-      }
-      break;
-    case 'h':
-    case 'ArrowLeft':
-      e.preventDefault();
-      if (state.selectedIndex > 0) {
-        state.selectedIndex--;
-        updateSelection();
-      }
-      break;
-    case 'l':
-    case 'ArrowRight':
-      e.preventDefault();
-      if (state.selectedIndex < cards.length - 1) {
-        state.selectedIndex++;
-        updateSelection();
-      }
-      break;
-    case 'Enter':
-      e.preventDefault();
-      activateSelected();
-      break;
-    case 'Escape':
-      e.preventDefault();
-      window.close();
-      break;
-  }
-};
+const handleKeydown = createKeydownHandler(state, {
+  onEscape: () => window.close()
+});
 
 // ── Toolbar ────────────────────────────────────────────────────────────
 
-const loadViewPrefs = () => {
-  try {
-    const stored = localStorage.getItem('search:viewPrefs');
-    if (stored) {
-      viewPrefs = { ...viewPrefs, ...JSON.parse(stored) };
-    }
-  } catch (err) {
-    debug && console.log('[search] Failed to load viewPrefs:', err);
-  }
-};
-
-const saveViewPrefs = () => {
-  try {
-    localStorage.setItem('search:viewPrefs', JSON.stringify(viewPrefs));
-  } catch (err) {
-    debug && console.log('[search] Failed to save viewPrefs:', err);
-  }
-};
-
 const setupToolbar = () => {
-  const toolbar = document.querySelector('.grid-toolbar');
-  const container = document.querySelector('.cards');
-  if (!toolbar) return;
-
-  toolbar.sortOptions = SORT_OPTIONS;
-  toolbar.sortBy = viewPrefs.sortBy;
-  toolbar.sortDirection = viewPrefs.sortDirection;
-  toolbar.viewMode = viewPrefs.viewMode;
-  container.viewMode = viewPrefs.viewMode;
-
-  toolbar.addEventListener('sort-change', (e) => {
-    viewPrefs.sortBy = e.detail.sortBy;
-    viewPrefs.sortDirection = e.detail.sortDirection;
-    saveViewPrefs();
-    render();
-  });
-
-  toolbar.addEventListener('view-mode-change', (e) => {
-    viewPrefs.viewMode = e.detail.mode;
-    container.viewMode = e.detail.mode;
-    saveViewPrefs();
-    render();
+  _setupToolbar({
+    viewPrefs,
+    sortOptions: SORT_OPTIONS,
+    onSave: saveViewPrefs,
+    onRender: render
   });
 };
 
