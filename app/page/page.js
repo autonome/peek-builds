@@ -917,7 +917,7 @@ function updateState() {
 // generation and bails out.
 let navbarGeneration = 0;
 
-function show(opts) {
+async function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
   navbarGeneration++;
   if (hideTimer) {
@@ -938,11 +938,16 @@ function show(opts) {
     navbar.focusUrl();
   }
 
+  // Fade-to-invisible before expanding window to prevent compositor desync flash.
+  // Same technique as hide() — make content invisible so the stale pixel buffer
+  // during resize is transparent, then restore after setBounds completes.
+  centerColumn.style.opacity = '0';
   // Show page info and entities panels alongside navbar
   // Expand window to fit panel overhang on each side
   if (pageInfoPanel) pageInfoPanel.classList.add('visible');
   if (entitiesPanel) entitiesPanel.classList.add('visible');
-  setWindowPadding(PANEL_OVERHANG * 2);
+  await setWindowPadding(PANEL_OVERHANG * 2);
+  centerColumn.style.opacity = '1';
 }
 
 async function hide() {
@@ -954,12 +959,11 @@ async function hide() {
     hideTimer = null;
   }
   const gen = ++navbarGeneration;
-  // Shrink the window FIRST, before hiding any CSS elements.
-  // setBounds is async IPC — if we hide panels (CSS) before the window shrinks,
-  // there's a frame where panels are gone but the window is still wide, and
-  // flexbox re-centers the content in the oversized window, causing a visible jump.
-  // By awaiting setBounds first, the window shrinks while panels are still visible
-  // (they get clipped by the window edge), then we clean up CSS classes.
+  // Fade-to-invisible before resizing to prevent compositor desync flash.
+  // The OS resizes the NSWindow before Chromium re-renders, causing a one-frame
+  // glitch where stale pixels are visible. By making content invisible first,
+  // the stale frame is transparent (invisible to the user).
+  centerColumn.style.opacity = '0';
   await setWindowPadding(0);
   // If show() was called while we were awaiting, abort — don't clobber the new state
   if (navbarGeneration !== gen) return;
@@ -968,6 +972,8 @@ async function hide() {
   if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
   if (entitiesPanel) entitiesPanel.classList.remove('visible');
   updatePositions();
+  // Restore visibility now that the window has been resized
+  centerColumn.style.opacity = '1';
   navbar.inputElement?.blur();
   showSource = null;
   DEBUG && console.log('[page] Navbar hidden');
