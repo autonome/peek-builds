@@ -126,6 +126,10 @@ const resizeHandles = {
 };
 const modeIndicator = document.getElementById('mode-indicator');
 const widgetContainer = document.getElementById('widget-container');
+const pageInfoPanel = document.getElementById('page-info-panel');
+const pageInfoBody = document.getElementById('page-info-body');
+const entitiesPanel = document.getElementById('entities-panel');
+const entitiesBody = document.getElementById('entities-body');
 
 console.log('[page] DOM elements initialized');
 
@@ -267,6 +271,18 @@ function updatePositions() {
     const widgetGap = 12;
     widgetContainer.style.left = `${webviewLeft + webviewWidth + widgetGap}px`;
     widgetContainer.style.top = `${webviewTop}px`;
+  }
+
+  // Page Info Panel — top-left, below navbar when visible
+  if (pageInfoPanel) {
+    pageInfoPanel.style.left = `${webviewLeft}px`;
+    pageInfoPanel.style.top = `${webviewTop + 8}px`;
+  }
+
+  // Entities Panel — right side, below navbar when visible
+  if (entitiesPanel) {
+    entitiesPanel.style.left = `${webviewLeft + webviewWidth - 280}px`;
+    entitiesPanel.style.top = `${webviewTop + 8}px`;
   }
 }
 
@@ -892,6 +908,10 @@ function show(opts) {
   if (opts?.focusUrl) {
     navbar.focusUrl();
   }
+
+  // Show page info and entities panels alongside navbar
+  if (pageInfoPanel) pageInfoPanel.classList.add('visible');
+  if (entitiesPanel) entitiesPanel.classList.add('visible');
 }
 
 function hide() {
@@ -903,6 +923,9 @@ function hide() {
     hideTimer = null;
   }
   navbar.classList.remove('visible');
+  // Hide page info and entities panels alongside navbar
+  if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
+  if (entitiesPanel) entitiesPanel.classList.remove('visible');
   // Window stays the same size (always includes navbar space).
   // Just update trigger zone and resize handle visibility.
   updatePositions();
@@ -911,9 +934,11 @@ function hide() {
   DEBUG && console.log('[page] Navbar hidden');
 }
 
-// Dismiss on click outside the navbar
+// Dismiss on click outside the navbar (also check panels)
 document.addEventListener('mousedown', (e) => {
-  if (navbar.classList.contains('visible') && !navbar.contains(e.target) && e.target !== triggerZone && !e.target.closest('.resize-handle')) {
+  if (navbar.classList.contains('visible') && !navbar.contains(e.target) && e.target !== triggerZone && !e.target.closest('.resize-handle')
+      && !(pageInfoPanel && pageInfoPanel.contains(e.target))
+      && !(entitiesPanel && entitiesPanel.contains(e.target))) {
     hide();
   }
 });
@@ -977,6 +1002,20 @@ navbar.addEventListener('mouseenter', () => {
 navbar.addEventListener('mouseleave', () => {
   if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
 });
+
+// Keep navbar visible when hovering page info or entities panels
+if (pageInfoPanel) {
+  pageInfoPanel.addEventListener('mouseenter', () => { cancelHide(); });
+  pageInfoPanel.addEventListener('mouseleave', () => {
+    if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
+  });
+}
+if (entitiesPanel) {
+  entitiesPanel.addEventListener('mouseenter', () => { cancelHide(); });
+  entitiesPanel.addEventListener('mouseleave', () => {
+    if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
+  });
+}
 
 // Cmd+L: show navbar with URL focus
 api.subscribe('page:show-navbar', (msg) => {
@@ -1541,5 +1580,354 @@ if (OPENER_SHIM_JS) {
   });
   DEBUG && console.log('[page] Opener shim will be injected (openerUrl:', openerUrl, ')');
 }
+
+// --- Page Info Panel: extract metadata from webview ---
+
+let lastPageInfoUrl = null;
+
+async function extractPageInfo() {
+  let currentUrl;
+  try {
+    currentUrl = webview.getURL();
+  } catch {
+    return;
+  }
+  if (!currentUrl || currentUrl === lastPageInfoUrl) return;
+  if (!currentUrl.startsWith('http://') && !currentUrl.startsWith('https://')) return;
+
+  lastPageInfoUrl = currentUrl;
+
+  try {
+    const info = await webview.executeJavaScript(`
+      (function() {
+        function getMeta(name) {
+          var el = document.querySelector('meta[property="' + name + '"], meta[name="' + name + '"]');
+          return el ? (el.getAttribute('content') || '').trim() : '';
+        }
+
+        return {
+          title: document.title || '',
+          hostname: window.location.hostname || '',
+          url: window.location.href || '',
+          description: getMeta('description') || getMeta('og:description') || '',
+          keywords: getMeta('keywords') || '',
+          ogTitle: getMeta('og:title') || '',
+          ogDescription: getMeta('og:description') || '',
+          ogImage: getMeta('og:image') || '',
+          ogSiteName: getMeta('og:site_name') || '',
+          ogType: getMeta('og:type') || '',
+          author: getMeta('author') || '',
+          generator: getMeta('generator') || '',
+          canonical: (function() {
+            var link = document.querySelector('link[rel="canonical"]');
+            return link ? link.href : '';
+          })(),
+          favicon: (function() {
+            var link = document.querySelector('link[rel="icon"], link[rel="shortcut icon"]');
+            return link ? link.href : '';
+          })()
+        };
+      })();
+    `);
+
+    renderPageInfo(info);
+  } catch (err) {
+    console.warn('[page] Failed to extract page info:', err.message);
+    if (pageInfoBody) {
+      pageInfoBody.innerHTML = '<div class="info-empty">Could not load page info</div>';
+    }
+  }
+}
+
+function renderPageInfo(info) {
+  if (!pageInfoBody) return;
+
+  const rows = [];
+
+  if (info.title) {
+    rows.push(makeInfoRow('Title', info.title));
+  }
+
+  if (info.hostname) {
+    rows.push(makeInfoRow('Domain', info.hostname));
+  }
+
+  if (info.ogSiteName && info.ogSiteName !== info.hostname) {
+    rows.push(makeInfoRow('Site', info.ogSiteName));
+  }
+
+  const desc = info.ogDescription || info.description;
+  if (desc) {
+    rows.push(makeInfoRow('Description', desc, true));
+  }
+
+  if (info.keywords) {
+    rows.push(makeInfoRow('Keywords', info.keywords, true));
+  }
+
+  if (info.author) {
+    rows.push(makeInfoRow('Author', info.author));
+  }
+
+  if (info.ogType) {
+    rows.push(makeInfoRow('Type', info.ogType));
+  }
+
+  if (info.ogImage) {
+    const imgRow = document.createElement('div');
+    imgRow.className = 'info-row';
+    const label = document.createElement('div');
+    label.className = 'info-label';
+    label.textContent = 'OG Image';
+    imgRow.appendChild(label);
+    const img = document.createElement('img');
+    img.className = 'og-image-preview';
+    img.src = info.ogImage;
+    img.alt = 'Open Graph image';
+    img.onerror = () => { imgRow.remove(); };
+    imgRow.appendChild(img);
+    rows.push(imgRow);
+  }
+
+  if (info.generator) {
+    rows.push(makeInfoRow('Generator', info.generator));
+  }
+
+  if (rows.length === 0) {
+    pageInfoBody.innerHTML = '<div class="info-empty">No metadata available</div>';
+    return;
+  }
+
+  pageInfoBody.innerHTML = '';
+  for (const row of rows) {
+    pageInfoBody.appendChild(row);
+  }
+}
+
+function makeInfoRow(labelText, valueText, truncated = false) {
+  const row = document.createElement('div');
+  row.className = 'info-row';
+
+  const label = document.createElement('div');
+  label.className = 'info-label';
+  label.textContent = labelText;
+  row.appendChild(label);
+
+  const value = document.createElement('div');
+  value.className = 'info-value' + (truncated ? ' truncated' : '');
+  value.textContent = valueText;
+  row.appendChild(value);
+
+  return row;
+}
+
+// Extract page info after page finishes loading
+webview.addEventListener('did-finish-load', () => {
+  // Small delay to ensure meta tags are populated (some SPAs add them after load)
+  setTimeout(extractPageInfo, 500);
+});
+
+// Re-extract on in-page navigation
+webview.addEventListener('did-navigate', () => {
+  lastPageInfoUrl = null; // Reset to allow re-extraction
+  setTimeout(extractPageInfo, 500);
+});
+
+// --- Entities Panel: show detected entities ---
+
+let currentPageEntities = [];
+
+function renderEntities(entities) {
+  if (!entitiesBody) return;
+
+  if (!entities || entities.length === 0) {
+    entitiesBody.innerHTML = '<div class="entity-empty">No entities detected</div>';
+    return;
+  }
+
+  // Group by type
+  const groups = {};
+  for (const entity of entities) {
+    const type = entity.type || entity.entityType || 'other';
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(entity);
+  }
+
+  // Display order for entity types
+  const typeOrder = ['person', 'organization', 'place', 'event', 'email', 'phone', 'product', 'date', 'tracking_number', 'link', 'other'];
+  const typeLabels = {
+    person: 'People',
+    organization: 'Organizations',
+    place: 'Places',
+    event: 'Events',
+    email: 'Emails',
+    phone: 'Phones',
+    product: 'Products',
+    date: 'Dates',
+    tracking_number: 'Tracking',
+    link: 'External Links',
+    other: 'Other',
+  };
+
+  const sortedTypes = Object.keys(groups).sort((a, b) => {
+    const ai = typeOrder.indexOf(a);
+    const bi = typeOrder.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+
+  entitiesBody.innerHTML = '';
+
+  for (const type of sortedTypes) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'entity-group';
+
+    const label = document.createElement('div');
+    label.className = 'entity-group-label';
+    label.textContent = typeLabels[type] || type;
+    groupEl.appendChild(label);
+
+    for (const entity of groups[type]) {
+      const item = document.createElement('div');
+      item.className = 'entity-item';
+
+      const badge = document.createElement('span');
+      badge.className = `entity-badge ${type}`;
+      item.appendChild(badge);
+
+      const name = document.createTextNode(entity.name || entity.content || '');
+      item.appendChild(name);
+
+      groupEl.appendChild(item);
+    }
+
+    entitiesBody.appendChild(groupEl);
+  }
+}
+
+// Listen for entity extraction results (from entities extension)
+api.subscribe('entities:extracted', (msg) => {
+  if (!msg || !msg.url || !msg.entities) return;
+  // Check if this is for the current page
+  try {
+    const currentUrl = webview.getURL();
+    if (msg.url === currentUrl) {
+      currentPageEntities = msg.entities;
+      renderEntities(currentPageEntities);
+    }
+  } catch {
+    // webview not ready
+  }
+}, api.scopes.GLOBAL);
+
+// Also listen for get-for-url responses
+api.subscribe('entities:get-for-url:response', (msg) => {
+  if (!msg || !msg.url || !msg.entities) return;
+  try {
+    const currentUrl = webview.getURL();
+    if (msg.url === currentUrl && msg.entities.length > 0) {
+      // Convert stored entity format to display format
+      currentPageEntities = msg.entities.map(e => {
+        let meta = {};
+        try { meta = JSON.parse(e.metadata || '{}'); } catch {}
+        return {
+          name: e.content || e.title,
+          type: meta.entityType || 'other',
+          confidence: meta.confidence || 0
+        };
+      });
+      renderEntities(currentPageEntities);
+    }
+  } catch {
+    // webview not ready
+  }
+}, api.scopes.GLOBAL);
+
+// On navigation, clear entities and request for current URL
+webview.addEventListener('did-navigate', (e) => {
+  currentPageEntities = [];
+  if (entitiesBody) {
+    entitiesBody.innerHTML = '<div class="entity-loading">Scanning for entities...</div>';
+  }
+
+  // Request entities for this URL from the entities extension
+  if (e.url && e.url.startsWith('http')) {
+    api.publish('entities:get-for-url', { url: e.url }, api.scopes.GLOBAL);
+  }
+});
+
+// Also do a simple in-page entity extraction as a fallback
+// This catches links, emails, etc. directly from the webview DOM
+async function extractSimpleEntities() {
+  let currentUrl;
+  try {
+    currentUrl = webview.getURL();
+  } catch {
+    return;
+  }
+  if (!currentUrl || !currentUrl.startsWith('http')) return;
+
+  // Only run if we have no entities yet (the extension hasn't responded)
+  if (currentPageEntities.length > 0) return;
+
+  try {
+    const extracted = await webview.executeJavaScript(`
+      (function() {
+        var entities = [];
+        var seen = new Set();
+
+        // Extract external links
+        var links = document.querySelectorAll('a[href]');
+        for (var i = 0; i < Math.min(links.length, 200); i++) {
+          var href = links[i].href;
+          if (!href || !href.startsWith('http')) continue;
+          try {
+            var host = new URL(href).hostname;
+            if (host === window.location.hostname) continue;
+            if (seen.has(host)) continue;
+            seen.add(host);
+            var text = links[i].textContent.trim().slice(0, 60);
+            if (text && text.length > 2) {
+              entities.push({ name: text + ' (' + host + ')', type: 'link' });
+            }
+          } catch(e) {}
+        }
+
+        // Extract mailto links
+        var mailLinks = document.querySelectorAll('a[href^="mailto:"]');
+        for (var j = 0; j < mailLinks.length; j++) {
+          var email = mailLinks[j].href.replace('mailto:', '').split('?')[0];
+          if (email && !seen.has(email)) {
+            seen.add(email);
+            entities.push({ name: email, type: 'email' });
+          }
+        }
+
+        // Extract tel links
+        var telLinks = document.querySelectorAll('a[href^="tel:"]');
+        for (var k = 0; k < telLinks.length; k++) {
+          var phone = telLinks[k].href.replace('tel:', '');
+          if (phone && !seen.has(phone)) {
+            seen.add(phone);
+            entities.push({ name: phone, type: 'phone' });
+          }
+        }
+
+        return entities.slice(0, 50);
+      })();
+    `);
+
+    if (extracted && extracted.length > 0 && currentPageEntities.length === 0) {
+      currentPageEntities = extracted;
+      renderEntities(extracted);
+    }
+  } catch (err) {
+    DEBUG && console.log('[page] Simple entity extraction failed:', err.message);
+  }
+}
+
+// Run simple extraction after page loads (as fallback)
+webview.addEventListener('did-finish-load', () => {
+  setTimeout(extractSimpleEntities, 2000);
+});
 
 DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);
