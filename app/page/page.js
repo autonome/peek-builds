@@ -19,6 +19,8 @@
 
 import api from '../api.js';
 
+console.log('[page] Script loaded');
+
 const DEBUG = false;
 
 // Cache our window ID for filtering GLOBAL pubsub messages
@@ -124,6 +126,8 @@ const resizeHandles = {
 };
 const modeIndicator = document.getElementById('mode-indicator');
 const widgetContainer = document.getElementById('widget-container');
+
+console.log('[page] DOM elements initialized');
 
 // Disable component-level keyboard shortcuts — page.js handles them via pubsub
 navbar.shortcuts = false;
@@ -286,6 +290,7 @@ updatePositions();
 // --- Set up webview partition and load URL ---
 
 async function initWebview() {
+  console.log('[page] initWebview: getting partition...');
   try {
     const result = await api.profiles.getPartition();
     if (result.success && result.data?.partition) {
@@ -298,7 +303,9 @@ async function initWebview() {
     console.error('[page] Failed to get partition:', err);
   }
 
+  console.log('[page] initWebview: partition resolved, setting src:', targetUrl);
   webview.src = targetUrl;
+  console.log('[page] initWebview: src set');
   navbar.setUrl(targetUrl);
 }
 
@@ -335,15 +342,23 @@ const loadingLifecycle = {
   }
 };
 
+// --- Show / Hide navbar state ---
+// Declared here (before loadingLifecycle.onChange) so they are initialized when
+// startLoading() triggers show() synchronously during module execution.
+let hideTimer = null;
+let showSource = null; // 'hover', 'shortcut', or 'loading'
+
 // Visual effect module — applies/removes CSS classes based on lifecycle state
 // Also shows/hides navbar with loading spinner during page load.
 loadingLifecycle.onChange((state) => {
   if (state === 'loading') {
+    console.log('[page] Loading state: loading');
     webview.classList.add('loading');
     webview.classList.remove('loaded');
     navbar.loading = true;
     show({ source: 'loading' });
   } else if (state === 'loaded') {
+    console.log('[page] Loading state: loaded');
     webview.classList.remove('loading');
     webview.classList.add('loaded');
     navbar.loading = false;
@@ -386,6 +401,7 @@ webview.addEventListener('did-start-navigation', (e) => {
 });
 
 webview.addEventListener('did-stop-loading', () => {
+  console.log('[page] did-stop-loading fired');
   loadingLifecycle.stopLoading();
 });
 
@@ -838,18 +854,27 @@ document.addEventListener('mouseup', () => {
 // --- State display ---
 
 function updateState() {
-  navbar.canGoBack = webview.canGoBack();
-  navbar.canGoForward = webview.canGoForward();
+  // Guard: webview methods (canGoBack, canGoForward) are only available after the
+  // guest process is attached. Calling them before src is set throws an error.
+  // During initial loading (show() called from startLoading()), the webview isn't
+  // ready yet, so we silently skip.
+  try {
+    navbar.canGoBack = webview.canGoBack();
+    navbar.canGoForward = webview.canGoForward();
+  } catch {
+    // Webview not ready yet — will be updated on did-navigate
+  }
 }
 
 // --- Show / Hide navbar ---
 // When the navbar becomes visible, the window must expand upward to accommodate it.
 // When it hides, the window contracts back down.
-
-let hideTimer = null;
-let showSource = null; // 'hover' or 'shortcut'
+// NOTE: hideTimer and showSource are declared near the top of the file (before
+// loadingLifecycle.onChange) to avoid TDZ errors when startLoading() calls show()
+// during module initialization.
 
 function show(opts) {
+  console.log('[page] show() called, source:', opts?.source);
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;
@@ -931,6 +956,7 @@ function cancelHide() {
 }
 
 triggerZone.addEventListener('mouseenter', () => {
+  console.log('[page] Trigger zone mouseenter');
   // Suppress navbar auto-show during OAuth flows (Level 2) to avoid
   // interrupting credential entry. User can still Cmd+L to force show.
   if (isOnOAuthPage) {
@@ -954,6 +980,7 @@ navbar.addEventListener('mouseleave', () => {
 
 // Cmd+L: show navbar with URL focus
 api.subscribe('page:show-navbar', (msg) => {
+  console.log('[page] page:show-navbar received, windowId:', msg.windowId, 'myWindowId:', myWindowId);
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
   show({ focusUrl: true, source: 'shortcut' });
 }, api.scopes.GLOBAL);

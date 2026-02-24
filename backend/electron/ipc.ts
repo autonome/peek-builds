@@ -2370,11 +2370,17 @@ export function registerWindowHandlers(): void {
     // Track window position for display-watcher home display restoration
     trackWindow(win);
 
-    // Forward console logs from window to main process stdout (for debugging)
+    // Forward console logs from window to main process stdout (for debugging).
+    // Errors/warnings always forwarded; info/debug only when DEBUG is on.
+    // For canvas pages, the loadUrl is peek://app/page/index.html so this
+    // catches page host errors. The label uses the original url for clarity.
+    const consoleLabel = useCanvas ? `page-host:${url.substring(0, 60)}` : url.replace('peek://', '');
     win.webContents.on('console-message', (event) => {
-      // Only forward for peek:// URLs to avoid noise
-      if (url.startsWith('peek://')) {
-        DEBUG && console.log(`[${url.replace('peek://', '')}] ${event.message}`);
+      const level = parseInt(String(event.level), 10);
+      if (level >= 2) {
+        console.error(`[${consoleLabel}] ${event.message}`);
+      } else if (DEBUG && url.startsWith('peek://')) {
+        console.log(`[${consoleLabel}] ${event.message}`);
       }
     });
 
@@ -2547,7 +2553,9 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log('Set window mode:', win.id, 'url:', modeUrl, 'mode:', detectedMode);
 
       // Load the URL AFTER mode/context is set, so page.js can read inherited mode
+      console.log(`[page-host:${win.id}] Loading: ${loadUrl.substring(0, 120)}`);
       await win.loadURL(loadUrl);
+      console.log(`[page-host:${win.id}] loadURL resolved`);
 
       // Background detection for non-canvas web pages (slides, modals, quick-views).
       // Canvas pages get this via the webview dom-ready handler in page.js.
