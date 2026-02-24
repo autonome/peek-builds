@@ -752,10 +752,31 @@ function handleSpecialKey(e) {
       state.typed = '';
       updateCommandUI();
       updateResultsUI();
+    } else if (trimmedText) {
+      // No matching command and not a URL — open search view with the typed text
+      log('cmd:panel', 'No command match, opening search for:', trimmedText);
+
+      api.window.open(`peek://ext/search/home.html?q=${encodeURIComponent(trimmedText)}`, {
+        role: 'workspace',
+        key: 'search-home',
+        width: 700,
+        height: 600,
+        trackingSource: 'cmd',
+        trackingSourceId: 'search'
+      }).catch(error => {
+        log.error('cmd:panel', 'Failed to open search:', error);
+      });
+
+      // Clear input and UI
+      commandInput.value = '';
+      state.typed = '';
+      updateCommandUI();
+      updateResultsUI();
+
+      // Close panel after opening search
+      setTimeout(shutdown, 100);
     } else {
-      // No matching command and not a URL — do nothing.
-      // User must Tab to accept ghost suggestion or type the full command name.
-      log('cmd:panel', 'No committed command match, ignoring Enter for:', trimmedText);
+      log('cmd:panel', 'Empty input, ignoring Enter');
     }
     return;
   }
