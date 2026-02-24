@@ -152,6 +152,63 @@ test.describe('Page Navbar @desktop', () => {
     }, windowId);
   });
 
+  test('Cmd+L navbar auto-hides on mouseleave like hover', async () => {
+    const { pageWindow, windowId } = await openCanvasPage(
+      sharedBgWindow,
+      'https://example.com'
+    );
+
+    // Wait for page.js to fully initialize and loading to complete
+    await pageWindow.waitForFunction(
+      () => document.getElementById('navbar') !== null,
+      undefined,
+      { timeout: 10000 }
+    );
+    await waitForPageLoaded(pageWindow);
+
+    // Wait for navbar to be hidden after loading
+    await waitForNavbarVisible(pageWindow, false, 10000);
+
+    // Simulate Cmd+L via pubsub
+    await sharedBgWindow.evaluate(async (wid: number) => {
+      (window as any).app.publish(
+        'page:show-navbar',
+        { windowId: wid },
+        (window as any).app.scopes.GLOBAL
+      );
+    }, windowId);
+
+    // Navbar should become visible with source 'shortcut'
+    await waitForNavbarVisible(pageWindow, true, 5000);
+
+    // Simulate mouse entering then leaving the navbar area
+    // First enter the navbar (cancels any pending hide)
+    await pageWindow.evaluate(() => {
+      const navbar = document.getElementById('navbar');
+      if (navbar) {
+        navbar.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      }
+    });
+
+    // Then leave the navbar — should schedule auto-hide
+    await pageWindow.evaluate(() => {
+      const navbar = document.getElementById('navbar');
+      if (navbar) {
+        navbar.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, clientY: 200 }));
+      }
+      // Update lastMouseY to simulate cursor being below navbar area
+      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 200 }));
+    });
+
+    // Navbar should auto-hide after the 300ms delay
+    await waitForNavbarVisible(pageWindow, false, 5000);
+
+    // Clean up
+    await sharedBgWindow.evaluate(async (id: number) => {
+      return await (window as any).app.window.close(id);
+    }, windowId);
+  });
+
   test('trigger zone hover shows navbar', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,

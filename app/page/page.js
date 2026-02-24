@@ -934,7 +934,7 @@ document.addEventListener('mousemove', (e) => { lastMouseY = e.clientY; }, true)
 function scheduleHide() {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
-    if (showSource !== 'hover') return;
+    if (showSource !== 'hover' && showSource !== 'shortcut') return;
     // If cursor is still in the navbar+trigger area, don't hide.
     // This prevents the hide→contract→re-trigger→show bounce when cursor
     // crosses the boundary between navbar and webview.
@@ -967,7 +967,7 @@ triggerZone.addEventListener('mouseenter', () => {
 });
 
 triggerZone.addEventListener('mouseleave', () => {
-  if (showSource === 'hover') scheduleHide();
+  if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
 });
 
 navbar.addEventListener('mouseenter', () => {
@@ -975,7 +975,7 @@ navbar.addEventListener('mouseenter', () => {
 });
 
 navbar.addEventListener('mouseleave', () => {
-  if (showSource === 'hover') scheduleHide();
+  if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
 });
 
 // Cmd+L: show navbar with URL focus
