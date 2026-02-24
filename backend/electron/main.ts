@@ -196,7 +196,7 @@ export async function initialize(): Promise<void> {
       // Show alwaysOnTop overlay windows (e.g. HUD) when app regains focus
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed() && win.isAlwaysOnTop() && (win as any).__hudHidden) {
-          win.show();
+          win.showInactive();
           (win as any).__hudHidden = false;
         }
       }
