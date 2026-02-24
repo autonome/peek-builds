@@ -2185,12 +2185,6 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
-          // Reinforce visibleOnAllWorkspaces before showing — on macOS, this
-          // ensures the window appears on the user's current Space instead of
-          // pulling them back to the Space where the window was first created.
-          if (process.platform === 'darwin' && (options.modal === true || options.alwaysOnTop === true)) {
-            existingWindow.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-          }
           existingWindow.window.show();
           existingWindow.window.focus();
         }
@@ -2365,20 +2359,16 @@ export function registerWindowHandlers(): void {
     const win = new BrowserWindow(winOptions);
     { const actualBounds = win.getBounds(); console.log(`[window-open:actual] Window ${win.id} actual bounds after creation: (${actualBounds.x},${actualBounds.y}) ${actualBounds.width}x${actualBounds.height}`); }
 
-    // Reinforce visibleOnAllWorkspaces after creation — on macOS the constructor
-    // flag can be unreliable. This ensures modal/palette windows (e.g. cmd palette)
-    // appear on the current Space rather than pulling the user to the creation Space.
-    if (options.modal === true && process.platform === 'darwin') {
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      DEBUG && console.log('[window-open] Set visibleOnAllWorkspaces for modal window', win.id);
-    }
-
     // Reinforce alwaysOnTop after creation — on macOS the constructor flag alone
     // is unreliable; calling setAlwaysOnTop with 'floating' level ensures it stays
     // above regular windows.
     if (options.alwaysOnTop) {
       win.setAlwaysOnTop(true, 'floating');
       DEBUG && console.log('[window-open] Set alwaysOnTop floating for window', win.id);
+    }
+
+    if (options.visibleOnAllWorkspaces) {
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     }
 
     // Track window position for display-watcher home display restoration

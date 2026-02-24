@@ -153,6 +153,7 @@ const openHud = async () => {
     alwaysOnTop: true,
     skipTaskbar: true,
     focusable: false,
+    visibleOnAllWorkspaces: true,
     resizable: false,
     frame: false,
     escapeMode: 'ignore',
