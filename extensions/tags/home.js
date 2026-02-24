@@ -13,6 +13,9 @@
 
 import * as CodeMirror from 'peek://extensions/editor/codemirror.js';
 import { StatusLine } from 'peek://extensions/editor/status-line.js';
+import {
+  createHeaderSlot, createFooterSlot, createFaviconEl, createUrlSpan
+} from 'peek://app/lib/card-helpers.js';
 const { getCM, Vim } = CodeMirror;
 
 const api = window.app;
@@ -21,9 +24,6 @@ const debug = api?.debug;
 // View states (following groups pattern)
 const VIEW_LIST = 'list';
 const VIEW_DETAIL = 'detail';
-
-// Fallback favicon for broken/missing images (globe emoji as SVG data URI)
-const FALLBACK_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
 
 /**
  * Extract the first URL from a text string.
@@ -1199,7 +1199,7 @@ const getItemDisplayInfo = (item) => {
 };
 
 /**
- * Create a card element for an item
+ * Create a card element for an item using peek-card slots + shared card-helpers.
  */
 const createItemCard = (item) => {
   const card = document.createElement('peek-card');
@@ -1208,50 +1208,50 @@ const createItemCard = (item) => {
 
   const { tags, itemUrl, title, subtitle, faviconUrl } = getItemDisplayInfo(item);
 
-  // Build the open button for items with URLs (both url type and notes with URLs)
-  const openBtnHtml = itemUrl
-    ? `<button class="card-open-btn" data-url="${escapeHtml(itemUrl)}" title="Open page">` +
-      `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
-      `<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>` +
-      `<polyline points="15 3 21 3 21 9"></polyline>` +
-      `<line x1="10" y1="14" x2="21" y2="3"></line>` +
-      `</svg></button>`
-    : '';
+  // Header slot: favicon + title + optional open button
+  const favicon = createFaviconEl(faviconUrl);
+  const header = createHeaderSlot(favicon, title);
 
-  card.innerHTML = `
-    <div class="card-header">
-      <img class="card-favicon" alt="">
-      <div class="card-content">
-        <div class="card-title">${escapeHtml(title)}</div>
-        <div class="card-url">${escapeHtml(subtitle)}</div>
-      </div>
-      ${openBtnHtml}
-    </div>
-    <div class="card-tags">
-      ${tags.map(tag => `<span class="card-tag" data-tag-id="${tag.id}">${escapeHtml(tag.name)}</span>`).join('')}
-    </div>
-  `;
-
-  // Set favicon src via DOM property to avoid escapeHtml breaking SVG data URIs
-  const faviconImg = card.querySelector('.card-favicon');
-  if (faviconImg) {
-    faviconImg.src = faviconUrl;
-    faviconImg.onerror = () => { faviconImg.src = FALLBACK_FAVICON; faviconImg.onerror = null; };
-  }
-
-  // Click handler for the open button - opens the URL as a web page
-  const openBtn = card.querySelector('.card-open-btn');
-  if (openBtn) {
+  // Add open button for items with URLs (both url type and notes with URLs)
+  if (itemUrl) {
+    const openBtn = document.createElement('button');
+    openBtn.className = 'card-open-btn';
+    openBtn.title = 'Open page';
+    openBtn.innerHTML =
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>' +
+      '<polyline points="15 3 21 3 21 9"></polyline>' +
+      '<line x1="10" y1="14" x2="21" y2="3"></line>' +
+      '</svg>';
+    openBtn.style.flexShrink = '0';
     openBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const url = openBtn.dataset.url;
-      if (url) openItemUrl(url);
+      openItemUrl(itemUrl);
     });
+    header.appendChild(openBtn);
   }
+
+  card.appendChild(header);
+
+  // Footer slot: URL/subtitle on the left, tag chips on the right
+  const urlEl = createUrlSpan(subtitle);
+
+  const tagsContainer = document.createElement('span');
+  tagsContainer.className = 'card-tags';
+  tagsContainer.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;flex-shrink:0;';
+  tags.forEach(tag => {
+    const chip = document.createElement('span');
+    chip.className = 'card-tag';
+    chip.dataset.tagId = tag.id;
+    chip.textContent = tag.name;
+    tagsContainer.appendChild(chip);
+  });
+
+  card.appendChild(createFooterSlot(urlEl, tagsContainer));
 
   // Click on card to open inline detail view
   card.addEventListener('click', (e) => {
-    // If clicking a tag, add it to filter (toggle behavior)
+    // If clicking a tag chip, add it to filter (toggle behavior)
     if (e.target.classList.contains('card-tag')) {
       const tagId = parseInt(e.target.dataset.tagId, 10);
       const tag = state.tags.find(t => t.id === tagId);
