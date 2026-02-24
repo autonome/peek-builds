@@ -80,6 +80,9 @@ const MIN_WIDTH = 200;
 const MIN_HEIGHT = 150;
 const MARGIN = 8;                // Resize handle margin on each side
 const TRIGGER_ZONE_HEIGHT = 8;   // Transparent strip above webview for hover trigger
+const PANEL_WIDTH = 280;         // Width of page info / entities panels
+const PANEL_OVERLAP = PANEL_WIDTH * 0.25; // 70px overlaps the page
+const PANEL_OVERHANG = PANEL_WIDTH - PANEL_OVERLAP; // 210px extends beyond page
 
 // --- Parse URL parameters ---
 // URL params represent the webview's position in screen coordinates
@@ -274,16 +277,18 @@ function updatePositions() {
     widgetContainer.style.top = `${webviewTop}px`;
   }
 
-  // Page Info Panel — top-left, below navbar when visible
+  // Page Info Panel — top-left, 75% off-page / 25% overlapping
   if (pageInfoPanel) {
-    pageInfoPanel.style.left = `${webviewLeft}px`;
+    pageInfoPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
     pageInfoPanel.style.top = `${webviewTop + 8}px`;
+    pageInfoPanel.style.width = `${PANEL_WIDTH}px`;
   }
 
-  // Entities Panel — right side, below navbar when visible
+  // Entities Panel — right side, 75% off-page / 25% overlapping
   if (entitiesPanel) {
-    entitiesPanel.style.left = `${webviewLeft + webviewWidth - 280}px`;
+    entitiesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
     entitiesPanel.style.top = `${webviewTop + 8}px`;
+    entitiesPanel.style.width = `${PANEL_WIDTH}px`;
   }
 }
 
@@ -925,8 +930,10 @@ function show(opts) {
   }
 
   // Show page info and entities panels alongside navbar
+  // Expand window to fit panel overhang on each side
   if (pageInfoPanel) pageInfoPanel.classList.add('visible');
   if (entitiesPanel) entitiesPanel.classList.add('visible');
+  setWindowPadding(PANEL_OVERHANG * 2);
 }
 
 function hide() {
@@ -939,10 +946,10 @@ function hide() {
   }
   navbar.classList.remove('visible');
   // Hide page info and entities panels alongside navbar
+  // Shrink window back to normal
   if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
   if (entitiesPanel) entitiesPanel.classList.remove('visible');
-  // Window stays the same size (always includes navbar space).
-  // Just update trigger zone and resize handle visibility.
+  setWindowPadding(0);
   updatePositions();
   navbar.inputElement?.blur();
   showSource = null;
