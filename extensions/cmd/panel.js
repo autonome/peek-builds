@@ -3,13 +3,15 @@
  *
  * Runs in isolated panel window (peek://ext/cmd/panel.html)
  * Uses api.settings for persistent adaptive matching data
+ *
+ * State management is handled by the state machine module (state-machine.js).
+ * All DOM events dispatch to the machine; actions perform side effects.
  */
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import './commands.js'; // Load commands module to dispatch cmd-update-commands event
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
-// CodeMirror imports removed — chain text editing now uses popup windows
-// (see chain-editor.html/js)
+import { createStateMachine, States, Events } from './state-machine.js';
 
 log('cmd:panel', 'loaded');
 
@@ -20,7 +22,6 @@ const STORAGE_KEY_FEEDBACK = 'adaptiveFeedback';
 const STORAGE_KEY_COUNTS = 'matchCounts';
 const STORAGE_KEY_VERSION = 'adaptiveVersion';
 // Version 2: removed prefix feedback that caused cross-contamination
-// (e.g., typing 'tag' no longer pollutes the 'ta' feedback entry)
 const ADAPTIVE_VERSION = 2;
 
 // Cache for adaptive data
@@ -28,7 +29,6 @@ let adaptiveDataCache = null;
 
 /**
  * Load persisted adaptive data from extension settings
- * Checks data version and resets stale data from older feedback algorithms
  */
 const loadAdaptiveData = async () => {
   if (adaptiveDataCache) {
@@ -40,14 +40,11 @@ const loadAdaptiveData = async () => {
     const storedVersion = result.data[STORAGE_KEY_VERSION] || 0;
 
     if (storedVersion < ADAPTIVE_VERSION) {
-      // Data is from an older algorithm version (prefix feedback caused cross-contamination).
-      // Reset feedback but keep match counts (frecency) since those are still valid.
       log('cmd:panel', 'loadAdaptiveData: resetting stale feedback data (version', storedVersion, '->', ADAPTIVE_VERSION + ')');
       adaptiveDataCache = {
         feedback: {},
         counts: result.data[STORAGE_KEY_COUNTS] || {}
       };
-      // Persist the reset and new version
       await Promise.all([
         api.settings.setKey(STORAGE_KEY_FEEDBACK, {}),
         api.settings.setKey(STORAGE_KEY_VERSION, ADAPTIVE_VERSION)
@@ -60,7 +57,6 @@ const loadAdaptiveData = async () => {
     }
   } else {
     adaptiveDataCache = { feedback: {}, counts: {} };
-    // Set version for fresh installs
     await api.settings.setKey(STORAGE_KEY_VERSION, ADAPTIVE_VERSION);
   }
   log('cmd:panel', 'loadAdaptiveData: loaded', Object.keys(adaptiveDataCache.feedback).length, 'feedback entries,', Object.keys(adaptiveDataCache.counts).length, 'count entries');
@@ -69,57 +65,20 @@ const loadAdaptiveData = async () => {
 
 /**
  * Save adaptive data to extension settings
- * Uses setKey to write each key independently, avoiding read-modify-write races
  */
 const saveAdaptiveData = async (feedback, counts) => {
   adaptiveDataCache = { feedback, counts };
-
-  // Write each key independently to avoid overwriting other settings
   await Promise.all([
     api.settings.setKey(STORAGE_KEY_FEEDBACK, feedback),
     api.settings.setKey(STORAGE_KEY_COUNTS, counts)
   ]);
 };
 
-// Initialize with empty data - will be loaded asynchronously
-let state = {
-  commands: [], // array of command names
-  matches: [], // array of commands matching the typed text
-  matchIndex: 0, // index of selected match
-  matchCounts: {}, // match counts - selectedcommand:numberofselections
-  adaptiveFeedback: {}, // adaptive matching - typed -> { command: count, ... }
-  typed: '', // text typed by user so far, if any
-  originalTyped: '', // original text before Tab completion (for adaptive feedback)
-  lastExecuted: '', // text last typed by user when last they hit return
+// ===== State Machine Setup =====
 
-  // UI visibility state
-  showResults: false, // Whether to show the results dropdown
-
-  // Output selection mode - for selecting an item from command output
-  outputSelectionMode: false, // Whether we're selecting from command output
-  outputItems: [], // Array of items to select from
-  outputItemIndex: 0, // Currently selected output item
-  outputMimeType: null, // MIME type of output items
-  outputSourceCommand: null, // Command that produced the output
-
-  // Chain mode state for command composition
-  chainMode: false, // Whether we're in chain mode (piping output between commands)
-  chainContext: null, // Current chain data: { data, mimeType, title, sourceCommand }
-  chainStack: [], // History stack for undo (array of chainContext objects)
-
-  // Param suggestion mode state
-  paramMode: false, // In param suggestion mode?
-  paramCommand: null, // Which command we're completing params for
-  paramSuggestions: [], // Current suggestion items [{title, subtitle, value}]
-  paramIndex: -1, // Selected suggestion (-1 = none)
-  paramGeneration: 0, // Stale result guard for async completions
-
-  // Execution state for showing progress
-  executing: false, // Whether a command is currently executing
-  executingCommand: null, // Name of the command being executed
-  executionTimeout: null, // Timeout handle for cancellation
-  executionError: null // Error message if execution failed
-};
+// Create the state machine with action handlers and guards
+const machine = createStateMachine(actionHandlers(), {}, (...args) => log(...args));
+const state = machine.getMutableData();
 
 // Load adaptive data on startup
 loadAdaptiveData().then(data => {
@@ -128,12 +87,10 @@ loadAdaptiveData().then(data => {
   log('cmd:panel', 'Loaded adaptive data');
 });
 
-// Chain popup state (popup windows for interactive chain editing)
-let chainPopupActive = false;  // Whether a chain popup is currently open
-let chainPopupWindowId = null; // Window ID of the active chain popup
+// Chain popup state (module-level for cleanup)
+let chainPopupWindowId = null;
 
 // Current command context (mode, target window, etc.)
-// Loaded asynchronously when panel opens
 let commandContext = null;
 
 // Major modes for cycling
@@ -142,29 +99,74 @@ const MAJOR_MODES = ['default', 'page', 'group', 'settings'];
 // Current mode for UI display
 let currentMode = 'default';
 let currentModeMetadata = {};
-// Flag to track if mode was explicitly set (vs still at initial 'default')
 let modeWasSet = false;
 
-/**
- * Load the current command context (target window, mode state)
- * Called when panel becomes visible
- */
+// Expose state for testing — allows waitForFunction to check command loading
+// Provide backward-compatible boolean accessors on top of machine data
+window._cmdState = new Proxy(state, {
+  get(target, prop) {
+    if (prop === 'paramMode') return machine.getState() === States.PARAM_MODE;
+    if (prop === 'outputSelectionMode') return machine.getState() === States.OUTPUT_SELECTION;
+    if (prop === 'chainMode') return machine.getState() === States.CHAIN_MODE || machine.getState() === States.CHAIN_POPUP;
+    if (prop === 'executing') return machine.getState() === States.EXECUTING;
+    if (prop === 'currentState') return machine.getState();
+    return target[prop];
+  }
+});
+
+// ===== Window Sizing =====
+
+const COLLAPSED_HEIGHT = 60;
+const EXPANDED_HEIGHT = 400;
+
+function updateWindowSize() {
+  const resultsVisible = document.getElementById('results')?.classList.contains('visible');
+  const previewVisible = document.getElementById('preview-container')?.classList.contains('visible');
+  const chainVisible = document.getElementById('chain-indicator')?.classList.contains('visible');
+  const execVisible = document.getElementById('execution-state')?.classList.contains('visible');
+  const chainStepsVisible = document.getElementById('chain-steps')?.classList.contains('visible');
+  const isOutputSelection = machine.getState() === States.OUTPUT_SELECTION;
+
+  const needsExpanded = resultsVisible || previewVisible || chainVisible || execVisible || isOutputSelection || chainStepsVisible;
+  const targetHeight = needsExpanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT;
+
+  api.window.resize(600, targetHeight);
+}
+
+// ===== Command Update Listener =====
+
+window.addEventListener('cmd-update-commands', function(e) {
+  log('cmd:panel', 'received updated commands');
+  state.commands = e.detail;
+});
+
+// ===== Mode Indicator Functions =====
+
+function updateModeIndicator() {
+  const indicator = document.getElementById('mode-indicator');
+  if (!indicator) return;
+
+  const label = indicator.querySelector('.mode-label');
+  indicator.setAttribute('data-mode', currentMode);
+
+  if (currentMode === 'group' && currentModeMetadata.groupName) {
+    label.textContent = currentModeMetadata.groupName;
+  } else {
+    label.textContent = currentMode;
+  }
+
+  log('cmd:panel', 'Mode indicator updated:', currentMode, currentModeMetadata);
+}
+
 const loadCommandContext = async () => {
   try {
-    // IZUI Policy: If invoked transiently (app was not focused when invoked),
-    // use "default" mode since we are not targeting a specific window context.
-    // Use api.window.isTransient() which reads the per-window transient flag
-    // set in the keepLive reuse path BEFORE the window is shown (and before
-    // showing the window triggers browser-window-focus which would promote
-    // the session from transient to active, defeating the check).
     const isTransient = await api.window.isTransient();
     if (isTransient) {
       log('cmd:panel', 'Transient invocation - using default mode');
       currentMode = 'default';
       currentModeMetadata = {};
-      modeWasSet = true; // Explicitly set by transient detection
+      modeWasSet = true;
       updateModeIndicator();
-      // Still load command context for backwards compat, but don't use its mode
       const result = await api.modes.getCommandContext();
       if (result.success) {
         commandContext = result.data;
@@ -172,28 +174,23 @@ const loadCommandContext = async () => {
       return;
     }
 
-    // Use context API to get mode for the target window
-    // First get the focused visible window ID
     const targetWindowId = await api.window.getFocusedVisibleWindowId();
 
-    // Get mode from context API
     if (api.context) {
       const modeResult = await api.context.get('mode', targetWindowId);
       if (modeResult.success && modeResult.data) {
         currentMode = modeResult.data.value || 'default';
         currentModeMetadata = modeResult.data.metadata || {};
-        modeWasSet = true; // Explicitly set from context API
+        modeWasSet = true;
         log('cmd:panel', 'Loaded mode from context:', currentMode, currentModeMetadata);
         updateModeIndicator();
       }
     }
 
-    // Also load from old modes API for backwards compatibility
     const result = await api.modes.getCommandContext();
     if (result.success) {
       commandContext = result.data;
       log('cmd:panel', 'Loaded command context:', commandContext);
-      // Update mode from old API if context API didn't set a mode
       if (!modeWasSet && commandContext?.mode?.major) {
         currentMode = commandContext.mode.major;
         modeWasSet = true;
@@ -206,31 +203,6 @@ const loadCommandContext = async () => {
   }
 };
 
-// ===== Mode Indicator Functions =====
-
-/**
- * Update the mode indicator UI
- */
-function updateModeIndicator() {
-  const indicator = document.getElementById('mode-indicator');
-  if (!indicator) return;
-
-  const label = indicator.querySelector('.mode-label');
-  indicator.setAttribute('data-mode', currentMode);
-
-  // Show group name in group mode
-  if (currentMode === 'group' && currentModeMetadata.groupName) {
-    label.textContent = currentModeMetadata.groupName;
-  } else {
-    label.textContent = currentMode;
-  }
-
-  log('cmd:panel', 'Mode indicator updated:', currentMode, currentModeMetadata);
-}
-
-/**
- * Cycle to the next major mode
- */
 async function cycleMode() {
   const currentIndex = MAJOR_MODES.indexOf(currentMode);
   const nextIndex = (currentIndex + 1) % MAJOR_MODES.length;
@@ -238,7 +210,6 @@ async function cycleMode() {
 
   log('cmd:panel', 'Cycling mode from', currentMode, 'to', nextMode);
 
-  // Try context API first
   if (api.context) {
     const targetWindowId = await api.window.getFocusedVisibleWindowId();
     const result = await api.context.setMode(nextMode, { windowId: targetWindowId });
@@ -251,7 +222,6 @@ async function cycleMode() {
     }
   }
 
-  // Fall back to old modes API
   const result = await api.modes.setMajorMode(nextMode);
   if (result.success) {
     currentMode = nextMode;
@@ -263,38 +233,26 @@ async function cycleMode() {
   }
 }
 
-/**
- * Initialize the mode indicator
- */
 async function initModeIndicator() {
-  // Use commandContext which has the target window's mode (not the cmd panel's mode)
-  // commandContext is loaded by loadCommandContext() before this is called
-  // If mode was explicitly set (by transient detection or context API), use that
-  // Otherwise try to get mode from commandContext (legacy modes API)
   if (modeWasSet) {
-    // Mode was explicitly set by loadCommandContext - use it
     updateModeIndicator();
   } else if (commandContext?.mode?.major) {
-    // Fallback to legacy modes API
     currentMode = commandContext.mode.major;
     modeWasSet = true;
     updateModeIndicator();
   } else {
-    // No mode data available - stay at 'default'
     updateModeIndicator();
   }
 
-  // Set up click handler for cycling
   const indicator = document.getElementById('mode-indicator');
   if (indicator) {
     indicator.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      cycleMode();
+      machine.dispatch(Events.CYCLE_MODE);
     });
   }
 
-  // Watch context API for mode changes (preferred)
   if (api.context) {
     api.context.watchMode((mode, entry) => {
       log('cmd:panel', 'Context mode changed:', mode, entry);
@@ -304,10 +262,8 @@ async function initModeIndicator() {
     });
   }
 
-  // Also subscribe to old modes API for backwards compatibility
   api.modes.onModeChange((modeState, windowId) => {
     log('cmd:panel', 'Mode changed (modes API):', modeState, 'for window:', windowId);
-    // Only update if context API hasn't set a value
     if (!currentMode || currentMode === 'default') {
       currentMode = modeState.major || 'default';
       updateModeIndicator();
@@ -317,615 +273,224 @@ async function initModeIndicator() {
   log('cmd:panel', 'Mode indicator initialized with mode:', currentMode);
 }
 
-/**
- * Check if a command is available in the current context
- * Based on mode requirements and scope
- */
 function isCommandAvailable(cmd) {
   if (!cmd) return false;
-
-  // Commands without mode restrictions are always available
-  if (!cmd.modes || cmd.modes.length === 0) {
-    return true;
-  }
-
-  // If no context loaded, show all commands
-  if (!commandContext || !commandContext.mode) {
-    return true;
-  }
-
-  // Check if current major mode is in the command's allowed modes
+  if (!cmd.modes || cmd.modes.length === 0) return true;
+  if (!commandContext || !commandContext.mode) return true;
   const currentMajorMode = commandContext.mode.major;
   return cmd.modes.includes(currentMajorMode);
 }
 
-// ===== Window Drag =====
-// Window dragging is handled by the preload's unified drag system.
-// Hold the mouse button on any non-interactive area for ~150ms to start dragging.
-// No custom drag handler needed here -- the preload covers all windows.
+// ===== Command Matching =====
 
-// Window sizing constants
-const COLLAPSED_HEIGHT = 60;  // Just the command bar
-const EXPANDED_HEIGHT = 400;  // With results/preview
+function findMatchingCommands(text) {
+  log('cmd:panel', 'findMatchingCommands', text, Object.keys(state.commands).length);
 
-/**
- * Resize the window based on content visibility
- */
-function updateWindowSize() {
-  const resultsVisible = document.getElementById('results')?.classList.contains('visible');
-  const previewVisible = document.getElementById('preview-container')?.classList.contains('visible');
-  const chainVisible = document.getElementById('chain-indicator')?.classList.contains('visible');
-  const execVisible = document.getElementById('execution-state')?.classList.contains('visible');
-  const chainStepsVisible = document.getElementById('chain-steps')?.classList.contains('visible');
+  let matches = [];
+  if (!text) return matches;
 
-  const needsExpanded = resultsVisible || previewVisible || chainVisible || execVisible || state.outputSelectionMode || chainStepsVisible;
-  const targetHeight = needsExpanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT;
+  const commandPart = text.split(' ')[0];
+  const hasParameters = text.includes(' ');
+  const lowerCommandPart = commandPart.toLowerCase();
+  const lowerText = text.toLowerCase();
 
-  api.window.resize(600, targetHeight);
-}
-
-window.addEventListener('cmd-update-commands', function(e) {
-  log('cmd:panel', 'received updated commands');
-  state.commands = e.detail;
-});
-
-// Expose state for testing — allows waitForFunction to check command loading
-window._cmdState = state;
-
-async function render() {
-  // Get elements
-  const commandInput = document.getElementById('command-input');
-  const commandText = document.getElementById('command-text');
-  const resultsContainer = document.getElementById('results');
-
-  // Set up input tracking
-  commandInput.value = '';
-  commandInput.focus();
-
-  // Add event listeners to the input
-  commandInput.addEventListener('input', () => {
-    state.typed = commandInput.value;
-    // Track original typed text for adaptive feedback (before Tab may overwrite it)
-    state.originalTyped = commandInput.value;
-    // Reset showResults when user types (they'll press down to see results)
-    state.showResults = false;
-
-    if (state.typed) {
-      // In chain mode, filter to only commands that accept the current pipe type
-      if (state.chainMode && state.chainContext) {
-        const chainingCommands = findChainingCommands(state.chainContext.mimeType);
-        const chainingNames = new Set(chainingCommands.map(cmd => cmd.name));
-        // Find matching commands, then intersect with chaining-compatible ones
-        const allMatches = findMatchingCommands(state.typed);
-        state.matches = allMatches.filter(name => chainingNames.has(name));
-      } else {
-        // Always pass full text to findMatchingCommands so it can detect parameters
-        state.matches = findMatchingCommands(state.typed);
-      }
-      state.matchIndex = 0;
-
-      // Check if we should enter/update param mode
-      // Find the best committed command: typed starts with command name + space
-      const typedLower = state.typed.toLowerCase();
-      let paramCandidate = null;
-      for (const matchName of state.matches) {
-        const matchLower = matchName.toLowerCase();
-        if (typedLower.startsWith(matchLower + ' ')) {
-          // Prefer longest command name (e.g., "list notes" over "list")
-          if (!paramCandidate || matchName.length > paramCandidate.length) {
-            paramCandidate = matchName;
-          }
+  // Check if typed text starts with a complete multi-word command name + space
+  let committedCommand = null;
+  if (hasParameters) {
+    const trimmedLower = lowerText.trimEnd();
+    for (const name of Object.keys(state.commands)) {
+      const lowerName = name.toLowerCase();
+      if (lowerName.includes(' ') && (trimmedLower === lowerName || lowerText.startsWith(lowerName + ' '))) {
+        if (!committedCommand || name.length > committedCommand.length) {
+          committedCommand = name;
         }
       }
-
-      if (paramCandidate) {
-        const cmd = state.commands[paramCandidate];
-        // Enter param mode for commands with params (provides autocomplete)
-        if (cmd && cmd.params && cmd.params.length > 0) {
-          enterParamMode(paramCandidate);
-        } else {
-          exitParamMode();
-        }
-      } else {
-        exitParamMode();
-      }
-    } else {
-      if (state.chainMode && state.chainContext) {
-        // Show all chaining commands when input is cleared
-        const chainingCommands = findChainingCommands(state.chainContext.mimeType);
-        state.matches = chainingCommands.map(cmd => cmd.name);
-      } else {
-        state.matches = [];
-      }
-      state.matchIndex = 0;
-      exitParamMode();
     }
-    updateCommandUI();
-    updateResultsUI();
-  });
-
-  commandInput.addEventListener('keydown', (e) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Escape', 'Enter'].includes(e.key)) {
-      // Only prevent default for ArrowRight in output selection mode
-      if (e.key === 'ArrowRight' && !state.outputSelectionMode) {
-        return; // Let normal cursor movement happen
-      }
-      e.preventDefault(); // Prevent default for special keys
-      handleSpecialKey(e);
-    }
-  });
-
-  // Keep focus on input (unless chain popup is active)
-  window.addEventListener('blur', () => {
-    if (!chainPopupActive) {
-      setTimeout(() => commandInput.focus(), 10);
-    }
-  });
-
-  window.addEventListener('focus', () => {
-    commandInput.focus();
-  });
-
-  // Handle visibility changes
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      updateCommandUI();
-    }
-  });
-
-  // Initial focus
-  setTimeout(() => {
-    commandInput.focus();
-  }, 50);
-
-  // Reset state when panel becomes visible (handles keepLive reuse)
-  document.addEventListener('visibilitychange', async () => {
-    if (!document.hidden) {
-      // Reset execution state when panel is shown
-      hideExecutionState();
-      // Exit output selection mode if panel was reused
-      if (state.outputSelectionMode) {
-        exitOutputSelectionMode();
-      }
-      // Exit chain mode if panel was reused
-      if (state.chainMode) {
-        exitChainMode();
-      }
-      // Exit param mode if panel was reused
-      if (state.paramMode) {
-        exitParamMode();
-      }
-      // Invalidate completer cache so tags are fresh
-      invalidateCompleterCache();
-      // Reset chain popup state
-      chainPopupActive = false;
-      // Reset showResults
-      state.showResults = false;
-      // Reset mode state for fresh context loading
-      currentMode = 'default';
-      currentModeMetadata = {};
-      modeWasSet = false;
-      // Load current command context (mode, target window)
-      await loadCommandContext();
-      // Reload adaptive data from storage (may have been updated by other processes)
-      adaptiveDataCache = null;
-      loadAdaptiveData().then(data => {
-        state.adaptiveFeedback = data.feedback;
-        state.matchCounts = data.counts;
-        log('cmd:panel', 'Reloaded adaptive data on panel show');
-      });
-    }
-  });
-
-  // Load command context on initial render (must complete before mode indicator init)
-  await loadCommandContext();
-
-  // Initialize mode indicator (uses commandContext loaded above)
-  initModeIndicator();
-
-  // Chain cancel button handler
-  const chainCancelBtn = document.getElementById('chain-cancel');
-  if (chainCancelBtn) {
-    chainCancelBtn.addEventListener('click', () => {
-      exitChainMode();
-      commandInput.value = '';
-      state.typed = '';
-      commandInput.focus();
-      updateCommandUI();
-      updateResultsUI();
-    });
   }
 
-  // Execution cancel button handler
-  const execCancelBtn = document.querySelector('#execution-state .exec-cancel');
-  if (execCancelBtn) {
-    execCancelBtn.addEventListener('click', () => {
-      cancelExecution();
-      commandInput.focus();
-    });
+  for (const name of Object.keys(state.commands)) {
+    const cmd = state.commands[name];
+    if (!isCommandAvailable(cmd)) continue;
+
+    if (committedCommand) {
+      if (name === committedCommand) matches.push(name);
+      continue;
+    }
+
+    const lowerName = name.toLowerCase();
+    const matchesCommand = lowerName.indexOf(lowerCommandPart) !== -1;
+    const isCommandWithParams = hasParameters && lowerText.startsWith(lowerName + ' ');
+
+    if (matchesCommand || isCommandWithParams) {
+      matches.push(name);
+    }
   }
+
+  // Sort by combined ranking score
+  matches.sort(function(a, b) {
+    const aLower = a.toLowerCase();
+    const bLower = b.toLowerCase();
+
+    if (hasParameters) {
+      const aExact = aLower === lowerCommandPart;
+      const bExact = bLower === lowerCommandPart;
+      if (aExact && !bExact) return -1;
+      if (bExact && !aExact) return 1;
+    }
+
+    const aAdaptive = getAdaptiveScore(commandPart, a);
+    const bAdaptive = getAdaptiveScore(commandPart, b);
+    const aFrecency = getFrecencyScore(a);
+    const bFrecency = getFrecencyScore(b);
+
+    const aScore = (aAdaptive * 3) + aFrecency;
+    const bScore = (bAdaptive * 3) + bFrecency;
+
+    if (bScore !== aScore) return bScore - aScore;
+
+    const aPrefix = aLower.startsWith(lowerCommandPart);
+    const bPrefix = bLower.startsWith(lowerCommandPart);
+    if (aPrefix && !bPrefix) return -1;
+    if (bPrefix && !aPrefix) return 1;
+
+    if (a.length !== b.length) return a.length - b.length;
+    return a.localeCompare(b);
+  });
+
+  return matches;
 }
 
-render();
+// ===== Adaptive Feedback =====
 
-// Register IZUI escape handler for the main process before-input-event flow.
-// The backend intercepts ESC on keyDown via before-input-event and calls e.preventDefault(),
-// so the DOM keydown event never reaches the page. This callback is the only way
-// for the panel to handle ESC with clear-text-first behavior.
-api.escape.onEscape(() => {
-  const commandInput = document.getElementById('command-input');
-
-  // Exit param mode first
-  if (state.paramMode) {
-    exitParamMode();
-    updateResultsUI();
-    updateCommandUI();
-    return { handled: true };
+function updateAdaptiveFeedback(typed, name) {
+  log('cmd:panel', 'updateAdaptiveFeedback', typed, '->', name);
+  if (!state.adaptiveFeedback[typed]) {
+    state.adaptiveFeedback[typed] = {};
   }
-
-  // Exit output selection mode first
-  if (state.outputSelectionMode) {
-    exitOutputSelectionMode();
-    commandInput.value = '';
-    state.typed = '';
-    updateCommandUI();
-    updateResultsUI();
-    return { handled: true };
+  if (!state.adaptiveFeedback[typed][name]) {
+    state.adaptiveFeedback[typed][name] = 0;
   }
+  state.adaptiveFeedback[typed][name]++;
 
-  // Exit chain mode next
-  if (state.chainMode) {
-    exitChainMode();
-    commandInput.value = '';
-    state.typed = '';
-    updateCommandUI();
-    updateResultsUI();
-    return { handled: true };
-  }
+  const lowerName = name.toLowerCase();
+  const lowerTyped = typed.toLowerCase();
+  const words = lowerName.split(/[\s-]+/);
 
-  // Hide results if visible
-  if (state.showResults) {
-    state.showResults = false;
-    updateResultsUI();
-    return { handled: true };
-  }
-
-  // Clear text first, then close (IZUI-style: escape content before container)
-  if (commandInput.value) {
-    commandInput.value = '';
-    state.typed = '';
-    state.matches = [];
-    state.matchIndex = 0;
-    updateCommandUI();
-    updateResultsUI();
-    return { handled: true };
-  }
-
-  // Input is empty, no modes active — let backend close the window
-  return { handled: false };
-});
-
-/**
- * Handles special key presses (arrows, tab, enter, escape)
- */
-function handleSpecialKey(e) {
-  const commandInput = document.getElementById('command-input');
-
-  // Escape key - exit modes first, then close window
-  if (e.key === 'Escape' && !hasModifier(e)) {
-    // Exit param mode first
-    if (state.paramMode) {
-      exitParamMode();
-      updateResultsUI();
-      updateCommandUI();
-      return;
-    }
-
-    // Exit output selection mode first
-    if (state.outputSelectionMode) {
-      exitOutputSelectionMode();
-      commandInput.value = '';
-      state.typed = '';
-      updateCommandUI();
-      updateResultsUI();
-      return;
-    }
-
-    // Exit chain mode next
-    if (state.chainMode) {
-      exitChainMode();
-      commandInput.value = '';
-      state.typed = '';
-      updateCommandUI();
-      updateResultsUI();
-      return;
-    }
-
-    // Hide results if visible
-    if (state.showResults) {
-      state.showResults = false;
-      updateResultsUI();
-      return;
-    }
-
-
-    // Clear text first, then close (IZUI-style: escape content before container)
-    if (commandInput.value) {
-      commandInput.value = '';
-      state.typed = '';
-      state.matches = [];
-      state.matchIndex = 0;
-      updateCommandUI();
-      updateResultsUI();
-      return;
-    }
-    shutdown();
-    return;
-  }
-
-  // Enter key in param mode with item-type param — accept selected suggestion
-  if (e.key === 'Enter' && !hasModifier(e) && state.paramMode && state.paramSuggestions.length > 0) {
-    const cmd = state.commands[state.paramCommand];
-    const paramDef = cmd && cmd.params && cmd.params[0];
-    if (paramDef && paramDef.type === 'item') {
-      e.preventDefault();
-      const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
-      acceptParamSuggestion(idx);
-      return;
+  for (const word of words) {
+    if (lowerTyped.startsWith(word) || word.startsWith(lowerTyped)) continue;
+    for (let len = 2; len <= word.length; len++) {
+      const sub = word.substring(0, len);
+      if (!state.adaptiveFeedback[sub]) state.adaptiveFeedback[sub] = {};
+      if (!state.adaptiveFeedback[sub][name]) state.adaptiveFeedback[sub][name] = 0;
+      state.adaptiveFeedback[sub][name] += 0.25;
     }
   }
 
-  // Enter key - execute command (but not if in output selection mode - handled above)
-  if (e.key === 'Enter' && !hasModifier(e) && !state.outputSelectionMode) {
-    // Check if the typed text is a URL - if so, open it directly
-    const trimmedText = commandInput.value.trim();
-    const urlResult = getValidURL(trimmedText);
-    if (urlResult.valid) {
-      log('cmd:panel', 'Detected URL, opening:', urlResult.url);
-
-      // Record frecency for the URL itself (as a registered command from history).
-      // Find the best matching URL command so frecency accumulates for it,
-      // making it appear in future suggestions when the user starts typing it.
-      const urlToOpen = urlResult.url;
-      const matchingUrlCommand = findMatchingUrlCommand(urlToOpen);
-      const frecencyTarget = matchingUrlCommand || urlToOpen;
-      state.lastExecuted = frecencyTarget;
-      updateMatchCount(frecencyTarget);
-      updateAdaptiveFeedback(trimmedText, frecencyTarget);
-
-      // Open URL directly using api.window.open
-      api.window.open(urlResult.url, {
-        role: 'content',
-        width: 800,
-        height: 600,
-        trackingSource: 'cmd',
-        trackingSourceId: 'url-direct'
-      }).then(result => {
-        log('cmd:panel', 'URL opened:', result);
-      }).catch(error => {
-        log.error('cmd:panel', 'Failed to open URL:', error);
-        showExecutionError('open', error.message || 'Failed to open URL');
-      });
-
-      // Clear input and UI
-      commandInput.value = '';
-      state.typed = '';
-      updateCommandUI();
-      updateResultsUI();
-
-      // Close panel after opening URL
-      setTimeout(shutdown, 100);
-      return;
-    }
-
-    // Otherwise, execute the matched command — but only if the user has committed
-    // to it (Tab-completed, typed the full name, or explicitly selected from results).
-    // Ghost text (inline autocomplete) is visual-only; Enter operates on typed text.
-    const name = state.matches[state.matchIndex];
-    const typedLower = trimmedText.toLowerCase();
-    const nameLower = name ? name.toLowerCase() : '';
-    const userCommittedToCommand = name && (
-      typedLower === nameLower ||                          // Typed full command name
-      typedLower.startsWith(nameLower + ' ') ||            // Command name + parameters
-      state.showResults ||                                  // Explicitly browsing results list
-      state.chainMode                                       // In chain mode, commands are pre-filtered
-    );
-    if (userCommittedToCommand && Object.keys(state.commands).indexOf(name) > -1) {
-      // Preserve any parameters when executing
-      const typedText = commandInput.value;
-
-      // Store command name for history and adaptive feedback
-      // Use originalTyped (pre-Tab text) for adaptive feedback so "ta" -> "open tags" is recorded
-      const commandPart = (state.originalTyped || typedText).split(' ')[0];
-      state.lastExecuted = name;
-      updateMatchCount(name);
-      updateAdaptiveFeedback(commandPart, name);
-
-      // Exit param mode before executing
-      exitParamMode();
-
-      // Execute with full typed text
-      execute(name, typedText);
-
-      // Clear input and UI
-      commandInput.value = '';
-      state.typed = '';
-      updateCommandUI();
-      updateResultsUI();
-    } else if (trimmedText) {
-      // No matching command and not a URL — open search view with the typed text
-      log('cmd:panel', 'No command match, opening search for:', trimmedText);
-
-      api.window.open(`peek://ext/search/home.html?q=${encodeURIComponent(trimmedText)}`, {
-        role: 'workspace',
-        key: 'search-home',
-        width: 700,
-        height: 600,
-        trackingSource: 'cmd',
-        trackingSourceId: 'search'
-      }).catch(error => {
-        log.error('cmd:panel', 'Failed to open search:', error);
-      });
-
-      // Clear input and UI
-      commandInput.value = '';
-      state.typed = '';
-      updateCommandUI();
-      updateResultsUI();
-
-      // Close panel after opening search
-      setTimeout(shutdown, 100);
-    } else {
-      log('cmd:panel', 'Empty input, ignoring Enter');
-    }
-    return;
-  }
-
-  // Arrow Up - navigate results or output items up
-  if (e.key === 'ArrowUp') {
-    if (state.paramMode && state.paramSuggestions.length > 0) {
-      if (state.paramIndex > 0) {
-        state.paramIndex--;
-      }
-      updateResultsUI();
-      updateCommandUI();
-      return;
-    }
-    if (state.outputSelectionMode && state.outputItemIndex > 0) {
-      // Navigate output items
-      state.outputItemIndex--;
-      updateOutputSelectionUI();
-      return;
-    } else if (state.showResults && state.matchIndex > 0) {
-      // Navigate command results
-      state.matchIndex--;
-      updateCommandUI();
-      updateResultsUI();
-      return;
-    }
-    return;
-  }
-
-  // Arrow Down - show results or navigate down
-  if (e.key === 'ArrowDown') {
-    if (state.paramMode && state.paramSuggestions.length > 0) {
-      if (state.paramIndex + 1 < state.paramSuggestions.length) {
-        state.paramIndex++;
-      }
-      updateResultsUI();
-      updateCommandUI();
-      return;
-    }
-
-    if (state.outputSelectionMode) {
-      // Navigate output items
-      if (state.outputItemIndex + 1 < state.outputItems.length) {
-        state.outputItemIndex++;
-        updateOutputSelectionUI();
-      }
-      return;
-    }
-
-    // Show results if not already visible
-    if (!state.showResults && state.matches.length > 0) {
-      state.showResults = true;
-      updateResultsUI();
-      return;
-    }
-
-    // Navigate down in results
-    if (state.showResults && state.matchIndex + 1 < state.matches.length) {
-      state.matchIndex++;
-      updateCommandUI();
-      updateResultsUI();
-      return;
-    }
-    return;
-  }
-
-  // Right Arrow or Enter in output selection mode - proceed to chaining
-  if (state.outputSelectionMode && (e.key === 'ArrowRight' || e.key === 'Enter')) {
-    selectOutputItem();
-    return;
-  }
-
-  // Tab key - in param mode, fill suggestion text (do NOT execute)
-  if (e.key === 'Tab' && state.paramMode && state.paramSuggestions.length > 0) {
-    const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
-    fillParamSuggestion(idx);
-    return;
-  }
-
-  // Tab key - autocomplete or cycle through matches
-  if (e.key === 'Tab' && state.matches.length > 0) {
-    const currentMatch = state.matches[state.matchIndex];
-    const currentValue = commandInput.value.trim();
-
-    // Check if we already completed to a match (need to cycle to next)
-    // This is true if current value starts with current match + space or equals current match
-    const alreadyCompleted = currentValue === currentMatch ||
-                            currentValue.startsWith(currentMatch + ' ');
-
-    if (alreadyCompleted && state.matches.length > 1) {
-      // Cycle forward (Tab) or backward (Shift-Tab)
-      if (e.shiftKey) {
-        state.matchIndex = (state.matchIndex - 1 + state.matches.length) % state.matches.length;
-      } else {
-        state.matchIndex = (state.matchIndex + 1) % state.matches.length;
-      }
-    }
-    // else: first completion, stay on current matchIndex
-
-    const match = state.matches[state.matchIndex];
-
-    // Set to the match with a trailing space
-    state.typed = match + ' ';
-    commandInput.value = state.typed;
-
-    // Check if Tab-completed command has params → enter param mode
-    // (provides autocomplete suggestions including for connector commands)
-    const cmd = state.commands[match];
-    if (cmd && cmd.params && cmd.params.length > 0) {
-      enterParamMode(match);
-    } else {
-      exitParamMode();
-    }
-
-    // Update UI but DON'T recalculate matches - keep cycling through current set
-    updateCommandUI();
-    // Don't call updateResultsUI() here - it would recalculate matches
-    // (unless in param mode, where we need to show suggestions)
-    if (state.paramMode) {
-      updateResultsUI();
-    }
-
-    // Place cursor at the end
-    setTimeout(() => {
-      commandInput.setSelectionRange(commandInput.value.length, commandInput.value.length);
-    }, 0);
-
-    return;
-  }
+  saveAdaptiveData(state.adaptiveFeedback, state.matchCounts);
 }
 
-/**
- * Builds execution context from typed string and command name
- */
+function getAdaptiveScore(typed, name) {
+  const k = 3;
+  const feedback = state.adaptiveFeedback[typed];
+  if (!feedback || !feedback[name]) return 0;
+  return feedback[name] / (feedback[name] + k);
+}
+
+function getFrecencyScore(name) {
+  const k = 10;
+  const count = state.matchCounts[name] || 0;
+  if (count === 0) return 0;
+  return count / (count + k);
+}
+
+function updateMatchCount(name) {
+  if (!state.matchCounts[name]) state.matchCounts[name] = 0;
+  state.matchCounts[name]++;
+  saveAdaptiveData(state.adaptiveFeedback, state.matchCounts);
+}
+
+// ===== Param Mode Helpers =====
+
+function getParamTokens() {
+  const commandName = state.paramCommand;
+  if (!commandName) return { partial: '', completedTokens: [] };
+
+  const typed = state.typed || '';
+  const lowerTyped = typed.toLowerCase();
+  const lowerName = commandName.toLowerCase();
+
+  let rest = '';
+  if (lowerTyped.startsWith(lowerName + ' ')) {
+    rest = typed.slice(commandName.length + 1);
+  } else if (lowerTyped.startsWith(lowerName)) {
+    rest = typed.slice(commandName.length);
+  }
+
+  const tokens = rest.split(/\s+/);
+  const endsWithSpace = rest.endsWith(' ') || rest === '';
+
+  if (endsWithSpace) {
+    return { partial: '', completedTokens: tokens.filter(t => t.length > 0) };
+  }
+
+  const partial = tokens.pop() || '';
+  return { partial, completedTokens: tokens.filter(t => t.length > 0) };
+}
+
+async function doUpdateParamSuggestions() {
+  if (!state.paramCommand) return;
+
+  const cmd = state.commands[state.paramCommand];
+  if (!cmd) return;
+
+  const paramDef = (cmd.params && cmd.params[0]) || null;
+  if (!paramDef) {
+    state.paramSuggestions = [];
+    return;
+  }
+
+  const generation = ++state.paramGeneration;
+  const { partial, completedTokens } = getParamTokens();
+
+  let searchPartial = partial;
+  if (paramDef.type === 'item') {
+    searchPartial = [...completedTokens, partial].filter(Boolean).join(' ');
+  }
+
+  const prefix = paramDef.prefix || '';
+  const exclude = new Set(
+    completedTokens.map(t => {
+      const stripped = prefix && t.toLowerCase().startsWith(prefix.toLowerCase())
+        ? t.slice(prefix.length).toLowerCase()
+        : t.toLowerCase();
+      return stripped;
+    })
+  );
+
+  const suggestions = await getSuggestions(paramDef, searchPartial, exclude);
+
+  if (generation !== state.paramGeneration) return;
+
+  state.paramSuggestions = suggestions;
+  state.paramIndex = suggestions.length > 0 ? 0 : -1;
+
+  updateResultsUI();
+  updateCommandUI();
+}
+
+// ===== Execution Context Builder =====
+
 function buildExecutionContext(name, typed) {
-  // Strip the command name from the beginning to get the rest
   const trimmed = typed.trim();
   const nameLower = name.toLowerCase();
   const trimmedLower = trimmed.toLowerCase();
   let rest;
   if (trimmedLower.startsWith(nameLower)) {
-    // Typed full command name (or more) — slice it off
     rest = trimmed.slice(name.length).trim();
   } else {
-    // Typed partial text (e.g., "s" matched "save") — check if first word is prefix of command
     const spaceIdx = trimmed.indexOf(' ');
     const firstWord = spaceIdx > 0 ? trimmedLower.slice(0, spaceIdx) : trimmedLower;
     if (nameLower.startsWith(firstWord)) {
-      // First word is prefix of command name — rest is after the space (if any)
       rest = spaceIdx > 0 ? trimmed.slice(spaceIdx + 1).trim() : '';
     } else {
       rest = trimmed;
@@ -934,19 +499,13 @@ function buildExecutionContext(name, typed) {
   const params = rest.length > 0 ? rest.split(/\s+/) : [];
   const search = rest.length > 0 ? rest : null;
 
-  const context = {
-    typed,       // Full typed string
-    name,        // Command name
-    params,      // Array of parameters
-    search       // Text after command name (for search-style commands)
-  };
+  const context = { typed, name, params, search };
 
-  // Add chain data if in chain mode
-  if (state.chainMode && state.chainContext) {
-    context.input = state.chainContext.data;           // Input data from previous command
-    context.inputMimeType = state.chainContext.mimeType; // MIME type of input data
-    context.inputTitle = state.chainContext.title;     // Human-readable title
-    context.inputSource = state.chainContext.sourceCommand; // Source command name
+  if ((machine.getState() === States.CHAIN_MODE || machine.getState() === States.EXECUTING) && state.chainContext) {
+    context.input = state.chainContext.data;
+    context.inputMimeType = state.chainContext.mimeType;
+    context.inputTitle = state.chainContext.title;
+    context.inputSource = state.chainContext.sourceCommand;
   }
 
   return context;
@@ -954,24 +513,14 @@ function buildExecutionContext(name, typed) {
 
 // ===== Chain Mode Functions =====
 
-/**
- * Check if a MIME pattern matches an actual MIME type
- * Supports wildcards like star/star for any type, text/star for text subtypes
- */
 function mimeTypeMatches(pattern, actual) {
   if (!pattern || !actual) return false;
   if (pattern === '*/*' || pattern === actual) return true;
-
   const [pType, pSub] = pattern.split('/');
-  const [aType, aSub] = actual.split('/');
-
-  // Wildcard subtype (e.g., "text/*" matches "text/plain")
+  const [aType] = actual.split('/');
   return pSub === '*' && pType === aType;
 }
 
-/**
- * Find commands that can accept the given MIME type as input
- */
 function findChainingCommands(mimeType) {
   return Object.values(state.commands).filter(cmd => {
     if (!cmd.accepts?.length) return false;
@@ -979,17 +528,11 @@ function findChainingCommands(mimeType) {
   });
 }
 
-/**
- * Enter chain mode with output from a command
- * @param {Object} output - { data, mimeType, title }
- * @param {string} sourceCommand - Name of the command that produced this output
- */
-async function enterChainMode(output, sourceCommand) {
+async function doEnterChainMode(output, sourceCommand) {
   log('cmd:panel', 'Entering chain mode with output:', output.mimeType, output.title);
 
   hidePreview();
 
-  state.chainMode = true;
   state.chainContext = {
     data: output.data,
     mimeType: output.mimeType,
@@ -997,89 +540,67 @@ async function enterChainMode(output, sourceCommand) {
     sourceCommand
   };
 
-  // Push to stack for potential undo
   state.chainStack.push({ ...state.chainContext });
 
-  // Find commands that can accept this output
   const chainingCommands = findChainingCommands(output.mimeType);
   log('cmd:panel', 'Found', chainingCommands.length, 'commands accepting', output.mimeType);
 
-  // Clear input and update matches to show chaining commands
   state.typed = '';
   state.matches = chainingCommands.map(cmd => cmd.name);
   state.matchIndex = 0;
 
-  // Update UI
   updateChainUI();
   updateChainStepsUI();
   updateCommandUI();
   updateResultsUI();
 
-  // For interactive popups (declared by command or MIME fallback)
   const popupUrl = output.interactive || getDefaultPopupForMime(output.mimeType);
   if (popupUrl && output.data) {
     await openChainPopup(popupUrl, output.data, output.mimeType, output.title);
   } else if (output.data) {
-    // Non-interactive output — just show preview
     showPreview(output.data, output.mimeType, output.title);
   }
 }
 
-/**
- * Exit chain mode and reset state
- */
-function exitChainMode() {
+function doExitChainMode() {
   log('cmd:panel', 'Exiting chain mode');
 
-  state.chainMode = false;
   state.chainContext = null;
   state.chainStack = [];
   state.matches = [];
   state.matchIndex = 0;
-  chainPopupActive = false;
+  state.chainPopupActive = false;
 
-  // Close any open popup window
   if (chainPopupWindowId) {
     api.window.close(chainPopupWindowId);
     chainPopupWindowId = null;
   }
 
-  // Hide preview
   hidePreview();
-
-  // Update UI
   updateChainUI();
   updateChainStepsUI();
   updateCommandUI();
   updateResultsUI();
 }
 
-/**
- * Go back one step in the chain (undo)
- */
-function chainUndo() {
+function doChainUndo() {
   if (state.chainStack.length <= 1) {
-    // Can't undo past the first item, exit chain mode
-    exitChainMode();
+    doExitChainMode();
     return;
   }
 
-  // Pop current and restore previous
   state.chainStack.pop();
   state.chainContext = { ...state.chainStack[state.chainStack.length - 1] };
 
-  // Update matches for the restored context
   const chainingCommands = findChainingCommands(state.chainContext.mimeType);
   state.matches = chainingCommands.map(cmd => cmd.name);
   state.matchIndex = 0;
 
-  // Update UI
   updateChainUI();
   updateChainStepsUI();
   updateCommandUI();
   updateResultsUI();
 
-  // Update preview for restored context
   if (state.chainContext.data) {
     const popupUrl = getDefaultPopupForMime(state.chainContext.mimeType);
     if (popupUrl) {
@@ -1093,19 +614,10 @@ function chainUndo() {
 
 // ===== Chain Popup Functions =====
 
-/**
- * Default popup URLs for MIME type prefixes.
- * Commands can override these by declaring an `interactive` field in output.
- */
 const DEFAULT_POPUPS = {
   'text/': 'peek://ext/cmd/chain-editor.html',
 };
 
-/**
- * Get the default popup URL for a given MIME type (prefix matching).
- * @param {string} mimeType
- * @returns {string|null} Popup URL or null if no default
- */
 function getDefaultPopupForMime(mimeType) {
   if (!mimeType) return null;
   for (const [prefix, url] of Object.entries(DEFAULT_POPUPS)) {
@@ -1114,76 +626,30 @@ function getDefaultPopupForMime(mimeType) {
   return null;
 }
 
-/**
- * Open a chain popup window for interactive editing of chain output.
- *
- * The popup receives content via pubsub and returns the edited result
- * via pubsub when the user closes the popup.
- *
- * @param {string} popupUrl - The URL to open (e.g., peek://ext/cmd/chain-editor.html)
- * @param {*} data - The content data to send to the popup
- * @param {string} mimeType - MIME type of the data
- * @param {string} title - Human-readable title
- */
 async function openChainPopup(popupUrl, data, mimeType, title) {
   const sessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  chainPopupActive = true;
+  state.chainPopupActive = true;
 
   log('cmd:panel', 'Opening chain popup:', popupUrl, 'sessionId:', sessionId);
 
-  // Subscribe for result BEFORE opening popup
   let resultReceived = false;
   api.subscribe('chain-popup:result', (msg) => {
     if (msg.sessionId !== sessionId) return;
     if (resultReceived) return;
     resultReceived = true;
-    chainPopupActive = false;
+    state.chainPopupActive = false;
     chainPopupWindowId = null;
 
     log('cmd:panel', 'Received chain popup result, length:', (msg.data || '').length, 'done:', !!msg.done);
 
-    // If the popup signals it's done (e.g. record created), close the panel
-    if (msg.done) {
-      shutdown();
-      return;
-    }
-
-    // Update chain context with returned data
-    state.chainContext.data = msg.data;
-    state.chainContext.mimeType = msg.mimeType || mimeType;
-    if (state.chainStack.length > 0) {
-      state.chainStack[state.chainStack.length - 1].data = msg.data;
-    }
-
-    // Show commands accepting the new mimeType
-    const chainingCommands = findChainingCommands(state.chainContext.mimeType);
-    state.typed = '';
-    state.matches = chainingCommands.map(cmd => cmd.name);
-    state.matchIndex = 0;
-    state.showResults = true;
-
-    updateChainUI();
-    updateChainStepsUI();
-    updateCommandUI();
-    updateResultsUI();
-    updateWindowSize();
-
-    // Re-focus cmd panel BrowserWindow and input after popup closes
-    api.window.getWindowId().then(id => {
-      if (id) api.window.focus(id);
+    machine.dispatch(Events.POPUP_RESULT, {
+      done: msg.done,
+      data: msg.data,
+      mimeType: msg.mimeType || mimeType,
     });
-    setTimeout(() => {
-      const commandInput = document.getElementById('command-input');
-      if (commandInput) {
-        commandInput.focus();
-      }
-    }, 100);
   }, api.scopes.GLOBAL);
 
-  // Get cmd panel bounds for positioning
   const panelBounds = await api.window.getBounds();
-
-  // Open popup centered vertically over cmd
   const editorHeight = 400;
   const editorY = Math.round(panelBounds.y - editorHeight / 2 + panelBounds.height / 2);
 
@@ -1202,14 +668,12 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
     resizable: true,
   });
 
-  // Track popup window ID for cleanup
   chainPopupWindowId = openResult?.id || null;
 
-  // Delay content publish to let the popup's module script load and subscribe.
-  // loadURL resolves on did-finish-load, but ES modules execute after that.
+  // Wait for popup's ES module to load and subscribe
+  // TODO: Replace with proper ready signaling (bug fix #6)
   await new Promise(r => setTimeout(r, 300));
 
-  // Send content via pubsub
   api.publish('chain-popup:content', {
     sessionId,
     data,
@@ -1220,14 +684,12 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
 
 // ===== Chain Steps UI =====
 
-/**
- * Update the chain steps indicator showing the pipe history
- */
 function updateChainStepsUI() {
   const stepsEl = document.getElementById('chain-steps');
   if (!stepsEl) return;
 
-  if (!state.chainMode || state.chainStack.length === 0) {
+  const isChainState = machine.getState() === States.CHAIN_MODE || machine.getState() === States.CHAIN_POPUP;
+  if (!isChainState || state.chainStack.length === 0) {
     stepsEl.classList.remove('visible');
     stepsEl.innerHTML = '';
     return;
@@ -1246,9 +708,7 @@ function updateChainStepsUI() {
 
     const stepEl = document.createElement('span');
     stepEl.className = 'chain-step';
-    if (i === state.chainStack.length - 1) {
-      stepEl.classList.add('active');
-    }
+    if (i === state.chainStack.length - 1) stepEl.classList.add('active');
     stepEl.textContent = step.sourceCommand || step.title || step.mimeType;
     stepsEl.appendChild(stepEl);
   });
@@ -1258,43 +718,29 @@ function updateChainStepsUI() {
 
 // ===== Output Selection Mode Functions =====
 
-/**
- * Enter output selection mode to let user pick an item from array output
- * @param {Array} items - Array of items to select from
- * @param {string} mimeType - MIME type of the items
- * @param {string} sourceCommand - Command that produced this output
- */
-function enterOutputSelectionMode(items, mimeType, sourceCommand) {
+function doEnterOutputSelectionMode(items, mimeType, sourceCommand) {
   log('cmd:panel', 'Entering output selection mode with', items.length, 'items');
 
-  state.outputSelectionMode = true;
   state.outputItems = items;
   state.outputItemIndex = 0;
   state.outputMimeType = mimeType;
   state.outputSourceCommand = sourceCommand;
 
-  // Clear command input
   state.typed = '';
   state.matches = [];
   state.showResults = false;
 
-  // Update UI to show selectable items
   updateOutputSelectionUI();
 }
 
-/**
- * Exit output selection mode
- */
-function exitOutputSelectionMode() {
+function doExitOutputSelectionMode() {
   log('cmd:panel', 'Exiting output selection mode');
 
-  state.outputSelectionMode = false;
   state.outputItems = [];
   state.outputItemIndex = 0;
   state.outputMimeType = null;
   state.outputSourceCommand = null;
 
-  // Hide preview and results
   hidePreview();
   const resultsContainer = document.getElementById('results');
   if (resultsContainer) {
@@ -1303,99 +749,78 @@ function exitOutputSelectionMode() {
   }
 }
 
-/**
- * Select the currently highlighted output item
- * Routes to editor for 'item' mimeType, otherwise enters chain mode
- */
-function selectOutputItem() {
-  if (!state.outputSelectionMode || state.outputItems.length === 0) return;
+function doSelectOutputItem() {
+  if (state.outputItems.length === 0) return;
 
   const selectedItem = state.outputItems[state.outputItemIndex];
   log('cmd:panel', 'Selected output item:', state.outputItemIndex, selectedItem);
 
-  // Capture state before exiting selection mode
   const mimeType = state.outputMimeType;
   const sourceCommand = state.outputSourceCommand;
-  exitOutputSelectionMode();
+  doExitOutputSelectionMode();
 
-  // Handle 'item' mimeType - route to editor instead of chain mode
   if (mimeType === 'item' && selectedItem.id) {
     log('cmd:panel', 'Opening editor for selected item:', selectedItem.id);
     api.publish('editor:open', { itemId: selectedItem.id }, api.scopes.GLOBAL);
+    machine.setState(States.CLOSING);
     setTimeout(shutdown, 100);
     return;
   }
 
-  // For other mimeTypes, enter chain mode with the selected item
-  enterChainMode({
+  // For other mimeTypes, enter chain mode
+  machine.setState(States.CHAIN_MODE);
+  doEnterChainMode({
     data: selectedItem,
     mimeType: mimeType,
     title: getItemTitle(selectedItem)
   }, sourceCommand);
 }
 
-/**
- * Get a human-readable title for an item
- */
 function getItemTitle(item) {
   if (typeof item === 'string') return item.slice(0, 50);
   if (typeof item === 'object' && item !== null) {
-    // Try common title fields
     return item.name || item.title || item.label || item.id || JSON.stringify(item).slice(0, 50);
   }
   return String(item).slice(0, 50);
 }
 
-/**
- * Update UI for output selection mode
- */
 function updateOutputSelectionUI() {
   const resultsContainer = document.getElementById('results');
   if (!resultsContainer) return;
 
   resultsContainer.innerHTML = '';
 
-  if (!state.outputSelectionMode || state.outputItems.length === 0) {
+  if (state.outputItems.length === 0) {
     resultsContainer.classList.remove('visible');
     return;
   }
 
-  // Show results container
   resultsContainer.classList.add('visible');
 
-  // Create items
   state.outputItems.slice(0, 50).forEach((item, index) => {
     const itemEl = document.createElement('div');
     itemEl.className = 'command-item';
-    if (index === state.outputItemIndex) {
-      itemEl.classList.add('selected');
-    }
+    if (index === state.outputItemIndex) itemEl.classList.add('selected');
 
-    // Render item content based on type
     const nameSpan = document.createElement('span');
     nameSpan.className = 'cmd-name';
     nameSpan.textContent = getItemTitle(item);
     itemEl.appendChild(nameSpan);
 
-    // Add type indicator
     if (typeof item === 'object' && item !== null) {
       const descSpan = document.createElement('span');
       descSpan.className = 'cmd-desc';
-      const keys = Object.keys(item).slice(0, 3);
-      descSpan.textContent = keys.join(', ');
+      descSpan.textContent = Object.keys(item).slice(0, 3).join(', ');
       itemEl.appendChild(descSpan);
     }
 
-    // Click to select
     itemEl.addEventListener('click', () => {
-      state.outputItemIndex = index;
-      selectOutputItem();
+      machine.dispatch(Events.CLICK_OUTPUT, { index });
     });
 
     resultsContainer.appendChild(itemEl);
   });
 
-  // Show preview of selected item
   if (state.outputItems[state.outputItemIndex]) {
     showPreview(
       state.outputItems[state.outputItemIndex],
@@ -1405,14 +830,14 @@ function updateOutputSelectionUI() {
   }
 }
 
-/**
- * Update chain indicator UI
- */
+// ===== Chain UI =====
+
 function updateChainUI() {
   const chainIndicator = document.getElementById('chain-indicator');
   if (!chainIndicator) return;
 
-  if (state.chainMode && state.chainContext) {
+  const isChainState = machine.getState() === States.CHAIN_MODE || machine.getState() === States.CHAIN_POPUP;
+  if (isChainState && state.chainContext) {
     chainIndicator.classList.add('visible');
     document.getElementById('chain-mime').textContent = state.chainContext.mimeType;
     document.getElementById('chain-title').textContent = state.chainContext.title || '';
@@ -1422,49 +847,34 @@ function updateChainUI() {
   updateWindowSize();
 }
 
-/**
- * Show preview pane with data
- */
+// ===== Preview Functions =====
+
 function showPreview(data, mimeType, title) {
   const previewContainer = document.getElementById('preview-container');
   const previewContent = document.getElementById('preview-content');
   const previewMime = document.getElementById('preview-mime');
   const previewTitle = document.getElementById('preview-title');
 
-  if (!previewContainer || !previewContent) {
-    log('cmd:panel', 'Preview container not found');
-    return;
-  }
+  if (!previewContainer || !previewContent) return;
 
-  // Render content based on MIME type
   const renderer = getRenderer(mimeType);
   previewContent.innerHTML = renderer(data);
 
-  // Update header
   if (previewMime) previewMime.textContent = mimeType;
   if (previewTitle) previewTitle.textContent = title || '';
 
-  // Show container
   previewContainer.classList.add('visible');
   updateWindowSize();
 }
 
-/**
- * Hide preview pane
- */
 function hidePreview() {
   const previewContainer = document.getElementById('preview-container');
-  if (previewContainer) {
-    previewContainer.classList.remove('visible');
-  }
+  if (previewContainer) previewContainer.classList.remove('visible');
   updateWindowSize();
 }
 
 // ===== MIME Type Renderers =====
 
-/**
- * Get renderer for MIME type
- */
 function getRenderer(mimeType) {
   const renderers = {
     'application/json': renderJson,
@@ -1474,32 +884,19 @@ function getRenderer(mimeType) {
     'text/html': renderHtml
   };
 
-  // Try exact match first
-  if (renderers[mimeType]) {
-    return renderers[mimeType];
-  }
-
-  // Try type-only match (e.g., "text/*")
+  if (renderers[mimeType]) return renderers[mimeType];
   const [type] = mimeType.split('/');
-  if (type === 'text') {
-    return renderPlain;
-  }
-
-  // Default fallback
+  if (type === 'text') return renderPlain;
   return renderDefault;
 }
 
 function renderJson(data) {
   try {
     const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-
-    // If it's an array, render as a nice list/table
     if (Array.isArray(parsed) && parsed.length > 0) {
-      // Check if items are objects (render as table) or primitives (render as list)
       if (typeof parsed[0] === 'object' && parsed[0] !== null) {
         return renderJsonTable(parsed);
       } else {
-        // Simple array of primitives
         const items = parsed.slice(0, 50).map((item, i) =>
           `<div class="preview-list-item">${i + 1}. ${escapeHtml(String(item))}</div>`
         ).join('');
@@ -1507,8 +904,6 @@ function renderJson(data) {
         return `<div class="preview-list">${items}${more}</div>`;
       }
     }
-
-    // For objects or other types, show formatted JSON
     return `<pre class="preview-json">${escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`;
   } catch (e) {
     return `<pre class="preview-error">Invalid JSON: ${escapeHtml(String(data))}</pre>`;
@@ -1516,16 +911,11 @@ function renderJson(data) {
 }
 
 function renderJsonTable(data) {
-  // Get all unique keys from the objects
   const keys = new Set();
   data.forEach(item => {
-    if (typeof item === 'object' && item !== null) {
-      Object.keys(item).forEach(k => keys.add(k));
-    }
+    if (typeof item === 'object' && item !== null) Object.keys(item).forEach(k => keys.add(k));
   });
-  const headers = Array.from(keys).slice(0, 6); // Limit columns
-
-  // Build table
+  const headers = Array.from(keys).slice(0, 6);
   const headerRow = headers.map(h => `<th>${escapeHtml(String(h))}</th>`).join('');
   const rows = data.slice(0, 30).map(item => {
     const cells = headers.map(h => {
@@ -1536,14 +926,12 @@ function renderJsonTable(data) {
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');
-
   const more = data.length > 30 ? `<div class="preview-more">Showing 30 of ${data.length} items</div>` : '';
-
   return `<table class="preview-table"><thead><tr>${headerRow}</tr></thead><tbody>${rows}</tbody></table>${more}`;
 }
 
 function renderCsv(data) {
-  const lines = String(data).split('\n').slice(0, 20); // Limit to 20 lines
+  const lines = String(data).split('\n').slice(0, 20);
   const rows = lines.map(line => {
     const cells = line.split(',').map(cell => `<td>${escapeHtml(cell.trim())}</td>`).join('');
     return `<tr>${cells}</tr>`;
@@ -1552,45 +940,31 @@ function renderCsv(data) {
 }
 
 function renderMarkdown(data) {
-  // Simple markdown-to-HTML rendering for preview
   const text = String(data).slice(0, 4000);
-  const html = text
-    .split('\n')
-    .map(line => {
-      // Headings
-      if (line.startsWith('## ')) return `<h3>${escapeHtml(line.slice(3))}</h3>`;
-      if (line.startsWith('# ')) return `<h2>${escapeHtml(line.slice(2))}</h2>`;
-      // Horizontal rule
-      if (line.trim() === '---') return '<hr>';
-      // Bold/italic inline
-      let processed = escapeHtml(line);
-      processed = processed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      processed = processed.replace(/\*(.+?)\*/g, '<em>$1</em>');
-      // List items
-      if (line.startsWith('- ')) return `<li>${processed.slice(2)}</li>`;
-      // Empty line
-      if (line.trim() === '') return '<br>';
-      // Default paragraph
-      return `<p>${processed}</p>`;
-    })
-    .join('\n');
+  const html = text.split('\n').map(line => {
+    if (line.startsWith('## ')) return `<h3>${escapeHtml(line.slice(3))}</h3>`;
+    if (line.startsWith('# ')) return `<h2>${escapeHtml(line.slice(2))}</h2>`;
+    if (line.trim() === '---') return '<hr>';
+    let processed = escapeHtml(line);
+    processed = processed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    processed = processed.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    if (line.startsWith('- ')) return `<li>${processed.slice(2)}</li>`;
+    if (line.trim() === '') return '<br>';
+    return `<p>${processed}</p>`;
+  }).join('\n');
   return `<div class="preview-markdown">${html}</div>`;
 }
 
 function renderPlain(data) {
-  const text = String(data).slice(0, 2000); // Limit length
-  return `<pre class="preview-plain">${escapeHtml(text)}</pre>`;
+  return `<pre class="preview-plain">${escapeHtml(String(data).slice(0, 2000))}</pre>`;
 }
 
 function renderHtml(data) {
-  // Sanitize and show snippet of HTML
-  const text = String(data).slice(0, 2000);
-  return `<pre class="preview-html">${escapeHtml(text)}</pre>`;
+  return `<pre class="preview-html">${escapeHtml(String(data).slice(0, 2000))}</pre>`;
 }
 
 function renderDefault(data) {
-  const text = String(data).slice(0, 1000);
-  return `<pre class="preview-default">${escapeHtml(text)}</pre>`;
+  return `<pre class="preview-default">${escapeHtml(String(data).slice(0, 1000))}</pre>`;
 }
 
 function escapeHtml(str) {
@@ -1602,15 +976,11 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
-// ===== Execution State Functions =====
+// ===== Execution State UI =====
 
-const EXECUTION_TIMEOUT_MS = 30000; // 30 second timeout
+const EXECUTION_TIMEOUT_MS = 30000;
 
-/**
- * Show execution state (spinner + command name)
- */
 function showExecutionState(commandName) {
-  state.executing = true;
   state.executingCommand = commandName;
   state.executionError = null;
 
@@ -1628,11 +998,7 @@ function showExecutionState(commandName) {
   updateWindowSize();
 }
 
-/**
- * Hide execution state
- */
 function hideExecutionState() {
-  state.executing = false;
   state.executingCommand = null;
   state.executionError = null;
 
@@ -1649,11 +1015,7 @@ function hideExecutionState() {
   updateWindowSize();
 }
 
-/**
- * Show execution error
- */
 function showExecutionError(commandName, errorMsg) {
-  state.executing = false;
   state.executionError = errorMsg;
 
   if (state.executionTimeout) {
@@ -1676,30 +1038,21 @@ function showExecutionError(commandName, errorMsg) {
   }
   updateWindowSize();
 
-  // Auto-hide error after 5 seconds
+  // Auto-hide after 5 seconds
   setTimeout(() => {
     if (state.executionError === errorMsg) {
-      hideExecutionState();
+      machine.dispatch(Events.ERROR_TIMEOUT);
     }
   }, 5000);
 }
 
-/**
- * Cancel current execution
- */
-function cancelExecution() {
-  log('cmd:panel', 'Cancelling execution');
-  hideExecutionState();
-}
+// ===== Execute Command =====
 
-/**
- * Executes a command
- */
-async function execute(name, typed, extra = {}) {
+async function doExecute(name, typed, extra = {}) {
   log('cmd:panel', 'execute() called with:', name, typed);
   if (!state.commands[name]) {
     log.error('cmd:panel', 'Command not found:', name);
-    showExecutionError(name, 'Command not found. Try again in a moment.');
+    machine.dispatch(Events.COMMAND_ERROR, { name, error: 'Command not found. Try again in a moment.' });
     return;
   }
 
@@ -1708,16 +1061,13 @@ async function execute(name, typed, extra = {}) {
   if (extra.selectedItem) {
     context.selectedItem = extra.selectedItem;
   }
-  log('cmd:panel', 'execution context', context);
 
-  // Delay showing execution state - only show if command takes > 150ms
-  // This prevents flash for fast commands
+  // Delay showing execution state (only show if command takes > 150ms)
   const SHOW_SPINNER_DELAY_MS = 150;
   const showStateTimer = setTimeout(() => {
     showExecutionState(name);
   }, SHOW_SPINNER_DELAY_MS);
 
-  // Set up timeout
   const timeoutPromise = new Promise((_, reject) => {
     state.executionTimeout = setTimeout(() => {
       reject(new Error(`Command timed out after ${EXECUTION_TIMEOUT_MS / 1000}s`));
@@ -1725,980 +1075,48 @@ async function execute(name, typed, extra = {}) {
   });
 
   try {
-    // Execute command with timeout
     const result = await Promise.race([
       state.commands[name].execute(context),
       timeoutPromise
     ]);
 
-    // Clear timers
     clearTimeout(showStateTimer);
     if (state.executionTimeout) {
       clearTimeout(state.executionTimeout);
       state.executionTimeout = null;
     }
 
-    // Hide execution state (in case it was shown)
-    hideExecutionState();
-
     log('cmd:panel', 'command result:', result);
 
-    // Check if command produced chainable output
+    // Determine output routing and dispatch command_complete with routing info
+    const payload = { result: result || {}, name };
+
     if (result && result.output && result.output.data && result.output.mimeType) {
       const outputData = result.output.data;
       const outputMimeType = result.output.mimeType;
 
-      // Handle special mimeTypes that have automatic routing (not chaining)
-      // 'item' - open existing item in editor
-      // 'new-item' - open empty editor for new item
-      if (outputMimeType === 'item' || outputMimeType === 'new-item') {
-        // If output is an array of items, enter selection mode
-        if (Array.isArray(outputData) && outputData.length > 0) {
-          enterOutputSelectionMode(outputData, outputMimeType, name);
-
-          const commandInput = document.getElementById('command-input');
-          if (commandInput) {
-            commandInput.value = '';
-            commandInput.focus();
-          }
-          return;
-        }
-
-        // Single item - route to editor
-        if (outputMimeType === 'new-item') {
-          // Open empty editor for new item
-          log('cmd:panel', 'Opening editor for new item:', outputData);
-          api.publish('editor:add', { type: outputData.type || 'text' }, api.scopes.GLOBAL);
-        } else if (outputData.id) {
-          // Open existing item in editor
-          log('cmd:panel', 'Opening editor for item:', outputData.id);
-          api.publish('editor:open', { itemId: outputData.id }, api.scopes.GLOBAL);
-
-          // If this is a newly created item, also notify of the change
-          if (result.output.isNew) {
-            api.publish('editor:changed', { action: 'add', itemId: outputData.id }, api.scopes.GLOBAL);
-          }
-        }
-
-        // Close panel after routing to editor
-        setTimeout(shutdown, 100);
-        return;
-      }
-
-      // If output is an array, check if we should pipe the whole array
-      // or enter output selection mode for individual item picking
-      if (Array.isArray(outputData) && outputData.length > 0) {
-        // Check if there are downstream commands that accept this MIME type.
-        // If so, pipe the entire array into chain mode (e.g., list notes -> markdown).
-        // If no downstream commands, fall back to output selection mode.
-        const downstreamCommands = findChainingCommands(outputMimeType);
-        if (downstreamCommands.length > 0) {
-          // Pipe entire array to chain mode
-          await enterChainMode(result.output, name);
-
-          const commandInput = document.getElementById('command-input');
-          if (commandInput) {
-            commandInput.value = '';
-            commandInput.focus();
-          }
-          return;
-        }
-
-        // No downstream commands - enter output selection mode to let user pick
-        enterOutputSelectionMode(outputData, outputMimeType, name);
-
-        // Clear input for selection
-        const commandInput = document.getElementById('command-input');
-        if (commandInput) {
-          commandInput.value = '';
-          commandInput.focus();
-        }
-        // Don't shutdown - stay open for selection
-        return;
-      }
-
-      // Single item output - enter chain mode directly
-      await enterChainMode(result.output, name);
-
-      // Clear input for next command
-      const commandInput = document.getElementById('command-input');
-      if (commandInput) {
-        commandInput.value = '';
-        commandInput.focus();
-      }
-      // Don't shutdown - stay open for chaining
-      return;
+      // Check for downstream commands to set hasDownstream
+      const downstreamCommands = findChainingCommands(outputMimeType);
+      payload.hasDownstream = downstreamCommands.length > 0;
     }
 
-    // No output or end of chain - close panel
-    if (state.chainMode) {
-      exitChainMode();
-    }
+    machine.dispatch(Events.COMMAND_COMPLETE, payload);
 
-    // Check result action type
-    // 'prompt' - command shows a dialog/prompt, keep panel open for user interaction
-    if (result && result.action === 'prompt') {
-      return;
-    }
-
-    setTimeout(shutdown, 100);
   } catch (err) {
-    // Clear the show state timer on error too
     clearTimeout(showStateTimer);
-
     log.error('cmd:panel', 'Command execution error:', err);
-
-    // Show error state
-    showExecutionError(name, err.message || 'Unknown error');
-
-    // Don't close panel on error - let user see the error and try again
+    machine.dispatch(Events.COMMAND_ERROR, { name, error: err.message || 'Unknown error' });
   }
 }
 
-/**
- * Closes the window
- */
-async function shutdown() {
-  window.close();
-}
+// ===== URL Validation =====
 
-/**
- * Finds commands matching the typed text
- * Filters based on:
- * 1. Text matching (command name contains typed text)
- * 2. Mode availability (command's mode requirements match current mode)
- */
-function findMatchingCommands(text) {
-  log('cmd:panel', 'findMatchingCommands', text, Object.keys(state.commands).length);
-
-  let matches = [];
-
-  // No text, no matches
-  if (!text) {
-    return matches;
-  }
-
-  // Get the command part (text before the first space)
-  const commandPart = text.split(' ')[0];
-  const hasParameters = text.includes(' ');
-
-  const lowerCommandPart = commandPart.toLowerCase();
-  const lowerText = text.toLowerCase();
-
-  log('cmd:panel', 'Command part:', commandPart, 'Has parameters:', hasParameters);
-
-  // Check if the typed text already starts with a complete multi-word command name + space.
-  // If so, the user has committed to that command (e.g., "list notes #foo") and we should
-  // only return that exact command — not other commands that share the first word.
-  let committedCommand = null;
-  if (hasParameters) {
-    const trimmedLower = lowerText.trimEnd();
-    for (const name of Object.keys(state.commands)) {
-      const lowerName = name.toLowerCase();
-      if (lowerName.includes(' ') && (trimmedLower === lowerName || lowerText.startsWith(lowerName + ' '))) {
-        // Prefer longest matching command name (e.g., "list notes" over "list")
-        if (!committedCommand || name.length > committedCommand.length) {
-          committedCommand = name;
-        }
-      }
-    }
-  }
-
-  // Iterate over all commands, searching for matches
-  for (const name of Object.keys(state.commands)) {
-    const cmd = state.commands[name];
-
-    // Check mode availability first
-    if (!isCommandAvailable(cmd)) {
-      continue;
-    }
-
-    // If user committed to a specific multi-word command, only include that one
-    if (committedCommand) {
-      if (name === committedCommand) {
-        matches.push(name);
-      }
-      continue;
-    }
-
-    // Match when:
-    // 1. typed string is anywhere in a command name
-    // 2. command name is at beginning of typed string (for commands with parameters)
-    log('cmd:panel', 'testing option...', name);
-
-    const lowerName = name.toLowerCase();
-    const matchesCommand = lowerName.indexOf(lowerCommandPart) !== -1;
-    const isCommandWithParams = hasParameters && lowerText.startsWith(lowerName + ' ');
-
-    if (matchesCommand || isCommandWithParams) {
-      matches.push(name);
-    }
-  }
-
-  // Sort by combined ranking score:
-  // 1. Exact match with parameters (highest priority)
-  // 2. Combined score: adaptive score (query-specific) + frecency (global usage)
-  //    This ensures frequently-used commands rank high even when the specific
-  //    query has no adaptive data (e.g., user types "ta" but usually types "tags")
-  // 3. Tiebreaker: prefix match preferred, then shorter name, then alphabetical
-  matches.sort(function(a, b) {
-    const aLower = a.toLowerCase();
-    const bLower = b.toLowerCase();
-
-    // If we have parameters, prioritize exact command match
-    if (hasParameters) {
-      const aExact = aLower === lowerCommandPart;
-      const bExact = bLower === lowerCommandPart;
-      if (aExact && !bExact) return -1;
-      if (bExact && !aExact) return 1;
-    }
-
-    // Combined ranking: adaptive score (0-1) weighted heavily + frecency score (0-1)
-    // Adaptive score is query-specific (e.g., "ta" -> "open tags")
-    // Frecency score is global (total selections of this command)
-    const aAdaptive = getAdaptiveScore(commandPart, a);
-    const bAdaptive = getAdaptiveScore(commandPart, b);
-    const aFrecency = getFrecencyScore(a);
-    const bFrecency = getFrecencyScore(b);
-
-    // Weight adaptive 3x more than frecency when adaptive data exists,
-    // but frecency still contributes so heavily-used commands rank well
-    // even without adaptive data for this specific query
-    const aScore = (aAdaptive * 3) + aFrecency;
-    const bScore = (bAdaptive * 3) + bFrecency;
-
-    log('cmd:panel', 'sort score', commandPart, a, 'adaptive:'+aAdaptive, 'frecency:'+aFrecency, 'total:'+aScore, 'vs', b, 'adaptive:'+bAdaptive, 'frecency:'+bFrecency, 'total:'+bScore);
-
-    if (bScore !== aScore) {
-      return bScore - aScore;
-    }
-
-    // Tiebreaker when scores are equal:
-    // 1. Prefer prefix matches (command starts with typed text) over substring matches
-    //    This makes the inline autocomplete ghost text more natural (e.g., "ta" -> "tag"
-    //    rather than "ta" -> "open tags" which shifts the cursor position)
-    const aPrefix = aLower.startsWith(lowerCommandPart);
-    const bPrefix = bLower.startsWith(lowerCommandPart);
-    if (aPrefix && !bPrefix) return -1;
-    if (bPrefix && !aPrefix) return 1;
-
-    // 2. Prefer shorter command names (more specific match)
-    if (a.length !== b.length) {
-      return a.length - b.length;
-    }
-
-    // 3. Alphabetical for full determinism
-    return a.localeCompare(b);
-  });
-
-  return matches;
-}
-
-/**
- * Updates the adaptive feedback for a typed string -> command selection
- * Uses asymptotic scoring: score = count / (count + k)
- * This creates ever-strengthening reinforcement based on user decisions
- *
- * Records feedback for:
- * 1. The exact typed string (full weight)
- * 2. Substrings of the command name that could be search queries (quarter weight)
- *    - e.g., selecting "open tags" via "open" also creates entries for "ta", "tag", "tags"
- *    - This ensures multi-word commands rank well when searched by any word substring
- *
- * Note: Prefix feedback (typing "tag" adds to "ta") was removed in v2 because it
- * caused cross-contamination between queries (e.g., "tag" command usage polluted
- * the "ta" query, preventing "open tags" from ranking first).
- */
-function updateAdaptiveFeedback(typed, name) {
-  // Initialize feedback for this typed string if needed
-  log('cmd:panel', 'updateAdaptiveFeedback', typed, '->', name, 'current feedback:', JSON.stringify(state.adaptiveFeedback[typed] || {}));
-  if (!state.adaptiveFeedback[typed]) {
-    state.adaptiveFeedback[typed] = {};
-  }
-
-  // Increment the count for this typed -> command pair
-  if (!state.adaptiveFeedback[typed][name]) {
-    state.adaptiveFeedback[typed][name] = 0;
-  }
-  state.adaptiveFeedback[typed][name]++;
-
-  // Record feedback for substrings of the command name that could be typed
-  // as search queries. This covers the case where a user always types "open"
-  // to reach "open tags" but sometimes types "ta" instead - the command
-  // should rank high for both queries.
-  const lowerName = name.toLowerCase();
-  const lowerTyped = typed.toLowerCase();
-  const words = lowerName.split(/[\s-]+/); // Split on spaces and hyphens
-
-  for (const word of words) {
-    // Skip words that are the same as or prefix of the typed text (already covered by the direct feedback or redundant)
-    if (lowerTyped.startsWith(word) || word.startsWith(lowerTyped)) {
-      continue;
-    }
-
-    // Generate substrings of this word (min length 2 to avoid single chars)
-    for (let len = 2; len <= word.length; len++) {
-      const sub = word.substring(0, len);
-      if (!state.adaptiveFeedback[sub]) {
-        state.adaptiveFeedback[sub] = {};
-      }
-      if (!state.adaptiveFeedback[sub][name]) {
-        state.adaptiveFeedback[sub][name] = 0;
-      }
-      // Quarter weight for command name substrings
-      state.adaptiveFeedback[sub][name] += 0.25;
-    }
-  }
-
-  // Persist to storage
-  saveAdaptiveData(state.adaptiveFeedback, state.matchCounts);
-}
-
-/**
- * Gets the adaptive score for a command given the typed string
- * Uses asymptotic formula: score = count / (count + k)
- * Returns 0-1 where higher is better
- */
-function getAdaptiveScore(typed, name) {
-  const k = 3; // Tuning constant - higher = slower convergence
-  const feedback = state.adaptiveFeedback[typed];
-  if (!feedback || !feedback[name]) {
-    return 0;
-  }
-  const count = feedback[name];
-  return count / (count + k);
-}
-
-/**
- * Gets the frecency score for a command based on total selection count
- * Uses the same asymptotic formula as adaptive scoring
- * Returns 0-1 where higher is better
- */
-function getFrecencyScore(name) {
-  const k = 10; // Higher k so frecency grows more slowly (needs more uses to saturate)
-  const count = state.matchCounts[name] || 0;
-  if (count === 0) return 0;
-  return count / (count + k);
-}
-
-/**
- * Updates the match count for frequency sorting
- */
-function updateMatchCount(name) {
-  if (!state.matchCounts[name]) {
-    state.matchCounts[name] = 0;
-  }
-  state.matchCounts[name]++;
-
-  // Persist to storage
-  saveAdaptiveData(state.adaptiveFeedback, state.matchCounts);
-}
-
-// ===== Param Mode Functions =====
-
-/**
- * Enter param suggestion mode for a committed command
- * If already in param mode for the same command, just refresh suggestions.
- * @param {string} commandName - The command the user has committed to
- */
-function enterParamMode(commandName) {
-  const cmd = state.commands[commandName];
-  if (!cmd) return;
-
-  if (!state.paramMode || state.paramCommand !== commandName) {
-    log('cmd:panel', 'Entering param mode for:', commandName);
-    state.paramMode = true;
-    state.paramCommand = commandName;
-    state.paramSuggestions = [];
-    state.paramIndex = -1;
-  }
-
-  updateParamSuggestions();
-}
-
-/**
- * Exit param suggestion mode
- */
-function exitParamMode() {
-  if (!state.paramMode) return;
-  log('cmd:panel', 'Exiting param mode');
-  state.paramMode = false;
-  state.paramCommand = null;
-  state.paramSuggestions = [];
-  state.paramIndex = -1;
-}
-
-/**
- * Extract the current partial token and completed tokens from typed text
- * @returns {{partial: string, completedTokens: string[]}}
- */
-function getParamTokens() {
-  const commandName = state.paramCommand;
-  if (!commandName) return { partial: '', completedTokens: [] };
-
-  const typed = state.typed || '';
-  const lowerTyped = typed.toLowerCase();
-  const lowerName = commandName.toLowerCase();
-
-  // Get text after the command name
-  let rest = '';
-  if (lowerTyped.startsWith(lowerName + ' ')) {
-    rest = typed.slice(commandName.length + 1);
-  } else if (lowerTyped.startsWith(lowerName)) {
-    rest = typed.slice(commandName.length);
-  }
-
-  // Split into tokens - the last one is the current partial
-  const tokens = rest.split(/\s+/);
-  const endsWithSpace = rest.endsWith(' ') || rest === '';
-
-  if (endsWithSpace) {
-    // Trailing space means all tokens are completed, partial is empty
-    return {
-      partial: '',
-      completedTokens: tokens.filter(t => t.length > 0)
-    };
-  }
-
-  // Last token is partial (still being typed)
-  const partial = tokens.pop() || '';
-  return {
-    partial,
-    completedTokens: tokens.filter(t => t.length > 0)
-  };
-}
-
-/**
- * Update param suggestions based on current input
- */
-async function updateParamSuggestions() {
-  if (!state.paramMode || !state.paramCommand) return;
-
-  const cmd = state.commands[state.paramCommand];
-  if (!cmd) return;
-
-  const paramDef = (cmd.params && cmd.params[0]) || null;
-  if (!paramDef) {
-    state.paramSuggestions = [];
-    return;
-  }
-
-  const generation = ++state.paramGeneration;
-  const { partial, completedTokens } = getParamTokens();
-
-  // For item-type params, pass the full rest-of-input as the search query
-  // (user is typing a search phrase, not discrete tokens)
-  let searchPartial = partial;
-  if (paramDef.type === 'item') {
-    searchPartial = [...completedTokens, partial].filter(Boolean).join(' ');
-  }
-
-  // Build exclusion set from completed tokens
-  const prefix = paramDef.prefix || '';
-  const exclude = new Set(
-    completedTokens.map(t => {
-      const stripped = prefix && t.toLowerCase().startsWith(prefix.toLowerCase())
-        ? t.slice(prefix.length).toLowerCase()
-        : t.toLowerCase();
-      return stripped;
-    })
-  );
-
-  const suggestions = await getSuggestions(paramDef, searchPartial, exclude);
-
-  // Discard stale results
-  if (generation !== state.paramGeneration) return;
-
-  state.paramSuggestions = suggestions;
-  state.paramIndex = suggestions.length > 0 ? 0 : -1;
-
-  updateResultsUI();
-  updateCommandUI();
-}
-
-/**
- * Fill a param suggestion into the input without executing (Tab behavior).
- * For item-type params, fills the title (human-readable) into the input.
- * For other params, fills the suggestion value.
- * Tab should ONLY complete/fill text — never execute.
- * @param {number} index - Index in paramSuggestions to fill
- */
-function fillParamSuggestion(index) {
-  if (index < 0 || index >= state.paramSuggestions.length) return;
-
-  const suggestion = state.paramSuggestions[index];
-  const commandInput = document.getElementById('command-input');
-  const commandName = state.paramCommand;
-
-  // For item-type params, use title (human-readable); otherwise use value
-  const cmd = state.commands[state.paramCommand];
-  const paramDef = cmd && cmd.params && cmd.params[0];
-  const fillText = (paramDef && paramDef.type === 'item' && suggestion.title)
-    ? suggestion.title
-    : suggestion.value;
-
-  // Get current text after command name
-  const typed = state.typed || '';
-  const lowerTyped = typed.toLowerCase();
-  const lowerName = commandName.toLowerCase();
-  let beforeParams = commandName + ' ';
-
-  // Get text after command name
-  let rest = '';
-  if (lowerTyped.startsWith(lowerName + ' ')) {
-    rest = typed.slice(commandName.length + 1);
-  }
-
-  // Split tokens, replace the last partial with suggestion text
-  const tokens = rest.split(/\s+/).filter(t => t.length > 0);
-  const endsWithSpace = rest.endsWith(' ') || rest === '';
-
-  if (!endsWithSpace && tokens.length > 0) {
-    // Replace the partial (last token) with suggestion text
-    tokens[tokens.length - 1] = fillText;
-  } else {
-    // No partial — append the suggestion
-    tokens.push(fillText);
-  }
-
-  // Rebuild input: command + completed tokens + trailing space
-  const newValue = beforeParams + tokens.join(' ') + ' ';
-  commandInput.value = newValue;
-  state.typed = newValue;
-
-  // Select this suggestion in the list for visual feedback
-  state.paramIndex = index;
-
-  // Cursor to end
-  setTimeout(() => {
-    commandInput.setSelectionRange(newValue.length, newValue.length);
-  }, 0);
-
-  // Refresh suggestions for the next token
-  updateParamSuggestions();
-}
-
-/**
- * Accept a param suggestion at the given index — executes the command.
- * Called by Enter key and click handlers.
- * @param {number} index - Index in paramSuggestions to accept
- */
-function acceptParamSuggestion(index) {
-  if (index < 0 || index >= state.paramSuggestions.length) return;
-
-  const suggestion = state.paramSuggestions[index];
-
-  // Item-type param for connector commands (those with produces):
-  // Route through execute() with the selected item so the command can use it
-  // directly instead of re-searching by text (which could match the wrong item).
-  const cmd = state.commands[state.paramCommand];
-  const paramDef = cmd && cmd.params && cmd.params[0];
-  if (paramDef && paramDef.type === 'item' && suggestion._item) {
-    const commandName = state.paramCommand;
-    const typed = commandName + ' ' + (suggestion.title || suggestion.value || '');
-    const selectedItem = suggestion._item;
-    exitParamMode();
-    execute(commandName, typed, { selectedItem });
-    return;
-  }
-
-  const commandInput = document.getElementById('command-input');
-  const commandName = state.paramCommand;
-
-  // Get current text after command name
-  const typed = state.typed || '';
-  const lowerTyped = typed.toLowerCase();
-  const lowerName = commandName.toLowerCase();
-  let beforeParams = commandName + ' ';
-
-  // Get text after command name
-  let rest = '';
-  if (lowerTyped.startsWith(lowerName + ' ')) {
-    rest = typed.slice(commandName.length + 1);
-  }
-
-  // Split tokens, replace the last partial with suggestion value
-  const tokens = rest.split(/\s+/).filter(t => t.length > 0);
-  const endsWithSpace = rest.endsWith(' ') || rest === '';
-
-  if (!endsWithSpace && tokens.length > 0) {
-    // Replace the partial (last token) with suggestion value
-    tokens[tokens.length - 1] = suggestion.value;
-  } else {
-    // No partial — append the suggestion
-    tokens.push(suggestion.value);
-  }
-
-  // Rebuild input: command + completed tokens + trailing space
-  const newValue = beforeParams + tokens.join(' ') + ' ';
-  commandInput.value = newValue;
-  state.typed = newValue;
-
-  // Cursor to end
-  setTimeout(() => {
-    commandInput.setSelectionRange(newValue.length, newValue.length);
-  }, 0);
-
-  // Refresh suggestions for the next token
-  updateParamSuggestions();
-}
-
-/**
- * Updates the command text UI with proper highlighting
- * Shows typed text in white, suggestion completion in grey
- */
-function updateCommandUI() {
-  const commandText = document.getElementById('command-text');
-  commandText.innerHTML = '';
-
-  // If no typed text, show nothing
-  if (!state.typed) {
-    return;
-  }
-
-  // If no matches, just show the typed text
-  if (state.matches.length === 0) {
-    const typedSpan = document.createElement('span');
-    typedSpan.className = 'typed';
-    typedSpan.textContent = state.typed;
-    commandText.appendChild(typedSpan);
-    return;
-  }
-
-  const selectedMatch = state.matches[state.matchIndex];
-  if (!selectedMatch) {
-    const typedSpan = document.createElement('span');
-    typedSpan.className = 'typed';
-    typedSpan.textContent = state.typed;
-    commandText.appendChild(typedSpan);
-    return;
-  }
-
-  // Check if we have parameters (text after the command)
-  // For multi-word commands like "open groups", we need to check if typed text
-  // matches the full command name before splitting on spaces
-  let typedCommand, typedParams;
-  // Use originalTyped (what user actually typed) for highlight boundary,
-  // so Tab-cycled suggestions show the original input bold and completion dim
-  const userTyped = state.originalTyped || state.typed;
-  const trimmedUserTyped = userTyped.trim();
-
-  // Check if typed text matches full command or command + params
-  if (state.typed.toLowerCase().startsWith(selectedMatch.toLowerCase() + ' ')) {
-    // Command with parameters - highlight original typed command portion, show params
-    // Use originalTyped for highlight length but state.typed for actual param text
-    typedCommand = trimmedUserTyped.toLowerCase().startsWith(selectedMatch.toLowerCase())
-      ? trimmedUserTyped.substring(0, Math.min(trimmedUserTyped.length, selectedMatch.length))
-      : trimmedUserTyped;
-    typedParams = state.typed.substring(selectedMatch.length);
-  } else if (selectedMatch.toLowerCase().startsWith(trimmedUserTyped.toLowerCase())) {
-    // Typed text is a prefix of the command (e.g., "ta" → "tags", or "list n" → "list notes")
-    // Bold the user-typed portion, dim the rest
-    typedCommand = trimmedUserTyped;
-    typedParams = '';
-  } else if (trimmedUserTyped.toLowerCase() === selectedMatch.toLowerCase()) {
-    // Exact match - typed text IS the command
-    typedCommand = trimmedUserTyped;
-    typedParams = state.typed.substring(trimmedUserTyped.length);
-  } else {
-    // Partial match in middle or no clear match - use first space as split point
-    const hasParameters = userTyped.includes(' ');
-    typedCommand = hasParameters ? userTyped.substring(0, userTyped.indexOf(' ')) : userTyped;
-    typedParams = hasParameters ? state.typed.substring(state.typed.indexOf(' ')) : '';
-  }
-
-  // Find where the typed text matches in the command
-  const lowerMatch = selectedMatch.toLowerCase();
-  const lowerTyped = typedCommand.toLowerCase();
-  const matchIndex = lowerMatch.indexOf(lowerTyped);
-
-  if (matchIndex === 0) {
-    // Typed text is at the start - show typed in white, rest in grey
-    const typedSpan = document.createElement('span');
-    typedSpan.className = 'typed';
-    typedSpan.textContent = typedCommand;
-    commandText.appendChild(typedSpan);
-
-    // Show the rest of the command suggestion in grey
-    if (selectedMatch.length > typedCommand.length) {
-      const restSpan = document.createElement('span');
-      restSpan.textContent = selectedMatch.substring(typedCommand.length);
-      commandText.appendChild(restSpan);
-    }
-
-    // Add parameters in white
-    if (typedParams) {
-      const paramsSpan = document.createElement('span');
-      paramsSpan.className = 'typed';
-      paramsSpan.textContent = typedParams;
-      commandText.appendChild(paramsSpan);
-    }
-  } else if (matchIndex > 0) {
-    // Typed text matches in the middle - show full command with typed part highlighted
-    const beforeSpan = document.createElement('span');
-    beforeSpan.textContent = selectedMatch.substring(0, matchIndex);
-    commandText.appendChild(beforeSpan);
-
-    const typedSpan = document.createElement('span');
-    typedSpan.className = 'typed';
-    typedSpan.textContent = selectedMatch.substring(matchIndex, matchIndex + typedCommand.length);
-    commandText.appendChild(typedSpan);
-
-    const afterSpan = document.createElement('span');
-    afterSpan.textContent = selectedMatch.substring(matchIndex + typedCommand.length);
-    commandText.appendChild(afterSpan);
-
-    // Add parameters in white
-    if (typedParams) {
-      const paramsSpan = document.createElement('span');
-      paramsSpan.className = 'typed';
-      paramsSpan.textContent = typedParams;
-      commandText.appendChild(paramsSpan);
-    }
-  } else {
-    // No match position found, just show typed text
-    const typedSpan = document.createElement('span');
-    typedSpan.className = 'typed';
-    typedSpan.textContent = state.typed;
-    commandText.appendChild(typedSpan);
-  }
-
-  // In param mode, ghost-complete the current partial token from top suggestion
-  if (state.paramMode && state.paramSuggestions.length > 0) {
-    const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
-    const suggestion = state.paramSuggestions[idx];
-    if (suggestion) {
-      const { partial } = getParamTokens();
-      // For item-type params, show title (human-readable) instead of value (ID)
-      const cmd = state.commands[state.paramCommand];
-      const paramDef = cmd && cmd.params && cmd.params[0];
-      const ghostSource = (paramDef && paramDef.type === 'item') ? suggestion.title : suggestion.value;
-      // Only show ghost if suggestion starts with the partial
-      if (partial && ghostSource.toLowerCase().startsWith(partial.toLowerCase())) {
-        const ghostText = ghostSource.substring(partial.length);
-        if (ghostText) {
-          const ghostSpan = document.createElement('span');
-          ghostSpan.textContent = ghostText;
-          commandText.appendChild(ghostSpan);
-        }
-      } else if (!partial) {
-        // No partial typed — show full suggestion as ghost
-        const ghostSpan = document.createElement('span');
-        ghostSpan.textContent = ghostSource;
-        commandText.appendChild(ghostSpan);
-      }
-    }
-  }
-}
-
-/**
- * Updates the results list UI
- */
-function updateResultsUI() {
-  const resultsContainer = document.getElementById('results');
-  resultsContainer.innerHTML = '';
-
-  // Don't show if in output selection mode (that has its own UI)
-  if (state.outputSelectionMode) {
-    return;
-  }
-
-  // Param mode: show parameter suggestions instead of command matches
-  if (state.paramMode && state.paramSuggestions.length > 0) {
-    resultsContainer.classList.add('visible');
-
-    state.paramSuggestions.forEach((suggestion, index) => {
-      const item = document.createElement('div');
-      item.className = 'command-item';
-      if (index === state.paramIndex) {
-        item.classList.add('selected');
-      }
-
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'cmd-name';
-      nameSpan.textContent = suggestion.title;
-      item.appendChild(nameSpan);
-
-      if (suggestion.subtitle) {
-        const descSpan = document.createElement('span');
-        descSpan.className = 'cmd-desc';
-        descSpan.textContent = suggestion.subtitle;
-        item.appendChild(descSpan);
-      }
-
-      item.addEventListener('click', () => {
-        acceptParamSuggestion(index);
-      });
-
-      resultsContainer.appendChild(item);
-    });
-
-    updateWindowSize();
-    return;
-  }
-
-  // In param mode with no suggestions, hide results (no "no results" noise)
-  if (state.paramMode) {
-    resultsContainer.classList.remove('visible');
-    updateWindowSize();
-    return;
-  }
-
-  // Hide results if no matches or not in showResults mode
-  // Exception: always show in chain mode since user needs to see available commands
-  if (state.matches.length === 0 || (!state.showResults && !state.chainMode)) {
-    resultsContainer.classList.remove('visible');
-    updateWindowSize();
-    return;
-  }
-
-  // Show results container
-  resultsContainer.classList.add('visible');
-
-  // Create and append result items
-  state.matches.forEach((match, index) => {
-    const item = document.createElement('div');
-    item.className = 'command-item';
-    if (index === state.matchIndex) {
-      item.classList.add('selected');
-    }
-
-    // Get command metadata for description and badges
-    const cmd = state.commands[match];
-
-    // Build item content with name, description, and badges
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'cmd-name';
-    nameSpan.textContent = match;
-    item.appendChild(nameSpan);
-
-    // Add description if available
-    if (cmd && cmd.description) {
-      const descSpan = document.createElement('span');
-      descSpan.className = 'cmd-desc';
-      descSpan.textContent = cmd.description;
-      item.appendChild(descSpan);
-    }
-
-    // Add badges for scope, modes, and chaining capabilities
-    if (cmd) {
-      const badgesSpan = document.createElement('span');
-      badgesSpan.className = 'cmd-badges';
-
-      // Show scope badge (window/page commands are more specific)
-      if (cmd.scope && cmd.scope !== 'global') {
-        const scopeBadge = document.createElement('span');
-        scopeBadge.className = 'cmd-badge cmd-badge-scope';
-        scopeBadge.textContent = cmd.scope === 'window' ? '⊞' : '⧉'; // window or page icon
-        scopeBadge.title = cmd.scope === 'window' ? 'Window command' : 'Page command';
-        badgesSpan.appendChild(scopeBadge);
-      }
-
-      // Show what the command accepts (in chain mode)
-      if (state.chainMode && cmd.accepts && cmd.accepts.length > 0) {
-        const acceptBadge = document.createElement('span');
-        acceptBadge.className = 'cmd-badge';
-        acceptBadge.textContent = '← ' + cmd.accepts[0];
-        badgesSpan.appendChild(acceptBadge);
-      }
-
-      // Show what the command produces
-      if (cmd.produces && cmd.produces.length > 0) {
-        const produceBadge = document.createElement('span');
-        produceBadge.className = 'cmd-badge';
-        produceBadge.textContent = '→ ' + cmd.produces[0];
-        badgesSpan.appendChild(produceBadge);
-      }
-
-      if (badgesSpan.children.length > 0) {
-        item.appendChild(badgesSpan);
-      }
-    }
-
-    // Add click handler
-    item.addEventListener('click', () => {
-      state.matchIndex = index;
-      execute(match, state.typed);
-      state.lastExecuted = match;
-      updateMatchCount(match);
-      updateAdaptiveFeedback((state.originalTyped || state.typed).split(' ')[0], match);
-      document.getElementById('command-input').value = '';
-      state.typed = '';
-      updateCommandUI();
-      updateResultsUI();
-    });
-
-    resultsContainer.appendChild(item);
-  });
-
-  // Update window size based on visibility
-  updateWindowSize();
-}
-
-/**
- * Checks if an event has modifier keys
- */
-function hasModifier(e) {
-  return e.altKey || e.ctrlKey || e.metaKey;
-}
-
-/**
- * Checks if a key is a modifier key
- */
-function isModifier(e) {
-  return ['Alt', 'Control', 'Shift', 'Meta'].indexOf(e.key) !== -1;
-}
-
-/**
- * Find the best matching URL command registered from history.
- * When a user types a URL and presses Enter, we need to record frecency
- * against the registered command name (from history.js) so it appears
- * in future suggestions. Matches exact URL or the closest registered URL
- * that starts with the typed URL.
- * @param {string} url - The URL to find a matching command for
- * @returns {string|null} - The registered command name, or null if no match
- */
-function findMatchingUrlCommand(url) {
-  if (!url) return null;
-  const lowerUrl = url.toLowerCase();
-
-  // Try exact match first
-  if (state.commands[url]) return url;
-
-  // Try to find a registered command whose name starts with the typed URL
-  // (e.g., typed "http://localhost" matches command "http://localhost:3000")
-  // or whose URL the typed text is a prefix of
-  let bestMatch = null;
-  let bestLength = Infinity;
-
-  for (const name of Object.keys(state.commands)) {
-    const lowerName = name.toLowerCase();
-    // Check if the command name is a URL that matches what was typed
-    if (lowerName.startsWith(lowerUrl) || lowerUrl.startsWith(lowerName)) {
-      // Prefer the shortest match (most specific)
-      if (name.length < bestLength) {
-        bestMatch = name;
-        bestLength = name.length;
-      }
-    }
-  }
-
-  return bestMatch;
-}
-
-/**
- * Checks if a string is a valid URL (with or without protocol)
- * @param {string} str - The string to check
- * @returns {Object} - Object with valid flag and normalized URL
- */
 function getValidURL(str) {
   if (!str) return { valid: false };
 
-  // Check if it starts with a valid protocol (including peek:// for internal pages)
   const hasValidProtocol = /^(https?|ftp|file|peek):\/\//.test(str);
 
   if (!hasValidProtocol) {
-    // Check if it looks like a domain (e.g., "example.com" or "localhost")
     const isDomainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/.*)?$/.test(str);
     const isLocalhost = /^localhost(:\d+)?(\/.*)?$/.test(str);
 
@@ -2721,3 +1139,1039 @@ function getValidURL(str) {
     return { valid: false };
   }
 }
+
+function findMatchingUrlCommand(url) {
+  if (!url) return null;
+  const lowerUrl = url.toLowerCase();
+
+  if (state.commands[url]) return url;
+
+  let bestMatch = null;
+  let bestLength = Infinity;
+
+  for (const name of Object.keys(state.commands)) {
+    const lowerName = name.toLowerCase();
+    if (lowerName.startsWith(lowerUrl) || lowerUrl.startsWith(lowerName)) {
+      if (name.length < bestLength) {
+        bestMatch = name;
+        bestLength = name.length;
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+function hasModifier(e) {
+  return e.altKey || e.ctrlKey || e.metaKey;
+}
+
+// ===== UI Update Functions =====
+
+function updateCommandUI() {
+  const commandText = document.getElementById('command-text');
+  commandText.innerHTML = '';
+
+  if (!state.typed) return;
+
+  if (state.matches.length === 0) {
+    const typedSpan = document.createElement('span');
+    typedSpan.className = 'typed';
+    typedSpan.textContent = state.typed;
+    commandText.appendChild(typedSpan);
+    return;
+  }
+
+  const selectedMatch = state.matches[state.matchIndex];
+  if (!selectedMatch) {
+    const typedSpan = document.createElement('span');
+    typedSpan.className = 'typed';
+    typedSpan.textContent = state.typed;
+    commandText.appendChild(typedSpan);
+    return;
+  }
+
+  const userTyped = state.originalTyped || state.typed;
+  const trimmedUserTyped = userTyped.trim();
+
+  let typedCommand, typedParams;
+
+  if (state.typed.toLowerCase().startsWith(selectedMatch.toLowerCase() + ' ')) {
+    typedCommand = trimmedUserTyped.toLowerCase().startsWith(selectedMatch.toLowerCase())
+      ? trimmedUserTyped.substring(0, Math.min(trimmedUserTyped.length, selectedMatch.length))
+      : trimmedUserTyped;
+    typedParams = state.typed.substring(selectedMatch.length);
+  } else if (selectedMatch.toLowerCase().startsWith(trimmedUserTyped.toLowerCase())) {
+    typedCommand = trimmedUserTyped;
+    typedParams = '';
+  } else if (trimmedUserTyped.toLowerCase() === selectedMatch.toLowerCase()) {
+    typedCommand = trimmedUserTyped;
+    typedParams = state.typed.substring(trimmedUserTyped.length);
+  } else {
+    const hasParameters = userTyped.includes(' ');
+    typedCommand = hasParameters ? userTyped.substring(0, userTyped.indexOf(' ')) : userTyped;
+    typedParams = hasParameters ? state.typed.substring(state.typed.indexOf(' ')) : '';
+  }
+
+  const lowerMatch = selectedMatch.toLowerCase();
+  const lowerTyped = typedCommand.toLowerCase();
+  const matchIdx = lowerMatch.indexOf(lowerTyped);
+
+  if (matchIdx === 0) {
+    const typedSpan = document.createElement('span');
+    typedSpan.className = 'typed';
+    typedSpan.textContent = typedCommand;
+    commandText.appendChild(typedSpan);
+
+    if (selectedMatch.length > typedCommand.length) {
+      const restSpan = document.createElement('span');
+      restSpan.textContent = selectedMatch.substring(typedCommand.length);
+      commandText.appendChild(restSpan);
+    }
+
+    if (typedParams) {
+      const paramsSpan = document.createElement('span');
+      paramsSpan.className = 'typed';
+      paramsSpan.textContent = typedParams;
+      commandText.appendChild(paramsSpan);
+    }
+  } else if (matchIdx > 0) {
+    const beforeSpan = document.createElement('span');
+    beforeSpan.textContent = selectedMatch.substring(0, matchIdx);
+    commandText.appendChild(beforeSpan);
+
+    const typedSpan = document.createElement('span');
+    typedSpan.className = 'typed';
+    typedSpan.textContent = selectedMatch.substring(matchIdx, matchIdx + typedCommand.length);
+    commandText.appendChild(typedSpan);
+
+    const afterSpan = document.createElement('span');
+    afterSpan.textContent = selectedMatch.substring(matchIdx + typedCommand.length);
+    commandText.appendChild(afterSpan);
+
+    if (typedParams) {
+      const paramsSpan = document.createElement('span');
+      paramsSpan.className = 'typed';
+      paramsSpan.textContent = typedParams;
+      commandText.appendChild(paramsSpan);
+    }
+  } else {
+    const typedSpan = document.createElement('span');
+    typedSpan.className = 'typed';
+    typedSpan.textContent = state.typed;
+    commandText.appendChild(typedSpan);
+  }
+
+  // Param mode ghost completion
+  const isParamState = machine.getState() === States.PARAM_MODE;
+  if (isParamState && state.paramSuggestions.length > 0) {
+    const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
+    const suggestion = state.paramSuggestions[idx];
+    if (suggestion) {
+      const { partial } = getParamTokens();
+      const cmd = state.commands[state.paramCommand];
+      const paramDef = cmd && cmd.params && cmd.params[0];
+      const ghostSource = (paramDef && paramDef.type === 'item') ? suggestion.title : suggestion.value;
+      if (partial && ghostSource.toLowerCase().startsWith(partial.toLowerCase())) {
+        const ghostText = ghostSource.substring(partial.length);
+        if (ghostText) {
+          const ghostSpan = document.createElement('span');
+          ghostSpan.textContent = ghostText;
+          commandText.appendChild(ghostSpan);
+        }
+      } else if (!partial) {
+        const ghostSpan = document.createElement('span');
+        ghostSpan.textContent = ghostSource;
+        commandText.appendChild(ghostSpan);
+      }
+    }
+  }
+}
+
+function updateResultsUI() {
+  const resultsContainer = document.getElementById('results');
+  resultsContainer.innerHTML = '';
+
+  const isOutputSelection = machine.getState() === States.OUTPUT_SELECTION;
+  if (isOutputSelection) return;
+
+  // Param mode: show parameter suggestions
+  const isParamState = machine.getState() === States.PARAM_MODE;
+  if (isParamState && state.paramSuggestions.length > 0) {
+    resultsContainer.classList.add('visible');
+
+    state.paramSuggestions.forEach((suggestion, index) => {
+      const item = document.createElement('div');
+      item.className = 'command-item';
+      if (index === state.paramIndex) item.classList.add('selected');
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'cmd-name';
+      nameSpan.textContent = suggestion.title;
+      item.appendChild(nameSpan);
+
+      if (suggestion.subtitle) {
+        const descSpan = document.createElement('span');
+        descSpan.className = 'cmd-desc';
+        descSpan.textContent = suggestion.subtitle;
+        item.appendChild(descSpan);
+      }
+
+      item.addEventListener('click', () => {
+        machine.dispatch(Events.CLICK_PARAM, { index });
+      });
+
+      resultsContainer.appendChild(item);
+    });
+
+    updateWindowSize();
+    return;
+  }
+
+  if (isParamState) {
+    resultsContainer.classList.remove('visible');
+    updateWindowSize();
+    return;
+  }
+
+  const isChainState = machine.getState() === States.CHAIN_MODE;
+  if (state.matches.length === 0 || (!state.showResults && !isChainState)) {
+    resultsContainer.classList.remove('visible');
+    updateWindowSize();
+    return;
+  }
+
+  resultsContainer.classList.add('visible');
+
+  state.matches.forEach((match, index) => {
+    const item = document.createElement('div');
+    item.className = 'command-item';
+    if (index === state.matchIndex) item.classList.add('selected');
+
+    const cmd = state.commands[match];
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'cmd-name';
+    nameSpan.textContent = match;
+    item.appendChild(nameSpan);
+
+    if (cmd && cmd.description) {
+      const descSpan = document.createElement('span');
+      descSpan.className = 'cmd-desc';
+      descSpan.textContent = cmd.description;
+      item.appendChild(descSpan);
+    }
+
+    if (cmd) {
+      const badgesSpan = document.createElement('span');
+      badgesSpan.className = 'cmd-badges';
+
+      if (cmd.scope && cmd.scope !== 'global') {
+        const scopeBadge = document.createElement('span');
+        scopeBadge.className = 'cmd-badge cmd-badge-scope';
+        scopeBadge.textContent = cmd.scope === 'window' ? '\u229E' : '\u29C9';
+        scopeBadge.title = cmd.scope === 'window' ? 'Window command' : 'Page command';
+        badgesSpan.appendChild(scopeBadge);
+      }
+
+      if (isChainState && cmd.accepts && cmd.accepts.length > 0) {
+        const acceptBadge = document.createElement('span');
+        acceptBadge.className = 'cmd-badge';
+        acceptBadge.textContent = '\u2190 ' + cmd.accepts[0];
+        badgesSpan.appendChild(acceptBadge);
+      }
+
+      if (cmd.produces && cmd.produces.length > 0) {
+        const produceBadge = document.createElement('span');
+        produceBadge.className = 'cmd-badge';
+        produceBadge.textContent = '\u2192 ' + cmd.produces[0];
+        badgesSpan.appendChild(produceBadge);
+      }
+
+      if (badgesSpan.children.length > 0) {
+        item.appendChild(badgesSpan);
+      }
+    }
+
+    // Route clicks through state machine dispatch (bug fix #3)
+    item.addEventListener('click', () => {
+      machine.dispatch(Events.CLICK_RESULT, { index, commandName: match });
+    });
+
+    resultsContainer.appendChild(item);
+  });
+
+  updateWindowSize();
+}
+
+// ===== Shutdown =====
+
+async function shutdown() {
+  window.close();
+}
+
+// ===== Action Handlers =====
+// These are called by the state machine's action runner.
+// They receive (payload, data) and perform DOM/IPC side effects.
+
+function actionHandlers() {
+  const commandInput = () => document.getElementById('command-input');
+
+  return {
+    setTyped(payload) {
+      state.typed = payload.value;
+      state.originalTyped = payload.value;
+    },
+
+    clearInput() {
+      const input = commandInput();
+      if (input) {
+        input.value = '';
+      }
+      state.typed = '';
+      state.originalTyped = '';
+      state.matches = [];
+      state.matchIndex = 0;
+    },
+
+    clearMatches() {
+      state.matches = [];
+      state.matchIndex = 0;
+    },
+
+    computeMatches(payload) {
+      const typed = payload?.value || state.typed;
+      if (typed) {
+        const isChainState = machine.getState() === States.CHAIN_MODE;
+        if (isChainState && state.chainContext) {
+          const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+          const chainingNames = new Set(chainingCommands.map(cmd => cmd.name));
+          const allMatches = findMatchingCommands(typed);
+          state.matches = allMatches.filter(name => chainingNames.has(name));
+        } else {
+          state.matches = findMatchingCommands(typed);
+        }
+        state.matchIndex = 0;
+      } else {
+        state.matches = [];
+        state.matchIndex = 0;
+      }
+    },
+
+    computeChainMatches() {
+      if (state.typed && state.chainContext) {
+        const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+        const chainingNames = new Set(chainingCommands.map(cmd => cmd.name));
+        const allMatches = findMatchingCommands(state.typed);
+        state.matches = allMatches.filter(name => chainingNames.has(name));
+      } else if (state.chainContext) {
+        const chainingCommands = findChainingCommands(state.chainContext.mimeType);
+        state.matches = chainingCommands.map(cmd => cmd.name);
+      } else {
+        state.matches = [];
+      }
+      state.matchIndex = 0;
+    },
+
+    clearTypedKeepChain() {
+      state.typed = '';
+      const input = commandInput();
+      if (input) input.value = '';
+    },
+
+    checkParamEntry(payload) {
+      // Check if typed text auto-enters param mode
+      const typed = payload?.value || state.typed;
+      if (!typed) return;
+      const typedLower = typed.toLowerCase();
+      let paramCandidate = null;
+      for (const matchName of state.matches) {
+        const matchLower = matchName.toLowerCase();
+        if (typedLower.startsWith(matchLower + ' ')) {
+          if (!paramCandidate || matchName.length > paramCandidate.length) {
+            paramCandidate = matchName;
+          }
+        }
+      }
+      if (paramCandidate) {
+        const cmd = state.commands[paramCandidate];
+        if (cmd && cmd.params && cmd.params.length > 0) {
+          // Signal to the transition that param mode should be entered
+          // This is handled by the INPUT transition's guard
+          payload.enterParamMode = true;
+          payload.paramCommandName = paramCandidate;
+        }
+      }
+    },
+
+    showResults() {
+      state.showResults = true;
+    },
+
+    hideResults() {
+      state.showResults = false;
+    },
+
+    renderResults() {
+      updateResultsUI();
+    },
+
+    updateGhostText() {
+      updateCommandUI();
+    },
+
+    updateResults() {
+      updateResultsUI();
+    },
+
+    navigateDown() {
+      state.matchIndex++;
+    },
+
+    navigateUp() {
+      state.matchIndex--;
+    },
+
+    navigateParamDown() {
+      state.paramIndex++;
+    },
+
+    navigateParamUp() {
+      state.paramIndex--;
+    },
+
+    navigateOutputDown() {
+      state.outputItemIndex++;
+    },
+
+    navigateOutputUp() {
+      state.outputItemIndex--;
+    },
+
+    updateOutputUI() {
+      updateOutputSelectionUI();
+    },
+
+    tabCompleteCommand() {
+      const input = commandInput();
+      const currentMatch = state.matches[state.matchIndex];
+      const currentValue = (input ? input.value : state.typed).trim();
+
+      const alreadyCompleted = currentValue === currentMatch ||
+                                currentValue.startsWith(currentMatch + ' ');
+
+      if (alreadyCompleted && state.matches.length > 1) {
+        state.matchIndex = (state.matchIndex + 1) % state.matches.length;
+      }
+
+      const match = state.matches[state.matchIndex];
+      state.typed = match + ' ';
+      if (input) {
+        input.value = state.typed;
+        setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+      }
+    },
+
+    shiftTabCycleCommand() {
+      const input = commandInput();
+      const currentMatch = state.matches[state.matchIndex];
+      const currentValue = (input ? input.value : state.typed).trim();
+
+      const alreadyCompleted = currentValue === currentMatch ||
+                                currentValue.startsWith(currentMatch + ' ');
+
+      if (alreadyCompleted && state.matches.length > 1) {
+        state.matchIndex = (state.matchIndex - 1 + state.matches.length) % state.matches.length;
+      }
+
+      const match = state.matches[state.matchIndex];
+      state.typed = match + ' ';
+      if (input) {
+        input.value = state.typed;
+        setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+      }
+    },
+
+    tabCycleInResults() {
+      const input = commandInput();
+      const currentMatch = state.matches[state.matchIndex];
+      const currentValue = (input ? input.value : state.typed).trim();
+
+      const alreadyCompleted = currentValue === currentMatch ||
+                                currentValue.startsWith(currentMatch + ' ');
+
+      if (alreadyCompleted && state.matches.length > 1) {
+        state.matchIndex = (state.matchIndex + 1) % state.matches.length;
+      }
+
+      const match = state.matches[state.matchIndex];
+      state.typed = match + ' ';
+      if (input) {
+        input.value = state.typed;
+        setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+      }
+    },
+
+    enterParamMode(payload) {
+      const cmdName = payload?.paramCommandName || state.matches[state.matchIndex];
+      const cmd = cmdName && state.commands[cmdName];
+      if (!cmd) return;
+
+      if (state.paramCommand !== cmdName) {
+        log('cmd:panel', 'Entering param mode for:', cmdName);
+        state.paramCommand = cmdName;
+        state.paramSuggestions = [];
+        state.paramIndex = -1;
+      }
+
+      doUpdateParamSuggestions();
+    },
+
+    exitParamMode() {
+      if (state.paramCommand) {
+        log('cmd:panel', 'Exiting param mode');
+      }
+      state.paramCommand = null;
+      state.paramSuggestions = [];
+      state.paramIndex = -1;
+    },
+
+    updateParamSuggestions() {
+      doUpdateParamSuggestions();
+    },
+
+    fillParamText() {
+      const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
+      if (idx < 0 || idx >= state.paramSuggestions.length) return;
+
+      const suggestion = state.paramSuggestions[idx];
+      const input = commandInput();
+      const commandName = state.paramCommand;
+
+      const cmd = state.commands[state.paramCommand];
+      const paramDef = cmd && cmd.params && cmd.params[0];
+      const fillText = (paramDef && paramDef.type === 'item' && suggestion.title)
+        ? suggestion.title
+        : suggestion.value;
+
+      const typed = state.typed || '';
+      const lowerTyped = typed.toLowerCase();
+      const lowerName = commandName.toLowerCase();
+      let beforeParams = commandName + ' ';
+
+      let rest = '';
+      if (lowerTyped.startsWith(lowerName + ' ')) {
+        rest = typed.slice(commandName.length + 1);
+      }
+
+      const tokens = rest.split(/\s+/).filter(t => t.length > 0);
+      const endsWithSpace = rest.endsWith(' ') || rest === '';
+
+      if (!endsWithSpace && tokens.length > 0) {
+        tokens[tokens.length - 1] = fillText;
+      } else {
+        tokens.push(fillText);
+      }
+
+      const newValue = beforeParams + tokens.join(' ') + ' ';
+      if (input) {
+        input.value = newValue;
+        setTimeout(() => input.setSelectionRange(newValue.length, newValue.length), 0);
+      }
+      state.typed = newValue;
+      state.paramIndex = idx;
+
+      doUpdateParamSuggestions();
+    },
+
+    acceptParamItem(payload) {
+      const idx = payload?.index !== undefined ? payload.index : (state.paramIndex >= 0 ? state.paramIndex : 0);
+      if (idx < 0 || idx >= state.paramSuggestions.length) return;
+
+      const suggestion = state.paramSuggestions[idx];
+      const cmd = state.commands[state.paramCommand];
+      const paramDef = cmd && cmd.params && cmd.params[0];
+
+      if (paramDef && paramDef.type === 'item' && suggestion._item) {
+        const commandName = state.paramCommand;
+        const typed = commandName + ' ' + (suggestion.title || suggestion.value || '');
+        const selectedItem = suggestion._item;
+
+        // Record frecency
+        const commandPart = (state.originalTyped || typed).split(' ')[0];
+        updateMatchCount(commandName);
+        updateAdaptiveFeedback(commandPart, commandName);
+        state.lastExecuted = commandName;
+
+        doExecute(commandName, typed, { selectedItem });
+      } else {
+        // Fallback: execute with typed text
+        const commandName = state.paramCommand;
+        const typed = state.typed;
+        const commandPart = (state.originalTyped || typed).split(' ')[0];
+        updateMatchCount(commandName);
+        updateAdaptiveFeedback(commandPart, commandName);
+        state.lastExecuted = commandName;
+
+        doExecute(commandName, typed);
+      }
+
+      const input = commandInput();
+      if (input) { input.value = ''; }
+      state.typed = '';
+    },
+
+    setParamIndexFromClick(payload) {
+      if (payload?.index !== undefined) {
+        state.paramIndex = payload.index;
+      }
+    },
+
+    recordFrecency(payload) {
+      const name = payload?.commandName || state.matches[state.matchIndex];
+      if (!name) return;
+      const typed = state.originalTyped || state.typed || '';
+      const commandPart = typed.split(' ')[0];
+      state.lastExecuted = name;
+      updateMatchCount(name);
+      updateAdaptiveFeedback(commandPart, name);
+    },
+
+    recordFrecencyFromResults() {
+      const name = state.matches[state.matchIndex];
+      if (!name) return;
+      const typed = state.originalTyped || state.typed || '';
+      const commandPart = typed.split(' ')[0];
+      state.lastExecuted = name;
+      updateMatchCount(name);
+      updateAdaptiveFeedback(commandPart, name);
+    },
+
+    setMatchIndexFromClick(payload) {
+      if (payload?.index !== undefined) {
+        state.matchIndex = payload.index;
+      }
+    },
+
+    executeCommand(payload) {
+      const name = payload?.commandName || state.matches[state.matchIndex];
+      const typed = payload?.typed || state.typed;
+      if (!name) return;
+      doExecute(name, typed);
+    },
+
+    executeCommandWithParams() {
+      const name = state.paramCommand || state.matches[state.matchIndex];
+      const typed = state.typed;
+      if (!name) return;
+      doExecute(name, typed);
+      const input = commandInput();
+      if (input) { input.value = ''; }
+      state.typed = '';
+    },
+
+    executeChainCommand() {
+      const name = state.matches[state.matchIndex];
+      const typed = state.typed;
+      if (!name) return;
+      doExecute(name, typed);
+    },
+
+    openURL(payload) {
+      const trimmedText = (payload?.value || state.typed || '').trim();
+      const urlResult = getValidURL(trimmedText);
+      if (!urlResult.valid) return;
+
+      log('cmd:panel', 'Opening URL:', urlResult.url);
+
+      const matchingUrlCommand = findMatchingUrlCommand(urlResult.url);
+      const frecencyTarget = matchingUrlCommand || urlResult.url;
+      state.lastExecuted = frecencyTarget;
+      updateMatchCount(frecencyTarget);
+      updateAdaptiveFeedback(trimmedText, frecencyTarget);
+
+      api.window.open(urlResult.url, {
+        role: 'content',
+        width: 800,
+        height: 600,
+        trackingSource: 'cmd',
+        trackingSourceId: 'url-direct'
+      }).catch(error => {
+        log.error('cmd:panel', 'Failed to open URL:', error);
+      });
+    },
+
+    openSearch(payload) {
+      const trimmedText = (payload?.value || state.typed || '').trim();
+      if (!trimmedText) return;
+
+      log('cmd:panel', 'Opening search for:', trimmedText);
+      api.window.open(`peek://ext/search/home.html?q=${encodeURIComponent(trimmedText)}`, {
+        role: 'workspace',
+        key: 'search-home',
+        width: 700,
+        height: 600,
+        trackingSource: 'cmd',
+        trackingSourceId: 'search'
+      }).catch(error => {
+        log.error('cmd:panel', 'Failed to open search:', error);
+      });
+    },
+
+    shutdown() {
+      setTimeout(shutdown, 100);
+    },
+
+    shutdownDelayed() {
+      setTimeout(shutdown, 100);
+    },
+
+    showSpinner(payload) {
+      showExecutionState(payload?.name || state.executingCommand);
+    },
+
+    hideSpinner() {
+      hideExecutionState();
+    },
+
+    showError(payload) {
+      const name = payload?.name || state.executingCommand || 'command';
+      const msg = payload?.error || 'Unknown error';
+      showExecutionError(name, msg);
+    },
+
+    hideError() {
+      hideExecutionState();
+    },
+
+    cancelExecution() {
+      log('cmd:panel', 'Cancelling execution');
+      hideExecutionState();
+    },
+
+    enterOutputSelection(payload) {
+      const result = payload?.result;
+      if (!result || !result.output) return;
+      doEnterOutputSelectionMode(result.output.data, result.output.mimeType, payload.name);
+      const input = commandInput();
+      if (input) { input.value = ''; input.focus(); }
+    },
+
+    exitOutputSelection() {
+      doExitOutputSelectionMode();
+    },
+
+    selectOutputItem() {
+      doSelectOutputItem();
+    },
+
+    setOutputIndexFromClick(payload) {
+      if (payload?.index !== undefined) {
+        state.outputItemIndex = payload.index;
+      }
+    },
+
+    enterChainMode(payload) {
+      const result = payload?.result;
+      if (!result || !result.output) return;
+      machine.setState(States.CHAIN_MODE);
+      doEnterChainMode(result.output, payload.name);
+      const input = commandInput();
+      if (input) { input.value = ''; input.focus(); }
+    },
+
+    exitChainMode() {
+      doExitChainMode();
+    },
+
+    exitChainModeIfActive() {
+      if (state.chainContext) {
+        doExitChainMode();
+      }
+    },
+
+    chainUndo() {
+      doChainUndo();
+    },
+
+    publishEditorOpen(payload) {
+      const result = payload?.result;
+      if (!result || !result.output) return;
+      const outputData = result.output.data;
+      const outputMimeType = result.output.mimeType;
+
+      if (outputMimeType === 'new-item') {
+        api.publish('editor:add', { type: outputData.type || 'text' }, api.scopes.GLOBAL);
+      } else if (outputData.id) {
+        api.publish('editor:open', { itemId: outputData.id }, api.scopes.GLOBAL);
+        if (result.output.isNew) {
+          api.publish('editor:changed', { action: 'add', itemId: outputData.id }, api.scopes.GLOBAL);
+        }
+      }
+    },
+
+    updateChainFromPopup(payload) {
+      if (state.chainContext) {
+        state.chainContext.data = payload.data;
+        state.chainContext.mimeType = payload.mimeType || state.chainContext.mimeType;
+        if (state.chainStack.length > 0) {
+          state.chainStack[state.chainStack.length - 1].data = payload.data;
+        }
+      }
+
+      state.typed = '';
+      state.showResults = true;
+
+      updateChainUI();
+      updateChainStepsUI();
+    },
+
+    closeChainPopup() {
+      if (chainPopupWindowId) {
+        api.window.close(chainPopupWindowId);
+        chainPopupWindowId = null;
+      }
+      state.chainPopupActive = false;
+    },
+
+    refocusPanel() {
+      api.window.getWindowId().then(id => {
+        if (id) api.window.focus(id);
+      });
+      setTimeout(() => {
+        const input = commandInput();
+        if (input) input.focus();
+      }, 100);
+    },
+
+    cycleMode() {
+      cycleMode();
+    },
+
+    resetAllState() {
+      machine.reset();
+
+      hideExecutionState();
+      doExitOutputSelectionMode();
+      doExitChainMode();
+
+      state.paramCommand = null;
+      state.paramSuggestions = [];
+      state.paramIndex = -1;
+
+      invalidateCompleterCache();
+
+      state.chainPopupActive = false;
+      state.showResults = false;
+
+      currentMode = 'default';
+      currentModeMetadata = {};
+      modeWasSet = false;
+
+      loadCommandContext();
+      adaptiveDataCache = null;
+      loadAdaptiveData().then(d => {
+        state.adaptiveFeedback = d.feedback;
+        state.matchCounts = d.counts;
+        log('cmd:panel', 'Reloaded adaptive data on panel show');
+      });
+
+      const input = commandInput();
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+
+      updateCommandUI();
+      updateResultsUI();
+    },
+  };
+}
+
+// ===== DOM Event Wiring =====
+
+async function render() {
+  const commandInput = document.getElementById('command-input');
+  const commandText = document.getElementById('command-text');
+
+  commandInput.value = '';
+  commandInput.focus();
+
+  // Input event -> dispatch to state machine
+  commandInput.addEventListener('input', () => {
+    const value = commandInput.value;
+    const trimmedText = value.trim();
+
+    // Pre-compute whether param mode should be entered
+    // (the action handler will check, but the guard needs the signal)
+    let enterParamMode = false;
+    let paramCommandName = null;
+
+    if (trimmedText) {
+      // Compute matches first to check for param candidates
+      const matches = findMatchingCommands(value);
+      const typedLower = value.toLowerCase();
+
+      for (const matchName of matches) {
+        const matchLower = matchName.toLowerCase();
+        if (typedLower.startsWith(matchLower + ' ')) {
+          if (!paramCommandName || matchName.length > paramCommandName.length) {
+            paramCommandName = matchName;
+          }
+        }
+      }
+
+      if (paramCommandName) {
+        const cmd = state.commands[paramCommandName];
+        if (cmd && cmd.params && cmd.params.length > 0) {
+          enterParamMode = true;
+        }
+      }
+    }
+
+    // For param mode, check if input still matches the param command
+    let paramStillMatches = false;
+    if (machine.getState() === States.PARAM_MODE && state.paramCommand) {
+      const lowerVal = value.toLowerCase();
+      const lowerCmd = state.paramCommand.toLowerCase();
+      paramStillMatches = lowerVal.startsWith(lowerCmd + ' ') || lowerVal.startsWith(lowerCmd);
+    }
+
+    machine.dispatch(Events.INPUT, {
+      value,
+      enterParamMode,
+      paramCommandName,
+      paramStillMatches,
+    });
+  });
+
+  // Keydown event -> dispatch special keys through state machine
+  commandInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !hasModifier(e)) {
+      // Escape is handled by IZUI onEscape handler — don't double-handle
+      // But if the keydown reaches us (not intercepted by before-input-event),
+      // handle it here
+      e.preventDefault();
+      machine.dispatch(Events.ESCAPE);
+      return;
+    }
+
+    if (e.key === 'Enter' && !hasModifier(e)) {
+      e.preventDefault();
+      const trimmedText = commandInput.value.trim();
+      const urlResult = getValidURL(trimmedText);
+      const name = state.matches[state.matchIndex];
+      const nameLower = name ? name.toLowerCase() : '';
+      const typedLower = trimmedText.toLowerCase();
+
+      const committed = name && (
+        typedLower === nameLower ||
+        typedLower.startsWith(nameLower + ' ') ||
+        state.showResults ||
+        machine.getState() === States.CHAIN_MODE
+      );
+
+      machine.dispatch(Events.ENTER, {
+        value: commandInput.value,
+        isURL: urlResult.valid,
+        url: urlResult.url,
+        committed,
+        commandName: name,
+        typed: commandInput.value,
+      });
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      machine.dispatch(Events.ARROW_DOWN);
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      machine.dispatch(Events.ARROW_UP);
+      return;
+    }
+
+    if (e.key === 'ArrowRight') {
+      if (machine.getState() === States.OUTPUT_SELECTION) {
+        e.preventDefault();
+        machine.dispatch(Events.ARROW_RIGHT);
+      }
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        machine.dispatch(Events.SHIFT_TAB);
+      } else {
+        // For Tab, check if the selected command has params
+        const name = state.matches[state.matchIndex];
+        const cmd = name && state.commands[name];
+        const hasParams = cmd && cmd.params && cmd.params.length > 0;
+        machine.dispatch(Events.TAB, { commandName: name, hasParams });
+      }
+      return;
+    }
+  });
+
+  // Keep focus on input (unless chain popup is active)
+  window.addEventListener('blur', () => {
+    if (!state.chainPopupActive) {
+      setTimeout(() => commandInput.focus(), 10);
+    }
+  });
+
+  window.addEventListener('focus', () => {
+    commandInput.focus();
+  });
+
+  // Handle visibility changes — single handler for panel show/hide
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      // Panel is now visible — dispatch visibility:shown
+      // If we're in CLOSING state, this resets everything
+      if (machine.getState() === States.CLOSING) {
+        machine.dispatch(Events.VISIBILITY_SHOWN);
+      } else {
+        // Force reset on re-show regardless (keepLive reuse)
+        machine.setState(States.CLOSING);
+        machine.dispatch(Events.VISIBILITY_SHOWN);
+      }
+    }
+  });
+
+  // Initial focus
+  setTimeout(() => commandInput.focus(), 50);
+
+  // Load command context on initial render
+  await loadCommandContext();
+
+  // Initialize mode indicator
+  initModeIndicator();
+
+  // Chain cancel button handler — dispatch through state machine
+  const chainCancelBtn = document.getElementById('chain-cancel');
+  if (chainCancelBtn) {
+    chainCancelBtn.addEventListener('click', () => {
+      machine.dispatch(Events.CLICK_CHAIN_CANCEL);
+    });
+  }
+
+  // Execution cancel button handler — dispatch through state machine
+  const execCancelBtn = document.querySelector('#execution-state .exec-cancel');
+  if (execCancelBtn) {
+    execCancelBtn.addEventListener('click', () => {
+      machine.dispatch(Events.CLICK_CANCEL);
+    });
+  }
+}
+
+render();
+
+// Register IZUI escape handler — single escape through dispatch (bug fix #1)
+api.escape.onEscape(() => {
+  return machine.handleEscape();
+});
