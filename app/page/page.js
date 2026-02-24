@@ -308,16 +308,18 @@ function setWindowBounds(bounds) {
 
 // --- Set extra window width (for panels, widgets, etc.) ---
 // Expands the window symmetrically. Flexbox keeps the center column in place.
+// Returns a promise that resolves when the window bounds have been applied.
 function setWindowPadding(width) {
   width = Math.max(0, width);
-  if (width === extraWidth) return;
+  if (width === extraWidth) return Promise.resolve();
   extraWidth = width;
   if (pendingBoundsUpdate) {
     cancelAnimationFrame(pendingBoundsUpdate);
     pendingBoundsUpdate = null;
   }
-  api.window.setBounds(computeWindowBounds(screenBounds));
+  const p = api.window.setBounds(computeWindowBounds(screenBounds));
   DEBUG && console.log('[page] Window padding set to', width);
+  return p;
 }
 
 // Initial positioning
@@ -909,8 +911,15 @@ function updateState() {
 // loadingLifecycle.onChange) to avoid TDZ errors when startLoading() calls show()
 // during module initialization.
 
+// Generation counter to prevent stale hide() completions from clobbering a
+// subsequent show(). Incremented by both show() and hide() — if show() fires
+// while hide() is awaiting setBounds, the hide's post-await code sees a stale
+// generation and bails out.
+let navbarGeneration = 0;
+
 function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
+  navbarGeneration++;
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;
@@ -936,7 +945,7 @@ function show(opts) {
   setWindowPadding(PANEL_OVERHANG * 2);
 }
 
-function hide() {
+async function hide() {
   if (isDragging || holdDragPending) return;
   // Don't hide while page is loading — navbar stays visible with spinner
   if (loadingLifecycle.state === 'loading') return;
@@ -944,12 +953,20 @@ function hide() {
     clearTimeout(hideTimer);
     hideTimer = null;
   }
+  const gen = ++navbarGeneration;
+  // Shrink the window FIRST, before hiding any CSS elements.
+  // setBounds is async IPC — if we hide panels (CSS) before the window shrinks,
+  // there's a frame where panels are gone but the window is still wide, and
+  // flexbox re-centers the content in the oversized window, causing a visible jump.
+  // By awaiting setBounds first, the window shrinks while panels are still visible
+  // (they get clipped by the window edge), then we clean up CSS classes.
+  await setWindowPadding(0);
+  // If show() was called while we were awaiting, abort — don't clobber the new state
+  if (navbarGeneration !== gen) return;
   navbar.classList.remove('visible');
   // Hide page info and entities panels alongside navbar
-  // Shrink window back to normal
   if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
   if (entitiesPanel) entitiesPanel.classList.remove('visible');
-  setWindowPadding(0);
   updatePositions();
   navbar.inputElement?.blur();
   showSource = null;
