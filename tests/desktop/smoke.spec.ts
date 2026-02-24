@@ -3034,12 +3034,11 @@ test.describe('Command Chaining @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute lists and select item to enter chain mode
+    // Execute lists to enter chain mode directly
+    // (lists returns application/json array, and downstream commands like save accept */*)
     await cmdWindow.fill('input', 'lists');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
-    await cmdWindow.press('input', 'Enter');
-    await waitForResultsWithContent(cmdWindow);
     await cmdWindow.press('input', 'Enter');
     await waitForClass(cmdWindow, '#chain-indicator', 'visible');
 

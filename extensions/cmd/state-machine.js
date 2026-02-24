@@ -215,6 +215,12 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     [States.IDLE]: {
       [Events.INPUT]: [
         {
+          // Direct to param mode when input already contains "command " with params
+          guard: (p) => p?.enterParamMode === true,
+          target: States.PARAM_MODE,
+          actions: ['setTyped', 'computeMatches', 'enterParamMode', 'updateGhostText', 'updateResults'],
+        },
+        {
           guard: 'inputNonEmpty',
           target: States.TYPING,
           actions: ['setTyped', 'computeMatches', 'checkParamEntry', 'updateGhostText', 'updateResults'],

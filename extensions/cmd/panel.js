@@ -2048,9 +2048,10 @@ async function render() {
   // Keydown event -> dispatch special keys through state machine
   commandInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !hasModifier(e)) {
-      // Escape is handled by IZUI onEscape handler — don't double-handle
-      // But if the keydown reaches us (not intercepted by before-input-event),
-      // handle it here
+      // Primary escape handler — dispatch directly to the state machine.
+      // The IZUI before-input-event handler may also fire (calling onEscape below),
+      // but it calls e.preventDefault() which blocks this keydown in production.
+      // In test (Playwright), before-input-event may not fire, so we handle here.
       e.preventDefault();
       machine.dispatch(Events.ESCAPE);
       return;
