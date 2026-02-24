@@ -1,0 +1,16 @@
+{
+  "id": "search",
+  "shortname": "search",
+  "name": "Search",
+  "description": "Search across items by text and tags",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": true,
+  "commands": [
+    {
+      "name": "search",
+      "description": "Search items by text and tags",
+      "action": { "type": "execute" }
+    }
+  ]
+}

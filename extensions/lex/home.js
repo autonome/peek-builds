@@ -1178,6 +1178,16 @@ async function fetchCollections() {
     state.collections = counts;
     renderCollections();
 
+    // Seed recent lexicons from existing collections on first visit
+    if (state.recentLexicons.length === 0 && counts.length > 0) {
+      state.recentLexicons = counts
+        .sort((a, b) => (b.count || 0) - (a.count || 0))
+        .slice(0, MAX_RECENT_LEXICONS)
+        .map(c => c.nsid);
+      saveRecentLexicons();
+      renderRecentLexicons();
+    }
+
     // Update "new" commands with repo collections
     onCollectionsChanged(counts.map(c => c.nsid));
   } catch (err) {
@@ -2476,7 +2486,7 @@ function renderRecentLexicons() {
 
   if (state.recentLexicons.length === 0) {
     recentLexiconsEl.innerHTML = `
-      <div class="recent-label">Recent Lexicons</div>
+      <div class="recent-label"><span class="nav-icon">&#8986;</span> Recent</div>
       <div class="recent-empty">No recent lexicons yet</div>
     `;
     return;
