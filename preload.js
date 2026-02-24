@@ -2207,7 +2207,7 @@ window.addEventListener('load', () => {
 // Design (v3 rewrite):
 //   - Window ID is fetched once at init (it never changes).
 //   - Window position is fetched eagerly on mousedown (overlaps with hold timer).
-//   - Hold delay is 120ms. Short enough to feel responsive.
+//   - Hold delay is configurable via dragHoldDelay pref (default 1s).
 //   - NO movement threshold during hold period. Mouse can move freely while
 //     waiting for the hold timer to fire. When it fires, the CURRENT mouse
 //     position becomes the drag origin (no jump from early movement).
@@ -2229,8 +2229,8 @@ window.addEventListener('load', () => {
   const MOVE_THRESHOLD = 3; // px of movement required to engage drag after hold fires
   const JITTER_TOLERANCE = 3; // px of movement allowed during hold without cancelling
 
-  // Configurable hold delay (read from prefs at init, default 2s)
-  let HOLD_DELAY = 2000;
+  // Configurable hold delay (read from prefs at init, default 1s)
+  let HOLD_DELAY = 1000;
 
   // State
   let isDragging = false;

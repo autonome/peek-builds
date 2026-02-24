@@ -10,7 +10,7 @@
  * The URL params (x, y, width, height) store screen coordinates of the webview
  * for session save/restore. Internally, elements use window-relative positions.
  *
- * - Custom drag: instant on navbar background, hold-150ms-to-drag anywhere else
+ * - Custom drag: instant on navbar background, hold-to-drag anywhere else (configurable via dragHoldDelay pref, default 1s)
  * - Custom resize: pointer-captured resize handle (robust even if cursor leaves window)
  * - Hover trigger zone above webview reveals/hides navbar
  * - Cmd+L shows navbar with URL focus
@@ -392,7 +392,7 @@ webview.addEventListener('did-stop-loading', () => {
 // --- Custom drag ---
 // Two modes:
 //   1. Navbar background: instant drag (no hold delay)
-//   2. Anywhere else: hold ~150ms then drag
+//   2. Anywhere else: hold for dragHoldDelay (default 1s) then drag
 // Drag now moves the BrowserWindow itself via setBounds() IPC.
 
 let isDragging = false;
@@ -404,7 +404,7 @@ let pageMouseButtonDown = false;
 
 // Hold-to-drag state (configurable, read from prefs at init)
 const JITTER_TOLERANCE = 3; // px of movement allowed during hold without cancelling
-let DRAG_HOLD_THRESHOLD = 2000; // ms, updated from prefs
+let DRAG_HOLD_THRESHOLD = 1000; // ms, updated from prefs
 let holdDragTimer = null;
 let holdDragPending = false;
 let holdDragReady = false; // true when hold fires, cursor is 'grab', waiting for movement
@@ -672,13 +672,16 @@ webview.addEventListener('console-message', (e) => {
 let mouseBridgeTimer = null;
 
 function injectMouseBridge() {
-  webview.executeJavaScript(WEBVIEW_MOUSE_BRIDGE_JS).catch(() => {});
+  webview.executeJavaScript(WEBVIEW_MOUSE_BRIDGE_JS)
+    .then(() => { DEBUG && console.log('[page] Mouse bridge injected'); })
+    .catch((err) => { console.warn('[page] Mouse bridge injection failed:', err.message); });
 }
 
 // Inject on dom-ready (fires on each full navigation)
 webview.addEventListener('dom-ready', injectMouseBridge);
 
-// Also inject on did-navigate for robustness (some navigations may not fire dom-ready).
+// Also inject on did-navigate and did-finish-load for robustness.
+// Some navigations skip dom-ready; some sites run scripts that reset global state.
 // Cancel any pending injection from a previous navigation to avoid listener buildup.
 webview.addEventListener('did-navigate', () => {
   if (mouseBridgeTimer) clearTimeout(mouseBridgeTimer);
@@ -686,6 +689,13 @@ webview.addEventListener('did-navigate', () => {
     mouseBridgeTimer = null;
     injectMouseBridge();
   }, 50);
+});
+
+webview.addEventListener('did-finish-load', () => {
+  // Re-inject after full load — catches cases where dom-ready injection was too early
+  // or the page's own scripts cleared global state. The bridge's __peekMouseBridgeInstalled
+  // guard prevents duplicate listeners if the bridge is already active.
+  injectMouseBridge();
 });
 
 dragOverlay.addEventListener('mouseup', () => {

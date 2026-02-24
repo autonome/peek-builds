@@ -139,7 +139,7 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 
 **How to try it:**
 1. Open a page (`open example.com` in the command palette).
-2. The page appears as a floating window. Hold the mouse still on the page body for 2 seconds (configurable "drag hold delay" in Settings) -- the cursor changes to a hand, then drag to move the window.
+2. The page appears as a floating window. Hold the mouse still on the page body for 1 second (configurable "drag hold delay" in Settings) -- the cursor changes to a hand, then drag to move the window.
 3. Use the corner resize handle to change dimensions.
 
 ### Navbar
@@ -173,7 +173,7 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 **Where in UI:** Settings > Core > "Window drag hold delay".
 
 **How to try it:**
-1. Open Settings and set "Window drag hold delay" (default: 2 seconds).
+1. Open Settings and set "Window drag hold delay" (default: 1 second).
 2. On a page, click and hold without moving. After the delay, the cursor changes to a hand.
 3. Now move the mouse to drag the window.
 4. On the navbar background, drag is instant with no delay.

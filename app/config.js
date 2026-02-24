@@ -91,7 +91,7 @@ const prefsSchema = {
     "dragHoldDelay": {
       "description": "How long (in seconds) to hold the mouse still before a window becomes draggable. Click and hold without moving — the cursor changes to a hand when ready, then drag to move. This allows normal text selection and clicking without accidental window drags. Set to 0 for instant drag. Takes effect on new windows.",
       "type": "number",
-      "default": 2
+      "default": 1
     },
   },
   "required": [ "shortcutKey", "startupFeature", "enableTrayIcon", "showInDockAndSwitcher", "quitShortcut" ]
@@ -168,7 +168,7 @@ const defaults = {
     sessionAutosaveInterval: 5,
     pageWidth: 800,
     pageHeight: 600,
-    dragHoldDelay: 2
+    dragHoldDelay: 1
   },
   items: [
     { id: '82de735f-a4b7-4fe6-a458-ec29939ae00d',
