@@ -1,3 +1,5 @@
+import { parseSearchQuery, filterItems, filterTags } from './search.js';
+
 /**
  * Tags Home - Tag visualization and management UI
  *
@@ -14,7 +16,8 @@
 import * as CodeMirror from 'peek://extensions/editor/codemirror.js';
 import { StatusLine } from 'peek://extensions/editor/status-line.js';
 import {
-  createHeaderSlot, createFooterSlot, createFaviconEl, createUrlSpan
+  createHeaderSlot, createFooterSlot, createFaviconEl, createUrlSpan,
+  extractTitle, formatUrl
 } from 'peek://app/lib/card-helpers.js';
 const { getCM, Vim } = CodeMirror;
 
@@ -712,79 +715,23 @@ const updateFilterCounts = () => {
   document.querySelector('[data-count="image"]').textContent = imageCount;
 };
 
-/**
- * Filter items based on current state.
- *
- * Search behaviour:
- *   - Search query filters items by content, title, URL, domain, AND tag names.
- *   - When tags are selected, items must have ALL selected tags (AND logic)
- *     AND match the search query against content/title/URL/tags.
- */
-const getFilteredItems = () => {
-  // Only show items that have at least one tag
-  let items = state.items.filter(item => {
-    const tags = state.itemTags.get(item.id);
-    return tags && tags.length > 0;
-  });
+// parseSearchQuery is imported from ./search.js
 
-  // Filter by type
-  if (state.activeFilter !== 'all') {
-    items = items.filter(item => {
-      const itemType = item.type || (item.uri ? 'url' : null);
-      if (state.activeFilter === 'page') {
-        return itemType === 'url' || !itemType;
-      }
-      return itemType === state.activeFilter;
-    });
-  }
+/** Delegate to the pure filterItems() from search.js, passing current state. */
+const getFilteredItems = () => filterItems({
+  items: state.items,
+  itemTags: state.itemTags,
+  searchQuery: state.searchQuery,
+  activeTags: state.activeTags,
+  activeFilter: state.activeFilter,
+});
 
-  // Filter by active tags (AND logic - item must have ALL selected tags)
-  if (state.activeTags.length > 0) {
-    items = items.filter(item => {
-      const tags = state.itemTags.get(item.id) || [];
-      const tagIds = new Set(tags.map(t => t.id));
-      return state.activeTags.every(activeTag => tagIds.has(activeTag.id));
-    });
-  }
-
-  // Filter by search query - searches content, title, URL, domain, and tag names
-  if (state.searchQuery) {
-    const q = state.searchQuery.toLowerCase().trim();
-    if (q.length > 0) {
-      items = items.filter(item => {
-        // Search item content fields
-        const content = (item.content || '').toLowerCase();
-        const title = (item.title || '').toLowerCase();
-        const uri = (item.uri || '').toLowerCase();
-        const domain = (item.domain || '').toLowerCase();
-
-        if (content.includes(q) || title.includes(q) || uri.includes(q) || domain.includes(q)) {
-          return true;
-        }
-
-        // Also search tag names on the item
-        const tags = state.itemTags.get(item.id) || [];
-        return tags.some(t => t.name.toLowerCase().includes(q));
-      });
-    }
-  }
-
-  return items;
-};
-
-/**
- * Filter tags based on search query.
- * When tags are selected, don't filter the tag list by search (search applies to items instead).
- * Selected tags are always included regardless of search filter.
- */
-const getFilteredTags = () => {
-  if (!state.searchQuery || state.activeTags.length > 0) return state.tags;
-  const q = state.searchQuery.toLowerCase();
-  const selectedIds = new Set(state.activeTags.map(t => t.id));
-  return state.tags.filter(tag =>
-    selectedIds.has(tag.id) || tag.name.toLowerCase().includes(q)
-  );
-};
+/** Delegate to the pure filterTags() from search.js, passing current state. */
+const getFilteredTags = () => filterTags({
+  tags: state.tags,
+  searchQuery: state.searchQuery,
+  activeTags: state.activeTags,
+});
 
 /**
  * Main render function
@@ -803,9 +750,9 @@ const render = () => {
  */
 const updateSearchPlaceholder = () => {
   if (state.activeTags.length > 0) {
-    searchInput.placeholder = 'Search within tagged items...';
+    searchInput.placeholder = 'Search within tagged items... (#tag for strict match)';
   } else {
-    searchInput.placeholder = 'Search content, titles, and tags...';
+    searchInput.placeholder = 'Search items... (#tag for tag filter, text for content)';
   }
 };
 
@@ -1153,13 +1100,13 @@ const getItemDisplayInfo = (item) => {
   let faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">?</text></svg>';
 
   if (isAddress) {
-    title = item.title || item.uri;
-    subtitle = item.uri;
+    title = extractTitle(item, item.uri);
+    subtitle = formatUrl(item.uri);
     faviconUrl = item.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
   } else {
     if (itemType === 'url') {
-      title = item.content;
-      subtitle = item.content;
+      title = extractTitle(item, item.content);
+      subtitle = formatUrl(item.content);
       faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
     } else if (itemType === 'text') {
       title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');

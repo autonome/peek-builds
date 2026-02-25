@@ -17,7 +17,7 @@ import path from 'node:path';
 
 import { getDb } from './datastore.js';
 import { getProfileSession } from './session-partition.js';
-import { registerAll } from '../../lib/chrome-api-polyfills/index.js';
+import { registerAll } from './chrome-api-polyfills/index.js';
 
 const DEBUG = !!process.env.DEBUG;
 
