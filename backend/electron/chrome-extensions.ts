@@ -11,12 +11,13 @@
  * - Compatible with electron-chrome-extensions for enhanced API support
  */
 
-import { session, Extension, BrowserWindow, nativeTheme } from 'electron';
+import { session, Extension, BrowserWindow, nativeTheme, ipcMain, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { getDb } from './datastore.js';
 import { getProfileSession } from './session-partition.js';
+import { registerAll } from '../../lib/chrome-api-polyfills/index.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -104,6 +105,7 @@ export interface ChromeExtensionSetting {
 const DISABLED_BY_DEFAULT = new Set(['proton-pass']);
 
 // Module state
+let polyfillHandle: { cleanup: () => void; getPreloadScript: () => string } | null = null;
 let extensionsDir: string | null = null;
 const discoveredExtensions: Map<string, ChromeExtensionInfo> = new Map();
 const loadedExtensions: Map<string, LoadedChromeExtension> = new Map();
@@ -296,6 +298,26 @@ async function unloadExtension(extId: string): Promise<boolean> {
  */
 export async function loadEnabledChromeExtensions(): Promise<void> {
   DEBUG && console.log('[chrome-ext] Loading enabled extensions...');
+
+  // Register Chrome API polyfills before loading extensions
+  const profileSession = getProfileSession();
+  if (!polyfillHandle) {
+    polyfillHandle = registerAll(profileSession, { ipcMain, app });
+
+    // Inject polyfill preload scripts into extension webContents
+    app.on('web-contents-created', (_event, webContents) => {
+      webContents.on('dom-ready', () => {
+        const url = webContents.getURL();
+        if (url.startsWith('chrome-extension://') && polyfillHandle) {
+          webContents.executeJavaScript(polyfillHandle.getPreloadScript()).catch(() => {
+            // Ignore injection errors (webContents may be destroyed)
+          });
+        }
+      });
+    });
+
+    DEBUG && console.log('[chrome-ext] Chrome API polyfills registered');
+  }
 
   for (const [extId, extInfo] of discoveredExtensions) {
     const setting = getExtensionSetting(extId);
@@ -542,6 +564,12 @@ export function openChromeExtensionPage(
  */
 export async function cleanupChromeExtensions(): Promise<void> {
   DEBUG && console.log('[chrome-ext] Cleaning up...');
+
+  // Clean up Chrome API polyfills
+  if (polyfillHandle) {
+    polyfillHandle.cleanup();
+    polyfillHandle = null;
+  }
 
   // Close any open UI windows
   for (const [key, win] of extensionUiWindows) {
