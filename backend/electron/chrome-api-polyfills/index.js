@@ -12,6 +12,7 @@
  * - `chrome.storage.session` — In-memory session storage (cleared on quit)
  * - `chrome.webNavigation` — Page navigation event forwarding
  * - `chrome.offscreen` — Offscreen document management via hidden windows
+ * - `chrome.permissions` — No-op permissions (all granted in Electron)
  *
  * ## Usage
  *
@@ -38,8 +39,9 @@ import * as alarms from './alarms.js';
 import * as storageSession from './storage-session.js';
 import * as webNavigation from './web-navigation.js';
 import * as offscreen from './offscreen.js';
+import * as permissions from './permissions.js';
 
-export { alarms, storageSession, webNavigation, offscreen };
+export { alarms, storageSession, webNavigation, offscreen, permissions };
 
 /**
  * Register all Chrome API polyfills for a session.
@@ -87,6 +89,11 @@ export function registerAll(session, options = {}) {
     cleanups.push(handles.offscreen.cleanup);
   }
 
+  if (shouldRegister('permissions')) {
+    handles.permissions = permissions.setupMainProcess(session, { ipcMain });
+    cleanups.push(handles.permissions.cleanup);
+  }
+
   return {
     /**
      * Clean up all registered handlers and free resources.
@@ -122,6 +129,9 @@ export function registerAll(session, options = {}) {
       }
       if (shouldRegister('offscreen')) {
         scripts.push(offscreen.getPreloadScript());
+      }
+      if (shouldRegister('permissions')) {
+        scripts.push(permissions.getPreloadScript());
       }
 
       return scripts.join('\n');
