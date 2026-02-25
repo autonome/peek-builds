@@ -78,16 +78,6 @@ const prefsSchema = {
       "type": "integer",
       "default": 5
     },
-    "pageWidth": {
-      "description": "Default width for new page windows",
-      "type": "integer",
-      "default": 800
-    },
-    "pageHeight": {
-      "description": "Default height for new page windows",
-      "type": "integer",
-      "default": 600
-    },
     "dragHoldDelay": {
       "description": "How long (in seconds) to hold the mouse still before a window becomes draggable. Click and hold without moving — the cursor changes to a hand when ready, then drag to move. This allows normal text selection and clicking without accidental window drags. Set to 0 for instant drag. Takes effect on new windows.",
       "type": "number",
@@ -166,8 +156,6 @@ const defaults = {
     hideTitleBar: true,
     restoreSession: true,
     sessionAutosaveInterval: 5,
-    pageWidth: 800,
-    pageHeight: 600,
     dragHoldDelay: 1
   },
   items: [

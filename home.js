@@ -244,26 +244,9 @@ const render = (initialLoad = false) => {
 
 // ===== Open URL in Page Host (with animation) =====
 
-// Default page host size — loaded from core prefs, with fallback
-let PAGE_HOST_WIDTH = 800;
-let PAGE_HOST_HEIGHT = 600;
-
-const CORE_SETTINGS_ID = '8aadaae5-2594-4968-aba0-707f0d371cfb';
-
-const loadPageHostDefaults = async () => {
-  try {
-    if (api?.settings?.getExtKey) {
-      const result = await api.settings.getExtKey(CORE_SETTINGS_ID, 'prefs');
-      if (result.success && result.data) {
-        if (result.data.pageWidth) PAGE_HOST_WIDTH = result.data.pageWidth;
-        if (result.data.pageHeight) PAGE_HOST_HEIGHT = result.data.pageHeight;
-        debug && console.log('[pagestream] Loaded page defaults from core:', PAGE_HOST_WIDTH, 'x', PAGE_HOST_HEIGHT);
-      }
-    }
-  } catch (err) {
-    debug && console.log('[pagestream] Could not load core prefs, using defaults:', err);
-  }
-};
+// Default page host size — XGA (1024x768)
+const PAGE_HOST_WIDTH = 1024;
+const PAGE_HOST_HEIGHT = 768;
 
 /**
  * @param {object} from - Start rect {top, left, width, height, borderRadius}
@@ -651,8 +634,6 @@ const handleKeydown = (e) => {
 
 const init = async () => {
   debug && console.log('[pagestream] init');
-
-  await loadPageHostDefaults();
 
   api.escape.onEscape(handleEscape);
 
