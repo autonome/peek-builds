@@ -13,6 +13,39 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-25
+
+Desktop - Command Palette
+- [x] Rewrite cmd panel to use state machine with transition table and dispatch — 10 states, guard-based transitions, enforced invariants ([0496](https://tangled.org/burrito.space/peek/commit/04960fb1), [08eb](https://tangled.org/burrito.space/peek/commit/08eb8055))
+- [x] Add 76 unit tests and 15 integration tests for state machine ([3c05](https://tangled.org/burrito.space/peek/commit/3c05a142))
+- [x] Fix IDLE → PARAM_MODE direct transition for fill-style input ([2f83](https://tangled.org/burrito.space/peek/commit/2f83e6d8))
+- [x] Restore two-tone inline suggestion styling — bold typed text, dim completion ([4d35](https://tangled.org/burrito.space/peek/commit/4d35289b))
+
+Desktop - Page View
+- [x] Add page info and entities panels to navbar overlay — 75% off-page, 25% overlapping ([e144](https://tangled.org/burrito.space/peek/commit/e144dbd8))
+- [x] Refactor page layout to flexbox centering — window padding expands symmetrically ([b494](https://tangled.org/burrito.space/peek/commit/b494e8a3))
+- [x] Eliminate one-frame visual flash on navbar show/hide with opacity masking ([8f22](https://tangled.org/burrito.space/peek/commit/8f22aa70))
+- [x] Fix Cmd+L navbar auto-hide on mouseleave ([4ff2](https://tangled.org/burrito.space/peek/commit/4ff260b2))
+- [x] Fix navbar show/hide and loading lifecycle failures ([6780](https://tangled.org/burrito.space/peek/commit/67d01801))
+
+Desktop - HUD
+- [x] Fix macOS Spaces switching — use showInactive() to prevent activateIgnoringOtherApps ([0166](https://tangled.org/burrito.space/peek/commit/0166d4b3))
+- [x] Make HUD visible on all macOS Spaces and pass through visibleOnAllWorkspaces option ([3893](https://tangled.org/burrito.space/peek/commit/3893e68b))
+
+Desktop - Extensions
+- [x] Add search view extension with text and tag search ([86a2](https://tangled.org/burrito.space/peek/commit/86a21be6))
+- [x] Add tag actions extension for configurable tag-based automation ([a617](https://tangled.org/burrito.space/peek/commit/a6170230))
+- [x] Extract shared grid navigation into app/lib/grid-nav.js ([e787](https://tangled.org/burrito.space/peek/commit/e787c66f))
+- [x] Refactor tags to use shared card-helpers for peek-card slot construction ([0580](https://tangled.org/burrito.space/peek/commit/0580c349))
+
+Desktop - Lexicon Studio
+- [x] Seed recent lexicons from collections, fix sidebar styling ([a629](https://tangled.org/burrito.space/peek/commit/a629437c))
+- [x] Always show recent lexicons section in sidebar ([d6cf](https://tangled.org/burrito.space/peek/commit/d6cfe9af))
+
+Desktop - Windows
+- [x] Unify hold-to-drag default to 1s, fix webview drag reliability ([ce48](https://tangled.org/burrito.space/peek/commit/ce483874))
+- [x] Prevent macOS Space switching when opening cmd palette ([ac9a](https://tangled.org/burrito.space/peek/commit/ac9aa862))
+
 ## 2026-02-23
 
 Desktop - Extensions
