@@ -18,6 +18,7 @@
  */
 
 import api from '../api.js';
+import { createPageWidgetHost } from './page-widgets.js';
 
 console.log('[page] Script loaded');
 
@@ -1509,6 +1510,34 @@ function updateWidget(id, { content, title } = {}) {
   DEBUG && console.log('[page] Widget updated:', id);
 }
 
+// --- Page Widget Host (extension-provided widgets via pubsub) ---
+
+const pageWidgetHost = createPageWidgetHost({
+  api,
+  webview,
+  widgetContainer,
+  addWidget,
+  updateWidget,
+  removeWidget,
+});
+pageWidgetHost.init();
+
+// Publish page:navigated on in-page navigation
+webview.addEventListener('did-navigate', (e) => {
+  const title = document.title || '';
+  pageWidgetHost.publishNavigated(e.url, title);
+});
+
+// Publish page:will-close when window is closing
+window.addEventListener('beforeunload', () => {
+  pageWidgetHost.destroy();
+});
+
+// Expose for testing
+if (typeof window !== 'undefined') {
+  window.__pageWidgetHost = pageWidgetHost;
+}
+
 // --- OpenSearch discovery widget ---
 
 api.subscribe('websearch:engine-discovered', (msg) => {
@@ -1974,5 +2003,305 @@ async function extractSimpleEntities() {
 webview.addEventListener('did-finish-load', () => {
   setTimeout(extractSimpleEntities, 2000);
 });
+
+// --- Page Command Handlers (pubsub) ---
+// Commands from the cmd palette publish page:cmd:request, we handle them here
+// by running executeJavaScript on the webview and publishing the result back.
+
+api.subscribe('page:cmd:request', async (msg) => {
+  if (!msg || !msg.requestId || !msg.action) return;
+
+  // Only respond if we are the focused page window
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
+
+  const { requestId, action } = msg;
+
+  const respond = (data, error) => {
+    api.publish('page:cmd:response', {
+      requestId,
+      data: data || null,
+      error: error || null
+    }, api.scopes.GLOBAL);
+  };
+
+  try {
+    switch (action) {
+      case 'list-images': {
+        const images = await webview.executeJavaScript(`
+          (function() {
+            var results = [];
+            var seen = new Set();
+            var imgs = document.querySelectorAll('img[src]');
+            for (var i = 0; i < imgs.length; i++) {
+              var img = imgs[i];
+              var src = img.src;
+              if (!src || seen.has(src)) continue;
+              seen.add(src);
+              var alt = (img.alt || '').trim();
+              var w = img.naturalWidth || img.width || 0;
+              var h = img.naturalHeight || img.height || 0;
+              results.push({
+                src: src,
+                alt: alt,
+                width: w,
+                height: h,
+                title: alt || src.split('/').pop().split('?')[0]
+              });
+            }
+            // Also check CSS background images on visible elements
+            var els = document.querySelectorAll('[style*="background-image"]');
+            for (var j = 0; j < Math.min(els.length, 50); j++) {
+              var style = window.getComputedStyle(els[j]);
+              var bg = style.backgroundImage;
+              if (bg && bg !== 'none') {
+                var match = bg.match(/url\\(["']?([^"')]+)["']?\\)/);
+                if (match && match[1] && !seen.has(match[1])) {
+                  seen.add(match[1]);
+                  results.push({
+                    src: match[1],
+                    alt: 'Background image',
+                    width: 0,
+                    height: 0,
+                    title: match[1].split('/').pop().split('?')[0]
+                  });
+                }
+              }
+            }
+            return results;
+          })();
+        `);
+        respond(images);
+        break;
+      }
+
+      case 'list-feeds': {
+        const feeds = await webview.executeJavaScript(`
+          (function() {
+            var results = [];
+            var feedLinks = document.querySelectorAll(
+              'link[type="application/rss+xml"], ' +
+              'link[type="application/atom+xml"], ' +
+              'link[type="application/feed+json"], ' +
+              'link[rel="alternate"][type*="xml"]'
+            );
+            for (var i = 0; i < feedLinks.length; i++) {
+              var link = feedLinks[i];
+              results.push({
+                url: link.href,
+                title: link.title || link.type || 'Feed',
+                type: link.type || 'unknown'
+              });
+            }
+            // Also look for common feed URL patterns in <a> tags
+            var anchors = document.querySelectorAll('a[href]');
+            var feedPatterns = ['/feed', '/rss', '/atom', '.rss', '.xml', '/feeds/'];
+            var seen = new Set(results.map(function(r) { return r.url; }));
+            for (var j = 0; j < anchors.length; j++) {
+              var href = anchors[j].href;
+              if (!href || seen.has(href)) continue;
+              var lower = href.toLowerCase();
+              for (var k = 0; k < feedPatterns.length; k++) {
+                if (lower.includes(feedPatterns[k])) {
+                  seen.add(href);
+                  results.push({
+                    url: href,
+                    title: anchors[j].textContent.trim().slice(0, 60) || 'Feed link',
+                    type: 'link'
+                  });
+                  break;
+                }
+              }
+            }
+            return results;
+          })();
+        `);
+        respond(feeds);
+        break;
+      }
+
+      case 'list-links': {
+        const links = await webview.executeJavaScript(`
+          (function() {
+            var results = [];
+            var seen = new Set();
+            var anchors = document.querySelectorAll('a[href]');
+            var pageHost = window.location.hostname;
+            for (var i = 0; i < anchors.length; i++) {
+              var a = anchors[i];
+              var href = a.href;
+              if (!href || !href.startsWith('http') || seen.has(href)) continue;
+              seen.add(href);
+              var text = (a.textContent || '').trim().slice(0, 100);
+              if (!text || text.length < 2) continue;
+              var isExternal = false;
+              try { isExternal = new URL(href).hostname !== pageHost; } catch(e) {}
+              results.push({
+                url: href,
+                text: text,
+                title: text,
+                external: isExternal
+              });
+            }
+            return results;
+          })();
+        `);
+        respond(links);
+        break;
+      }
+
+      case 'list-entities': {
+        // Return cached entities if available, otherwise do live extraction
+        if (currentPageEntities && currentPageEntities.length > 0) {
+          respond(currentPageEntities);
+        } else {
+          // Do a quick extraction
+          const entities = await webview.executeJavaScript(`
+            (function() {
+              var entities = [];
+              var seen = new Set();
+
+              // Emails from mailto links
+              var mailLinks = document.querySelectorAll('a[href^="mailto:"]');
+              for (var i = 0; i < mailLinks.length; i++) {
+                var email = mailLinks[i].href.replace('mailto:', '').split('?')[0];
+                if (email && !seen.has(email)) {
+                  seen.add(email);
+                  entities.push({ name: email, type: 'email' });
+                }
+              }
+
+              // Emails from text content (regex)
+              var textContent = document.body ? document.body.innerText : '';
+              var emailRegex = /[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/g;
+              var emailMatches = textContent.match(emailRegex) || [];
+              for (var j = 0; j < emailMatches.length; j++) {
+                if (!seen.has(emailMatches[j])) {
+                  seen.add(emailMatches[j]);
+                  entities.push({ name: emailMatches[j], type: 'email' });
+                }
+              }
+
+              // Phone numbers from tel links
+              var telLinks = document.querySelectorAll('a[href^="tel:"]');
+              for (var k = 0; k < telLinks.length; k++) {
+                var phone = telLinks[k].href.replace('tel:', '');
+                if (phone && !seen.has(phone)) {
+                  seen.add(phone);
+                  entities.push({ name: phone, type: 'phone' });
+                }
+              }
+
+              // External domains as organizations
+              var links = document.querySelectorAll('a[href]');
+              var domainCounts = {};
+              for (var l = 0; l < Math.min(links.length, 500); l++) {
+                try {
+                  var host = new URL(links[l].href).hostname;
+                  if (host === window.location.hostname) continue;
+                  if (!domainCounts[host]) domainCounts[host] = 0;
+                  domainCounts[host]++;
+                } catch(e) {}
+              }
+              // Only include domains referenced multiple times (likely organizations)
+              Object.keys(domainCounts).forEach(function(domain) {
+                if (domainCounts[domain] >= 2 && !seen.has(domain)) {
+                  seen.add(domain);
+                  entities.push({ name: domain, type: 'organization' });
+                }
+              });
+
+              return entities.slice(0, 100);
+            })();
+          `);
+          respond(entities);
+        }
+        break;
+      }
+
+      case 'view-reader': {
+        // Toggle reader mode by injecting/removing a simplified view
+        const result = await webview.executeJavaScript(`
+          (function() {
+            // Check if already in reader mode
+            if (document.getElementById('__peek_reader_mode')) {
+              // Exit reader mode: restore original content
+              var overlay = document.getElementById('__peek_reader_mode');
+              overlay.remove();
+              document.body.style.overflow = '';
+              return { active: false, message: 'Reader mode off' };
+            }
+
+            // Enter reader mode: extract readable content
+            var title = document.title || '';
+            var article = document.querySelector('article') ||
+                          document.querySelector('[role="main"]') ||
+                          document.querySelector('main') ||
+                          document.querySelector('.post-content') ||
+                          document.querySelector('.article-content') ||
+                          document.querySelector('.entry-content');
+
+            var content = '';
+            if (article) {
+              content = article.innerHTML;
+            } else {
+              // Fallback: use body but strip nav, header, footer, aside, script, style
+              var clone = document.body.cloneNode(true);
+              var remove = clone.querySelectorAll('nav, header, footer, aside, script, style, .nav, .header, .footer, .sidebar, .menu, .ad, .advertisement, [role="navigation"], [role="banner"], [role="complementary"]');
+              for (var i = 0; i < remove.length; i++) {
+                remove[i].remove();
+              }
+              content = clone.innerHTML;
+            }
+
+            var overlay = document.createElement('div');
+            overlay.id = '__peek_reader_mode';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:999999;background:#fff;color:#222;overflow-y:auto;padding:40px;font-family:Georgia,serif;font-size:18px;line-height:1.6;';
+            overlay.innerHTML =
+              '<div style="max-width:700px;margin:0 auto;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:10px;border-bottom:1px solid #ddd;">' +
+                  '<span style="color:#888;font-size:14px;font-family:system-ui,sans-serif;">Reader Mode</span>' +
+                  '<button id="__peek_reader_close" style="background:none;border:1px solid #ccc;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:13px;font-family:system-ui,sans-serif;">Exit</button>' +
+                '</div>' +
+                '<h1 style="font-size:28px;line-height:1.3;margin-bottom:20px;">' + title.replace(/</g, '&lt;') + '</h1>' +
+                content +
+              '</div>';
+
+            document.body.appendChild(overlay);
+            document.body.style.overflow = 'hidden';
+
+            // Wire up close button
+            document.getElementById('__peek_reader_close').addEventListener('click', function() {
+              overlay.remove();
+              document.body.style.overflow = '';
+            });
+
+            return { active: true, message: 'Reader mode on' };
+          })();
+        `);
+        respond(result);
+        break;
+      }
+
+      case 'view-source': {
+        const source = await webview.executeJavaScript(`
+          (function() {
+            return {
+              html: document.documentElement.outerHTML,
+              title: document.title || window.location.href
+            };
+          })();
+        `);
+        respond(source);
+        break;
+      }
+
+      default:
+        respond(null, 'Unknown page command action: ' + action);
+    }
+  } catch (err) {
+    console.error('[page] page:cmd:request error:', err);
+    respond(null, err.message || 'Failed to execute page command');
+  }
+}, api.scopes.GLOBAL);
 
 DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);

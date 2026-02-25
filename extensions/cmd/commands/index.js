@@ -10,6 +10,7 @@ import noteModule from './note.js';
 import editModule from './edit.js';
 import urlModule from './url.js';
 import historyModule from './history.js';
+import pageModule from './page.js';
 
 // Chaining commands - for command composition pipelines
 import listsCommand from './lists.js';
@@ -38,6 +39,7 @@ const activeCommands = [
   ...editModule.commands,
   ...urlModule.commands,
   ...historyModule.commands,
+  ...pageModule.commands,
 
   // Chaining commands
   listsCommand

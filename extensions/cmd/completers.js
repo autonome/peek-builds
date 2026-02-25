@@ -78,11 +78,33 @@ export async function completeTag(partial, exclude, paramDef) {
 export function completeEnum(partial, exclude, paramDef) {
   const prefix = paramDef.prefix || '';
   const lowerPartial = (partial || '').toLowerCase();
+  const options = paramDef.options || [];
   const values = paramDef.values || [];
 
   const matchText = lowerPartial.startsWith(prefix.toLowerCase())
     ? lowerPartial.slice(prefix.length)
     : lowerPartial;
+
+  // Support both rich options [{value, title, subtitle}] and plain string values
+  if (options.length > 0) {
+    return options
+      .filter(opt => {
+        const val = typeof opt === 'string' ? opt : opt.value;
+        if (exclude.has(val.toLowerCase())) return false;
+        if (matchText && !val.toLowerCase().startsWith(matchText)) return false;
+        return true;
+      })
+      .map(opt => {
+        if (typeof opt === 'string') {
+          return { title: prefix + opt, subtitle: '', value: prefix + opt };
+        }
+        return {
+          title: prefix + (opt.title || opt.value),
+          subtitle: opt.subtitle || '',
+          value: prefix + opt.value
+        };
+      });
+  }
 
   return values
     .filter(val => {

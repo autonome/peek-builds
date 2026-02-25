@@ -1,0 +1,9 @@
+{
+  "id": "pagewidgets-sample",
+  "shortname": "pagewidgets-sample",
+  "name": "Page Widgets Sample",
+  "description": "Sample extension demonstrating the page widget extensibility API",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": true
+}
