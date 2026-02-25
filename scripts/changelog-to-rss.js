@@ -138,7 +138,7 @@ function generateRss(meta, items) {
 
     xml += `    <item>
       <title>${escapeXml(item.title)}</title>
-      <link>${escapeXml(meta.link || '')}</link>
+      <link>${escapeXml((meta.link || '') + '/raw/main/CHANGELOG.md#' + item.dateStr)}</link>
       <guid isPermaLink="false">${escapeXml(guid)}</guid>
       <pubDate>${pubDate}</pubDate>
       <description>${escapeXml(item.description)}</description>
