@@ -192,17 +192,40 @@ export function createPageWidgetHost(deps) {
       return;
     }
 
-    if (!webview) {
+    if (!webview || typeof webview.executeJavaScript !== 'function') {
       api.publish('page:script-result', {
         requestId: msg.requestId,
         extensionId: msg.extensionId,
         error: 'No webview available',
+        success: false,
       }, api.scopes.GLOBAL);
       return;
     }
 
-    // Execute the script in the webview and publish the result
-    webview.executeJavaScript(msg.script)
+    const SCRIPT_TIMEOUT = 10000; // 10s timeout for script execution
+
+    // Execute the script in the webview and publish the result.
+    // Wrap in try-catch for synchronous errors (e.g., webview not attached).
+    let promise;
+    try {
+      promise = webview.executeJavaScript(msg.script);
+    } catch (err) {
+      api.publish('page:script-result', {
+        requestId: msg.requestId,
+        extensionId: msg.extensionId,
+        error: err.message || String(err),
+        success: false,
+      }, api.scopes.GLOBAL);
+      return;
+    }
+
+    // Race against a timeout to guarantee a response even if the webview
+    // guest process is unresponsive or the script execution hangs.
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Script execution timed out')), SCRIPT_TIMEOUT);
+    });
+
+    Promise.race([promise, timeout])
       .then((result) => {
         api.publish('page:script-result', {
           requestId: msg.requestId,
