@@ -4870,6 +4870,33 @@ export function registerContextHandlers(): void {
 }
 
 /**
+ * Persist adBlockerEnabled pref in the datastore.
+ * Reads current core prefs, updates adBlockerEnabled, writes back.
+ */
+function persistAdBlockerPref(enabled: boolean): void {
+  try {
+    const db = getDb();
+    const CORE_EXT_ID = 'core';
+    const PREFS_KEY = 'prefs';
+    const row = db.prepare(
+      'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+    ).get(CORE_EXT_ID, PREFS_KEY) as { value: string } | undefined;
+    let prefs: Record<string, unknown> = {};
+    if (row?.value) {
+      try { prefs = JSON.parse(row.value); } catch { /* use empty */ }
+    }
+    prefs.adBlockerEnabled = enabled;
+    const timestamp = Date.now();
+    db.prepare(`
+      INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(`${CORE_EXT_ID}_${PREFS_KEY}`, CORE_EXT_ID, PREFS_KEY, JSON.stringify(prefs), timestamp);
+  } catch (error) {
+    console.error('[adblocker] Failed to persist pref:', error);
+  }
+}
+
+/**
  * Register IPC handlers for bundled web extensions (adblocker + chrome extensions)
  */
 export function registerWebExtensionHandlers(): void {
@@ -4894,6 +4921,7 @@ export function registerWebExtensionHandlers(): void {
     try {
       const { applyAdblockerConfig } = await import('./adblocker.js');
       await applyAdblockerConfig({ enabled: true });
+      persistAdBlockerPref(true);
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4906,6 +4934,7 @@ export function registerWebExtensionHandlers(): void {
     try {
       const { disableBlocking } = await import('./adblocker.js');
       disableBlocking();
+      persistAdBlockerPref(false);
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
