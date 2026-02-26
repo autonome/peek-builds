@@ -261,7 +261,7 @@ const renderCoreSettings = async () => {
   defaultBrowserRow.style.cssText = 'display: flex; align-items: center; gap: 12px;';
 
   const defaultBrowserBtn = document.createElement('button');
-  defaultBrowserBtn.textContent = 'Set as Default Browser';
+  defaultBrowserBtn.textContent = 'Set as default handler for HTTP addresses and HTML documents';
   defaultBrowserBtn.style.cssText = `
     padding: 8px 16px;
     font-size: 13px;
@@ -282,11 +282,11 @@ const renderCoreSettings = async () => {
     try {
       const result = await api.invoke('default-browser-status');
       if (result.isDefault) {
-        defaultBrowserBtn.textContent = 'Already Default Browser';
+        defaultBrowserBtn.textContent = 'Already the default handler';
         defaultBrowserBtn.disabled = true;
         defaultBrowserBtn.style.opacity = '0.6';
         defaultBrowserBtn.style.cursor = 'default';
-        defaultBrowserStatus.textContent = '\u2713 Peek is the default browser';
+        defaultBrowserStatus.textContent = '\u2713 Peek is the default handler';
       }
     } catch { /* ignore */ }
   })();
@@ -297,17 +297,17 @@ const renderCoreSettings = async () => {
     try {
       const result = await api.invoke('set-default-browser');
       if (result.success) {
-        defaultBrowserBtn.textContent = 'Already Default Browser';
+        defaultBrowserBtn.textContent = 'Already the default handler';
         defaultBrowserBtn.style.opacity = '0.6';
         defaultBrowserBtn.style.cursor = 'default';
-        defaultBrowserStatus.textContent = '\u2713 Peek is the default browser';
+        defaultBrowserStatus.textContent = '\u2713 Peek is the default handler';
       } else {
-        defaultBrowserBtn.textContent = 'Set as Default Browser';
+        defaultBrowserBtn.textContent = 'Set as default handler for HTTP addresses and HTML documents';
         defaultBrowserBtn.disabled = false;
         defaultBrowserStatus.textContent = result.error || 'Could not set as default';
       }
     } catch (err) {
-      defaultBrowserBtn.textContent = 'Set as Default Browser';
+      defaultBrowserBtn.textContent = 'Set as default handler for HTTP addresses and HTML documents';
       defaultBrowserBtn.disabled = false;
       defaultBrowserStatus.textContent = 'Error: ' + err.message;
     }
