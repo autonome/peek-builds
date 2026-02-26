@@ -129,7 +129,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     commandHasParams: (payload) => {
       const cmdName = payload?.commandName || data.matches[data.matchIndex];
       const cmd = cmdName && data.commands[cmdName];
-      return cmd && cmd.params && cmd.params.length > 0;
+      return cmd && cmd.params && cmd.params.length > 0 && !(cmd.produces && cmd.produces.length > 0);
     },
     isItemTypeParam: () => {
       const cmd = data.paramCommand && data.commands[data.paramCommand];
