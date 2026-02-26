@@ -1497,7 +1497,7 @@ function actionHandlers() {
       }
       if (paramCandidate) {
         const cmd = state.commands[paramCandidate];
-        if (cmd && cmd.params && cmd.params.length > 0 && !(cmd.produces && cmd.produces.length > 0)) {
+        if (cmd && cmd.params && cmd.params.length > 0) {
           // Signal to the transition that param mode should be entered
           // This is handled by the INPUT transition's guard
           payload.enterParamMode = true;
@@ -2050,7 +2050,7 @@ async function render() {
 
       if (paramCommandName) {
         const cmd = state.commands[paramCommandName];
-        if (cmd && cmd.params && cmd.params.length > 0 && !(cmd.produces && cmd.produces.length > 0)) {
+        if (cmd && cmd.params && cmd.params.length > 0) {
           enterParamMode = true;
         }
       }
