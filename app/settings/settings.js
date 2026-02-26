@@ -231,7 +231,102 @@ const renderCoreSettings = async () => {
   const getVal = (k) => (prefs && prefs.hasOwnProperty(k)) ? prefs[k] : pProps[k]?.default;
   const getLabel = (k) => (labels.prefs && labels.prefs[k]) || k;
 
-  // --- Group 1: Data & Backup ---
+
+  // --- Group 1: System ---
+  const systemGroup = createSettingsGroup('System');
+
+  systemGroup.appendChild(createCheckbox(getLabel('showTrayIcon'), getVal('showTrayIcon'), (newVal) => {
+    prefs.showTrayIcon = newVal;
+    save();
+  }, {
+    helpText: pProps.showTrayIcon.description
+  }));
+
+  systemGroup.appendChild(createCheckbox(getLabel('showInDockAndSwitcher'), getVal('showInDockAndSwitcher'), (newVal) => {
+    prefs.showInDockAndSwitcher = newVal;
+    save();
+  }, {
+    helpText: pProps.showInDockAndSwitcher.description
+  }));
+
+  // Default browser button
+  const defaultBrowserGroup = document.createElement('div');
+  defaultBrowserGroup.className = 'form-group';
+
+  const defaultBrowserLabel = document.createElement('label');
+  defaultBrowserLabel.textContent = 'Default HTTP handler';
+  defaultBrowserGroup.appendChild(defaultBrowserLabel);
+
+  const defaultBrowserRow = document.createElement('div');
+  defaultBrowserRow.style.cssText = 'display: flex; align-items: center; gap: 12px;';
+
+  const defaultBrowserBtn = document.createElement('button');
+  defaultBrowserBtn.textContent = 'Set as Default Browser';
+  defaultBrowserBtn.style.cssText = `
+    padding: 8px 16px;
+    font-size: 13px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    color: var(--text-primary);
+    cursor: pointer;
+  `;
+  defaultBrowserBtn.addEventListener('mouseenter', () => { defaultBrowserBtn.style.background = 'var(--bg-hover)'; });
+  defaultBrowserBtn.addEventListener('mouseleave', () => { defaultBrowserBtn.style.background = 'var(--bg-tertiary)'; });
+
+  const defaultBrowserStatus = document.createElement('span');
+  defaultBrowserStatus.style.cssText = 'font-size: 12px; color: var(--text-secondary);';
+
+  // Check current status
+  (async () => {
+    try {
+      const result = await api.invoke('default-browser-status');
+      if (result.isDefault) {
+        defaultBrowserBtn.textContent = 'Already Default Browser';
+        defaultBrowserBtn.disabled = true;
+        defaultBrowserBtn.style.opacity = '0.6';
+        defaultBrowserBtn.style.cursor = 'default';
+        defaultBrowserStatus.textContent = '\u2713 Peek is the default browser';
+      }
+    } catch { /* ignore */ }
+  })();
+
+  defaultBrowserBtn.addEventListener('click', async () => {
+    defaultBrowserBtn.disabled = true;
+    defaultBrowserBtn.textContent = 'Setting...';
+    try {
+      const result = await api.invoke('set-default-browser');
+      if (result.success) {
+        defaultBrowserBtn.textContent = 'Already Default Browser';
+        defaultBrowserBtn.style.opacity = '0.6';
+        defaultBrowserBtn.style.cursor = 'default';
+        defaultBrowserStatus.textContent = '\u2713 Peek is the default browser';
+      } else {
+        defaultBrowserBtn.textContent = 'Set as Default Browser';
+        defaultBrowserBtn.disabled = false;
+        defaultBrowserStatus.textContent = result.error || 'Could not set as default';
+      }
+    } catch (err) {
+      defaultBrowserBtn.textContent = 'Set as Default Browser';
+      defaultBrowserBtn.disabled = false;
+      defaultBrowserStatus.textContent = 'Error: ' + err.message;
+    }
+  });
+
+  defaultBrowserRow.appendChild(defaultBrowserBtn);
+  defaultBrowserRow.appendChild(defaultBrowserStatus);
+  defaultBrowserGroup.appendChild(defaultBrowserRow);
+
+  const defaultBrowserHelp = document.createElement('div');
+  defaultBrowserHelp.className = 'help-text';
+  defaultBrowserHelp.textContent = 'Register Peek as the default handler for http and https URLs.';
+  defaultBrowserGroup.appendChild(defaultBrowserHelp);
+
+  systemGroup.appendChild(defaultBrowserGroup);
+
+  container.appendChild(systemGroup);
+
+  // --- Group 2: Data & Backup ---
   const dataGroup = createSettingsGroup('Data & Backup');
 
   dataGroup.appendChild(createBackupDirInput(getLabel('backupDir'), getVal('backupDir'), (newVal) => {
@@ -261,27 +356,15 @@ const renderCoreSettings = async () => {
 
   container.appendChild(dataGroup);
 
-  // --- Group 2: System Tray & Dock ---
-  const trayGroup = createSettingsGroup('System Tray & Dock');
-
-  trayGroup.appendChild(createCheckbox(getLabel('showTrayIcon'), getVal('showTrayIcon'), (newVal) => {
-    prefs.showTrayIcon = newVal;
-    save();
-  }, {
-    helpText: pProps.showTrayIcon.description
-  }));
-
-  trayGroup.appendChild(createCheckbox(getLabel('showInDockAndSwitcher'), getVal('showInDockAndSwitcher'), (newVal) => {
-    prefs.showInDockAndSwitcher = newVal;
-    save();
-  }, {
-    helpText: pProps.showInDockAndSwitcher.description
-  }));
-
-  container.appendChild(trayGroup);
-
   // --- Group 3: Windows ---
   const windowsGroup = createSettingsGroup('Windows');
+
+  windowsGroup.appendChild(createCheckbox(getLabel('persistWindowBounds'), getVal('persistWindowBounds'), (newVal) => {
+    prefs.persistWindowBounds = newVal;
+    save();
+  }, {
+    helpText: pProps.persistWindowBounds.description
+  }));
 
   windowsGroup.appendChild(createInput(getLabel('defaultWindowWidth'), getVal('defaultWindowWidth'), (newVal) => {
     prefs.defaultWindowWidth = newVal;
@@ -301,13 +384,6 @@ const renderCoreSettings = async () => {
     step: 1,
     min: 200,
     helpText: pProps.defaultWindowHeight.description
-  }));
-
-  windowsGroup.appendChild(createCheckbox(getLabel('persistWindowBounds'), getVal('persistWindowBounds'), (newVal) => {
-    prefs.persistWindowBounds = newVal;
-    save();
-  }, {
-    helpText: pProps.persistWindowBounds.description
   }));
 
   windowsGroup.appendChild(createCheckbox(getLabel('hideTitleBar'), getVal('hideTitleBar'), (newVal) => {

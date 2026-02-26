@@ -4193,6 +4193,37 @@ export function registerMiscHandlers(onQuit: () => void): void {
     }
   });
 
+  // Check if app is the default browser for http/https
+  ipcMain.handle('default-browser-status', async () => {
+    try {
+      const isDefaultHttp = app.isDefaultProtocolClient('http');
+      const isDefaultHttps = app.isDefaultProtocolClient('https');
+      return { isDefault: isDefaultHttp && isDefaultHttps };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { isDefault: false, error: message };
+    }
+  });
+
+  // Set app as the default browser for http/https
+  ipcMain.handle('set-default-browser', async () => {
+    try {
+      app.setAsDefaultProtocolClient('http');
+      app.setAsDefaultProtocolClient('https');
+      // Check if it actually worked
+      const isDefaultHttp = app.isDefaultProtocolClient('http');
+      const isDefaultHttps = app.isDefaultProtocolClient('https');
+      if (isDefaultHttp && isDefaultHttps) {
+        return { success: true };
+      } else {
+        return { success: false, error: 'System did not accept the change. You may need to set the default browser in System Settings.' };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   // Net fetch handler - proxies HTTP requests through main process to bypass CORS
   // Used by extensions that need to fetch from external APIs (e.g., search suggestions)
   ipcMain.handle('net-fetch', async (_ev, data: { url: string; options?: { method?: string; headers?: Record<string, string>; timeout?: number } }) => {
