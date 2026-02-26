@@ -1,16 +1,17 @@
 /**
  * Tag Actions Extension - Background Script
  *
- * Listens to tag:item-added and tag:item-removed pubsub events,
- * matches against configured tag-action rules, and executes actions.
+ * Stores a simplified "tag pairs" config and converts it to action rules
+ * for the affordances renderer. Each pair defines two tags that toggle
+ * on item cards with a chosen icon style.
  *
- * Action types:
- * - icon: Visual badge on items (broadcast rules for other UIs to render)
- * - publish: Fire a custom pubsub event
- * - open-url: Open a URL template with item data substituted
- * - tag: Automatically add another tag
+ * Data model (stored in settings):
+ *   pairs: [
+ *     { activeTag: "todo", completedTag: "done", iconPair: "checkbox" },
+ *     { activeTag: "readme", completedTag: "read", iconPair: "eye" }
+ *   ]
  *
- * Runs in isolated extension process (peek://ext/tag-actions/background.html)
+ * Internally converts pairs to action rules so resolveAffordances() works unchanged.
  */
 
 import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
@@ -18,382 +19,161 @@ import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 const api = window.app;
 const debug = api.debug;
 
-// Default settings
-const defaults = {
-  prefs: { autoExecute: true },
-  actions: []
-};
+// ==================== State ====================
 
-// In-memory cache
-let currentActions = [];
-let currentPrefs = { autoExecute: true };
-
-// Circular trigger prevention: tracks action IDs currently being executed
-// within a single event chain to prevent infinite loops
-let executingActionIds = new Set();
+let currentPairs = [];
+let currentActions = []; // derived from pairs
 
 // ==================== Settings ====================
 
-/**
- * Load actions and prefs from extension settings
- */
 const loadSettings = async () => {
   const result = await api.settings.get();
   if (result.success && result.data) {
-    currentActions = result.data.actions || defaults.actions;
-    currentPrefs = result.data.prefs || defaults.prefs;
+    // Support new pairs format
+    if (Array.isArray(result.data.pairs)) {
+      currentPairs = result.data.pairs;
+    }
+    // Migration: convert old actions format to pairs
+    else if (Array.isArray(result.data.actions) && result.data.actions.length > 0) {
+      currentPairs = migrateActionsToToPairs(result.data.actions);
+    } else {
+      currentPairs = [];
+    }
   } else {
-    currentActions = defaults.actions;
-    currentPrefs = defaults.prefs;
+    currentPairs = [];
   }
-  debug && console.log('[tag-actions] Loaded settings:', currentActions.length, 'actions');
+
+  // Derive action rules from pairs
+  currentActions = pairsToActionRules(currentPairs);
+  debug && console.log('[tag-actions] Loaded', currentPairs.length, 'pairs ->', currentActions.length, 'action rules');
 };
 
-/**
- * Save current state to extension settings
- */
 const saveSettings = async () => {
-  const result = await api.settings.set({
-    prefs: currentPrefs,
-    actions: currentActions
-  });
+  const result = await api.settings.set({ pairs: currentPairs });
   if (!result.success) {
     console.error('[tag-actions] Failed to save settings:', result.error);
   }
+  // Regenerate action rules
+  currentActions = pairsToActionRules(currentPairs);
   return result;
 };
 
+// ==================== Migration ====================
+
 /**
- * Generate unique ID for a tag action
+ * Convert old-format actions array to new pairs format.
+ * Only migrates toggle-type actions (the visual affordance type).
  */
+const migrateActionsToToPairs = (actions) => {
+  const pairs = [];
+  for (const action of actions) {
+    if (action.actionType === 'toggle' && action.actionConfig) {
+      const config = action.actionConfig;
+      // Map old icon names to new iconPair names
+      let iconPair = 'checkbox';
+      if (config.icon === 'eye' || config.checkedIcon === 'eye') iconPair = 'eye';
+      else if (config.icon === 'star' || config.checkedIcon === 'star') iconPair = 'star';
+      else if (config.icon === 'heart' || config.checkedIcon === 'heart') iconPair = 'heart';
+      else if (config.icon === 'flag' || config.checkedIcon === 'flag') iconPair = 'flag';
+      else if (config.icon === 'bookmark' || config.checkedIcon === 'bookmark') iconPair = 'bookmark';
+
+      pairs.push({
+        activeTag: config.activeTag || action.triggerTag || '',
+        completedTag: config.completedTag || '',
+        iconPair
+      });
+    }
+  }
+  return pairs;
+};
+
+// ==================== Pairs to Action Rules ====================
+
+/**
+ * Icon pair name to the icon/checkedIcon names used by tag-action-affordances.js
+ */
+const ICON_PAIR_MAP = {
+  checkbox: { icon: 'unchecked', checkedIcon: 'checked' },
+  eye:      { icon: 'eye-open', checkedIcon: 'eye-closed' },
+  star:     { icon: 'star-empty', checkedIcon: 'star-filled' },
+  heart:    { icon: 'heart-empty', checkedIcon: 'heart-filled' },
+  flag:     { icon: 'flag-empty', checkedIcon: 'flag-filled' },
+  bookmark: { icon: 'bookmark-empty', checkedIcon: 'bookmark-filled' }
+};
+
+/**
+ * Convert simplified pairs to action rule objects compatible with resolveAffordances().
+ */
+const pairsToActionRules = (pairs) => {
+  return pairs
+    .filter(p => p.activeTag && p.completedTag)
+    .map((pair, i) => {
+      const icons = ICON_PAIR_MAP[pair.iconPair] || ICON_PAIR_MAP.checkbox;
+      return {
+        id: `pair_${i}`,
+        name: `${pair.activeTag}/${pair.completedTag}`,
+        enabled: true,
+        triggerTag: pair.activeTag,
+        triggerOn: 'add',
+        actionType: 'toggle',
+        actionConfig: {
+          activeTag: pair.activeTag,
+          completedTag: pair.completedTag,
+          icon: icons.icon,
+          checkedIcon: icons.checkedIcon,
+          color: '#007aff',
+          checkedColor: '#34c759'
+        },
+        itemTypes: null
+      };
+    });
+};
+
 const generateId = () => {
   return `ta_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
 };
 
-// ==================== Icon Rules ====================
-
-/**
- * Broadcast current icon rules via pubsub so other UIs can render them.
- * Called on init and whenever icon actions change.
- */
-const broadcastIconRules = () => {
-  const rules = currentActions
-    .filter(a => a.enabled && a.actionType === 'icon')
-    .map(a => ({
-      tag: a.triggerTag,
-      icon: a.actionConfig.icon || 'star',
-      color: a.actionConfig.color || '#999999',
-      tooltip: a.actionConfig.tooltip || ''
-    }));
-
-  api.publish('tag-actions:icon-rules', { rules }, api.scopes.GLOBAL);
-  debug && console.log('[tag-actions] Broadcast icon rules:', rules.length);
-};
-
 // ==================== Event Handling ====================
 
-/**
- * Handle a tag event (add or remove) by matching against configured actions
- */
-const handleTagEvent = async (eventType, msg) => {
-  if (!currentPrefs.autoExecute) return;
+// Toggle actions are purely UI affordances rendered by card UIs.
+// No auto-execution needed for tag events -- the user clicks the toggle.
 
-  const { tagName, itemId, itemType } = msg;
-  debug && console.log(`[tag-actions] Tag event: ${eventType}`, tagName, itemId);
+// ==================== Commands ====================
 
-  for (const action of currentActions) {
-    if (!action.enabled) continue;
-    if (action.triggerTag !== tagName) continue;
-    if (action.triggerOn !== 'both' && action.triggerOn !== eventType) continue;
-
-    // Item type filter
-    if (action.itemTypes && action.itemTypes.length > 0 && !action.itemTypes.includes(itemType)) continue;
-
-    // Filter tag (AND logic) - item must also have this second tag
-    if (action.filterTag) {
-      const itemTags = await api.datastore.getItemTags(itemId);
-      if (!itemTags.success || !itemTags.data.some(t => t.name === action.filterTag)) continue;
-    }
-
-    // Circular trigger prevention
-    if (executingActionIds.has(action.id)) {
-      debug && console.log('[tag-actions] Skipping circular trigger:', action.name);
-      continue;
-    }
-
-    await executeAction(action, msg);
-  }
-};
-
-/**
- * Execute a single action
- */
-const executeAction = async (action, msg) => {
-  debug && console.log('[tag-actions] Executing action:', action.name, action.actionType);
-
-  executingActionIds.add(action.id);
-
-  try {
-    switch (action.actionType) {
-      case 'icon':
-        // Icons are rendered by list UIs based on broadcast rules.
-        // Publish a change event so UIs can refresh.
-        api.publish('tag-actions:icon-changed', {
-          itemId: msg.itemId,
-          actionId: action.id
-        }, api.scopes.GLOBAL);
-        break;
-
-      case 'publish':
-        await executePublish(action, msg);
-        break;
-
-      case 'open-url':
-        await executeOpenUrl(action, msg);
-        break;
-
-      case 'toggle':
-        // Toggle actions are UI affordances rendered by card UIs.
-        // No auto-execution needed — the user clicks the toggle to swap tags.
-        break;
-
-      case 'tag':
-        await executeAddTag(action, msg);
-        break;
-
-      default:
-        console.warn('[tag-actions] Unknown action type:', action.actionType);
-    }
-  } catch (err) {
-    console.error('[tag-actions] Action execution error:', action.name, err);
-  } finally {
-    executingActionIds.delete(action.id);
-  }
-};
-
-/**
- * Execute a "publish" action - fire a custom pubsub event
- */
-const executePublish = async (action, msg) => {
-  const config = action.actionConfig || {};
-  const payload = {
-    itemId: msg.itemId,
-    tagName: msg.tagName,
-    actionId: action.id
-  };
-
-  if (config.includeItemData) {
-    const item = await api.datastore.getItem(msg.itemId);
-    if (item.success && item.data) {
-      payload.item = item.data;
-    }
-  }
-
-  api.publish(config.topic || 'tag-actions:event', payload, api.scopes.GLOBAL);
-  debug && console.log('[tag-actions] Published event:', config.topic);
-};
-
-/**
- * Execute an "open-url" action - open a URL template with item data substituted
- */
-const executeOpenUrl = async (action, msg) => {
-  const config = action.actionConfig || {};
-  const item = await api.datastore.getItem(msg.itemId);
-
-  if (!item.success || !item.data) {
-    console.error('[tag-actions] Could not load item for open-url:', msg.itemId);
-    return;
-  }
-
-  let url = config.urlTemplate || '';
-  url = url.replace('{url}', encodeURIComponent(item.data.content || ''));
-  url = url.replace('{id}', encodeURIComponent(msg.itemId));
-
-  // Extract title from metadata
-  let title = '';
-  if (item.data.metadata) {
-    try {
-      const meta = typeof item.data.metadata === 'string'
-        ? JSON.parse(item.data.metadata)
-        : item.data.metadata;
-      title = meta.title || '';
-    } catch {}
-  }
-  url = url.replace('{title}', encodeURIComponent(title));
-
-  api.window.open(url, {
-    role: 'content',
-    width: 800,
-    height: 600
-  });
-  debug && console.log('[tag-actions] Opened URL:', url);
-};
-
-/**
- * Execute an "add tag" action - automatically add another tag to the item
- */
-const executeAddTag = async (action, msg) => {
-  const config = action.actionConfig || {};
-  const addTagName = config.addTagName;
-
-  if (!addTagName) {
-    console.warn('[tag-actions] Add-tag action has no addTagName configured');
-    return;
-  }
-
-  const tagResult = await api.datastore.getOrCreateTag(addTagName);
-  if (tagResult.success) {
-    await api.datastore.tagItem(msg.itemId, tagResult.data.tag.id);
-    debug && console.log('[tag-actions] Added tag:', addTagName, 'to item:', msg.itemId);
-  } else {
-    console.error('[tag-actions] Failed to add tag:', addTagName, tagResult.error);
-  }
-};
-
-// ==================== CRUD API ====================
-
-/**
- * Create a new tag action
- */
-const createAction = async (actionData) => {
-  const now = Date.now();
-  const action = {
-    id: generateId(),
-    name: actionData.name || 'Untitled Action',
-    enabled: actionData.enabled !== undefined ? actionData.enabled : true,
-    triggerTag: actionData.triggerTag || '',
-    filterTag: actionData.filterTag || null,
-    triggerOn: actionData.triggerOn || 'add',
-    actionType: actionData.actionType || 'publish',
-    actionConfig: actionData.actionConfig || {},
-    itemTypes: actionData.itemTypes || null,
-    createdAt: now,
-    updatedAt: now
-  };
-
-  currentActions.push(action);
-  await saveSettings();
-
-  // Re-broadcast icon rules if this is an icon action
-  if (action.actionType === 'icon') {
-    broadcastIconRules();
-  }
-
-  return { success: true, data: action };
-};
-
-/**
- * Update an existing tag action
- */
-const updateAction = async (actionId, updates) => {
-  const index = currentActions.findIndex(a => a.id === actionId);
-  if (index === -1) {
-    return { success: false, error: 'Action not found' };
-  }
-
-  currentActions[index] = {
-    ...currentActions[index],
-    ...updates,
-    updatedAt: Date.now()
-  };
-
-  await saveSettings();
-
-  // Re-broadcast icon rules if relevant
-  if (currentActions[index].actionType === 'icon' || updates.actionType === 'icon') {
-    broadcastIconRules();
-  }
-
-  return { success: true, data: currentActions[index] };
-};
-
-/**
- * Delete a tag action
- */
-const deleteAction = async (actionId) => {
-  const index = currentActions.findIndex(a => a.id === actionId);
-  if (index === -1) {
-    return { success: false, error: 'Action not found' };
-  }
-
-  const wasIcon = currentActions[index].actionType === 'icon';
-  currentActions.splice(index, 1);
-  await saveSettings();
-
-  if (wasIcon) {
-    broadcastIconRules();
-  }
-
-  return { success: true };
-};
-
-/**
- * Get all tag actions
- */
-const getActions = () => {
-  return { success: true, data: currentActions };
-};
-
-/**
- * Get a single tag action by ID
- */
-const getAction = (actionId) => {
-  const action = currentActions.find(a => a.id === actionId);
-  if (!action) {
-    return { success: false, error: 'Action not found' };
-  }
-  return { success: true, data: action };
-};
-
-// ==================== UI ====================
-
-/**
- * Open the tag actions home UI
- */
 const openTagActions = () => {
   api.window.open('peek://ext/tag-actions/home.html', {
     role: 'workspace',
     key: 'tag-actions-home',
-    width: 800,
-    height: 600,
-    title: 'Tag Actions'
+    width: 560,
+    height: 400,
+    title: 'Tag Pairs'
   });
 };
-
-// ==================== Commands ====================
 
 const registerCommands = () => {
   registerNoun({
     name: 'tag actions',
     singular: 'tag action',
-    description: 'Custom actions triggered by tags',
+    description: 'Tag pair toggles on item cards',
 
     query: async ({ search }) => {
-      const result = getActions();
-      if (!result.success) return { success: false };
-      let actions = result.data;
+      let filtered = currentPairs;
       if (search) {
         const s = search.toLowerCase();
-        actions = actions.filter(a =>
-          a.name.toLowerCase().includes(s) ||
-          a.triggerTag.toLowerCase().includes(s)
+        filtered = filtered.filter(p =>
+          p.activeTag.toLowerCase().includes(s) ||
+          p.completedTag.toLowerCase().includes(s)
         );
       }
-      if (actions.length === 0) {
-        return { output: 'No tag actions found.', mimeType: 'text/plain' };
+      if (filtered.length === 0) {
+        return { output: 'No tag pairs found.', mimeType: 'text/plain' };
       }
       return {
         success: true,
         output: {
-          data: actions.map(a => ({
-            id: a.id,
-            name: a.name,
-            enabled: a.enabled,
-            triggerTag: a.triggerTag,
-            actionType: a.actionType
-          })),
+          data: filtered,
           mimeType: 'application/json',
-          title: `Tag Actions (${actions.length})`
+          title: `Tag Pairs (${filtered.length})`
         }
       };
     },
@@ -401,11 +181,10 @@ const registerCommands = () => {
     browse: async () => { openTagActions(); },
 
     create: async ({ search }) => {
-      const result = await createAction({ name: search || undefined });
-      if (result.success) {
-        openTagActions();
-      }
-      return result;
+      currentPairs.push({ activeTag: search || '', completedTag: '', iconPair: 'checkbox' });
+      await saveSettings();
+      openTagActions();
+      return { success: true };
     },
 
     produces: 'application/json'
@@ -417,94 +196,60 @@ const registerCommands = () => {
 const init = async () => {
   debug && console.log('[tag-actions] init');
 
-  // Load settings from datastore
   await loadSettings();
-
-  // Register commands
   registerCommands();
 
-  // Subscribe to tag events
-  api.subscribe('tag:item-added', async (msg) => {
-    await handleTagEvent('add', msg);
+  // Respond to pairs CRUD from the home UI
+  api.subscribe('tag-actions:get-pairs', () => {
+    api.publish('tag-actions:get-pairs:response', {
+      success: true,
+      data: currentPairs
+    }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:item-removed', async (msg) => {
-    await handleTagEvent('remove', msg);
-  }, api.scopes.GLOBAL);
-
-  // Respond to icon rule queries from other extensions
-  api.subscribe('tag-actions:get-icons', async (msg) => {
-    const { itemIds } = msg;
-    if (!itemIds || !Array.isArray(itemIds)) return;
-
-    const iconActions = currentActions.filter(a => a.enabled && a.actionType === 'icon');
-    const icons = {};
-
-    for (const itemId of itemIds) {
-      const itemTags = await api.datastore.getItemTags(itemId);
-      if (!itemTags.success) continue;
-
-      const tagNames = new Set(itemTags.data.map(t => t.name));
-      const matchingIcons = iconActions
-        .filter(a => tagNames.has(a.triggerTag))
-        .map(a => ({
-          icon: a.actionConfig.icon || 'star',
-          color: a.actionConfig.color || '#999999',
-          tooltip: a.actionConfig.tooltip || ''
-        }));
-
-      if (matchingIcons.length > 0) {
-        icons[itemId] = matchingIcons;
-      }
+  api.subscribe('tag-actions:set-pairs', async (msg) => {
+    if (Array.isArray(msg.pairs)) {
+      currentPairs = msg.pairs;
+      await saveSettings();
     }
-
-    api.publish('tag-actions:icons-response', { icons }, api.scopes.GLOBAL);
+    api.publish('tag-actions:set-pairs:response', {
+      success: true,
+      data: currentPairs
+    }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  // Pubsub API for the home UI to communicate with background
+  // Backward-compatible: respond to get-all with derived action rules
+  // so tag-action-affordances.js cache still works
   api.subscribe('tag-actions:get-all', () => {
-    api.publish('tag-actions:get-all:response', getActions(), api.scopes.GLOBAL);
+    api.publish('tag-actions:get-all:response', {
+      success: true,
+      data: currentActions
+    }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag-actions:get', (msg) => {
-    api.publish('tag-actions:get:response', getAction(msg.actionId), api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
-
+  // Legacy CRUD endpoints -- respond gracefully but pairs is the source of truth now
   api.subscribe('tag-actions:create', async (msg) => {
-    const result = await createAction(msg);
-    api.publish('tag-actions:create:response', result, api.scopes.GLOBAL);
+    // If it looks like a toggle action, convert to pair
+    if (msg.actionType === 'toggle' && msg.actionConfig) {
+      currentPairs.push({
+        activeTag: msg.actionConfig.activeTag || msg.triggerTag || '',
+        completedTag: msg.actionConfig.completedTag || '',
+        iconPair: 'checkbox'
+      });
+      await saveSettings();
+    }
+    api.publish('tag-actions:create:response', { success: true }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   api.subscribe('tag-actions:update', async (msg) => {
-    const result = await updateAction(msg.actionId, msg.updates);
-    api.publish('tag-actions:update:response', result, api.scopes.GLOBAL);
+    api.publish('tag-actions:update:response', { success: true }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   api.subscribe('tag-actions:delete', async (msg) => {
-    const result = await deleteAction(msg.actionId);
-    api.publish('tag-actions:delete:response', result, api.scopes.GLOBAL);
+    api.publish('tag-actions:delete:response', { success: true }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag-actions:get-prefs', () => {
-    api.publish('tag-actions:get-prefs:response', {
-      success: true,
-      data: currentPrefs
-    }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
-
-  api.subscribe('tag-actions:set-prefs', async (msg) => {
-    currentPrefs = { ...currentPrefs, ...msg };
-    await saveSettings();
-    api.publish('tag-actions:set-prefs:response', {
-      success: true,
-      data: currentPrefs
-    }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
-
-  // Broadcast icon rules on init so any currently-open UIs get them
-  broadcastIconRules();
-
-  debug && console.log('[tag-actions] initialized with', currentActions.length, 'actions');
+  debug && console.log('[tag-actions] initialized with', currentPairs.length, 'pairs');
 };
 
 const uninit = () => {

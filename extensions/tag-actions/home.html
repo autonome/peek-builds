@@ -33,43 +33,19 @@
     </script>
   </head>
   <body>
-    <!-- List View -->
-    <div id="list-view">
-      <div class="header-bar">
-        <h1 class="page-title">Tag Actions</h1>
-        <button class="add-action-btn" title="Add new tag action">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
-      </div>
-      <div class="search-container">
-        <peek-input
-          class="search-input"
-          placeholder="Search actions..."
-          type="search"
-        ></peek-input>
-      </div>
-      <div class="actions-list"></div>
-      <div class="presets-section" style="display: none;">
-        <div class="presets-header">Suggested Actions</div>
-        <div class="presets-list"></div>
-      </div>
+    <div class="header-bar">
+      <h1 class="page-title">Tag Pairs</h1>
+      <button class="add-pair-btn" title="Add new tag pair">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
     </div>
 
-    <!-- Detail/Edit View -->
-    <div id="detail-view" style="display: none;">
-      <div class="detail-header">
-        <button class="back-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="15 18 9 12 15 6"></polyline>
-          </svg>
-          Back
-        </button>
-      </div>
-      <div class="detail-form"></div>
-    </div>
+    <p class="page-description">Each pair defines two tags that toggle on item cards. Tag an item with either tag and a clickable icon appears.</p>
+
+    <div class="pairs-list"></div>
 
     <script type="module" src="home.js"></script>
   </body>

@@ -17,9 +17,9 @@
         "options": {
           "role": "workspace",
           "key": "tag-actions-home",
-          "width": 800,
-          "height": 600,
-          "title": "Tag Actions"
+          "width": 560,
+          "height": 400,
+          "title": "Tag Pairs"
         }
       }
     }
