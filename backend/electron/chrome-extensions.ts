@@ -333,6 +333,12 @@ export async function loadEnabledChromeExtensions(): Promise<void> {
   if (!polyfillHandle) {
     polyfillHandle = registerAll(profileSession, { ipcMain, app });
 
+    // Grant all permissions to extensions (belt-and-suspenders for web permissions)
+    profileSession.setPermissionCheckHandler(() => true);
+    profileSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+      callback(true);
+    });
+
     // Inject polyfill preload scripts into extension webContents
     app.on('web-contents-created', (_event, webContents) => {
       webContents.on('dom-ready', () => {

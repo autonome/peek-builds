@@ -2,6 +2,7 @@
  * Electron does not implement chrome.permissions. The webextension-polyfill used by
  * Proton Pass detects globalThis.browser and uses it directly (skipping the chrome
  * wrapper), so we must shim both chrome.permissions AND browser.permissions.
+ * Supports both Promise and callback styles (webextension-polyfill uses Chrome callback convention).
  * Without this, the service worker crashes at startup on permissions.onAdded. */
 (function() {
   function NoopEvent() { this._l = []; }
@@ -12,15 +13,29 @@
 
   function makePermissions() {
     return {
-      contains: function() { return Promise.resolve(true); },
-      getAll: function() {
-        try {
-          var m = typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest() : {};
-          return Promise.resolve({ permissions: m.permissions || [], origins: m.host_permissions || [] });
-        } catch(e) { return Promise.resolve({ permissions: [], origins: [] }); }
+      contains: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
       },
-      request: function() { return Promise.resolve(true); },
-      remove: function() { return Promise.resolve(true); },
+      getAll: function(callback) {
+        var result = { permissions: [], origins: [] };
+        try {
+          if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+            var m = chrome.runtime.getManifest();
+            result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
+          }
+        } catch(e) {}
+        if (typeof callback === 'function') callback(result);
+        return Promise.resolve(result);
+      },
+      request: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
+      },
+      remove: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
+      },
       onAdded: new NoopEvent(),
       onRemoved: new NoopEvent()
     };

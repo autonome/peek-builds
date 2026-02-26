@@ -9,6 +9,8 @@
  * What it does:
  * - Proton Pass: Prepends chrome.permissions, chrome.storage.session, and
  *   chrome.runtime.getBackgroundPage shims to background.js
+ * - Proton Pass: Prepends chrome.permissions shim to polyfills.js
+ *   (loaded by popup.html and settings.html before their entry scripts)
  *
  * Usage:
  *   node scripts/patch-chrome-extensions.js
@@ -30,10 +32,13 @@ const SHIM_MARKER = '/* Peek: chrome.permissions';
  * The permissions shim. Electron does not implement chrome.permissions.
  * The webextension-polyfill used by Proton Pass detects globalThis.browser
  * and uses it directly (bypassing its chrome->browser wrapper), so we must
- * shim BOTH chrome.permissions AND browser.permissions. Without this, the
+ * shim BOTH chrome.permissions AND browser.permissions. Supports both
+ * Promise and callback invocation styles (webextension-polyfill uses
+ * Chrome callback convention). Without this, the
  * service worker crashes at startup on permissions.onAdded.addListener().
  */
-const PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatibility */
+const PERMISSIONS_SHIM = `/* Peek: chrome.permissions + browser.permissions shim for Electron compatibility.
+ * Supports both Promise and callback styles (webextension-polyfill uses Chrome callback convention). */
 (function() {
   function NoopEvent() { this._l = []; }
   NoopEvent.prototype.addListener = function(fn) { this._l.push(fn); };
@@ -43,15 +48,29 @@ const PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatib
 
   function makePermissions() {
     return {
-      contains: function() { return Promise.resolve(true); },
-      getAll: function() {
-        try {
-          var m = typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest() : {};
-          return Promise.resolve({ permissions: m.permissions || [], origins: m.host_permissions || [] });
-        } catch(e) { return Promise.resolve({ permissions: [], origins: [] }); }
+      contains: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
       },
-      request: function() { return Promise.resolve(true); },
-      remove: function() { return Promise.resolve(true); },
+      getAll: function(callback) {
+        var result = { permissions: [], origins: [] };
+        try {
+          if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+            var m = chrome.runtime.getManifest();
+            result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
+          }
+        } catch(e) {}
+        if (typeof callback === 'function') callback(result);
+        return Promise.resolve(result);
+      },
+      request: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
+      },
+      remove: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
+      },
       onAdded: new NoopEvent(),
       onRemoved: new NoopEvent()
     };
@@ -199,8 +218,23 @@ function patchProtonPass() {
   fs.writeFileSync(bgPath, content);
   console.log('[patch] Proton Pass background.js patched with shims');
 
+  // --- Patch polyfills.js (loaded by popup.html, settings.html before their entry scripts) ---
+  const polyfillsPath = path.join(extPath, 'polyfills.js');
+  if (fs.existsSync(polyfillsPath)) {
+    let polyContent = fs.readFileSync(polyfillsPath, 'utf-8');
+    if (polyContent.indexOf(SHIM_MARKER) === -1) {
+      polyContent = PERMISSIONS_SHIM + polyContent;
+      fs.writeFileSync(polyfillsPath, polyContent);
+      console.log('[patch] Proton Pass polyfills.js patched with permissions shim');
+    } else {
+      console.log('[patch] Proton Pass polyfills.js already patched');
+    }
+  } else {
+    console.warn('[patch] WARNING: Proton Pass polyfills.js not found');
+  }
+
   // Verify required files exist
-  const required = ['settings.js', 'popup.js', 'polyfills.js', 'settings.html', 'popup.html'];
+  const required = ['polyfills.js', 'popup.html', 'settings.html'];
   const missing = required.filter(f => !fs.existsSync(path.join(extPath, f)));
   if (missing.length > 0) {
     console.warn(`[patch] WARNING: Proton Pass missing files: ${missing.join(', ')}`);
