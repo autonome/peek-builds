@@ -46,13 +46,12 @@ const extractUrl = (text) => {
   if (/^https?:\/\//i.test(trimmed)) {
     try { new URL(trimmed); return trimmed; } catch (e) { /* fall through */ }
   }
-  // Check if it looks like a bare domain
+  // Check if it looks like a bare domain (entire content is just a domain)
   if (/^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/\S*)?$/.test(trimmed)) {
     try { new URL('https://' + trimmed); return 'https://' + trimmed; } catch (e) { /* not valid */ }
   }
-  // Search for a URL embedded in the text
-  const match = trimmed.match(/https?:\/\/[^\s<>"')\]]+/i);
-  if (match) { try { new URL(match[0]); return match[0]; } catch (e) { /* not valid */ } }
+  // Don't search for embedded URLs — a text document containing URLs is still
+  // a document, not a link. Only match when the entire content IS a URL.
   return null;
 };
 
@@ -1119,13 +1118,10 @@ const getItemDisplayInfo = (item) => {
       faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
     } else if (itemType === 'text') {
       title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
-      if (noteUrl) {
-        subtitle = noteUrl;
-        faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔗</text></svg>';
-      } else {
-        subtitle = 'Text';
-        faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📝</text></svg>';
-      }
+      // Always show document icon for text items — the item's datastore type
+      // is the primary determinant, not whether content happens to contain URLs
+      subtitle = noteUrl || 'Text';
+      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📝</text></svg>';
     } else if (itemType === 'tagset') {
       title = 'Tag Set';
       subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';
