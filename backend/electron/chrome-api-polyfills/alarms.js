@@ -291,6 +291,10 @@ export function getPreloadScript() {
 
   return `
 (function() {
+  // Skip if chrome.alarms already exists natively
+  if (typeof chrome !== 'undefined' && chrome.alarms) return;
+
+  const _ipc = (typeof electron !== 'undefined' && electron.ipcRenderer) ? electron.ipcRenderer : null;
   const _onAlarmListeners = new Set();
 
   const onAlarm = {
@@ -304,8 +308,8 @@ export function getPreloadScript() {
   };
 
   // Listen for alarm events from main process
-  if (typeof electron !== 'undefined' && electron.ipcRenderer) {
-    electron.ipcRenderer.on('${ch('onAlarm')}', (_event, alarm) => {
+  if (_ipc) {
+    _ipc.on('${ch('onAlarm')}', (_event, alarm) => {
       for (const l of _onAlarmListeners) {
         try { l(alarm); } catch(e) { console.error('[chrome.alarms] Listener error:', e); }
       }
@@ -314,6 +318,7 @@ export function getPreloadScript() {
 
   const alarms = {
     async create(nameOrInfo, alarmInfoOrUndef) {
+      if (!_ipc) return;
       let name, alarmInfo;
       if (typeof nameOrInfo === 'string') {
         name = nameOrInfo;
@@ -322,38 +327,40 @@ export function getPreloadScript() {
         name = '';
         alarmInfo = nameOrInfo || {};
       }
-      return electron.ipcRenderer.invoke('${ch('create')}', name, alarmInfo);
+      return _ipc.invoke('${ch('create')}', name, alarmInfo);
     },
 
     async get(name) {
+      if (!_ipc) return undefined;
       if (name === undefined) name = '';
-      return electron.ipcRenderer.invoke('${ch('get')}', name);
+      return _ipc.invoke('${ch('get')}', name);
     },
 
     async getAll() {
-      return electron.ipcRenderer.invoke('${ch('getAll')}');
+      if (!_ipc) return [];
+      return _ipc.invoke('${ch('getAll')}');
     },
 
     async clear(name) {
+      if (!_ipc) return false;
       if (name === undefined) name = '';
-      return electron.ipcRenderer.invoke('${ch('clear')}', name);
+      return _ipc.invoke('${ch('clear')}', name);
     },
 
     async clearAll() {
-      return electron.ipcRenderer.invoke('${ch('clearAll')}');
+      if (!_ipc) return false;
+      return _ipc.invoke('${ch('clearAll')}');
     },
 
     onAlarm,
   };
 
-  // Inject into chrome namespace (only if IPC is available)
-  if (typeof electron !== 'undefined' && electron.ipcRenderer) {
-    if (typeof chrome !== 'undefined') {
-      chrome.alarms = alarms;
-    } else if (typeof globalThis !== 'undefined') {
-      globalThis.chrome = globalThis.chrome || {};
-      globalThis.chrome.alarms = alarms;
-    }
+  // Inject into chrome namespace
+  if (typeof chrome !== 'undefined') {
+    chrome.alarms = alarms;
+  } else if (typeof globalThis !== 'undefined') {
+    globalThis.chrome = globalThis.chrome || {};
+    globalThis.chrome.alarms = alarms;
   }
 })();
 `;

@@ -451,6 +451,174 @@
       padding: 8px 0;
     }
 
+    /* --- Tags Panel (below page info, left side) --- */
+
+    .tags-panel {
+      position: absolute;
+      z-index: 140;
+      pointer-events: auto;
+      background: rgba(30, 30, 30, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      color: var(--theme-text, #e0e0e0);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+      font-size: 12px;
+      border-radius: 10px;
+      max-width: 280px;
+      min-width: 200px;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateX(-12px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      display: none;
+    }
+
+    .tags-panel.visible {
+      display: block;
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .tags-panel .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px 4px 10px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .tags-panel .panel-title {
+      flex: 1;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--theme-text-secondary, #aaa);
+    }
+
+    .tags-panel .panel-body {
+      padding: 4px 10px 10px 10px;
+    }
+
+    .tags-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      max-height: 120px;
+      overflow-y: auto;
+      margin-bottom: 6px;
+    }
+
+    .tags-list:empty {
+      display: none;
+      margin-bottom: 0;
+    }
+
+    .tags-list::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .tags-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .tags-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+    }
+
+    .tag-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--theme-text, #e0e0e0);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 3px 6px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .tag-btn:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18));
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .tag-btn .tag-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tag-btn .tag-remove {
+      font-size: 12px;
+      line-height: 1;
+      opacity: 0.5;
+      transition: opacity 0.1s;
+      flex-shrink: 0;
+    }
+
+    .tag-btn:hover .tag-remove {
+      opacity: 1;
+      color: #f87171;
+    }
+
+    .tags-input-row {
+      position: relative;
+    }
+
+    .tags-input-wrapper {
+      position: relative;
+    }
+
+    .tags-input {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 5px;
+      color: var(--theme-text, #e0e0e0);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 6px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .tags-input:focus {
+      border-color: var(--theme-accent, rgba(100, 150, 255, 0.5));
+    }
+
+    .tags-input::placeholder {
+      color: var(--theme-text-muted, #666);
+    }
+
+    .tags-suggestion {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 4px 6px;
+      font-size: 11px;
+      font-family: inherit;
+      color: var(--theme-text-muted, #555);
+      pointer-events: none;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .tags-empty {
+      color: var(--theme-text-muted, #555);
+      font-style: italic;
+      font-size: 11px;
+      padding: 4px 0;
+    }
+
     /* --- Entities Panel (right side) --- */
 
     .entities-panel {
@@ -607,6 +775,22 @@
         </div>
         <div class="panel-body" id="page-info-body">
           <div class="info-empty">Loading page info...</div>
+        </div>
+      </div>
+
+      <!-- Tags Panel (below page info on left side, shown with navbar) -->
+      <div class="tags-panel" id="tags-panel">
+        <div class="panel-header">
+          <span class="panel-title">Tags</span>
+        </div>
+        <div class="panel-body" id="tags-body">
+          <div class="tags-list" id="tags-list"></div>
+          <div class="tags-input-row">
+            <div class="tags-input-wrapper">
+              <input type="text" class="tags-input" id="tags-input" placeholder="Add tag..." autocomplete="off" spellcheck="false">
+              <span class="tags-suggestion" id="tags-suggestion"></span>
+            </div>
+          </div>
         </div>
       </div>
 

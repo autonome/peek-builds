@@ -213,32 +213,38 @@ export function getPreloadScript() {
 
   return `
 (function() {
+  // Skip if chrome.offscreen already exists natively
+  if (typeof chrome !== 'undefined' && chrome.offscreen) return;
+
+  const _ipc = (typeof electron !== 'undefined' && electron.ipcRenderer) ? electron.ipcRenderer : null;
+
   const offscreen = {
     Reason: {
 ${reasonEntries}
     },
 
     async createDocument(parameters) {
-      return electron.ipcRenderer.invoke('${ch('createDocument')}', parameters);
+      if (!_ipc) return;
+      return _ipc.invoke('${ch('createDocument')}', parameters);
     },
 
     async closeDocument() {
-      return electron.ipcRenderer.invoke('${ch('closeDocument')}');
+      if (!_ipc) return;
+      return _ipc.invoke('${ch('closeDocument')}');
     },
 
     async hasDocument() {
-      return electron.ipcRenderer.invoke('${ch('hasDocument')}');
+      if (!_ipc) return false;
+      return _ipc.invoke('${ch('hasDocument')}');
     },
   };
 
-  // Inject into chrome namespace (only if IPC is available)
-  if (typeof electron !== 'undefined' && electron.ipcRenderer) {
-    if (typeof chrome !== 'undefined') {
-      chrome.offscreen = offscreen;
-    } else if (typeof globalThis !== 'undefined') {
-      globalThis.chrome = globalThis.chrome || {};
-      globalThis.chrome.offscreen = offscreen;
-    }
+  // Inject into chrome namespace
+  if (typeof chrome !== 'undefined') {
+    chrome.offscreen = offscreen;
+  } else if (typeof globalThis !== 'undefined') {
+    globalThis.chrome = globalThis.chrome || {};
+    globalThis.chrome.offscreen = offscreen;
   }
 })();
 `;

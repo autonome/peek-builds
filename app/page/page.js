@@ -133,6 +133,11 @@ const widgetContainer = document.getElementById('widget-container');
 const centerColumn = document.getElementById('center-column');
 const pageInfoPanel = document.getElementById('page-info-panel');
 const pageInfoBody = document.getElementById('page-info-body');
+const tagsPanel = document.getElementById('tags-panel');
+const tagsBody = document.getElementById('tags-body');
+const tagsList = document.getElementById('tags-list');
+const tagsInput = document.getElementById('tags-input');
+const tagsSuggestion = document.getElementById('tags-suggestion');
 const entitiesPanel = document.getElementById('entities-panel');
 const entitiesBody = document.getElementById('entities-body');
 
@@ -283,6 +288,16 @@ function updatePositions() {
     pageInfoPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
     pageInfoPanel.style.top = `${webviewTop + 8}px`;
     pageInfoPanel.style.width = `${PANEL_WIDTH}px`;
+  }
+
+  // Tags Panel — below page info on left side
+  if (tagsPanel) {
+    tagsPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
+    // Position below page-info panel (estimate page-info height or use fixed offset)
+    const pageInfoHeight = pageInfoPanel ? pageInfoPanel.offsetHeight : 0;
+    const tagsPanelTop = webviewTop + 8 + (pageInfoHeight > 0 ? pageInfoHeight + 8 : 0);
+    tagsPanel.style.top = `${tagsPanelTop}px`;
+    tagsPanel.style.width = `${PANEL_WIDTH}px`;
   }
 
   // Entities Panel — right side, 75% off-page / 25% overlapping
@@ -946,6 +961,7 @@ async function show(opts) {
   // Show page info and entities panels alongside navbar
   // Expand window to fit panel overhang on each side
   if (pageInfoPanel) pageInfoPanel.classList.add('visible');
+  if (tagsPanel) tagsPanel.classList.add('visible');
   if (entitiesPanel) entitiesPanel.classList.add('visible');
   await setWindowPadding(PANEL_OVERHANG * 2);
   centerColumn.style.opacity = '1';
@@ -971,6 +987,7 @@ async function hide() {
   navbar.classList.remove('visible');
   // Hide page info and entities panels alongside navbar
   if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
+  if (tagsPanel) tagsPanel.classList.remove('visible');
   if (entitiesPanel) entitiesPanel.classList.remove('visible');
   updatePositions();
   // Restore visibility now that the window has been resized
@@ -984,6 +1001,7 @@ async function hide() {
 document.addEventListener('mousedown', (e) => {
   if (navbar.classList.contains('visible') && !navbar.contains(e.target) && e.target !== triggerZone && !e.target.closest('.resize-handle')
       && !(pageInfoPanel && pageInfoPanel.contains(e.target))
+      && !(tagsPanel && tagsPanel.contains(e.target))
       && !(entitiesPanel && entitiesPanel.contains(e.target))) {
     hide();
   }
@@ -1059,6 +1077,12 @@ if (pageInfoPanel) {
 if (entitiesPanel) {
   entitiesPanel.addEventListener('mouseenter', () => { cancelHide(); });
   entitiesPanel.addEventListener('mouseleave', () => {
+    if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
+  });
+}
+if (tagsPanel) {
+  tagsPanel.addEventListener('mouseenter', () => { cancelHide(); });
+  tagsPanel.addEventListener('mouseleave', () => {
     if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
   });
 }
@@ -2002,6 +2026,252 @@ async function extractSimpleEntities() {
 // Run simple extraction after page loads (as fallback)
 webview.addEventListener('did-finish-load', () => {
   setTimeout(extractSimpleEntities, 2000);
+});
+
+// --- Tags Panel: show/manage tags for current page ---
+
+let currentItemId = null;
+let currentPageTags = [];
+let allTagsCache = []; // For autocomplete suggestions
+
+async function resolveItemId(url) {
+  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
+  try {
+    // queryItems with exact URL search to find the item
+    const result = await api.datastore.queryItems({ type: 'url', search: url });
+    if (result.success && result.data && result.data.length > 0) {
+      // Find exact match by content
+      const exact = result.data.find(item => item.content === url);
+      if (exact) return exact.id;
+      // Fallback: first result
+      return result.data[0].id;
+    }
+  } catch (err) {
+    DEBUG && console.log('[page] Failed to resolve itemId for URL:', err.message);
+  }
+  return null;
+}
+
+async function loadTagsForCurrentPage() {
+  if (!currentItemId) {
+    if (tagsList) tagsList.innerHTML = '';
+    return;
+  }
+
+  try {
+    const result = await api.datastore.getItemTags(currentItemId);
+    if (result.success && result.data) {
+      currentPageTags = result.data;
+    } else {
+      currentPageTags = [];
+    }
+  } catch (err) {
+    console.warn('[page] Failed to load tags:', err.message);
+    currentPageTags = [];
+  }
+
+  renderTags();
+}
+
+async function loadAllTags() {
+  try {
+    const result = await api.datastore.getTagsByFrecency();
+    if (result.success && result.data) {
+      allTagsCache = result.data;
+    }
+  } catch (err) {
+    DEBUG && console.log('[page] Failed to load all tags:', err.message);
+  }
+}
+
+function renderTags() {
+  if (!tagsList) return;
+
+  tagsList.innerHTML = '';
+
+  if (currentPageTags.length === 0) {
+    // Show nothing — the input placeholder is enough
+    return;
+  }
+
+  for (const tag of currentPageTags) {
+    const btn = document.createElement('button');
+    btn.className = 'tag-btn';
+    btn.title = `Remove tag: ${tag.name}`;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'tag-name';
+    nameSpan.textContent = tag.name;
+    btn.appendChild(nameSpan);
+
+    const removeSpan = document.createElement('span');
+    removeSpan.className = 'tag-remove';
+    removeSpan.textContent = '\u00D7';
+    btn.appendChild(removeSpan);
+
+    btn.addEventListener('click', () => {
+      removeTagFromPage(tag.id, tag.name);
+    });
+
+    tagsList.appendChild(btn);
+  }
+}
+
+async function addTagToPage(tagName) {
+  if (!currentItemId || !tagName) return;
+  tagName = tagName.trim().toLowerCase();
+  if (!tagName) return;
+
+  // Check if already tagged
+  if (currentPageTags.some(t => t.name.toLowerCase() === tagName)) {
+    return;
+  }
+
+  try {
+    // Get or create tag
+    const tagResult = await api.datastore.getOrCreateTag(tagName);
+    if (!tagResult.success || !tagResult.data) {
+      console.warn('[page] Failed to create tag:', tagResult.error);
+      return;
+    }
+
+    const tagId = tagResult.data.tag.id;
+
+    // Tag the item (IPC handler publishes events)
+    const result = await api.datastore.tagItem(currentItemId, tagId);
+    if (result.success) {
+      // Refresh tags list
+      await loadTagsForCurrentPage();
+      // Refresh autocomplete cache
+      loadAllTags();
+    }
+  } catch (err) {
+    console.error('[page] Failed to add tag:', err);
+  }
+}
+
+async function removeTagFromPage(tagId, tagName) {
+  if (!currentItemId || !tagId) return;
+
+  try {
+    const result = await api.datastore.untagItem(currentItemId, tagId);
+    if (result.success) {
+      // Refresh tags list
+      await loadTagsForCurrentPage();
+    }
+  } catch (err) {
+    console.error('[page] Failed to remove tag:', err);
+  }
+}
+
+// --- Tags input with inline suggestion ---
+
+if (tagsInput) {
+  tagsInput.addEventListener('input', () => {
+    const query = tagsInput.value.trim().toLowerCase();
+    if (!query) {
+      if (tagsSuggestion) tagsSuggestion.textContent = '';
+      return;
+    }
+
+    // Find first matching tag not already applied
+    const appliedNames = new Set(currentPageTags.map(t => t.name.toLowerCase()));
+    const match = allTagsCache.find(t =>
+      t.name.toLowerCase().startsWith(query) && !appliedNames.has(t.name.toLowerCase())
+    );
+
+    if (match && tagsSuggestion) {
+      // Show the typed part + suggestion remainder as ghost text
+      tagsSuggestion.textContent = tagsInput.value + match.name.slice(query.length);
+    } else if (tagsSuggestion) {
+      tagsSuggestion.textContent = '';
+    }
+  });
+
+  tagsInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && tagsSuggestion && tagsSuggestion.textContent) {
+      // Accept suggestion
+      e.preventDefault();
+      tagsInput.value = tagsSuggestion.textContent;
+      tagsSuggestion.textContent = '';
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const value = tagsInput.value.trim();
+      if (value) {
+        addTagToPage(value);
+        tagsInput.value = '';
+        if (tagsSuggestion) tagsSuggestion.textContent = '';
+      }
+    } else if (e.key === 'Escape') {
+      tagsInput.value = '';
+      if (tagsSuggestion) tagsSuggestion.textContent = '';
+      tagsInput.blur();
+      e.stopPropagation();
+    }
+  });
+
+}
+
+// --- React to tag pubsub events ---
+
+api.subscribe('tag:item-added', (msg) => {
+  if (msg && msg.itemId === currentItemId) {
+    loadTagsForCurrentPage();
+  }
+  // Refresh autocomplete cache on any tag creation
+  loadAllTags();
+}, api.scopes.GLOBAL);
+
+api.subscribe('tag:item-removed', (msg) => {
+  if (msg && msg.itemId === currentItemId) {
+    loadTagsForCurrentPage();
+  }
+}, api.scopes.GLOBAL);
+
+api.subscribe('tag:created', () => {
+  loadAllTags();
+}, api.scopes.GLOBAL);
+
+// --- Load tags on navigation ---
+
+// Capture itemId from trackNavigation on did-navigate
+webview.addEventListener('did-navigate', async (e) => {
+  currentItemId = null;
+  currentPageTags = [];
+  renderTags();
+
+  if (!e.url || (!e.url.startsWith('http://') && !e.url.startsWith('https://'))) return;
+
+  // Small delay to ensure trackNavigation has created the item
+  setTimeout(async () => {
+    currentItemId = await resolveItemId(e.url);
+    if (currentItemId) {
+      await loadTagsForCurrentPage();
+    }
+    // Update tags panel position after page-info has rendered
+    updatePositions();
+  }, 600);
+});
+
+// Also load tags on initial page load
+webview.addEventListener('did-finish-load', async () => {
+  if (currentItemId) return; // Already resolved
+
+  let url;
+  try {
+    url = webview.getURL();
+  } catch {
+    return;
+  }
+  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return;
+
+  currentItemId = await resolveItemId(url);
+  if (currentItemId) {
+    await loadTagsForCurrentPage();
+  }
+  // Load all tags for autocomplete
+  loadAllTags();
+  updatePositions();
 });
 
 // --- Page Command Handlers (pubsub) ---

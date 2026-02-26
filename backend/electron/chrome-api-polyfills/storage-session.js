@@ -301,11 +301,15 @@ export function getPreloadScript() {
 
   return `
 (function() {
+  // Skip if chrome.storage.session already exists natively (Electron 33+)
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) return;
+
+  const _ipc = (typeof electron !== 'undefined' && electron.ipcRenderer) ? electron.ipcRenderer : null;
   const _onChangedListeners = new Set();
 
   // Listen for change events from main process
-  if (typeof electron !== 'undefined' && electron.ipcRenderer) {
-    electron.ipcRenderer.on('${ch('onChanged')}', (_event, data) => {
+  if (_ipc) {
+    _ipc.on('${ch('onChanged')}', (_event, data) => {
       for (const l of _onChangedListeners) {
         try { l(data.changes, data.areaName); } catch(e) { console.error('[chrome.storage.session] Listener error:', e); }
       }
@@ -314,29 +318,35 @@ export function getPreloadScript() {
 
   const sessionStorage = {
     async get(keys) {
+      if (!_ipc) return {};
       if (keys === undefined) keys = null;
-      return electron.ipcRenderer.invoke('${ch('get')}', keys);
+      return _ipc.invoke('${ch('get')}', keys);
     },
 
     async set(items) {
-      return electron.ipcRenderer.invoke('${ch('set')}', items);
+      if (!_ipc) return;
+      return _ipc.invoke('${ch('set')}', items);
     },
 
     async remove(keys) {
-      return electron.ipcRenderer.invoke('${ch('remove')}', keys);
+      if (!_ipc) return;
+      return _ipc.invoke('${ch('remove')}', keys);
     },
 
     async clear() {
-      return electron.ipcRenderer.invoke('${ch('clear')}');
+      if (!_ipc) return;
+      return _ipc.invoke('${ch('clear')}');
     },
 
     async getBytesInUse(keys) {
+      if (!_ipc) return 0;
       if (keys === undefined) keys = null;
-      return electron.ipcRenderer.invoke('${ch('getBytesInUse')}', keys);
+      return _ipc.invoke('${ch('getBytesInUse')}', keys);
     },
 
     async setAccessLevel(accessOptions) {
-      return electron.ipcRenderer.invoke('${ch('setAccessLevel')}', accessOptions);
+      if (!_ipc) return;
+      return _ipc.invoke('${ch('setAccessLevel')}', accessOptions);
     },
 
     onChanged: {
@@ -352,17 +362,14 @@ export function getPreloadScript() {
     QUOTA_BYTES: ${QUOTA_BYTES},
   };
 
-  // Inject into chrome.storage namespace — only if IPC is available
-  // (this polyfill requires electron.ipcRenderer for main-process storage)
-  if (typeof chrome !== 'undefined' && typeof electron !== 'undefined' && electron.ipcRenderer) {
-    if (!chrome.storage) chrome.storage = {};
+  // Inject into chrome.storage namespace
+  if (typeof chrome !== 'undefined') {
+    chrome.storage = chrome.storage || {};
     chrome.storage.session = sessionStorage;
 
     // Also add session change events to main onChanged if it exists
     if (chrome.storage.onChanged) {
       const _origAddListener = chrome.storage.onChanged.addListener.bind(chrome.storage.onChanged);
-      const _sessionListeners = new WeakSet();
-      const origOnChanged = chrome.storage.onChanged;
 
       // Wrap addListener to also catch session changes
       chrome.storage.onChanged.addListener = function(cb) {
