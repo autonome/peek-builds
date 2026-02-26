@@ -82,6 +82,56 @@ const PERMISSIONS_SHIM = `/* Peek: chrome.permissions + browser.permissions shim
 `;
 
 /**
+ * Polyfills-only permissions shim. Unlike the background.js shim, this must
+ * NOT touch browser.permissions because polyfills.js runs before
+ * webextension-polyfill in popup/settings pages. Setting browser.permissions
+ * before the polyfill runs causes it to detect an incomplete browser object,
+ * leading to a black screen.
+ */
+const POLYFILLS_PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatibility.
+ * Supports both Promise and callback styles (webextension-polyfill uses Chrome callback convention). */
+(function() {
+  function NoopEvent() { this._l = []; }
+  NoopEvent.prototype.addListener = function(fn) { this._l.push(fn); };
+  NoopEvent.prototype.removeListener = function(fn) { this._l = this._l.filter(function(x) { return x !== fn; }); };
+  NoopEvent.prototype.hasListener = function(fn) { return this._l.indexOf(fn) !== -1; };
+  NoopEvent.prototype.hasListeners = function() { return this._l.length > 0; };
+
+  function makePermissions() {
+    return {
+      contains: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
+      },
+      getAll: function(callback) {
+        var result = { permissions: [], origins: [] };
+        try {
+          if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+            var m = chrome.runtime.getManifest();
+            result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
+          }
+        } catch(e) {}
+        if (typeof callback === 'function') callback(result);
+        return Promise.resolve(result);
+      },
+      request: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
+      },
+      remove: function(perms, callback) {
+        if (typeof callback === 'function') callback(true);
+        return Promise.resolve(true);
+      },
+      onAdded: new NoopEvent(),
+      onRemoved: new NoopEvent()
+    };
+  }
+
+  if (typeof chrome !== 'undefined' && !chrome.permissions) chrome.permissions = makePermissions();
+})();
+`;
+
+/**
  * chrome.storage.session in-memory shim. Electron does not provide
  * chrome.storage.session. Without this, the background service worker
  * fails to initialize its storage layer and settings pages stay blank.
@@ -223,7 +273,7 @@ function patchProtonPass() {
   if (fs.existsSync(polyfillsPath)) {
     let polyContent = fs.readFileSync(polyfillsPath, 'utf-8');
     if (polyContent.indexOf(SHIM_MARKER) === -1) {
-      polyContent = PERMISSIONS_SHIM + polyContent;
+      polyContent = POLYFILLS_PERMISSIONS_SHIM + polyContent;
       fs.writeFileSync(polyfillsPath, polyContent);
       console.log('[patch] Proton Pass polyfills.js patched with permissions shim');
     } else {
