@@ -52,6 +52,7 @@ const PERMISSIONS_SHIM = `/* Peek: chrome.permissions + browser.permissions shim
 
   var _methods = {
     contains: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     },
@@ -63,14 +64,17 @@ const PERMISSIONS_SHIM = `/* Peek: chrome.permissions + browser.permissions shim
           result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
         }
       } catch(e) {}
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(result);
       return Promise.resolve(result);
     },
     request: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     },
     remove: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     }
@@ -145,6 +149,7 @@ const POLYFILLS_PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electro
 
   var _methods = {
     contains: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     },
@@ -156,14 +161,17 @@ const POLYFILLS_PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electro
           result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
         }
       } catch(e) {}
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(result);
       return Promise.resolve(result);
     },
     request: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     },
     remove: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     }

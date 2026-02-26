@@ -68,6 +68,7 @@ export function getPreloadScript() {
 
   var _methods = {
     contains: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     },
@@ -79,14 +80,17 @@ export function getPreloadScript() {
           result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
         }
       } catch(e) {}
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(result);
       return Promise.resolve(result);
     },
     request: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     },
     remove: function(perms, callback) {
+      try { delete chrome.runtime.lastError; } catch(e) {}
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     }
