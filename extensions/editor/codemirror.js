@@ -685,9 +685,10 @@ const folditallFoldService = foldService.of((state, lineStart, lineEnd) => {
  * @param {Function} options.onChange - Callback when content changes
  * @param {Function} options.onSelectionChange - Callback when cursor position changes (line, col)
  * @param {Function} options.onVimModeChange - Callback when vim mode changes (mode string)
+ * @param {Function} options.onFoldChange - Callback when fold state changes
  * @returns {EditorView} - CodeMirror EditorView instance
  */
-export function createEditor({ parent, content = '', vimMode = false, showLineNumbers = true, onChange, onSelectionChange, onVimModeChange }) {
+export function createEditor({ parent, content = '', vimMode = false, showLineNumbers = true, onChange, onSelectionChange, onVimModeChange, onFoldChange }) {
   // Track last known vim mode to detect changes
   let lastVimMode = 'normal';
 
@@ -745,6 +746,18 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
         const line = update.state.doc.lineAt(pos);
         const col = pos - line.from + 1;
         onSelectionChange(line.number, col);
+      }
+
+      // Fold state change detection
+      if (onFoldChange) {
+        for (const tr of update.transactions) {
+          for (const effect of tr.effects) {
+            if (effect.is(foldEffect) || effect.is(unfoldEffect)) {
+              onFoldChange();
+              break;
+            }
+          }
+        }
       }
 
       // Vim mode change detection

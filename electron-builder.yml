@@ -93,6 +93,12 @@ mac:
       - CFBundleURLName: HTTPS
         CFBundleURLSchemes:
           - https
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: HTML Document
+        CFBundleTypeRole: Viewer
+        LSItemContentTypes:
+          - public.html
+        LSHandlerRank: Alternate
 
 # Windows specific
 win:

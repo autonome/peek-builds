@@ -1,9 +1,6 @@
 /* Peek: chrome.permissions + browser.permissions shim for Electron compatibility.
- * Electron does not implement chrome.permissions. The webextension-polyfill used by
- * Proton Pass detects globalThis.browser and uses it directly (skipping the chrome
- * wrapper), so we must shim both chrome.permissions AND browser.permissions.
- * Supports both Promise and callback styles (webextension-polyfill uses Chrome callback convention).
- * Without this, the service worker crashes at startup on permissions.onAdded. */
+ * Force-patches all methods so native Electron bindings cannot override with broken stubs.
+ * Supports both Promise and callback styles (webextension-polyfill uses Chrome callback convention). */
 (function() {
   function NoopEvent() { this._l = []; }
   NoopEvent.prototype.addListener = function(fn) { this._l.push(fn); };
@@ -11,38 +8,78 @@
   NoopEvent.prototype.hasListener = function(fn) { return this._l.indexOf(fn) !== -1; };
   NoopEvent.prototype.hasListeners = function() { return this._l.length > 0; };
 
-  function makePermissions() {
-    return {
-      contains: function(perms, callback) {
-        if (typeof callback === 'function') callback(true);
-        return Promise.resolve(true);
-      },
-      getAll: function(callback) {
-        var result = { permissions: [], origins: [] };
-        try {
-          if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
-            var m = chrome.runtime.getManifest();
-            result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
-          }
-        } catch(e) {}
-        if (typeof callback === 'function') callback(result);
-        return Promise.resolve(result);
-      },
-      request: function(perms, callback) {
-        if (typeof callback === 'function') callback(true);
-        return Promise.resolve(true);
-      },
-      remove: function(perms, callback) {
-        if (typeof callback === 'function') callback(true);
-        return Promise.resolve(true);
-      },
-      onAdded: new NoopEvent(),
-      onRemoved: new NoopEvent()
-    };
+  var _onAdded = new NoopEvent();
+  var _onRemoved = new NoopEvent();
+
+  var _methods = {
+    contains: function(perms, callback) {
+      if (typeof callback === 'function') callback(true);
+      return Promise.resolve(true);
+    },
+    getAll: function(callback) {
+      var result = { permissions: [], origins: [] };
+      try {
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+          var m = chrome.runtime.getManifest();
+          result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
+        }
+      } catch(e) {}
+      if (typeof callback === 'function') callback(result);
+      return Promise.resolve(result);
+    },
+    request: function(perms, callback) {
+      if (typeof callback === 'function') callback(true);
+      return Promise.resolve(true);
+    },
+    remove: function(perms, callback) {
+      if (typeof callback === 'function') callback(true);
+      return Promise.resolve(true);
+    }
+  };
+
+  function patchPermissions(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    var keys = Object.keys(_methods);
+    for (var i = 0; i < keys.length; i++) {
+      var name = keys[i];
+      try {
+        Object.defineProperty(obj, name, { value: _methods[name], writable: false, configurable: false, enumerable: true });
+      } catch(e) {
+        try { obj[name] = _methods[name]; } catch(e2) {}
+      }
+    }
+    if (!obj.onAdded) { try { Object.defineProperty(obj, 'onAdded', { value: _onAdded, writable: false, configurable: false, enumerable: true }); } catch(e) { try { obj.onAdded = _onAdded; } catch(e2) {} } }
+    if (!obj.onRemoved) { try { Object.defineProperty(obj, 'onRemoved', { value: _onRemoved, writable: false, configurable: false, enumerable: true }); } catch(e) { try { obj.onRemoved = _onRemoved; } catch(e2) {} } }
   }
 
-  if (typeof chrome !== 'undefined' && !chrome.permissions) chrome.permissions = makePermissions();
-  if (typeof browser !== 'undefined' && browser && !browser.permissions) browser.permissions = makePermissions();
+  function ensureAndPatch(root, name) {
+    if (typeof root === 'undefined' || !root) return;
+    if (!root[name]) {
+      try { Object.defineProperty(root, name, { value: {}, writable: true, configurable: true, enumerable: true }); } catch(e) { try { root[name] = {}; } catch(e2) { return; } }
+    }
+    patchPermissions(root[name]);
+  }
+
+  if (typeof chrome !== 'undefined') ensureAndPatch(chrome, 'permissions');
+  if (typeof browser !== 'undefined' && browser) ensureAndPatch(browser, 'permissions');
+
+  var _pollCount = 0;
+  var _maxPolls = 60;
+  function _poll() {
+    _pollCount++;
+    if (typeof chrome !== 'undefined' && chrome.permissions && chrome.permissions.request !== _methods.request) {
+      patchPermissions(chrome.permissions);
+    }
+    if (typeof browser !== 'undefined' && browser && browser.permissions && browser.permissions.request !== _methods.request) {
+      patchPermissions(browser.permissions);
+    }
+    if (_pollCount < _maxPolls) {
+      if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(_poll);
+      else if (typeof setTimeout !== 'undefined') setTimeout(_poll, 16);
+    }
+  }
+  if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(_poll);
+  else if (typeof setTimeout !== 'undefined') setTimeout(_poll, 16);
 })();
 // --- chrome.storage.session in-memory shim ---
 (function() {

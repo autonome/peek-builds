@@ -130,6 +130,12 @@ export const createAffordanceElements = (itemId, itemTagNames, actionRules, api,
   container.className = 'tag-action-affordances';
   container.style.cssText = 'display:inline-flex;align-items:center;gap:4px;flex-shrink:0;';
 
+  // Stop clicks on the affordance container from propagating to parent card handlers
+  container.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  });
+
   for (const aff of affordances) {
     let el;
     switch (aff.type) {

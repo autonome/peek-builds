@@ -1106,7 +1106,8 @@ let windowColorSchemeOverride = null;
   for (let i = S.length - 1; i >= 0; i--) {
     if (key >= toSD(S[i][0], S[i][1])) { idx = i; break; }
   }
-  document.documentElement.setAttribute('data-microseason', String(idx));
+  const root = document.documentElement;
+  if (root) root.setAttribute('data-microseason', String(idx));
 } catch (e) { console.error('[preload] microseason error:', e); } })();
 
 // Auto-apply persisted color scheme preference for this URL

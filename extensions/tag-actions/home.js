@@ -692,7 +692,7 @@ const renderToggleConfig = (container, config, fd) => {
   activeInput.value = config.activeTag || fd.triggerTag || '';
   activeInput.placeholder = 'e.g. todo';
   activeInput.addEventListener('input', (e) => {
-    if (\!fd.actionConfig) fd.actionConfig = {};
+    if (!fd.actionConfig) fd.actionConfig = {};
     fd.actionConfig.activeTag = e.target.value;
   });
   activeGroup.appendChild(activeInput);
@@ -705,7 +705,7 @@ const renderToggleConfig = (container, config, fd) => {
   completedInput.value = config.completedTag || '';
   completedInput.placeholder = 'e.g. done';
   completedInput.addEventListener('input', (e) => {
-    if (\!fd.actionConfig) fd.actionConfig = {};
+    if (!fd.actionConfig) fd.actionConfig = {};
     fd.actionConfig.completedTag = e.target.value;
   });
   completedGroup.appendChild(completedInput);
@@ -719,7 +719,7 @@ const renderToggleConfig = (container, config, fd) => {
   colorInput.type = 'color';
   colorInput.value = config.color || '#007aff';
   colorInput.addEventListener('input', () => {
-    if (\!fd.actionConfig) fd.actionConfig = {};
+    if (!fd.actionConfig) fd.actionConfig = {};
     fd.actionConfig.color = colorInput.value;
   });
   colorRow.appendChild(colorInput);
@@ -734,7 +734,7 @@ const renderToggleConfig = (container, config, fd) => {
   checkedColorInput.type = 'color';
   checkedColorInput.value = config.checkedColor || '#34c759';
   checkedColorInput.addEventListener('input', () => {
-    if (\!fd.actionConfig) fd.actionConfig = {};
+    if (!fd.actionConfig) fd.actionConfig = {};
     fd.actionConfig.checkedColor = checkedColorInput.value;
   });
   checkedColorRow.appendChild(checkedColorInput);

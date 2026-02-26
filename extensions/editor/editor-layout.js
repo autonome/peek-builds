@@ -8,6 +8,7 @@ import { OutlineSidebar } from './outline-sidebar.js';
 import { PreviewSidebar } from './preview-sidebar.js';
 import { StatusLine } from './status-line.js';
 import * as CodeMirror from './codemirror.js';
+import { foldEffect, unfoldEffect, foldable, foldedRanges } from '@codemirror/language';
 
 export class EditorLayout {
   constructor(options) {
@@ -39,6 +40,7 @@ export class EditorLayout {
     this.outlineSidebar = new OutlineSidebar({
       container: this.wrapper,
       onHeaderClick: (header) => this.jumpToHeader(header),
+      onFoldToggle: (header, shouldFold) => this.handleOutlineFoldToggle(header, shouldFold),
     });
 
     // Create left resizer
@@ -138,6 +140,7 @@ export class EditorLayout {
       onChange: (content) => this.handleContentChange(content),
       onSelectionChange: (line, col) => this.handleSelectionChange(line, col),
       onVimModeChange: (mode) => this.handleVimModeUpdate(mode),
+      onFoldChange: () => this.syncOutlineFromFolds(),
     });
 
     // Apply persisted vim settings (wrap, lineNumbers) if provided
@@ -329,6 +332,56 @@ export class EditorLayout {
   handleVimModeUpdate(mode) {
     if (this.statusLine && this.vimMode) {
       this.statusLine.updateMode(mode);
+    }
+  }
+
+  /**
+   * Handle outline sidebar fold toggle — fold/unfold the corresponding
+   * section in the CodeMirror document.
+   * @param {Object} header - Header object with offset, line, level, text
+   * @param {boolean} shouldFold - true to fold, false to unfold
+   */
+  handleOutlineFoldToggle(header, shouldFold) {
+    if (!this.cmEditor) return;
+
+    const view = this.cmEditor;
+    const state = view.state;
+
+    // Find the line at the header's offset
+    if (header.offset >= state.doc.length) return;
+    const line = state.doc.lineAt(header.offset);
+
+    // Get the foldable range for this line
+    const foldRange = foldable(state, line.from, line.to);
+    if (!foldRange) return;
+
+    if (shouldFold) {
+      // Check it's not already folded
+      const folded = foldedRanges(state);
+      let alreadyFolded = false;
+      folded.between(foldRange.from, foldRange.to, (from) => {
+        if (from === foldRange.from) alreadyFolded = true;
+      });
+      if (!alreadyFolded) {
+        view.dispatch({
+          effects: foldEffect.of({ from: foldRange.from, to: foldRange.to })
+        });
+      }
+    } else {
+      // Unfold
+      view.dispatch({
+        effects: unfoldEffect.of({ from: foldRange.from, to: foldRange.to })
+      });
+    }
+  }
+
+  /**
+   * Sync outline collapse state from the editor's current fold state.
+   * Called after fold changes in the editor.
+   */
+  syncOutlineFromFolds() {
+    if (this.outlineSidebar && this.cmEditor) {
+      this.outlineSidebar.syncFromEditor(this.cmEditor);
     }
   }
 
