@@ -95,8 +95,8 @@ function openGallery() {
   if (hasPeekAPI) {
     api.window.open('peek://ext/example/gallery.html', {
       key: 'example-gallery',
-      width: 800,
-      height: 600,
+      width: 1024,
+      height: 768,
       title: 'Image Gallery'
     });
   } else {

@@ -944,8 +944,8 @@ const createAddressCard = (address) => {
       const openOptions = {
         role: 'content',
         key: addressUrl,
-        width: 800,
-        height: 600
+        width: 1024,
+        height: 768
       };
       if (state.currentTag && state.currentTag.id !== '__untagged__') {
         openOptions.groupMode = {

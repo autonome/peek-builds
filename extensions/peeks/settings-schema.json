@@ -34,12 +34,12 @@
       "height": {
         "type": "integer",
         "description": "Window height",
-        "default": 600
+        "default": 768
       },
       "width": {
         "type": "integer",
         "description": "Window width",
-        "default": 800
+        "default": 1024
       },
       "persistState": {
         "type": "boolean",
@@ -72,16 +72,116 @@
       "shortcutKeyPrefix": "Option+"
     },
     "items": [
-      { "keyNum": 0, "title": "Peek key 0", "address": "https://example.com/", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": true },
-      { "keyNum": 1, "title": "Peek key 1", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "keyNum": 2, "title": "Peek key 2", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "keyNum": 3, "title": "Peek key 3", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "keyNum": 4, "title": "Peek key 4", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "keyNum": 5, "title": "Peek key 5", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "keyNum": 6, "title": "Peek key 6", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "keyNum": 7, "title": "Peek key 7", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "keyNum": 8, "title": "Peek key 8", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "keyNum": 9, "title": "Peek key 9", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false }
+      {
+        "keyNum": 0,
+        "title": "Peek key 0",
+        "address": "https://example.com/",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": true
+      },
+      {
+        "keyNum": 1,
+        "title": "Peek key 1",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "keyNum": 2,
+        "title": "Peek key 2",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "keyNum": 3,
+        "title": "Peek key 3",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "keyNum": 4,
+        "title": "Peek key 4",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "keyNum": 5,
+        "title": "Peek key 5",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "keyNum": 6,
+        "title": "Peek key 6",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "keyNum": 7,
+        "title": "Peek key 7",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "keyNum": 8,
+        "title": "Peek key 8",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "keyNum": 9,
+        "title": "Peek key 9",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      }
     ]
   }
 }

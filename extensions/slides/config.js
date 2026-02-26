@@ -69,12 +69,12 @@ const itemSchema = {
     "height": {
       "description": "User-defined height of slide page",
       "type": "integer",
-      "default": 600
+      "default": 768
     },
     "width": {
       "description": "User-defined width of slide page",
       "type": "integer",
-      "default": 800
+      "default": 1024
     },
     "enabled": {
       "description": "Whether this slide is enabled or not.",
@@ -114,8 +114,8 @@ const defaults = {
       persistState: false,
       keepLive: false,
       allowSound: false,
-      height: 600,
-      width: 800,
+      height: 768,
+      width: 1024,
       enabled: true,
     },
     {
@@ -125,8 +125,8 @@ const defaults = {
       persistState: false,
       keepLive: false,
       allowSound: false,
-      height: 600,
-      width: 800,
+      height: 768,
+      width: 1024,
       enabled: false,
     },
     {
@@ -136,8 +136,8 @@ const defaults = {
       persistState: false,
       keepLive: false,
       allowSound: false,
-      height: 600,
-      width: 800,
+      height: 768,
+      width: 1024,
       enabled: false,
     },
     {
@@ -147,8 +147,8 @@ const defaults = {
       persistState: false,
       keepLive: false,
       allowSound: false,
-      height: 600,
-      width: 800,
+      height: 768,
+      width: 1024,
       enabled: false,
     },
   ]

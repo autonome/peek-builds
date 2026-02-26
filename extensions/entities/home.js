@@ -146,8 +146,8 @@ async function openSourceUrl(url) {
   try {
     await api.window.open(url, {
       role: 'content',
-      width: 800,
-      height: 600,
+      width: 1024,
+      height: 768,
       trackingSource: 'entities',
       trackingSourceId: 'source-page'
     });

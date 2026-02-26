@@ -218,8 +218,8 @@ const executeOpenUrl = async (action, msg) => {
 
   api.window.open(url, {
     role: 'content',
-    width: 800,
-    height: 600
+    width: 1024,
+    height: 768
   });
   debug && console.log('[tag-actions] Opened URL:', url);
 };
@@ -349,8 +349,8 @@ const openTagActions = () => {
   api.window.open('peek://ext/tag-actions/home.html', {
     role: 'workspace',
     key: 'tag-actions-home',
-    width: 800,
-    height: 600,
+    width: 1024,
+    height: 768,
     title: 'Tag Actions'
   });
 };

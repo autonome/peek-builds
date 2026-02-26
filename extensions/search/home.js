@@ -354,8 +354,8 @@ const createResultCard = (item) => {
         await api.window.open(itemUrl, {
           role: 'content',
           key: itemUrl,
-          width: 800,
-          height: 600
+          width: 1024,
+          height: 768
         });
       } else if (item.type === 'text') {
         // Open text item in editor

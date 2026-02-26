@@ -84,8 +84,8 @@ const commandDefinitions = [
 
       try {
         await api.window.open(normalizedAddress, {
-          width: 800,
-          height: 600,
+          width: 1024,
+          height: 768,
           trackingSource: 'cmd',
           trackingSourceId: 'open'
         });

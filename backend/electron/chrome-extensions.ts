@@ -507,7 +507,7 @@ export function getChromeExtensionUiEntries(): ChromeExtensionUiEntry[] {
       entries.push({
         extensionId: extId, extensionName: discovered.name, type: 'options',
         title: `${discovered.name} Settings`,
-        url: `${baseUrl}${optionsPage}`, width: 800, height: 600, openable: true,
+        url: `${baseUrl}${optionsPage}`, width: 1024, height: 768, openable: true,
       });
     }
 
@@ -532,21 +532,21 @@ export function getChromeExtensionUiEntries(): ChromeExtensionUiEntry[] {
         entries.push({
           extensionId: extId, extensionName: discovered.name, type: 'newtab',
           title: `${discovered.name} New Tab`,
-          url: `${baseUrl}${overrides.newtab}`, width: 800, height: 600, openable: true,
+          url: `${baseUrl}${overrides.newtab}`, width: 1024, height: 768, openable: true,
         });
       }
       if (overrides.history) {
         entries.push({
           extensionId: extId, extensionName: discovered.name, type: 'history',
           title: `${discovered.name} History`,
-          url: `${baseUrl}${overrides.history}`, width: 800, height: 600, openable: true,
+          url: `${baseUrl}${overrides.history}`, width: 1024, height: 768, openable: true,
         });
       }
       if (overrides.bookmarks) {
         entries.push({
           extensionId: extId, extensionName: discovered.name, type: 'bookmarks',
           title: `${discovered.name} Bookmarks`,
-          url: `${baseUrl}${overrides.bookmarks}`, width: 800, height: 600, openable: true,
+          url: `${baseUrl}${overrides.bookmarks}`, width: 1024, height: 768, openable: true,
         });
       }
     }
@@ -556,7 +556,7 @@ export function getChromeExtensionUiEntries(): ChromeExtensionUiEntry[] {
       entries.push({
         extensionId: extId, extensionName: discovered.name, type: 'devtools',
         title: `${discovered.name} DevTools`,
-        url: `${baseUrl}${manifest.devtools_page}`, width: 800, height: 600, openable: true,
+        url: `${baseUrl}${manifest.devtools_page}`, width: 1024, height: 768, openable: true,
       });
     }
 
@@ -566,7 +566,7 @@ export function getChromeExtensionUiEntries(): ChromeExtensionUiEntry[] {
       entries.push({
         extensionId: extId, extensionName: discovered.name, type: 'sidepanel',
         title: manifest.sidebar_action?.default_title || `${discovered.name} Side Panel`,
-        url: `${baseUrl}${sidePanelPath}`, width: 400, height: 600, openable: true,
+        url: `${baseUrl}${sidePanelPath}`, width: 400, height: 768, openable: true,
       });
     }
   }

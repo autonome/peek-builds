@@ -495,7 +495,7 @@ pub async fn extension_load(
     {
         ext_builder = ext_builder
             .title(&format!("Extension: {}", manifest.name.as_deref().unwrap_or(&id)))
-            .inner_size(800.0, 600.0)
+            .inner_size(1024.0, 768.0)
             .visible(false);
     }
 

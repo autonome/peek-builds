@@ -39,7 +39,7 @@ function openEditor(params) {
     api.window.open(url, {
       role: 'workspace',
       key,
-      width: 800,
+      width: 1024,
       height: 1000,
       title: 'Editor'
     });

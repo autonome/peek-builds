@@ -31,12 +31,12 @@ const prefsSchema = {
     "height": {
       "description": "User-set or -defined height of Settings page",
       "type": "integer",
-      "default": 600
+      "default": 768
     },
     "width": {
       "description": "User-set or -defined width of Settings page",
       "type": "integer",
-      "default": 800
+      "default": 1024
     },
     "startupFeature": {
       "description": "Address of what to load at startup, if anything",
@@ -148,7 +148,7 @@ const defaults = {
     shortcutKey: 'CommandOrControl+,',
     quitShortcut: 'CommandOrControl+Q',
     height: 850,
-    width: 800,
+    width: 1024,
     startupFeature: 'peek://app/settings/settings.html',
     showTrayIcon: true,
     showInDockAndSwitcher: true,

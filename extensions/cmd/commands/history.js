@@ -46,8 +46,8 @@ const getHistory = async (searchTerm = '', limit = 200) => {
 const openFromHistory = async (url) => {
   try {
     const windowController = await windows.createWindow(url, {
-      width: 800,
-      height: 600,
+      width: 1024,
+      height: 768,
       openDevTools: window.app.debug,
       trackingSource: 'cmd',
       trackingSourceId: 'history'

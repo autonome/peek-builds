@@ -32,12 +32,12 @@
       "height": {
         "type": "integer",
         "description": "Window height",
-        "default": 600
+        "default": 768
       },
       "width": {
         "type": "integer",
         "description": "Window width",
-        "default": 800
+        "default": 1024
       },
       "persistState": {
         "type": "boolean",
@@ -70,10 +70,50 @@
       "shortcutKeyPrefix": "Option+"
     },
     "items": [
-      { "screenEdge": "Up", "title": "Slide from top", "address": "http://localhost/", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": true },
-      { "screenEdge": "Down", "title": "Slide from bottom", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "screenEdge": "Left", "title": "Slide from left", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false },
-      { "screenEdge": "Right", "title": "Slide from right", "address": "", "persistState": false, "keepLive": false, "allowSound": false, "height": 600, "width": 800, "enabled": false }
+      {
+        "screenEdge": "Up",
+        "title": "Slide from top",
+        "address": "http://localhost/",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": true
+      },
+      {
+        "screenEdge": "Down",
+        "title": "Slide from bottom",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "screenEdge": "Left",
+        "title": "Slide from left",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      },
+      {
+        "screenEdge": "Right",
+        "title": "Slide from right",
+        "address": "",
+        "persistState": false,
+        "keepLive": false,
+        "allowSound": false,
+        "height": 768,
+        "width": 1024,
+        "enabled": false
+      }
     ]
   }
 }

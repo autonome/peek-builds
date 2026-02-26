@@ -1819,8 +1819,8 @@ function actionHandlers() {
 
       api.window.open(urlResult.url, {
         role: 'content',
-        width: 800,
-        height: 600,
+        width: 1024,
+        height: 768,
         trackingSource: 'cmd',
         trackingSourceId: 'url-direct'
       }).catch(error => {
@@ -1837,7 +1837,7 @@ function actionHandlers() {
         role: 'workspace',
         key: 'search-home',
         width: 700,
-        height: 600,
+        height: 768,
         trackingSource: 'cmd',
         trackingSourceId: 'search'
       }).catch(error => {

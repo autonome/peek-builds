@@ -435,8 +435,8 @@ const activateResult = async (item) => {
       await api.window.open(url, {
         role: 'content',
         key: url,
-        width: 800,
-        height: 600
+        width: 1024,
+        height: 768
       });
     }
   } else if (item.type === 'tag') {

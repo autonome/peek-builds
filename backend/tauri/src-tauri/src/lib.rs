@@ -208,7 +208,7 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 main_builder = main_builder
-                    .inner_size(800.0, 600.0)
+                    .inner_size(1024.0, 768.0)
                     .title("Peek (Tauri)")
                     .visible(false);
 
@@ -320,7 +320,7 @@ pub fn run() {
                 #[cfg(desktop)]
                 {
                     ext_builder = ext_builder
-                        .inner_size(800.0, 600.0)
+                        .inner_size(1024.0, 768.0)
                         .title(&format!("Extension: {}", ext.manifest.name.as_deref().unwrap_or(&ext.id)))
                         .visible(false);
 

@@ -61,7 +61,7 @@ const openSearchWindow = async () => {
     const params = {
       role: 'workspace',
       key: address,
-      height: 600,
+      height: 768,
       width: 700,
       trackingSource: 'cmd',
       trackingSourceId: 'search'
