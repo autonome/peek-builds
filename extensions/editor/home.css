@@ -454,3 +454,16 @@ body {
   color: var(--base08);
   background: var(--base01);
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Vim Command Bar Ghost-Text Suggestions
+   ═══════════════════════════════════════════════════════════════════ */
+
+.vim-cmd-ghost {
+  color: var(--base03);
+  pointer-events: none;
+  user-select: none;
+  white-space: pre;
+  font-family: inherit;
+  font-size: inherit;
+}

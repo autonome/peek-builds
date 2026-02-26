@@ -9,6 +9,7 @@ import { PreviewSidebar } from './preview-sidebar.js';
 import { StatusLine } from './status-line.js';
 import * as CodeMirror from './codemirror.js';
 import { foldEffect, unfoldEffect, foldable, foldedRanges } from '@codemirror/language';
+import { observeCommandBar } from './cmd-suggestions.js';
 
 export class EditorLayout {
   constructor(options) {
@@ -27,6 +28,7 @@ export class EditorLayout {
     this.isDestroyed = false;
     this.isFocusMode = false;
     this.originalContainerStyles = '';
+    this.cmdSuggestionsCleanup = null;
 
     this.init();
   }
@@ -146,6 +148,11 @@ export class EditorLayout {
     // Apply persisted vim settings (wrap, lineNumbers) if provided
     if (this.initialVimSettings && this.cmEditor) {
       CodeMirror.applyVimSettings(this.cmEditor, this.initialVimSettings);
+    }
+
+    // Set up command bar suggestions (ghost-text completions for : commands)
+    if (this.cmContainer) {
+      this.cmdSuggestionsCleanup = observeCommandBar(this.cmContainer);
     }
 
     // Default sidebars to collapsed
@@ -579,6 +586,11 @@ export class EditorLayout {
 
     if (this.isFocusMode) {
       this.exitFocusMode();
+    }
+
+    if (this.cmdSuggestionsCleanup) {
+      this.cmdSuggestionsCleanup();
+      this.cmdSuggestionsCleanup = null;
     }
 
     if (this.cmEditor) {
