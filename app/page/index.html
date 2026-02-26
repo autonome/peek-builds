@@ -747,6 +747,198 @@
       font-size: 11px;
       padding: 8px 0;
     }
+
+    /* --- Extensions Panel (right side, below entities) --- */
+
+    .extensions-panel {
+      position: absolute;
+      z-index: 140;
+      pointer-events: auto;
+      background: rgba(30, 30, 30, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--theme-text, #e0e0e0);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+      font-size: 12px;
+      border-radius: 10px;
+      max-width: 280px;
+      min-width: 200px;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateX(12px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      display: none;
+    }
+
+    .extensions-panel.visible {
+      display: block;
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .extensions-panel .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px 4px 10px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .extensions-panel .panel-title {
+      flex: 1;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--theme-text-secondary, #aaa);
+    }
+
+    .extensions-panel .panel-body {
+      padding: 4px 10px 10px 10px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .extensions-panel .panel-body::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .extensions-panel .panel-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .extensions-panel .panel-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+    }
+
+    .ext-loading {
+      color: var(--theme-text-muted, #666);
+      font-size: 11px;
+      padding: 8px 0;
+    }
+
+    .ext-empty {
+      color: var(--theme-text-muted, #555);
+      font-style: italic;
+      font-size: 11px;
+      padding: 8px 0;
+    }
+
+    .ext-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .ext-item:last-child {
+      border-bottom: none;
+    }
+
+    .ext-icon {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      opacity: 0.8;
+    }
+
+    .ext-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .ext-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--theme-text, #e0e0e0);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ext-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .ext-action-btn {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
+      border: none;
+      color: var(--theme-text-secondary, #bbb);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 3px 8px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s;
+      white-space: nowrap;
+    }
+
+    .ext-action-btn:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18));
+      color: var(--theme-text, #fff);
+    }
+
+    /* Adblocker toggle */
+
+    .ext-toggle {
+      position: relative;
+      width: 32px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    .ext-toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .ext-toggle-track {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 9px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .ext-toggle-track::before {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 2px;
+      top: 2px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+
+    .ext-toggle input:checked + .ext-toggle-track {
+      background: #4ade80;
+    }
+
+    .ext-toggle input:checked + .ext-toggle-track::before {
+      transform: translateX(14px);
+    }
+
+    .ext-adblocker-status {
+      font-size: 10px;
+      color: var(--theme-text-muted, #777);
+    }
   </style>
 </head>
 <body data-no-drag>
@@ -804,6 +996,16 @@
         </div>
         <div class="panel-body" id="entities-body">
           <div class="entity-empty">No entities detected yet</div>
+        </div>
+      </div>
+
+      <!-- Extensions Panel (right side, below entities, shown with navbar) -->
+      <div class="extensions-panel" id="extensions-panel">
+        <div class="panel-header">
+          <span class="panel-title">Extensions</span>
+        </div>
+        <div class="panel-body" id="extensions-body">
+          <div class="ext-loading">Loading extensions...</div>
         </div>
       </div>
 

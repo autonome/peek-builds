@@ -953,6 +953,41 @@ api.adblocker = {
    */
   getBlockedCount: () => {
     return ipcRenderer.invoke('adblocker:getBlockedCount');
+  },
+
+  /**
+   * Get the per-site allowlist (sites where blocking is disabled)
+   * @returns {Promise<{success: boolean, data?: string[], error?: string}>}
+   */
+  getAllowlist: () => {
+    return ipcRenderer.invoke('adblocker:getAllowlist');
+  },
+
+  /**
+   * Check if a specific site is in the allowlist
+   * @param {string} hostname - The hostname to check
+   * @returns {Promise<{success: boolean, data?: boolean, error?: string}>}
+   */
+  isSiteAllowed: (hostname) => {
+    return ipcRenderer.invoke('adblocker:isSiteAllowed', { hostname });
+  },
+
+  /**
+   * Add a site to the allowlist (disable blocking for that site)
+   * @param {string} hostname - The hostname to allow
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  allowSite: (hostname) => {
+    return ipcRenderer.invoke('adblocker:allowSite', { hostname });
+  },
+
+  /**
+   * Remove a site from the allowlist (re-enable blocking for that site)
+   * @param {string} hostname - The hostname to disallow
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  disallowSite: (hostname) => {
+    return ipcRenderer.invoke('adblocker:disallowSite', { hostname });
   }
 };
 

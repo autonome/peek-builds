@@ -140,6 +140,8 @@ const tagsInput = document.getElementById('tags-input');
 const tagsSuggestion = document.getElementById('tags-suggestion');
 const entitiesPanel = document.getElementById('entities-panel');
 const entitiesBody = document.getElementById('entities-body');
+const extensionsPanel = document.getElementById('extensions-panel');
+const extensionsBody = document.getElementById('extensions-body');
 
 console.log('[page] DOM elements initialized');
 
@@ -305,6 +307,15 @@ function updatePositions() {
     entitiesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
     entitiesPanel.style.top = `${webviewTop + 8}px`;
     entitiesPanel.style.width = `${PANEL_WIDTH}px`;
+  }
+
+  // Extensions Panel — right side, below entities panel
+  if (extensionsPanel) {
+    extensionsPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
+    const entitiesHeight = entitiesPanel ? entitiesPanel.offsetHeight : 0;
+    const extensionsPanelTop = webviewTop + 8 + (entitiesHeight > 0 ? entitiesHeight + 12 : 0);
+    extensionsPanel.style.top = `${extensionsPanelTop}px`;
+    extensionsPanel.style.width = `${PANEL_WIDTH}px`;
   }
 }
 
@@ -963,6 +974,7 @@ async function show(opts) {
   if (pageInfoPanel) pageInfoPanel.classList.add('visible');
   if (tagsPanel) tagsPanel.classList.add('visible');
   if (entitiesPanel) entitiesPanel.classList.add('visible');
+  if (extensionsPanel) extensionsPanel.classList.add('visible');
   // Re-run positions now that panels are visible (offsetHeight is accurate)
   updatePositions();
   await setWindowPadding(PANEL_OVERHANG * 2);
@@ -987,10 +999,11 @@ async function hide() {
   // If show() was called while we were awaiting, abort — don't clobber the new state
   if (navbarGeneration !== gen) return;
   navbar.classList.remove('visible');
-  // Hide page info and entities panels alongside navbar
+  // Hide page info, entities, and extensions panels alongside navbar
   if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
   if (tagsPanel) tagsPanel.classList.remove('visible');
   if (entitiesPanel) entitiesPanel.classList.remove('visible');
+  if (extensionsPanel) extensionsPanel.classList.remove('visible');
   updatePositions();
   // Restore visibility now that the window has been resized
   centerColumn.style.opacity = '1';
@@ -1004,7 +1017,8 @@ document.addEventListener('mousedown', (e) => {
   if (navbar.classList.contains('visible') && !navbar.contains(e.target) && e.target !== triggerZone && !e.target.closest('.resize-handle')
       && !(pageInfoPanel && pageInfoPanel.contains(e.target))
       && !(tagsPanel && tagsPanel.contains(e.target))
-      && !(entitiesPanel && entitiesPanel.contains(e.target))) {
+      && !(entitiesPanel && entitiesPanel.contains(e.target))
+      && !(extensionsPanel && extensionsPanel.contains(e.target))) {
     hide();
   }
 });
@@ -1085,6 +1099,12 @@ if (entitiesPanel) {
 if (tagsPanel) {
   tagsPanel.addEventListener('mouseenter', () => { cancelHide(); });
   tagsPanel.addEventListener('mouseleave', () => {
+    if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
+  });
+}
+if (extensionsPanel) {
+  extensionsPanel.addEventListener('mouseenter', () => { cancelHide(); });
+  extensionsPanel.addEventListener('mouseleave', () => {
     if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
   });
 }
@@ -2575,5 +2595,222 @@ api.subscribe('page:cmd:request', async (msg) => {
     respond(null, err.message || 'Failed to execute page command');
   }
 }, api.scopes.GLOBAL);
+
+// --- Extensions Panel: show loaded chrome extensions and adblocker ---
+
+let extensionsLoaded = false;
+let currentSiteHostname = null;
+let currentSiteAdblockAllowed = false; // true = ads allowed (blocking disabled for this site)
+let adblockerGlobalEnabled = false;
+
+function getHostnameFromWebview() {
+  try {
+    const url = webview.getURL();
+    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      return new URL(url).hostname;
+    }
+  } catch {
+    // webview not ready
+  }
+  return null;
+}
+
+async function loadExtensionsPanel() {
+  if (!extensionsBody) return;
+
+  try {
+    // Fetch chrome extensions and adblocker status in parallel
+    const [extResult, uiResult, adStatus] = await Promise.all([
+      api.chromeExtensions.list(),
+      api.chromeExtensions.getUiEntries(),
+      api.adblocker.getStatus(),
+    ]);
+
+    const extensions = (extResult.success && extResult.data) ? extResult.data : [];
+    const uiEntries = (uiResult.success && uiResult.data) ? uiResult.data : [];
+    adblockerGlobalEnabled = adStatus.success && adStatus.data?.enabled;
+
+    // Get per-site adblocker state
+    const hostname = getHostnameFromWebview();
+    currentSiteHostname = hostname;
+    if (hostname && adblockerGlobalEnabled) {
+      const siteResult = await api.adblocker.isSiteAllowed(hostname);
+      currentSiteAdblockAllowed = siteResult.success && siteResult.data;
+    } else {
+      currentSiteAdblockAllowed = false;
+    }
+
+    // Build UI entry lookup for quick popup access
+    const popupMap = new Map(); // extensionId -> popup entry
+    for (const entry of uiEntries) {
+      if (entry.type === 'popup') {
+        popupMap.set(entry.extensionId, entry);
+      }
+    }
+
+    // Filter to only enabled/loaded extensions
+    const enabledExts = extensions.filter(ext => ext.enabled && ext.loaded);
+
+    extensionsBody.innerHTML = '';
+
+    // Adblocker entry (always shown first)
+    renderAdblockerEntry();
+
+    if (enabledExts.length === 0) {
+      const emptyEl = document.createElement('div');
+      emptyEl.className = 'ext-empty';
+      emptyEl.textContent = 'No extensions loaded';
+      extensionsBody.appendChild(emptyEl);
+    } else {
+      for (const ext of enabledExts) {
+        const item = document.createElement('div');
+        item.className = 'ext-item';
+
+        const icon = document.createElement('span');
+        icon.className = 'ext-icon';
+        icon.textContent = '\uD83E\uDDE9'; // puzzle piece emoji
+        item.appendChild(icon);
+
+        const info = document.createElement('div');
+        info.className = 'ext-info';
+
+        const name = document.createElement('div');
+        name.className = 'ext-name';
+        name.textContent = ext.name;
+        name.title = ext.description || ext.name;
+        info.appendChild(name);
+
+        item.appendChild(info);
+
+        // Popup button (if extension has a popup)
+        const popupEntry = popupMap.get(ext.id);
+        if (popupEntry) {
+          const actions = document.createElement('div');
+          actions.className = 'ext-actions';
+
+          const popupBtn = document.createElement('button');
+          popupBtn.className = 'ext-action-btn';
+          popupBtn.textContent = 'Open';
+          popupBtn.title = `Open ${ext.name} popup`;
+          popupBtn.addEventListener('click', () => {
+            api.chromeExtensions.openPage(ext.id, 'popup');
+          });
+          actions.appendChild(popupBtn);
+          item.appendChild(actions);
+        }
+
+        extensionsBody.appendChild(item);
+      }
+    }
+
+    extensionsLoaded = true;
+    // Update positions after rendering (panel height may have changed)
+    updatePositions();
+  } catch (err) {
+    console.warn('[page] Failed to load extensions panel:', err.message);
+    if (extensionsBody) {
+      extensionsBody.innerHTML = '<div class="ext-empty">Could not load extensions</div>';
+    }
+  }
+}
+
+function renderAdblockerEntry() {
+  if (!extensionsBody) return;
+
+  const item = document.createElement('div');
+  item.className = 'ext-item';
+  item.id = 'ext-adblocker-item';
+
+  const icon = document.createElement('span');
+  icon.className = 'ext-icon';
+  icon.textContent = '\uD83D\uDEE1\uFE0F'; // shield emoji
+  item.appendChild(icon);
+
+  const info = document.createElement('div');
+  info.className = 'ext-info';
+
+  const name = document.createElement('div');
+  name.className = 'ext-name';
+  name.textContent = 'Ad Blocker';
+  info.appendChild(name);
+
+  if (currentSiteHostname) {
+    const status = document.createElement('div');
+    status.className = 'ext-adblocker-status';
+    if (!adblockerGlobalEnabled) {
+      status.textContent = 'Disabled globally';
+    } else if (currentSiteAdblockAllowed) {
+      status.textContent = `Ads allowed on ${currentSiteHostname}`;
+    } else {
+      status.textContent = `Blocking ads on ${currentSiteHostname}`;
+    }
+    info.appendChild(status);
+  }
+
+  item.appendChild(info);
+
+  // Toggle switch for per-site blocking
+  if (adblockerGlobalEnabled && currentSiteHostname) {
+    const toggle = document.createElement('label');
+    toggle.className = 'ext-toggle';
+    toggle.title = currentSiteAdblockAllowed
+      ? `Enable ad blocking on ${currentSiteHostname}`
+      : `Disable ad blocking on ${currentSiteHostname}`;
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    // Checked = blocking is active (not allowed)
+    input.checked = !currentSiteAdblockAllowed;
+    input.addEventListener('change', async () => {
+      const shouldBlock = input.checked;
+      if (shouldBlock) {
+        // Remove from allowlist
+        await api.adblocker.disallowSite(currentSiteHostname);
+        currentSiteAdblockAllowed = false;
+      } else {
+        // Add to allowlist
+        await api.adblocker.allowSite(currentSiteHostname);
+        currentSiteAdblockAllowed = true;
+      }
+      // Refresh the adblocker entry to update status text and toggle title
+      const existing = document.getElementById('ext-adblocker-item');
+      if (existing) {
+        const nextSibling = existing.nextSibling;
+        existing.remove();
+        renderAdblockerEntry();
+        // The new entry was appended; move it back to the original position
+        const newItem = document.getElementById('ext-adblocker-item');
+        if (newItem && nextSibling) {
+          extensionsBody.insertBefore(newItem, nextSibling);
+        }
+      }
+    });
+
+    const track = document.createElement('span');
+    track.className = 'ext-toggle-track';
+
+    toggle.appendChild(input);
+    toggle.appendChild(track);
+    item.appendChild(toggle);
+  }
+
+  // Insert at the beginning of the body
+  if (extensionsBody.firstChild) {
+    extensionsBody.insertBefore(item, extensionsBody.firstChild);
+  } else {
+    extensionsBody.appendChild(item);
+  }
+}
+
+// Load extensions panel on initial page load
+webview.addEventListener('did-finish-load', () => {
+  setTimeout(loadExtensionsPanel, 700);
+});
+
+// Reload on navigation (hostname may change)
+webview.addEventListener('did-navigate', () => {
+  extensionsLoaded = false;
+  setTimeout(loadExtensionsPanel, 700);
+});
 
 DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);

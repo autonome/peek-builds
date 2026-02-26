@@ -5102,6 +5102,90 @@ export function registerWebExtensionHandlers(): void {
     }
   });
 
+  // ========== Per-Site Adblocker Handlers ==========
+
+  // Get per-site adblocker allowlist (sites where blocking is disabled)
+  ipcMain.handle('adblocker:getAllowlist', async () => {
+    try {
+      const db = getDb();
+      const CORE_EXT_ID = 'core';
+      const KEY = 'adblocker_allowlist';
+      const row = db.prepare(
+        'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+      ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
+      const allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
+      return { success: true, data: allowlist };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Check if a specific site is in the adblocker allowlist
+  ipcMain.handle('adblocker:isSiteAllowed', async (_ev, data: { hostname: string }) => {
+    try {
+      const db = getDb();
+      const CORE_EXT_ID = 'core';
+      const KEY = 'adblocker_allowlist';
+      const row = db.prepare(
+        'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+      ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
+      const allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
+      return { success: true, data: allowlist.includes(data.hostname) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Add a site to the adblocker allowlist (disable blocking for that site)
+  ipcMain.handle('adblocker:allowSite', async (_ev, data: { hostname: string }) => {
+    try {
+      const db = getDb();
+      const CORE_EXT_ID = 'core';
+      const KEY = 'adblocker_allowlist';
+      const row = db.prepare(
+        'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+      ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
+      let allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
+      if (!allowlist.includes(data.hostname)) {
+        allowlist.push(data.hostname);
+      }
+      const timestamp = Date.now();
+      db.prepare(`
+        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(`${CORE_EXT_ID}_${KEY}`, CORE_EXT_ID, KEY, JSON.stringify(allowlist), timestamp);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Remove a site from the adblocker allowlist (re-enable blocking for that site)
+  ipcMain.handle('adblocker:disallowSite', async (_ev, data: { hostname: string }) => {
+    try {
+      const db = getDb();
+      const CORE_EXT_ID = 'core';
+      const KEY = 'adblocker_allowlist';
+      const row = db.prepare(
+        'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+      ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
+      let allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
+      allowlist = allowlist.filter(h => h !== data.hostname);
+      const timestamp = Date.now();
+      db.prepare(`
+        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(`${CORE_EXT_ID}_${KEY}`, CORE_EXT_ID, KEY, JSON.stringify(allowlist), timestamp);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   DEBUG && console.log('[ipc] Web extension handlers registered');
 }
 
