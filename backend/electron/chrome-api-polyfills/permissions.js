@@ -51,9 +51,15 @@ export function setupMainProcess(_session, _options = {}) {
  */
 export function getPreloadScript() {
   return `
-/* chrome.permissions polyfill for Electron — force-patches all methods */
+/* chrome.permissions polyfill for Electron — completely replaces chrome.permissions.
+ * Saves a reference to the real chrome object, creates a complete permissions object,
+ * and installs it as non-configurable to prevent overwrites by native bindings or
+ * extension code (e.g. Proton Pass Proxy replacement). No polling needed. */
 (function() {
   if (typeof chrome === 'undefined') return;
+
+  var DEBUG_PERMISSIONS = false;
+  function _log() { if (DEBUG_PERMISSIONS) console.log.apply(console, ['[peek:permissions:preload]'].concat(Array.prototype.slice.call(arguments))); }
 
   function NoopEvent() { this._l = []; }
   NoopEvent.prototype.addListener = function(fn) { this._l.push(fn); };
@@ -63,120 +69,83 @@ export function getPreloadScript() {
   NoopEvent.prototype.hasListener = function(fn) { return this._l.indexOf(fn) !== -1; };
   NoopEvent.prototype.hasListeners = function() { return this._l.length > 0; };
 
-  var _onAdded = new NoopEvent();
-  var _onRemoved = new NoopEvent();
+  /* Save reference to the REAL chrome object */
+  var _chrome = chrome;
 
-  var _methods = {
+  var _permsObj = {
     contains: function(perms, callback) {
-      try { delete chrome.runtime.lastError; } catch(e) {}
+      _log('contains called with:', JSON.stringify(perms));
+      try { delete _chrome.runtime.lastError; } catch(e) {}
+      _log('contains returning true');
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     },
     getAll: function(callback) {
+      _log('getAll called');
       var result = { permissions: [], origins: [] };
       try {
-        if (chrome.runtime && chrome.runtime.getManifest) {
-          var m = chrome.runtime.getManifest();
+        if (_chrome.runtime && _chrome.runtime.getManifest) {
+          var m = _chrome.runtime.getManifest();
           result = { permissions: m.permissions || [], origins: m.host_permissions || [] };
         }
       } catch(e) {}
-      try { delete chrome.runtime.lastError; } catch(e) {}
+      try { delete _chrome.runtime.lastError; } catch(e) {}
+      _log('getAll returning:', JSON.stringify(result));
       if (typeof callback === 'function') callback(result);
       return Promise.resolve(result);
     },
     request: function(perms, callback) {
-      try { delete chrome.runtime.lastError; } catch(e) {}
+      _log('request called with:', JSON.stringify(perms));
+      try { delete _chrome.runtime.lastError; } catch(e) {}
+      _log('request returning true');
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
     },
     remove: function(perms, callback) {
-      try { delete chrome.runtime.lastError; } catch(e) {}
+      _log('remove called with:', JSON.stringify(perms));
+      try { delete _chrome.runtime.lastError; } catch(e) {}
+      _log('remove returning true');
       if (typeof callback === 'function') callback(true);
       return Promise.resolve(true);
-    }
+    },
+    onAdded: new NoopEvent(),
+    onRemoved: new NoopEvent()
   };
 
+  /* Save backup ref for verification */
+  globalThis.__peekPermissions = _permsObj;
+
   /**
-   * Force-patch a permissions object: override every method with our shim
-   * using non-configurable defineProperty so native bindings cannot replace them.
+   * Install our permissions object on a root object, making it non-configurable.
+   * Three attempts: defineProperty, delete+defineProperty, direct assignment.
    */
-  function patchPermissions(obj) {
-    if (!obj || typeof obj !== 'object') return;
-    var keys = Object.keys(_methods);
-    for (var i = 0; i < keys.length; i++) {
-      var name = keys[i];
-      try {
-        Object.defineProperty(obj, name, {
-          value: _methods[name],
-          writable: false,
-          configurable: false,
-          enumerable: true,
-        });
-      } catch(e) {
-        // Fallback: direct assignment if defineProperty is rejected
-        try { obj[name] = _methods[name]; } catch(e2) { /* give up */ }
-      }
-    }
-    // Ensure event objects exist
-    if (!obj.onAdded) {
-      try { Object.defineProperty(obj, 'onAdded', { value: _onAdded, writable: false, configurable: false, enumerable: true }); } catch(e) { try { obj.onAdded = _onAdded; } catch(e2) {} }
-    }
-    if (!obj.onRemoved) {
-      try { Object.defineProperty(obj, 'onRemoved', { value: _onRemoved, writable: false, configurable: false, enumerable: true }); } catch(e) { try { obj.onRemoved = _onRemoved; } catch(e2) {} }
-    }
+  function installPermissions(root, name) {
+    if (!root || typeof root !== 'object') return false;
+    try {
+      Object.defineProperty(root, name, { value: _permsObj, writable: false, configurable: false, enumerable: true });
+      _log('installed on', name, 'via defineProperty (non-configurable)');
+      return true;
+    } catch(e) { _log('defineProperty failed on', name, ':', e.message); }
+    try {
+      delete root[name];
+      Object.defineProperty(root, name, { value: _permsObj, writable: false, configurable: false, enumerable: true });
+      _log('installed on', name, 'via delete+defineProperty');
+      return true;
+    } catch(e) { _log('delete+defineProperty failed on', name, ':', e.message); }
+    try {
+      root[name] = _permsObj;
+      _log('installed on', name, 'via direct assignment');
+      return true;
+    } catch(e) { _log('direct assignment failed on', name, ':', e.message); }
+    return false;
   }
 
-  function ensurePermissions() {
-    if (!chrome.permissions) {
-      // No native binding — install our full object
-      try {
-        Object.defineProperty(chrome, 'permissions', {
-          value: {},
-          writable: true,
-          configurable: true,
-          enumerable: true,
-        });
-      } catch(e) {
-        try { chrome.permissions = {}; } catch(e2) { return; }
-      }
-    }
-    patchPermissions(chrome.permissions);
+  var installed = installPermissions(_chrome, 'permissions');
+  _log('shim installed on chrome.permissions:', installed, 'chrome.permissions.request:', typeof _chrome.permissions.request);
 
-    // Also patch browser.permissions if browser object exists
-    if (typeof browser !== 'undefined' && browser) {
-      if (!browser.permissions) {
-        try { browser.permissions = {}; } catch(e) {}
-      }
-      if (browser.permissions) patchPermissions(browser.permissions);
-    }
-  }
-
-  // Patch immediately
-  ensurePermissions();
-
-  // Defend against native binding arriving later (race condition).
-  // Electron's C++ binding may override chrome.permissions after our script
-  // runs. Poll briefly to re-patch if the native binding replaces our methods.
-  var _pollCount = 0;
-  var _maxPolls = 60; // ~1 second at 60fps
-  function _pollForNativeOverride() {
-    _pollCount++;
-    // Check if our request shim was replaced (native binding would not return Promise.resolve(true))
-    if (chrome.permissions && chrome.permissions.request !== _methods.request) {
-      patchPermissions(chrome.permissions);
-    }
-    if (_pollCount < _maxPolls) {
-      if (typeof requestAnimationFrame !== 'undefined') {
-        requestAnimationFrame(_pollForNativeOverride);
-      } else {
-        setTimeout(_pollForNativeOverride, 16);
-      }
-    }
-  }
-  if (typeof requestAnimationFrame !== 'undefined') {
-    requestAnimationFrame(_pollForNativeOverride);
-  } else if (typeof setTimeout !== 'undefined') {
-    setTimeout(_pollForNativeOverride, 16);
+  // Also patch browser.permissions if browser object exists
+  if (typeof browser !== 'undefined' && browser) {
+    installPermissions(browser, 'permissions');
   }
 })();
 `;
