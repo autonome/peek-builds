@@ -35,8 +35,9 @@
  *   [EXIT]            Script exit info
  */
 
-import { app, BrowserWindow, session } from 'electron';
+import { app, BrowserWindow, session, ipcMain } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ const { values: args } = parseArgs({
     session:   { type: 'string' },
     'wait-sw': { type: 'string', default: '2000' },
     preload:   { type: 'string' },
+    polyfills: { type: 'boolean', default: false },
     show:      { type: 'boolean', default: false },
   },
   strict: false,
@@ -127,6 +129,35 @@ async function run() {
     } catch (err) {
       emit('EXT:error', `Failed to load extension: ${err.message}`);
       // Continue anyway — user may want to debug why it fails
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Register Chrome API polyfills if --polyfills flag is set
+  // -------------------------------------------------------------------------
+  let polyfillScript = null;
+
+  if (args.polyfills) {
+    try {
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = path.dirname(__filename);
+      const polyfillsPath = path.resolve(__dirname, '..', 'backend', 'electron', 'chrome-api-polyfills', 'index.js');
+      const polyfills = await import(polyfillsPath);
+      const handle = polyfills.registerAll(ses, { ipcMain, app });
+      polyfillScript = handle.getPreloadScript();
+      emit('POLYFILL', `Registered chrome API polyfills`);
+
+      // Inject polyfill into all chrome-extension:// webContents on dom-ready
+      app.on('web-contents-created', (_event, webContents) => {
+        webContents.on('dom-ready', () => {
+          const url = webContents.getURL();
+          if (url.startsWith('chrome-extension://') && polyfillScript) {
+            webContents.executeJavaScript(polyfillScript).catch(() => {});
+          }
+        });
+      });
+    } catch (err) {
+      emit('POLYFILL:error', `Failed to register polyfills: ${err.message}`);
     }
   }
 

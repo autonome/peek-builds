@@ -362,32 +362,93 @@ export function getPreloadScript() {
     QUOTA_BYTES: ${QUOTA_BYTES},
   };
 
-  // Inject into chrome.storage namespace.
-  // chrome.storage is a native Electron binding object on extension pages —
-  // it cannot be reassigned with =, so we must use Object.defineProperty
-  // to add the session property to the existing native object.
-  try {
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      Object.defineProperty(chrome.storage, 'session', {
-        value: sessionStorage,
-        writable: true,
-        configurable: true,
-        enumerable: true,
-      });
+  // Inject session into chrome.storage namespace.
+  //
+  // chrome.storage is a native Electron binding on extension pages. It has
+  // two quirks we must handle:
+  //   1. It CANNOT be reassigned with = (native binding, non-writable).
+  //   2. It may be undefined at dom-ready due to a race condition in
+  //      Electron's async binding initialization. Electron's native C++
+  //      binding actively controls the property descriptor and overrides
+  //      any custom getter/setter we install on chrome.storage.
+  //
+  // Strategy:
+  //   - If chrome.storage already exists, use Object.defineProperty to add
+  //     the session property to the existing native object.
+  //   - If chrome.storage is undefined (race condition), poll with
+  //     requestAnimationFrame until the native binding initializes, then
+  //     add session to it.
 
-      // Also add session change events to main onChanged if it exists
-      if (chrome.storage.onChanged) {
-        var _origAddListener = chrome.storage.onChanged.addListener.bind(chrome.storage.onChanged);
-        chrome.storage.onChanged.addListener = function(cb) {
-          _origAddListener(cb);
+  function _addSessionToStorage(storageObj) {
+    try {
+      if (storageObj && typeof storageObj === 'object' && !storageObj.session) {
+        Object.defineProperty(storageObj, 'session', {
+          value: sessionStorage,
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        });
+      }
+    } catch(e) {
+      // Native binding may reject defineProperty — try direct assignment
+      try {
+        if (storageObj && !storageObj.session) {
+          storageObj.session = sessionStorage;
+        }
+      } catch(e2) { /* give up */ }
+    }
+
+    // Wire session change events into the main onChanged if it exists
+    try {
+      if (storageObj && storageObj.onChanged && storageObj.onChanged.addListener) {
+        var _origAdd = storageObj.onChanged.addListener.bind(storageObj.onChanged);
+        storageObj.onChanged.addListener = function(cb) {
+          _origAdd(cb);
           _onChangedListeners.add(cb);
         };
       }
-    } else if (typeof chrome !== 'undefined') {
-      // chrome exists but chrome.storage doesn't — try creating it
-      try {
-        chrome.storage = { session: sessionStorage };
-      } catch(e2) { /* chrome.storage non-writable, skip */ }
+    } catch(e) { /* ignore */ }
+  }
+
+  try {
+    if (typeof chrome === 'undefined') {
+      // No chrome object at all — nothing we can do
+    } else if (chrome.storage && typeof chrome.storage === 'object') {
+      // Happy path: chrome.storage exists, just add session
+      _addSessionToStorage(chrome.storage);
+    } else {
+      // chrome.storage is undefined — race condition with native binding.
+      // Electron's C++ binding controls the chrome.storage property and
+      // overrides any getter/setter we install. Poll until it arrives.
+      var _pollCount = 0;
+      var _maxPolls = 100; // ~1.6 seconds at 60fps
+
+      function _pollForStorage() {
+        _pollCount++;
+        if (chrome.storage && typeof chrome.storage === 'object') {
+          _addSessionToStorage(chrome.storage);
+          return; // Done — native binding arrived
+        }
+        if (_pollCount < _maxPolls) {
+          requestAnimationFrame(_pollForStorage);
+        }
+      }
+
+      // Start polling on next frame
+      if (typeof requestAnimationFrame !== 'undefined') {
+        requestAnimationFrame(_pollForStorage);
+      } else {
+        // Fallback for non-browser contexts: use setTimeout
+        var _pollInterval = setInterval(function() {
+          _pollCount++;
+          if (chrome.storage && typeof chrome.storage === 'object') {
+            _addSessionToStorage(chrome.storage);
+            clearInterval(_pollInterval);
+          } else if (_pollCount >= _maxPolls) {
+            clearInterval(_pollInterval);
+          }
+        }, 16);
+      }
     }
   } catch(e) {
     console.warn('[chrome.storage.session polyfill] Injection failed:', e.message);
