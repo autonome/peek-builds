@@ -231,12 +231,14 @@ ${reasonEntries}
     },
   };
 
-  // Inject into chrome namespace
-  if (typeof chrome !== 'undefined') {
-    chrome.offscreen = offscreen;
-  } else if (typeof globalThis !== 'undefined') {
-    globalThis.chrome = globalThis.chrome || {};
-    globalThis.chrome.offscreen = offscreen;
+  // Inject into chrome namespace (only if IPC is available)
+  if (typeof electron !== 'undefined' && electron.ipcRenderer) {
+    if (typeof chrome !== 'undefined') {
+      chrome.offscreen = offscreen;
+    } else if (typeof globalThis !== 'undefined') {
+      globalThis.chrome = globalThis.chrome || {};
+      globalThis.chrome.offscreen = offscreen;
+    }
   }
 })();
 `;

@@ -336,12 +336,14 @@ export function getPreloadScript() {
     onErrorOccurred,
   };
 
-  // Inject into chrome namespace
-  if (typeof chrome !== 'undefined') {
-    chrome.webNavigation = webNavigation;
-  } else if (typeof globalThis !== 'undefined') {
-    globalThis.chrome = globalThis.chrome || {};
-    globalThis.chrome.webNavigation = webNavigation;
+  // Inject into chrome namespace (only if IPC is available)
+  if (typeof electron !== 'undefined' && electron.ipcRenderer) {
+    if (typeof chrome !== 'undefined') {
+      chrome.webNavigation = webNavigation;
+    } else if (typeof globalThis !== 'undefined') {
+      globalThis.chrome = globalThis.chrome || {};
+      globalThis.chrome.webNavigation = webNavigation;
+    }
   }
 })();
 `;

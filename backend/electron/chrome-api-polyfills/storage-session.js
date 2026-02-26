@@ -352,9 +352,10 @@ export function getPreloadScript() {
     QUOTA_BYTES: ${QUOTA_BYTES},
   };
 
-  // Inject into chrome.storage namespace
-  if (typeof chrome !== 'undefined') {
-    chrome.storage = chrome.storage || {};
+  // Inject into chrome.storage namespace — only if IPC is available
+  // (this polyfill requires electron.ipcRenderer for main-process storage)
+  if (typeof chrome !== 'undefined' && typeof electron !== 'undefined' && electron.ipcRenderer) {
+    if (!chrome.storage) chrome.storage = {};
     chrome.storage.session = sessionStorage;
 
     // Also add session change events to main onChanged if it exists
