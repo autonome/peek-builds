@@ -295,7 +295,7 @@ function updatePositions() {
     tagsPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
     // Position below page-info panel (estimate page-info height or use fixed offset)
     const pageInfoHeight = pageInfoPanel ? pageInfoPanel.offsetHeight : 0;
-    const tagsPanelTop = webviewTop + 8 + (pageInfoHeight > 0 ? pageInfoHeight + 8 : 0);
+    const tagsPanelTop = webviewTop + 8 + (pageInfoHeight > 0 ? pageInfoHeight + 12 : 0);
     tagsPanel.style.top = `${tagsPanelTop}px`;
     tagsPanel.style.width = `${PANEL_WIDTH}px`;
   }
@@ -963,6 +963,8 @@ async function show(opts) {
   if (pageInfoPanel) pageInfoPanel.classList.add('visible');
   if (tagsPanel) tagsPanel.classList.add('visible');
   if (entitiesPanel) entitiesPanel.classList.add('visible');
+  // Re-run positions now that panels are visible (offsetHeight is accurate)
+  updatePositions();
   await setWindowPadding(PANEL_OVERHANG * 2);
   centerColumn.style.opacity = '1';
 }
