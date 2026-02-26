@@ -13,6 +13,47 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-26
+
+Desktop - Editor
+- [x] Add file open/save with autosave and vim :w/:wq/:e support — Cmd+O opens file picker, Cmd+S saves, autosave to disk ([5658](https://tangled.org/burrito.space/peek/commit/56589716))
+- [x] Sync outline sidebar collapse with document folds — bidirectional, click toggle or vim zc/zo ([efa7](https://tangled.org/burrito.space/peek/commit/efa77299))
+- [x] Add inline suggestions with Tab/Shift-Tab cycling to vim command bar ([542f](https://tangled.org/burrito.space/peek/commit/542fe48f))
+- [x] Skip saving empty notes with no tags — defer item creation until user types ([0bd9](https://tangled.org/burrito.space/peek/commit/0bd98f19))
+
+Desktop - Command Palette
+- [x] Fix single-select enum params accumulating on Tab — now replaces, with Shift-Tab reverse cycling ([e410](https://tangled.org/burrito.space/peek/commit/e4106a8a), [eefc](https://tangled.org/burrito.space/peek/commit/eefcfd58))
+- [x] Fix local file paths treated as domain names — tighten domain regex, add filesystem-first check ([85b4](https://tangled.org/burrito.space/peek/commit/85b48192))
+- [x] Fix connector commands with produces blocking param mode for edit command ([4c28](https://tangled.org/burrito.space/peek/commit/4c2840b9))
+
+Desktop - Chrome Extensions
+- [x] Show extension entry points from manifest in Settings, make them cmd-searchable ([f55b](https://tangled.org/burrito.space/peek/commit/f55b6bb3))
+- [x] Add extensions widget to page view with per-site adblocker toggle ([046d](https://tangled.org/burrito.space/peek/commit/046d5dd6))
+- [x] Fix Proton Pass black screen — remove browser.permissions shim that broke webextension-polyfill ([1aa6](https://tangled.org/burrito.space/peek/commit/1aa63e10))
+- [x] Replace chrome.permissions completely before extension code runs — prevents Proton Pass Proxy override ([b744](https://tangled.org/burrito.space/peek/commit/b744e8b7))
+- [x] Clear chrome.runtime.lastError before permission shim callbacks ([8569](https://tangled.org/burrito.space/peek/commit/8569c20d))
+- [x] Add callback-style permissions shim for webextension-polyfill compatibility ([23f8](https://tangled.org/burrito.space/peek/commit/23f81b96))
+- [x] Add chrome.storage.session and getBackgroundPage shims for Proton Pass service worker ([a7d7](https://tangled.org/burrito.space/peek/commit/a7d79dd2), [b48f](https://tangled.org/burrito.space/peek/commit/b48f5001))
+- [x] Fix adblocker enable/disable state not persisting across restarts ([ced1](https://tangled.org/burrito.space/peek/commit/ced182ff))
+
+Desktop - Tag Actions
+- [x] Render tag action affordances as single toggle icon buttons in item cards ([b721](https://tangled.org/burrito.space/peek/commit/b721b51c))
+- [x] Simplify config UI to tag pairs with icon style — checkbox, eye, star, heart, flag, bookmark ([fd82](https://tangled.org/burrito.space/peek/commit/fd82de24))
+- [x] Fix event propagation on affordance clicks, fix \! syntax errors ([efa7](https://tangled.org/burrito.space/peek/commit/efa77299))
+
+Desktop - Settings
+- [x] Reorganize core pane into System/Data & Backup/Windows groups ([4d59](https://tangled.org/burrito.space/peek/commit/4d597f2e), [c7bf](https://tangled.org/burrito.space/peek/commit/c7bf11d1))
+- [x] Add "Set as default handler for HTTP addresses and HTML documents" button ([85b4](https://tangled.org/burrito.space/peek/commit/85b48192))
+- [x] Add HTML file association to electron-builder for macOS open command support ([85b4](https://tangled.org/burrito.space/peek/commit/85b48192))
+- [x] Update default window sizes from 800x600 to 1024x768 across 21 files ([a9a1](https://tangled.org/burrito.space/peek/commit/a9a14310))
+
+Desktop - Items
+- [x] Fix text items showing link icon when content contains URLs — use datastore type for icon ([d47d](https://tangled.org/burrito.space/peek/commit/d47d759b))
+
+Desktop - Infrastructure
+- [x] Add jj-worktrees.sh script and Claude skill for multi-agent workflow ([85b4](https://tangled.org/burrito.space/peek/commit/85b48192))
+- [x] Fix microseason preload null reference on document.documentElement ([efa7](https://tangled.org/burrito.space/peek/commit/efa77299))
+
 ## 2026-02-25
 
 Desktop - Command Palette
