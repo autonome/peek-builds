@@ -4988,10 +4988,10 @@ export function registerWebExtensionHandlers(): void {
   });
 
   // Open a chrome extension's options page or popup in a window
-  ipcMain.handle('chrome-ext:openPage', async (_ev, data: { id: string; type: 'options' | 'popup' }) => {
+  ipcMain.handle('chrome-ext:openPage', async (_ev, data: { id: string; type: string }) => {
     try {
       const { openChromeExtensionPage } = await import('./chrome-extensions.js');
-      const win = openChromeExtensionPage(data.id, data.type);
+      const win = openChromeExtensionPage(data.id, data.type as import('./chrome-extensions.js').ChromeExtensionUiEntryType);
       if (win) {
         return { success: true, data: { windowId: win.id } };
       }

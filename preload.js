@@ -1005,7 +1005,7 @@ api.chromeExtensions = {
   /**
    * Open a chrome extension's options page or popup in a window
    * @param {string} id - Extension ID
-   * @param {'options' | 'popup'} type - Page type to open
+   * @param {string} type - Page type to open (popup, options, newtab, etc.)
    * @returns {Promise<{success: boolean, data?: {windowId: number}, error?: string}>}
    */
   openPage: (id, type) => {

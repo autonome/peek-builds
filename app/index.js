@@ -542,6 +542,34 @@ const registerExtensionCommands = () => {
     }
   });
 
+
+  // ---- Chrome Extension Entry Point Commands ----
+  // Register commands for each openable entry point of loaded chrome extensions
+  // (async, fire-and-forget since registerExtensionCommands is not async)
+  api.chromeExtensions.getUiEntries().then(uiResult => {
+    if (!uiResult.success || !uiResult.data) return;
+    const entryTypeLabels = {
+      popup: 'Popup', options: 'Options', background: 'Background',
+      newtab: 'New Tab', history: 'History', bookmarks: 'Bookmarks',
+      devtools: 'DevTools', sidepanel: 'Side Panel',
+    };
+    for (const entry of uiResult.data) {
+      if (!entry.openable) continue;
+      const label = entryTypeLabels[entry.type] || entry.type;
+      const cmdName = `${entry.extensionName}: ${label}`;
+      api.commands.register({
+        name: cmdName,
+        description: `Open ${label} for ${entry.extensionName}`,
+        execute: async () => {
+          await api.chromeExtensions.openPage(entry.extensionId, entry.type);
+        }
+      });
+    }
+    log('core', `Registered ${uiResult.data.filter(e => e.openable).length} chrome extension entry point commands`);
+  }).catch(err => {
+    log.error('core', 'Failed to register chrome extension entry point commands:', err);
+  });
+
   log('core', 'Core commands registered');
 };
 

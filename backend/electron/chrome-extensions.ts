@@ -33,6 +33,7 @@ export interface ChromeManifest {
   permissions?: string[];
   host_permissions?: string[];
   background?: {
+    page?: string;
     service_worker?: string;
     scripts?: string[];
     type?: string;
@@ -53,20 +54,48 @@ export interface ChromeManifest {
     page: string;
     open_in_tab?: boolean;
   };
+  browser_action?: {
+    default_popup?: string;
+    default_icon?: string | Record<string, string>;
+    default_title?: string;
+  };
+  chrome_url_overrides?: {
+    newtab?: string;
+    history?: string;
+    bookmarks?: string;
+  };
+  devtools_page?: string;
+  side_panel?: {
+    default_path?: string;
+  };
+  sidebar_action?: {
+    default_panel?: string;
+    default_title?: string;
+  };
+  web_accessible_resources?: Array<{
+    resources: string[];
+    matches: string[];
+  }>;
 }
 
 /**
- * UI entry point for a chrome extension (options page or popup)
+ * UI entry point for a chrome extension
  */
+export type ChromeExtensionUiEntryType =
+  | 'popup' | 'options' | 'background' | 'newtab' | 'history'
+  | 'bookmarks' | 'devtools' | 'sidepanel';
+
 export interface ChromeExtensionUiEntry {
   extensionId: string;
   extensionName: string;
-  type: 'options' | 'popup';
+  type: ChromeExtensionUiEntryType;
   title: string;
   url: string;
   /** Suggested window dimensions */
   width: number;
   height: number;
+  /** Whether this entry point can be opened in a window */
+  openable: boolean;
 }
 
 /**
@@ -448,8 +477,9 @@ export function getChromeExtensionStatus(): {
 }
 
 /**
- * Get UI entry points (options page, popup) for all loaded chrome extensions.
- * Returns entries only for extensions that are currently loaded and have UI pages.
+ * Get UI entry points for all loaded chrome extensions.
+ * Detects all possible entry points from each extension's manifest.json.
+ * Returns entries only for extensions that are currently loaded.
  */
 export function getChromeExtensionUiEntries(): ChromeExtensionUiEntry[] {
   const entries: ChromeExtensionUiEntry[] = [];
@@ -461,45 +491,96 @@ export function getChromeExtensionUiEntries(): ChromeExtensionUiEntry[] {
     const manifest = discovered.manifest;
     const baseUrl = loaded.electronExtension.url; // chrome-extension://[id]/
 
+    // Action popup (action takes priority over browser_action for MV3)
+    const popupPage = manifest.action?.default_popup || manifest.browser_action?.default_popup;
+    if (popupPage) {
+      entries.push({
+        extensionId: extId, extensionName: discovered.name, type: 'popup',
+        title: manifest.action?.default_title || manifest.browser_action?.default_title || discovered.name,
+        url: `${baseUrl}${popupPage}`, width: 400, height: 500, openable: true,
+      });
+    }
+
     // Options page (options_ui takes priority over options_page)
     const optionsPage = manifest.options_ui?.page || manifest.options_page;
     if (optionsPage) {
       entries.push({
-        extensionId: extId,
-        extensionName: discovered.name,
-        type: 'options',
+        extensionId: extId, extensionName: discovered.name, type: 'options',
         title: `${discovered.name} Settings`,
-        url: `${baseUrl}${optionsPage}`,
-        width: 800,
-        height: 600,
+        url: `${baseUrl}${optionsPage}`, width: 800, height: 600, openable: true,
       });
     }
 
-    // Action popup
-    if (manifest.action?.default_popup) {
+    // Background page (informational - service workers are not directly openable)
+    const bgPage = manifest.background?.page;
+    const bgWorker = manifest.background?.service_worker;
+    const bgScripts = manifest.background?.scripts;
+    if (bgPage || bgWorker || bgScripts) {
+      const bgPath = bgPage || bgWorker || (bgScripts && bgScripts[0]) || '';
       entries.push({
-        extensionId: extId,
-        extensionName: discovered.name,
-        type: 'popup',
-        title: manifest.action.default_title || discovered.name,
-        url: `${baseUrl}${manifest.action.default_popup}`,
-        width: 400,
-        height: 500,
+        extensionId: extId, extensionName: discovered.name, type: 'background',
+        title: `${discovered.name} Background`,
+        url: bgPath ? `${baseUrl}${bgPath}` : '',
+        width: 0, height: 0, openable: !!bgPage,
+      });
+    }
+
+    // Chrome URL overrides
+    if (manifest.chrome_url_overrides) {
+      const overrides = manifest.chrome_url_overrides;
+      if (overrides.newtab) {
+        entries.push({
+          extensionId: extId, extensionName: discovered.name, type: 'newtab',
+          title: `${discovered.name} New Tab`,
+          url: `${baseUrl}${overrides.newtab}`, width: 800, height: 600, openable: true,
+        });
+      }
+      if (overrides.history) {
+        entries.push({
+          extensionId: extId, extensionName: discovered.name, type: 'history',
+          title: `${discovered.name} History`,
+          url: `${baseUrl}${overrides.history}`, width: 800, height: 600, openable: true,
+        });
+      }
+      if (overrides.bookmarks) {
+        entries.push({
+          extensionId: extId, extensionName: discovered.name, type: 'bookmarks',
+          title: `${discovered.name} Bookmarks`,
+          url: `${baseUrl}${overrides.bookmarks}`, width: 800, height: 600, openable: true,
+        });
+      }
+    }
+
+    // DevTools page
+    if (manifest.devtools_page) {
+      entries.push({
+        extensionId: extId, extensionName: discovered.name, type: 'devtools',
+        title: `${discovered.name} DevTools`,
+        url: `${baseUrl}${manifest.devtools_page}`, width: 800, height: 600, openable: true,
+      });
+    }
+
+    // Side panel
+    const sidePanelPath = manifest.side_panel?.default_path || manifest.sidebar_action?.default_panel;
+    if (sidePanelPath) {
+      entries.push({
+        extensionId: extId, extensionName: discovered.name, type: 'sidepanel',
+        title: manifest.sidebar_action?.default_title || `${discovered.name} Side Panel`,
+        url: `${baseUrl}${sidePanelPath}`, width: 400, height: 600, openable: true,
       });
     }
   }
 
   return entries;
 }
-
 /**
- * Open a chrome extension's UI page (options or popup) in a BrowserWindow.
- * Reuses an existing window if one is already open for this extension+type.
- * @returns The window ID on success, null on failure
+ * Open a chrome extension's UI page in a BrowserWindow.
+ * Supports all entry point types. Reuses existing window if already open.
+ * @returns The BrowserWindow on success, null on failure
  */
 export function openChromeExtensionPage(
   extensionId: string,
-  pageType: 'options' | 'popup'
+  pageType: ChromeExtensionUiEntryType
 ): BrowserWindow | null {
   const windowKey = `${extensionId}:${pageType}`;
 
@@ -513,6 +594,10 @@ export function openChromeExtensionPage(
   // Find the UI entry
   const entries = getChromeExtensionUiEntries();
   const entry = entries.find(e => e.extensionId === extensionId && e.type === pageType);
+  if (entry && !entry.openable) {
+    console.error(`[chrome-ext] Entry point ${pageType} for ${extensionId} is not openable`);
+    return null;
+  }
   if (!entry) {
     console.error(`[chrome-ext] No ${pageType} page found for extension: ${extensionId}`);
     return null;

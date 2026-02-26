@@ -766,40 +766,43 @@ const renderPrivacySettings = async () => {
         leftSide.appendChild(cardTitle);
         header.appendChild(leftSide);
 
-        // Right side: Options button
+        // Right side: entry point buttons
         const actions = document.createElement('div');
-        actions.style.cssText = 'display: flex; gap: 8px; align-items: center;';
+        actions.style.cssText = 'display: flex; gap: 6px; align-items: center; flex-wrap: wrap;';
 
-        // Options button if extension has an options page
-        const hasOptions = ext.hasOptionsPage || uiEntries.some(e => e.extensionId === ext.id && e.type === 'options');
-        if (hasOptions && ext.enabled) {
-          const optionsBtn = document.createElement('button');
-          optionsBtn.textContent = 'Options';
-          optionsBtn.style.cssText = `
-            padding: 4px 8px;
-            font-size: 11px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-primary);
-            border-radius: 4px;
-            color: var(--text-secondary);
-            cursor: pointer;
-          `;
-          optionsBtn.addEventListener('mouseenter', () => {
-            optionsBtn.style.background = 'var(--bg-hover)';
-          });
-          optionsBtn.addEventListener('mouseleave', () => {
-            optionsBtn.style.background = 'var(--bg-tertiary)';
-          });
-          optionsBtn.addEventListener('click', async () => {
-            try {
-              await api.chromeExtensions.openPage(ext.id, 'options');
-            } catch (err) {
-              console.error('[settings] Failed to open extension options:', err);
-            }
-          });
-          actions.appendChild(optionsBtn);
+        // Show buttons for all openable entry points of this extension
+        if (ext.enabled) {
+          const extEntries = uiEntries.filter(e => e.extensionId === ext.id && e.openable);
+          const entryTypeLabels = {
+            popup: 'Popup', options: 'Options', background: 'Background',
+            newtab: 'New Tab', history: 'History', bookmarks: 'Bookmarks',
+            devtools: 'DevTools', sidepanel: 'Side Panel',
+          };
+          for (const entry of extEntries) {
+            const btn = document.createElement('button');
+            btn.textContent = entryTypeLabels[entry.type] || entry.type;
+            btn.title = entry.title;
+            btn.style.cssText = `
+              padding: 4px 8px;
+              font-size: 11px;
+              background: var(--bg-tertiary);
+              border: 1px solid var(--border-primary);
+              border-radius: 4px;
+              color: var(--text-secondary);
+              cursor: pointer;
+            `;
+            btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
+            btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--bg-tertiary)'; });
+            btn.addEventListener('click', async () => {
+              try {
+                await api.chromeExtensions.openPage(ext.id, entry.type);
+              } catch (err) {
+                console.error(`[settings] Failed to open extension ${entry.type}:`, err);
+              }
+            });
+            actions.appendChild(btn);
+          }
         }
-
         header.appendChild(actions);
         card.appendChild(header);
 
@@ -833,6 +836,27 @@ const renderPrivacySettings = async () => {
           body.appendChild(attrDiv);
         }
 
+
+        // Entry points list (informational)
+        if (ext.enabled) {
+          const allEntries = uiEntries.filter(e => e.extensionId === ext.id);
+          if (allEntries.length > 0) {
+            const epDiv = document.createElement('div');
+            epDiv.className = 'help-text';
+            epDiv.style.cssText = 'margin-top: 8px; font-size: 11px; color: var(--text-tertiary);';
+            const typeLabels = {
+              popup: 'Popup', options: 'Options', background: 'Background',
+              newtab: 'New Tab', history: 'History', bookmarks: 'Bookmarks',
+              devtools: 'DevTools', sidepanel: 'Side Panel',
+            };
+            const labels = allEntries.map(e => {
+              const label = typeLabels[e.type] || e.type;
+              return e.openable ? label : `${label} (info)`;
+            });
+            epDiv.textContent = 'Entry points: ' + labels.join(', ');
+            body.appendChild(epDiv);
+          }
+        }
         card.appendChild(body);
         extSection.appendChild(card);
       }
