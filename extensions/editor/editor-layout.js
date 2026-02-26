@@ -90,12 +90,18 @@ export class EditorLayout {
 
     this.toolbar.appendChild(sidebarToggles);
 
-    // Save status indicator (shown when editing datastore items)
+    // Filename display (center of toolbar)
+    this.filenameDisplay = document.createElement('span');
+    this.filenameDisplay.className = 'filename-display';
+    this.filenameDisplay.style.display = 'none';
+    this.toolbar.appendChild(this.filenameDisplay);
+
+    // Save status indicator (shown when editing datastore items or files)
     this.saveStatus = document.createElement('span');
     this.saveStatus.id = 'save-status';
     this.saveStatus.className = 'save-status save-status-saved';
     this.saveStatus.textContent = 'Saved';
-    this.saveStatus.style.display = 'none'; // Hidden until editing an item
+    this.saveStatus.style.display = 'none'; // Hidden until editing an item or file
     this.toolbar.appendChild(this.saveStatus);
 
     this.editorContainer.appendChild(this.toolbar);
@@ -492,6 +498,22 @@ export class EditorLayout {
   setSaveStatusVisible(visible) {
     if (this.saveStatus) {
       this.saveStatus.style.display = visible ? 'inline-block' : 'none';
+    }
+  }
+
+  /**
+   * Set the displayed filename in the toolbar.
+   * @param {string|null} filename - Filename to show, or null to hide
+   */
+  setFilename(filename) {
+    if (this.filenameDisplay) {
+      if (filename) {
+        this.filenameDisplay.textContent = filename;
+        this.filenameDisplay.style.display = 'inline-block';
+      } else {
+        this.filenameDisplay.textContent = '';
+        this.filenameDisplay.style.display = 'none';
+      }
     }
   }
 

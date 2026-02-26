@@ -4165,6 +4165,46 @@ export function registerMiscHandlers(onQuit: () => void): void {
     }
   });
 
+  // File read from path - reads content directly from a known file path (no dialog)
+  ipcMain.handle('file-read-from-path', async (_ev, data: {
+    filePath: string;
+  }) => {
+    try {
+      if (!data.filePath || typeof data.filePath !== 'string') {
+        return { success: false, error: 'filePath is required' };
+      }
+      if (!fs.existsSync(data.filePath)) {
+        return { success: false, error: 'File not found' };
+      }
+      const content = fs.readFileSync(data.filePath, 'utf-8');
+      const fileName = path.basename(data.filePath);
+      return { success: true, data: { content, name: fileName, path: data.filePath } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // File write to path - writes content directly to a known file path (no dialog)
+  ipcMain.handle('file-write-to-path', async (_ev, data: {
+    filePath: string;
+    content: string;
+  }) => {
+    try {
+      if (!data.filePath || typeof data.filePath !== 'string') {
+        return { success: false, error: 'filePath is required' };
+      }
+      if (typeof data.content !== 'string') {
+        return { success: false, error: 'content must be a string' };
+      }
+      fs.writeFileSync(data.filePath, data.content, 'utf-8');
+      return { success: true, path: data.filePath };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   // App info handler - returns app version and other metadata
   ipcMain.handle('app-info', async () => {
     return {

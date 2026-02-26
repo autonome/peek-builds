@@ -2146,6 +2146,25 @@ api.files = {
    */
   open: () => {
     return ipcRenderer.invoke('file-open-dialog');
+  },
+
+  /**
+   * Read content directly from a file path (no dialog)
+   * @param {string} filePath - Absolute path to read from
+   * @returns {Promise<{success: boolean, data?: {content: string, name: string, path: string}, error?: string}>}
+   */
+  readFromPath: (filePath) => {
+    return ipcRenderer.invoke('file-read-from-path', { filePath });
+  },
+
+  /**
+   * Write content directly to a file path (no dialog)
+   * @param {string} filePath - Absolute path to write to
+   * @param {string} content - Content to write
+   * @returns {Promise<{success: boolean, path?: string, error?: string}>}
+   */
+  writeToPath: (filePath, content) => {
+    return ipcRenderer.invoke('file-write-to-path', { filePath, content });
   }
 };
 

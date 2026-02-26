@@ -24,6 +24,7 @@ const PREFS_STORAGE_KEY = 'prefs';
 
 // Autosave state
 let currentItemId = null;
+let currentFilePath = null; // Tracks the open file on disk
 let saveStatus = 'saved'; // 'saved' | 'saving' | 'unsaved'
 let saveTimer = null;
 const AUTOSAVE_DELAY_MS = 1500; // 1.5 seconds after typing stops
@@ -186,12 +187,14 @@ const init = async () => {
   }
 
   // If file path provided, try to load it
-  if (fileParam && api?.fs?.readFile) {
+  if (fileParam && api?.files?.readFromPath) {
     try {
-      const result = await api.fs.readFile(fileParam);
-      if (result.success) {
-        initialContent = result.data;
+      const result = await api.files.readFromPath(fileParam);
+      if (result.success && result.data) {
+        initialContent = result.data.content;
+        currentFilePath = result.data.path;
         hasExplicitSource = true;
+        debug && console.log('[editor] Loaded file from path:', currentFilePath);
       }
     } catch (err) {
       debug && console.log('[editor] Failed to load file:', err);
@@ -263,10 +266,36 @@ const init = async () => {
     onContentChange: handleContentChange,
   });
 
-  // Show save status indicator if editing a datastore item
-  if (currentItemId) {
+  // Show save status indicator and filename if editing a datastore item or file
+  if (currentItemId || currentFilePath) {
     editorLayout.setSaveStatusVisible(true);
   }
+  if (currentFilePath) {
+    updateWindowTitle();
+  }
+
+  // Set up Cmd+O (open file) and Cmd+S (save file) keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Cmd+O: Open file
+    if ((e.metaKey || e.ctrlKey) && e.key === 'o' && !e.shiftKey) {
+      e.preventDefault();
+      openFile();
+    }
+    // Cmd+S: Save file
+    if ((e.metaKey || e.ctrlKey) && e.key === 's' && !e.shiftKey) {
+      e.preventDefault();
+      const content = editorLayout.getContent();
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      if (currentFilePath || currentItemId) {
+        performAutosave(content);
+      } else {
+        saveToFile(content);
+      }
+    }
+  });
 
   // Persist vim :set option changes (wrap, number) to settings
   onVimSetOption(async (optionName, value) => {
@@ -293,19 +322,20 @@ const init = async () => {
     }
   });
 
-  // Register vim ex-commands for :w and :wq
+  // Register vim ex-commands for :w, :wq, :e
   Vim.defineEx('write', 'w', () => {
-    if (!currentItemId) {
-      debug && console.log('[editor:vim] :w — no item to save');
-      return;
-    }
     const content = editorLayout.getContent();
     // Cancel any pending autosave — we're saving now
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    performAutosave(content);
+    if (currentFilePath || currentItemId) {
+      performAutosave(content);
+    } else {
+      // No file or item — trigger save-as
+      saveToFile(content);
+    }
     debug && console.log('[editor:vim] :w — saved');
   });
 
@@ -319,15 +349,17 @@ const init = async () => {
   });
 
   Vim.defineEx('wq', 'wq', async () => {
-    if (currentItemId) {
-      const content = editorLayout.getContent();
-      if (saveTimer) {
-        clearTimeout(saveTimer);
-        saveTimer = null;
-      }
-      await performAutosave(content);
-      debug && console.log('[editor:vim] :wq — saved');
+    const content = editorLayout.getContent();
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
     }
+    if (currentFilePath || currentItemId) {
+      await performAutosave(content);
+    } else {
+      await saveToFile(content);
+    }
+    debug && console.log('[editor:vim] :wq — saved');
     // Close the editor window
     if (api?.window?.close) {
       api.window.close();
@@ -335,6 +367,12 @@ const init = async () => {
       window.close();
     }
     debug && console.log('[editor:vim] :wq — closing window');
+  });
+
+  // :e — open a file
+  Vim.defineEx('edit', 'e', () => {
+    openFile();
+    debug && console.log('[editor:vim] :e — opening file');
   });
 
   // Set up escape handler
@@ -440,9 +478,141 @@ const extractTitleFromContent = (content) => {
 };
 
 /**
+ * Extract filename from a full file path.
+ */
+const extractFilename = (filePath) => {
+  if (!filePath) return '';
+  return filePath.split('/').pop() || filePath.split('\\').pop() || filePath;
+};
+
+/**
+ * Update the window title and filename display to show the current filename.
+ */
+const updateWindowTitle = () => {
+  const filename = currentFilePath ? extractFilename(currentFilePath) : null;
+  const title = filename || 'Editor';
+  document.title = title;
+  if (api?.window?.setTitle) {
+    api.window.setTitle(title);
+  }
+  if (editorLayout) {
+    editorLayout.setFilename(filename);
+  }
+};
+
+/**
+ * Open a file from disk via the native file picker.
+ */
+const openFile = async () => {
+  if (!api?.files?.open) return;
+
+  try {
+    const result = await api.files.open();
+    if (!result.success || result.canceled || !result.data) return;
+
+    const { content, path: filePath, name, isText } = result.data;
+    if (!isText || content === null) {
+      debug && console.log('[editor] Cannot open non-text file:', name);
+      return;
+    }
+
+    // Clear any pending autosave for previous content
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    // Switch to file mode (no datastore item)
+    currentItemId = null;
+    currentFilePath = filePath;
+
+    // Load content into editor
+    if (editorLayout) {
+      editorLayout.setContent(content);
+      editorLayout.setSaveStatusVisible(true);
+    }
+
+    saveStatus = 'saved';
+    updateSaveStatusUI();
+    updateWindowTitle();
+    debug && console.log('[editor] Opened file:', filePath);
+  } catch (err) {
+    console.error('[editor] Failed to open file:', err);
+  }
+};
+
+/**
+ * Save content to the current file path, or show save-as dialog if no path.
+ */
+const saveToFile = async (content) => {
+  if (!content && editorLayout) {
+    content = editorLayout.getContent();
+  }
+  if (!content && content !== '') return;
+
+  // If we have a file path, write directly
+  if (currentFilePath && api?.files?.writeToPath) {
+    saveStatus = 'saving';
+    updateSaveStatusUI();
+
+    try {
+      const result = await api.files.writeToPath(currentFilePath, content);
+      if (result.success) {
+        saveStatus = 'saved';
+        debug && console.log('[editor] Saved to file:', currentFilePath);
+      } else {
+        console.error('[editor] File save failed:', result.error);
+        saveStatus = 'unsaved';
+      }
+    } catch (err) {
+      console.error('[editor] File save error:', err);
+      saveStatus = 'unsaved';
+    }
+
+    updateSaveStatusUI();
+    return;
+  }
+
+  // No file path — show save-as dialog
+  if (api?.files?.save) {
+    saveStatus = 'saving';
+    updateSaveStatusUI();
+
+    try {
+      const result = await api.files.save(content, { filename: 'untitled.md' });
+      if (result.success && result.path) {
+        currentFilePath = result.path;
+        saveStatus = 'saved';
+        updateWindowTitle();
+        if (editorLayout) {
+          editorLayout.setSaveStatusVisible(true);
+        }
+        debug && console.log('[editor] Saved as:', currentFilePath);
+      } else if (result.canceled) {
+        saveStatus = 'unsaved';
+      } else {
+        console.error('[editor] Save-as failed:', result.error);
+        saveStatus = 'unsaved';
+      }
+    } catch (err) {
+      console.error('[editor] Save-as error:', err);
+      saveStatus = 'unsaved';
+    }
+
+    updateSaveStatusUI();
+  }
+};
+
+/**
  * Perform autosave to datastore
  */
 const performAutosave = async (content) => {
+  // File-based autosave
+  if (currentFilePath) {
+    await saveToFile(content);
+    return;
+  }
+
   if (!currentItemId || !api?.datastore?.updateItem) {
     return;
   }
@@ -478,7 +648,7 @@ const performAutosave = async (content) => {
  * Schedule autosave with debouncing
  */
 const scheduleAutosave = (content) => {
-  if (!currentItemId) return;
+  if (!currentItemId && !currentFilePath) return;
 
   // Mark as unsaved
   saveStatus = 'unsaved';
@@ -504,8 +674,8 @@ const handleContentChange = (content) => {
     api.publish('editor:contentChanged', { content }, api.scopes.GLOBAL);
   }
 
-  // Schedule autosave if editing a datastore item
-  if (currentItemId) {
+  // Schedule autosave if editing a datastore item or a file
+  if (currentItemId || currentFilePath) {
     scheduleAutosave(content);
   }
 };
