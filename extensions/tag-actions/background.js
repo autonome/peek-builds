@@ -152,6 +152,11 @@ const executeAction = async (action, msg) => {
         await executeOpenUrl(action, msg);
         break;
 
+      case 'toggle':
+        // Toggle actions are UI affordances rendered by card UIs.
+        // No auto-execution needed — the user clicks the toggle to swap tags.
+        break;
+
       case 'tag':
         await executeAddTag(action, msg);
         break;
@@ -218,8 +223,8 @@ const executeOpenUrl = async (action, msg) => {
 
   api.window.open(url, {
     role: 'content',
-    width: 1024,
-    height: 768
+    width: 800,
+    height: 600
   });
   debug && console.log('[tag-actions] Opened URL:', url);
 };
@@ -349,8 +354,8 @@ const openTagActions = () => {
   api.window.open('peek://ext/tag-actions/home.html', {
     role: 'workspace',
     key: 'tag-actions-home',
-    width: 1024,
-    height: 768,
+    width: 800,
+    height: 600,
     title: 'Tag Actions'
   });
 };

@@ -19,10 +19,16 @@ import {
   createHeaderSlot, createFooterSlot, createFaviconEl, createUrlSpan,
   extractTitle, formatUrl
 } from 'peek://app/lib/card-helpers.js';
+import {
+  createAffordanceElements, createActionRulesCache
+} from 'peek://app/lib/tag-action-affordances.js';
 const { getCM, Vim } = CodeMirror;
 
 const api = window.app;
 const debug = api?.debug;
+
+// Tag action rules cache for rendering affordances on cards
+let actionRulesCache = null;
 
 // View states (following groups pattern)
 const VIEW_LIST = 'list';
@@ -59,8 +65,8 @@ const openItemUrl = async (url) => {
   try {
     await api.window.open(url, {
       role: 'content',
-      width: 1024,
-      height: 768,
+      width: 800,
+      height: 600,
       trackingSource: 'tags',
       trackingSourceId: 'note-url'
     });
@@ -136,6 +142,9 @@ let gridToolbar;
  */
 const init = async () => {
   debug && console.log('[tags] Home init');
+
+  // Initialize tag action rules cache for card affordances
+  actionRulesCache = createActionRulesCache(api);
 
   // Cache DOM elements
   searchInput = document.querySelector('.search-input');
@@ -1194,7 +1203,20 @@ const createItemCard = (item) => {
     tagsContainer.appendChild(chip);
   });
 
-  card.appendChild(createFooterSlot(urlEl, tagsContainer));
+  // Tag action affordances (icon badges, toggle checkboxes, etc.)
+  const tagNames = tags.map(t => t.name);
+  const affordanceEl = actionRulesCache
+    ? createAffordanceElements(item.id, tagNames, actionRulesCache.getRules(), api, {
+        onToggle: () => { loadData().then(() => renderCards()); }
+      })
+    : null;
+
+  const footerRight = document.createElement('span');
+  footerRight.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
+  if (affordanceEl) footerRight.appendChild(affordanceEl);
+  footerRight.appendChild(tagsContainer);
+
+  card.appendChild(createFooterSlot(urlEl, footerRight));
 
   // Click on card to open inline detail view
   card.addEventListener('click', (e) => {

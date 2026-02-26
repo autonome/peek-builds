@@ -156,3 +156,15 @@ export const withClickDebounce = (card, handler, cooldown = 500) => {
     }
   });
 };
+
+// ── Tag Action Affordances (re-exported for convenience) ──────────────────
+
+/**
+ * For tag action affordance rendering on cards, import from:
+ *   'peek://app/lib/tag-action-affordances.js'
+ *
+ * That module provides:
+ *   - resolveAffordances(itemTagNames, actionRules) — resolve affordance descriptors
+ *   - createAffordanceElements(itemId, tags, rules, api, opts) — create DOM elements
+ *   - createActionRulesCache(api) — subscribe to action rule updates
+ */

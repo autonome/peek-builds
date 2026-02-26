@@ -6,8 +6,15 @@
  * Click/Enter opens the URL in a page host window.
  */
 
+import {
+  createAffordanceElements, createActionRulesCache
+} from 'peek://app/lib/tag-action-affordances.js';
+
 const api = window.app;
 const debug = api.debug;
+
+// Tag action rules cache for rendering affordances on visit cards
+let actionRulesCache = null;
 
 const debounce = (fn, ms) => {
   let timer;
@@ -549,6 +556,18 @@ const createVisitCard = (visit, item, index) => {
       });
       card.appendChild(tagsContainer);
     }
+
+    // Render tag action affordances (icon badges, toggle checkboxes)
+    if (actionRulesCache && tags.length > 0) {
+      const tagNames = tags.map(t => t.name);
+      const el = createAffordanceElements(item.id, tagNames, actionRulesCache.getRules(), api, {
+        onToggle: () => { loadVisits().then(() => render()); }
+      });
+      if (el) {
+        el.slot = 'footer';
+        card.appendChild(el);
+      }
+    }
   });
 
   card.addEventListener('card-click', () => {
@@ -634,6 +653,9 @@ const handleKeydown = (e) => {
 
 const init = async () => {
   debug && console.log('[pagestream] init');
+
+  // Initialize tag action rules cache
+  actionRulesCache = createActionRulesCache(api);
 
   api.escape.onEscape(handleEscape);
 

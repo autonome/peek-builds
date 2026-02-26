@@ -33,7 +33,8 @@ const ACTION_TYPE_LABELS = {
   'icon': 'Icon',
   'publish': 'Publish Event',
   'open-url': 'Open URL',
-  'tag': 'Add Tag'
+  'tag': 'Add Tag',
+  'toggle': 'Toggle (Tag Pair)'
 };
 
 const ACTION_TYPES = Object.keys(ACTION_TYPE_LABELS);
@@ -59,6 +60,20 @@ const PRESET_ACTIONS = [
     actionType: 'open-url',
     actionConfig: { urlTemplate: 'https://web.archive.org/save/{url}', openInBackground: true },
     itemTypes: ['url']
+  },
+  {
+    name: 'Todo/Done Checkbox',
+    triggerTag: 'todo',
+    triggerOn: 'add',
+    actionType: 'toggle',
+    actionConfig: { activeTag: 'todo', completedTag: 'done', icon: 'unchecked', checkedIcon: 'checked', color: '#007aff', checkedColor: '#34c759' }
+  },
+  {
+    name: 'Reading List',
+    triggerTag: 'readme',
+    triggerOn: 'add',
+    actionType: 'toggle',
+    actionConfig: { activeTag: 'readme', completedTag: 'read', icon: 'unchecked', checkedIcon: 'checked', color: '#5856d6', checkedColor: '#34c759' }
   }
 ];
 
@@ -517,6 +532,9 @@ const renderActionConfig = (container, fd) => {
     case 'tag':
       renderTagConfig(container, config, fd);
       break;
+    case 'toggle':
+      renderToggleConfig(container, config, fd);
+      break;
   }
 };
 
@@ -663,6 +681,70 @@ const renderTagConfig = (container, config, fd) => {
   hint.textContent = 'This tag will be added to items when the trigger tag is applied. Circular chains are prevented.';
   tagGroup.appendChild(hint);
   container.appendChild(tagGroup);
+};
+
+
+const renderToggleConfig = (container, config, fd) => {
+  // Active tag (the "unchecked" state tag)
+  const activeGroup = createFormGroup('"Active" tag (unchecked state)');
+  const activeInput = document.createElement('peek-input');
+  activeInput.className = 'form-input';
+  activeInput.value = config.activeTag || fd.triggerTag || '';
+  activeInput.placeholder = 'e.g. todo';
+  activeInput.addEventListener('input', (e) => {
+    if (\!fd.actionConfig) fd.actionConfig = {};
+    fd.actionConfig.activeTag = e.target.value;
+  });
+  activeGroup.appendChild(activeInput);
+  container.appendChild(activeGroup);
+
+  // Completed tag (the "checked" state tag)
+  const completedGroup = createFormGroup('"Completed" tag (checked state)');
+  const completedInput = document.createElement('peek-input');
+  completedInput.className = 'form-input';
+  completedInput.value = config.completedTag || '';
+  completedInput.placeholder = 'e.g. done';
+  completedInput.addEventListener('input', (e) => {
+    if (\!fd.actionConfig) fd.actionConfig = {};
+    fd.actionConfig.completedTag = e.target.value;
+  });
+  completedGroup.appendChild(completedInput);
+  container.appendChild(completedGroup);
+
+  // Color for unchecked state
+  const colorGroup = createFormGroup('Unchecked color');
+  const colorRow = document.createElement('div');
+  colorRow.className = 'color-picker-row';
+  const colorInput = document.createElement('input');
+  colorInput.type = 'color';
+  colorInput.value = config.color || '#007aff';
+  colorInput.addEventListener('input', () => {
+    if (\!fd.actionConfig) fd.actionConfig = {};
+    fd.actionConfig.color = colorInput.value;
+  });
+  colorRow.appendChild(colorInput);
+  colorGroup.appendChild(colorRow);
+  container.appendChild(colorGroup);
+
+  // Color for checked state
+  const checkedColorGroup = createFormGroup('Checked color');
+  const checkedColorRow = document.createElement('div');
+  checkedColorRow.className = 'color-picker-row';
+  const checkedColorInput = document.createElement('input');
+  checkedColorInput.type = 'color';
+  checkedColorInput.value = config.checkedColor || '#34c759';
+  checkedColorInput.addEventListener('input', () => {
+    if (\!fd.actionConfig) fd.actionConfig = {};
+    fd.actionConfig.checkedColor = checkedColorInput.value;
+  });
+  checkedColorRow.appendChild(checkedColorInput);
+  checkedColorGroup.appendChild(checkedColorRow);
+  container.appendChild(checkedColorGroup);
+
+  const hint = document.createElement('div');
+  hint.className = 'form-hint';
+  hint.textContent = 'Items with either tag will show a checkbox on cards. Clicking swaps between the two tags.';
+  container.appendChild(hint);
 };
 
 // ==================== Form Helpers ====================

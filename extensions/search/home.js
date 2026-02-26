@@ -13,9 +13,15 @@ import {
   setupToolbar as _setupToolbar,
   createViewPrefs
 } from 'peek://app/lib/grid-nav.js';
+import {
+  createAffordanceElements, createActionRulesCache
+} from 'peek://app/lib/tag-action-affordances.js';
 
 const api = window.app;
 const debug = api.debug;
+
+// Tag action rules cache for rendering affordances on result cards
+let actionRulesCache = null;
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -343,6 +349,26 @@ const createResultCard = (item) => {
 
   card.appendChild(footer);
 
+  // Async: load item tags and render affordances if any rules match
+  if (actionRulesCache && actionRulesCache.getRules().length > 0) {
+    api.datastore.getItemTags(item.id).then(tagsResult => {
+      if (!tagsResult.success || !tagsResult.data.length) return;
+      const tagNames = tagsResult.data.map(t => t.name);
+      const el = createAffordanceElements(item.id, tagNames, actionRulesCache.getRules(), api, {
+        onToggle: () => { renderResults(); }
+      });
+      if (el) {
+        // Insert before the last child (visit count) if it exists
+        const lastChild = footer.lastElementChild;
+        if (lastChild) {
+          footer.insertBefore(el, lastChild);
+        } else {
+          footer.appendChild(el);
+        }
+      }
+    });
+  }
+
   // Click to open item
   let isOpening = false;
   card.addEventListener('card-click', async () => {
@@ -354,8 +380,8 @@ const createResultCard = (item) => {
         await api.window.open(itemUrl, {
           role: 'content',
           key: itemUrl,
-          width: 1024,
-          height: 768
+          width: 800,
+          height: 600
         });
       } else if (item.type === 'text') {
         // Open text item in editor
@@ -392,6 +418,9 @@ const setupToolbar = () => {
 
 const init = async () => {
   debug && console.log('[search] init');
+
+  // Initialize tag action rules cache for card affordances
+  actionRulesCache = createActionRulesCache(api);
 
   // Parse query from URL
   const params = new URLSearchParams(window.location.search);

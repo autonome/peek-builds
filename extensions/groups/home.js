@@ -14,9 +14,15 @@ import {
   setupToolbar as _setupToolbar,
   createViewPrefs
 } from 'peek://app/lib/grid-nav.js';
+import {
+  createAffordanceElements, createActionRulesCache
+} from 'peek://app/lib/tag-action-affordances.js';
 
 const api = window.app;
 const debug = api.debug;
+
+// Tag action rules cache for rendering affordances on address cards
+let actionRulesCache = null;
 
 /**
  * Simple debounce helper - collapses rapid calls into one
@@ -343,6 +349,9 @@ const setupCreateGroup = () => {
 
 const init = async () => {
   debug && console.log('Groups init');
+
+  // Initialize tag action rules cache for card affordances
+  actionRulesCache = createActionRulesCache(api);
 
   // Register escape handler for internal navigation
   // Backend handles parent centering, child tracking, and focus restoration
@@ -926,6 +935,12 @@ const createAddressCard = (address) => {
     footer.appendChild(urlSpan);
   }
 
+  // Tag action affordances placeholder — loads item tags async then renders
+  const affordancePlaceholder = document.createElement('span');
+  affordancePlaceholder.className = 'tag-action-affordances-slot';
+  affordancePlaceholder.style.cssText = 'display:inline-flex;align-items:center;flex-shrink:0;';
+  footer.appendChild(affordancePlaceholder);
+
   const visitCount = address.visitCount || 0;
   const visitSpan = document.createElement('span');
   visitSpan.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
@@ -933,6 +948,20 @@ const createAddressCard = (address) => {
   footer.appendChild(visitSpan);
 
   card.appendChild(footer);
+
+  // Async: load item tags and render affordances if any rules match
+  if (actionRulesCache && actionRulesCache.getRules().length > 0) {
+    api.datastore.getItemTags(address.id).then(tagsResult => {
+      if (!tagsResult.success || !tagsResult.data.length) return;
+      const tagNames = tagsResult.data.map(t => t.name);
+      const el = createAffordanceElements(address.id, tagNames, actionRulesCache.getRules(), api, {
+        onToggle: () => {
+          if (state.currentTag) loadAddressesForTag(state.currentTag.id).then(() => renderAddresses());
+        }
+      });
+      if (el) affordancePlaceholder.appendChild(el);
+    });
+  }
 
   // Click to open address - backend handles centering and parent tracking
   let isOpening = false;
@@ -944,8 +973,8 @@ const createAddressCard = (address) => {
       const openOptions = {
         role: 'content',
         key: addressUrl,
-        width: 1024,
-        height: 768
+        width: 800,
+        height: 600
       };
       if (state.currentTag && state.currentTag.id !== '__untagged__') {
         openOptions.groupMode = {
