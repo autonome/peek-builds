@@ -7,8 +7,8 @@
  * placing or updating extension files in resources/chrome-extensions/.
  *
  * What it does:
- * - Proton Pass: Prepends chrome.permissions + browser.permissions shim to
- *   background.js (prevents SW crash from missing permissions API)
+ * - Proton Pass: Prepends chrome.permissions, chrome.storage.session, and
+ *   chrome.runtime.getBackgroundPage shims to background.js
  *
  * Usage:
  *   node scripts/patch-chrome-extensions.js
@@ -24,7 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const EXT_DIR = path.join(ROOT, 'resources', 'chrome-extensions');
 
-const SHIM_MARKER = '/* Peek: chrome.permissions shim';
+const SHIM_MARKER = '/* Peek: chrome.permissions';
 
 /**
  * The permissions shim. Electron does not implement chrome.permissions.
@@ -62,6 +62,99 @@ const PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatib
 })();
 `;
 
+/**
+ * chrome.storage.session in-memory shim. Electron does not provide
+ * chrome.storage.session. Without this, the background service worker
+ * fails to initialize its storage layer and settings pages stay blank.
+ */
+const STORAGE_SESSION_SHIM = `// --- chrome.storage.session in-memory shim ---
+(function() {
+  if (typeof chrome !== 'undefined' && chrome.storage) {
+    if (!chrome.storage.session) {
+      const _data = {};
+      const _listeners = new Set();
+      chrome.storage.session = {
+        get(keys) {
+          return new Promise(resolve => {
+            if (keys === null || keys === undefined) { resolve({..._data}); return; }
+            if (typeof keys === 'string') keys = [keys];
+            if (Array.isArray(keys)) {
+              const result = {};
+              for (const k of keys) { if (k in _data) result[k] = _data[k]; }
+              resolve(result); return;
+            }
+            const result = {};
+            for (const [k, def] of Object.entries(keys)) { result[k] = k in _data ? _data[k] : def; }
+            resolve(result);
+          });
+        },
+        set(items) {
+          return new Promise(resolve => {
+            const changes = {};
+            for (const [k, v] of Object.entries(items)) {
+              const oldValue = _data[k]; _data[k] = v;
+              changes[k] = { newValue: v };
+              if (oldValue !== undefined) changes[k].oldValue = oldValue;
+            }
+            if (Object.keys(changes).length > 0) { for (const l of _listeners) { try { l(changes, 'session'); } catch(e) {} } }
+            resolve();
+          });
+        },
+        remove(keys) {
+          return new Promise(resolve => {
+            if (typeof keys === 'string') keys = [keys];
+            const changes = {};
+            for (const k of keys) { if (k in _data) { changes[k] = { oldValue: _data[k] }; delete _data[k]; } }
+            if (Object.keys(changes).length > 0) { for (const l of _listeners) { try { l(changes, 'session'); } catch(e) {} } }
+            resolve();
+          });
+        },
+        clear() {
+          return new Promise(resolve => {
+            const changes = {};
+            for (const [k, v] of Object.entries(_data)) { changes[k] = { oldValue: v }; delete _data[k]; }
+            if (Object.keys(changes).length > 0) { for (const l of _listeners) { try { l(changes, 'session'); } catch(e) {} } }
+            resolve();
+          });
+        },
+        getBytesInUse(keys) {
+          return new Promise(resolve => {
+            if (keys === null || keys === undefined) { resolve(JSON.stringify(_data).length * 2); return; }
+            if (typeof keys === 'string') keys = [keys];
+            let total = 0;
+            for (const k of keys) { if (k in _data) total += JSON.stringify(k).length * 2 + JSON.stringify(_data[k]).length * 2; }
+            resolve(total);
+          });
+        },
+        setAccessLevel() { return Promise.resolve(); },
+        onChanged: {
+          addListener(cb) { _listeners.add(cb); },
+          removeListener(cb) { _listeners.delete(cb); },
+          hasListener(cb) { return _listeners.has(cb); },
+          hasListeners() { return _listeners.size > 0; },
+        },
+        QUOTA_BYTES: 10485760,
+      };
+    }
+  }
+})();
+`;
+
+/**
+ * chrome.runtime.getBackgroundPage shim. Electron does not implement this API.
+ * Without it, the background page detection fails and storage operations
+ * relay via sendMessage back to itself in a circular failure loop.
+ */
+const GET_BACKGROUND_PAGE_SHIM = `// --- chrome.runtime.getBackgroundPage shim ---
+(function() {
+  if (typeof chrome !== 'undefined' && chrome.runtime && !chrome.runtime.getBackgroundPage) {
+    chrome.runtime.getBackgroundPage = function() {
+      return Promise.resolve(typeof self !== 'undefined' ? self : globalThis);
+    };
+  }
+})();
+`;
+
 function patchProtonPass() {
   const extPath = path.join(EXT_DIR, 'proton-pass');
 
@@ -76,15 +169,35 @@ function patchProtonPass() {
     return;
   }
 
-  const content = fs.readFileSync(bgPath, 'utf-8');
+  let content = fs.readFileSync(bgPath, 'utf-8');
+  let patched = false;
 
-  if (content.includes(SHIM_MARKER)) {
+  // Check each shim independently so re-running after adding new shims works
+  if (!content.includes(SHIM_MARKER)) {
+    content = PERMISSIONS_SHIM + content;
+    patched = true;
+  }
+
+  if (!content.includes('chrome.storage.session')) {
+    // Insert after permissions shim closing })();
+    const marker = '})();\n';
+    const idx = content.indexOf(marker);
+    if (idx !== -1) {
+      const insertAt = idx + marker.length;
+      content = content.slice(0, insertAt) + STORAGE_SESSION_SHIM + GET_BACKGROUND_PAGE_SHIM + content.slice(insertAt);
+    } else {
+      content = content + STORAGE_SESSION_SHIM + GET_BACKGROUND_PAGE_SHIM;
+    }
+    patched = true;
+  }
+
+  if (!patched) {
     console.log('[patch] Proton Pass background.js already patched');
     return;
   }
 
-  fs.writeFileSync(bgPath, PERMISSIONS_SHIM + content);
-  console.log('[patch] Proton Pass background.js patched with permissions shim');
+  fs.writeFileSync(bgPath, content);
+  console.log('[patch] Proton Pass background.js patched with shims');
 
   // Verify required files exist
   const required = ['settings.js', 'popup.js', 'polyfills.js', 'settings.html', 'popup.html'];
