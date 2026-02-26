@@ -27,6 +27,7 @@ let currentItemId = null;
 let currentFilePath = null; // Tracks the open file on disk
 let saveStatus = 'saved'; // 'saved' | 'saving' | 'unsaved'
 let saveTimer = null;
+let deferredNewNote = false; // True when editor opened blank — item creation deferred until content exists
 const AUTOSAVE_DELAY_MS = 1500; // 1.5 seconds after typing stops
 
 /**
@@ -223,38 +224,11 @@ const init = async () => {
     }
   }
 
-  // No explicit source — create a new blank note item in the datastore
-  // so autosave works from the start
-  if (!hasExplicitSource && !currentItemId && api?.datastore?.addItem) {
-    try {
-      const result = await api.datastore.addItem('text', { content: '' });
-      if (result.success && result.data) {
-        currentItemId = result.data.id;
-        debug && console.log('[editor] Created new blank note item:', currentItemId);
-
-        // Tag with 'note' and 'from:cmd'
-        if (api?.datastore?.getOrCreateTag && api?.datastore?.tagItem) {
-          for (const tagName of ['note', 'from:cmd']) {
-            const tagResult = await api.datastore.getOrCreateTag(tagName);
-            if (tagResult.success) {
-              await api.datastore.tagItem(currentItemId, tagResult.data.tag.id);
-            }
-          }
-        }
-
-        // Notify that a new item was created
-        if (api?.publish) {
-          api.publish('editor:changed', { action: 'add', itemId: currentItemId }, api.scopes.GLOBAL);
-        }
-
-        // Set context to editor mode
-        if (api?.context?.setMode) {
-          api.context.setMode('editor', { metadata: { itemId: currentItemId } });
-        }
-      }
-    } catch (err) {
-      debug && console.log('[editor] Failed to create blank note item:', err);
-    }
+  // No explicit source — defer item creation until user actually types content.
+  // This prevents empty junk items from being saved to the datastore.
+  if (!hasExplicitSource && !currentItemId) {
+    deferredNewNote = true;
+    debug && console.log('[editor] New blank note — item creation deferred until content is typed');
   }
 
   // Create editor layout
@@ -645,6 +619,57 @@ const performAutosave = async (content) => {
 };
 
 /**
+ * Create a new note item in the datastore (deferred from init).
+ * Called on first real content change when editor was opened blank.
+ */
+const createDeferredNoteItem = async (content) => {
+  if (!deferredNewNote || !api?.datastore?.addItem) return false;
+
+  deferredNewNote = false; // Prevent re-entry
+
+  try {
+    const title = extractTitleFromContent(content);
+    const result = await api.datastore.addItem('text', { content, title });
+    if (result.success && result.data) {
+      currentItemId = result.data.id;
+      debug && console.log('[editor] Created new note item on first content:', currentItemId);
+
+      // Tag with 'note' and 'from:cmd'
+      if (api?.datastore?.getOrCreateTag && api?.datastore?.tagItem) {
+        for (const tagName of ['note', 'from:cmd']) {
+          const tagResult = await api.datastore.getOrCreateTag(tagName);
+          if (tagResult.success) {
+            await api.datastore.tagItem(currentItemId, tagResult.data.tag.id);
+          }
+        }
+      }
+
+      // Notify that a new item was created
+      if (api?.publish) {
+        api.publish('editor:changed', { action: 'add', itemId: currentItemId }, api.scopes.GLOBAL);
+      }
+
+      // Set context to editor mode
+      if (api?.context?.setMode) {
+        api.context.setMode('editor', { metadata: { itemId: currentItemId } });
+      }
+
+      // Show save status now that we have an item
+      if (editorLayout) {
+        editorLayout.setSaveStatusVisible(true);
+      }
+
+      saveStatus = 'saved';
+      updateSaveStatusUI();
+      return true;
+    }
+  } catch (err) {
+    debug && console.log('[editor] Failed to create deferred note item:', err);
+  }
+  return false;
+};
+
+/**
  * Schedule autosave with debouncing
  */
 const scheduleAutosave = (content) => {
@@ -668,10 +693,17 @@ const scheduleAutosave = (content) => {
 /**
  * Handle content changes
  */
-const handleContentChange = (content) => {
+const handleContentChange = async (content) => {
   // Publish change event for other extensions
   if (api?.publish) {
     api.publish('editor:contentChanged', { content }, api.scopes.GLOBAL);
+  }
+
+  // If this is a deferred new note and user typed real content, create the item now
+  if (deferredNewNote && content && content.trim().length > 0) {
+    await createDeferredNoteItem(content);
+    // Item was just created with this content — no need to schedule another save
+    return;
   }
 
   // Schedule autosave if editing a datastore item or a file
@@ -689,6 +721,9 @@ const cleanup = () => {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+
+  // Reset deferred state
+  deferredNewNote = false;
 
   // Reset context when leaving editor
   if (currentItemId && api?.context?.setMode) {
