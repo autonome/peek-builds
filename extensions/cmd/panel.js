@@ -458,14 +458,16 @@ async function doUpdateParamSuggestions() {
   }
 
   const prefix = paramDef.prefix || '';
-  const exclude = new Set(
-    completedTokens.map(t => {
-      const stripped = prefix && t.toLowerCase().startsWith(prefix.toLowerCase())
-        ? t.slice(prefix.length).toLowerCase()
-        : t.toLowerCase();
-      return stripped;
-    })
-  );
+  const exclude = paramDef.multiple
+    ? new Set(
+        completedTokens.map(t => {
+          const stripped = prefix && t.toLowerCase().startsWith(prefix.toLowerCase())
+            ? t.slice(prefix.length).toLowerCase()
+            : t.toLowerCase();
+          return stripped;
+        })
+      )
+    : new Set();
 
   const suggestions = await getSuggestions(paramDef, searchPartial, exclude);
 
@@ -1664,10 +1666,12 @@ function actionHandlers() {
         rest = typed.slice(commandName.length + 1);
       }
 
-      const tokens = rest.split(/\s+/).filter(t => t.length > 0);
+      let tokens = rest.split(/\s+/).filter(t => t.length > 0);
       const endsWithSpace = rest.endsWith(' ') || rest === '';
 
-      if (!endsWithSpace && tokens.length > 0) {
+      if (!paramDef || !paramDef.multiple) {
+        tokens = [fillText];
+      } else if (!endsWithSpace && tokens.length > 0) {
         tokens[tokens.length - 1] = fillText;
       } else {
         tokens.push(fillText);
@@ -1681,7 +1685,15 @@ function actionHandlers() {
       state.typed = newValue;
       state.paramIndex = idx;
 
-      doUpdateParamSuggestions();
+      doUpdateParamSuggestions().then(() => {
+        if (!paramDef || !paramDef.multiple) {
+          const len = state.paramSuggestions.length;
+          if (len > 0) {
+            state.paramIndex = (idx + 1) % len;
+            updateResultsUI();
+          }
+        }
+      });
     },
 
     acceptParamItem(payload) {
