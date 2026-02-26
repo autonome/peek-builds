@@ -190,16 +190,11 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 12px 0;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .form-group-inline-text {
   flex: 1;
   min-width: 0;
-}
-
-.form-group-inline:last-child {
-  border-bottom: none;
 }
 
 .form-group-inline label {
@@ -353,6 +348,51 @@ body {
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-bg);
   cursor: not-allowed;
+}
+
+/* Settings Groups */
+.settings-group {
+  margin-bottom: 32px;
+}
+
+.settings-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* Input with button (folder picker) */
+.input-with-button {
+  display: flex;
+  gap: 8px;
+}
+
+.input-with-button input[type="text"] {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--input-bg);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+}
+
+.input-with-button input[type="text"]:focus {
+  outline: none;
+  border-color: var(--theme-accent);
+}
+
+.browse-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 /* Scrollbar */

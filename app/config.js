@@ -13,6 +13,9 @@ const labels = {
     restoreSession: 'Restore session on startup',
     sessionAutosaveInterval: 'Autosave interval (minutes)',
     dragHoldDelay: 'Window drag hold delay',
+    defaultWindowWidth: 'Default window width',
+    defaultWindowHeight: 'Default window height',
+    persistWindowBounds: 'Remember window size and position',
   }
 };
 
@@ -82,6 +85,21 @@ const prefsSchema = {
       "description": "How long (in seconds) to hold the mouse still before a window becomes draggable. Click and hold without moving — the cursor changes to a hand when ready, then drag to move. This allows normal text selection and clicking without accidental window drags. Set to 0 for instant drag. Takes effect on new windows.",
       "type": "number",
       "default": 1
+    },
+    "defaultWindowWidth": {
+      "description": "Default width for new windows (pixels)",
+      "type": "integer",
+      "default": 1024
+    },
+    "defaultWindowHeight": {
+      "description": "Default height for new windows (pixels)",
+      "type": "integer",
+      "default": 768
+    },
+    "persistWindowBounds": {
+      "description": "Remember window size and position between sessions",
+      "type": "boolean",
+      "default": false
     },
   },
   "required": [ "shortcutKey", "startupFeature", "enableTrayIcon", "showInDockAndSwitcher", "quitShortcut" ]
@@ -156,7 +174,10 @@ const defaults = {
     hideTitleBar: true,
     restoreSession: true,
     sessionAutosaveInterval: 5,
-    dragHoldDelay: 1
+    dragHoldDelay: 1,
+    defaultWindowWidth: 1024,
+    defaultWindowHeight: 768,
+    persistWindowBounds: false
   },
   items: [
     { id: '82de735f-a4b7-4fe6-a458-ec29939ae00d',

@@ -127,10 +127,12 @@ const createSection = async (sectionId, title, contentFn) => {
   section.className = 'section';
   section.id = `section-${sectionId}`;
 
-  const titleEl = document.createElement('h2');
-  titleEl.className = 'section-title';
-  titleEl.textContent = title;
-  section.appendChild(titleEl);
+  if (title) {
+    const titleEl = document.createElement('h2');
+    titleEl.className = 'section-title';
+    titleEl.textContent = title;
+    section.appendChild(titleEl);
+  }
 
   const content = await contentFn();
   if (content) {
@@ -138,6 +140,72 @@ const createSection = async (sectionId, title, contentFn) => {
   }
 
   return section;
+};
+
+// Helper: Create a settings group with optional label
+const createSettingsGroup = (label) => {
+  const group = document.createElement('div');
+  group.className = 'settings-group';
+
+  if (label) {
+    const groupLabel = document.createElement('div');
+    groupLabel.className = 'settings-group-label';
+    groupLabel.textContent = label;
+    group.appendChild(groupLabel);
+  }
+
+  return group;
+};
+
+// Helper: Create backup directory input with Browse button
+const createBackupDirInput = (label, value, onChange, options = {}) => {
+  const group = document.createElement('div');
+  group.className = 'form-group';
+
+  const labelEl = document.createElement('label');
+  labelEl.textContent = label;
+
+  const inputRow = document.createElement('div');
+  inputRow.className = 'input-with-button';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = value || '';
+  if (options.placeholder) input.placeholder = options.placeholder;
+
+  input.addEventListener('change', (e) => {
+    onChange(e.target.value);
+  });
+
+  const browseBtn = document.createElement('button');
+  browseBtn.className = 'btn browse-btn';
+  browseBtn.textContent = 'Browse';
+  browseBtn.addEventListener('click', async () => {
+    try {
+      const result = await api.extensions.pickFolder();
+      if (result.success && result.data && result.data.path) {
+        input.value = result.data.path;
+        onChange(result.data.path);
+      }
+    } catch (err) {
+      console.error('Folder picker error:', err);
+    }
+  });
+
+  inputRow.appendChild(input);
+  inputRow.appendChild(browseBtn);
+
+  group.appendChild(labelEl);
+  group.appendChild(inputRow);
+
+  if (options.helpText) {
+    const help = document.createElement('div');
+    help.className = 'help-text';
+    help.textContent = options.helpText;
+    group.appendChild(help);
+  }
+
+  return group;
 };
 
 // Render core settings
@@ -159,63 +227,107 @@ const renderCoreSettings = async () => {
     api.publish('topic:core:prefs', { id, prefs }, api.scopes.SYSTEM);
   };
 
-  // Preferences
-  if (schemas.prefs && schemas.prefs.properties) {
-    const prefsSection = document.createElement('div');
-    prefsSection.className = 'form-section';
+  const pProps = schemas.prefs.properties;
+  const getVal = (k) => (prefs && prefs.hasOwnProperty(k)) ? prefs[k] : pProps[k]?.default;
+  const getLabel = (k) => (labels.prefs && labels.prefs[k]) || k;
 
-    const title = document.createElement('h3');
-    title.className = 'form-section-title';
-    title.textContent = 'Preferences';
-    prefsSection.appendChild(title);
+  // --- Group 1: Data & Backup ---
+  const dataGroup = createSettingsGroup('Data & Backup');
 
-    const pProps = schemas.prefs.properties;
+  dataGroup.appendChild(createBackupDirInput(getLabel('backupDir'), getVal('backupDir'), (newVal) => {
+    prefs.backupDir = newVal;
+    save();
+  }, {
+    helpText: pProps.backupDir.description,
+    placeholder: 'Select a backup folder...'
+  }));
 
-    Object.keys(pProps).forEach(k => {
-      const s = pProps[k];
-      const v = (prefs && prefs.hasOwnProperty(k)) ? prefs[k] : s.default;
-      const displayLabel = (labels.prefs && labels.prefs[k]) || k;
+  dataGroup.appendChild(createCheckbox(getLabel('restoreSession'), getVal('restoreSession'), (newVal) => {
+    prefs.restoreSession = newVal;
+    save();
+  }, {
+    helpText: pProps.restoreSession.description
+  }));
 
-      if (s.type === 'boolean') {
-        const checkbox = createCheckbox(displayLabel, v, (newVal) => {
-          prefs[k] = newVal;
-          save();
-        }, {
-          helpText: s.description
-        });
-        prefsSection.appendChild(checkbox);
-      } else if (s.type === 'integer' || s.type === 'number') {
-        const input = createInput(displayLabel, v, (newVal) => {
-          prefs[k] = newVal;
-          save();
-        }, {
-          type: 'number',
-          step: s.type === 'integer' ? 1 : 0.1,
-          helpText: s.description
-        });
-        prefsSection.appendChild(input);
-      } else {
-        const input = createInput(displayLabel, v, (newVal) => {
-          // If cleared to empty and there's a default, reset to default
-          if (newVal === '' && s.default) {
-            prefs[k] = s.default;
-            // Update the input field to show the default
-            const inputEl = input.querySelector('input');
-            if (inputEl) inputEl.value = s.default;
-          } else {
-            prefs[k] = newVal;
-          }
-          save();
-        }, {
-          helpText: s.description,
-          placeholder: s.default || ''
-        });
-        prefsSection.appendChild(input);
-      }
-    });
+  dataGroup.appendChild(createInput(getLabel('sessionAutosaveInterval'), getVal('sessionAutosaveInterval'), (newVal) => {
+    prefs.sessionAutosaveInterval = newVal;
+    save();
+  }, {
+    type: 'number',
+    step: 1,
+    min: 0,
+    helpText: pProps.sessionAutosaveInterval.description
+  }));
 
-    container.appendChild(prefsSection);
-  }
+  container.appendChild(dataGroup);
+
+  // --- Group 2: System Tray & Dock ---
+  const trayGroup = createSettingsGroup('System Tray & Dock');
+
+  trayGroup.appendChild(createCheckbox(getLabel('showTrayIcon'), getVal('showTrayIcon'), (newVal) => {
+    prefs.showTrayIcon = newVal;
+    save();
+  }, {
+    helpText: pProps.showTrayIcon.description
+  }));
+
+  trayGroup.appendChild(createCheckbox(getLabel('showInDockAndSwitcher'), getVal('showInDockAndSwitcher'), (newVal) => {
+    prefs.showInDockAndSwitcher = newVal;
+    save();
+  }, {
+    helpText: pProps.showInDockAndSwitcher.description
+  }));
+
+  container.appendChild(trayGroup);
+
+  // --- Group 3: Windows ---
+  const windowsGroup = createSettingsGroup('Windows');
+
+  windowsGroup.appendChild(createInput(getLabel('defaultWindowWidth'), getVal('defaultWindowWidth'), (newVal) => {
+    prefs.defaultWindowWidth = newVal;
+    save();
+  }, {
+    type: 'number',
+    step: 1,
+    min: 200,
+    helpText: pProps.defaultWindowWidth.description
+  }));
+
+  windowsGroup.appendChild(createInput(getLabel('defaultWindowHeight'), getVal('defaultWindowHeight'), (newVal) => {
+    prefs.defaultWindowHeight = newVal;
+    save();
+  }, {
+    type: 'number',
+    step: 1,
+    min: 200,
+    helpText: pProps.defaultWindowHeight.description
+  }));
+
+  windowsGroup.appendChild(createCheckbox(getLabel('persistWindowBounds'), getVal('persistWindowBounds'), (newVal) => {
+    prefs.persistWindowBounds = newVal;
+    save();
+  }, {
+    helpText: pProps.persistWindowBounds.description
+  }));
+
+  windowsGroup.appendChild(createCheckbox(getLabel('hideTitleBar'), getVal('hideTitleBar'), (newVal) => {
+    prefs.hideTitleBar = newVal;
+    save();
+  }, {
+    helpText: pProps.hideTitleBar.description
+  }));
+
+  windowsGroup.appendChild(createInput(getLabel('dragHoldDelay'), getVal('dragHoldDelay'), (newVal) => {
+    prefs.dragHoldDelay = newVal;
+    save();
+  }, {
+    type: 'number',
+    step: 0.1,
+    min: 0,
+    helpText: pProps.dragHoldDelay.description
+  }));
+
+  container.appendChild(windowsGroup);
 
   return container;
 };
@@ -2909,7 +3021,7 @@ const init = async () => {
   coreNav.addEventListener('click', () => showSection('core'));
   sidebarNav.appendChild(coreNav);
 
-  const coreSection = await createSection('core', 'Core Settings', renderCoreSettings);
+  const coreSection = await createSection('core', '', renderCoreSettings);
   coreSection.classList.add('active');
   contentArea.appendChild(coreSection);
 
