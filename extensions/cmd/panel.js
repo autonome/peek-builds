@@ -1642,16 +1642,27 @@ function actionHandlers() {
       doUpdateParamSuggestions();
     },
 
-    fillParamText() {
-      const idx = state.paramIndex >= 0 ? state.paramIndex : 0;
-      if (idx < 0 || idx >= state.paramSuggestions.length) return;
+    fillParamText(payload) {
+      const direction = payload?.direction === -1 ? -1 : 1;
+      const cmd = state.commands[state.paramCommand];
+      const paramDef = cmd && cmd.params && cmd.params[0];
+      const len = state.paramSuggestions.length;
+      if (len === 0) return;
+
+      // For single-select, advance index first so highlighted matches displayed text
+      let idx;
+      if (!paramDef || !paramDef.multiple) {
+        const cur = state.paramIndex >= 0 ? state.paramIndex : (direction === 1 ? -1 : 0);
+        idx = (cur + direction + len) % len;
+      } else {
+        idx = state.paramIndex >= 0 ? state.paramIndex : 0;
+      }
+      if (idx < 0 || idx >= len) return;
 
       const suggestion = state.paramSuggestions[idx];
       const input = commandInput();
       const commandName = state.paramCommand;
 
-      const cmd = state.commands[state.paramCommand];
-      const paramDef = cmd && cmd.params && cmd.params[0];
       const fillText = (paramDef && paramDef.type === 'item' && suggestion.title)
         ? suggestion.title
         : suggestion.value;
@@ -1670,6 +1681,7 @@ function actionHandlers() {
       const endsWithSpace = rest.endsWith(' ') || rest === '';
 
       if (!paramDef || !paramDef.multiple) {
+        // Single-select: replace entire param with current selection
         tokens = [fillText];
       } else if (!endsWithSpace && tokens.length > 0) {
         tokens[tokens.length - 1] = fillText;
@@ -1685,15 +1697,18 @@ function actionHandlers() {
       state.typed = newValue;
       state.paramIndex = idx;
 
-      doUpdateParamSuggestions().then(() => {
-        if (!paramDef || !paramDef.multiple) {
-          const len = state.paramSuggestions.length;
-          if (len > 0) {
-            state.paramIndex = (idx + 1) % len;
-            updateResultsUI();
-          }
-        }
-      });
+      if (paramDef && paramDef.multiple) {
+        // Multi-select: refresh suggestions to exclude completed tokens
+        doUpdateParamSuggestions();
+      } else {
+        // Single-select: suggestions don't change, just update UI
+        updateResultsUI();
+        updateCommandUI();
+      }
+    },
+
+    fillParamTextReverse() {
+      actions.fillParamText({ direction: -1 });
     },
 
     acceptParamItem(payload) {

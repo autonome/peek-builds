@@ -429,6 +429,13 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           actions: ['fillParamText', 'updateGhostText', 'updateResults'],
         },
       ],
+      [Events.SHIFT_TAB]: [
+        {
+          guard: 'hasParamSuggestions',
+          target: States.PARAM_MODE,
+          actions: ['fillParamTextReverse', 'updateGhostText', 'updateResults'],
+        },
+      ],
       [Events.ENTER]: [
         {
           guard: (p) => guard('isItemTypeParam', p) && guard('hasParamSuggestions', p),
