@@ -362,28 +362,35 @@ export function getPreloadScript() {
     QUOTA_BYTES: ${QUOTA_BYTES},
   };
 
-  // Inject into chrome.storage namespace
-  if (typeof chrome !== 'undefined') {
-    chrome.storage = chrome.storage || {};
-    chrome.storage.session = sessionStorage;
+  // Inject into chrome.storage namespace.
+  // chrome.storage is a native Electron binding object on extension pages —
+  // it cannot be reassigned with =, so we must use Object.defineProperty
+  // to add the session property to the existing native object.
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      Object.defineProperty(chrome.storage, 'session', {
+        value: sessionStorage,
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
 
-    // Also add session change events to main onChanged if it exists
-    if (chrome.storage.onChanged) {
-      const _origAddListener = chrome.storage.onChanged.addListener.bind(chrome.storage.onChanged);
-
-      // Wrap addListener to also catch session changes
-      chrome.storage.onChanged.addListener = function(cb) {
-        _origAddListener(cb);
-        // Also register for session changes
-        _onChangedListeners.add(cb);
-      };
-    } else {
-      chrome.storage.onChanged = sessionStorage.onChanged;
+      // Also add session change events to main onChanged if it exists
+      if (chrome.storage.onChanged) {
+        var _origAddListener = chrome.storage.onChanged.addListener.bind(chrome.storage.onChanged);
+        chrome.storage.onChanged.addListener = function(cb) {
+          _origAddListener(cb);
+          _onChangedListeners.add(cb);
+        };
+      }
+    } else if (typeof chrome !== 'undefined') {
+      // chrome exists but chrome.storage doesn't — try creating it
+      try {
+        chrome.storage = { session: sessionStorage };
+      } catch(e2) { /* chrome.storage non-writable, skip */ }
     }
-  } else if (typeof globalThis !== 'undefined') {
-    globalThis.chrome = globalThis.chrome || {};
-    globalThis.chrome.storage = globalThis.chrome.storage || {};
-    globalThis.chrome.storage.session = sessionStorage;
+  } catch(e) {
+    console.warn('[chrome.storage.session polyfill] Injection failed:', e.message);
   }
 })();
 `;

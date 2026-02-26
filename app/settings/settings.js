@@ -1999,6 +1999,11 @@ const showSection = (sectionId) => {
   if (navItem) {
     navItem.classList.add('active');
   }
+
+  // Persist pane in URL hash so session restore reopens the same pane
+  if (location.hash !== `#${sectionId}`) {
+    history.replaceState(null, '', `#${sectionId}`);
+  }
 };
 
 // Helper to check if a feature is enabled (reads from cached store)
@@ -3227,6 +3232,12 @@ const init = async () => {
     api.quit();
   });
   sidebarNav.appendChild(quitBtn);
+
+  // Restore pane from URL hash (persisted by showSection for session restore)
+  const hashSection = location.hash ? location.hash.slice(1) : '';
+  if (hashSection && document.getElementById(`section-${hashSection}`)) {
+    showSection(hashSection);
+  }
 };
 
 window.addEventListener('load', init);

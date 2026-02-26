@@ -33,12 +33,15 @@ const builtinExtensions = ['cmd', 'editor', 'groups', 'peeks', 'slides'];
 
 let _settingsWin = null;
 
-const openSettingsWindow = async (prefs) => {
-  log('core', 'openSettingsWindow()');
+const openSettingsWindow = async (prefs, section) => {
+  log('core', 'openSettingsWindow()', section ? `section=${section}` : '');
 
   // Fixed size for settings window - content doesn't need to scale with screen
   const width = 900;
   const height = 650;
+
+  // Include hash for section navigation (persisted across session restore)
+  const url = section ? `${settingsAddress}#${section}` : settingsAddress;
 
   const params = {
     debug: log.debug,
@@ -52,13 +55,21 @@ const openSettingsWindow = async (prefs) => {
 
   try {
     // Use the window creation API from windows.js
-    const windowController = await windowManager.createWindow(settingsAddress, params);
+    const windowController = await windowManager.createWindow(url, params);
 
     log('core', 'Settings window opened successfully with controller:', windowController);
     _settingsWin = windowController;
 
     // Focus the window to bring it to front
     await windowController.focus();
+
+    // If navigating to a specific section on an already-open window,
+    // publish navigate event (createWindow may have just focused existing window)
+    if (section) {
+      setTimeout(() => {
+        api.publish('settings:navigate', { section }, api.scopes.GLOBAL);
+      }, 100);
+    }
   } catch (error) {
     log.error('core', 'Failed to open settings window:', error);
   }
@@ -196,52 +207,36 @@ const registerExtensionCommands = () => {
     }
   });
 
-  // ---- Settings Section Commands ----
+  // ---- Settings Command (parameterized with pane selection) ----
 
-  // Helper to open settings and navigate to a section
-  const openSettingsSection = async (section) => {
-    const p = prefs();
-    await openSettingsWindow(p);
-    // Small delay to ensure window is ready
-    setTimeout(() => {
-      api.publish('settings:navigate', { section }, api.scopes.GLOBAL);
-    }, 100);
-  };
-
-  api.commands.register({
-    name: 'settings core',
-    description: 'Open Core settings',
-    execute: () => openSettingsSection('core')
-  });
-
-  api.commands.register({
-    name: 'settings extensions',
-    description: 'Open Extensions settings',
-    execute: () => openSettingsSection('extensions')
-  });
+  const SETTINGS_PANES = [
+    { value: 'core', title: 'Core', subtitle: 'General application settings' },
+    { value: 'extensions', title: 'Features', subtitle: 'Manage peek features and extensions' },
+    { value: 'privacy', title: 'Extensions', subtitle: 'Browser extensions (ad blocker, etc.)' },
+    { value: 'dark-mode', title: 'Dark Mode', subtitle: 'Dark mode settings' },
+    { value: 'sync', title: 'Sync', subtitle: 'Sync configuration and status' },
+    { value: 'profiles', title: 'Profiles', subtitle: 'Manage user profiles' },
+    { value: 'themes', title: 'Themes', subtitle: 'Manage color themes' },
+    { value: 'datastore', title: 'Datastore', subtitle: 'Browse and manage stored data' },
+    { value: 'diagnostics', title: 'Diagnostics', subtitle: 'System diagnostics and debug info' },
+    { value: 'peeks', title: 'Peeks', subtitle: 'Peeks feature settings' },
+    { value: 'slides', title: 'Slides', subtitle: 'Slides feature settings' },
+    { value: 'groups', title: 'Groups', subtitle: 'Groups feature settings' },
+  ];
 
   api.commands.register({
-    name: 'settings themes',
-    description: 'Open Themes settings',
-    execute: () => openSettingsSection('themes')
-  });
-
-  api.commands.register({
-    name: 'settings peeks',
-    description: 'Open Peeks settings',
-    execute: () => openSettingsSection('peeks')
-  });
-
-  api.commands.register({
-    name: 'settings slides',
-    description: 'Open Slides settings',
-    execute: () => openSettingsSection('slides')
-  });
-
-  api.commands.register({
-    name: 'settings groups',
-    description: 'Open Groups settings',
-    execute: () => openSettingsSection('groups')
+    name: 'settings',
+    description: 'Open settings',
+    params: [{ type: 'enum', options: SETTINGS_PANES }],
+    execute: async (ctx) => {
+      const section = (ctx.params && ctx.params[0]) || (ctx.search || '').trim().toLowerCase();
+      const p = prefs();
+      if (section && SETTINGS_PANES.some(pane => pane.value === section)) {
+        await openSettingsWindow(p, section);
+      } else {
+        await openSettingsWindow(p);
+      }
+    }
   });
 
   api.commands.register({
