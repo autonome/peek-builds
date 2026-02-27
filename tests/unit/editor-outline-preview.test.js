@@ -388,3 +388,153 @@ describe('renderMarkdown', () => {
     assert.ok(html.includes('plain code'));
   });
 });
+
+// ===========================================================================
+// Highlight serialization/deserialization tests
+// ===========================================================================
+
+// Inline the pure functions from highlights.js (they depend on CodeMirror
+// StateField which can't run in Node, but serialize/deserialize are pure)
+
+function generateHighlightId() {
+  return 'hl-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 8);
+}
+
+function serializeHighlights(highlights) {
+  return highlights.map(hl => ({
+    id: hl.id,
+    from: hl.from,
+    to: hl.to,
+    text: hl.text,
+    note: hl.note || '',
+    color: hl.color,
+  }));
+}
+
+function deserializeHighlights(data, docLength) {
+  if (!Array.isArray(data)) return [];
+  return data.filter(hl =>
+    hl && typeof hl.from === 'number' && typeof hl.to === 'number' &&
+    hl.from >= 0 && hl.to <= docLength && hl.from < hl.to
+  ).map(hl => ({
+    id: hl.id || generateHighlightId(),
+    from: hl.from,
+    to: hl.to,
+    text: hl.text || '',
+    note: hl.note || '',
+    color: hl.color || 'var(--base0A)',
+  }));
+}
+
+describe('serializeHighlights', () => {
+  it('serializes highlights with empty text field', () => {
+    const highlights = [
+      { id: 'hl-1', from: 0, to: 10, text: '', note: '', color: 'var(--base0A)' },
+    ];
+    const result = serializeHighlights(highlights);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].text, '');
+    assert.equal(result[0].from, 0);
+    assert.equal(result[0].to, 10);
+  });
+
+  it('serializes highlights with note but empty text', () => {
+    const highlights = [
+      { id: 'hl-2', from: 5, to: 15, text: '', note: 'My note', color: 'var(--base0B)' },
+    ];
+    const result = serializeHighlights(highlights);
+    assert.equal(result[0].text, '');
+    assert.equal(result[0].note, 'My note');
+  });
+
+  it('preserves all fields during serialization', () => {
+    const hl = { id: 'hl-3', from: 10, to: 20, text: '', note: 'test', color: 'var(--base0C)' };
+    const result = serializeHighlights([hl]);
+    assert.deepEqual(result[0], hl);
+  });
+});
+
+describe('deserializeHighlights', () => {
+  it('deserializes highlights with empty text', () => {
+    const data = [
+      { id: 'hl-1', from: 0, to: 10, text: '', note: '', color: 'var(--base0A)' },
+    ];
+    const result = deserializeHighlights(data, 100);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].text, '');
+  });
+
+  it('defaults missing text to empty string', () => {
+    const data = [
+      { id: 'hl-1', from: 0, to: 10, note: '', color: 'var(--base0A)' },
+    ];
+    const result = deserializeHighlights(data, 100);
+    assert.equal(result[0].text, '');
+  });
+
+  it('filters out highlights beyond doc length', () => {
+    const data = [
+      { id: 'hl-1', from: 0, to: 50, text: '', note: '', color: 'var(--base0A)' },
+    ];
+    const result = deserializeHighlights(data, 20);
+    assert.equal(result.length, 0);
+  });
+
+  it('filters out invalid highlights (from >= to)', () => {
+    const data = [
+      { id: 'hl-1', from: 10, to: 10, text: '', note: '', color: 'var(--base0A)' },
+      { id: 'hl-2', from: 15, to: 5, text: '', note: '', color: 'var(--base0A)' },
+    ];
+    const result = deserializeHighlights(data, 100);
+    assert.equal(result.length, 0);
+  });
+
+  it('generates ID if missing', () => {
+    const data = [
+      { from: 0, to: 10, text: '', note: '', color: 'var(--base0A)' },
+    ];
+    const result = deserializeHighlights(data, 100);
+    assert.equal(result.length, 1);
+    assert.ok(result[0].id.startsWith('hl-'));
+  });
+
+  it('defaults color if missing', () => {
+    const data = [
+      { id: 'hl-1', from: 0, to: 10, text: '' },
+    ];
+    const result = deserializeHighlights(data, 100);
+    assert.equal(result[0].color, 'var(--base0A)');
+  });
+
+  it('round-trips through serialize and deserialize with empty text', () => {
+    const original = [
+      { id: 'hl-1', from: 0, to: 10, text: '', note: 'A note', color: 'var(--base0B)' },
+      { id: 'hl-2', from: 15, to: 25, text: '', note: '', color: 'var(--base0C)' },
+    ];
+    const serialized = serializeHighlights(original);
+    const deserialized = deserializeHighlights(serialized, 100);
+    assert.equal(deserialized.length, 2);
+    assert.equal(deserialized[0].text, '');
+    assert.equal(deserialized[0].note, 'A note');
+    assert.equal(deserialized[1].text, '');
+    assert.equal(deserialized[1].note, '');
+  });
+
+  it('returns empty array for non-array input', () => {
+    assert.deepEqual(deserializeHighlights(null, 100), []);
+    assert.deepEqual(deserializeHighlights(undefined, 100), []);
+    assert.deepEqual(deserializeHighlights('invalid', 100), []);
+  });
+
+  it('handles line-anchored highlights (full line range)', () => {
+    // Simulating a line-anchored highlight: from=start of line, to=end of line
+    const data = [
+      { id: 'hl-line', from: 11, to: 22, text: '', note: '', color: 'var(--base0D)' },
+    ];
+    const result = deserializeHighlights(data, 50);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].from, 11);
+    assert.equal(result[0].to, 22);
+    assert.equal(result[0].text, '');
+  });
+});

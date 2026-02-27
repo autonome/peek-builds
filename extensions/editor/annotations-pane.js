@@ -10,6 +10,8 @@ export class AnnotationsPane {
     this.onAnnotationClick = options.onAnnotationClick; // (highlight) => void
     this.onAnnotationDelete = options.onAnnotationDelete; // (highlightId) => void
     this.onAnnotationEdit = options.onAnnotationEdit; // (highlightId, note) => void
+    this.onAddNote = options.onAddNote; // () => void — trigger highlight from selection
+    this.onToggle = options.onToggle; // () => void — called when internal toggle clicked
     this.collapsed = true; // Start collapsed
     this.highlights = [];
 
@@ -22,7 +24,7 @@ export class AnnotationsPane {
 
     const title = document.createElement('span');
     title.className = 'sidebar-title';
-    title.textContent = 'Annotations';
+    title.textContent = 'Notes';
     this.header.appendChild(title);
 
     const countBadge = document.createElement('span');
@@ -31,12 +33,30 @@ export class AnnotationsPane {
     this.countBadge = countBadge;
     this.header.appendChild(countBadge);
 
+    // Add Note button
+    this.addNoteBtn = document.createElement('button');
+    this.addNoteBtn.className = 'annotation-add-btn';
+    this.addNoteBtn.textContent = '+';
+    this.addNoteBtn.title = 'Add note at selection (Cmd+Shift+L)';
+    this.addNoteBtn.tabIndex = -1;
+    this.addNoteBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    this.addNoteBtn.addEventListener('click', () => {
+      if (this.onAddNote) this.onAddNote();
+    });
+    this.header.appendChild(this.addNoteBtn);
+
     this.toggleBtn = document.createElement('button');
     this.toggleBtn.className = 'sidebar-toggle';
     this.toggleBtn.innerHTML = '\u25B6'; // >
     this.toggleBtn.tabIndex = -1;
     this.toggleBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    this.toggleBtn.addEventListener('click', () => this.toggle());
+    this.toggleBtn.addEventListener('click', () => {
+      if (this.onToggle) {
+        this.onToggle();
+      } else {
+        this.toggle();
+      }
+    });
     this.header.appendChild(this.toggleBtn);
 
     this.element.appendChild(this.header);
@@ -52,9 +72,11 @@ export class AnnotationsPane {
   /**
    * Update the displayed highlights.
    * @param {Array} highlights - Array of {id, from, to, text, note, color}
+   * @param {object} [doc] - CodeMirror doc for line number lookup
    */
-  update(highlights) {
+  update(highlights, doc) {
     this.highlights = highlights || [];
+    this.doc = doc || this.doc;
     this.countBadge.textContent = String(this.highlights.length);
     this.render();
   }
@@ -65,7 +87,7 @@ export class AnnotationsPane {
     if (this.highlights.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'annotations-empty';
-      empty.textContent = 'No highlights yet. Select text and use Cmd+H to highlight.';
+      empty.innerHTML = 'No notes yet.<br><br>Select text or place cursor, then click <strong>+</strong> or press <strong>\u2318\u21E7L</strong> to add a note.';
       this.content.appendChild(empty);
       return;
     }
@@ -83,14 +105,19 @@ export class AnnotationsPane {
       colorDot.style.background = hl.color || 'var(--base0A)';
       item.appendChild(colorDot);
 
-      // Text content
+      // Line reference + user note
       const textWrap = document.createElement('div');
       textWrap.className = 'annotation-text-wrap';
 
-      const text = document.createElement('div');
-      text.className = 'annotation-text';
-      text.textContent = hl.text.length > 80 ? hl.text.substring(0, 80) + '...' : hl.text;
-      textWrap.appendChild(text);
+      // Show line number
+      const lineRef = document.createElement('div');
+      lineRef.className = 'annotation-text';
+      let lineNum = '?';
+      try {
+        if (this.doc) lineNum = this.doc.lineAt(hl.from).number;
+      } catch (e) { /* position may be stale */ }
+      lineRef.textContent = hl.note ? `Line ${lineNum}` : `Line ${lineNum} — highlight`;
+      textWrap.appendChild(lineRef);
 
       if (hl.note) {
         const note = document.createElement('div');
@@ -107,8 +134,8 @@ export class AnnotationsPane {
 
       const editBtn = document.createElement('button');
       editBtn.className = 'annotation-btn';
-      editBtn.textContent = 'Note';
-      editBtn.title = 'Edit note';
+      editBtn.textContent = 'Edit';
+      editBtn.title = 'Edit note text';
       editBtn.addEventListener('mousedown', (e) => e.preventDefault());
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -151,15 +178,19 @@ export class AnnotationsPane {
   }
 
   toggle() {
-    this.collapsed = !this.collapsed;
+    this.setCollapsed(!this.collapsed);
+  }
+
+  setCollapsed(collapsed) {
+    this.collapsed = collapsed;
     this.element.classList.toggle('collapsed', this.collapsed);
 
     if (this.collapsed) {
       this.toggleBtn.innerHTML = '\u25B6';
-      this.toggleBtn.title = 'Show Annotations';
+      this.toggleBtn.title = 'Show Notes';
     } else {
       this.toggleBtn.innerHTML = '\u25C0';
-      this.toggleBtn.title = 'Hide Annotations';
+      this.toggleBtn.title = 'Hide Notes';
     }
   }
 

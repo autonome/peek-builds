@@ -74,6 +74,7 @@ export class OutlineSidebar {
     this.container = options.container;
     this.onHeaderClick = options.onHeaderClick;
     this.onFoldToggle = options.onFoldToggle; // callback: (header, shouldFold) => void
+    this.onToggle = options.onToggle; // callback: () => void — called when internal toggle clicked
     this.collapsed = false;
     this.headers = [];
     this.parentSet = new Set();
@@ -128,7 +129,13 @@ export class OutlineSidebar {
     this.toggleBtn.innerHTML = '\u25C0'; // left arrow
     this.toggleBtn.tabIndex = -1;
     this.toggleBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    this.toggleBtn.addEventListener('click', () => this.toggle());
+    this.toggleBtn.addEventListener('click', () => {
+      if (this.onToggle) {
+        this.onToggle();
+      } else {
+        this.toggle();
+      }
+    });
     this.header.appendChild(this.toggleBtn);
 
     this.element.appendChild(this.header);
@@ -394,7 +401,11 @@ export class OutlineSidebar {
    * Toggle sidebar collapsed state.
    */
   toggle() {
-    this.collapsed = !this.collapsed;
+    this.setCollapsed(!this.collapsed);
+  }
+
+  setCollapsed(collapsed) {
+    this.collapsed = collapsed;
     this.element.classList.toggle('collapsed', this.collapsed);
 
     if (this.collapsed) {

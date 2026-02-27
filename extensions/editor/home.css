@@ -404,6 +404,10 @@ body {
   display: none;
 }
 
+.annotations-pane.collapsed .annotation-add-btn {
+  display: none;
+}
+
 .annotations-pane.collapsed .sidebar-header {
   justify-content: center;
   padding: 8px 4px;
@@ -417,6 +421,26 @@ body {
   border-radius: 8px;
   min-width: 18px;
   text-align: center;
+}
+
+.annotation-add-btn {
+  background: none;
+  border: 1px solid var(--base02);
+  color: var(--base04);
+  cursor: pointer;
+  padding: 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 3px;
+  transition: all 0.1s;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.annotation-add-btn:hover {
+  background: var(--base02);
+  color: var(--base05);
 }
 
 .annotations-content {

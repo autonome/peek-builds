@@ -161,6 +161,49 @@
       border-top: 1px solid var(--base02); min-height: 22px;
       font-family: var(--theme-font-mono); font-size: 12px;
     }
+    /* Annotations / Notes pane styles */
+    .annotations-pane {
+      display: flex; flex-direction: column; width: 260px; min-width: 260px;
+      background: var(--base00); border-left: 1px solid var(--base02);
+      font-family: var(--theme-font-mono); font-size: 12px;
+    }
+    .annotations-pane.collapsed { width: 32px; min-width: 32px; }
+    .annotations-pane.collapsed .annotations-content { display: none; }
+    .annotations-pane.collapsed .sidebar-title { display: none; }
+    .annotations-content { flex: 1; overflow-y: auto; padding: 8px 0; }
+    .annotations-empty { padding: 12px; color: var(--base03); font-style: italic; }
+    .annotations-count {
+      font-size: 10px; background: var(--base02); color: var(--base04);
+      padding: 1px 6px; border-radius: 8px; margin-left: 6px;
+    }
+    .annotation-item {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--base01);
+    }
+    .annotation-item:hover { background: var(--base01); }
+    .annotation-color {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      margin-top: 4px; flex-shrink: 0;
+    }
+    .annotation-text-wrap { flex: 1; min-width: 0; }
+    .annotation-text {
+      color: var(--base05); font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .annotation-note { color: var(--base03); font-size: 11px; margin-top: 2px; }
+    .annotation-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .annotation-btn {
+      background: none; border: 1px solid var(--base02); color: var(--base04);
+      font-size: 10px; padding: 2px 6px; border-radius: 3px; cursor: pointer;
+    }
+    .annotation-btn-delete { color: var(--base08); }
+    .annotation-add-btn {
+      background: none; border: 1px solid var(--base02); color: var(--base04);
+      font-size: 14px; padding: 0 6px; border-radius: 3px; cursor: pointer;
+      margin-left: auto;
+    }
+    .cm-highlight-mark { border-radius: 2px; }
+    .pane-container { display: flex; flex: 1; overflow: hidden; }
   </style>
 </head>
 <body>
@@ -272,6 +315,54 @@ Conclusion text.
 
     // Helper: save status visibility
     window.setSaveStatusVisible = (v) => layout.setSaveStatusVisible(v);
+
+    // Helper: get annotations pane state
+    window.getAnnotationsState = () => ({
+      visible: layout.paneVisibility.annotations,
+      highlightCount: layout.annotationsPane.highlights.length,
+      element: layout.annotationsPane.getElement(),
+    });
+
+    // Helper: toggle annotations pane
+    window.toggleAnnotations = () => layout.togglePane('annotations');
+
+    // Helper: add highlight from selection (programmatic)
+    window.addHighlightFromSelection = () => layout._addHighlightFromSelection();
+
+    // Helper: get highlights from state (via annotations pane which tracks them)
+    window.getEditorHighlights = () => {
+      if (!layout.cmEditor) return [];
+      return layout.annotationsPane.highlights;
+    };
+
+    // Helper: select text range in editor
+    window.selectRange = (from, to) => {
+      if (!layout.cmEditor) return;
+      layout.cmEditor.dispatch({
+        selection: { anchor: from, head: to },
+      });
+    };
+
+    // Helper: set cursor position
+    window.setCursor = (pos) => {
+      if (!layout.cmEditor) return;
+      layout.cmEditor.dispatch({
+        selection: { anchor: pos },
+      });
+    };
+
+    // Helper: get annotation items from DOM
+    window.getAnnotationItems = () => {
+      const items = document.querySelectorAll('.annotation-item');
+      return Array.from(items).map(item => ({
+        text: item.querySelector('.annotation-text')?.textContent || '',
+        note: item.querySelector('.annotation-note')?.textContent || '',
+        hasEditBtn: !!item.querySelector('.annotation-btn'),
+      }));
+    };
+
+    // Helper: update highlight note
+    window.updateHighlightNote = (id, note) => layout._updateHighlightNote(id, note);
 
     // Signal ready
     document.body.dataset.ready = 'true';

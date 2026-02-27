@@ -67,7 +67,7 @@ export class EditorLayout {
 
     // Pane state — outline and preview start collapsed
     this.paneVisibility = { outline: true, editor: true, preview: true, annotations: false };
-    this.paneCollapsed = { outline: true, preview: true }; // collapsed = narrow strip, not hidden
+    this.paneCollapsed = { outline: true, preview: true };
     this.paneOrder = ['outline', 'editor', 'preview']; // annotations always far right
     this.paneWidths = {}; // user-resized widths, persisted
     this.maximizedPane = null; // null or pane name
@@ -120,6 +120,7 @@ export class EditorLayout {
       container: document.createElement('div'), // temporary, will reparent
       onHeaderClick: (header) => this.jumpToHeader(header),
       onFoldToggle: (header, shouldFold) => this.handleOutlineFoldToggle(header, shouldFold),
+      onToggle: () => this.togglePane('outline'),
     });
 
     // Create editor container (center)
@@ -153,7 +154,7 @@ export class EditorLayout {
     this.previewToggleBtn = this._createToggleBtn('Preview', 'Toggle preview (Cmd+Shift+P)', () => this.togglePane('preview'));
     sidebarToggles.appendChild(this.previewToggleBtn);
 
-    this.annotationsToggleBtn = this._createToggleBtn('Notes', 'Toggle annotations (Cmd+Shift+H)', () => this.togglePane('annotations'));
+    this.annotationsToggleBtn = this._createToggleBtn('Notes', 'Toggle notes (Cmd+Shift+H)', () => this.togglePane('annotations'));
     sidebarToggles.appendChild(this.annotationsToggleBtn);
 
     // Pane order cycle button
@@ -188,6 +189,7 @@ export class EditorLayout {
     // Create preview sidebar
     this.previewSidebar = new PreviewSidebar({
       container: document.createElement('div'), // temporary
+      onToggle: () => this.togglePane('preview'),
     });
 
     // Create annotations pane (always far right)
@@ -196,6 +198,8 @@ export class EditorLayout {
       onAnnotationClick: (hl) => this._jumpToHighlight(hl),
       onAnnotationDelete: (id) => this._removeHighlight(id),
       onAnnotationEdit: (id, note) => this._updateHighlightNote(id, note),
+      onAddNote: () => this._addHighlightFromSelection(),
+      onToggle: () => this.togglePane('annotations'),
     });
 
     // Build pane layout
@@ -383,13 +387,10 @@ export class EditorLayout {
     const rightEl = this._getPaneElement(rightPaneName);
     if (!leftEl || !rightEl) return;
 
-    // Determine which pane to resize (the fixed-width one, not the flex:1 editor)
     const leftIsEditor = leftPaneName === 'editor';
-    const rightIsEditor = rightPaneName === 'editor';
-    // If editor is on the left, resize the right pane (invert delta)
-    // If editor is on the right (or neither is editor), resize the left pane
     const targetEl = leftIsEditor ? rightEl : leftEl;
-    const invertDelta = leftIsEditor; // dragging right should shrink the right pane
+    const invertDelta = leftIsEditor;
+    const targetPaneName = leftIsEditor ? rightPaneName : leftPaneName;
 
     resizer.classList.add('dragging');
     const startX = startEvent.clientX;
@@ -404,8 +405,6 @@ export class EditorLayout {
       targetEl.style.width = `${newWidth}px`;
       targetEl.style.minWidth = `${newWidth}px`;
     };
-
-    const targetPaneName = leftIsEditor ? rightPaneName : leftPaneName;
 
     const onMouseUp = () => {
       resizer.classList.remove('dragging');
@@ -524,10 +523,8 @@ export class EditorLayout {
 
       if (name === 'outline') {
         const collapsed = this.paneCollapsed.outline;
-        el.classList.toggle('collapsed', collapsed);
-        this.outlineSidebar.collapsed = collapsed;
+        this.outlineSidebar.setCollapsed(collapsed);
         if (!collapsed) {
-          // Apply user width or CSS default
           if (this.paneWidths.outline) {
             el.style.width = `${this.paneWidths.outline}px`;
             el.style.minWidth = '80px';
@@ -541,8 +538,7 @@ export class EditorLayout {
         }
       } else if (name === 'preview') {
         const collapsed = this.paneCollapsed.preview;
-        el.classList.toggle('collapsed', collapsed);
-        this.previewSidebar.collapsed = collapsed;
+        this.previewSidebar.setCollapsed(collapsed);
         if (!collapsed) {
           if (this.paneWidths.preview) {
             el.style.width = `${this.paneWidths.preview}px`;
@@ -684,13 +680,13 @@ export class EditorLayout {
         e.preventDefault();
         this.togglePane('preview');
       }
-      // Cmd+Shift+H: Toggle annotations
+      // Cmd+Shift+H: Toggle notes pane
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
         e.preventDefault();
         this.togglePane('annotations');
       }
-      // Cmd+H: Add highlight on selected text
-      if ((e.metaKey || e.ctrlKey) && e.key === 'h' && !e.shiftKey) {
+      // Cmd+Shift+L: Add note at selection/cursor
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'l') {
         e.preventDefault();
         this._addHighlightFromSelection();
       }
@@ -708,14 +704,21 @@ export class EditorLayout {
 
     const state = this.cmEditor.state;
     const sel = state.selection.main;
-    if (sel.from === sel.to) return; // No selection
 
-    const text = state.doc.sliceString(sel.from, sel.to);
+    // If no selection, anchor to the current line
+    let from = sel.from;
+    let to = sel.to;
+    if (from === to) {
+      const line = state.doc.lineAt(from);
+      from = line.from;
+      to = line.to;
+    }
+
     const highlight = {
       id: generateHighlightId(),
-      from: sel.from,
-      to: sel.to,
-      text,
+      from,
+      to,
+      text: '', // notes don't store selected text
       note: '',
       color: nextHighlightColor(),
     };
@@ -724,7 +727,7 @@ export class EditorLayout {
     this._syncAnnotationsPane();
     this._persistHighlights();
 
-    // Auto-show annotations pane
+    // Auto-show notes pane
     if (!this.paneVisibility.annotations) {
       this.togglePane('annotations');
     }
@@ -756,7 +759,7 @@ export class EditorLayout {
   _syncAnnotationsPane() {
     if (!this.cmEditor || !this.annotationsPane) return;
     const highlights = getHighlights(this.cmEditor.state);
-    this.annotationsPane.update(highlights);
+    this.annotationsPane.update(highlights, this.cmEditor.state.doc);
   }
 
   _persistHighlights() {

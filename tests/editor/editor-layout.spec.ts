@@ -1037,4 +1037,477 @@ Conclusion.
       expect(hasFoldGutter).toBe(true);
     });
   });
+
+  // ==========================================================================
+  // Notes and Highlights
+  // ==========================================================================
+
+  test.describe('Notes and Highlights', () => {
+    test('Cmd+Shift+H toggles notes pane', async () => {
+      const wasBefore = await page.evaluate(() => window.getAnnotationsState().visible);
+
+      await page.keyboard.press('Meta+Shift+h');
+
+      const isAfter = await page.evaluate(() => window.getAnnotationsState().visible);
+      expect(isAfter).toBe(!wasBefore);
+
+      // Toggle back to original state
+      await page.keyboard.press('Meta+Shift+h');
+      const restored = await page.evaluate(() => window.getAnnotationsState().visible);
+      expect(restored).toBe(wasBefore);
+    });
+
+    test('notes pane title says Notes', async () => {
+      // Open notes pane
+      await page.evaluate(() => {
+        if (!window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+
+      const title = await page.evaluate(() => {
+        const el = document.querySelector('.annotations-pane .sidebar-title');
+        return el?.textContent;
+      });
+      expect(title).toBe('Notes');
+
+      // Close pane
+      await page.evaluate(() => {
+        if (window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+    });
+
+    test('Cmd+Shift+L with selection creates highlight with empty text', async () => {
+      // Set known content and select some text
+      await page.evaluate(() => {
+        window.setEditorContent('Hello World\nSecond line\nThird line');
+      });
+
+      // Wait for content to settle
+      await page.waitForFunction(() => window.getEditorContent() === 'Hello World\nSecond line\nThird line');
+
+      // Select "World" (chars 6-11)
+      await page.evaluate(() => window.selectRange(6, 11));
+
+      // Press Cmd+Shift+L to add highlight
+      await page.keyboard.press('Meta+Shift+l');
+
+      // Wait for highlight to appear
+      await page.waitForFunction(() => window.getEditorHighlights().length > 0);
+
+      const highlights = await page.evaluate(() => window.getEditorHighlights());
+      expect(highlights.length).toBeGreaterThanOrEqual(1);
+
+      const hl = highlights[highlights.length - 1];
+      expect(hl.text).toBe('');
+      expect(hl.from).toBe(6);
+      expect(hl.to).toBe(11);
+
+      // Restore content
+      await page.evaluate(() => {
+        window.setEditorContent(`# Introduction
+
+Welcome to the document.
+
+## Section One
+
+Content in section one.
+
+### Subsection 1.1
+
+Details about subsection 1.1.
+
+### Subsection 1.2
+
+Details about subsection 1.2.
+
+## Section Two
+
+Content in section two.
+
+### Subsection 2.1
+
+More details here.
+
+## Section Three
+
+Final section content.
+
+### Subsection 3.1
+
+Some code:
+
+\`\`\`javascript
+function hello() {
+  console.log('world');
+}
+\`\`\`
+
+### Subsection 3.2
+
+Conclusion text.
+`);
+        if (window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+    });
+
+    test('Cmd+Shift+L without selection anchors to current line', async () => {
+      // Set known content
+      await page.evaluate(() => {
+        window.setEditorContent('First line\nSecond line\nThird line');
+      });
+      await page.waitForFunction(() => window.getEditorContent() === 'First line\nSecond line\nThird line');
+
+      // Place cursor in "Second line" (position 15, no selection)
+      await page.evaluate(() => window.setCursor(15));
+
+      // Press Cmd+Shift+L with no selection
+      await page.keyboard.press('Meta+Shift+l');
+
+      // Wait for highlight
+      await page.waitForFunction(() => window.getEditorHighlights().length > 0);
+
+      const highlights = await page.evaluate(() => window.getEditorHighlights());
+      const hl = highlights[highlights.length - 1];
+      expect(hl.text).toBe('');
+      // Should cover the full "Second line" -- from=11, to=22
+      expect(hl.from).toBe(11);
+      expect(hl.to).toBe(22);
+
+      // Restore content
+      await page.evaluate(() => {
+        window.setEditorContent(`# Introduction
+
+Welcome to the document.
+
+## Section One
+
+Content in section one.
+
+### Subsection 1.1
+
+Details about subsection 1.1.
+
+### Subsection 1.2
+
+Details about subsection 1.2.
+
+## Section Two
+
+Content in section two.
+
+### Subsection 2.1
+
+More details here.
+
+## Section Three
+
+Final section content.
+
+### Subsection 3.1
+
+Some code:
+
+\`\`\`javascript
+function hello() {
+  console.log('world');
+}
+\`\`\`
+
+### Subsection 3.2
+
+Conclusion text.
+`);
+        if (window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+    });
+
+    test('notes pane shows "Line N -- highlight" for empty notes', async () => {
+      // Set known content
+      await page.evaluate(() => {
+        window.setEditorContent('Alpha\nBravo\nCharlie');
+      });
+      await page.waitForFunction(() => window.getEditorContent() === 'Alpha\nBravo\nCharlie');
+
+      // Select "Bravo" (from=6, to=11)
+      await page.evaluate(() => window.selectRange(6, 11));
+
+      await page.keyboard.press('Meta+Shift+l');
+
+      // Notes pane should auto-open; wait for annotation items
+      await page.waitForFunction(() => {
+        return document.querySelectorAll('.annotation-item').length > 0;
+      });
+
+      const items = await page.evaluate(() => window.getAnnotationItems());
+      const lastItem = items[items.length - 1];
+      // Should show "Line 2 -- highlight" (Bravo is on line 2)
+      expect(lastItem.text).toContain('Line 2');
+      expect(lastItem.text).toContain('highlight');
+
+      // Restore content and close pane
+      await page.evaluate(() => {
+        window.setEditorContent(`# Introduction
+
+Welcome to the document.
+
+## Section One
+
+Content in section one.
+
+### Subsection 1.1
+
+Details about subsection 1.1.
+
+### Subsection 1.2
+
+Details about subsection 1.2.
+
+## Section Two
+
+Content in section two.
+
+### Subsection 2.1
+
+More details here.
+
+## Section Three
+
+Final section content.
+
+### Subsection 3.1
+
+Some code:
+
+\`\`\`javascript
+function hello() {
+  console.log('world');
+}
+\`\`\`
+
+### Subsection 3.2
+
+Conclusion text.
+`);
+        if (window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+    });
+
+    test('notes pane shows "Line N" with note text for annotated highlights', async () => {
+      // Set known content
+      await page.evaluate(() => {
+        window.setEditorContent('Alpha\nBravo\nCharlie');
+      });
+      await page.waitForFunction(() => window.getEditorContent() === 'Alpha\nBravo\nCharlie');
+
+      // Select "Alpha" (from=0, to=5) and add highlight
+      await page.evaluate(() => window.selectRange(0, 5));
+      await page.keyboard.press('Meta+Shift+l');
+
+      await page.waitForFunction(() => window.getEditorHighlights().length > 0);
+
+      // Add a note to the highlight
+      const hlId = await page.evaluate(() => {
+        const hls = window.getEditorHighlights();
+        return hls[hls.length - 1].id;
+      });
+      await page.evaluate((id) => window.updateHighlightNote(id, 'My note text'), hlId);
+
+      // Wait for annotation items to update
+      await page.waitForFunction(() => {
+        const items = document.querySelectorAll('.annotation-item');
+        return Array.from(items).some(item =>
+          item.querySelector('.annotation-note')?.textContent === 'My note text'
+        );
+      });
+
+      const items = await page.evaluate(() => window.getAnnotationItems());
+      const annotatedItem = items.find(i => i.note === 'My note text');
+      expect(annotatedItem).toBeTruthy();
+      // Should show "Line 1" (not "Line 1 -- highlight")
+      expect(annotatedItem!.text).toBe('Line 1');
+      expect(annotatedItem!.text).not.toContain('highlight');
+
+      // Restore content and close pane
+      await page.evaluate(() => {
+        window.setEditorContent(`# Introduction
+
+Welcome to the document.
+
+## Section One
+
+Content in section one.
+
+### Subsection 1.1
+
+Details about subsection 1.1.
+
+### Subsection 1.2
+
+Details about subsection 1.2.
+
+## Section Two
+
+Content in section two.
+
+### Subsection 2.1
+
+More details here.
+
+## Section Three
+
+Final section content.
+
+### Subsection 3.1
+
+Some code:
+
+\`\`\`javascript
+function hello() {
+  console.log('world');
+}
+\`\`\`
+
+### Subsection 3.2
+
+Conclusion text.
+`);
+        if (window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+    });
+
+    test('notes pane has Edit button on each item', async () => {
+      // Set known content and create a highlight
+      await page.evaluate(() => {
+        window.setEditorContent('Test content line');
+      });
+      await page.waitForFunction(() => window.getEditorContent() === 'Test content line');
+
+      await page.evaluate(() => window.selectRange(0, 4));
+      await page.keyboard.press('Meta+Shift+l');
+
+      await page.waitForFunction(() => {
+        return document.querySelectorAll('.annotation-item').length > 0;
+      });
+
+      const editBtnText = await page.evaluate(() => {
+        const btn = document.querySelector('.annotation-item .annotation-btn');
+        return btn?.textContent;
+      });
+      expect(editBtnText).toBe('Edit');
+
+      // Restore content and close pane
+      await page.evaluate(() => {
+        window.setEditorContent(`# Introduction
+
+Welcome to the document.
+
+## Section One
+
+Content in section one.
+
+### Subsection 1.1
+
+Details about subsection 1.1.
+
+### Subsection 1.2
+
+Details about subsection 1.2.
+
+## Section Two
+
+Content in section two.
+
+### Subsection 2.1
+
+More details here.
+
+## Section Three
+
+Final section content.
+
+### Subsection 3.1
+
+Some code:
+
+\`\`\`javascript
+function hello() {
+  console.log('world');
+}
+\`\`\`
+
+### Subsection 3.2
+
+Conclusion text.
+`);
+        if (window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+    });
+
+    test('Cmd+Shift+L auto-opens notes pane', async () => {
+      // Ensure notes pane is closed
+      await page.evaluate(() => {
+        if (window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+
+      await page.evaluate(() => {
+        window.setEditorContent('Some text to highlight');
+      });
+      await page.waitForFunction(() => window.getEditorContent() === 'Some text to highlight');
+
+      await page.evaluate(() => window.selectRange(0, 4));
+      await page.keyboard.press('Meta+Shift+l');
+
+      // Notes pane should be auto-opened
+      await page.waitForFunction(() => window.getAnnotationsState().visible === true);
+
+      const visible = await page.evaluate(() => window.getAnnotationsState().visible);
+      expect(visible).toBe(true);
+
+      // Restore
+      await page.evaluate(() => {
+        window.setEditorContent(`# Introduction
+
+Welcome to the document.
+
+## Section One
+
+Content in section one.
+
+### Subsection 1.1
+
+Details about subsection 1.1.
+
+### Subsection 1.2
+
+Details about subsection 1.2.
+
+## Section Two
+
+Content in section two.
+
+### Subsection 2.1
+
+More details here.
+
+## Section Three
+
+Final section content.
+
+### Subsection 3.1
+
+Some code:
+
+\`\`\`javascript
+function hello() {
+  console.log('world');
+}
+\`\`\`
+
+### Subsection 3.2
+
+Conclusion text.
+`);
+        if (window.getAnnotationsState().visible) window.toggleAnnotations();
+      });
+    });
+  });
 });

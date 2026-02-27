@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <title>Timers Extension</title>
+</head>
+<body>
+<script type="module">
+  import extension from './background.js';
+
+  const api = window.app;
+  const extId = extension.id;
+
+  // Initialize extension BEFORE signaling ready
+  // (lazy loading waits for ext:ready, so handlers must be registered first)
+  if (extension.init) {
+    await extension.init();
+  }
+
+  // Signal ready to main process
+  api.publish('ext:ready', {
+    id: extId,
+    manifest: {
+      id: extension.id,
+      labels: extension.labels,
+      version: '1.0.0'
+    }
+  }, api.scopes.SYSTEM);
+
+  // Handle shutdown request from main process
+  api.subscribe('app:shutdown', () => {
+    if (extension.uninit) {
+      extension.uninit();
+    }
+  }, api.scopes.SYSTEM);
+
+  // Handle extension-specific shutdown
+  api.subscribe(`ext:${extId}:shutdown`, () => {
+    if (extension.uninit) {
+      extension.uninit();
+    }
+  }, api.scopes.SYSTEM);
+</script>
+</body>
+</html>

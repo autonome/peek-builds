@@ -1,0 +1,217 @@
+/* Import theme variables */
+@import url('peek://theme/variables.css');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--theme-font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+body {
+  background: var(--base00);
+  color: var(--base05);
+  min-height: 100vh;
+}
+
+/* Header */
+.header-container {
+  padding: 12px 16px 0 16px;
+}
+
+.page-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--base05);
+  margin: 0;
+}
+
+/* Sections */
+.section {
+  padding: 0 16px;
+  margin-top: 16px;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--base04);
+  margin-bottom: 8px;
+}
+
+.active-section .section-label {
+  color: var(--base0A);
+}
+
+/* Cards container */
+.cards {
+  /* peek-grid handles layout */
+}
+
+/* Timer card base */
+peek-card.timer-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-hover-bg: var(--base02);
+  --peek-card-border: transparent;
+  --peek-card-radius: 6px;
+  --peek-card-padding: 10px;
+  --peek-card-gap: 6px;
+  max-width: 340px;
+}
+
+/* Active timer cards */
+peek-card.active-timer {
+  --peek-card-bg: var(--base01);
+  --peek-card-border: var(--base0A);
+}
+
+peek-card.paused-timer {
+  --peek-card-border: var(--base03);
+  opacity: 0.85;
+}
+
+/* Timer badge */
+.timer-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  color: var(--base00);
+}
+
+.timer-badge-countdown {
+  background: var(--base0D);
+}
+
+.timer-badge-alarm {
+  background: var(--base08);
+}
+
+.timer-badge-stopwatch {
+  background: var(--base0B);
+}
+
+.timer-badge-interval {
+  background: var(--base0E);
+}
+
+/* Status badge */
+.status-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.status-badge.paused {
+  background: rgba(255, 180, 60, 0.2);
+  color: var(--base0A);
+}
+
+/* Card title */
+.card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--base05);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Timer display (large time readout) */
+.timer-display {
+  font-size: 28px;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  color: var(--base05);
+  letter-spacing: 0.02em;
+  padding: 4px 0;
+}
+
+.active-timer .timer-display {
+  color: var(--base0A);
+}
+
+.paused-timer .timer-display {
+  color: var(--base04);
+}
+
+/* Interval count */
+.interval-count {
+  font-size: 11px;
+  color: var(--base04);
+}
+
+/* Timer footer */
+.timer-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.timer-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* Card meta (footer text) */
+.card-meta {
+  font-size: 11px;
+  color: var(--base03);
+}
+
+/* Completed/stopped cards — muted */
+peek-card.timer-card:not(.active-timer) {
+  opacity: 0.65;
+}
+
+peek-card.timer-card:not(.active-timer):hover {
+  opacity: 0.9;
+}
+
+peek-card.timer-card:not(.active-timer) .timer-display {
+  font-size: 20px;
+  color: var(--base04);
+}
+
+/* Empty state */
+.empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--base03);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.empty-state code {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 4px;
+  font-family: var(--theme-font-mono, monospace);
+  font-size: 12px;
+  color: var(--base0D);
+}
+
+/* List view mode */
+peek-grid.cards[view-mode="list"] peek-card {
+  max-width: none;
+}
