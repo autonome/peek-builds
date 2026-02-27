@@ -1933,6 +1933,7 @@ api.subscribe('entities:extracted', (msg) => {
     if (msg.url === currentUrl) {
       currentPageEntities = msg.entities;
       renderEntities(currentPageEntities);
+      updatePositions();
     }
   } catch {
     // webview not ready
@@ -1956,6 +1957,7 @@ api.subscribe('entities:get-for-url:response', (msg) => {
         };
       });
       renderEntities(currentPageEntities);
+      updatePositions();
     }
   } catch {
     // webview not ready
@@ -2039,6 +2041,7 @@ async function extractSimpleEntities() {
     if (extracted && extracted.length > 0 && currentPageEntities.length === 0) {
       currentPageEntities = extracted;
       renderEntities(extracted);
+      updatePositions();
     }
   } catch (err) {
     DEBUG && console.log('[page] Simple entity extraction failed:', err.message);
@@ -2648,8 +2651,8 @@ async function loadExtensionsPanel() {
       }
     }
 
-    // Filter to only enabled/loaded extensions
-    const enabledExts = extensions.filter(ext => ext.enabled && ext.loaded);
+    // Filter to only enabled extensions (loaded state is a race condition at startup)
+    const enabledExts = extensions.filter(ext => ext.enabled);
 
     extensionsBody.innerHTML = '';
 
@@ -2659,7 +2662,7 @@ async function loadExtensionsPanel() {
     if (enabledExts.length === 0) {
       const emptyEl = document.createElement('div');
       emptyEl.className = 'ext-empty';
-      emptyEl.textContent = 'No extensions loaded';
+      emptyEl.textContent = 'No extensions enabled';
       extensionsBody.appendChild(emptyEl);
     } else {
       for (const ext of enabledExts) {
