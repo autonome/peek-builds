@@ -55,12 +55,20 @@ function createMockWindowProvider(windows: MockWindow[]): WindowProvider {
 // Import will be done after build
 let izuiState: typeof import('./izui-state.js');
 
+// Import escPolicy from the shared module (pure function, no Electron deps)
+// At runtime (from dist/backend/electron/) the path is ../../../app/lib/izui-state.js
+let escPolicy: (sessionState: string, role: string) => 'close' | 'close-and-restore' | 'nothing';
+
 describe('IZUI State Coordinator Tests', () => {
   let mockWindows: MockWindow[];
 
   before(async () => {
     // Dynamic import of the compiled module
     izuiState = await import('./izui-state.js');
+    // Import escPolicy from shared module (pure function, no Electron deps)
+    // @ts-expect-error — shared JS module in app/lib, no .d.ts in tsconfig rootDir
+    const shared = await import('../../../app/lib/izui-state.js');
+    escPolicy = shared.escPolicy;
   });
 
   beforeEach(() => {
@@ -669,6 +677,119 @@ describe('IZUI State Coordinator Tests', () => {
       const coordinator1 = izuiState.getIzuiCoordinator();
       const coordinator2 = izuiState.getIzuiCoordinator();
       assert.strictEqual(coordinator1, coordinator2);
+    });
+  });
+
+  describe('escPolicy', () => {
+    // Transient UI roles always close regardless of session state
+    it('should close quick-view in any session state', () => {
+      assert.strictEqual(escPolicy('active', 'quick-view'), 'close');
+      assert.strictEqual(escPolicy('transient', 'quick-view'), 'close');
+      assert.strictEqual(escPolicy('idle', 'quick-view'), 'close');
+    });
+
+    it('should close palette in any session state', () => {
+      assert.strictEqual(escPolicy('active', 'palette'), 'close');
+      assert.strictEqual(escPolicy('transient', 'palette'), 'close');
+      assert.strictEqual(escPolicy('idle', 'palette'), 'close');
+    });
+
+    it('should close utility in any session state', () => {
+      assert.strictEqual(escPolicy('active', 'utility'), 'close');
+      assert.strictEqual(escPolicy('transient', 'utility'), 'close');
+      assert.strictEqual(escPolicy('idle', 'utility'), 'close');
+    });
+
+    it('should close-and-restore overlay in any session state', () => {
+      assert.strictEqual(escPolicy('active', 'overlay'), 'close-and-restore');
+      assert.strictEqual(escPolicy('transient', 'overlay'), 'close-and-restore');
+      assert.strictEqual(escPolicy('idle', 'overlay'), 'close-and-restore');
+    });
+
+    // Content roles: close in transient, nothing in active
+    it('should close content in transient session', () => {
+      assert.strictEqual(escPolicy('transient', 'content'), 'close');
+    });
+
+    it('should NOT close content in active session', () => {
+      assert.strictEqual(escPolicy('active', 'content'), 'nothing');
+    });
+
+    it('should close workspace in transient session', () => {
+      assert.strictEqual(escPolicy('transient', 'workspace'), 'close');
+    });
+
+    it('should NOT close workspace in active session', () => {
+      assert.strictEqual(escPolicy('active', 'workspace'), 'nothing');
+    });
+
+    // REGRESSION TEST: child-content must NOT close in active sessions
+    // This was a bug where child-content always returned 'close' regardless
+    // of session state, causing root-level content windows to close on ESC
+    // when the user was actively working in the app.
+    it('should close child-content in transient session', () => {
+      assert.strictEqual(escPolicy('transient', 'child-content'), 'close');
+    });
+
+    it('should NOT close child-content in active session (regression test)', () => {
+      assert.strictEqual(escPolicy('active', 'child-content'), 'nothing',
+        'child-content windows must not close on ESC in active sessions — ' +
+        'they are user-opened content, not transient UI');
+    });
+
+    it('should NOT close child-content in idle session', () => {
+      assert.strictEqual(escPolicy('idle', 'child-content'), 'nothing');
+    });
+
+    // Idle state: content roles should not close
+    it('should NOT close content in idle state', () => {
+      assert.strictEqual(escPolicy('idle', 'content'), 'nothing');
+    });
+
+    it('should NOT close workspace in idle state', () => {
+      assert.strictEqual(escPolicy('idle', 'workspace'), 'nothing');
+    });
+  });
+
+  describe('ESC on root content window in active session (regression)', () => {
+    it('should not close a content window when session is active', () => {
+      // Simulate: user is working in Peek (active session), has a content window open
+      const coordinator = izuiState.getIzuiCoordinator();
+      // appFocused defaults to true → active session
+      coordinator.evaluateOnShow();
+      coordinator.pushWindow(1); // workspace window
+      coordinator.pushWindow(2); // content window opened from workspace
+
+      // Verify session is active
+      assert.strictEqual(coordinator.getState(), 'active');
+      assert.strictEqual(coordinator.isTransient(), false);
+
+      // escPolicy for child-content in active session should be 'nothing'
+      const action = escPolicy(coordinator.getState(), 'child-content');
+      assert.strictEqual(action, 'nothing',
+        'ESC on child-content in active session must return nothing (not close)');
+
+      // Same for plain content role
+      const contentAction = escPolicy(coordinator.getState(), 'content');
+      assert.strictEqual(contentAction, 'nothing');
+    });
+
+    it('should close a content window when session is transient', () => {
+      // Simulate: user invoked from background (transient session)
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.setAppFocused(false);
+      coordinator.evaluateOnShow();
+      coordinator.pushWindow(1);
+      coordinator.pushWindow(2);
+
+      // Verify session is transient
+      assert.strictEqual(coordinator.getState(), 'transient');
+      assert.strictEqual(coordinator.isTransient(), true);
+
+      // In transient mode, ESC should close all content roles
+      assert.strictEqual(escPolicy(coordinator.getState(), 'child-content'), 'close');
+      assert.strictEqual(escPolicy(coordinator.getState(), 'content'), 'close');
+      assert.strictEqual(escPolicy(coordinator.getState(), 'workspace'), 'close');
     });
   });
 });

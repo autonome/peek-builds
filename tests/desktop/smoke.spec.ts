@@ -686,6 +686,67 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     }
   });
 
+  test('active mode: ESC on child-content window does NOT close it (regression)', async () => {
+    const bgWindow = sharedBgWindow;
+
+    // First open a workspace window (like groups) to establish an active session
+    const workspaceResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+        role: 'workspace',
+        width: 400,
+        height: 300,
+      });
+    });
+    expect(workspaceResult.success).toBe(true);
+    const workspaceWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    expect(workspaceWindow).toBeTruthy();
+    await workspaceWindow.waitForLoadState('domcontentloaded');
+
+    // Verify session is active
+    const izuiState = await bgWindow.evaluate(async () => {
+      return await (window as any).app.izui.getState();
+    });
+    expect(izuiState).toBe('active');
+
+    // Now open a child-content window (simulates opening a web page from groups)
+    // Using the workspace window as the opener gives it child-content role
+    const contentResult = await workspaceWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/search/home.html', {
+        role: 'child-content',
+        width: 400,
+        height: 300,
+      });
+    });
+    expect(contentResult.success).toBe(true);
+    const contentWindow = await sharedApp.getWindow('search/home.html', 5000);
+    expect(contentWindow).toBeTruthy();
+    await contentWindow.waitForLoadState('domcontentloaded');
+
+    // Press ESC on the child-content window
+    await contentWindow.keyboard.press('Escape');
+
+    // Wait for async ESC handling
+    await new Promise(resolve => setTimeout(resolve, 600));
+
+    // Verify child-content window is still alive — this is the regression test.
+    // Before the fix, child-content always closed on ESC regardless of session state.
+    const stillAlive = await contentWindow.evaluate(() => true).catch(() => false);
+    expect(stillAlive).toBe(true);
+
+    // Clean up
+    for (const id of [contentResult.id, workspaceResult.id]) {
+      if (id) {
+        try {
+          await bgWindow.evaluate(async (wid: number) => {
+            return await (window as any).app.window.close(wid);
+          }, id);
+        } catch {
+          // Window may already be closed
+        }
+      }
+    }
+  });
+
   test('navigate mode: timeout does not close window', async () => {
     const bgWindow = sharedBgWindow;
 

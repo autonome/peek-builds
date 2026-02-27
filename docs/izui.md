@@ -183,6 +183,8 @@ Tests cover:
 - Window exclusion in focus checks
 - Overlay mode and window restoration
 - Complex multi-window workflows
+- ESC policy for all role/session-state combinations
+- Regression: child-content windows not closing in active sessions
 
 ## Files
 

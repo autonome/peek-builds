@@ -103,12 +103,15 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
  * ESC policy: given session state and window role, determine what to do.
  * Pure function — no side effects.
  */
-function escPolicy(sessionState: string, role: string): 'close' | 'close-and-restore' | 'nothing' {
+export function escPolicy(sessionState: string, role: string): 'close' | 'close-and-restore' | 'nothing' {
   // These roles always close regardless of session state
   if (['quick-view', 'palette', 'utility'].includes(role)) return 'close';
   if (role === 'overlay') return 'close-and-restore';
-  if (role === 'child-content') return 'close';
-  // workspace and content: only close in transient sessions
+  // child-content, workspace, and content: only close in transient sessions.
+  // In active sessions, ESC navigates internally (renderer handles it) but
+  // never closes the window — even child-content windows are user-opened
+  // content that should persist. Root-level content windows must not close
+  // on ESC in an active session.
   if (sessionState === 'transient') return 'close';
   return 'nothing';
 }
