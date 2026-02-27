@@ -280,7 +280,7 @@ export class EditorLayout {
       const paneName = this.paneOrder[i];
       const el = paneElements[paneName];
       if (el) {
-        el.style.order = String(i);
+        el.style.order = String(i * 2);
         this.paneContainer.appendChild(el);
       }
 
@@ -288,7 +288,7 @@ export class EditorLayout {
       if (i < this.paneOrder.length - 1) {
         const resizerKey = `${this.paneOrder[i]}-${this.paneOrder[i + 1]}`;
         const resizer = this._createResizer(resizerKey);
-        resizer.style.order = String(i) + '.5';
+        resizer.style.order = String(i * 2 + 1);
         resizer.dataset.leftPane = this.paneOrder[i];
         resizer.dataset.rightPane = this.paneOrder[i + 1];
         this.paneContainer.appendChild(resizer);
@@ -352,6 +352,15 @@ export class EditorLayout {
     const startX = startEvent.clientX;
     const startLeftWidth = leftEl.offsetWidth;
     const startRightWidth = rightEl.offsetWidth;
+
+    // Override flex on both panes so explicit widths are respected
+    const prevLeftFlex = leftEl.style.flex;
+    const prevRightFlex = rightEl.style.flex;
+    leftEl.style.flex = 'none';
+    rightEl.style.flex = 'none';
+    // Set initial widths to current computed sizes
+    leftEl.style.width = `${startLeftWidth}px`;
+    rightEl.style.width = `${startRightWidth}px`;
 
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
@@ -435,7 +444,6 @@ export class EditorLayout {
       el.style.width = '';
       el.style.minWidth = '';
     }
-    this.paneContainer.querySelectorAll('.resizer').forEach(r => r.style.display = '');
     this._applyVisibility();
   }
 
@@ -512,6 +520,14 @@ export class EditorLayout {
       this.annotationsPane.getElement().style.display = this.paneVisibility.annotations ? '' : 'none';
       this.annotationsResizer.style.display = this.paneVisibility.annotations ? '' : 'none';
     }
+
+    // Hide resizers between hidden panes
+    this.paneContainer.querySelectorAll('.resizer').forEach(r => {
+      const left = r.dataset.leftPane;
+      const right = r.dataset.rightPane;
+      const bothVisible = this.paneVisibility[left] && this.paneVisibility[right];
+      r.style.display = bothVisible ? '' : 'none';
+    });
 
     // Update toggle button states
     this.outlineToggleBtn.classList.toggle('active', this.paneVisibility.outline);
