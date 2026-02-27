@@ -174,7 +174,7 @@ export class EditorLayout {
     this.previewToggleBtn = this._createToggleBtn('Preview', 'Toggle preview (Cmd+Shift+P)', () => this.togglePane('preview'));
     sidebarToggles.appendChild(this.previewToggleBtn);
 
-    this.annotationsToggleBtn = this._createToggleBtn('Notes', 'Toggle annotations (Cmd+Shift+H)', () => this.togglePane('annotations'));
+    this.annotationsToggleBtn = this._createToggleBtn('Notes', 'Toggle notes (Cmd+Shift+H)', () => this.togglePane('annotations'));
     sidebarToggles.appendChild(this.annotationsToggleBtn);
 
     // Pane order cycle button
@@ -218,6 +218,7 @@ export class EditorLayout {
       onAnnotationClick: (hl) => this._jumpToHighlight(hl),
       onAnnotationDelete: (id) => this._removeHighlight(id),
       onAnnotationEdit: (id, note) => this._updateHighlightNote(id, note),
+      onAddNote: () => this._addHighlightFromSelection(),
       onToggle: () => this.togglePane('annotations'),
     });
 
@@ -696,13 +697,13 @@ export class EditorLayout {
         e.preventDefault();
         this.togglePane('preview');
       }
-      // Cmd+Shift+H: Toggle annotations
+      // Cmd+Shift+H: Toggle notes pane
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
         e.preventDefault();
         this.togglePane('annotations');
       }
-      // Cmd+H: Add highlight on selected text
-      if ((e.metaKey || e.ctrlKey) && e.key === 'h' && !e.shiftKey) {
+      // Cmd+Shift+L: Add note at selection/cursor
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'l') {
         e.preventDefault();
         this._addHighlightFromSelection();
       }
@@ -720,14 +721,24 @@ export class EditorLayout {
 
     const state = this.cmEditor.state;
     const sel = state.selection.main;
-    if (sel.from === sel.to) return; // No selection
 
-    const text = state.doc.sliceString(sel.from, sel.to);
+    let from, to;
+    if (sel.from !== sel.to) {
+      // Has selection — anchor to selection range
+      from = sel.from;
+      to = sel.to;
+    } else {
+      // No selection — anchor to current line
+      const line = state.doc.lineAt(sel.from);
+      from = line.from;
+      to = line.to;
+    }
+
     const highlight = {
       id: generateHighlightId(),
-      from: sel.from,
-      to: sel.to,
-      text,
+      from,
+      to,
+      text: '', // Notes don't store selected text
       note: '',
       color: nextHighlightColor(),
     };
@@ -771,7 +782,7 @@ export class EditorLayout {
   _syncAnnotationsPane() {
     if (!this.cmEditor || !this.annotationsPane) return;
     const highlights = getHighlights(this.cmEditor.state);
-    this.annotationsPane.update(highlights);
+    this.annotationsPane.update(highlights, this.cmEditor.state.doc);
   }
 
   _persistHighlights() {

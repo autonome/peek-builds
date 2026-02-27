@@ -391,6 +391,25 @@ body {
   text-align: center;
 }
 
+.annotation-add-btn {
+  background: var(--base02);
+  border: none;
+  color: var(--base04);
+  cursor: pointer;
+  padding: 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 3px;
+  transition: all 0.1s;
+  margin-left: auto;
+}
+
+.annotation-add-btn:hover {
+  background: var(--base03);
+  color: var(--base05);
+}
+
 .annotations-content {
   flex: 1;
   overflow-y: auto;
