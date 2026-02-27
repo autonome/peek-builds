@@ -65,9 +65,11 @@ export class EditorLayout {
     this.originalContainerStyles = '';
     this.cmdSuggestionsCleanup = null;
 
-    // Pane state
-    this.paneVisibility = { outline: false, editor: true, preview: false, annotations: false };
+    // Pane state — outline and preview start collapsed
+    this.paneVisibility = { outline: true, editor: true, preview: true, annotations: false };
+    this.paneCollapsed = { outline: true, preview: true }; // collapsed = narrow strip, not hidden
     this.paneOrder = ['outline', 'editor', 'preview']; // annotations always far right
+    this.paneWidths = {}; // user-resized widths, persisted
     this.maximizedPane = null; // null or pane name
 
     // Scroll sync state
@@ -84,15 +86,23 @@ export class EditorLayout {
     if (prefs.paneVisibility) {
       this.paneVisibility = { ...this.paneVisibility, ...prefs.paneVisibility };
     }
+    if (prefs.paneCollapsed) {
+      this.paneCollapsed = { ...this.paneCollapsed, ...prefs.paneCollapsed };
+    }
     if (Array.isArray(prefs.paneOrder) && prefs.paneOrder.length === 3) {
       this.paneOrder = prefs.paneOrder;
+    }
+    if (prefs.paneWidths) {
+      this.paneWidths = prefs.paneWidths;
     }
   }
 
   _savePrefs() {
     saveLayoutPrefs({
       paneVisibility: this.paneVisibility,
+      paneCollapsed: this.paneCollapsed,
       paneOrder: this.paneOrder,
+      paneWidths: this.paneWidths,
     });
   }
 
@@ -337,51 +347,65 @@ export class EditorLayout {
     // For annotations resizer, left is paneContainer, right is annotations
     const isAnnotationsResizer = resizer.dataset.resizerKey === 'annotations';
 
-    let leftEl, rightEl;
     if (isAnnotationsResizer) {
-      rightEl = this.annotationsPane.getElement();
-      leftEl = this.paneContainer;
-    } else {
-      leftEl = this._getPaneElement(leftPaneName);
-      rightEl = this._getPaneElement(rightPaneName);
+      const rightEl = this.annotationsPane.getElement();
+      if (!rightEl) return;
+
+      resizer.classList.add('dragging');
+      const startX = startEvent.clientX;
+      const startWidth = rightEl.offsetWidth;
+
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+
+      const onMouseMove = (e) => {
+        const newWidth = Math.max(100, Math.min(600, startWidth - (e.clientX - startX)));
+        rightEl.style.width = `${newWidth}px`;
+        rightEl.style.minWidth = `${newWidth}px`;
+      };
+
+      const onMouseUp = () => {
+        resizer.classList.remove('dragging');
+        indicator.classList.remove('visible');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      return;
     }
 
+    // For pane resizers: only resize the non-flex pane, let flex:1 editor absorb the rest
+    const leftEl = this._getPaneElement(leftPaneName);
+    const rightEl = this._getPaneElement(rightPaneName);
     if (!leftEl || !rightEl) return;
+
+    // Determine which pane to resize (the fixed-width one, not the flex:1 editor)
+    const leftIsEditor = leftPaneName === 'editor';
+    const rightIsEditor = rightPaneName === 'editor';
+    // If editor is on the left, resize the right pane (invert delta)
+    // If editor is on the right (or neither is editor), resize the left pane
+    const targetEl = leftIsEditor ? rightEl : leftEl;
+    const invertDelta = leftIsEditor; // dragging right should shrink the right pane
 
     resizer.classList.add('dragging');
     const startX = startEvent.clientX;
-    const startLeftWidth = leftEl.offsetWidth;
-    const startRightWidth = rightEl.offsetWidth;
-
-    // Override flex on both panes so explicit widths are respected
-    const prevLeftFlex = leftEl.style.flex;
-    const prevRightFlex = rightEl.style.flex;
-    leftEl.style.flex = 'none';
-    rightEl.style.flex = 'none';
-    // Set initial widths to current computed sizes
-    leftEl.style.width = `${startLeftWidth}px`;
-    rightEl.style.width = `${startRightWidth}px`;
+    const startWidth = targetEl.offsetWidth;
 
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
 
     const onMouseMove = (e) => {
       const delta = e.clientX - startX;
-
-      if (isAnnotationsResizer) {
-        // Resize annotations pane (drag right = shrink annotations)
-        const newWidth = Math.max(100, Math.min(600, startRightWidth - delta));
-        rightEl.style.width = `${newWidth}px`;
-        rightEl.style.minWidth = `${newWidth}px`;
-      } else {
-        const newLeftWidth = Math.max(100, startLeftWidth + delta);
-        const newRightWidth = Math.max(100, startRightWidth - delta);
-        leftEl.style.width = `${newLeftWidth}px`;
-        leftEl.style.minWidth = `${newLeftWidth}px`;
-        rightEl.style.width = `${newRightWidth}px`;
-        rightEl.style.minWidth = `${newRightWidth}px`;
-      }
+      const newWidth = Math.max(80, startWidth + (invertDelta ? -delta : delta));
+      targetEl.style.width = `${newWidth}px`;
+      targetEl.style.minWidth = `${newWidth}px`;
     };
+
+    const targetPaneName = leftIsEditor ? rightPaneName : leftPaneName;
 
     const onMouseUp = () => {
       resizer.classList.remove('dragging');
@@ -390,6 +414,9 @@ export class EditorLayout {
       document.body.style.cursor = '';
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      // Persist the resized width
+      this.paneWidths[targetPaneName] = targetEl.offsetWidth;
+      this._savePrefs();
     };
 
     document.addEventListener('mousemove', onMouseMove);
@@ -458,60 +485,76 @@ export class EditorLayout {
   }
 
   /**
-   * Toggle a pane's visibility.
+   * Toggle a pane. For outline/preview, toggles between collapsed and expanded.
+   * For annotations, toggles visibility entirely.
    */
   togglePane(paneName) {
     if (paneName === 'annotations') {
       this.paneVisibility.annotations = !this.paneVisibility.annotations;
-      if (this.annotationsPane) {
-        if (this.paneVisibility.annotations) {
-          this.annotationsPane.getElement().style.display = '';
-          this.annotationsPane.collapsed = false;
-          this.annotationsPane.getElement().classList.remove('collapsed');
-          this.annotationsResizer.style.display = '';
-        } else {
-          this.annotationsPane.getElement().style.display = 'none';
-          this.annotationsResizer.style.display = 'none';
-        }
-      }
-      this.annotationsToggleBtn.classList.toggle('active', this.paneVisibility.annotations);
+      this._applyVisibility();
       this._savePrefs();
       return;
     }
 
-    this.paneVisibility[paneName] = !this.paneVisibility[paneName];
+    if (paneName === 'outline' || paneName === 'preview') {
+      this.paneCollapsed[paneName] = !this.paneCollapsed[paneName];
+    } else {
+      this.paneVisibility[paneName] = !this.paneVisibility[paneName];
+    }
     this._applyVisibility();
     this._savePrefs();
   }
 
   /**
-   * Apply current visibility state to DOM.
+   * Apply current visibility and collapsed state to DOM.
    */
   _applyVisibility() {
-    if (this.maximizedPane) return; // Don't interfere with maximized state
+    if (this.maximizedPane) return;
 
     for (const name of this.paneOrder) {
       const el = this._getPaneElement(name);
       if (!el) continue;
 
+      if (!this.paneVisibility[name]) {
+        el.style.display = 'none';
+        continue;
+      }
+
+      el.style.display = '';
+
       if (name === 'outline') {
-        if (this.paneVisibility.outline) {
-          el.style.display = '';
-          this.outlineSidebar.collapsed = false;
-          el.classList.remove('collapsed');
+        const collapsed = this.paneCollapsed.outline;
+        el.classList.toggle('collapsed', collapsed);
+        this.outlineSidebar.collapsed = collapsed;
+        if (!collapsed) {
+          // Apply user width or CSS default
+          if (this.paneWidths.outline) {
+            el.style.width = `${this.paneWidths.outline}px`;
+            el.style.minWidth = '80px';
+          } else {
+            el.style.width = '';
+            el.style.minWidth = '';
+          }
         } else {
-          el.style.display = 'none';
+          el.style.width = '';
+          el.style.minWidth = '';
         }
       } else if (name === 'preview') {
-        if (this.paneVisibility.preview) {
-          el.style.display = '';
-          this.previewSidebar.collapsed = false;
-          el.classList.remove('collapsed');
+        const collapsed = this.paneCollapsed.preview;
+        el.classList.toggle('collapsed', collapsed);
+        this.previewSidebar.collapsed = collapsed;
+        if (!collapsed) {
+          if (this.paneWidths.preview) {
+            el.style.width = `${this.paneWidths.preview}px`;
+            el.style.minWidth = '80px';
+          } else {
+            el.style.width = '';
+            el.style.minWidth = '';
+          }
         } else {
-          el.style.display = 'none';
+          el.style.width = '';
+          el.style.minWidth = '';
         }
-      } else if (name === 'editor') {
-        el.style.display = this.paneVisibility.editor ? '' : 'none';
       }
     }
 
@@ -521,18 +564,19 @@ export class EditorLayout {
       this.annotationsResizer.style.display = this.paneVisibility.annotations ? '' : 'none';
     }
 
-    // Hide resizers between hidden panes
+    // Hide resizers next to collapsed or hidden panes
     this.paneContainer.querySelectorAll('.resizer').forEach(r => {
       const left = r.dataset.leftPane;
       const right = r.dataset.rightPane;
-      const bothVisible = this.paneVisibility[left] && this.paneVisibility[right];
-      r.style.display = bothVisible ? '' : 'none';
+      const leftUsable = this.paneVisibility[left] && !this.paneCollapsed[left];
+      const rightUsable = this.paneVisibility[right] && !this.paneCollapsed[right];
+      r.style.display = (leftUsable && rightUsable) ? '' : 'none';
     });
 
-    // Update toggle button states
-    this.outlineToggleBtn.classList.toggle('active', this.paneVisibility.outline);
+    // Update toggle button states — active means expanded (not collapsed)
+    this.outlineToggleBtn.classList.toggle('active', this.paneVisibility.outline && !this.paneCollapsed.outline);
     this.editorToggleBtn.classList.toggle('active', this.paneVisibility.editor);
-    this.previewToggleBtn.classList.toggle('active', this.paneVisibility.preview);
+    this.previewToggleBtn.classList.toggle('active', this.paneVisibility.preview && !this.paneCollapsed.preview);
     this.annotationsToggleBtn.classList.toggle('active', this.paneVisibility.annotations);
   }
 
@@ -590,8 +634,8 @@ export class EditorLayout {
    * Sync preview scroll position based on editor scroll.
    */
   _syncPreviewScroll() {
-    if (!this.cmEditor || !this.previewSidebar || this.previewSidebar.isCollapsed()) return;
-    if (!this.paneVisibility.preview) return;
+    if (!this.cmEditor || !this.previewSidebar) return;
+    if (!this.paneVisibility.preview || this.paneCollapsed.preview) return;
 
     const scroller = this.cmContainer?.querySelector('.cm-scroller');
     if (!scroller) return;
@@ -612,8 +656,8 @@ export class EditorLayout {
    * Sync preview to a specific heading (from outline click).
    */
   _syncPreviewToHeading(headerText) {
-    if (!this.previewSidebar || this.previewSidebar.isCollapsed()) return;
-    if (!this.paneVisibility.preview) return;
+    if (!this.previewSidebar) return;
+    if (!this.paneVisibility.preview || this.paneCollapsed.preview) return;
 
     const previewContent = this.previewSidebar.getContentElement();
     if (!previewContent) return;

@@ -73,14 +73,14 @@ body {
 }
 
 .outline-sidebar {
-  width: 220px;
-  min-width: 220px;
+  width: 20%;
+  min-width: 80px;
   border-right: 1px solid var(--base02);
 }
 
 .preview-sidebar {
-  width: 400px;
-  min-width: 400px;
+  width: 40%;
+  min-width: 80px;
   border-left: 1px solid var(--base02);
   font-family: var(--theme-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
   font-size: 14px;
