@@ -178,6 +178,13 @@ export class PreviewSidebar {
   }
 
   /**
+   * Get the content element (for scroll sync).
+   */
+  getContentElement() {
+    return this.content;
+  }
+
+  /**
    * Destroy the sidebar.
    */
   destroy() {

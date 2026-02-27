@@ -1,15 +1,49 @@
 /**
- * Editor Layout - Three-panel markdown editor.
- * Combines outline sidebar, CodeMirror editor, and preview sidebar.
- * Resizable panels with vim mode support.
+ * Editor Layout - Multi-panel markdown editor with pane management.
+ *
+ * Features:
+ * - Three main panes: outline, editor, preview (independently togglable)
+ * - Fourth annotations pane anchored to far right
+ * - Pane ordering via toolbar controls (persisted)
+ * - Pane resizing with drag handles, double-click to maximize/minimize
+ * - Preview scroll sync with editor
+ * - Persistent highlights with annotations
  */
 
 import { OutlineSidebar } from './outline-sidebar.js';
 import { PreviewSidebar } from './preview-sidebar.js';
+import { AnnotationsPane } from './annotations-pane.js';
 import { StatusLine } from './status-line.js';
 import * as CodeMirror from './codemirror.js';
 import { foldEffect, unfoldEffect, foldable, foldedRanges } from '@codemirror/language';
 import { observeCommandBar } from './cmd-suggestions.js';
+import {
+  highlightField, getHighlights, addHighlight, removeHighlight,
+  setHighlights, updateHighlightNote, serializeHighlights,
+  deserializeHighlights, nextHighlightColor, generateHighlightId,
+} from './highlights.js';
+
+const LAYOUT_PREFS_KEY = 'editor:layout-prefs';
+
+/**
+ * Load layout preferences from localStorage.
+ */
+function loadLayoutPrefs() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_PREFS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* ignore */ }
+  return {};
+}
+
+/**
+ * Save layout preferences to localStorage.
+ */
+function saveLayoutPrefs(prefs) {
+  try {
+    localStorage.setItem(LAYOUT_PREFS_KEY, JSON.stringify(prefs));
+  } catch (e) { /* ignore */ }
+}
 
 export class EditorLayout {
   constructor(options) {
@@ -17,10 +51,11 @@ export class EditorLayout {
     this.onContentChange = options.onContentChange;
     this.initialContent = options.initialContent || '';
     this.vimMode = options.vimMode || false;
-    this.initialVimSettings = options.vimSettings || null; // { wrap, lineNumbers }
+    this.initialVimSettings = options.vimSettings || null;
 
     this.outlineSidebar = null;
     this.previewSidebar = null;
+    this.annotationsPane = null;
     this.statusLine = null;
     this.cmEditor = null;
     this.lastContent = '';
@@ -30,7 +65,35 @@ export class EditorLayout {
     this.originalContainerStyles = '';
     this.cmdSuggestionsCleanup = null;
 
+    // Pane state
+    this.paneVisibility = { outline: false, editor: true, preview: false, annotations: false };
+    this.paneOrder = ['outline', 'editor', 'preview']; // annotations always far right
+    this.maximizedPane = null; // null or pane name
+
+    // Scroll sync state
+    this._scrollSyncEnabled = true;
+    this._scrollSyncRAF = null;
+    this._isEditorScrolling = false;
+
+    this._loadPrefs();
     this.init();
+  }
+
+  _loadPrefs() {
+    const prefs = loadLayoutPrefs();
+    if (prefs.paneVisibility) {
+      this.paneVisibility = { ...this.paneVisibility, ...prefs.paneVisibility };
+    }
+    if (Array.isArray(prefs.paneOrder) && prefs.paneOrder.length === 3) {
+      this.paneOrder = prefs.paneOrder;
+    }
+  }
+
+  _savePrefs() {
+    saveLayoutPrefs({
+      paneVisibility: this.paneVisibility,
+      paneOrder: this.paneOrder,
+    });
   }
 
   init() {
@@ -38,16 +101,16 @@ export class EditorLayout {
     this.wrapper = document.createElement('div');
     this.wrapper.className = 'editor-layout';
 
-    // Create outline sidebar (left)
+    // Create pane container (holds the three reorderable panes + resizers)
+    this.paneContainer = document.createElement('div');
+    this.paneContainer.className = 'pane-container';
+
+    // Create outline sidebar
     this.outlineSidebar = new OutlineSidebar({
-      container: this.wrapper,
+      container: document.createElement('div'), // temporary, will reparent
       onHeaderClick: (header) => this.jumpToHeader(header),
       onFoldToggle: (header, shouldFold) => this.handleOutlineFoldToggle(header, shouldFold),
     });
-
-    // Create left resizer
-    this.leftResizer = this.createResizer('left');
-    this.wrapper.appendChild(this.leftResizer);
 
     // Create editor container (center)
     this.editorContainer = document.createElement('div');
@@ -58,7 +121,7 @@ export class EditorLayout {
     this.cmContainer.className = 'cm-container';
     this.editorContainer.appendChild(this.cmContainer);
 
-    // Status line container (below editor, above toolbar)
+    // Status line container
     this.statusLineContainer = document.createElement('div');
     this.statusLineContainer.className = 'status-line-container';
     this.editorContainer.appendChild(this.statusLineContainer);
@@ -67,68 +130,81 @@ export class EditorLayout {
     this.toolbar = document.createElement('div');
     this.toolbar.className = 'editor-toolbar';
 
-    // Sidebar toggles
+    // Left group: pane toggles
     const sidebarToggles = document.createElement('div');
     sidebarToggles.className = 'sidebar-toggles';
 
-    this.outlineToggleBtn = document.createElement('button');
-    this.outlineToggleBtn.className = 'toolbar-btn';
-    this.outlineToggleBtn.textContent = 'Outline';
-    this.outlineToggleBtn.title = 'Toggle outline sidebar (Cmd+Shift+O)';
-    this.outlineToggleBtn.addEventListener('click', () => this.toggleOutline());
+    this.outlineToggleBtn = this._createToggleBtn('Outline', 'Toggle outline (Cmd+Shift+O)', () => this.togglePane('outline'));
     sidebarToggles.appendChild(this.outlineToggleBtn);
 
-    this.previewToggleBtn = document.createElement('button');
-    this.previewToggleBtn.className = 'toolbar-btn';
-    this.previewToggleBtn.textContent = 'Preview';
-    this.previewToggleBtn.title = 'Toggle preview sidebar (Cmd+Shift+P)';
-    this.previewToggleBtn.addEventListener('click', () => this.togglePreview());
+    this.editorToggleBtn = this._createToggleBtn('Editor', 'Toggle editor pane', () => this.togglePane('editor'));
+    sidebarToggles.appendChild(this.editorToggleBtn);
+
+    this.previewToggleBtn = this._createToggleBtn('Preview', 'Toggle preview (Cmd+Shift+P)', () => this.togglePane('preview'));
     sidebarToggles.appendChild(this.previewToggleBtn);
 
-    this.focusBtn = document.createElement('button');
-    this.focusBtn.className = 'toolbar-btn';
-    this.focusBtn.textContent = 'Focus';
-    this.focusBtn.title = 'Toggle focus mode (Escape to exit)';
-    this.focusBtn.addEventListener('click', () => this.toggleFocusMode());
+    this.annotationsToggleBtn = this._createToggleBtn('Notes', 'Toggle annotations (Cmd+Shift+H)', () => this.togglePane('annotations'));
+    sidebarToggles.appendChild(this.annotationsToggleBtn);
+
+    // Pane order cycle button
+    this.orderBtn = document.createElement('button');
+    this.orderBtn.className = 'toolbar-btn toolbar-btn-icon';
+    this.orderBtn.textContent = '\u21C4'; // arrows
+    this.orderBtn.title = 'Cycle pane order';
+    this.orderBtn.addEventListener('click', () => this.cyclePaneOrder());
+    sidebarToggles.appendChild(this.orderBtn);
+
+    this.focusBtn = this._createToggleBtn('Focus', 'Toggle focus mode (Escape to exit)', () => this.toggleFocusMode());
     sidebarToggles.appendChild(this.focusBtn);
 
     this.toolbar.appendChild(sidebarToggles);
 
-    // Filename display (center of toolbar)
+    // Filename display (center)
     this.filenameDisplay = document.createElement('span');
     this.filenameDisplay.className = 'filename-display';
     this.filenameDisplay.style.display = 'none';
     this.toolbar.appendChild(this.filenameDisplay);
 
-    // Save status indicator (shown when editing datastore items or files)
+    // Save status indicator
     this.saveStatus = document.createElement('span');
     this.saveStatus.id = 'save-status';
     this.saveStatus.className = 'save-status save-status-saved';
     this.saveStatus.textContent = 'Saved';
-    this.saveStatus.style.display = 'none'; // Hidden until editing an item or file
+    this.saveStatus.style.display = 'none';
     this.toolbar.appendChild(this.saveStatus);
 
     this.editorContainer.appendChild(this.toolbar);
 
-    this.wrapper.appendChild(this.editorContainer);
-
-    // Create right resizer
-    this.rightResizer = this.createResizer('right');
-    this.wrapper.appendChild(this.rightResizer);
-
-    // Create preview sidebar (right)
+    // Create preview sidebar
     this.previewSidebar = new PreviewSidebar({
-      container: this.wrapper,
+      container: document.createElement('div'), // temporary
     });
+
+    // Create annotations pane (always far right)
+    this.annotationsPane = new AnnotationsPane({
+      container: document.createElement('div'), // temporary
+      onAnnotationClick: (hl) => this._jumpToHighlight(hl),
+      onAnnotationDelete: (id) => this._removeHighlight(id),
+      onAnnotationEdit: (id, note) => this._updateHighlightNote(id, note),
+    });
+
+    // Build pane layout
+    this._buildPaneLayout();
+
+    // Annotations pane always far right, outside main pane container
+    this.wrapper.appendChild(this.paneContainer);
+
+    // Annotations resizer and pane
+    this.annotationsResizer = this._createResizer('annotations');
+    this.wrapper.appendChild(this.annotationsResizer);
+    this.wrapper.appendChild(this.annotationsPane.getElement());
 
     this.container.appendChild(this.wrapper);
 
-    // Initialize status line (only shown when vim mode is enabled)
+    // Initialize status line
     this.statusLine = new StatusLine({
       container: this.statusLineContainer,
     });
-
-    // Hide status line initially if vim mode is off
     if (!this.vimMode) {
       this.statusLine.hide();
     }
@@ -143,31 +219,34 @@ export class EditorLayout {
       onSelectionChange: (line, col) => this.handleSelectionChange(line, col),
       onVimModeChange: (mode) => this.handleVimModeUpdate(mode),
       onFoldChange: () => this.syncOutlineFromFolds(),
+      onScroll: (view) => this._handleEditorScroll(view),
     });
 
-    // Apply persisted vim settings (wrap, lineNumbers) if provided
+    // Apply persisted vim settings
     if (this.initialVimSettings && this.cmEditor) {
       CodeMirror.applyVimSettings(this.cmEditor, this.initialVimSettings);
     }
 
-    // Set up command bar suggestions (ghost-text completions for : commands)
+    // Set up command bar suggestions
     if (this.cmContainer) {
       this.cmdSuggestionsCleanup = observeCommandBar(this.cmContainer);
     }
 
-    // Default sidebars to collapsed
-    this.outlineSidebar.toggle();
-    this.previewSidebar.toggle();
+    // Apply visibility state
+    this._applyVisibility();
 
     // Initial update
     this.lastContent = this.initialContent;
     this.updateSidebars();
 
-    // Start watching for changes (throttled updates)
+    // Start watching for changes
     this.startWatching();
 
     // Set up keyboard shortcuts
     this.setupKeyboardShortcuts();
+
+    // Set up editor scroll sync via scroll event on scroller
+    this._setupEditorScrollListener();
 
     // Focus editor
     setTimeout(() => {
@@ -175,9 +254,52 @@ export class EditorLayout {
     }, 100);
   }
 
-  createResizer(side) {
+  _createToggleBtn(label, title, onClick) {
+    const btn = document.createElement('button');
+    btn.className = 'toolbar-btn';
+    btn.textContent = label;
+    btn.title = title;
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  /**
+   * Build the pane layout based on current paneOrder.
+   * Clears and repopulates paneContainer.
+   */
+  _buildPaneLayout() {
+    this.paneContainer.innerHTML = '';
+
+    const paneElements = {
+      outline: this.outlineSidebar.getElement(),
+      editor: this.editorContainer,
+      preview: this.previewSidebar.getElement(),
+    };
+
+    for (let i = 0; i < this.paneOrder.length; i++) {
+      const paneName = this.paneOrder[i];
+      const el = paneElements[paneName];
+      if (el) {
+        el.style.order = String(i);
+        this.paneContainer.appendChild(el);
+      }
+
+      // Add resizer between panes (not after last)
+      if (i < this.paneOrder.length - 1) {
+        const resizerKey = `${this.paneOrder[i]}-${this.paneOrder[i + 1]}`;
+        const resizer = this._createResizer(resizerKey);
+        resizer.style.order = String(i) + '.5';
+        resizer.dataset.leftPane = this.paneOrder[i];
+        resizer.dataset.rightPane = this.paneOrder[i + 1];
+        this.paneContainer.appendChild(resizer);
+      }
+    }
+  }
+
+  _createResizer(key) {
     const resizer = document.createElement('div');
-    resizer.className = `resizer resizer-${side}`;
+    resizer.className = `resizer resizer-${key}`;
+    resizer.dataset.resizerKey = key;
 
     const indicator = document.createElement('div');
     indicator.className = 'resizer-indicator';
@@ -196,36 +318,60 @@ export class EditorLayout {
     resizer.addEventListener('mousedown', (e) => {
       e.preventDefault();
       indicator.classList.add('visible');
-      this.startResize(side, e, indicator);
+      this._startResize(resizer, e, indicator);
+    });
+
+    // Double-click to maximize/minimize
+    resizer.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      this._handleResizerDoubleClick(resizer);
     });
 
     return resizer;
   }
 
-  startResize(side, startEvent, indicator) {
-    const resizer = side === 'left' ? this.leftResizer : this.rightResizer;
-    const target = side === 'left'
-      ? this.outlineSidebar.getElement()
-      : this.previewSidebar.getElement();
+  _startResize(resizer, startEvent, indicator) {
+    const leftPaneName = resizer.dataset.leftPane;
+    const rightPaneName = resizer.dataset.rightPane;
 
-    if (!resizer || !target) return;
+    // For annotations resizer, left is paneContainer, right is annotations
+    const isAnnotationsResizer = resizer.dataset.resizerKey === 'annotations';
+
+    let leftEl, rightEl;
+    if (isAnnotationsResizer) {
+      rightEl = this.annotationsPane.getElement();
+      leftEl = this.paneContainer;
+    } else {
+      leftEl = this._getPaneElement(leftPaneName);
+      rightEl = this._getPaneElement(rightPaneName);
+    }
+
+    if (!leftEl || !rightEl) return;
 
     resizer.classList.add('dragging');
-
     const startX = startEvent.clientX;
-    const startWidth = target.offsetWidth;
+    const startLeftWidth = leftEl.offsetWidth;
+    const startRightWidth = rightEl.offsetWidth;
 
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
 
     const onMouseMove = (e) => {
-      const delta = side === 'left'
-        ? e.clientX - startX
-        : startX - e.clientX;
+      const delta = e.clientX - startX;
 
-      const newWidth = Math.max(100, Math.min(600, startWidth + delta));
-      target.style.width = `${newWidth}px`;
-      target.style.minWidth = `${newWidth}px`;
+      if (isAnnotationsResizer) {
+        // Resize annotations pane (drag right = shrink annotations)
+        const newWidth = Math.max(100, Math.min(600, startRightWidth - delta));
+        rightEl.style.width = `${newWidth}px`;
+        rightEl.style.minWidth = `${newWidth}px`;
+      } else {
+        const newLeftWidth = Math.max(100, startLeftWidth + delta);
+        const newRightWidth = Math.max(100, startRightWidth - delta);
+        leftEl.style.width = `${newLeftWidth}px`;
+        leftEl.style.minWidth = `${newLeftWidth}px`;
+        rightEl.style.width = `${newRightWidth}px`;
+        rightEl.style.minWidth = `${newRightWidth}px`;
+      }
     };
 
     const onMouseUp = () => {
@@ -241,17 +387,252 @@ export class EditorLayout {
     document.addEventListener('mouseup', onMouseUp);
   }
 
+  _handleResizerDoubleClick(resizer) {
+    const leftPaneName = resizer.dataset.leftPane;
+    const rightPaneName = resizer.dataset.rightPane;
+
+    if (resizer.dataset.resizerKey === 'annotations') {
+      // Toggle annotations between collapsed and expanded
+      this.togglePane('annotations');
+      return;
+    }
+
+    // If a pane is maximized, restore it
+    if (this.maximizedPane) {
+      this._restoreAllPanes();
+      this.maximizedPane = null;
+      return;
+    }
+
+    // Maximize the left pane (convention: double-click maximizes the pane to the left of the resizer)
+    this._maximizePane(leftPaneName);
+  }
+
+  _maximizePane(paneName) {
+    this.maximizedPane = paneName;
+    for (const name of this.paneOrder) {
+      const el = this._getPaneElement(name);
+      if (!el) continue;
+      if (name === paneName) {
+        el.style.flex = '1';
+        el.style.display = '';
+        el.style.width = '';
+        el.style.minWidth = '';
+      } else {
+        el.style.display = 'none';
+      }
+    }
+    // Hide resizers inside pane container
+    this.paneContainer.querySelectorAll('.resizer').forEach(r => r.style.display = 'none');
+  }
+
+  _restoreAllPanes() {
+    for (const name of this.paneOrder) {
+      const el = this._getPaneElement(name);
+      if (!el) continue;
+      el.style.flex = '';
+      el.style.display = this.paneVisibility[name] ? '' : 'none';
+      el.style.width = '';
+      el.style.minWidth = '';
+    }
+    this.paneContainer.querySelectorAll('.resizer').forEach(r => r.style.display = '');
+    this._applyVisibility();
+  }
+
+  _getPaneElement(name) {
+    switch (name) {
+      case 'outline': return this.outlineSidebar?.getElement();
+      case 'editor': return this.editorContainer;
+      case 'preview': return this.previewSidebar?.getElement();
+      case 'annotations': return this.annotationsPane?.getElement();
+      default: return null;
+    }
+  }
+
+  /**
+   * Toggle a pane's visibility.
+   */
+  togglePane(paneName) {
+    if (paneName === 'annotations') {
+      this.paneVisibility.annotations = !this.paneVisibility.annotations;
+      if (this.annotationsPane) {
+        if (this.paneVisibility.annotations) {
+          this.annotationsPane.getElement().style.display = '';
+          this.annotationsPane.collapsed = false;
+          this.annotationsPane.getElement().classList.remove('collapsed');
+          this.annotationsResizer.style.display = '';
+        } else {
+          this.annotationsPane.getElement().style.display = 'none';
+          this.annotationsResizer.style.display = 'none';
+        }
+      }
+      this.annotationsToggleBtn.classList.toggle('active', this.paneVisibility.annotations);
+      this._savePrefs();
+      return;
+    }
+
+    this.paneVisibility[paneName] = !this.paneVisibility[paneName];
+    this._applyVisibility();
+    this._savePrefs();
+  }
+
+  /**
+   * Apply current visibility state to DOM.
+   */
+  _applyVisibility() {
+    if (this.maximizedPane) return; // Don't interfere with maximized state
+
+    for (const name of this.paneOrder) {
+      const el = this._getPaneElement(name);
+      if (!el) continue;
+
+      if (name === 'outline') {
+        if (this.paneVisibility.outline) {
+          el.style.display = '';
+          this.outlineSidebar.collapsed = false;
+          el.classList.remove('collapsed');
+        } else {
+          el.style.display = 'none';
+        }
+      } else if (name === 'preview') {
+        if (this.paneVisibility.preview) {
+          el.style.display = '';
+          this.previewSidebar.collapsed = false;
+          el.classList.remove('collapsed');
+        } else {
+          el.style.display = 'none';
+        }
+      } else if (name === 'editor') {
+        el.style.display = this.paneVisibility.editor ? '' : 'none';
+      }
+    }
+
+    // Annotations pane
+    if (this.annotationsPane) {
+      this.annotationsPane.getElement().style.display = this.paneVisibility.annotations ? '' : 'none';
+      this.annotationsResizer.style.display = this.paneVisibility.annotations ? '' : 'none';
+    }
+
+    // Update toggle button states
+    this.outlineToggleBtn.classList.toggle('active', this.paneVisibility.outline);
+    this.editorToggleBtn.classList.toggle('active', this.paneVisibility.editor);
+    this.previewToggleBtn.classList.toggle('active', this.paneVisibility.preview);
+    this.annotationsToggleBtn.classList.toggle('active', this.paneVisibility.annotations);
+  }
+
+  /**
+   * Cycle the pane order through common arrangements.
+   */
+  cyclePaneOrder() {
+    const arrangements = [
+      ['outline', 'editor', 'preview'],
+      ['editor', 'outline', 'preview'],
+      ['outline', 'preview', 'editor'],
+      ['preview', 'editor', 'outline'],
+      ['editor', 'preview', 'outline'],
+      ['preview', 'outline', 'editor'],
+    ];
+
+    const currentStr = this.paneOrder.join(',');
+    let idx = arrangements.findIndex(a => a.join(',') === currentStr);
+    idx = (idx + 1) % arrangements.length;
+    this.paneOrder = arrangements[idx];
+
+    this._buildPaneLayout();
+    this._applyVisibility();
+    this._savePrefs();
+  }
+
+  /**
+   * Set up editor scroll listener for preview sync.
+   */
+  _setupEditorScrollListener() {
+    // Watch for scroll on the cm-scroller element
+    const scroller = this.cmContainer?.querySelector('.cm-scroller');
+    if (scroller) {
+      scroller.addEventListener('scroll', () => {
+        if (this._scrollSyncEnabled) {
+          this._syncPreviewScroll();
+        }
+      }, { passive: true });
+    }
+  }
+
+  /**
+   * Handle editor scroll from CodeMirror update listener.
+   */
+  _handleEditorScroll(view) {
+    if (this._scrollSyncEnabled && !this._scrollSyncRAF) {
+      this._scrollSyncRAF = requestAnimationFrame(() => {
+        this._scrollSyncRAF = null;
+        this._syncPreviewScroll();
+      });
+    }
+  }
+
+  /**
+   * Sync preview scroll position based on editor scroll.
+   */
+  _syncPreviewScroll() {
+    if (!this.cmEditor || !this.previewSidebar || this.previewSidebar.isCollapsed()) return;
+    if (!this.paneVisibility.preview) return;
+
+    const scroller = this.cmContainer?.querySelector('.cm-scroller');
+    if (!scroller) return;
+
+    const scrollRatio = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight);
+
+    const previewContent = this.previewSidebar.getContentElement();
+    if (!previewContent) return;
+
+    const maxScroll = previewContent.scrollHeight - previewContent.clientHeight;
+    previewContent.scrollTo({
+      top: scrollRatio * maxScroll,
+      behavior: 'smooth',
+    });
+  }
+
+  /**
+   * Sync preview to a specific heading (from outline click).
+   */
+  _syncPreviewToHeading(headerText) {
+    if (!this.previewSidebar || this.previewSidebar.isCollapsed()) return;
+    if (!this.paneVisibility.preview) return;
+
+    const previewContent = this.previewSidebar.getContentElement();
+    if (!previewContent) return;
+
+    // Find matching heading in preview
+    const headings = previewContent.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    for (const heading of headings) {
+      if (heading.textContent.trim() === headerText.trim()) {
+        heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+    }
+  }
+
   setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
       // Cmd+Shift+O: Toggle outline
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'o') {
         e.preventDefault();
-        this.toggleOutline();
+        this.togglePane('outline');
       }
       // Cmd+Shift+P: Toggle preview
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'p') {
         e.preventDefault();
-        this.togglePreview();
+        this.togglePane('preview');
+      }
+      // Cmd+Shift+H: Toggle annotations
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
+        e.preventDefault();
+        this.togglePane('annotations');
+      }
+      // Cmd+H: Add highlight on selected text
+      if ((e.metaKey || e.ctrlKey) && e.key === 'h' && !e.shiftKey) {
+        e.preventDefault();
+        this._addHighlightFromSelection();
       }
       // Escape: Exit focus mode
       if (e.key === 'Escape' && this.isFocusMode) {
@@ -259,6 +640,103 @@ export class EditorLayout {
       }
     });
   }
+
+  // ── Highlight management ──
+
+  _addHighlightFromSelection() {
+    if (!this.cmEditor) return;
+
+    const state = this.cmEditor.state;
+    const sel = state.selection.main;
+    if (sel.from === sel.to) return; // No selection
+
+    const text = state.doc.sliceString(sel.from, sel.to);
+    const highlight = {
+      id: generateHighlightId(),
+      from: sel.from,
+      to: sel.to,
+      text,
+      note: '',
+      color: nextHighlightColor(),
+    };
+
+    addHighlight(this.cmEditor, highlight);
+    this._syncAnnotationsPane();
+    this._persistHighlights();
+
+    // Auto-show annotations pane
+    if (!this.paneVisibility.annotations) {
+      this.togglePane('annotations');
+    }
+  }
+
+  _removeHighlight(id) {
+    if (!this.cmEditor) return;
+    removeHighlight(this.cmEditor, id);
+    this._syncAnnotationsPane();
+    this._persistHighlights();
+  }
+
+  _updateHighlightNote(id, note) {
+    if (!this.cmEditor) return;
+    updateHighlightNote(this.cmEditor, id, note);
+    this._syncAnnotationsPane();
+    this._persistHighlights();
+  }
+
+  _jumpToHighlight(hl) {
+    if (!this.cmEditor) return;
+    this.cmEditor.dispatch({
+      selection: { anchor: hl.from, head: hl.to },
+      scrollIntoView: true,
+    });
+    CodeMirror.focus(this.cmEditor);
+  }
+
+  _syncAnnotationsPane() {
+    if (!this.cmEditor || !this.annotationsPane) return;
+    const highlights = getHighlights(this.cmEditor.state);
+    this.annotationsPane.update(highlights);
+  }
+
+  _persistHighlights() {
+    if (!this.cmEditor) return;
+    const highlights = getHighlights(this.cmEditor.state);
+    const data = serializeHighlights(highlights);
+    try {
+      // Use itemId-based key if available, otherwise generic
+      const key = this._getHighlightStorageKey();
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) { /* ignore */ }
+  }
+
+  _restoreHighlights() {
+    if (!this.cmEditor) return;
+    try {
+      const key = this._getHighlightStorageKey();
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const data = JSON.parse(raw);
+        const highlights = deserializeHighlights(data, this.cmEditor.state.doc.length);
+        if (highlights.length > 0) {
+          setHighlights(this.cmEditor, highlights);
+          this._syncAnnotationsPane();
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  _getHighlightStorageKey() {
+    // Uses URL params to create a unique key per document
+    const params = new URLSearchParams(window.location.search);
+    const itemId = params.get('itemId');
+    const file = params.get('file');
+    if (itemId) return `editor:highlights:${itemId}`;
+    if (file) return `editor:highlights:file:${file}`;
+    return 'editor:highlights:scratch';
+  }
+
+  // ── Content & sidebar updates ──
 
   startWatching() {
     const check = () => {
@@ -274,6 +752,9 @@ export class EditorLayout {
     };
 
     this.rafId = requestAnimationFrame(check);
+
+    // Restore highlights after editor is ready
+    setTimeout(() => this._restoreHighlights(), 200);
   }
 
   stopWatching() {
@@ -299,21 +780,20 @@ export class EditorLayout {
     this.lastContent = content;
     this.updateSidebars();
 
+    // Persist highlights (positions may have changed)
+    this._persistHighlights();
+    this._syncAnnotationsPane();
+
     if (this.onContentChange) {
       this.onContentChange(content);
     }
   }
 
-  /**
-   * Update vim mode state (called from setVimMode).
-   */
   updateVimModeState(enabled) {
     this.vimMode = enabled;
     if (this.cmEditor) {
       CodeMirror.setVimMode(this.cmEditor, this.vimMode);
     }
-
-    // Show/hide status line based on vim mode
     if (this.statusLine) {
       if (this.vimMode) {
         this.statusLine.show();
@@ -324,46 +804,30 @@ export class EditorLayout {
     }
   }
 
-  /**
-   * Handle cursor position changes.
-   */
   handleSelectionChange(line, col) {
     if (this.statusLine) {
       this.statusLine.updatePosition(line, col);
     }
   }
 
-  /**
-   * Handle vim mode state changes (normal, insert, visual, etc.)
-   */
   handleVimModeUpdate(mode) {
     if (this.statusLine && this.vimMode) {
       this.statusLine.updateMode(mode);
     }
   }
 
-  /**
-   * Handle outline sidebar fold toggle — fold/unfold the corresponding
-   * section in the CodeMirror document.
-   * @param {Object} header - Header object with offset, line, level, text
-   * @param {boolean} shouldFold - true to fold, false to unfold
-   */
   handleOutlineFoldToggle(header, shouldFold) {
     if (!this.cmEditor) return;
 
     const view = this.cmEditor;
     const state = view.state;
 
-    // Find the line at the header's offset
     if (header.offset >= state.doc.length) return;
     const line = state.doc.lineAt(header.offset);
-
-    // Get the foldable range for this line
     const foldRange = foldable(state, line.from, line.to);
     if (!foldRange) return;
 
     if (shouldFold) {
-      // Check it's not already folded
       const folded = foldedRanges(state);
       let alreadyFolded = false;
       folded.between(foldRange.from, foldRange.to, (from) => {
@@ -375,17 +839,12 @@ export class EditorLayout {
         });
       }
     } else {
-      // Unfold
       view.dispatch({
         effects: unfoldEffect.of({ from: foldRange.from, to: foldRange.to })
       });
     }
   }
 
-  /**
-   * Sync outline collapse state from the editor's current fold state.
-   * Called after fold changes in the editor.
-   */
   syncOutlineFromFolds() {
     if (this.outlineSidebar && this.cmEditor) {
       this.outlineSidebar.syncFromEditor(this.cmEditor);
@@ -395,18 +854,17 @@ export class EditorLayout {
   jumpToHeader(header) {
     if (!this.cmEditor) return;
 
-    // Set cursor position to the header's offset
     const view = this.cmEditor;
     view.dispatch({
       selection: { anchor: header.offset },
       scrollIntoView: true,
     });
     CodeMirror.focus(view);
+
+    // Sync preview to this heading
+    this._syncPreviewToHeading(header.text);
   }
 
-  /**
-   * Get the current content.
-   */
   getContent() {
     if (this.cmEditor) {
       return CodeMirror.getContent(this.cmEditor);
@@ -414,9 +872,6 @@ export class EditorLayout {
     return this.lastContent;
   }
 
-  /**
-   * Set the editor content.
-   */
   setContent(content) {
     if (this.cmEditor) {
       CodeMirror.setContent(this.cmEditor, content);
@@ -425,29 +880,14 @@ export class EditorLayout {
     this.updateSidebars();
   }
 
-  /**
-   * Toggle outline sidebar.
-   */
   toggleOutline() {
-    if (this.outlineSidebar) {
-      this.outlineSidebar.toggle();
-      this.outlineToggleBtn.classList.toggle('active', !this.outlineSidebar.isCollapsed());
-    }
+    this.togglePane('outline');
   }
 
-  /**
-   * Toggle preview sidebar.
-   */
   togglePreview() {
-    if (this.previewSidebar) {
-      this.previewSidebar.toggle();
-      this.previewToggleBtn.classList.toggle('active', !this.previewSidebar.isCollapsed());
-    }
+    this.togglePane('preview');
   }
 
-  /**
-   * Enter focus mode - expand editor to fill viewport.
-   */
   enterFocusMode() {
     if (this.isFocusMode) return;
 
@@ -456,26 +896,18 @@ export class EditorLayout {
     this.wrapper.classList.add('focus-mode');
     this.focusBtn.classList.add('active');
 
-    // Hide sidebars and resizers
-    if (this.outlineSidebar) {
-      this.outlineSidebar.getElement().style.display = 'none';
+    // Hide everything except editor
+    if (this.outlineSidebar) this.outlineSidebar.getElement().style.display = 'none';
+    if (this.previewSidebar) this.previewSidebar.getElement().style.display = 'none';
+    if (this.annotationsPane) {
+      this.annotationsPane.getElement().style.display = 'none';
+      this.annotationsResizer.style.display = 'none';
     }
-    if (this.previewSidebar) {
-      this.previewSidebar.getElement().style.display = 'none';
-    }
-    if (this.leftResizer) {
-      this.leftResizer.style.display = 'none';
-    }
-    if (this.rightResizer) {
-      this.rightResizer.style.display = 'none';
-    }
+    this.paneContainer.querySelectorAll('.resizer').forEach(r => r.style.display = 'none');
 
     if (this.cmEditor) CodeMirror.focus(this.cmEditor);
   }
 
-  /**
-   * Exit focus mode.
-   */
   exitFocusMode() {
     if (!this.isFocusMode) return;
 
@@ -484,26 +916,20 @@ export class EditorLayout {
     this.wrapper.classList.remove('focus-mode');
     this.focusBtn.classList.remove('active');
 
-    // Restore sidebars and resizers
-    if (this.outlineSidebar) {
-      this.outlineSidebar.getElement().style.display = '';
+    // Restore visibility
+    if (this.outlineSidebar) this.outlineSidebar.getElement().style.display = '';
+    if (this.previewSidebar) this.previewSidebar.getElement().style.display = '';
+    if (this.annotationsPane) {
+      this.annotationsPane.getElement().style.display = '';
+      this.annotationsResizer.style.display = '';
     }
-    if (this.previewSidebar) {
-      this.previewSidebar.getElement().style.display = '';
-    }
-    if (this.leftResizer) {
-      this.leftResizer.style.display = '';
-    }
-    if (this.rightResizer) {
-      this.rightResizer.style.display = '';
-    }
+    this.paneContainer.querySelectorAll('.resizer').forEach(r => r.style.display = '');
+
+    this._applyVisibility();
 
     if (this.cmEditor) CodeMirror.focus(this.cmEditor);
   }
 
-  /**
-   * Toggle focus mode.
-   */
   toggleFocusMode() {
     if (this.isFocusMode) {
       this.exitFocusMode();
@@ -512,59 +938,36 @@ export class EditorLayout {
     }
   }
 
-  /**
-   * Check if in focus mode.
-   */
   isInFocusMode() {
     return this.isFocusMode;
   }
 
-  /**
-   * Set vim mode.
-   */
   setVimMode(enabled) {
     this.updateVimModeState(enabled);
   }
 
-  /**
-   * Apply vim settings (wrap, lineNumbers) to the editor.
-   */
   applyVimSettings(settings) {
     if (this.cmEditor && settings) {
       CodeMirror.applyVimSettings(this.cmEditor, settings);
     }
   }
 
-  /**
-   * Get vim mode state.
-   */
   getVimMode() {
     return this.vimMode;
   }
 
-  /**
-   * Focus the editor.
-   */
   focus() {
     if (this.cmEditor) {
       CodeMirror.focus(this.cmEditor);
     }
   }
 
-  /**
-   * Show/hide save status indicator.
-   * @param {boolean} visible - Whether to show the indicator
-   */
   setSaveStatusVisible(visible) {
     if (this.saveStatus) {
       this.saveStatus.style.display = visible ? 'inline-block' : 'none';
     }
   }
 
-  /**
-   * Set the displayed filename in the toolbar.
-   * @param {string|null} filename - Filename to show, or null to hide
-   */
   setFilename(filename) {
     if (this.filenameDisplay) {
       if (filename) {
@@ -577,12 +980,13 @@ export class EditorLayout {
     }
   }
 
-  /**
-   * Destroy the layout and clean up.
-   */
   destroy() {
     this.isDestroyed = true;
     this.stopWatching();
+
+    if (this._scrollSyncRAF) {
+      cancelAnimationFrame(this._scrollSyncRAF);
+    }
 
     if (this.isFocusMode) {
       this.exitFocusMode();
@@ -601,6 +1005,7 @@ export class EditorLayout {
     this.statusLine?.destroy();
     this.outlineSidebar?.destroy();
     this.previewSidebar?.destroy();
+    this.annotationsPane?.destroy();
     this.wrapper.remove();
   }
 }

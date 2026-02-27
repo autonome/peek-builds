@@ -79,12 +79,13 @@ export class OutlineSidebar {
     this.parentSet = new Set();
     this.collapsedSections = new Set(); // Set of header indices that are collapsed in outline
     this.itemElements = []; // DOM elements for each header, indexed by header index
+    this.zoomLevel = 6; // Show all levels by default (1-6)
 
     // Create sidebar element
     this.element = document.createElement('div');
     this.element.className = 'outline-sidebar';
 
-    // Header with title and collapse button
+    // Header with title, zoom controls, and collapse button
     this.header = document.createElement('div');
     this.header.className = 'sidebar-header';
 
@@ -93,9 +94,38 @@ export class OutlineSidebar {
     title.textContent = 'Outline';
     this.header.appendChild(title);
 
+    // Zoom controls
+    const zoomControls = document.createElement('span');
+    zoomControls.className = 'outline-zoom-controls';
+
+    this.zoomOutBtn = document.createElement('button');
+    this.zoomOutBtn.className = 'outline-zoom-btn';
+    this.zoomOutBtn.textContent = '\u2212'; // minus
+    this.zoomOutBtn.title = 'Show fewer levels';
+    this.zoomOutBtn.tabIndex = -1;
+    this.zoomOutBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    this.zoomOutBtn.addEventListener('click', () => this.zoomOut());
+    zoomControls.appendChild(this.zoomOutBtn);
+
+    this.zoomLabel = document.createElement('span');
+    this.zoomLabel.className = 'outline-zoom-label';
+    this.zoomLabel.textContent = 'H1-6';
+    zoomControls.appendChild(this.zoomLabel);
+
+    this.zoomInBtn = document.createElement('button');
+    this.zoomInBtn.className = 'outline-zoom-btn';
+    this.zoomInBtn.textContent = '+';
+    this.zoomInBtn.title = 'Show more levels';
+    this.zoomInBtn.tabIndex = -1;
+    this.zoomInBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    this.zoomInBtn.addEventListener('click', () => this.zoomIn());
+    zoomControls.appendChild(this.zoomInBtn);
+
+    this.header.appendChild(zoomControls);
+
     this.toggleBtn = document.createElement('button');
     this.toggleBtn.className = 'sidebar-toggle';
-    this.toggleBtn.innerHTML = '\u25C0'; // ◀
+    this.toggleBtn.innerHTML = '\u25C0'; // left arrow
     this.toggleBtn.tabIndex = -1;
     this.toggleBtn.addEventListener('mousedown', (e) => e.preventDefault());
     this.toggleBtn.addEventListener('click', () => this.toggle());
@@ -109,6 +139,73 @@ export class OutlineSidebar {
     this.element.appendChild(this.content);
 
     this.container.appendChild(this.element);
+
+    // Restore persisted zoom level
+    this._restoreZoomLevel();
+  }
+
+  /**
+   * Zoom out - show fewer heading levels.
+   */
+  zoomOut() {
+    if (this.zoomLevel > 1) {
+      this.zoomLevel--;
+      this._updateZoomLabel();
+      this._persistZoomLevel();
+      this.render();
+    }
+  }
+
+  /**
+   * Zoom in - show more heading levels.
+   */
+  zoomIn() {
+    if (this.zoomLevel < 6) {
+      this.zoomLevel++;
+      this._updateZoomLabel();
+      this._persistZoomLevel();
+      this.render();
+    }
+  }
+
+  /**
+   * Set the zoom level directly.
+   */
+  setZoomLevel(level) {
+    this.zoomLevel = Math.max(1, Math.min(6, level));
+    this._updateZoomLabel();
+    this.render();
+  }
+
+  _updateZoomLabel() {
+    if (this.zoomLabel) {
+      this.zoomLabel.textContent = this.zoomLevel === 6 ? 'H1-6' : `H1-${this.zoomLevel}`;
+    }
+    if (this.zoomOutBtn) {
+      this.zoomOutBtn.disabled = this.zoomLevel <= 1;
+    }
+    if (this.zoomInBtn) {
+      this.zoomInBtn.disabled = this.zoomLevel >= 6;
+    }
+  }
+
+  _persistZoomLevel() {
+    try {
+      localStorage.setItem('editor:outline-zoom', String(this.zoomLevel));
+    } catch (e) { /* ignore */ }
+  }
+
+  _restoreZoomLevel() {
+    try {
+      const saved = localStorage.getItem('editor:outline-zoom');
+      if (saved) {
+        const level = parseInt(saved, 10);
+        if (level >= 1 && level <= 6) {
+          this.zoomLevel = level;
+          this._updateZoomLabel();
+        }
+      }
+    } catch (e) { /* ignore */ }
   }
 
   /**
@@ -160,10 +257,11 @@ export class OutlineSidebar {
       const isParent = this.parentSet.has(i);
       const isSectionCollapsed = this.collapsedSections.has(i);
       const isHidden = hiddenSet.has(i);
+      const isAboveZoomLevel = header.level > this.zoomLevel;
 
       const item = document.createElement('div');
       item.className = 'outline-item';
-      if (isHidden) {
+      if (isHidden || isAboveZoomLevel) {
         item.style.display = 'none';
       }
       item.style.paddingLeft = `${(header.level - 1) * 12}px`;

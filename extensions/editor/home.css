@@ -29,9 +29,9 @@ body {
   height: 100%;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   Editor Layout - Three-panel structure
-   ═══════════════════════════════════════════════════════════════════ */
+/* =====================================================================
+   Editor Layout - Multi-panel structure
+   ===================================================================== */
 
 .editor-layout {
   display: flex;
@@ -49,9 +49,17 @@ body {
   z-index: 99999;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* Pane container holds the three reorderable panes */
+.pane-container {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* =====================================================================
    Sidebar shared styles
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .outline-sidebar,
 .preview-sidebar {
@@ -97,6 +105,10 @@ body {
   display: none;
 }
 
+.outline-sidebar.collapsed .outline-zoom-controls {
+  display: none;
+}
+
 .outline-sidebar.collapsed .sidebar-header,
 .preview-sidebar.collapsed .sidebar-header {
   justify-content: center;
@@ -115,6 +127,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-size: 11px;
+  gap: 6px;
 }
 
 .sidebar-title {
@@ -129,6 +142,7 @@ body {
   padding: 2px 6px;
   font-size: 10px;
   transition: color 0.15s;
+  flex-shrink: 0;
 }
 
 .sidebar-toggle:hover {
@@ -142,9 +156,9 @@ body {
   padding: 8px 0;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* =====================================================================
    Outline Sidebar
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .outline-empty {
   padding: 12px;
@@ -210,9 +224,49 @@ body {
   white-space: nowrap;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* ── Outline Zoom Controls ── */
+
+.outline-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.outline-zoom-btn {
+  background: none;
+  border: 1px solid var(--base02);
+  color: var(--base04);
+  cursor: pointer;
+  padding: 1px 5px;
+  font-size: 11px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: all 0.1s;
+  font-weight: 600;
+}
+
+.outline-zoom-btn:hover:not(:disabled) {
+  background: var(--base02);
+  color: var(--base05);
+}
+
+.outline-zoom-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.outline-zoom-label {
+  font-size: 10px;
+  color: var(--base03);
+  min-width: 28px;
+  text-align: center;
+  user-select: none;
+}
+
+/* =====================================================================
    Preview Sidebar
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .preview-content {
   flex: 1;
@@ -220,6 +274,7 @@ body {
   padding: 16px;
   color: var(--base05);
   line-height: 1.6;
+  scroll-behavior: smooth;
 }
 
 .preview-content h1,
@@ -315,9 +370,153 @@ body {
   border-radius: 4px;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* =====================================================================
+   Annotations Pane (far right)
+   ===================================================================== */
+
+.annotations-pane {
+  display: flex;
+  flex-direction: column;
+  background: var(--base00);
+  font-family: var(--theme-font-mono, 'SF Mono', 'Fira Code', 'Consolas', monospace);
+  font-size: 12px;
+  overflow: hidden;
+  width: 260px;
+  min-width: 260px;
+  border-left: 1px solid var(--base02);
+  transition: width 0.15s ease, min-width 0.15s ease;
+}
+
+.annotations-pane.collapsed {
+  width: 32px;
+  min-width: 32px;
+}
+
+.annotations-pane.collapsed .annotations-content {
+  display: none;
+}
+
+.annotations-pane.collapsed .sidebar-title {
+  display: none;
+}
+
+.annotations-pane.collapsed .annotations-count {
+  display: none;
+}
+
+.annotations-pane.collapsed .sidebar-header {
+  justify-content: center;
+  padding: 8px 4px;
+}
+
+.annotations-count {
+  background: var(--base02);
+  color: var(--base04);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.annotations-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.annotations-empty {
+  padding: 12px;
+  color: var(--base03);
+  font-style: italic;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.annotation-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--base01);
+}
+
+.annotation-item:hover {
+  background: var(--base01);
+}
+
+.annotation-color {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.annotation-text-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.annotation-text {
+  color: var(--base05);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-note {
+  color: var(--base0D);
+  font-size: 10px;
+  margin-top: 2px;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.annotation-item:hover .annotation-actions {
+  opacity: 1;
+}
+
+.annotation-btn {
+  background: var(--base02);
+  border: none;
+  color: var(--base04);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  transition: all 0.1s;
+}
+
+.annotation-btn:hover {
+  background: var(--base03);
+  color: var(--base05);
+}
+
+.annotation-btn-delete:hover {
+  background: var(--base08);
+  color: var(--base00);
+}
+
+/* =====================================================================
    Resizers
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .resizer {
   width: 8px;
@@ -347,9 +546,9 @@ body {
   background: var(--base0A);
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* =====================================================================
    Editor Container (center panel)
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .editor-container {
   flex: 1;
@@ -372,9 +571,9 @@ body {
   overflow: auto;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* =====================================================================
    Editor Toolbar
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .editor-toolbar {
   display: flex;
@@ -383,11 +582,13 @@ body {
   padding: 6px 12px;
   background: var(--base01);
   border-top: 1px solid var(--base02);
+  gap: 8px;
 }
 
 .sidebar-toggles {
   display: flex;
-  gap: 6px;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
 .toolbar-btn {
@@ -412,9 +613,14 @@ body {
   color: var(--base00);
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+.toolbar-btn-icon {
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+/* =====================================================================
    Filename Display
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .filename-display {
   font-size: 12px;
@@ -427,9 +633,9 @@ body {
   user-select: none;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* =====================================================================
    Save Status Indicator
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .save-status {
   font-size: 11px;
@@ -455,9 +661,9 @@ body {
   background: var(--base01);
 }
 
-/* ═══════════════════════════════════════════════════════════════════
+/* =====================================================================
    Vim Command Bar Ghost-Text Suggestions
-   ═══════════════════════════════════════════════════════════════════ */
+   ===================================================================== */
 
 .vim-cmd-ghost {
   color: var(--base03);
@@ -466,4 +672,17 @@ body {
   white-space: pre;
   font-family: inherit;
   font-size: inherit;
+}
+
+/* =====================================================================
+   Highlight Marks in Editor
+   ===================================================================== */
+
+.cm-highlight-mark {
+  border-radius: 2px;
+  transition: background-color 0.15s;
+}
+
+.cm-highlight-mark:hover {
+  filter: brightness(1.2);
 }

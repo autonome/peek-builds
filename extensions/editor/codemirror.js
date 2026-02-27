@@ -14,6 +14,7 @@ import { tags } from '@lezer/highlight';
 import { vim, Vim, getCM } from '@replit/codemirror-vim';
 import { searchKeymap } from '@codemirror/search';
 import { clickableLinks } from './links.js';
+import { highlightField } from './highlights.js';
 
 // Compartments for runtime-reconfigurable extensions
 const vimCompartment = new Compartment();
@@ -559,7 +560,10 @@ const peekTheme = EditorView.theme({
     borderLeftColor: 'var(--base05)',
   },
   '.cm-selectionBackground, ::selection': {
-    backgroundColor: 'var(--base02)',
+    backgroundColor: 'color-mix(in srgb, var(--base0D) 35%, var(--base02))',
+  },
+  '&.cm-focused .cm-selectionBackground': {
+    backgroundColor: 'color-mix(in srgb, var(--base0D) 40%, var(--base01))',
   },
   '.cm-activeLine': {
     backgroundColor: 'var(--base02)',
@@ -688,7 +692,7 @@ const folditallFoldService = foldService.of((state, lineStart, lineEnd) => {
  * @param {Function} options.onFoldChange - Callback when fold state changes
  * @returns {EditorView} - CodeMirror EditorView instance
  */
-export function createEditor({ parent, content = '', vimMode = false, showLineNumbers = true, onChange, onSelectionChange, onVimModeChange, onFoldChange }) {
+export function createEditor({ parent, content = '', vimMode = false, showLineNumbers = true, onChange, onSelectionChange, onVimModeChange, onFoldChange, onScroll }) {
   // Track last known vim mode to detect changes
   let lastVimMode = 'normal';
 
@@ -720,6 +724,9 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
 
     // Clickable links (Cmd+click to open URLs)
     clickableLinks(),
+
+    // Persistent highlights
+    highlightField,
 
     // Theming
     themeCompartment.of(peekTheme),
@@ -758,6 +765,11 @@ export function createEditor({ parent, content = '', vimMode = false, showLineNu
             }
           }
         }
+      }
+
+      // Scroll change
+      if (onScroll && update.geometryChanged) {
+        onScroll(update.view);
       }
 
       // Vim mode change detection
