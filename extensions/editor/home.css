@@ -1,6 +1,21 @@
 /* Import theme variables */
 @import url('peek://theme/variables.css');
 
+/* Selection colors — hardcoded rgba for reliable contrast in both themes */
+:root {
+  --editor-selection: rgba(50, 130, 220, 0.25);
+  --editor-selection-focused: rgba(50, 130, 220, 0.35);
+  --editor-activeline: rgba(0, 0, 0, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --editor-selection: rgba(60, 140, 230, 0.35);
+    --editor-selection-focused: rgba(60, 140, 230, 0.45);
+    --editor-activeline: rgba(255, 255, 255, 0.04);
+  }
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

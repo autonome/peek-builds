@@ -707,6 +707,16 @@ export class EditorLayout {
         e.preventDefault();
         this._addHighlightFromSelection();
       }
+      // Cmd+Shift+Plus: Zoom outline in (show more levels)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+        if (this.outlineSidebar) this.outlineSidebar.zoomIn();
+      }
+      // Cmd+Shift+Minus: Zoom outline out (show fewer levels)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '-' || e.key === '_')) {
+        e.preventDefault();
+        if (this.outlineSidebar) this.outlineSidebar.zoomOut();
+      }
       // Escape: Exit focus mode
       if (e.key === 'Escape' && this.isFocusMode) {
         this.exitFocusMode();

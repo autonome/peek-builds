@@ -560,16 +560,16 @@ const peekTheme = EditorView.theme({
     borderLeftColor: 'var(--base05)',
   },
   '.cm-selectionBackground, ::selection': {
-    backgroundColor: 'color-mix(in srgb, var(--base0D) 45%, var(--base02))',
+    background: 'var(--editor-selection) !important',
   },
   '&.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'color-mix(in srgb, var(--base0D) 55%, var(--base02))',
+    background: 'var(--editor-selection-focused) !important',
   },
   '.cm-activeLine': {
-    backgroundColor: 'color-mix(in srgb, var(--base01) 50%, transparent)',
+    backgroundColor: 'var(--editor-activeline)',
   },
   '.cm-activeLineGutter': {
-    backgroundColor: 'var(--base02)',
+    backgroundColor: 'var(--base01)',
   },
   '.cm-gutters': {
     backgroundColor: 'var(--base01)',
