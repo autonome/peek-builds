@@ -25,11 +25,11 @@ html, body {
 #hud-container {
   width: 100%;
   padding: 10px;
-  background: rgba(0, 0, 0, 0.81);
+  background: color-mix(in srgb, var(--base00) 81%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: var(--theme-surface-border, 1px solid rgba(255, 255, 255, 0.04));
   -webkit-app-region: no-drag;
 }
 

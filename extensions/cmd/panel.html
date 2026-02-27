@@ -11,6 +11,32 @@
     <style>
       @import url('peek://theme/variables.css');
 
+      /* Translucent surface colors — light/dark aware */
+      :root {
+        --cmd-surface-bg: rgba(240, 240, 240, 0.95);
+        --cmd-surface-hover: rgba(0, 0, 0, 0.06);
+        --cmd-surface-selected: rgba(0, 0, 0, 0.1);
+        --cmd-surface-divider: rgba(0, 0, 0, 0.08);
+        --cmd-badge-bg: rgba(0, 0, 0, 0.08);
+        --cmd-chain-bg: rgba(180, 200, 230, 0.95);
+        --cmd-chain-steps-bg: rgba(210, 220, 235, 0.95);
+        --cmd-exec-bg: rgba(180, 200, 230, 0.95);
+        --cmd-exec-error-bg: rgba(230, 180, 180, 0.95);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --cmd-surface-bg: rgba(40, 44, 52, 0.95);
+          --cmd-surface-hover: rgba(255, 255, 255, 0.1);
+          --cmd-surface-selected: rgba(255, 255, 255, 0.2);
+          --cmd-surface-divider: rgba(255, 255, 255, 0.1);
+          --cmd-badge-bg: rgba(255, 255, 255, 0.1);
+          --cmd-chain-bg: rgba(60, 80, 120, 0.95);
+          --cmd-chain-steps-bg: rgba(50, 60, 80, 0.95);
+          --cmd-exec-bg: rgba(60, 100, 160, 0.95);
+          --cmd-exec-error-bg: rgba(160, 60, 60, 0.95);
+        }
+      }
+
       html, body {
         margin: 0;
         padding: 0;
@@ -18,7 +44,7 @@
         width: 100%;
         background-color: transparent;
         font-family: var(--theme-font-sans);
-        color: white;
+        color: var(--theme-text, #333);
         overflow: hidden;
         display: flex;
         flex-direction: column;
@@ -30,7 +56,7 @@
         align-items: center;
         padding: 6px 10px;
         box-sizing: border-box;
-        background-color: rgba(40, 44, 52, 0.95);
+        background-color: var(--cmd-surface-bg);
         border: var(--theme-surface-border, 1px solid rgba(255, 255, 255, 0.2));
         box-shadow: var(--theme-surface-ring, 0 0 0 1px rgba(0, 0, 0, 0.5));
         border-radius: 8px;
@@ -71,7 +97,7 @@
       }
 
       #command-input::placeholder {
-        color: rgba(255, 255, 255, 0.3);
+        color: var(--theme-text-muted, #999);
       }
 
       /* Suggestion element that shows the matching command with highlighting */
@@ -85,7 +111,7 @@
         font-family: inherit;
         font-size: 18px;
         font-weight: 300;
-        color: rgba(255, 255, 255, 0.5);
+        color: var(--theme-text-muted, #999);
         white-space: pre;
         overflow: hidden;
         pointer-events: none;
@@ -95,7 +121,7 @@
       }
 
       #command-text .typed {
-        color: white;
+        color: var(--theme-text, #333);
         font-weight: 500;
       }
 
@@ -116,7 +142,7 @@
         margin: 5px 10px;
         box-sizing: border-box;
 
-        background-color: rgba(40, 44, 52, 0.95);
+        background-color: var(--cmd-surface-bg);
         border-radius: 8px;
       }
 
@@ -131,11 +157,11 @@
       }
 
       .command-item:hover {
-        background-color: rgba(255, 255, 255, 0.1);
+        background-color: var(--cmd-surface-hover);
       }
 
       .command-item.selected {
-        background-color: rgba(255, 255, 255, 0.2);
+        background-color: var(--cmd-surface-selected);
       }
 
       /* Command item with description */
@@ -145,7 +171,7 @@
 
       .command-item .cmd-desc {
         font-size: 12px;
-        color: rgba(255, 255, 255, 0.6);
+        color: var(--theme-text-secondary, #666);
         margin-left: 8px;
       }
 
@@ -159,7 +185,7 @@
         display: inline-block;
         padding: 2px 4px;
         border-radius: 3px;
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--cmd-badge-bg);
         margin-left: 4px;
       }
 
@@ -169,7 +195,7 @@
         align-items: center;
         padding: 8px 12px;
         margin: 10px 10px 5px 10px;
-        background: rgba(60, 80, 120, 0.95);
+        background: var(--cmd-chain-bg);
         border-radius: 8px;
         font-size: 12px;
         gap: 8px;
@@ -183,20 +209,20 @@
 
       #chain-indicator #chain-mime {
         font-family: var(--theme-font-mono);
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--cmd-badge-bg);
         padding: 2px 6px;
         border-radius: 3px;
       }
 
       #chain-indicator #chain-title {
-        color: rgba(255, 255, 255, 0.8);
+        color: var(--theme-text-secondary, #666);
         flex: 1;
       }
 
       #chain-indicator #chain-cancel {
         background: none;
         border: none;
-        color: rgba(255, 255, 255, 0.6);
+        color: var(--theme-text-secondary, #666);
         cursor: pointer;
         font-size: 14px;
         padding: 2px 6px;
@@ -204,8 +230,8 @@
       }
 
       #chain-indicator #chain-cancel:hover {
-        color: white;
-        background: rgba(255, 255, 255, 0.1);
+        color: var(--theme-text, #333);
+        background: var(--cmd-surface-hover);
         border-radius: 3px;
       }
 
@@ -215,7 +241,7 @@
         flex-shrink: 0;
         margin: 5px 10px;
         padding: 10px;
-        background: rgba(40, 44, 52, 0.95);
+        background: var(--cmd-surface-bg);
         border-radius: 8px;
         max-height: 200px;
         overflow: auto;
@@ -233,20 +259,20 @@
         align-items: center;
         gap: 8px;
         padding-bottom: 6px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom: 1px solid var(--cmd-surface-divider);
         margin-bottom: 8px;
         font-size: 11px;
       }
 
       #preview-mime {
         font-family: var(--theme-font-mono);
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--cmd-badge-bg);
         padding: 2px 6px;
         border-radius: 3px;
       }
 
       #preview-title {
-        color: rgba(255, 255, 255, 0.7);
+        color: var(--theme-text-secondary, #666);
       }
 
       #preview-content {
@@ -263,7 +289,7 @@
       }
 
       #preview-content .preview-json {
-        color: #a8d4a8;
+        color: var(--base0B, #34c759);
       }
 
       #preview-content .preview-csv {
@@ -273,20 +299,20 @@
 
       #preview-content .preview-csv td {
         padding: 4px 8px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        border: 1px solid var(--cmd-surface-divider);
       }
 
       #preview-content .preview-csv tr:first-child td {
-        background: rgba(255, 255, 255, 0.05);
+        background: var(--cmd-surface-hover);
         font-weight: 500;
       }
 
       #preview-content .preview-plain {
-        color: rgba(255, 255, 255, 0.9);
+        color: var(--theme-text, #333);
       }
 
       #preview-content .preview-error {
-        color: #ff8888;
+        color: var(--base08, #ff3b30);
       }
 
       /* Preview table for JSON arrays of objects */
@@ -299,20 +325,20 @@
       #preview-content .preview-table th {
         text-align: left;
         padding: 6px 8px;
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: var(--cmd-surface-hover);
+        border: 1px solid var(--cmd-surface-divider);
         font-weight: 500;
-        color: rgba(255, 255, 255, 0.9);
+        color: var(--theme-text, #333);
       }
 
       #preview-content .preview-table td {
         padding: 4px 8px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        color: rgba(255, 255, 255, 0.8);
+        border: 1px solid var(--cmd-surface-divider);
+        color: var(--theme-text-secondary, #666);
       }
 
       #preview-content .preview-table tr:hover td {
-        background: rgba(255, 255, 255, 0.05);
+        background: var(--cmd-surface-hover);
       }
 
       /* Preview list for simple arrays */
@@ -322,12 +348,12 @@
 
       #preview-content .preview-list-item {
         padding: 2px 0;
-        color: rgba(255, 255, 255, 0.85);
+        color: var(--theme-text, #333);
       }
 
       #preview-content .preview-more {
         padding-top: 6px;
-        color: rgba(255, 255, 255, 0.5);
+        color: var(--theme-text-muted, #999);
         font-style: italic;
         font-size: 10px;
       }
@@ -338,7 +364,7 @@
         align-items: center;
         padding: 8px 12px;
         margin: 10px 10px 5px 10px;
-        background: rgba(60, 100, 160, 0.95);
+        background: var(--cmd-exec-bg);
         border-radius: 8px;
         font-size: 13px;
         gap: 10px;
@@ -351,14 +377,14 @@
       }
 
       #execution-state.error {
-        background: rgba(160, 60, 60, 0.95);
+        background: var(--cmd-exec-error-bg);
       }
 
       #execution-state .spinner {
         width: 14px;
         height: 14px;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        border-top-color: white;
+        border: 2px solid var(--theme-text-muted, #999);
+        border-top-color: var(--theme-text, #333);
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
       }
@@ -369,17 +395,17 @@
 
       #execution-state .exec-text {
         flex: 1;
-        color: rgba(255, 255, 255, 0.9);
+        color: var(--theme-text, #333);
       }
 
       #execution-state .exec-error {
-        color: #ff8888;
+        color: var(--base08, #ff3b30);
       }
 
       #execution-state .exec-cancel {
         background: none;
         border: none;
-        color: rgba(255, 255, 255, 0.6);
+        color: var(--theme-text-secondary, #666);
         cursor: pointer;
         font-size: 12px;
         padding: 2px 8px;
@@ -387,8 +413,8 @@
       }
 
       #execution-state .exec-cancel:hover {
-        color: white;
-        background: rgba(255, 255, 255, 0.1);
+        color: var(--theme-text, #333);
+        background: var(--cmd-surface-hover);
         border-radius: 3px;
       }
 
@@ -397,12 +423,12 @@
         display: flex;
         align-items: center;
         padding: 4px 10px;
-        background: rgba(255, 255, 255, 0.15);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: var(--cmd-badge-bg);
+        border: 1px solid var(--cmd-surface-divider);
         border-radius: 12px;
         font-size: 11px;
         font-weight: 500;
-        color: rgba(255, 255, 255, 0.9);
+        color: var(--theme-text, #333);
         cursor: pointer;
         transition: all 0.15s ease;
         margin-right: 10px;
@@ -412,12 +438,12 @@
       }
 
       .mode-indicator:hover {
-        background: rgba(255, 255, 255, 0.25);
-        border-color: rgba(255, 255, 255, 0.3);
+        background: var(--cmd-surface-selected);
+        border-color: var(--cmd-surface-divider);
       }
 
       .mode-indicator:active {
-        background: rgba(255, 255, 255, 0.3);
+        background: var(--cmd-surface-selected);
         transform: scale(0.98);
       }
 
@@ -450,11 +476,11 @@
         display: none;
         padding: 6px 12px;
         margin: 5px 10px 0 10px;
-        background: rgba(50, 60, 80, 0.95);
+        background: var(--cmd-chain-steps-bg);
         border-radius: 8px;
         font-size: 11px;
         font-family: var(--theme-font-mono);
-        color: rgba(255, 255, 255, 0.7);
+        color: var(--theme-text-secondary, #666);
         width: calc(100% - 20px);
         box-sizing: border-box;
         white-space: nowrap;
@@ -466,16 +492,16 @@
       }
 
       #chain-steps .chain-step {
-        color: rgba(255, 255, 255, 0.6);
+        color: var(--theme-text-secondary, #666);
       }
 
       #chain-steps .chain-step.active {
-        color: rgba(150, 200, 255, 1);
+        color: var(--base0D, #007aff);
         font-weight: 600;
       }
 
       #chain-steps .chain-arrow {
-        color: rgba(255, 255, 255, 0.3);
+        color: var(--theme-text-muted, #999);
         margin: 0 6px;
       }
 

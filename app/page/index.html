@@ -223,7 +223,7 @@
 
     .widget {
       pointer-events: auto;
-      background: var(--theme-bg-secondary, rgba(30, 30, 30, 0.92));
+      background: color-mix(in srgb, var(--base01, var(--theme-bg-secondary)) 92%, transparent);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       color: var(--theme-text, #e0e0e0);
@@ -358,10 +358,10 @@
       position: absolute;
       z-index: 140;
       pointer-events: auto;
-      background: rgba(30, 30, 30, 0.85);
+      background: color-mix(in srgb, var(--base00) 85%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: var(--theme-surface-border, 1px solid rgba(255, 255, 255, 0.08));
       color: var(--theme-text, #e0e0e0);
       font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
       font-size: 12px;
@@ -408,7 +408,7 @@
       flex-direction: column;
       gap: 2px;
       padding: 4px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      border-bottom: 1px solid color-mix(in srgb, var(--theme-border) 30%, transparent);
     }
 
     .page-info-panel .info-row:last-child {
@@ -458,10 +458,10 @@
       position: absolute;
       z-index: 140;
       pointer-events: auto;
-      background: rgba(30, 30, 30, 0.85);
+      background: color-mix(in srgb, var(--base00) 85%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: var(--theme-surface-border, 1px solid rgba(255, 255, 255, 0.08));
       color: var(--theme-text, #e0e0e0);
       font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
       font-size: 12px;
@@ -526,7 +526,7 @@
     }
 
     .tags-list::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.15);
+      background: color-mix(in srgb, var(--theme-border) 50%, transparent);
       border-radius: 2px;
     }
 
@@ -535,7 +535,7 @@
       align-items: center;
       gap: 4px;
       background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: 1px solid color-mix(in srgb, var(--theme-border) 40%, transparent);
       color: var(--theme-text, #e0e0e0);
       font-size: 11px;
       font-family: inherit;
@@ -549,7 +549,7 @@
 
     .tag-btn:hover {
       background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18));
-      border-color: rgba(255, 255, 255, 0.15);
+      border-color: color-mix(in srgb, var(--theme-border) 60%, transparent);
     }
 
     .tag-btn .tag-name {
@@ -581,8 +581,8 @@
 
     .tags-input {
       width: 100%;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: color-mix(in srgb, var(--theme-bg-tertiary) 30%, transparent);
+      border: 1px solid color-mix(in srgb, var(--theme-border) 40%, transparent);
       border-radius: 5px;
       color: var(--theme-text, #e0e0e0);
       font-size: 11px;
@@ -627,10 +627,10 @@
       position: absolute;
       z-index: 140;
       pointer-events: auto;
-      background: rgba(30, 30, 30, 0.85);
+      background: color-mix(in srgb, var(--base00) 85%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: var(--theme-surface-border, 1px solid rgba(255, 255, 255, 0.08));
       color: var(--theme-text, #e0e0e0);
       font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
       font-size: 12px;
@@ -683,7 +683,7 @@
     }
 
     .entities-panel .panel-body::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.15);
+      background: color-mix(in srgb, var(--theme-border) 50%, transparent);
       border-radius: 2px;
     }
 
@@ -754,10 +754,10 @@
       position: absolute;
       z-index: 140;
       pointer-events: auto;
-      background: rgba(30, 30, 30, 0.85);
+      background: color-mix(in srgb, var(--base00) 85%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: var(--theme-surface-border, 1px solid rgba(255, 255, 255, 0.08));
       color: var(--theme-text, #e0e0e0);
       font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
       font-size: 12px;
@@ -810,7 +810,7 @@
     }
 
     .extensions-panel .panel-body::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.15);
+      background: color-mix(in srgb, var(--theme-border) 50%, transparent);
       border-radius: 2px;
     }
 
@@ -832,7 +832,7 @@
       align-items: center;
       gap: 8px;
       padding: 5px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      border-bottom: 1px solid color-mix(in srgb, var(--theme-border) 30%, transparent);
     }
 
     .ext-item:last-child {
@@ -909,7 +909,7 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(255, 255, 255, 0.15);
+      background: color-mix(in srgb, var(--theme-border) 60%, transparent);
       border-radius: 9px;
       cursor: pointer;
       transition: background 0.2s;
