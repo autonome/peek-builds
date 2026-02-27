@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Editor Layout Test Page</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "@codemirror/state": "/node_modules/@codemirror/state/dist/index.js",
+      "@codemirror/view": "/node_modules/@codemirror/view/dist/index.js",
+      "@codemirror/commands": "/node_modules/@codemirror/commands/dist/index.js",
+      "@codemirror/language": "/node_modules/@codemirror/language/dist/index.js",
+      "@codemirror/autocomplete": "/node_modules/@codemirror/autocomplete/dist/index.js",
+      "@codemirror/lang-markdown": "/node_modules/@codemirror/lang-markdown/dist/index.js",
+      "@codemirror/lang-html": "/node_modules/@codemirror/lang-html/dist/index.js",
+      "@codemirror/lang-css": "/node_modules/@codemirror/lang-css/dist/index.js",
+      "@codemirror/lang-javascript": "/node_modules/@codemirror/lang-javascript/dist/index.js",
+      "@codemirror/theme-one-dark": "/node_modules/@codemirror/theme-one-dark/dist/index.js",
+      "@codemirror/search": "/node_modules/@codemirror/search/dist/index.js",
+      "@replit/codemirror-vim": "/node_modules/@replit/codemirror-vim/dist/index.js",
+      "@lezer/common": "/node_modules/@lezer/common/dist/index.js",
+      "@lezer/highlight": "/node_modules/@lezer/highlight/dist/index.js",
+      "@lezer/lr": "/node_modules/@lezer/lr/dist/index.js",
+      "@lezer/markdown": "/node_modules/@lezer/markdown/dist/index.js",
+      "@lezer/html": "/node_modules/@lezer/html/dist/index.js",
+      "@lezer/css": "/node_modules/@lezer/css/dist/index.js",
+      "@lezer/javascript": "/node_modules/@lezer/javascript/dist/index.js",
+      "crelt": "/node_modules/crelt/index.js",
+      "style-mod": "/node_modules/style-mod/src/style-mod.js",
+      "w3c-keyname": "/node_modules/w3c-keyname/index.js",
+      "@marijn/find-cluster-break": "/node_modules/@marijn/find-cluster-break/src/index.js"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --base00: #1d1f21;
+      --base01: #282a2e;
+      --base02: #373b41;
+      --base03: #969896;
+      --base04: #b4b7b4;
+      --base05: #c5c8c6;
+      --base06: #e0e0e0;
+      --base07: #ffffff;
+      --base08: #cc6666;
+      --base09: #de935f;
+      --base0A: #f0c674;
+      --base0B: #b5bd68;
+      --base0C: #8abeb7;
+      --base0D: #81a2be;
+      --base0E: #b294bb;
+      --base0F: #a3685a;
+      --theme-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --theme-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      background: var(--base00);
+      color: var(--base05);
+      font-family: var(--theme-font-sans);
+    }
+    #editor-root {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Editor Layout styles (inlined from home.css for test independence) */
+    .editor-layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      background: var(--base00);
+    }
+    .editor-layout.focus-mode {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 99999;
+    }
+    .outline-sidebar, .preview-sidebar {
+      display: flex;
+      flex-direction: column;
+      background: var(--base00);
+      font-family: var(--theme-font-mono);
+      font-size: 12px;
+      overflow: hidden;
+      transition: width 0.15s ease, min-width 0.15s ease;
+    }
+    .outline-sidebar { width: 220px; min-width: 220px; border-right: 1px solid var(--base02); }
+    .preview-sidebar { width: 400px; min-width: 400px; border-left: 1px solid var(--base02); font-family: var(--theme-font-sans); font-size: 14px; }
+    .outline-sidebar.collapsed, .preview-sidebar.collapsed { width: 32px; min-width: 32px; }
+    .outline-sidebar.collapsed .sidebar-content,
+    .preview-sidebar.collapsed .sidebar-content,
+    .outline-sidebar.collapsed .preview-content,
+    .preview-sidebar.collapsed .preview-content { display: none; }
+    .outline-sidebar.collapsed .sidebar-title,
+    .preview-sidebar.collapsed .sidebar-title { display: none; }
+    .sidebar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--base01);
+      border-bottom: 1px solid var(--base02);
+      color: var(--base04);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 11px;
+    }
+    .sidebar-title { user-select: none; }
+    .sidebar-toggle {
+      background: none; border: none; color: var(--base03);
+      cursor: pointer; padding: 2px 6px; font-size: 10px;
+    }
+    .sidebar-content { flex: 1; overflow-y: auto; padding: 8px 0; }
+    .outline-empty { padding: 12px; color: var(--base03); font-style: italic; }
+    .outline-item {
+      padding: 4px 12px; color: var(--base04); cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .outline-fold-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; flex-shrink: 0; cursor: pointer;
+      color: var(--base03); font-size: 8px; user-select: none;
+    }
+    .outline-fold-spacer { display: inline-block; width: 16px; flex-shrink: 0; }
+    .outline-indicator { display: inline-block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .outline-item-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .preview-content {
+      flex: 1; overflow-y: auto; padding: 16px; color: var(--base05); line-height: 1.6;
+    }
+    .resizer { width: 8px; margin: 0 -4px; cursor: col-resize; flex-shrink: 0; position: relative; z-index: 20; }
+    .resizer-indicator { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: transparent; }
+    .resizer-indicator.visible { background: var(--base0A); }
+    .editor-container { flex: 1; display: flex; flex-direction: column; min-width: 300px; overflow: hidden; }
+    .cm-container { flex: 1; overflow: hidden; }
+    .cm-container .cm-editor { height: 100%; }
+    .cm-container .cm-scroller { overflow: auto; }
+    .editor-toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 12px; background: var(--base01); border-top: 1px solid var(--base02);
+    }
+    .sidebar-toggles { display: flex; gap: 6px; }
+    .toolbar-btn {
+      padding: 4px 10px; background: var(--base02); border: none; border-radius: 4px;
+      font-size: 11px; font-weight: 500; color: var(--base04); cursor: pointer;
+    }
+    .toolbar-btn.active { background: var(--base0D); color: var(--base00); }
+    .filename-display {
+      font-size: 12px; color: var(--base04);
+      font-family: var(--theme-font-mono);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px;
+    }
+    .save-status { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 3px; }
+    .save-status-saved { color: var(--base0B); }
+    .vim-status-line {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px 12px; background: var(--base00);
+      border-top: 1px solid var(--base02); min-height: 22px;
+      font-family: var(--theme-font-mono); font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="editor-root"></div>
+
+  <script type="module">
+    import { EditorLayout } from '/extensions/editor/editor-layout.js';
+
+    const TEST_CONTENT = `# Introduction
+
+Welcome to the document.
+
+## Section One
+
+Content in section one.
+
+### Subsection 1.1
+
+Details about subsection 1.1.
+
+### Subsection 1.2
+
+Details about subsection 1.2.
+
+## Section Two
+
+Content in section two.
+
+### Subsection 2.1
+
+More details here.
+
+## Section Three
+
+Final section content.
+
+### Subsection 3.1
+
+Some code:
+
+\`\`\`javascript
+function hello() {
+  console.log('world');
+}
+\`\`\`
+
+### Subsection 3.2
+
+Conclusion text.
+`;
+
+    // Create editor layout
+    const container = document.getElementById('editor-root');
+    const layout = new EditorLayout({
+      container,
+      initialContent: TEST_CONTENT,
+      vimMode: false,
+      onContentChange: (content) => {
+        // Track content changes for testing
+        window._lastContentChange = content;
+      },
+    });
+
+    // Expose for testing
+    window.editorLayout = layout;
+
+    // Helper to get outline sidebar state
+    window.getOutlineState = () => ({
+      collapsed: layout.outlineSidebar.isCollapsed(),
+      headerCount: layout.outlineSidebar.headers.length,
+      element: layout.outlineSidebar.getElement(),
+    });
+
+    // Helper to get preview sidebar state
+    window.getPreviewState = () => ({
+      collapsed: layout.previewSidebar.isCollapsed(),
+      element: layout.previewSidebar.getElement(),
+    });
+
+    // Helper: check focus mode
+    window.isInFocusMode = () => layout.isInFocusMode();
+
+    // Helper: get editor content
+    window.getEditorContent = () => layout.getContent();
+
+    // Helper: set editor content
+    window.setEditorContent = (content) => layout.setContent(content);
+
+    // Helper: toggle outline
+    window.toggleOutline = () => layout.toggleOutline();
+
+    // Helper: toggle preview
+    window.togglePreview = () => layout.togglePreview();
+
+    // Helper: toggle focus mode
+    window.toggleFocusMode = () => layout.toggleFocusMode();
+
+    // Helper: get sidebar widths
+    window.getSidebarWidths = () => ({
+      outline: layout.outlineSidebar.getElement().offsetWidth,
+      preview: layout.previewSidebar.getElement().offsetWidth,
+    });
+
+    // Helper: set filename
+    window.setFilename = (name) => layout.setFilename(name);
+
+    // Helper: get filename
+    window.getFilename = () => layout.filenameDisplay.textContent;
+
+    // Helper: save status visibility
+    window.setSaveStatusVisible = (v) => layout.setSaveStatusVisible(v);
+
+    // Signal ready
+    document.body.dataset.ready = 'true';
+    console.log('[test] Editor layout ready');
+  </script>
+</body>
+</html>
