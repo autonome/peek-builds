@@ -106,7 +106,7 @@ export function renderMarkdown(text) {
 export class PreviewSidebar {
   constructor(options) {
     this.container = options.container;
-    this.onToggle = options.onToggle; // callback: () => void — called when internal toggle clicked
+    this.onToggle = options.onToggle; // callback: () => void — layout handles state
     this.collapsed = false;
 
     // Create sidebar element
@@ -127,13 +127,7 @@ export class PreviewSidebar {
     this.toggleBtn.innerHTML = '\u25B6'; // ▶
     this.toggleBtn.tabIndex = -1;
     this.toggleBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    this.toggleBtn.addEventListener('click', () => {
-      if (this.onToggle) {
-        this.onToggle();
-      } else {
-        this.toggle();
-      }
-    });
+    this.toggleBtn.addEventListener('click', () => this.toggle());
     this.header.appendChild(this.toggleBtn);
 
     this.element.appendChild(this.header);
@@ -155,22 +149,26 @@ export class PreviewSidebar {
   }
 
   /**
-   * Toggle sidebar collapsed state.
+   * Set collapsed visual state. Called by layout — sidebar does NOT own this state.
    */
-  toggle() {
-    this.setCollapsed(!this.collapsed);
-  }
-
   setCollapsed(collapsed) {
     this.collapsed = collapsed;
-    this.element.classList.toggle('collapsed', this.collapsed);
-
-    if (this.collapsed) {
+    this.element.classList.toggle('collapsed', collapsed);
+    if (collapsed) {
       this.toggleBtn.innerHTML = '\u25CE'; // ◎
       this.toggleBtn.title = 'Show Preview';
     } else {
       this.toggleBtn.innerHTML = '\u25B6'; // ▶
       this.toggleBtn.title = 'Hide Preview';
+    }
+  }
+
+  /**
+   * Toggle sidebar collapsed state (for internal toggle button click).
+   */
+  toggle() {
+    if (this.onToggle) {
+      this.onToggle();
     }
   }
 

@@ -1,11 +1,19 @@
 /**
  * Editor Layout - Multi-panel markdown editor with pane management.
  *
- * Features:
- * - Three main panes: outline, editor, preview (independently togglable)
- * - Fourth annotations pane anchored to far right
+ * Pane management model:
+ * - Each pane has two independent states: visible (bool) and collapsed (bool)
+ * - Visible+expanded: shows at persisted width (or CSS default)
+ * - Visible+collapsed: 32px strip with header only
+ * - Hidden (!visible): display:none, not shown at all
+ * - Toolbar buttons toggle collapsed state (expanded <-> collapsed)
+ * - Hidden state is only for programmatic use (annotations default, focus mode)
+ * - Layout owns ALL state; sidebar components only update their visual appearance
+ * - _applyPaneState() is the single source of truth for DOM
+ *
+ * Other features:
  * - Pane ordering via toolbar controls (persisted)
- * - Pane resizing with drag handles, double-click to maximize/minimize
+ * - Pane resizing with drag handles
  * - Preview scroll sync with editor
  * - Persistent highlights with annotations
  */
@@ -24,6 +32,13 @@ import {
 } from './highlights.js';
 
 const LAYOUT_PREFS_KEY = 'editor:layout-prefs';
+
+/** Default widths for each pane when expanded (CSS values). */
+const DEFAULT_WIDTHS = {
+  outline: '220px',
+  preview: '400px',
+  annotations: '260px',
+};
 
 /**
  * Load layout preferences from localStorage.
@@ -62,15 +77,16 @@ export class EditorLayout {
     this.rafId = null;
     this.isDestroyed = false;
     this.isFocusMode = false;
-    this.originalContainerStyles = '';
+    this.preFocusState = null; // saved state before focus mode
     this.cmdSuggestionsCleanup = null;
 
-    // Pane state — outline and preview start collapsed
-    this.paneVisibility = { outline: true, editor: true, preview: true, annotations: false };
-    this.paneCollapsed = { outline: true, preview: true };
+    // Pane state — uniform for all four panes
+    // visible: whether the pane is shown at all (hidden = display:none)
+    // collapsed: whether the pane is a 32px strip (true) or expanded (false)
+    this.paneVisible = { outline: true, editor: true, preview: true, annotations: false };
+    this.paneCollapsed = { outline: true, editor: false, preview: true, annotations: false };
+    this.paneWidths = {}; // persisted user widths (px strings), e.g. { outline: '250px' }
     this.paneOrder = ['outline', 'editor', 'preview']; // annotations always far right
-    this.paneWidths = {}; // user-resized widths, persisted
-    this.maximizedPane = null; // null or pane name
 
     // Scroll sync state
     this._scrollSyncEnabled = true;
@@ -83,26 +99,30 @@ export class EditorLayout {
 
   _loadPrefs() {
     const prefs = loadLayoutPrefs();
-    if (prefs.paneVisibility) {
-      this.paneVisibility = { ...this.paneVisibility, ...prefs.paneVisibility };
+    if (prefs.paneVisible) {
+      this.paneVisible = { ...this.paneVisible, ...prefs.paneVisible };
     }
+    // Always keep editor visible
+    this.paneVisible.editor = true;
     if (prefs.paneCollapsed) {
       this.paneCollapsed = { ...this.paneCollapsed, ...prefs.paneCollapsed };
     }
+    // Editor is never collapsed
+    this.paneCollapsed.editor = false;
+    if (prefs.paneWidths) {
+      this.paneWidths = { ...prefs.paneWidths };
+    }
     if (Array.isArray(prefs.paneOrder) && prefs.paneOrder.length === 3) {
       this.paneOrder = prefs.paneOrder;
-    }
-    if (prefs.paneWidths) {
-      this.paneWidths = prefs.paneWidths;
     }
   }
 
   _savePrefs() {
     saveLayoutPrefs({
-      paneVisibility: this.paneVisibility,
+      paneVisible: this.paneVisible,
       paneCollapsed: this.paneCollapsed,
-      paneOrder: this.paneOrder,
       paneWidths: this.paneWidths,
+      paneOrder: this.paneOrder,
     });
   }
 
@@ -154,7 +174,7 @@ export class EditorLayout {
     this.previewToggleBtn = this._createToggleBtn('Preview', 'Toggle preview (Cmd+Shift+P)', () => this.togglePane('preview'));
     sidebarToggles.appendChild(this.previewToggleBtn);
 
-    this.annotationsToggleBtn = this._createToggleBtn('Notes', 'Toggle notes (Cmd+Shift+H)', () => this.togglePane('annotations'));
+    this.annotationsToggleBtn = this._createToggleBtn('Notes', 'Toggle annotations (Cmd+Shift+H)', () => this.togglePane('annotations'));
     sidebarToggles.appendChild(this.annotationsToggleBtn);
 
     // Pane order cycle button
@@ -198,7 +218,6 @@ export class EditorLayout {
       onAnnotationClick: (hl) => this._jumpToHighlight(hl),
       onAnnotationDelete: (id) => this._removeHighlight(id),
       onAnnotationEdit: (id, note) => this._updateHighlightNote(id, note),
-      onAddNote: () => this._addHighlightFromSelection(),
       onToggle: () => this.togglePane('annotations'),
     });
 
@@ -246,8 +265,8 @@ export class EditorLayout {
       this.cmdSuggestionsCleanup = observeCommandBar(this.cmContainer);
     }
 
-    // Apply visibility state
-    this._applyVisibility();
+    // Apply pane state (visibility, collapsed, widths)
+    this._applyPaneState();
 
     // Initial update
     this.lastContent = this.initialContent;
@@ -345,65 +364,52 @@ export class EditorLayout {
   }
 
   _startResize(resizer, startEvent, indicator) {
-    const leftPaneName = resizer.dataset.leftPane;
-    const rightPaneName = resizer.dataset.rightPane;
-
-    // For annotations resizer, left is paneContainer, right is annotations
     const isAnnotationsResizer = resizer.dataset.resizerKey === 'annotations';
 
+    // Determine which non-editor pane we're resizing.
+    // For annotations resizer: resize the annotations pane.
+    // For inner resizers: resize whichever side is NOT the editor.
+    let targetPaneName;
+    let targetEl;
+
     if (isAnnotationsResizer) {
-      const rightEl = this.annotationsPane.getElement();
-      if (!rightEl) return;
-
-      resizer.classList.add('dragging');
-      const startX = startEvent.clientX;
-      const startWidth = rightEl.offsetWidth;
-
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'col-resize';
-
-      const onMouseMove = (e) => {
-        const newWidth = Math.max(100, Math.min(600, startWidth - (e.clientX - startX)));
-        rightEl.style.width = `${newWidth}px`;
-        rightEl.style.minWidth = `${newWidth}px`;
-      };
-
-      const onMouseUp = () => {
-        resizer.classList.remove('dragging');
-        indicator.classList.remove('visible');
-        document.body.style.userSelect = '';
-        document.body.style.cursor = '';
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-      };
-
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-      return;
+      targetPaneName = 'annotations';
+      targetEl = this._getPaneElement('annotations');
+    } else {
+      const leftPaneName = resizer.dataset.leftPane;
+      const rightPaneName = resizer.dataset.rightPane;
+      // The non-editor side is the target
+      if (leftPaneName !== 'editor') {
+        targetPaneName = leftPaneName;
+      } else {
+        targetPaneName = rightPaneName;
+      }
+      targetEl = this._getPaneElement(targetPaneName);
     }
 
-    // For pane resizers: only resize the non-flex pane, let flex:1 editor absorb the rest
-    const leftEl = this._getPaneElement(leftPaneName);
-    const rightEl = this._getPaneElement(rightPaneName);
-    if (!leftEl || !rightEl) return;
-
-    const leftIsEditor = leftPaneName === 'editor';
-    const targetEl = leftIsEditor ? rightEl : leftEl;
-    const invertDelta = leftIsEditor;
-    const targetPaneName = leftIsEditor ? rightPaneName : leftPaneName;
+    if (!targetEl) return;
 
     resizer.classList.add('dragging');
     const startX = startEvent.clientX;
     const startWidth = targetEl.offsetWidth;
 
+    // Determine resize direction: dragging right grows the pane if it's to the left of the resizer
+    const growsRight = isAnnotationsResizer
+      ? false // annotations is to the right, dragging right shrinks it
+      : (resizer.dataset.leftPane === targetPaneName); // left pane grows when dragging right
+
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
 
+    let lastWidth = startWidth;
+
     const onMouseMove = (e) => {
       const delta = e.clientX - startX;
-      const newWidth = Math.max(80, startWidth + (invertDelta ? -delta : delta));
+      const newWidth = Math.max(100, Math.min(600, startWidth + (growsRight ? delta : -delta)));
       targetEl.style.width = `${newWidth}px`;
       targetEl.style.minWidth = `${newWidth}px`;
+      targetEl.style.flex = 'none';
+      lastWidth = newWidth;
     };
 
     const onMouseUp = () => {
@@ -413,8 +419,9 @@ export class EditorLayout {
       document.body.style.cursor = '';
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
-      // Persist the resized width
-      this.paneWidths[targetPaneName] = targetEl.offsetWidth;
+
+      // Persist the width
+      this.paneWidths[targetPaneName] = `${lastWidth}px`;
       this._savePrefs();
     };
 
@@ -423,54 +430,16 @@ export class EditorLayout {
   }
 
   _handleResizerDoubleClick(resizer) {
-    const leftPaneName = resizer.dataset.leftPane;
-    const rightPaneName = resizer.dataset.rightPane;
-
     if (resizer.dataset.resizerKey === 'annotations') {
-      // Toggle annotations between collapsed and expanded
       this.togglePane('annotations');
       return;
     }
 
-    // If a pane is maximized, restore it
-    if (this.maximizedPane) {
-      this._restoreAllPanes();
-      this.maximizedPane = null;
-      return;
-    }
-
-    // Maximize the left pane (convention: double-click maximizes the pane to the left of the resizer)
-    this._maximizePane(leftPaneName);
-  }
-
-  _maximizePane(paneName) {
-    this.maximizedPane = paneName;
-    for (const name of this.paneOrder) {
-      const el = this._getPaneElement(name);
-      if (!el) continue;
-      if (name === paneName) {
-        el.style.flex = '1';
-        el.style.display = '';
-        el.style.width = '';
-        el.style.minWidth = '';
-      } else {
-        el.style.display = 'none';
-      }
-    }
-    // Hide resizers inside pane container
-    this.paneContainer.querySelectorAll('.resizer').forEach(r => r.style.display = 'none');
-  }
-
-  _restoreAllPanes() {
-    for (const name of this.paneOrder) {
-      const el = this._getPaneElement(name);
-      if (!el) continue;
-      el.style.flex = '';
-      el.style.display = this.paneVisibility[name] ? '' : 'none';
-      el.style.width = '';
-      el.style.minWidth = '';
-    }
-    this._applyVisibility();
+    // Double-click toggles the non-editor pane adjacent to the resizer
+    const leftPaneName = resizer.dataset.leftPane;
+    const rightPaneName = resizer.dataset.rightPane;
+    const target = leftPaneName !== 'editor' ? leftPaneName : rightPaneName;
+    this.togglePane(target);
   }
 
   _getPaneElement(name) {
@@ -484,96 +453,143 @@ export class EditorLayout {
   }
 
   /**
-   * Toggle a pane. For outline/preview, toggles between collapsed and expanded.
-   * For annotations, toggles visibility entirely.
+   * Toggle a pane's collapsed state.
+   * For non-visible panes (e.g. annotations initially hidden), first show them expanded.
+   * Toolbar cycle: expanded -> collapsed -> expanded (never hides).
    */
   togglePane(paneName) {
-    if (paneName === 'annotations') {
-      this.paneVisibility.annotations = !this.paneVisibility.annotations;
-      this._applyVisibility();
-      this._savePrefs();
-      return;
+    if (paneName === 'editor') return; // Editor cannot be toggled
+
+    if (!this.paneVisible[paneName]) {
+      // Not visible yet — show it expanded
+      this.paneVisible[paneName] = true;
+      this.paneCollapsed[paneName] = false;
+    } else {
+      // Already visible — toggle collapsed
+      this.paneCollapsed[paneName] = !this.paneCollapsed[paneName];
     }
 
-    if (paneName === 'outline' || paneName === 'preview') {
-      this.paneCollapsed[paneName] = !this.paneCollapsed[paneName];
-    } else {
-      this.paneVisibility[paneName] = !this.paneVisibility[paneName];
-    }
-    this._applyVisibility();
+    this._applyPaneState();
     this._savePrefs();
   }
 
   /**
-   * Apply current visibility and collapsed state to DOM.
+   * Programmatically hide a pane (display:none). Used by focus mode.
    */
-  _applyVisibility() {
-    if (this.maximizedPane) return;
+  hidePane(paneName) {
+    this.paneVisible[paneName] = false;
+    this._applyPaneState();
+  }
 
-    for (const name of this.paneOrder) {
+  /**
+   * Programmatically show a pane (restores previous collapsed state).
+   */
+  showPane(paneName) {
+    this.paneVisible[paneName] = true;
+    this._applyPaneState();
+  }
+
+  /**
+   * Apply the full pane state to DOM. This is the SINGLE source of truth.
+   * Reads paneVisible, paneCollapsed, paneWidths and updates:
+   *   - display (visible vs hidden)
+   *   - CSS .collapsed class
+   *   - inline width/minWidth (cleared when collapsed, set when expanded with user width)
+   *   - sidebar component visual state (toggle button icon)
+   *   - resizer visibility
+   *   - toolbar button active states
+   */
+  _applyPaneState() {
+    const allPanes = ['outline', 'editor', 'preview', 'annotations'];
+
+    for (const name of allPanes) {
       const el = this._getPaneElement(name);
       if (!el) continue;
 
-      if (!this.paneVisibility[name]) {
+      const visible = this.paneVisible[name];
+      const collapsed = this.paneCollapsed[name];
+
+      if (!visible) {
+        // Hidden — display:none, clear all inline styles
         el.style.display = 'none';
-        continue;
+        el.style.width = '';
+        el.style.minWidth = '';
+        el.style.flex = '';
+        el.classList.remove('collapsed');
+      } else if (collapsed) {
+        // Visible + collapsed — 32px strip
+        el.style.display = '';
+        el.style.width = '32px';
+        el.style.minWidth = '32px';
+        el.style.flex = 'none';
+        el.classList.add('collapsed');
+      } else if (name === 'editor') {
+        // Editor is always flex:1
+        el.style.display = '';
+        el.style.width = '';
+        el.style.minWidth = '';
+        el.style.flex = '1';
+        el.classList.remove('collapsed');
+      } else {
+        // Visible + expanded — use persisted width or default
+        el.style.display = '';
+        const width = this.paneWidths[name] || DEFAULT_WIDTHS[name] || '';
+        el.style.width = width;
+        el.style.minWidth = width;
+        el.style.flex = 'none';
+        el.classList.remove('collapsed');
       }
 
-      el.style.display = '';
-
-      if (name === 'outline') {
-        const collapsed = this.paneCollapsed.outline;
-        this.outlineSidebar.setCollapsed(collapsed);
-        if (!collapsed) {
-          if (this.paneWidths.outline) {
-            el.style.width = `${this.paneWidths.outline}px`;
-            el.style.minWidth = '80px';
-          } else {
-            el.style.width = '';
-            el.style.minWidth = '';
-          }
-        } else {
-          el.style.width = '';
-          el.style.minWidth = '';
-        }
-      } else if (name === 'preview') {
-        const collapsed = this.paneCollapsed.preview;
-        this.previewSidebar.setCollapsed(collapsed);
-        if (!collapsed) {
-          if (this.paneWidths.preview) {
-            el.style.width = `${this.paneWidths.preview}px`;
-            el.style.minWidth = '80px';
-          } else {
-            el.style.width = '';
-            el.style.minWidth = '';
-          }
-        } else {
-          el.style.width = '';
-          el.style.minWidth = '';
-        }
-      }
+      // Update sidebar component visual state
+      this._updateSidebarVisual(name, collapsed && visible);
     }
 
-    // Annotations pane
-    if (this.annotationsPane) {
-      this.annotationsPane.getElement().style.display = this.paneVisibility.annotations ? '' : 'none';
-      this.annotationsResizer.style.display = this.paneVisibility.annotations ? '' : 'none';
+    // Annotations resizer visibility: shown only when annotations is visible AND expanded
+    if (this.annotationsResizer) {
+      const annVisible = this.paneVisible.annotations;
+      const annCollapsed = this.paneCollapsed.annotations;
+      this.annotationsResizer.style.display = (annVisible && !annCollapsed) ? '' : 'none';
     }
 
-    // Hide resizers next to collapsed or hidden panes
+    // Inner resizers: shown only when both adjacent panes are visible AND at least one is expanded
     this.paneContainer.querySelectorAll('.resizer').forEach(r => {
       const left = r.dataset.leftPane;
       const right = r.dataset.rightPane;
-      const leftUsable = this.paneVisibility[left] && !this.paneCollapsed[left];
-      const rightUsable = this.paneVisibility[right] && !this.paneCollapsed[right];
-      r.style.display = (leftUsable && rightUsable) ? '' : 'none';
+      const leftOk = this.paneVisible[left] && !this.paneCollapsed[left];
+      const rightOk = this.paneVisible[right] && !this.paneCollapsed[right];
+      // Show resizer if both panes are visible and at least one is expanded
+      const bothVisible = this.paneVisible[left] && this.paneVisible[right];
+      r.style.display = (bothVisible && (leftOk || rightOk)) ? '' : 'none';
     });
 
-    // Update toggle button states — active means expanded (not collapsed)
-    this.outlineToggleBtn.classList.toggle('active', this.paneVisibility.outline && !this.paneCollapsed.outline);
-    this.editorToggleBtn.classList.toggle('active', this.paneVisibility.editor);
-    this.previewToggleBtn.classList.toggle('active', this.paneVisibility.preview && !this.paneCollapsed.preview);
-    this.annotationsToggleBtn.classList.toggle('active', this.paneVisibility.annotations);
+    // Update toolbar button states — "active" means visible+expanded
+    this.outlineToggleBtn.classList.toggle('active', this.paneVisible.outline && !this.paneCollapsed.outline);
+    this.editorToggleBtn.classList.toggle('active', this.paneVisible.editor);
+    this.previewToggleBtn.classList.toggle('active', this.paneVisible.preview && !this.paneCollapsed.preview);
+    this.annotationsToggleBtn.classList.toggle('active', this.paneVisible.annotations && !this.paneCollapsed.annotations);
+  }
+
+  /**
+   * Update a sidebar component's visual collapsed state (CSS class + toggle button icon).
+   * The layout owns the state; sidebars only reflect it visually.
+   */
+  _updateSidebarVisual(paneName, isCollapsed) {
+    switch (paneName) {
+      case 'outline':
+        if (this.outlineSidebar) this.outlineSidebar.setCollapsed(isCollapsed);
+        break;
+      case 'preview':
+        if (this.previewSidebar) this.previewSidebar.setCollapsed(isCollapsed);
+        break;
+      case 'annotations':
+        if (this.annotationsPane) this.annotationsPane.setCollapsed(isCollapsed);
+        break;
+    }
+  }
+
+  // Keep old name as alias for any external callers
+  _applyVisibility() {
+    this._applyPaneState();
   }
 
   /**
@@ -631,7 +647,7 @@ export class EditorLayout {
    */
   _syncPreviewScroll() {
     if (!this.cmEditor || !this.previewSidebar) return;
-    if (!this.paneVisibility.preview || this.paneCollapsed.preview) return;
+    if (!this.paneVisible.preview || this.paneCollapsed.preview) return;
 
     const scroller = this.cmContainer?.querySelector('.cm-scroller');
     if (!scroller) return;
@@ -653,7 +669,7 @@ export class EditorLayout {
    */
   _syncPreviewToHeading(headerText) {
     if (!this.previewSidebar) return;
-    if (!this.paneVisibility.preview || this.paneCollapsed.preview) return;
+    if (!this.paneVisible.preview || this.paneCollapsed.preview) return;
 
     const previewContent = this.previewSidebar.getContentElement();
     if (!previewContent) return;
@@ -680,13 +696,13 @@ export class EditorLayout {
         e.preventDefault();
         this.togglePane('preview');
       }
-      // Cmd+Shift+H: Toggle notes pane
+      // Cmd+Shift+H: Toggle annotations
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
         e.preventDefault();
         this.togglePane('annotations');
       }
-      // Cmd+Shift+L: Add note at selection/cursor
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'l') {
+      // Cmd+H: Add highlight on selected text
+      if ((e.metaKey || e.ctrlKey) && e.key === 'h' && !e.shiftKey) {
         e.preventDefault();
         this._addHighlightFromSelection();
       }
@@ -704,21 +720,14 @@ export class EditorLayout {
 
     const state = this.cmEditor.state;
     const sel = state.selection.main;
+    if (sel.from === sel.to) return; // No selection
 
-    // If no selection, anchor to the current line
-    let from = sel.from;
-    let to = sel.to;
-    if (from === to) {
-      const line = state.doc.lineAt(from);
-      from = line.from;
-      to = line.to;
-    }
-
+    const text = state.doc.sliceString(sel.from, sel.to);
     const highlight = {
       id: generateHighlightId(),
-      from,
-      to,
-      text: '', // notes don't store selected text
+      from: sel.from,
+      to: sel.to,
+      text,
       note: '',
       color: nextHighlightColor(),
     };
@@ -727,9 +736,12 @@ export class EditorLayout {
     this._syncAnnotationsPane();
     this._persistHighlights();
 
-    // Auto-show notes pane
-    if (!this.paneVisibility.annotations) {
-      this.togglePane('annotations');
+    // Auto-show annotations pane expanded
+    if (!this.paneVisible.annotations || this.paneCollapsed.annotations) {
+      this.paneVisible.annotations = true;
+      this.paneCollapsed.annotations = false;
+      this._applyPaneState();
+      this._savePrefs();
     }
   }
 
@@ -759,7 +771,7 @@ export class EditorLayout {
   _syncAnnotationsPane() {
     if (!this.cmEditor || !this.annotationsPane) return;
     const highlights = getHighlights(this.cmEditor.state);
-    this.annotationsPane.update(highlights, this.cmEditor.state.doc);
+    this.annotationsPane.update(highlights);
   }
 
   _persistHighlights() {
@@ -955,18 +967,18 @@ export class EditorLayout {
     if (this.isFocusMode) return;
 
     this.isFocusMode = true;
-    this.originalContainerStyles = this.container.style.cssText;
+    // Save current state so we can restore on exit
+    this.preFocusState = {
+      paneVisible: { ...this.paneVisible },
+      paneCollapsed: { ...this.paneCollapsed },
+    };
     this.wrapper.classList.add('focus-mode');
     this.focusBtn.classList.add('active');
 
     // Hide everything except editor
-    if (this.outlineSidebar) this.outlineSidebar.getElement().style.display = 'none';
-    if (this.previewSidebar) this.previewSidebar.getElement().style.display = 'none';
-    if (this.annotationsPane) {
-      this.annotationsPane.getElement().style.display = 'none';
-      this.annotationsResizer.style.display = 'none';
-    }
-    this.paneContainer.querySelectorAll('.resizer').forEach(r => r.style.display = 'none');
+    this.paneVisible = { outline: false, editor: true, preview: false, annotations: false };
+    this.paneCollapsed = { ...this.paneCollapsed, editor: false };
+    this._applyPaneState();
 
     if (this.cmEditor) CodeMirror.focus(this.cmEditor);
   }
@@ -975,20 +987,16 @@ export class EditorLayout {
     if (!this.isFocusMode) return;
 
     this.isFocusMode = false;
-    this.container.style.cssText = this.originalContainerStyles;
     this.wrapper.classList.remove('focus-mode');
     this.focusBtn.classList.remove('active');
 
-    // Restore visibility
-    if (this.outlineSidebar) this.outlineSidebar.getElement().style.display = '';
-    if (this.previewSidebar) this.previewSidebar.getElement().style.display = '';
-    if (this.annotationsPane) {
-      this.annotationsPane.getElement().style.display = '';
-      this.annotationsResizer.style.display = '';
+    // Restore previous state
+    if (this.preFocusState) {
+      this.paneVisible = this.preFocusState.paneVisible;
+      this.paneCollapsed = this.preFocusState.paneCollapsed;
+      this.preFocusState = null;
     }
-    this.paneContainer.querySelectorAll('.resizer').forEach(r => r.style.display = '');
-
-    this._applyVisibility();
+    this._applyPaneState();
 
     if (this.cmEditor) CodeMirror.focus(this.cmEditor);
   }

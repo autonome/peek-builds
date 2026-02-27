@@ -61,47 +61,43 @@ body {
    Sidebar shared styles
    ===================================================================== */
 
+/* ── Shared sidebar/pane base styles ── */
+
 .outline-sidebar,
-.preview-sidebar {
+.preview-sidebar,
+.annotations-pane {
   display: flex;
   flex-direction: column;
   background: var(--base00);
   font-family: var(--theme-font-mono, 'SF Mono', 'Fira Code', 'Consolas', monospace);
   font-size: 12px;
   overflow: hidden;
-  transition: width 0.15s ease, min-width 0.15s ease;
+  /* No CSS transition on width — layout sets inline styles for instant response */
 }
 
 .outline-sidebar {
-  width: 20%;
-  min-width: 80px;
   border-right: 1px solid var(--base02);
 }
 
 .preview-sidebar {
-  width: 40%;
-  min-width: 80px;
   border-left: 1px solid var(--base02);
   font-family: var(--theme-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
   font-size: 14px;
 }
 
-/* Collapsed state */
-.outline-sidebar.collapsed,
-.preview-sidebar.collapsed {
-  width: 32px;
-  min-width: 32px;
-}
+/* ── Collapsed state (uniform for all panes) ── */
+/* When collapsed, hide content and title, show only toggle button */
 
 .outline-sidebar.collapsed .sidebar-content,
 .preview-sidebar.collapsed .sidebar-content,
-.outline-sidebar.collapsed .preview-content,
-.preview-sidebar.collapsed .preview-content {
+.preview-sidebar.collapsed .preview-content,
+.annotations-pane.collapsed .annotations-content {
   display: none;
 }
 
 .outline-sidebar.collapsed .sidebar-title,
-.preview-sidebar.collapsed .sidebar-title {
+.preview-sidebar.collapsed .sidebar-title,
+.annotations-pane.collapsed .sidebar-title {
   display: none;
 }
 
@@ -109,8 +105,13 @@ body {
   display: none;
 }
 
+.annotations-pane.collapsed .annotations-count {
+  display: none;
+}
+
 .outline-sidebar.collapsed .sidebar-header,
-.preview-sidebar.collapsed .sidebar-header {
+.preview-sidebar.collapsed .sidebar-header,
+.annotations-pane.collapsed .sidebar-header {
   justify-content: center;
   padding: 8px 4px;
 }
@@ -374,43 +375,10 @@ body {
    Annotations Pane (far right)
    ===================================================================== */
 
+/* annotations-pane inherits shared styles from above */
+
 .annotations-pane {
-  display: flex;
-  flex-direction: column;
-  background: var(--base00);
-  font-family: var(--theme-font-mono, 'SF Mono', 'Fira Code', 'Consolas', monospace);
-  font-size: 12px;
-  overflow: hidden;
-  width: 260px;
-  min-width: 260px;
   border-left: 1px solid var(--base02);
-  transition: width 0.15s ease, min-width 0.15s ease;
-}
-
-.annotations-pane.collapsed {
-  width: 32px;
-  min-width: 32px;
-}
-
-.annotations-pane.collapsed .annotations-content {
-  display: none;
-}
-
-.annotations-pane.collapsed .sidebar-title {
-  display: none;
-}
-
-.annotations-pane.collapsed .annotations-count {
-  display: none;
-}
-
-.annotations-pane.collapsed .annotation-add-btn {
-  display: none;
-}
-
-.annotations-pane.collapsed .sidebar-header {
-  justify-content: center;
-  padding: 8px 4px;
 }
 
 .annotations-count {
@@ -421,26 +389,6 @@ body {
   border-radius: 8px;
   min-width: 18px;
   text-align: center;
-}
-
-.annotation-add-btn {
-  background: none;
-  border: 1px solid var(--base02);
-  color: var(--base04);
-  cursor: pointer;
-  padding: 0 6px;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1;
-  border-radius: 3px;
-  transition: all 0.1s;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.annotation-add-btn:hover {
-  background: var(--base02);
-  color: var(--base05);
 }
 
 .annotations-content {
