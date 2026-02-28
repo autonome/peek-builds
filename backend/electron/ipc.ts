@@ -2266,19 +2266,12 @@ export function registerWindowHandlers(): void {
 
     // Determine opener window and whether it's a real content parent
     // Background/infrastructure windows (background.html, extension-host.html) are
-    // not real parents — they're just the IPC sender. Transient UI windows (palette,
-    // quick-view, overlay) are also not real parents — they're ephemeral launchers.
-    // Only content/workspace windows count as parents for IZUI child-window semantics
-    // (ESC closes child, focuses parent).
+    // not real parents — they're just the IPC sender. Only content windows count
+    // as parents for IZUI child-window semantics (ESC closes child, focuses parent).
     const openerWindow = BrowserWindow.fromWebContents(ev.sender);
     const INTERNAL_URLS = ['peek://app/background.html', 'peek://app/extension-host.html'];
     const openerUrl = openerWindow && !openerWindow.isDestroyed() ? openerWindow.webContents?.getURL() ?? '' : '';
-    const TRANSIENT_ROLES = ['palette', 'quick-view', 'overlay', 'utility'];
-    const openerInfo = openerWindow && !openerWindow.isDestroyed() ? getWindowInfo(openerWindow.id) : null;
-    const openerRole = (openerInfo?.params?.role as string) || '';
-    const isRealParent = openerWindow && !openerWindow.isDestroyed()
-      && !INTERNAL_URLS.some(u => openerUrl === u)
-      && !TRANSIENT_ROLES.includes(openerRole);
+    const isRealParent = openerWindow && !openerWindow.isDestroyed() && !INTERNAL_URLS.some(u => openerUrl === u);
 
     // Center window on parent if opener exists and no explicit position
     // Priority: explicit x/y > center on parent > center on screen

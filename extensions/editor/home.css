@@ -411,13 +411,17 @@ body {
   border: none;
   color: var(--base04);
   cursor: pointer;
-  padding: 0 6px;
+  padding: 1px 5px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1;
+  height: 18px;
   border-radius: 3px;
   transition: all 0.1s;
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .annotation-add-btn:hover {
