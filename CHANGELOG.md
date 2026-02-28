@@ -13,6 +13,31 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-02-28
+
+Desktop - Editor
+- [x] Redesign pane management with uniform state model — visible/collapsed/width per pane, single source of truth via _applyPaneState() ([6a00](https://tangled.org/burrito.space/peek/commit/6a00b274))
+- [x] Add Notes pane (renamed from Annotations) — Cmd+Shift+L to add note at selection/cursor, Cmd+Shift+H to toggle pane, line-anchored notes with + button ([7766](https://tangled.org/burrito.space/peek/commit/7766bcc1))
+- [x] Add Cmd+Shift+Plus/Minus shortcuts for outline zoom in/out ([b860](https://tangled.org/burrito.space/peek/commit/b860b819))
+- [x] Fix selection contrast — hardcoded rgba per color-scheme, works in both light and dark themes ([b860](https://tangled.org/burrito.space/peek/commit/b860b819))
+- [x] Fix active line obscuring same-line selection — reduced to 4% opacity ([b860](https://tangled.org/burrito.space/peek/commit/b860b819))
+- [x] Fix uniform sidebar header heights — constrain add-btn height ([81b4](https://tangled.org/burrito.space/peek/commit/81b4f2d2))
+
+Desktop - Theme
+- [x] Fix HUD, cmd palette, and page panels stuck in dark mode — replace hardcoded rgba with theme variables ([f39b](https://tangled.org/burrito.space/peek/commit/f39b1d52))
+
+Desktop - IZUI
+- [x] Fix ESC closing root-level content windows in active sessions — child-content now follows session-aware policy ([616b](https://tangled.org/burrito.space/peek/commit/616b3b69))
+
+Desktop - Page View
+- [x] Fix extension widget showing "not loaded" — filter by enabled, not loaded state ([692d](https://tangled.org/burrito.space/peek/commit/692d0cf0))
+- [x] Fix widget spacing — recalculate positions after async entity content loads ([692d](https://tangled.org/burrito.space/peek/commit/692d0cf0))
+
+Desktop - Tests
+- [x] Add 15 IZUI escPolicy unit tests covering all role/session-state combinations ([616b](https://tangled.org/burrito.space/peek/commit/616b3b69))
+- [x] Add editor notes/highlights unit tests — serialization, empty text, line-anchored highlights ([f8c0](https://tangled.org/burrito.space/peek/commit/f8c05fac))
+- [x] Add editor layout Playwright tests — pane toggles, notes shortcuts, notes pane UI ([f8c0](https://tangled.org/burrito.space/peek/commit/f8c05fac))
+
 ## 2026-02-26
 
 Desktop - Editor
