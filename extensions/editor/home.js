@@ -351,14 +351,23 @@ const init = async () => {
 
   // Set up escape handler
   //
-  // Vim mode ESC cascade:
-  //   1. ESC in vim insert/visual mode -> exits to vim normal mode
-  //      (preload intercepts ESC via before-input-event so CodeMirror's vim
-  //      extension never sees the DOM keydown — we must forward it here)
-  //   2. ESC in vim normal mode (or non-vim) + focus mode -> exits focus mode
-  //   3. ESC otherwise -> not handled (backend decides: close window, etc.)
+  // ESC cascade (preload intercepts ESC via before-input-event, DOM keydown never fires):
+  //   1. Annotation textarea focused -> blur to save+close
+  //   2. Vim insert/visual mode -> exit to vim normal mode
+  //   3. Vim normal mode (or non-vim) + focus mode -> exit focus mode
+  //   4. Otherwise -> not handled (backend decides: close window, etc.)
   if (api?.escape) {
     api.escape.onEscape(() => {
+      // Check if an annotation textarea is focused. The preload intercepts
+      // ESC via before-input-event, so the textarea's own keydown handler
+      // never fires. We blur it here to trigger the save+close logic.
+      const focused = document.activeElement;
+      if (focused?.tagName === 'TEXTAREA' && focused.classList.contains('annotation-textarea')) {
+        debug && console.log('[editor:esc] Annotation textarea focused, blurring to save+close');
+        focused.blur();
+        return { handled: true };
+      }
+
       // If vim mode is enabled, check if vim is in insert/visual mode.
       // The preload intercepts ESC via before-input-event and calls
       // e.preventDefault(), so the DOM keydown never reaches CodeMirror.
