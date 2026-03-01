@@ -101,18 +101,39 @@
       justify-content: space-between;
       align-items: center;
       padding: 8px 12px;
+      height: 32px;
+      min-height: 32px;
+      max-height: 32px;
+      box-sizing: border-box;
       background: var(--base01);
       border-bottom: 1px solid var(--base02);
       color: var(--base04);
       text-transform: uppercase;
       letter-spacing: 0.5px;
       font-size: 11px;
+      gap: 6px;
     }
     .sidebar-title { user-select: none; }
     .sidebar-toggle {
-      background: none; border: none; color: var(--base03);
-      cursor: pointer; padding: 2px 6px; font-size: 10px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--base02); border: none; color: var(--base04);
+      cursor: pointer; padding: 2px 6px; font-size: 11px;
+      font-family: system-ui, -apple-system, sans-serif;
+      border-radius: 3px; flex-shrink: 0; margin-left: auto;
+      min-width: 20px; min-height: 18px;
     }
+    .sidebar-toggle:hover { background: var(--base03); color: var(--base05); }
+    .pane-collapsed-icon {
+      display: none; font-size: 14px; font-family: system-ui, -apple-system, sans-serif;
+      color: var(--base04); cursor: pointer; user-select: none; line-height: 1;
+    }
+    .collapsed .pane-collapsed-icon { display: block; }
+    .collapsed .sidebar-toggle { display: none; }
+    .collapsed .sidebar-header { justify-content: center; padding: 8px 4px; }
+    .collapsed .sidebar-title { display: none; }
+    .outline-sidebar.collapsed .outline-zoom-controls { display: none; }
+    .annotations-pane.collapsed .annotations-count { display: none; }
+    .annotations-pane.collapsed .annotation-add-btn { display: none; }
     .sidebar-content { flex: 1; overflow-y: auto; padding: 8px 0; }
     .outline-empty { padding: 12px; color: var(--base03); font-style: italic; }
     .outline-item {

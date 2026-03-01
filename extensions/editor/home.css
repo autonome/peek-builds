@@ -140,7 +140,8 @@ body {
 .pane-collapsed-icon {
   display: none;
   font-size: 14px;
-  color: var(--base03);
+  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--base04);
   cursor: pointer;
   user-select: none;
   line-height: 1;
@@ -182,18 +183,23 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: none;
+  background: var(--base02);
   border: none;
   color: var(--base04);
   cursor: pointer;
   padding: 2px 6px;
-  font-size: 12px;
-  transition: color 0.15s;
+  font-size: 11px;
+  font-family: system-ui, -apple-system, sans-serif;
+  border-radius: 3px;
+  transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
   margin-left: auto;
+  min-width: 20px;
+  min-height: 18px;
 }
 
 .sidebar-toggle:hover {
+  background: var(--base03);
   color: var(--base05);
 }
 
