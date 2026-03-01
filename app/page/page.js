@@ -285,37 +285,39 @@ function updatePositions() {
     widgetContainer.style.top = `${webviewTop}px`;
   }
 
+  // Panel top offset — enough clearance below the top edge of the web content area
+  const panelTopOffset = webviewTop + 40;
+
   // Page Info Panel — top-left, 75% off-page / 25% overlapping
   if (pageInfoPanel) {
     pageInfoPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
-    pageInfoPanel.style.top = `${webviewTop + 8}px`;
+    pageInfoPanel.style.top = `${panelTopOffset}px`;
     pageInfoPanel.style.width = `${PANEL_WIDTH}px`;
   }
 
-  // Tags Panel — below page info on left side
-  if (tagsPanel) {
-    tagsPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
-    // Position below page-info panel (estimate page-info height or use fixed offset)
+  // Extensions Panel — left side, below page info
+  if (extensionsPanel) {
+    extensionsPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
     const pageInfoHeight = pageInfoPanel ? pageInfoPanel.offsetHeight : 0;
-    const tagsPanelTop = webviewTop + 8 + (pageInfoHeight > 0 ? pageInfoHeight + 12 : 0);
-    tagsPanel.style.top = `${tagsPanelTop}px`;
+    const extensionsPanelTop = panelTopOffset + (pageInfoHeight > 0 ? pageInfoHeight + 12 : 0);
+    extensionsPanel.style.top = `${extensionsPanelTop}px`;
+    extensionsPanel.style.width = `${PANEL_WIDTH}px`;
+  }
+
+  // Tags Panel — right side, top of right stack
+  if (tagsPanel) {
+    tagsPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
+    tagsPanel.style.top = `${panelTopOffset}px`;
     tagsPanel.style.width = `${PANEL_WIDTH}px`;
   }
 
-  // Entities Panel — right side, 75% off-page / 25% overlapping
+  // Entities Panel — right side, below tags panel
   if (entitiesPanel) {
     entitiesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
-    entitiesPanel.style.top = `${webviewTop + 8}px`;
+    const tagsHeight = tagsPanel ? tagsPanel.offsetHeight : 0;
+    const entitiesPanelTop = panelTopOffset + (tagsHeight > 0 ? tagsHeight + 12 : 0);
+    entitiesPanel.style.top = `${entitiesPanelTop}px`;
     entitiesPanel.style.width = `${PANEL_WIDTH}px`;
-  }
-
-  // Extensions Panel — right side, below entities panel
-  if (extensionsPanel) {
-    extensionsPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
-    const entitiesHeight = entitiesPanel ? entitiesPanel.offsetHeight : 0;
-    const extensionsPanelTop = webviewTop + 8 + (entitiesHeight > 0 ? entitiesHeight + 12 : 0);
-    extensionsPanel.style.top = `${extensionsPanelTop}px`;
-    extensionsPanel.style.width = `${PANEL_WIDTH}px`;
   }
 }
 
