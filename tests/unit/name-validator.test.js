@@ -363,6 +363,38 @@ describe('isLikelyPersonName', () => {
     });
   });
 
+  describe('international names', () => {
+    it('recognizes "Hayao Miyazaki" as likely person (both in DB)', () => {
+      const r = isLikelyPersonName('Hayao Miyazaki');
+      assert.equal(r.likely, true);
+      assert.ok(r.confidence >= 0.7);
+    });
+
+    it('recognizes "Joe Hisaishi" as likely person (first name in DB)', () => {
+      const r = isLikelyPersonName('Joe Hisaishi');
+      assert.equal(r.likely, true);
+      assert.ok(r.confidence >= 0.7);
+    });
+
+    it('recognizes "Akira Kurosawa" as likely person (both in DB)', () => {
+      const r = isLikelyPersonName('Akira Kurosawa');
+      assert.equal(r.likely, true);
+      assert.ok(r.confidence >= 0.7);
+    });
+
+    it('recognizes "Chimamanda Adichie" as likely person', () => {
+      const r = isLikelyPersonName('Chimamanda Adichie');
+      assert.equal(r.likely, true);
+      assert.ok(r.confidence >= 0.5);
+    });
+
+    it('recognizes "Sachin Patel" as likely person', () => {
+      const r = isLikelyPersonName('Sachin Patel');
+      assert.equal(r.likely, true);
+      assert.ok(r.confidence >= 0.7);
+    });
+  });
+
   describe('two-word title case without DB match', () => {
     it('returns not-likely with moderate confidence', () => {
       const r = isLikelyPersonName('Zxqwkj Plugh');
