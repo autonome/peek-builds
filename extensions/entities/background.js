@@ -13,6 +13,7 @@ import { extractMicroformatEntities } from './extractors/microformats.js';
 import { extractStructuredDataEntities, extractPageMetadata } from './extractors/structured-data.js';
 import { processEntities } from './entity-matcher.js';
 import { getEntities, getObservations, setEntityFeedback } from './entity-store.js';
+import { ensureNameDatabase } from './name-validator.js';
 import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
@@ -347,6 +348,9 @@ const extension = {
   },
 
   init() {
+    // Eagerly load the name database so regex NER can use it from the first extraction
+    ensureNameDatabase();
+
     // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 

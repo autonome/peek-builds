@@ -2,9 +2,12 @@
  * Regex-based entity extractors
  *
  * Extracts emails, phone numbers, dates (with event/label context),
- * prices (with product context), addresses, and tracking numbers from
- * page text content using regular expressions.
+ * prices (with product context), addresses, tracking numbers, and
+ * person names (lightweight NER using name database) from page text
+ * content using regular expressions.
  */
+
+import { ensureNameDatabase, isKnownFirstName, isLikelyPersonName } from '../name-validator.js';
 
 // Email pattern
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
@@ -41,6 +44,27 @@ const TRACKING_PATTERNS = [
   // USPS
   { carrier: 'USPS', pattern: /\b(?:9[234]|7[01])\d{20,22}\b/g },
 ];
+
+// Person name pattern: 2-3 capitalized words, with optional nobiliary particles
+// Matches: "John Smith", "Maria van den Berg", "Jean de la Cruz"
+const PERSON_NAME_RE = /\b[A-Z][a-z]+(?:\s+(?:van|de|den|von|el|al|ibn|la|del|di|du|le|da)\s+)?(?:\s+(?:van|de|den|von|el|al|ibn|la|del|di|du|le|da)\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g;
+
+// Common false positive words that form capitalized sequences but aren't person names
+const NER_FALSE_POSITIVES = new Set([
+  'new york', 'los angeles', 'san francisco', 'san diego', 'san jose',
+  'las vegas', 'el paso', 'santa cruz', 'santa monica', 'santa barbara',
+  'united states', 'united kingdom', 'south africa', 'north america',
+  'south america', 'north carolina', 'south carolina', 'west virginia',
+  'north dakota', 'south dakota', 'new zealand', 'new hampshire',
+  'new jersey', 'new mexico', 'new orleans', 'costa rica',
+  'hong kong', 'sri lanka', 'puerto rico', 'buenos aires',
+  'terms of service', 'privacy policy', 'read more', 'learn more',
+  'sign up', 'log in', 'sign in', 'click here', 'find out',
+  'get started', 'contact us', 'about us', 'see more', 'view all',
+  'share this', 'follow us', 'join us', 'free shipping',
+  'add to cart', 'buy now', 'next page', 'last updated',
+  'all rights reserved', 'no comments', 'related posts',
+]);
 
 /**
  * Extract the meaningful context/label near a date match.
@@ -148,6 +172,53 @@ function extractPriceContext(text, matchIndex) {
 }
 
 /**
+ * Extract person names from text using lightweight NER.
+ * Scans for capitalized word sequences (2-3 words) where the first word
+ * matches a known first name from the name database.
+ * Confidence is set just above the minimum threshold (0.71).
+ * @param {string} text - Text content to scan
+ * @param {string} url - Source URL for context
+ * @returns {Array<Object>} Extracted person entities
+ */
+function extractPersonNames(text, url) {
+  const entities = [];
+  const seen = new Set();
+
+  PERSON_NAME_RE.lastIndex = 0;
+  let match;
+  while ((match = PERSON_NAME_RE.exec(text)) !== null) {
+    const name = match[0].trim();
+
+    // Deduplicate
+    const nameKey = name.toLowerCase();
+    if (seen.has(nameKey)) continue;
+
+    // Filter common false positives
+    if (NER_FALSE_POSITIVES.has(nameKey)) continue;
+
+    // First word must be a known first name
+    const firstWord = name.split(/\s+/)[0];
+    if (!isKnownFirstName(firstWord)) continue;
+
+    // Double-check with isLikelyPersonName for extra validation
+    const check = isLikelyPersonName(name);
+    if (!check.likely) continue;
+
+    seen.add(nameKey);
+    entities.push({
+      name,
+      entityType: 'person',
+      confidence: 0.71,
+      extractor: 'regex-ner',
+      attributes: {},
+      sourceUrl: url
+    });
+  }
+
+  return entities;
+}
+
+/**
  * Extract all regex-based entities from text content
  * @param {string} text - Text content to scan
  * @param {string} url - Source URL for context
@@ -247,6 +318,10 @@ export function extractRegexEntities(text, url) {
       });
     }
   }
+
+  // Extract person names via lightweight NER (name database lookup)
+  const personNames = extractPersonNames(text, url);
+  entities.push(...personNames);
 
   return entities;
 }

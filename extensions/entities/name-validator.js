@@ -304,6 +304,17 @@ export function validateEntityType(name, claimedType) {
 
 
 /**
+ * Check if a word is a known first name in the database.
+ * Returns false if the database hasn't been loaded yet.
+ * @param {string} word - Single word to check (case-insensitive)
+ * @returns {boolean}
+ */
+export function isKnownFirstName(word) {
+  if (!_firstNames || !word) return false;
+  return _firstNames.has(word.toLowerCase());
+}
+
+/**
  * Ensure the name database is loaded. Call this before using validateEntityType
  * or isLikelyPersonName in async contexts.
  */
