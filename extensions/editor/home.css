@@ -124,6 +124,10 @@ body {
   display: none;
 }
 
+.annotations-pane.collapsed .annotation-add-btn {
+  display: none;
+}
+
 .outline-sidebar.collapsed .sidebar-header,
 .preview-sidebar.collapsed .sidebar-header,
 .annotations-pane.collapsed .sidebar-header {
@@ -561,6 +565,18 @@ body {
 .annotation-btn-delete:hover {
   background: var(--base08);
   color: var(--base00);
+}
+
+.annotation-btn-confirm {
+  background: var(--base08) !important;
+  color: var(--base00) !important;
+  font-weight: 700;
+  opacity: 1 !important;
+}
+
+/* Keep actions visible when delete confirmation is pending */
+.annotation-actions:has(.annotation-btn-confirm) {
+  opacity: 1;
 }
 
 /* =====================================================================

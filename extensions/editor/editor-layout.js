@@ -748,7 +748,7 @@ export class EditorLayout {
       id: generateHighlightId(),
       from,
       to,
-      text: '', // Notes don't store selected text
+      text: state.doc.sliceString(from, to),
       note: '',
       color: nextHighlightColor(),
     };

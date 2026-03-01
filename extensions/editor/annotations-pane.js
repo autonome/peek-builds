@@ -136,7 +136,15 @@ export class AnnotationsPane {
       const lineNum = this._getLineNumber(hl.from);
       const text = document.createElement('div');
       text.className = 'annotation-text';
-      text.textContent = lineNum ? `Line ${lineNum}` : 'Highlight';
+      let headerLabel = lineNum ? `Line ${lineNum}` : 'Highlight';
+      if (hl.text) {
+        const excerpt = hl.text.replace(/\s+/g, ' ').trim();
+        if (excerpt.length > 0) {
+          const truncated = excerpt.length > 35 ? excerpt.slice(0, 35) + '\u2026' : excerpt;
+          headerLabel += ` \u2014 ${truncated}`;
+        }
+      }
+      text.textContent = headerLabel;
       header.appendChild(text);
 
       if (hl.note && !isEditing) {
@@ -175,21 +183,20 @@ export class AnnotationsPane {
         textarea.addEventListener('mousedown', (e) => e.stopPropagation());
         textarea.addEventListener('click', (e) => e.stopPropagation());
 
-        // Save on blur
+        // Save and close on blur
         textarea.addEventListener('blur', () => {
           this._saveTextarea(hl.id, textarea.value);
+          this._editingId = null;
+          this.render();
         });
 
-        // Enter saves (Shift+Enter for newline)
+        // Enter inserts newline (default behavior). Escape saves and closes.
         textarea.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            textarea.blur();
-          }
           if (e.key === 'Escape') {
             e.preventDefault();
-            this._editingId = null;
-            this.render();
+            e.stopPropagation(); // Don't trigger editor focus mode exit
+            // blur will trigger save+close
+            textarea.blur();
           }
         });
 
@@ -214,11 +221,27 @@ export class AnnotationsPane {
       deleteBtn.className = 'annotation-btn annotation-btn-delete';
       deleteBtn.textContent = '\u00D7'; // x
       deleteBtn.title = 'Remove note';
+      let confirmPending = false;
+      let confirmTimeout = null;
       deleteBtn.addEventListener('mousedown', (e) => e.preventDefault());
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (this.onAnnotationDelete) {
-          this.onAnnotationDelete(hl.id);
+        if (confirmPending) {
+          // Second click — actually delete
+          clearTimeout(confirmTimeout);
+          if (this.onAnnotationDelete) {
+            this.onAnnotationDelete(hl.id);
+          }
+        } else {
+          // First click — enter confirm state
+          confirmPending = true;
+          deleteBtn.textContent = '?';
+          deleteBtn.classList.add('annotation-btn-confirm');
+          confirmTimeout = setTimeout(() => {
+            confirmPending = false;
+            deleteBtn.textContent = '\u00D7';
+            deleteBtn.classList.remove('annotation-btn-confirm');
+          }, 3000);
         }
       });
       actions.appendChild(deleteBtn);
