@@ -179,14 +179,18 @@ body {
 }
 
 .sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
-  color: var(--base03);
+  color: var(--base04);
   cursor: pointer;
   padding: 2px 6px;
-  font-size: 10px;
+  font-size: 12px;
   transition: color 0.15s;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .sidebar-toggle:hover {
