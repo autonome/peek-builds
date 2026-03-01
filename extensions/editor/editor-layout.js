@@ -757,6 +757,11 @@ export class EditorLayout {
     this._syncAnnotationsPane();
     this._persistHighlights();
 
+    // Auto-open the textarea editor for the new highlight
+    if (this.annotationsPane) {
+      this.annotationsPane.openEditorForHighlight(highlight.id);
+    }
+
     // Auto-show annotations pane expanded
     if (!this.paneVisible.annotations || this.paneCollapsed.annotations) {
       this.paneVisible.annotations = true;

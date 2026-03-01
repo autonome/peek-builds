@@ -15,6 +15,8 @@ export class AnnotationsPane {
     this.collapsed = false; // Layout owns this state
     this.highlights = [];
     this.doc = null; // CodeMirror doc for line number lookup
+    this._editingId = null; // ID of highlight currently being edited
+    this._pendingEditId = null; // ID of newly-added highlight to auto-open for editing
 
     this.element = document.createElement('div');
     this.element.className = 'annotations-pane';
@@ -86,6 +88,15 @@ export class AnnotationsPane {
     return null;
   }
 
+  /**
+   * Open the inline textarea editor for a specific highlight.
+   * Called externally (e.g. after adding a new highlight).
+   */
+  openEditorForHighlight(highlightId) {
+    this._pendingEditId = highlightId;
+    this.render();
+  }
+
   render() {
     this.content.innerHTML = '';
 
@@ -94,6 +105,7 @@ export class AnnotationsPane {
       empty.className = 'annotations-empty';
       empty.textContent = 'No notes yet. Select text or place cursor, then click + or press \u2318\u21E7L.';
       this.content.appendChild(empty);
+      this._pendingEditId = null;
       return;
     }
 
@@ -101,8 +113,11 @@ export class AnnotationsPane {
     const sorted = [...this.highlights].sort((a, b) => a.from - b.from);
 
     for (const hl of sorted) {
+      const isEditing = this._editingId === hl.id || this._pendingEditId === hl.id;
+
       const item = document.createElement('div');
       item.className = 'annotation-item';
+      if (isEditing) item.classList.add('annotation-item-editing');
 
       // Color indicator
       const colorDot = document.createElement('span');
@@ -114,41 +129,86 @@ export class AnnotationsPane {
       const textWrap = document.createElement('div');
       textWrap.className = 'annotation-text-wrap';
 
+      // Header row: line info + note preview (clickable to toggle editor)
+      const header = document.createElement('div');
+      header.className = 'annotation-header';
+
       const lineNum = this._getLineNumber(hl.from);
       const text = document.createElement('div');
       text.className = 'annotation-text';
-      if (hl.note) {
-        // Has user note — show "Line N" as label, note as primary text
-        text.textContent = lineNum ? `Line ${lineNum}` : 'Note';
-      } else {
-        // No note — show "Line N — highlight"
-        text.textContent = lineNum ? `Line ${lineNum} \u2014 highlight` : 'Highlight';
-      }
-      textWrap.appendChild(text);
+      text.textContent = lineNum ? `Line ${lineNum}` : 'Highlight';
+      header.appendChild(text);
 
-      if (hl.note) {
-        const note = document.createElement('div');
-        note.className = 'annotation-note';
-        note.textContent = hl.note;
-        textWrap.appendChild(note);
+      if (hl.note && !isEditing) {
+        const notePreview = document.createElement('div');
+        notePreview.className = 'annotation-note';
+        notePreview.textContent = hl.note;
+        header.appendChild(notePreview);
+      }
+
+      // Click header to toggle textarea and jump to highlight
+      header.addEventListener('mousedown', (e) => e.preventDefault());
+      header.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this._editingId === hl.id) {
+          this._editingId = null;
+        } else {
+          this._editingId = hl.id;
+        }
+        this.render();
+        if (this.onAnnotationClick) {
+          this.onAnnotationClick(hl);
+        }
+      });
+
+      textWrap.appendChild(header);
+
+      // Inline textarea editor
+      if (isEditing) {
+        const textarea = document.createElement('textarea');
+        textarea.className = 'annotation-textarea';
+        textarea.value = hl.note || '';
+        textarea.placeholder = 'Add a note...';
+        textarea.rows = 3;
+
+        // Prevent item click from firing when interacting with textarea
+        textarea.addEventListener('mousedown', (e) => e.stopPropagation());
+        textarea.addEventListener('click', (e) => e.stopPropagation());
+
+        // Save on blur
+        textarea.addEventListener('blur', () => {
+          this._saveTextarea(hl.id, textarea.value);
+        });
+
+        // Enter saves (Shift+Enter for newline)
+        textarea.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            textarea.blur();
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            this._editingId = null;
+            this.render();
+          }
+        });
+
+        textWrap.appendChild(textarea);
+
+        // Auto-focus the textarea after DOM insertion
+        requestAnimationFrame(() => {
+          textarea.focus();
+          // Place cursor at end
+          textarea.selectionStart = textarea.value.length;
+          textarea.selectionEnd = textarea.value.length;
+        });
       }
 
       item.appendChild(textWrap);
 
-      // Actions
+      // Actions — only delete button
       const actions = document.createElement('div');
       actions.className = 'annotation-actions';
-
-      const editBtn = document.createElement('button');
-      editBtn.className = 'annotation-btn';
-      editBtn.textContent = 'Edit';
-      editBtn.title = 'Edit note';
-      editBtn.addEventListener('mousedown', (e) => e.preventDefault());
-      editBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._editNote(hl);
-      });
-      actions.appendChild(editBtn);
 
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'annotation-btn annotation-btn-delete';
@@ -165,7 +225,7 @@ export class AnnotationsPane {
 
       item.appendChild(actions);
 
-      // Click to jump to highlight
+      // Click the item background to jump to highlight
       item.addEventListener('mousedown', (e) => e.preventDefault());
       item.addEventListener('click', () => {
         if (this.onAnnotationClick) {
@@ -175,12 +235,17 @@ export class AnnotationsPane {
 
       this.content.appendChild(item);
     }
+
+    // Clear pending edit after render
+    if (this._pendingEditId) {
+      this._editingId = this._pendingEditId;
+      this._pendingEditId = null;
+    }
   }
 
-  _editNote(highlight) {
-    const note = prompt('Note:', highlight.note || '');
-    if (note !== null && this.onAnnotationEdit) {
-      this.onAnnotationEdit(highlight.id, note);
+  _saveTextarea(highlightId, value) {
+    if (this.onAnnotationEdit) {
+      this.onAnnotationEdit(highlightId, value);
     }
   }
 
