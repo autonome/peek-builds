@@ -185,8 +185,16 @@ export class AnnotationsPane {
 
         // Save and close on blur
         textarea.addEventListener('blur', () => {
-          this._saveTextarea(hl.id, textarea.value);
+          const value = textarea.value;
+          // Clear editing state BEFORE save — save triggers update() -> render()
+          // chain via onAnnotationEdit callback. If _editingId is still set when
+          // that intermediate render runs, it recreates the textarea (with a new
+          // rAF focus schedule), defeating the close.
           this._editingId = null;
+          this._pendingEditId = null;
+          this._saveTextarea(hl.id, value);
+          // render() was already called by the save->update chain above,
+          // but call again to ensure consistent state if the chain was skipped.
           this.render();
         });
 
