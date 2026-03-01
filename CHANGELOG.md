@@ -13,6 +13,27 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-03-01
+
+Desktop - Editor
+- [x] Redesign note editing — inline textarea replaces broken Edit button, auto-opens on new highlight ([2988](https://tangled.org/burrito.space/peek/commit/2988))
+- [x] Notes pane UX polish — Enter creates newlines, delete confirms with two-click, collapsed hides + button, header shows selection text excerpt with ellipsis ([2a5c](https://tangled.org/burrito.space/peek/commit/2a5c))
+- [x] Fix ESC in note textarea — Electron's before-input-event intercepted ESC before DOM, now handled via escape IPC callback ([f978](https://tangled.org/burrito.space/peek/commit/f978))
+
+Desktop - Entities
+- [x] Add lightweight NER — regex-based person name extraction with name database validation ([f42e](https://tangled.org/burrito.space/peek/commit/f42e))
+- [x] Recursive JSON-LD extraction — walk nested objects, extract relationship entities (performer, location, organizer), expanded schema.org type mappings ([2816](https://tangled.org/burrito.space/peek/commit/2816))
+- [x] Fix page fallback extractors — inline entity extraction in page.js now parses JSON-LD, relaxed relationship field filters, added pipeline logging ([d8f2](https://tangled.org/burrito.space/peek/commit/d8f2))
+- [x] Expand name database with ~500 international names — Japanese, Korean, Chinese, Indian, African, Vietnamese, French, Spanish, Italian ([fe37](https://tangled.org/burrito.space/peek/commit/fe37))
+- [x] Fix person name regex — mandatory \s+ between first and last name was missing, regex could never match normal names ([937e](https://tangled.org/burrito.space/peek/commit/937e))
+
+Desktop - Page View
+- [x] Remove translateX transforms from page panels — opacity-only fade animation as intended ([f70c](https://tangled.org/burrito.space/peek/commit/f70c))
+- [x] Replace keyframe animations with 500ms CSS transitions for fade in/out ([5296](https://tangled.org/burrito.space/peek/commit/5296))
+
+Desktop - Command Palette
+- [x] Cache history commands — batch registration, skip re-registration when unchanged, incremental delta updates ([66ec](https://tangled.org/burrito.space/peek/commit/66ec))
+
 ## 2026-02-28
 
 Desktop - Editor

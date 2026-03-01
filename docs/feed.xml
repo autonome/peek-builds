@@ -4,9 +4,33 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Sat, 28 Feb 2026 09:30:04 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 01 Mar 2026 15:57:15 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-03-01</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-01</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-03-01</guid>
+      <pubDate>Sun, 01 Mar 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Editor
+- Redesign note editing — inline textarea replaces broken Edit button, auto-opens on new highlight (2988 (https://tangled.org/burrito.space/peek/commit/2988))
+- Notes pane UX polish — Enter creates newlines, delete confirms with two-click, collapsed hides + button, header shows selection text excerpt with ellipsis (2a5c (https://tangled.org/burrito.space/peek/commit/2a5c))
+- Fix ESC in note textarea — Electron&apos;s before-input-event intercepted ESC before DOM, now handled via escape IPC callback (f978 (https://tangled.org/burrito.space/peek/commit/f978))
+
+Desktop - Entities
+- Add lightweight NER — regex-based person name extraction with name database validation (f42e (https://tangled.org/burrito.space/peek/commit/f42e))
+- Recursive JSON-LD extraction — walk nested objects, extract relationship entities (performer, location, organizer), expanded schema.org type mappings (2816 (https://tangled.org/burrito.space/peek/commit/2816))
+- Fix page fallback extractors — inline entity extraction in page.js now parses JSON-LD, relaxed relationship field filters, added pipeline logging (d8f2 (https://tangled.org/burrito.space/peek/commit/d8f2))
+- Expand name database with ~500 international names — Japanese, Korean, Chinese, Indian, African, Vietnamese, French, Spanish, Italian (fe37 (https://tangled.org/burrito.space/peek/commit/fe37))
+- Fix person name regex — mandatory \s+ between first and last name was missing, regex could never match normal names (937e (https://tangled.org/burrito.space/peek/commit/937e))
+
+Desktop - Page View
+- Remove translateX transforms from page panels — opacity-only fade animation as intended (f70c (https://tangled.org/burrito.space/peek/commit/f70c))
+- Replace keyframe animations with 500ms CSS transitions for fade in/out (5296 (https://tangled.org/burrito.space/peek/commit/5296))
+
+Desktop - Command Palette
+- Cache history commands — batch registration, skip re-registration when unchanged, incremental delta updates (66ec (https://tangled.org/burrito.space/peek/commit/66ec))</description>
+    </item>
     <item>
       <title>2026-02-28</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-02-28</link>
