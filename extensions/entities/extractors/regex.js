@@ -296,7 +296,7 @@ export function extractRegexEntities(text, url) {
     entities.push({
       name: normalized,
       entityType: 'place',
-      confidence: 0.6,
+      confidence: 0.75,
       extractor: 'regex',
       attributes: { address: normalized },
       sourceUrl: url

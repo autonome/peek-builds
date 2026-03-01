@@ -14,7 +14,10 @@ import { classifyNamePattern, isLikelyPersonName } from '../name-validator.js';
  * @returns {Array<Object>} Extracted entities
  */
 export function extractStructuredDataEntities(html, url) {
-  if (!html || typeof html !== 'string') return [];
+  if (!html || typeof html !== 'string') {
+    console.log(`[entities:structured-data] No HTML content for ${url}`);
+    return [];
+  }
 
   const entities = [];
 
@@ -37,6 +40,7 @@ export function extractStructuredDataEntities(html, url) {
     console.warn('[entities:structured-data] Parse error:', err.message);
   }
 
+  console.log(`[entities:structured-data] Extracted ${entities.length} entities from ${url}:`, entities.map(e => `${e.name} (${e.entityType})`).join(', ') || 'none');
   return entities;
 }
 
@@ -64,9 +68,16 @@ function extractJsonLd(doc, url) {
   const entities = [];
   const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
 
+  console.log(`[entities:structured-data] Found ${scripts.length} JSON-LD script(s) in HTML`);
+
   for (const script of scripts) {
     try {
-      const data = JSON.parse(script.textContent);
+      const raw = script.textContent;
+      if (!raw || !raw.trim()) {
+        console.log('[entities:structured-data] Empty JSON-LD script, skipping');
+        continue;
+      }
+      const data = JSON.parse(raw);
       const items = Array.isArray(data) ? data : [data];
 
       for (const item of items) {
@@ -79,8 +90,8 @@ function extractJsonLd(doc, url) {
           extractJsonLdItem(item, url, entities);
         }
       }
-    } catch {
-      // Invalid JSON-LD, skip
+    } catch (err) {
+      console.warn('[entities:structured-data] JSON-LD parse error:', err.message);
     }
   }
 
@@ -129,7 +140,7 @@ function extractRelationshipEntities(item, url) {
     const values = Array.isArray(value) ? value : [value];
     for (const v of values) {
       if (!v || typeof v !== 'object' || !v['@type']) continue;
-      const entity = jsonLdItemToEntity(v, url);
+      const entity = jsonLdItemToEntity(v, url, { fromRelationship: true });
       if (entity) {
         results.push({ entity, attribute: config.attribute });
       }
@@ -187,8 +198,13 @@ function processNestedValue(value, url, entities, visited) {
 
 /**
  * Convert a single JSON-LD item to an entity
+ * @param {Object} item - JSON-LD item object
+ * @param {string} url - Source URL
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.fromRelationship=false] - If true, relax minimum field requirements
+ *   (entities from relationship fields like performer/organizer often have minimal attributes)
  */
-function jsonLdItemToEntity(item, url) {
+function jsonLdItemToEntity(item, url, options = {}) {
   if (!item || !item['@type']) return null;
 
   const type = Array.isArray(item['@type']) ? item['@type'][0] : item['@type'];
@@ -382,21 +398,25 @@ function jsonLdItemToEntity(item, url) {
   ).length;
 
   // Type-specific minimum field requirements
+  // Entities from relationship fields (performer, organizer, location) are already
+  // validated by their @type and the relationship context, so relax requirements.
+  const fromRelationship = options.fromRelationship || false;
   switch (entityType) {
     case 'person':
       // Person needs at least 1 additional field beyond name (email, url, jobTitle, org, etc.)
-      if (meaningfulFields < 1) return null;
+      // Unless from a relationship field where the @type is sufficient evidence
+      if (!fromRelationship && meaningfulFields < 1) return null;
       break;
     case 'organization':
-      if (meaningfulFields < 1) return null;
+      if (!fromRelationship && meaningfulFields < 1) return null;
       break;
     case 'event':
       // Events need a start date at minimum
-      if (!attributes.startDate) return null;
+      if (!fromRelationship && !attributes.startDate) return null;
       break;
     case 'product':
       // Products need at least price or description
-      if (!attributes.price && !attributes.description) return null;
+      if (!fromRelationship && !attributes.price && !attributes.description) return null;
       break;
   }
 

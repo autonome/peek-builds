@@ -43,17 +43,23 @@ async function getPageContent(url) {
   try {
     const result = await api.datastore.extractPageContent(url);
     if (result && result.success) {
+      console.log(`[entities] getPageContent via IPC for ${url}: html=${result.data.html?.length || 0} chars, text=${result.data.text?.length || 0} chars`);
       return result.data;
     }
-  } catch {
-    // IPC not available or failed - fall back to fetch for metadata
+    console.log(`[entities] IPC extractPageContent failed for ${url}: ${result?.error || 'no result'}, falling back to fetch`);
+  } catch (err) {
+    console.log(`[entities] IPC extractPageContent error for ${url}: ${err.message}, falling back to fetch`);
   }
 
   // Fallback: fetch the URL directly for metadata extraction
   try {
     const response = await fetch(url);
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.log(`[entities] fetch fallback failed for ${url}: HTTP ${response.status}`);
+      return null;
+    }
     const html = await response.text();
+    console.log(`[entities] getPageContent via fetch for ${url}: html=${html.length} chars, hasJsonLd=${html.includes('application/ld+json')}`);
     // Extract basic text (strip tags)
     const textContent = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -65,7 +71,8 @@ async function getPageContent(url) {
       text: textContent.slice(0, 50000), // Limit text extraction
       title: ''
     };
-  } catch {
+  } catch (err) {
+    console.log(`[entities] fetch fallback error for ${url}: ${err.message}`);
     return null;
   }
 }
@@ -153,12 +160,25 @@ async function extractEntities(url, title = '') {
     console.warn('[entities] Page metadata enrichment failed:', err.message);
   }
 
-  // Run all extractors in parallel
+  // Run all extractors in parallel, isolating failures so one broken extractor
+  // doesn't prevent the others from contributing entities
+  const safeExtract = (fn, name) => {
+    try {
+      const result = fn();
+      return Array.isArray(result) ? result : [];
+    } catch (err) {
+      console.warn(`[entities] ${name} extractor threw:`, err.message);
+      return [];
+    }
+  };
+
   const [regexEntities, microformatEntities, structuredDataEntities] = await Promise.all([
-    Promise.resolve(extractRegexEntities(text, url)),
-    Promise.resolve(extractMicroformatEntities(html, url)),
-    Promise.resolve(extractStructuredDataEntities(html, url)),
+    Promise.resolve(safeExtract(() => extractRegexEntities(text, url), 'regex')),
+    Promise.resolve(safeExtract(() => extractMicroformatEntities(html, url), 'microformats')),
+    Promise.resolve(safeExtract(() => extractStructuredDataEntities(html, url), 'structured-data')),
   ]);
+
+  console.log(`[entities] Extraction results for ${url}: structured-data=${structuredDataEntities.length}, microformats=${microformatEntities.length}, regex=${regexEntities.length}, html.length=${html.length}, hasJsonLd=${html.includes('application/ld+json')}`);
 
   const allRaw = [
     ...structuredDataEntities,  // Highest confidence first

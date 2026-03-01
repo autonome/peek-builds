@@ -76,7 +76,9 @@ export async function processEntities(rawEntities, pageContext, confidenceThresh
       if (validation.suggestedType) {
         // Re-type the entity instead of dropping it
         entity.entityType = validation.suggestedType;
-        entity.confidence *= 0.8; // reduce confidence for reclassified entities
+        // Reduce confidence for reclassified entities, but keep at threshold minimum
+        // so they aren't immediately filtered out by the confidence check above
+        entity.confidence = Math.max(entity.confidence * 0.8, confidenceThreshold);
       } else {
         // No valid type — skip this entity
         continue;
@@ -100,6 +102,11 @@ export async function processEntities(rawEntities, pageContext, confidenceThresh
       seen.set(key, entity);
       dedupedEntities.push(entity);
     }
+  }
+
+  console.log(`[entities:matcher] After filtering: ${dedupedEntities.length} entities from ${rawEntities.length} raw (threshold=${confidenceThreshold})`);
+  for (const entity of dedupedEntities) {
+    console.log(`[entities:matcher] Processing: "${entity.name}" type=${entity.entityType} confidence=${entity.confidence} extractor=${entity.extractor}`);
   }
 
   // Process each deduplicated entity

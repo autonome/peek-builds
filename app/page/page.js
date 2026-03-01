@@ -1876,7 +1876,7 @@ function renderEntities(entities) {
   }
 
   // Display order for entity types
-  const typeOrder = ['person', 'organization', 'place', 'event', 'email', 'phone', 'product', 'date', 'tracking_number', 'link', 'other'];
+  const typeOrder = ['person', 'organization', 'place', 'event', 'email', 'phone', 'product', 'creative_work', 'date', 'tracking_number', 'link', 'other'];
   const typeLabels = {
     person: 'People',
     organization: 'Organizations',
@@ -1885,6 +1885,7 @@ function renderEntities(entities) {
     email: 'Emails',
     phone: 'Phones',
     product: 'Products',
+    creative_work: 'Works',
     date: 'Dates',
     tracking_number: 'Tracking',
     link: 'External Links',
@@ -1999,7 +2000,57 @@ async function extractSimpleEntities() {
         var entities = [];
         var seen = new Set();
 
-        // Extract external links
+        // --- JSON-LD structured data (high quality) ---
+        var typeMap = {
+          'Person': 'person', 'Organization': 'organization', 'Corporation': 'organization',
+          'LocalBusiness': 'organization', 'PerformingGroup': 'organization',
+          'MusicGroup': 'organization', 'Event': 'event', 'MusicEvent': 'event',
+          'TheaterEvent': 'event', 'Festival': 'event', 'SportsEvent': 'event',
+          'Place': 'place', 'PerformingArtsTheater': 'place', 'MusicVenue': 'place',
+          'Church': 'place', 'StadiumOrArena': 'place', 'CivicStructure': 'place',
+          'Product': 'product', 'SoftwareApplication': 'product',
+          'Article': 'creative_work', 'NewsArticle': 'creative_work', 'Book': 'creative_work',
+          'Movie': 'creative_work', 'MusicRecording': 'creative_work'
+        };
+        var skipTypes = new Set(['Offer', 'AggregateOffer', 'ListItem', 'BreadcrumbList',
+          'ItemList', 'SearchAction', 'WebPage', 'WebSite', 'ImageObject', 'Rating',
+          'AggregateRating', 'PropertyValue', 'MonetaryAmount', 'QuantitativeValue']);
+        function extractLdItem(item) {
+          if (!item || typeof item !== 'object' || !item['@type']) return;
+          var type = Array.isArray(item['@type']) ? item['@type'][0] : item['@type'];
+          if (skipTypes.has(type)) return;
+          var name = item.name || item.headline || item.title;
+          if (name && typeof name === 'string' && name.trim().length >= 4) {
+            var entityType = typeMap[type];
+            if (entityType && !seen.has(name.trim())) {
+              seen.add(name.trim());
+              entities.push({ name: name.trim(), type: entityType, confidence: 0.9 });
+            }
+          }
+          // Walk nested objects for sub-entities
+          Object.keys(item).forEach(function(key) {
+            if (key.startsWith('@')) return;
+            var val = item[key];
+            if (Array.isArray(val)) { val.forEach(function(v) { extractLdItem(v); }); }
+            else if (val && typeof val === 'object') { extractLdItem(val); }
+          });
+        }
+        var ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+        for (var s = 0; s < ldScripts.length; s++) {
+          try {
+            var data = JSON.parse(ldScripts[s].textContent);
+            var items = Array.isArray(data) ? data : [data];
+            items.forEach(function(item) {
+              if (item['@graph'] && Array.isArray(item['@graph'])) {
+                item['@graph'].forEach(extractLdItem);
+              } else {
+                extractLdItem(item);
+              }
+            });
+          } catch(e) {}
+        }
+
+        // --- Extract external links ---
         var links = document.querySelectorAll('a[href]');
         for (var i = 0; i < Math.min(links.length, 200); i++) {
           var href = links[i].href;
@@ -2016,7 +2067,7 @@ async function extractSimpleEntities() {
           } catch(e) {}
         }
 
-        // Extract mailto links
+        // --- Extract mailto links ---
         var mailLinks = document.querySelectorAll('a[href^="mailto:"]');
         for (var j = 0; j < mailLinks.length; j++) {
           var email = mailLinks[j].href.replace('mailto:', '').split('?')[0];
@@ -2026,7 +2077,7 @@ async function extractSimpleEntities() {
           }
         }
 
-        // Extract tel links
+        // --- Extract tel links ---
         var telLinks = document.querySelectorAll('a[href^="tel:"]');
         for (var k = 0; k < telLinks.length; k++) {
           var phone = telLinks[k].href.replace('tel:', '');
@@ -2451,13 +2502,63 @@ api.subscribe('page:cmd:request', async (msg) => {
         if (currentPageEntities && currentPageEntities.length > 0) {
           respond(currentPageEntities);
         } else {
-          // Do a quick extraction
+          // Do a quick extraction from the live page DOM
           const entities = await webview.executeJavaScript(`
             (function() {
               var entities = [];
               var seen = new Set();
 
-              // Emails from mailto links
+              // --- JSON-LD structured data (high quality) ---
+              var typeMap = {
+                'Person': 'person', 'Organization': 'organization', 'Corporation': 'organization',
+                'LocalBusiness': 'organization', 'PerformingGroup': 'organization',
+                'MusicGroup': 'organization', 'Event': 'event', 'MusicEvent': 'event',
+                'TheaterEvent': 'event', 'Festival': 'event', 'SportsEvent': 'event',
+                'Place': 'place', 'PerformingArtsTheater': 'place', 'MusicVenue': 'place',
+                'Church': 'place', 'StadiumOrArena': 'place', 'CivicStructure': 'place',
+                'Product': 'product', 'SoftwareApplication': 'product',
+                'Article': 'creative_work', 'NewsArticle': 'creative_work', 'Book': 'creative_work',
+                'Movie': 'creative_work', 'MusicRecording': 'creative_work'
+              };
+              var skipTypes = new Set(['Offer', 'AggregateOffer', 'ListItem', 'BreadcrumbList',
+                'ItemList', 'SearchAction', 'WebPage', 'WebSite', 'ImageObject', 'Rating',
+                'AggregateRating', 'PropertyValue', 'MonetaryAmount', 'QuantitativeValue']);
+              function extractLdItem(item) {
+                if (!item || typeof item !== 'object' || !item['@type']) return;
+                var type = Array.isArray(item['@type']) ? item['@type'][0] : item['@type'];
+                if (skipTypes.has(type)) return;
+                var name = item.name || item.headline || item.title;
+                if (name && typeof name === 'string' && name.trim().length >= 4) {
+                  var entityType = typeMap[type];
+                  if (entityType && !seen.has(name.trim())) {
+                    seen.add(name.trim());
+                    entities.push({ name: name.trim(), type: entityType, confidence: 0.9 });
+                  }
+                }
+                // Walk nested objects for sub-entities (location, performer, organizer, etc.)
+                Object.keys(item).forEach(function(key) {
+                  if (key.startsWith('@')) return;
+                  var val = item[key];
+                  if (Array.isArray(val)) { val.forEach(function(v) { extractLdItem(v); }); }
+                  else if (val && typeof val === 'object') { extractLdItem(val); }
+                });
+              }
+              var ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+              for (var s = 0; s < ldScripts.length; s++) {
+                try {
+                  var data = JSON.parse(ldScripts[s].textContent);
+                  var items = Array.isArray(data) ? data : [data];
+                  items.forEach(function(item) {
+                    if (item['@graph'] && Array.isArray(item['@graph'])) {
+                      item['@graph'].forEach(extractLdItem);
+                    } else {
+                      extractLdItem(item);
+                    }
+                  });
+                } catch(e) {}
+              }
+
+              // --- Emails from mailto links ---
               var mailLinks = document.querySelectorAll('a[href^="mailto:"]');
               for (var i = 0; i < mailLinks.length; i++) {
                 var email = mailLinks[i].href.replace('mailto:', '').split('?')[0];
@@ -2467,7 +2568,7 @@ api.subscribe('page:cmd:request', async (msg) => {
                 }
               }
 
-              // Emails from text content (regex)
+              // --- Emails from text content (regex) ---
               var textContent = document.body ? document.body.innerText : '';
               var emailRegex = /[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/g;
               var emailMatches = textContent.match(emailRegex) || [];
@@ -2478,7 +2579,7 @@ api.subscribe('page:cmd:request', async (msg) => {
                 }
               }
 
-              // Phone numbers from tel links
+              // --- Phone numbers from tel links ---
               var telLinks = document.querySelectorAll('a[href^="tel:"]');
               for (var k = 0; k < telLinks.length; k++) {
                 var phone = telLinks[k].href.replace('tel:', '');
@@ -2488,7 +2589,7 @@ api.subscribe('page:cmd:request', async (msg) => {
                 }
               }
 
-              // External domains as organizations
+              // --- External domains as organizations ---
               var links = document.querySelectorAll('a[href]');
               var domainCounts = {};
               for (var l = 0; l < Math.min(links.length, 500); l++) {
