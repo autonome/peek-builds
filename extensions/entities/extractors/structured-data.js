@@ -40,6 +40,23 @@ export function extractStructuredDataEntities(html, url) {
   return entities;
 }
 
+// Schema.org types to skip during recursive extraction (too noisy)
+const SKIP_NESTED_TYPES = new Set([
+  'Offer', 'AggregateOffer', 'ListItem', 'BreadcrumbList',
+  'ItemList', 'SearchAction', 'ReadAction', 'WebPage', 'WebSite',
+  'ImageObject', 'PropertyValue', 'QuantitativeValue',
+  'MonetaryAmount', 'Rating', 'AggregateRating'
+]);
+
+// Relationship field mappings: field name -> { entityType, attributeName }
+const RELATIONSHIP_FIELDS = {
+  location: { preferredType: 'place', attribute: 'locationEntityName' },
+  performer: { preferredType: null, attribute: 'performerEntityName' },
+  author: { preferredType: null, attribute: 'authorEntityName' },
+  creator: { preferredType: null, attribute: 'creatorEntityName' },
+  organizer: { preferredType: 'organization', attribute: 'organizerEntityName' },
+};
+
 /**
  * Extract entities from JSON-LD script tags
  */
@@ -56,12 +73,10 @@ function extractJsonLd(doc, url) {
         // Handle @graph arrays
         if (item['@graph'] && Array.isArray(item['@graph'])) {
           for (const graphItem of item['@graph']) {
-            const entity = jsonLdItemToEntity(graphItem, url);
-            if (entity) entities.push(entity);
+            extractJsonLdItem(graphItem, url, entities);
           }
         } else {
-          const entity = jsonLdItemToEntity(item, url);
-          if (entity) entities.push(entity);
+          extractJsonLdItem(item, url, entities);
         }
       }
     } catch {
@@ -70,6 +85,104 @@ function extractJsonLd(doc, url) {
   }
 
   return entities;
+}
+
+/**
+ * Extract a JSON-LD item and all nested typed objects.
+ * Handles relationship fields (location, performer, etc.) by extracting
+ * sub-entities and linking them to the parent via attributes.
+ */
+function extractJsonLdItem(item, url, entities) {
+  if (!item || typeof item !== 'object') return;
+
+  const parentEntity = jsonLdItemToEntity(item, url);
+
+  // Extract sub-entities from known relationship fields (Fix 4)
+  const subEntities = extractRelationshipEntities(item, url);
+  for (const sub of subEntities) {
+    entities.push(sub.entity);
+    // Link to parent if parent was successfully extracted
+    if (parentEntity && sub.attribute) {
+      parentEntity.attributes[sub.attribute] = sub.entity.name;
+    }
+  }
+
+  if (parentEntity) entities.push(parentEntity);
+
+  // Recursively walk all object-valued properties for additional nested types (Fix 1)
+  extractNestedEntities(item, url, entities);
+}
+
+/**
+ * Extract entities from known relationship fields on a JSON-LD item.
+ * Returns array of { entity, attribute } objects.
+ */
+function extractRelationshipEntities(item, url) {
+  const results = [];
+  if (!item || typeof item !== 'object') return results;
+
+  for (const [field, config] of Object.entries(RELATIONSHIP_FIELDS)) {
+    const value = item[field];
+    if (!value || typeof value !== 'object') continue;
+
+    // Handle arrays of performers/authors/etc.
+    const values = Array.isArray(value) ? value : [value];
+    for (const v of values) {
+      if (!v || typeof v !== 'object' || !v['@type']) continue;
+      const entity = jsonLdItemToEntity(v, url);
+      if (entity) {
+        results.push({ entity, attribute: config.attribute });
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Recursively walk an object's properties and extract any nested objects
+ * that have a @type field. Skips noisy types and already-processed
+ * relationship fields.
+ */
+function extractNestedEntities(item, url, entities, visited = new WeakSet()) {
+  if (!item || typeof item !== 'object' || visited.has(item)) return;
+  visited.add(item);
+
+  for (const [key, value] of Object.entries(item)) {
+    // Skip relationship fields (already handled by extractRelationshipEntities)
+    if (RELATIONSHIP_FIELDS[key]) continue;
+    // Skip metadata fields
+    if (key.startsWith('@')) continue;
+
+    if (Array.isArray(value)) {
+      for (const arrItem of value) {
+        if (arrItem && typeof arrItem === 'object') {
+          processNestedValue(arrItem, url, entities, visited);
+        }
+      }
+    } else if (value && typeof value === 'object') {
+      processNestedValue(value, url, entities, visited);
+    }
+  }
+}
+
+/**
+ * Process a single nested value: extract as entity if typed, then recurse.
+ */
+function processNestedValue(value, url, entities, visited) {
+  if (!value || typeof value !== 'object' || visited.has(value)) return;
+
+  if (value['@type']) {
+    const type = Array.isArray(value['@type']) ? value['@type'][0] : value['@type'];
+    // Skip noisy types
+    if (!SKIP_NESTED_TYPES.has(type)) {
+      const entity = jsonLdItemToEntity(value, url);
+      if (entity) entities.push(entity);
+    }
+  }
+
+  // Continue recursing
+  extractNestedEntities(value, url, entities, visited);
 }
 
 /**
@@ -99,6 +212,10 @@ function jsonLdItemToEntity(item, url) {
     'SportsTeam': 'organization',
     'Airline': 'organization',
     'MedicalOrganization': 'organization',
+    'PerformingGroup': 'organization',
+    'MusicGroup': 'organization',
+    'TheaterGroup': 'organization',
+    'DanceGroup': 'organization',
     // Events
     'Event': 'event',
     'MusicEvent': 'event',
@@ -116,6 +233,12 @@ function jsonLdItemToEntity(item, url) {
     'City': 'place',
     'Country': 'place',
     'State': 'place',
+    'Church': 'place',
+    'CivicStructure': 'place',
+    'PerformingArtsTheater': 'place',
+    'MusicVenue': 'place',
+    'StadiumOrArena': 'place',
+    'GovernmentBuilding': 'place',
     // Products
     'Product': 'product',
     'IndividualProduct': 'product',
