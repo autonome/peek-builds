@@ -47,7 +47,8 @@ const TRACKING_PATTERNS = [
 
 // Person name pattern: 2-3 capitalized words, with optional nobiliary particles
 // Matches: "John Smith", "Maria van den Berg", "Jean de la Cruz"
-const PERSON_NAME_RE = /\b[A-Z][a-z]+(?:\s+(?:van|de|den|von|el|al|ibn|la|del|di|du|le|da)\s+)?(?:\s+(?:van|de|den|von|el|al|ibn|la|del|di|du|le|da)\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g;
+// Structure: FirstName \s+ (optional particle \s+){0,2} LastName (optional \s+ ThirdName)
+const PERSON_NAME_RE = /\b[A-Z][a-z]+\s+(?:(?:van|de|den|von|el|al|ibn|la|del|di|du|le|da)\s+)?(?:(?:van|de|den|von|el|al|ibn|la|del|di|du|le|da)\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g;
 
 // Common false positive words that form capitalized sequences but aren't person names
 const NER_FALSE_POSITIVES = new Set([
