@@ -298,7 +298,7 @@ function updatePositions() {
   // Extensions Panel — left side, below page info
   if (extensionsPanel) {
     extensionsPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
-    const pageInfoHeight = pageInfoPanel ? pageInfoPanel.offsetHeight : 0;
+    const pageInfoHeight = (pageInfoPanel && pageInfoPanel.classList.contains('visible')) ? pageInfoPanel.offsetHeight : 0;
     const extensionsPanelTop = panelTopOffset + (pageInfoHeight > 0 ? pageInfoHeight + 12 : 0);
     extensionsPanel.style.top = `${extensionsPanelTop}px`;
     extensionsPanel.style.width = `${PANEL_WIDTH}px`;
@@ -314,7 +314,7 @@ function updatePositions() {
   // Entities Panel — right side, below tags panel
   if (entitiesPanel) {
     entitiesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
-    const tagsHeight = tagsPanel ? tagsPanel.offsetHeight : 0;
+    const tagsHeight = (tagsPanel && tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
     const entitiesPanelTop = panelTopOffset + (tagsHeight > 0 ? tagsHeight + 12 : 0);
     entitiesPanel.style.top = `${entitiesPanelTop}px`;
     entitiesPanel.style.width = `${PANEL_WIDTH}px`;

@@ -118,25 +118,18 @@
      * Window expands upward via setBounds() to accommodate it.
      * Dragging is handled by custom JS (moves window), not -webkit-app-region.
      */
-    @keyframes panel-fade-in {
-      from {
-        opacity: 0;
-      }
-      to {
-        opacity: 1;
-      }
-    }
-
     peek-navbar {
       position: absolute;
-      display: none;
       z-index: 100;
       cursor: grab;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.5s ease;
     }
 
     peek-navbar.visible {
-      display: block;
-      animation: panel-fade-in 0.2s ease forwards;
+      opacity: 1;
+      pointer-events: auto;
     }
 
     /* Trigger zone — transparent strip above webview, always part of window.
@@ -367,7 +360,7 @@
     .page-info-panel {
       position: absolute;
       z-index: 140;
-      pointer-events: auto;
+      pointer-events: none;
       background: color-mix(in srgb, var(--base00) 85%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
@@ -381,15 +374,13 @@
       overflow: hidden;
       opacity: 0;
       transform: translateX(-12px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      display: none;
+      transition: opacity 0.5s ease, transform 0.5s ease;
     }
 
     .page-info-panel.visible {
-      display: block;
       opacity: 1;
       transform: translateX(0);
-      animation: panel-fade-in 0.2s ease forwards;
+      pointer-events: auto;
     }
 
     .page-info-panel .panel-header {
@@ -468,7 +459,7 @@
     .tags-panel {
       position: absolute;
       z-index: 140;
-      pointer-events: auto;
+      pointer-events: none;
       background: color-mix(in srgb, var(--base00) 85%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
@@ -482,15 +473,13 @@
       overflow: hidden;
       opacity: 0;
       transform: translateX(12px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      display: none;
+      transition: opacity 0.5s ease, transform 0.5s ease;
     }
 
     .tags-panel.visible {
-      display: block;
       opacity: 1;
       transform: translateX(0);
-      animation: panel-fade-in 0.2s ease forwards;
+      pointer-events: auto;
     }
 
     .tags-panel .panel-header {
@@ -638,7 +627,7 @@
     .entities-panel {
       position: absolute;
       z-index: 140;
-      pointer-events: auto;
+      pointer-events: none;
       background: color-mix(in srgb, var(--base00) 85%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
@@ -652,15 +641,13 @@
       overflow: hidden;
       opacity: 0;
       transform: translateX(12px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      display: none;
+      transition: opacity 0.5s ease, transform 0.5s ease;
     }
 
     .entities-panel.visible {
-      display: block;
       opacity: 1;
       transform: translateX(0);
-      animation: panel-fade-in 0.2s ease forwards;
+      pointer-events: auto;
     }
 
     .entities-panel .panel-header {
@@ -766,7 +753,7 @@
     .extensions-panel {
       position: absolute;
       z-index: 140;
-      pointer-events: auto;
+      pointer-events: none;
       background: color-mix(in srgb, var(--base00) 85%, transparent);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
@@ -780,15 +767,13 @@
       overflow: hidden;
       opacity: 0;
       transform: translateX(-12px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      display: none;
+      transition: opacity 0.5s ease, transform 0.5s ease;
     }
 
     .extensions-panel.visible {
-      display: block;
       opacity: 1;
       transform: translateX(0);
-      animation: panel-fade-in 0.2s ease forwards;
+      pointer-events: auto;
     }
 
     .extensions-panel .panel-header {
