@@ -72,12 +72,16 @@ const sources = [
 
 /**
  * Initializes command sources that dynamically generate commands
- * @param {Function} addCommand - Function to register a command
+ * @param {Function} addCommand - Function to register a command (triggers UI update)
+ * @param {Object} batchApi - Batch-friendly API for bulk operations
+ * @param {Function} batchApi.addCommandSilent - Add command without triggering update
+ * @param {Function} batchApi.removeCommand - Remove a command by name
+ * @param {Function} batchApi.flushUpdates - Trigger a single UI update after batch
  */
-export const initializeSources = async (addCommand) => {
+export const initializeSources = async (addCommand, batchApi = {}) => {
   for (const source of sources) {
     if (typeof source.initializeSources === 'function') {
-      await source.initializeSources(addCommand);
+      await source.initializeSources(addCommand, batchApi);
     }
   }
 };

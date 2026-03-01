@@ -73,8 +73,13 @@ async function initializeCommandSources() {
   });
 
   // Initialize any command sources that dynamically generate commands
+  // Pass batch-friendly API so sources can add silently and trigger one update
   if (typeof commandsModule.initializeSources === 'function') {
-    await commandsModule.initializeSources(addCommand);
+    await commandsModule.initializeSources(addCommand, {
+      addCommandSilent,
+      removeCommand,
+      flushUpdates: onCommandsUpdated
+    });
   }
 
   // Notify that commands are ready
