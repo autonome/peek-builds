@@ -124,9 +124,18 @@ export class OutlineSidebar {
 
     this.header.appendChild(zoomControls);
 
+    // Collapsed pane icon (visible only when collapsed)
+    this.collapsedIcon = document.createElement('span');
+    this.collapsedIcon.className = 'pane-collapsed-icon';
+    this.collapsedIcon.textContent = '\u2261'; // ≡ (list/tree icon)
+    this.collapsedIcon.title = 'Show Outline';
+    this.collapsedIcon.addEventListener('click', () => this.toggle());
+    this.header.appendChild(this.collapsedIcon);
+
     this.toggleBtn = document.createElement('button');
     this.toggleBtn.className = 'sidebar-toggle';
-    this.toggleBtn.innerHTML = '\u25C0'; // left arrow
+    this.toggleBtn.innerHTML = '\u25C0'; // left arrow (collapse icon)
+    this.toggleBtn.title = 'Hide Outline';
     this.toggleBtn.tabIndex = -1;
     this.toggleBtn.addEventListener('mousedown', (e) => e.preventDefault());
     this.toggleBtn.addEventListener('click', () => this.toggle());
@@ -398,13 +407,7 @@ export class OutlineSidebar {
   setCollapsed(collapsed) {
     this.collapsed = collapsed;
     this.element.classList.toggle('collapsed', collapsed);
-    if (collapsed) {
-      this.toggleBtn.innerHTML = '\u2261'; // ≡
-      this.toggleBtn.title = 'Show Outline';
-    } else {
-      this.toggleBtn.innerHTML = '\u25C0'; // ◀
-      this.toggleBtn.title = 'Hide Outline';
-    }
+    // Toggle button and collapsed icon visibility handled by CSS .collapsed class
   }
 
   /**

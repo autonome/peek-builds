@@ -107,8 +107,6 @@ export class EditorLayout {
     if (prefs.paneCollapsed) {
       this.paneCollapsed = { ...this.paneCollapsed, ...prefs.paneCollapsed };
     }
-    // Editor is never collapsed
-    this.paneCollapsed.editor = false;
     if (prefs.paneWidths) {
       this.paneWidths = { ...prefs.paneWidths };
     }
@@ -146,6 +144,38 @@ export class EditorLayout {
     // Create editor container (center)
     this.editorContainer = document.createElement('div');
     this.editorContainer.className = 'editor-container';
+
+    // Editor header bar (matches sidebar headers)
+    this.editorHeader = document.createElement('div');
+    this.editorHeader.className = 'sidebar-header';
+
+    const editorTitle = document.createElement('span');
+    editorTitle.className = 'sidebar-title';
+    editorTitle.textContent = 'Editor';
+    this.editorHeader.appendChild(editorTitle);
+
+    this.editorHeaderFilename = document.createElement('span');
+    this.editorHeaderFilename.className = 'editor-header-filename';
+    this.editorHeader.appendChild(this.editorHeaderFilename);
+
+    // Collapsed icon for editor pane
+    this.editorCollapsedIcon = document.createElement('span');
+    this.editorCollapsedIcon.className = 'pane-collapsed-icon';
+    this.editorCollapsedIcon.textContent = '\u270E'; // ✎
+    this.editorCollapsedIcon.title = 'Show Editor';
+    this.editorCollapsedIcon.addEventListener('click', () => this.togglePane('editor'));
+    this.editorHeader.appendChild(this.editorCollapsedIcon);
+
+    this.editorToggleHeaderBtn = document.createElement('button');
+    this.editorToggleHeaderBtn.className = 'sidebar-toggle';
+    this.editorToggleHeaderBtn.innerHTML = '\u25C0'; // ◀
+    this.editorToggleHeaderBtn.title = 'Hide Editor';
+    this.editorToggleHeaderBtn.tabIndex = -1;
+    this.editorToggleHeaderBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    this.editorToggleHeaderBtn.addEventListener('click', () => this.togglePane('editor'));
+    this.editorHeader.appendChild(this.editorToggleHeaderBtn);
+
+    this.editorContainer.appendChild(this.editorHeader);
 
     // CodeMirror container
     this.cmContainer = document.createElement('div');
@@ -459,8 +489,6 @@ export class EditorLayout {
    * Toolbar cycle: expanded -> collapsed -> expanded (never hides).
    */
   togglePane(paneName) {
-    if (paneName === 'editor') return; // Editor cannot be toggled
-
     if (!this.paneVisible[paneName]) {
       // Not visible yet — show it expanded
       this.paneVisible[paneName] = true;
@@ -525,7 +553,7 @@ export class EditorLayout {
         el.style.flex = 'none';
         el.classList.add('collapsed');
       } else if (name === 'editor') {
-        // Editor is always flex:1
+        // Editor expanded — flex:1
         el.style.display = '';
         el.style.width = '';
         el.style.minWidth = '';
@@ -541,7 +569,7 @@ export class EditorLayout {
         el.classList.remove('collapsed');
       }
 
-      // Update sidebar component visual state
+      // Update sidebar component visual state (including editor)
       this._updateSidebarVisual(name, collapsed && visible);
     }
 
@@ -565,7 +593,7 @@ export class EditorLayout {
 
     // Update toolbar button states — "active" means visible+expanded
     this.outlineToggleBtn.classList.toggle('active', this.paneVisible.outline && !this.paneCollapsed.outline);
-    this.editorToggleBtn.classList.toggle('active', this.paneVisible.editor);
+    this.editorToggleBtn.classList.toggle('active', this.paneVisible.editor && !this.paneCollapsed.editor);
     this.previewToggleBtn.classList.toggle('active', this.paneVisible.preview && !this.paneCollapsed.preview);
     this.annotationsToggleBtn.classList.toggle('active', this.paneVisible.annotations && !this.paneCollapsed.annotations);
   }
@@ -578,6 +606,9 @@ export class EditorLayout {
     switch (paneName) {
       case 'outline':
         if (this.outlineSidebar) this.outlineSidebar.setCollapsed(isCollapsed);
+        break;
+      case 'editor':
+        this.editorContainer.classList.toggle('collapsed', isCollapsed);
         break;
       case 'preview':
         if (this.previewSidebar) this.previewSidebar.setCollapsed(isCollapsed);
@@ -1074,6 +1105,10 @@ export class EditorLayout {
         this.filenameDisplay.textContent = '';
         this.filenameDisplay.style.display = 'none';
       }
+    }
+    // Also update the editor header filename
+    if (this.editorHeaderFilename) {
+      this.editorHeaderFilename.textContent = filename || '';
     }
   }
 

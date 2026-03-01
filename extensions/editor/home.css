@@ -130,9 +130,29 @@ body {
 
 .outline-sidebar.collapsed .sidebar-header,
 .preview-sidebar.collapsed .sidebar-header,
-.annotations-pane.collapsed .sidebar-header {
+.annotations-pane.collapsed .sidebar-header,
+.editor-container.collapsed .sidebar-header {
   justify-content: center;
   padding: 8px 4px;
+}
+
+/* Collapsed pane icon — visible only when collapsed */
+.pane-collapsed-icon {
+  display: none;
+  font-size: 14px;
+  color: var(--base03);
+  cursor: pointer;
+  user-select: none;
+  line-height: 1;
+}
+
+.collapsed .pane-collapsed-icon {
+  display: block;
+}
+
+/* Hide collapse toggle button when collapsed — show pane icon instead */
+.collapsed .sidebar-toggle {
+  display: none;
 }
 
 /* Sidebar header */
@@ -141,6 +161,10 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  box-sizing: border-box;
   background: var(--base01);
   border-bottom: 1px solid var(--base02);
   color: var(--base04);
@@ -623,6 +647,26 @@ body {
   overflow: hidden;
 }
 
+/* Editor container collapsed state */
+.editor-container.collapsed {
+  min-width: 32px;
+  flex: none !important;
+}
+
+.editor-container.collapsed .cm-container,
+.editor-container.collapsed .editor-toolbar,
+.editor-container.collapsed .status-line-container {
+  display: none;
+}
+
+.editor-container.collapsed .sidebar-title {
+  display: none;
+}
+
+.editor-container.collapsed .editor-header-filename {
+  display: none;
+}
+
 .cm-container {
   flex: 1;
   overflow: hidden;
@@ -687,6 +731,21 @@ body {
    Filename Display
    ===================================================================== */
 
+/* Editor header filename (in header bar) */
+.editor-header-filename {
+  font-size: 11px;
+  color: var(--base04);
+  font-family: var(--theme-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Toolbar filename display (bottom bar) */
 .filename-display {
   font-size: 12px;
   color: var(--base04);

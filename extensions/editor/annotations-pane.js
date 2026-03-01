@@ -47,9 +47,18 @@ export class AnnotationsPane {
     });
     this.header.appendChild(addBtn);
 
+    // Collapsed pane icon (visible only when collapsed)
+    this.collapsedIcon = document.createElement('span');
+    this.collapsedIcon.className = 'pane-collapsed-icon';
+    this.collapsedIcon.textContent = '\u2710'; // ✐ (note icon)
+    this.collapsedIcon.title = 'Show Notes';
+    this.collapsedIcon.addEventListener('click', () => this.toggle());
+    this.header.appendChild(this.collapsedIcon);
+
     this.toggleBtn = document.createElement('button');
     this.toggleBtn.className = 'sidebar-toggle';
-    this.toggleBtn.innerHTML = '\u25B6'; // >
+    this.toggleBtn.innerHTML = '\u25B6'; // ▶ (collapse icon)
+    this.toggleBtn.title = 'Hide Notes';
     this.toggleBtn.tabIndex = -1;
     this.toggleBtn.addEventListener('mousedown', (e) => e.preventDefault());
     this.toggleBtn.addEventListener('click', () => this.toggle());
@@ -286,13 +295,7 @@ export class AnnotationsPane {
   setCollapsed(collapsed) {
     this.collapsed = collapsed;
     this.element.classList.toggle('collapsed', collapsed);
-    if (collapsed) {
-      this.toggleBtn.innerHTML = '\u25B6';
-      this.toggleBtn.title = 'Show Notes';
-    } else {
-      this.toggleBtn.innerHTML = '\u25C0';
-      this.toggleBtn.title = 'Hide Notes';
-    }
+    // Toggle button and collapsed icon visibility handled by CSS .collapsed class
   }
 
   /**
