@@ -1,8 +1,6 @@
 import appConfig from '../config.js';
 import { createDatastoreStore } from '../utils.js';
 import api from '../api.js';
-import fc from '../features.js';
-
 const DEBUG = api.debug;
 const clear = false;
 
@@ -1697,6 +1695,8 @@ const renderExtensionsSettings = async () => {
         // Handle both snake_case (Tauri JSON) and direct field names
         const lastError = ext.lastError || ext.last_error || null;
 
+        // If running, merge schemas/storageKeys/defaults from running manifest
+        const runningManifest = running?.manifest || {};
         allExtensions.push({
           id: ext.id,
           manifest: {
@@ -1705,7 +1705,11 @@ const renderExtensionsSettings = async () => {
             shortname,
             description,
             version,
-            builtin
+            builtin,
+            schemas: runningManifest.schemas,
+            storageKeys: runningManifest.storageKeys,
+            defaults: runningManifest.defaults,
+            labels: runningManifest.labels
           },
           path: ext.path,
           source: 'datastore',
@@ -1969,6 +1973,63 @@ const renderExtensionsSettings = async () => {
           body.appendChild(errorInfo);
         }
 
+        // Inline Options accordion for extensions with settings schemas
+        if (manifest.schemas && (manifest.schemas.prefs || manifest.schemas.item)) {
+          const optionsAccordion = document.createElement('div');
+          optionsAccordion.className = 'ext-options-accordion';
+          optionsAccordion.style.cssText = 'margin-top: 12px; border-top: 1px solid var(--border-light);';
+
+          const optionsToggle = document.createElement('div');
+          optionsToggle.className = 'ext-options-toggle';
+          optionsToggle.style.cssText = 'padding: 8px 0; cursor: pointer; user-select: none; font-size: 13px; font-weight: 500; color: var(--text-secondary);';
+          optionsToggle.textContent = '\u25B6 Options';
+          optionsAccordion.appendChild(optionsToggle);
+
+          const optionsContent = document.createElement('div');
+          optionsContent.className = 'ext-options-content';
+          optionsContent.style.cssText = 'display: none; padding: 8px 0;';
+          optionsAccordion.appendChild(optionsContent);
+
+          let optionsLoaded = false;
+
+          optionsToggle.addEventListener('click', async () => {
+            const isExpanded = optionsContent.style.display !== 'none';
+            if (isExpanded) {
+              optionsContent.style.display = 'none';
+              optionsToggle.textContent = '\u25B6 Options';
+            } else {
+              optionsContent.style.display = 'block';
+              optionsToggle.textContent = '\u25BC Options';
+
+              // Lazy-load settings content on first expand
+              if (!optionsLoaded) {
+                optionsLoaded = true;
+                try {
+                  const feature = {
+                    id: manifest.id,
+                    shortname: manifest.shortname || ext.id || manifest.id,
+                    labels: { name: manifest.name, ...(manifest.labels || {}) },
+                    schemas: manifest.schemas,
+                    storageKeys: manifest.storageKeys || { PREFS: 'prefs', ITEMS: 'items' },
+                    defaults: manifest.defaults || {}
+                  };
+                  const settingsContent = await renderFeatureSettings(feature);
+                  optionsContent.appendChild(settingsContent);
+                } catch (err) {
+                  console.error(`[settings] Failed to load options for ${ext.id}:`, err);
+                  const errorMsg = document.createElement('div');
+                  errorMsg.className = 'help-text';
+                  errorMsg.style.color = 'var(--error-text, #dc2626)';
+                  errorMsg.textContent = 'Failed to load options: ' + err.message;
+                  optionsContent.appendChild(errorMsg);
+                }
+              }
+            }
+          });
+
+          body.appendChild(optionsAccordion);
+        }
+
         card.appendChild(body);
         extSection.appendChild(card);
       });
@@ -2218,15 +2279,8 @@ const showSection = (sectionId) => {
   }
 };
 
-// Helper to check if a feature is enabled (reads from cached store)
-// Note: Needs pre-loaded coreStore passed in, or use async version
+// Cached core store for feature state lookups
 let _coreStore = null;
-const isFeatureEnabled = (featureName) => {
-  if (!_coreStore) return false;
-  const features = _coreStore.get(appConfig.storageKeys.ITEMS) || [];
-  const feature = features.find(f => f.name.toLowerCase() === featureName.toLowerCase());
-  return feature ? feature.enabled : false;
-};
 
 // Render profiles settings
 const renderProfilesSettings = async () => {
@@ -3101,47 +3155,10 @@ const init = async () => {
   coreSection.classList.add('active');
   contentArea.appendChild(coreSection);
 
-  // Track feature nav items and sections for dynamic updates
-  const featureElements = new Map();
-
-  // Add CORE feature sections (cmd, scripts - features that run in peek://app context)
-  for (const i in fc) {
-    const feature = fc[i];
-    const name = feature.labels.name;
-    const sectionId = name.toLowerCase().replace(/\s+/g, '-');
-    const enabled = isFeatureEnabled(name);
-
-    // Add nav item
-    const navItem = document.createElement('a');
-    navItem.className = 'nav-item';
-    navItem.textContent = name;
-    navItem.dataset.section = sectionId;
-    navItem.dataset.featureName = name;
-    navItem.addEventListener('click', () => showSection(sectionId));
-    if (!enabled) navItem.style.display = 'none';
-    sidebarNav.appendChild(navItem);
-
-    // Add section
-    const section = await createSection(sectionId, name, () => renderFeatureSettings(feature));
-    if (!enabled) section.style.display = 'none';
-    contentArea.appendChild(section);
-
-    featureElements.set(name.toLowerCase(), { navItem, section });
-  }
-
-  // Listen for feature toggle events to update sidebar (core features only)
-  api.subscribe('core:feature:toggle', (msg) => {
-    const featureName = msg.featureId?.toLowerCase();
-    const elements = featureElements.get(featureName);
-    if (elements) {
-      const display = msg.enabled ? '' : 'none';
-      elements.navItem.style.display = display;
-      elements.section.style.display = display;
-
-      // If currently viewing a disabled section, switch to Core
-      if (!msg.enabled && elements.section.classList.contains('active')) {
-        showSection('core');
-      }
+  // Listen for feature toggle events (refresh Features list when toggled)
+  api.subscribe('core:feature:toggle', () => {
+    if (window._refreshExtensionsList) {
+      window._refreshExtensionsList();
     }
   });
 
@@ -3170,80 +3187,13 @@ const init = async () => {
 
   contentArea.appendChild(extSection);
 
-  // Add EXTENSION settings sections (peeks, slides, groups - run in isolated peek://ext contexts)
-  // Load schemas dynamically from extension manifests
-  // Track which extensions we've already added to avoid duplicates
-  const addedExtensions = new Set();
+  // Extension settings schemas are loaded inline in the Features pane (via Options accordion)
+  // No separate nav items or panes needed.
 
-  const loadExtensionSettings = async () => {
-    try {
-      const result = await api.extensions.list();
-      if (result.success && result.data) {
-        for (const ext of result.data) {
-          // Only show extensions that have schemas defined
-          if (!ext.manifest?.schemas) continue;
-
-          // Skip if already added
-          const extName = ext.manifest.name.toLowerCase();
-          if (addedExtensions.has(extName)) continue;
-          addedExtensions.add(extName);
-
-          // Construct feature-like object from manifest
-          // shortname is the datastore namespace (must match what api.settings uses via URL path)
-          const feature = {
-            id: ext.manifest.id,
-            shortname: ext.manifest.shortname || ext.id || ext.manifest.id,
-            labels: { name: ext.manifest.name, ...(ext.manifest.labels || {}) },
-            schemas: ext.manifest.schemas,
-            storageKeys: ext.manifest.storageKeys || { PREFS: 'prefs', ITEMS: 'items' },
-            defaults: ext.manifest.defaults || {}
-          };
-
-          const name = feature.labels.name;
-          const sectionId = name.toLowerCase().replace(/\s+/g, '-');
-
-          // Add nav item (insert before Extensions nav item)
-          const navItem = document.createElement('a');
-          navItem.className = 'nav-item nav-item-extension';
-          navItem.textContent = name;
-          navItem.dataset.section = sectionId;
-          navItem.dataset.featureName = name;
-          navItem.dataset.isExtension = 'true';
-          navItem.addEventListener('click', () => showSection(sectionId));
-
-          // Insert before the Extensions section in nav
-          const extNavItem = sidebarNav.querySelector('[data-section="extensions"]');
-          if (extNavItem) {
-            sidebarNav.insertBefore(navItem, extNavItem);
-          } else {
-            sidebarNav.appendChild(navItem);
-          }
-
-          // Add section (insert before extensions section)
-          const section = await createSection(sectionId, name, () => renderFeatureSettings(feature));
-          const extSectionEl = document.getElementById('section-extensions');
-          if (extSectionEl) {
-            contentArea.insertBefore(section, extSectionEl);
-          } else {
-            contentArea.appendChild(section);
-          }
-
-          featureElements.set(name.toLowerCase(), { navItem, section });
-        }
-      }
-    } catch (err) {
-      console.error('[settings] Failed to load extension schemas:', err);
-    }
-  };
-
-  // Load extensions that are already running
-  await loadExtensionSettings();
-
-  // Listen for all extensions loaded event to catch any we missed
+  // Listen for all extensions loaded event to refresh the Extensions list
   // NOTE: Only ONE ext:all-loaded subscription per source - pubsub overwrites duplicates
   api.subscribe('ext:all-loaded', () => {
-    loadExtensionSettings();
-    // Also refresh the Extensions list if it's been rendered
+    // Refresh the Extensions list if it's been rendered
     if (window._refreshExtensionsList) {
       window._refreshExtensionsList();
     }

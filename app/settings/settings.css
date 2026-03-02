@@ -99,7 +99,7 @@ body {
   font-weight: 500;
 }
 
-/* Extension nav items - visual indicator */
+/* Extension nav items - visual indicator (kept for external extensions if needed) */
 .nav-item-extension::before {
   content: '⚙';
   font-size: 11px;
@@ -445,6 +445,24 @@ body {
   .section {
     padding: 24px 20px;
   }
+}
+
+/* Extension inline options accordion */
+.ext-options-toggle:hover {
+  color: var(--text-primary);
+}
+
+.ext-options-content .form-section {
+  margin-bottom: 16px;
+}
+
+.ext-options-content .form-section-title {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.ext-options-content .item-card {
+  margin-bottom: 12px;
 }
 
 /* Visual feedback during drag */
