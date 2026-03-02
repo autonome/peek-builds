@@ -1616,50 +1616,69 @@ const renderExtensionsSettings = async () => {
       const coreStore = _coreStore || await createDatastoreStore('core', appConfig.defaults);
       const features = coreStore.get(appConfig.storageKeys.ITEMS) || [];
 
-      // Get all registered (discovered) builtin extensions, running extensions, and datastore extensions
-      const [registeredResult, runningResult, datastoreResult] = await Promise.all([
-        api.extensions.listAllRegistered(),
+      // Get both running extensions and datastore extensions
+      const [runningResult, datastoreResult] = await Promise.all([
         api.extensions.list(),
         api.extensions.getAll()
       ]);
 
       loading.remove();
 
-      const registeredExts = registeredResult.success ? registeredResult.data || [] : [];
       const runningExts = runningResult.success ? runningResult.data || [] : [];
       const datastoreExts = datastoreResult.success ? datastoreResult.data || [] : [];
 
-      // Merge: builtin registered + datastore external
+      // Merge: builtin running + datastore external
+      // Running extensions have manifest info, datastore has persisted info
       const runningById = new Map(runningExts.map(e => [e.id, e]));
 
       // Build combined list
       const allExtensions = [];
 
-      // Use all registered builtin extensions (discovered from extensions/ directory)
-      // This ensures ALL extensions appear, not just currently running ones
+      // Derive builtin extension IDs from running extensions
+      // All running extensions are discovered from the extensions/ directory or loaded externally.
+      // We treat any running extension as builtin if it's not in the external datastore.
       const datastoreIds = new Set(datastoreExts.map(e => e.id));
-      const builtinExts = registeredExts.filter(e => !datastoreIds.has(e.id));
+      const builtinExtIds = runningExts
+        .filter(e => !datastoreIds.has(e.id))
+        .map(e => e.id);
 
-      builtinExts.forEach(ext => {
-        const running = runningById.get(ext.id);
+      // Add builtin extensions (whether running or not)
+      builtinExtIds.forEach(extId => {
+        const running = runningById.get(extId);
         // Find matching feature to get enabled state
         // For builtins: if running, they're enabled. Otherwise check stored state, default true.
-        const feature = features.find(f => f.name.toLowerCase() === ext.id);
+        const feature = features.find(f => f.name.toLowerCase() === extId);
         const isEnabled = running ? true : (feature ? feature.enabled !== false : true);
-        const isRunning = ext.status === 'running' || !!running;
 
-        allExtensions.push({
-          id: ext.id,
-          manifest: ext.manifest || {
-            id: ext.id,
-            name: ext.id.charAt(0).toUpperCase() + ext.id.slice(1),
-            shortname: ext.id,
-            builtin: true
-          },
-          source: 'builtin',
-          isRunning,
-          enabled: isEnabled
-        });
+        if (running) {
+          // Extension is running
+          allExtensions.push({
+            ...running,
+            manifest: running.manifest || {
+              id: extId,
+              name: extId.charAt(0).toUpperCase() + extId.slice(1),
+              shortname: extId,
+              builtin: true
+            },
+            source: 'builtin',
+            isRunning: true,
+            enabled: isEnabled
+          });
+        } else {
+          // Extension not running - show it as stopped
+          allExtensions.push({
+            id: extId,
+            manifest: {
+              id: extId,
+              name: extId.charAt(0).toUpperCase() + extId.slice(1),
+              shortname: extId,
+              builtin: true
+            },
+            source: 'builtin',
+            isRunning: false,
+            enabled: isEnabled
+          });
+        }
       });
 
       // Add datastore extensions (external)
@@ -1673,6 +1692,7 @@ const renderExtensionsSettings = async () => {
         const version = ext.version || manifestData.version || '';
         const shortname = (ext.metadata ? JSON.parse(ext.metadata).shortname : manifestData.shortname) || ext.id;
         const builtin = ext.builtin === 1 || ext.builtin === true || manifestData.builtin;
+        const author = ext.author || manifestData.author || '';
         // Handle both snake_case (Tauri JSON) and direct field names
         const lastError = ext.lastError || ext.last_error || null;
 
@@ -1687,6 +1707,7 @@ const renderExtensionsSettings = async () => {
             description,
             version,
             builtin,
+            author: author || runningManifest.author,
             schemas: runningManifest.schemas,
             storageKeys: runningManifest.storageKeys,
             defaults: runningManifest.defaults,
@@ -1722,10 +1743,11 @@ const renderExtensionsSettings = async () => {
         const isBuiltin = manifest.builtin || ext.source === 'builtin';
 
         const card = document.createElement('div');
-        card.className = 'item-card';
+        card.className = 'item-card no-collapse';
 
         const header = document.createElement('div');
         header.className = 'item-card-header';
+        header.style.cssText = 'border-bottom: none; margin-bottom: 4px; padding-bottom: 0;';
 
         // Left side: checkbox + name
         const leftSide = document.createElement('div');
@@ -1811,11 +1833,11 @@ const renderExtensionsSettings = async () => {
           cardTitle.appendChild(versionSpan);
         }
 
-        if (isBuiltin) {
-          const badge = document.createElement('span');
-          badge.style.cssText = 'margin-left: 8px; font-size: 10px; padding: 2px 6px; background: var(--bg-tertiary); border-radius: 4px; color: var(--text-tertiary);';
-          badge.textContent = 'built-in';
-          cardTitle.appendChild(badge);
+        if (manifest.author) {
+          const authorSpan = document.createElement('span');
+          authorSpan.style.cssText = 'margin-left: 8px; font-size: 11px; color: var(--text-tertiary);';
+          authorSpan.textContent = manifest.author;
+          cardTitle.appendChild(authorSpan);
         }
 
         // Show "required" badge for cmd extension (cannot be disabled)
@@ -1825,17 +1847,6 @@ const renderExtensionsSettings = async () => {
           requiredBadge.textContent = 'required';
           cardTitle.appendChild(requiredBadge);
         }
-
-        // Status indicator: running or stopped
-        const statusBadge = document.createElement('span');
-        if (ext.isRunning) {
-          statusBadge.style.cssText = 'margin-left: 8px; font-size: 10px; padding: 2px 6px; background: #22c55e; border-radius: 4px; color: white;';
-          statusBadge.textContent = 'running';
-        } else {
-          statusBadge.style.cssText = 'margin-left: 8px; font-size: 10px; padding: 2px 6px; background: #6b7280; border-radius: 4px; color: white;';
-          statusBadge.textContent = 'stopped';
-        }
-        cardTitle.appendChild(statusBadge);
 
         leftSide.appendChild(cardTitle);
         header.appendChild(leftSide);
@@ -1924,7 +1935,6 @@ const renderExtensionsSettings = async () => {
         if (manifest.description) {
           const desc = document.createElement('div');
           desc.className = 'help-text';
-          desc.style.marginBottom = '8px';
           desc.textContent = manifest.description;
           body.appendChild(desc);
         }
@@ -1937,13 +1947,6 @@ const renderExtensionsSettings = async () => {
           pathInfo.textContent = ext.path;
           body.appendChild(pathInfo);
         }
-
-        // Show URL
-        const urlInfo = document.createElement('div');
-        urlInfo.className = 'help-text';
-        urlInfo.style.cssText = 'font-family: monospace; font-size: 11px;';
-        urlInfo.textContent = `peek://ext/${manifest.shortname || ext.id}/`;
-        body.appendChild(urlInfo);
 
         // Show error if any
         if (ext.lastError) {
@@ -2070,11 +2073,6 @@ const renderFeatureSettings = async (feature) => {
   if (schemas.prefs && schemas.prefs.properties && Object.keys(schemas.prefs.properties).length > 0) {
     const prefsSection = document.createElement('div');
     prefsSection.className = 'form-section';
-
-    const title = document.createElement('h3');
-    title.className = 'form-section-title';
-    title.textContent = 'Preferences';
-    prefsSection.appendChild(title);
 
     const pProps = schemas.prefs.properties;
 
