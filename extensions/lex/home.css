@@ -645,6 +645,21 @@ body {
   text-align: center;
 }
 
+/* Template pack active badge */
+.template-active-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--base0B);
+  color: var(--base00);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 /* ==================== Shared filter search ==================== */
 
 .filter-search {

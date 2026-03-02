@@ -10,7 +10,7 @@ import {
   nsidToFriendlyName,
 } from './lexicon-ui.js';
 
-import { getDefaultPack } from './templates/index.js';
+import { getDefaultPack, listTemplatePackMetadata } from './templates/index.js';
 import { escapeHtml, rkeyFromUri } from './templates/raw/utils.js';
 
 import {
@@ -619,6 +619,9 @@ let modeFormBtn, modeJsonBtn, createRecordBackBtn;
 // Recent lexicons DOM ref
 let recentLexiconsEl;
 
+// Templates DOM ref
+let templatesListEl;
+
 // Records list DOM refs
 let recordsBackBtn, recordsTitleEl, recordsNsidEl, recordsCreateBtn;
 let recordsListEl, recordsPaginationEl, recordsLoadMoreBtn;
@@ -671,6 +674,9 @@ async function init() {
 
   // Recent lexicons ref
   recentLexiconsEl = document.getElementById('recent-lexicons');
+
+  // Templates ref
+  templatesListEl = document.getElementById('templates-list');
 
   // Records list refs
   recordsBackBtn = document.getElementById('records-back');
@@ -955,6 +961,11 @@ function switchPanel(panel) {
   if ((panel === 'explore' || panel === 'create') && state.exploreLexicons === null && !state.exploreLoading) {
     loadExploreLexicons();
   }
+
+  // Render templates list when switching to templates panel
+  if (panel === 'templates') {
+    renderTemplatePacks();
+  }
 }
 
 async function loadExploreLexicons() {
@@ -982,6 +993,41 @@ function renderExploreLexicons() {
     lexicons: state.exploreLexicons,
     filter: state.exploreFilter,
   });
+}
+
+// ============================================================================
+// Templates panel
+// ============================================================================
+
+function renderTemplatePacks() {
+  if (!templatesListEl) return;
+
+  const packs = listTemplatePackMetadata();
+  const defaultPack = getDefaultPack();
+  const defaultName = (defaultPack.metadata && defaultPack.metadata.name) || 'raw';
+
+  if (packs.length === 0) {
+    templatesListEl.innerHTML = '<div class="collections-empty">No template packs installed</div>';
+    return;
+  }
+
+  templatesListEl.innerHTML = packs.map(pack => {
+    const isActive = pack.name === defaultName;
+    const description = pack.description || 'No description';
+    const version = pack.version ? `v${pack.version}` : '';
+
+    return `
+      <div class="collection-item template-pack-item" title="${escapeHtml(pack.name)}">
+        <div class="collection-info">
+          <span class="collection-friendly">${escapeHtml(pack.name)}${isActive ? ' <span class="template-active-badge">active</span>' : ''}</span>
+          <span class="collection-nsid">${escapeHtml(description)}</span>
+        </div>
+        <div class="collection-right">
+          ${version ? `<span class="collection-count">${escapeHtml(version)}</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 // ============================================================================
@@ -1152,9 +1198,6 @@ async function openCreateRecord(nsid, fromPanel) {
 
   // Switch to create-record panel
   switchPanel('create-record');
-
-  // Track as recently used
-  addRecentLexicon(nsid);
 
   // Delegate form loading to the template
   await formTemplate.openCreateRecord(
@@ -1359,9 +1402,6 @@ async function selectPickerLexicon(nsid) {
   pickerResults.classList.remove('visible');
   pickerResults.innerHTML = '';
 
-  // Track as recently used
-  addRecentLexicon(nsid);
-
   // Delegate form loading to the template
   await formTemplate.selectPickerLexicon(
     {
@@ -1497,9 +1537,6 @@ async function openRecordsList(nsid) {
   recordsPaginationEl.style.display = 'none';
 
   switchPanel('records');
-
-  // Track as recently used
-  addRecentLexicon(nsid);
 
   // Check cache first for instant display
   const cached = getCachedRecords(nsid);
@@ -1728,7 +1765,7 @@ async function saveRecentLexicons() {
 
 /**
  * Add or promote a lexicon to the front of the recent list (most recent first).
- * Called when a lexicon is created, browsed, or viewed.
+ * Called when a record is successfully published/created in a lexicon.
  */
 function addRecentLexicon(nsid) {
   // Remove if already present (we will re-add at front)

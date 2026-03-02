@@ -233,7 +233,7 @@ export class ListTemplate {
     if (!recentLexicons || recentLexicons.length === 0) {
       targetEl.innerHTML = `
         <div class="recent-label"><span class="nav-icon">&#8986;</span> Recent</div>
-        <div class="recent-empty">No recent lexicons yet</div>
+        <div class="recent-empty">No published records yet</div>
       `;
       return;
     }
