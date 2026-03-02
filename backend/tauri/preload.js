@@ -634,6 +634,15 @@
         return { success: false, error: String(e) };
       }
     },
+    listAllRegistered: async () => {
+      // Tauri: fall back to list() — all extensions are returned there
+      try {
+        return await invoke('extensions_list', {});
+      } catch (e) {
+        console.error('[tauri] extensions.listAllRegistered error:', e);
+        return { success: false, error: String(e) };
+      }
+    },
     load: async (id) => {
       if (!api.extensions._hasPermission()) {
         return { success: false, error: 'Permission denied' };

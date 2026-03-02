@@ -98,6 +98,7 @@ import {
   getExtensionHostWindow,
   isConsolidatedExtension,
   getRunningExtensions,
+  getAllRegisteredExtensions,
   reloadExtension,
   registerWindow,
   getWindowInfo,
@@ -1367,6 +1368,16 @@ export function registerExtensionHandlers(): void {
     try {
       const running = getRunningExtensions();
       return { success: true, data: running };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('extension-list-all-registered', async () => {
+    try {
+      const all = getAllRegisteredExtensions();
+      return { success: true, data: all };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

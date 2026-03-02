@@ -1515,6 +1515,14 @@ api.extensions = {
   },
 
   /**
+   * Get list of all registered (discovered) builtin extensions, whether running or not.
+   * @returns {Promise<{success: boolean, data?: Array, error?: string}>}
+   */
+  listAllRegistered: () => {
+    return ipcRenderer.invoke('extension-list-all-registered');
+  },
+
+  /**
    * Load an extension (permission required)
    * @param {string} id - Extension ID to load
    * @returns {Promise<{success: boolean, error?: string}>}

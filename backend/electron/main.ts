@@ -1330,6 +1330,45 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
 }
 
 /**
+ * Get all registered (discovered) builtin extensions, whether running or not.
+ * Used by the Settings Features pane to show ALL extensions from the extensions/ directory.
+ */
+export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unknown; status: string }> {
+  const registeredIds = getRegisteredExtensionIds();
+  const result: Array<{ id: string; manifest: unknown; status: string }> = [];
+
+  // Build a set of running extension IDs for status info
+  const runningSet = new Set<string>();
+  if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
+    for (const extId of CONSOLIDATED_EXTENSION_IDS) {
+      if (loadedConsolidatedExtensions.has(extId)) {
+        runningSet.add(extId);
+      }
+    }
+  }
+  for (const [extId, entry] of extensionWindows) {
+    if (entry.status === 'running') {
+      runningSet.add(extId);
+    }
+  }
+  for (const extId of declarativeExtensions) {
+    runningSet.add(extId);
+  }
+
+  for (const extId of registeredIds) {
+    const extPath = getExtensionPath(extId);
+    const manifest = extPath ? loadExtensionManifest(extPath) : null;
+    result.push({
+      id: extId,
+      manifest: manifest || { id: extId },
+      status: runningSet.has(extId) ? 'running' : 'registered'
+    });
+  }
+
+  return result;
+}
+
+/**
  * Destroy an extension window
  */
 export function destroyExtensionWindow(extId: string): boolean {

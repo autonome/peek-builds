@@ -1616,69 +1616,50 @@ const renderExtensionsSettings = async () => {
       const coreStore = _coreStore || await createDatastoreStore('core', appConfig.defaults);
       const features = coreStore.get(appConfig.storageKeys.ITEMS) || [];
 
-      // Get both running extensions and datastore extensions
-      const [runningResult, datastoreResult] = await Promise.all([
+      // Get all registered (discovered) builtin extensions, running extensions, and datastore extensions
+      const [registeredResult, runningResult, datastoreResult] = await Promise.all([
+        api.extensions.listAllRegistered(),
         api.extensions.list(),
         api.extensions.getAll()
       ]);
 
       loading.remove();
 
+      const registeredExts = registeredResult.success ? registeredResult.data || [] : [];
       const runningExts = runningResult.success ? runningResult.data || [] : [];
       const datastoreExts = datastoreResult.success ? datastoreResult.data || [] : [];
 
-      // Merge: builtin running + datastore external
-      // Running extensions have manifest info, datastore has persisted info
+      // Merge: builtin registered + datastore external
       const runningById = new Map(runningExts.map(e => [e.id, e]));
 
       // Build combined list
       const allExtensions = [];
 
-      // Derive builtin extension IDs from running extensions
-      // All running extensions are discovered from the extensions/ directory or loaded externally.
-      // We treat any running extension as builtin if it's not in the external datastore.
+      // Use all registered builtin extensions (discovered from extensions/ directory)
+      // This ensures ALL extensions appear, not just currently running ones
       const datastoreIds = new Set(datastoreExts.map(e => e.id));
-      const builtinExtIds = runningExts
-        .filter(e => !datastoreIds.has(e.id))
-        .map(e => e.id);
+      const builtinExts = registeredExts.filter(e => !datastoreIds.has(e.id));
 
-      // Add builtin extensions (whether running or not)
-      builtinExtIds.forEach(extId => {
-        const running = runningById.get(extId);
+      builtinExts.forEach(ext => {
+        const running = runningById.get(ext.id);
         // Find matching feature to get enabled state
         // For builtins: if running, they're enabled. Otherwise check stored state, default true.
-        const feature = features.find(f => f.name.toLowerCase() === extId);
+        const feature = features.find(f => f.name.toLowerCase() === ext.id);
         const isEnabled = running ? true : (feature ? feature.enabled !== false : true);
+        const isRunning = ext.status === 'running' || !!running;
 
-        if (running) {
-          // Extension is running
-          allExtensions.push({
-            ...running,
-            manifest: running.manifest || {
-              id: extId,
-              name: extId.charAt(0).toUpperCase() + extId.slice(1),
-              shortname: extId,
-              builtin: true
-            },
-            source: 'builtin',
-            isRunning: true,
-            enabled: isEnabled
-          });
-        } else {
-          // Extension not running - show it as stopped
-          allExtensions.push({
-            id: extId,
-            manifest: {
-              id: extId,
-              name: extId.charAt(0).toUpperCase() + extId.slice(1),
-              shortname: extId,
-              builtin: true
-            },
-            source: 'builtin',
-            isRunning: false,
-            enabled: isEnabled
-          });
-        }
+        allExtensions.push({
+          id: ext.id,
+          manifest: ext.manifest || {
+            id: ext.id,
+            name: ext.id.charAt(0).toUpperCase() + ext.id.slice(1),
+            shortname: ext.id,
+            builtin: true
+          },
+          source: 'builtin',
+          isRunning,
+          enabled: isEnabled
+        });
       });
 
       // Add datastore extensions (external)
