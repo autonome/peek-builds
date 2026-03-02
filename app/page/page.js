@@ -337,16 +337,18 @@ function setWindowBounds(bounds) {
 
 // --- Set extra window width (for panels, widgets, etc.) ---
 // Expands the window symmetrically. Flexbox keeps the center column in place.
+// Returns a promise that resolves when the window bounds have been applied.
 function setWindowPadding(width) {
   width = Math.max(0, width);
-  if (width === extraWidth) return;
+  if (width === extraWidth) return Promise.resolve();
   extraWidth = width;
   if (pendingBoundsUpdate) {
     cancelAnimationFrame(pendingBoundsUpdate);
     pendingBoundsUpdate = null;
   }
-  api.window.setBounds(computeWindowBounds(screenBounds));
+  const p = api.window.setBounds(computeWindowBounds(screenBounds));
   DEBUG && console.log('[page] Window padding set to', width);
+  return p;
 }
 
 // Initial positioning
@@ -412,7 +414,6 @@ const loadingLifecycle = {
 // startLoading() triggers show() synchronously during module execution.
 let hideTimer = null;
 let showSource = null; // 'hover', 'shortcut', or 'loading'
-
 
 // Visual effect module — applies/removes CSS classes based on lifecycle state
 // Also shows/hides navbar with loading spinner during page load.
@@ -939,8 +940,15 @@ function updateState() {
 // loadingLifecycle.onChange) to avoid TDZ errors when startLoading() calls show()
 // during module initialization.
 
-function show(opts) {
+// Generation counter to prevent stale hide() completions from clobbering a
+// subsequent show(). Incremented by both show() and hide() — if show() fires
+// while hide() is awaiting setBounds, the hide's post-await code sees a stale
+// generation and bails out.
+let navbarGeneration = 0;
+
+async function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
+  navbarGeneration++;
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;
@@ -959,6 +967,10 @@ function show(opts) {
     navbar.focusUrl();
   }
 
+  // Fade-to-invisible before expanding window to prevent compositor desync flash.
+  // Same technique as hide() — make content invisible so the stale pixel buffer
+  // during resize is transparent, then restore after setBounds completes.
+  centerColumn.style.opacity = '0';
   // Show page info and entities panels alongside navbar
   // Expand window to fit panel overhang on each side
   if (pageInfoPanel) pageInfoPanel.classList.add('visible');
@@ -967,10 +979,11 @@ function show(opts) {
   if (extensionsPanel) extensionsPanel.classList.add('visible');
   // Re-run positions now that panels are visible (offsetHeight is accurate)
   updatePositions();
-  setWindowPadding(PANEL_OVERHANG * 2);
+  await setWindowPadding(PANEL_OVERHANG * 2);
+  centerColumn.style.opacity = '1';
 }
 
-function hide() {
+async function hide() {
   if (isDragging || holdDragPending) return;
   // Don't hide while page is loading — navbar stays visible with spinner
   if (loadingLifecycle.state === 'loading') return;
@@ -978,15 +991,24 @@ function hide() {
     clearTimeout(hideTimer);
     hideTimer = null;
   }
+  const gen = ++navbarGeneration;
+  // Fade-to-invisible before resizing to prevent compositor desync flash.
+  // The OS resizes the NSWindow before Chromium re-renders, causing a one-frame
+  // glitch where stale pixels are visible. By making content invisible first,
+  // the stale frame is transparent (invisible to the user).
+  centerColumn.style.opacity = '0';
+  await setWindowPadding(0);
+  // If show() was called while we were awaiting, abort — don't clobber the new state
+  if (navbarGeneration !== gen) return;
   navbar.classList.remove('visible');
   // Hide page info, entities, and extensions panels alongside navbar
-  // Shrink window back to normal
   if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
   if (tagsPanel) tagsPanel.classList.remove('visible');
   if (entitiesPanel) entitiesPanel.classList.remove('visible');
   if (extensionsPanel) extensionsPanel.classList.remove('visible');
-  setWindowPadding(0);
   updatePositions();
+  // Restore visibility now that the window has been resized
+  centerColumn.style.opacity = '1';
   navbar.inputElement?.blur();
   showSource = null;
   DEBUG && console.log('[page] Navbar hidden');
@@ -1167,6 +1189,12 @@ navbar.addEventListener('dismiss', () => { hide(); });
 // --- Escape handling ---
 
 api.escape.onEscape(() => {
+  // If navbar and widget panels are visible, hide them first
+  if (navbar.classList.contains('visible')) {
+    DEBUG && console.log('[page] ESC: hiding navbar and widget panels');
+    hide();
+    return { handled: true };
+  }
   // If pagestream was flipping through cards, skip all accumulated history
   // and let backend close the window (return to pagestream)
   if (pagestreamOriginalUrl) {
