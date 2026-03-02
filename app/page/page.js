@@ -19,6 +19,7 @@
 
 import api from '../api.js';
 import { createPageWidgetHost } from './page-widgets.js';
+import { PageNotesPane } from './page-notes.js';
 
 console.log('[page] Script loaded');
 
@@ -142,6 +143,14 @@ const entitiesPanel = document.getElementById('entities-panel');
 const entitiesBody = document.getElementById('entities-body');
 const extensionsPanel = document.getElementById('extensions-panel');
 const extensionsBody = document.getElementById('extensions-body');
+
+// Notes panel — instantiated from page-notes.js, inserted into DOM
+const pageNotesPane = new PageNotesPane();
+const notesPanel = pageNotesPane.getElement();
+const notesPanelAnchor = document.getElementById('notes-panel-anchor');
+if (notesPanelAnchor) {
+  notesPanelAnchor.replaceWith(notesPanel);
+}
 
 console.log('[page] DOM elements initialized');
 
@@ -318,6 +327,18 @@ function updatePositions() {
     const entitiesPanelTop = panelTopOffset + (tagsHeight > 0 ? tagsHeight + 12 : 0);
     entitiesPanel.style.top = `${entitiesPanelTop}px`;
     entitiesPanel.style.width = `${PANEL_WIDTH}px`;
+  }
+
+  // Notes Panel — right side, below entities panel
+  if (notesPanel) {
+    notesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
+    const tagsHeight = (tagsPanel && tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
+    const entitiesHeight = (entitiesPanel && entitiesPanel.classList.contains('visible')) ? entitiesPanel.offsetHeight : 0;
+    let notesPanelTop = panelTopOffset;
+    if (tagsHeight > 0) notesPanelTop += tagsHeight + 12;
+    if (entitiesHeight > 0) notesPanelTop += entitiesHeight + 12;
+    notesPanel.style.top = `${notesPanelTop}px`;
+    notesPanel.style.width = `${PANEL_WIDTH}px`;
   }
 }
 
@@ -977,6 +998,7 @@ async function show(opts) {
   if (tagsPanel) tagsPanel.classList.add('visible');
   if (entitiesPanel) entitiesPanel.classList.add('visible');
   if (extensionsPanel) extensionsPanel.classList.add('visible');
+  if (notesPanel) notesPanel.classList.add('visible');
   // Re-run positions now that panels are visible (offsetHeight is accurate)
   updatePositions();
   await setWindowPadding(PANEL_OVERHANG * 2);
@@ -1006,6 +1028,7 @@ async function hide() {
   if (tagsPanel) tagsPanel.classList.remove('visible');
   if (entitiesPanel) entitiesPanel.classList.remove('visible');
   if (extensionsPanel) extensionsPanel.classList.remove('visible');
+  if (notesPanel) notesPanel.classList.remove('visible');
   updatePositions();
   // Restore visibility now that the window has been resized
   centerColumn.style.opacity = '1';
@@ -1020,7 +1043,8 @@ document.addEventListener('mousedown', (e) => {
       && !(pageInfoPanel && pageInfoPanel.contains(e.target))
       && !(tagsPanel && tagsPanel.contains(e.target))
       && !(entitiesPanel && entitiesPanel.contains(e.target))
-      && !(extensionsPanel && extensionsPanel.contains(e.target))) {
+      && !(extensionsPanel && extensionsPanel.contains(e.target))
+      && !(notesPanel && notesPanel.contains(e.target))) {
     hide();
   }
 });
@@ -1110,6 +1134,12 @@ if (extensionsPanel) {
     if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
   });
 }
+if (notesPanel) {
+  notesPanel.addEventListener('mouseenter', () => { cancelHide(); });
+  notesPanel.addEventListener('mouseleave', () => {
+    if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
+  });
+}
 
 // Cmd+L: show navbar with URL focus
 api.subscribe('page:show-navbar', (msg) => {
@@ -1189,6 +1219,12 @@ navbar.addEventListener('dismiss', () => { hide(); });
 // --- Escape handling ---
 
 api.escape.onEscape(() => {
+  // If a notes textarea is focused, blur it (saves and closes)
+  if (pageNotesPane.hasActiveTextarea()) {
+    DEBUG && console.log('[page] ESC: blurring notes textarea');
+    pageNotesPane.blurActiveTextarea();
+    return { handled: true };
+  }
   // If navbar and widget panels are visible, hide them first
   if (navbar.classList.contains('visible')) {
     DEBUG && console.log('[page] ESC: hiding navbar and widget panels');
@@ -1983,6 +2019,11 @@ webview.addEventListener('did-navigate', (e) => {
   // Request entities for this URL from the entities extension
   if (e.url && e.url.startsWith('http')) {
     api.publish('entities:get-for-url', { url: e.url }, api.scopes.GLOBAL);
+  }
+
+  // Load notes for the new URL
+  if (e.url) {
+    pageNotesPane.loadForUrl(e.url);
   }
 });
 
@@ -2923,6 +2964,17 @@ webview.addEventListener('did-finish-load', () => {
 webview.addEventListener('did-navigate', () => {
   extensionsLoaded = false;
   setTimeout(loadExtensionsPanel, 700);
+});
+
+// --- Notes Panel: load notes for current page URL ---
+// Initial load on did-finish-load (fallback in case did-navigate was missed)
+webview.addEventListener('did-finish-load', () => {
+  try {
+    const url = webview.getURL();
+    if (url) pageNotesPane.loadForUrl(url);
+  } catch {
+    // webview not ready
+  }
 });
 
 DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);
