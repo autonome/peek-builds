@@ -414,6 +414,7 @@ const loadingLifecycle = {
 // startLoading() triggers show() synchronously during module execution.
 let hideTimer = null;
 let showSource = null; // 'hover', 'shortcut', or 'loading'
+let navbarGeneration = 0; // generation counter for show/hide — must be here to avoid TDZ
 
 // Visual effect module — applies/removes CSS classes based on lifecycle state
 // Also shows/hides navbar with loading spinner during page load.
@@ -936,15 +937,9 @@ function updateState() {
 // --- Show / Hide navbar ---
 // When the navbar becomes visible, the window must expand upward to accommodate it.
 // When it hides, the window contracts back down.
-// NOTE: hideTimer and showSource are declared near the top of the file (before
-// loadingLifecycle.onChange) to avoid TDZ errors when startLoading() calls show()
-// during module initialization.
-
-// Generation counter to prevent stale hide() completions from clobbering a
-// subsequent show(). Incremented by both show() and hide() — if show() fires
-// while hide() is awaiting setBounds, the hide's post-await code sees a stale
-// generation and bails out.
-let navbarGeneration = 0;
+// NOTE: hideTimer, showSource, and navbarGeneration are declared near the top of
+// the file (before loadingLifecycle.onChange) to avoid TDZ errors when
+// startLoading() calls show() during module initialization.
 
 async function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
@@ -1189,6 +1184,12 @@ navbar.addEventListener('dismiss', () => { hide(); });
 // --- Escape handling ---
 
 api.escape.onEscape(() => {
+  // If navbar and widget panels are visible, hide them first
+  if (navbar.classList.contains('visible')) {
+    DEBUG && console.log('[page] ESC: hiding navbar and widget panels');
+    hide();
+    return { handled: true };
+  }
   // If pagestream was flipping through cards, skip all accumulated history
   // and let backend close the window (return to pagestream)
   if (pagestreamOriginalUrl) {
