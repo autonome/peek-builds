@@ -1,20 +1,17 @@
 /**
  * Lexicon Studio Home — AT Protocol identity and data browser UI
  *
- * All session management, XRPC calls, and OAuth logic are handled directly
- * in this file (via atproto.js imports). No background page needed.
+ * Orchestrator: loads a template pack and wires up events between templates.
+ * Manages state (auth, current panel, selected lexicon) and handles IPC/pubsub.
+ * All rendering is delegated to the active template pack.
  */
 
 import {
-  resolveLexicon,
-  getRecordSchema,
-  isRecordType,
-  generateForm,
-  collectFormData,
-  createRawJsonEditor,
-  parseRawJson,
   nsidToFriendlyName,
 } from './lexicon-ui.js';
+
+import { getDefaultPack } from './templates/index.js';
+import { escapeHtml, rkeyFromUri } from './templates/raw/utils.js';
 
 import {
   searchActors,
@@ -31,6 +28,16 @@ import {
 } from './atproto.js';
 
 const api = window.app;
+
+// ============================================================================
+// Template pack
+// ============================================================================
+
+const pack = getDefaultPack();
+const appTemplate = new pack.AppTemplate();
+const listTemplate = new pack.ListTemplate();
+const lexiconTemplate = new pack.LexiconTemplate();
+const formTemplate = new pack.FormTemplate();
 
 // ============================================================================
 // "new" command system
@@ -237,6 +244,7 @@ async function clearSession() {
 
 function onSessionRefresh(refreshedSession) {
   currentSession = refreshedSession;
+  lexiconTemplate.setSession(currentSession);
   saveSession();
 }
 
@@ -517,25 +525,7 @@ function stopSyncPoll() {
  */
 function updateSyncIndicator() {
   const el = document.getElementById('records-sync-status');
-  if (!el) return;
-
-  if (!lastSyncTime) {
-    el.textContent = '';
-    return;
-  }
-
-  const ago = Date.now() - lastSyncTime;
-  let text;
-  if (ago < 60000) {
-    text = 'just now';
-  } else if (ago < 3600000) {
-    const mins = Math.floor(ago / 60000);
-    text = `${mins} min${mins !== 1 ? 's' : ''} ago`;
-  } else {
-    const hrs = Math.floor(ago / 3600000);
-    text = `${hrs} hr${hrs !== 1 ? 's' : ''} ago`;
-  }
-  el.textContent = `synced ${text}`;
+  appTemplate.updateSyncIndicator(el, lastSyncTime);
 }
 
 /**
@@ -730,6 +720,9 @@ async function init() {
   setupRecordsPanel();
   setupRecordDetailPanel();
 
+  // Wire up template events
+  wireTemplateEvents();
+
   // Load recent lexicons from storage
   loadRecentLexicons();
 
@@ -757,6 +750,7 @@ async function init() {
     state.did = currentSession.did;
     state.pdsUrl = currentSession.pdsUrl;
     state.profile = currentProfile;
+    lexiconTemplate.setSession(currentSession);
     showAccountView();
 
     // Refresh profile in background
@@ -932,13 +926,8 @@ function setupEventListeners() {
 // ============================================================================
 
 function setupNav() {
-  // Nav item clicks
-  document.querySelectorAll('.nav-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const panel = item.dataset.panel;
-      switchPanel(panel);
-    });
-  });
+  // Nav item clicks — delegate to app template
+  appTemplate.setupNav();
 
   // My Lexicons filter
   if (myLexiconsSearchEl) {
@@ -960,22 +949,7 @@ function setupNav() {
 function switchPanel(panel) {
   state.activePanel = panel;
 
-  // Update nav items (don't highlight for create-record -- it's a sub-panel)
-  document.querySelectorAll('.nav-item').forEach(item => {
-    item.classList.toggle('active', item.dataset.panel === panel);
-  });
-
-  // Update panels
-  document.querySelectorAll('.panel').forEach(p => {
-    p.classList.remove('active');
-    p.style.display = 'none';
-  });
-
-  const panelEl = document.getElementById(`panel-${panel}`);
-  if (panelEl) {
-    panelEl.classList.add('active');
-    panelEl.style.display = '';
-  }
+  appTemplate.switchPanel(panel);
 
   // Lazy-load explore data on first visit or when create panel needs it
   if ((panel === 'explore' || panel === 'create') && state.exploreLexicons === null && !state.exploreLoading) {
@@ -1002,71 +976,11 @@ async function loadExploreLexicons() {
 
 function renderExploreLexicons() {
   if (!exploreListEl) return;
-
-  if (state.exploreLoading) {
-    exploreListEl.innerHTML = '<div class="loading">Loading lexicon directory...</div>';
-    return;
-  }
-
-  if (state.exploreError) {
-    exploreListEl.innerHTML = `<div class="error">${escapeHtml(state.exploreError)}</div>`;
-    return;
-  }
-
-  if (!state.exploreLexicons || state.exploreLexicons.length === 0) {
-    exploreListEl.innerHTML = '<div class="collections-empty">No lexicons found</div>';
-    return;
-  }
-
-  // Filter
-  const filter = state.exploreFilter;
-  const filtered = filter
-    ? state.exploreLexicons.filter(lex => lex.nsid.toLowerCase().includes(filter))
-    : state.exploreLexicons;
-
-  if (filtered.length === 0) {
-    exploreListEl.innerHTML = `<div class="collections-empty">No lexicons matching "${escapeHtml(filter)}"</div>`;
-    return;
-  }
-
-  // Group by domain
-  const groups = {};
-  for (const lex of filtered) {
-    const domain = lex.domain || 'unknown';
-    if (!groups[domain]) groups[domain] = [];
-    groups[domain].push(lex);
-  }
-
-  const statsHtml = `<div class="explore-stats">${filtered.length} lexicon${filtered.length !== 1 ? 's' : ''}${filter ? ' matched' : ' loaded'}</div>`;
-
-  const groupsHtml = Object.entries(groups).map(([domain, lexicons]) => {
-    const items = lexicons.map(lex => {
-      const friendly = nsidToFriendlyName(lex.nsid);
-      return `
-        <div class="collection-item clickable" data-nsid="${escapeHtml(lex.nsid)}" title="${escapeHtml(lex.nsid)}">
-          <div class="collection-info">
-            <span class="collection-friendly">${escapeHtml(friendly)}</span>
-            <span class="collection-nsid">${escapeHtml(lex.nsid)}</span>
-          </div>
-          <span class="collection-action">Create</span>
-        </div>
-      `;
-    }).join('');
-
-    return `
-      <div class="domain-group-label">${escapeHtml(domain)}</div>
-      ${items}
-    `;
-  }).join('');
-
-  exploreListEl.innerHTML = statsHtml + groupsHtml;
-
-  // Attach click handlers for "Create" action
-  exploreListEl.querySelectorAll('.collection-item.clickable').forEach(el => {
-    el.addEventListener('click', () => {
-      const nsid = el.dataset.nsid;
-      if (nsid) openCreateRecord(nsid, 'explore');
-    });
+  listTemplate.renderExploreLexicons(exploreListEl, {
+    loading: state.exploreLoading,
+    error: state.exploreError,
+    lexicons: state.exploreLexicons,
+    filter: state.exploreFilter,
   });
 }
 
@@ -1091,12 +1005,7 @@ function clearActorSelection() {
   state.selectedActor = null;
   state.error = null;
 
-  handleInput.value = '';
-  handleInput.style.display = '';
-  selectedAccountEl.style.display = 'none';
-  loginError.style.display = 'none';
-
-  handleInput.focus();
+  appTemplate.clearActorSelection({ handleInput, selectedAccountEl, loginError });
 }
 
 async function doLogin() {
@@ -1121,6 +1030,9 @@ async function doLogin() {
     state.pdsUrl = currentSession.pdsUrl;
     state.profile = currentProfile;
 
+    // Update template session
+    lexiconTemplate.setSession(currentSession);
+
     // Session restored — commands check currentSession at execute time
 
     showAccountView();
@@ -1138,23 +1050,14 @@ async function doLogin() {
 // ============================================================================
 
 function showLoginView() {
-  loginView.style.display = '';
-  accountView.style.display = 'none';
-
-  // Reset login form
-  handleInput.value = '';
-  handleInput.style.display = '';
-  selectedAccountEl.style.display = 'none';
-  loginError.style.display = 'none';
-  loginLoading.style.display = 'none';
+  appTemplate.showLoginView({ loginView, accountView, handleInput, selectedAccountEl, loginError, loginLoading });
   state.selectedActor = null;
   state.loading = false;
   state.error = null;
 }
 
 function showAccountView() {
-  loginView.style.display = 'none';
-  accountView.style.display = '';
+  appTemplate.showAccountView({ loginView, accountView });
 
   renderAccountInfo();
 
@@ -1196,139 +1099,37 @@ async function fetchCollections() {
 }
 
 function renderSearchResults() {
-  if (!state.searchVisible || state.searchResults.length === 0) {
-    searchResultsEl.classList.remove('visible');
-    searchResultsEl.innerHTML = '';
-    return;
-  }
-
-  searchResultsEl.classList.add('visible');
-  searchResultsEl.innerHTML = state.searchResults.map((actor, i) => {
-    const initial = ((actor.handle || '?')[0]).toUpperCase();
-    const avatarHtml = actor.avatar
-      ? `<img class="search-result-avatar" src="${escapeHtml(actor.avatar)}" alt="">`
-      : `<span class="search-result-placeholder">${initial}</span>`;
-
-    return `
-      <div class="search-result-item ${i === state.activeIndex ? 'active' : ''}" data-index="${i}">
-        ${avatarHtml}
-        <div class="search-result-info">
-          <div class="search-result-name">${escapeHtml(actor.displayName || actor.handle)}</div>
-          <div class="search-result-handle">@${escapeHtml(actor.handle)}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Click handlers for results
-  searchResultsEl.querySelectorAll('.search-result-item').forEach(el => {
-    el.addEventListener('mousedown', (e) => {
-      e.preventDefault(); // Prevent blur
-      const idx = parseInt(el.dataset.index, 10);
-      selectActor(state.searchResults[idx]);
-    });
+  appTemplate.renderSearchResults(searchResultsEl, {
+    visible: state.searchVisible,
+    results: state.searchResults,
+    activeIndex: state.activeIndex,
   });
 }
 
 function renderSelectedAccount() {
   if (!state.selectedActor) return;
-
-  const actor = state.selectedActor;
-  const initial = ((actor.handle || '?')[0]).toUpperCase();
-  const avatarHtml = actor.avatar
-    ? `<img class="selected-account-avatar" src="${escapeHtml(actor.avatar)}" alt="">`
-    : `<span class="selected-account-placeholder">${initial}</span>`;
-
-  selectedAccountEl.innerHTML = `
-    ${avatarHtml}
-    <div class="selected-account-info">
-      <div class="selected-account-name">${escapeHtml(actor.displayName || actor.handle)}</div>
-      <div class="selected-account-handle">@${escapeHtml(actor.handle)}</div>
-    </div>
-    <button class="selected-account-clear" title="Clear selection">&times;</button>
-  `;
-
-  selectedAccountEl.querySelector('.selected-account-clear').addEventListener('click', clearActorSelection);
-
-  // Show selected account, hide search input
-  handleInput.style.display = 'none';
-  selectedAccountEl.style.display = 'flex';
+  appTemplate.renderSelectedAccount(selectedAccountEl, handleInput, state.selectedActor);
 }
 
 function renderLoginState() {
-  if (state.loading) {
-    loginLoading.style.display = '';
-    loginError.style.display = 'none';
-  } else {
-    loginLoading.style.display = 'none';
-  }
-
-  if (state.error) {
-    loginError.textContent = state.error;
-    loginError.style.display = '';
-  } else {
-    loginError.style.display = 'none';
-  }
+  appTemplate.renderLoginState(
+    { loginLoading, loginError },
+    { loading: state.loading, error: state.error },
+  );
 }
 
 function renderAccountInfo() {
-  const profile = state.profile || {};
-  const displayName = profile.displayName || state.handle;
-  const initial = ((state.handle || '?')[0]).toUpperCase();
-
-  const avatarHtml = profile.avatar
-    ? `<img class="account-avatar" src="${escapeHtml(profile.avatar)}" alt="">`
-    : `<span class="account-placeholder">${initial}</span>`;
-
-  accountInfo.innerHTML = `
-    ${avatarHtml}
-    <div class="account-details">
-      <div class="account-name">${escapeHtml(displayName)}</div>
-      <div class="account-handle">@${escapeHtml(state.handle)}</div>
-      <div class="account-did">${escapeHtml(state.did)}</div>
-    </div>
-  `;
+  appTemplate.renderAccountInfo(accountInfo, {
+    profile: state.profile,
+    handle: state.handle,
+    did: state.did,
+  });
 }
 
 function renderCollections() {
-  if (!state.collections || state.collections.length === 0) {
-    collectionsListEl.innerHTML = '<div class="collections-empty">No collections found</div>';
-    return;
-  }
-
-  const filter = state.myLexiconsFilter;
-  const filtered = filter
-    ? state.collections.filter(col => col.nsid.toLowerCase().includes(filter))
-    : state.collections;
-
-  if (filtered.length === 0) {
-    collectionsListEl.innerHTML = `<div class="collections-empty">No lexicons matching "${escapeHtml(filter)}"</div>`;
-    return;
-  }
-
-  collectionsListEl.innerHTML = filtered.map(col => {
-    const countLabel = col.hasMore ? `${col.count}+` : String(col.count);
-    const friendly = nsidToFriendlyName(col.nsid);
-    return `
-      <div class="collection-item clickable" data-nsid="${escapeHtml(col.nsid)}" title="${escapeHtml(col.nsid)}">
-        <div class="collection-info">
-          <span class="collection-friendly">${escapeHtml(friendly)}</span>
-          <span class="collection-nsid">${escapeHtml(col.nsid)}</span>
-        </div>
-        <div class="collection-right">
-          <span class="collection-count">${countLabel}</span>
-          <span class="collection-action">View</span>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Attach click handlers to browse records
-  collectionsListEl.querySelectorAll('.collection-item.clickable').forEach(el => {
-    el.addEventListener('click', () => {
-      const nsid = el.dataset.nsid;
-      if (nsid) openRecordsList(nsid);
-    });
+  listTemplate.renderCollections(collectionsListEl, {
+    collections: state.collections,
+    filter: state.myLexiconsFilter,
   });
 }
 
@@ -1337,33 +1138,10 @@ function renderCollections() {
 // ============================================================================
 
 function setupCreateRecord() {
-  // Back button
-  createRecordBackBtn.addEventListener('click', goBackFromCreate);
-
-  // Mode toggle
-  modeFormBtn.addEventListener('click', () => {
-    state.createMode = 'form';
-    modeFormBtn.classList.add('active');
-    modeJsonBtn.classList.remove('active');
-    createFormContainer.style.display = '';
-    createJsonContainer.style.display = 'none';
-  });
-
-  modeJsonBtn.addEventListener('click', () => {
-    state.createMode = 'json';
-    modeJsonBtn.classList.add('active');
-    modeFormBtn.classList.remove('active');
-    createFormContainer.style.display = 'none';
-    createJsonContainer.style.display = '';
-    // Lazy-init the JSON editor
-    if (createJsonContainer.children.length === 0 && state.createNsid) {
-      const editor = createRawJsonEditor(state.createNsid);
-      createJsonContainer.appendChild(editor);
-    }
-  });
-
-  // Submit button
-  createSubmitBtn.addEventListener('click', handleCreateSubmit);
+  formTemplate.setupCreateRecord(
+    { createRecordBackBtn, modeFormBtn, modeJsonBtn, createFormContainer, createJsonContainer, createSubmitBtn },
+    state,
+  );
 }
 
 /**
@@ -1371,28 +1149,6 @@ function setupCreateRecord() {
  */
 async function openCreateRecord(nsid, fromPanel) {
   state.previousPanel = fromPanel;
-  state.createNsid = nsid;
-  state.createLexicon = null;
-  state.createSchema = null;
-  state.createMode = 'form';
-  state.createSubmitting = false;
-
-  // Reset UI
-  const friendly = nsidToFriendlyName(nsid);
-  createRecordNsidEl.innerHTML = `
-    <span class="create-record-friendly">${escapeHtml(friendly)}</span>
-    <span class="create-record-nsid-sub">${escapeHtml(nsid)}</span>
-  `;
-  createFormContainer.innerHTML = '';
-  createJsonContainer.innerHTML = '';
-  createSchemaLoading.style.display = '';
-  createSchemaError.style.display = 'none';
-  createSubmitArea.style.display = 'none';
-  createSubmitStatus.style.display = 'none';
-  modeFormBtn.classList.add('active');
-  modeJsonBtn.classList.remove('active');
-  createFormContainer.style.display = '';
-  createJsonContainer.style.display = 'none';
 
   // Switch to create-record panel
   switchPanel('create-record');
@@ -1400,48 +1156,16 @@ async function openCreateRecord(nsid, fromPanel) {
   // Track as recently used
   addRecentLexicon(nsid);
 
-  // Fetch the lexicon schema
-  try {
-    const lexicon = await resolveLexicon(nsid);
-    createSchemaLoading.style.display = 'none';
-
-    if (!lexicon) {
-      createSchemaError.textContent = 'Could not resolve lexicon schema. Use Raw JSON mode to create a record.';
-      createSchemaError.style.display = '';
-      modeJsonBtn.click();
-      createSubmitArea.style.display = '';
-      return;
-    }
-
-    state.createLexicon = lexicon;
-    const schema = getRecordSchema(lexicon);
-
-    if (!schema) {
-      createSchemaError.textContent = 'This lexicon does not define a record type. It may be a query or procedure.';
-      createSchemaError.style.display = '';
-      modeJsonBtn.click();
-      createSubmitArea.style.display = '';
-      return;
-    }
-
-    state.createSchema = schema;
-
-    // Generate the form
-    const form = await generateForm(nsid, schema, lexicon, {
-      autoFillCreatedAt: true,
-    });
-    createFormContainer.appendChild(form);
-
-    // Show submit area
-    createSubmitArea.style.display = '';
-
-  } catch (err) {
-    createSchemaLoading.style.display = 'none';
-    createSchemaError.textContent = `Failed to load schema: ${err.message}`;
-    createSchemaError.style.display = '';
-    // Allow JSON fallback
-    createSubmitArea.style.display = '';
-  }
+  // Delegate form loading to the template
+  await formTemplate.openCreateRecord(
+    {
+      createRecordNsidEl, createFormContainer, createJsonContainer,
+      createSchemaLoading, createSchemaError, createSubmitArea,
+      createSubmitStatus, modeFormBtn, modeJsonBtn,
+    },
+    state,
+    nsid,
+  );
 }
 
 function goBackFromCreate() {
@@ -1473,29 +1197,12 @@ async function handleCreateSubmit() {
   createSubmitStatus.style.display = 'none';
 
   try {
-    let record;
+    const record = await formTemplate.collectCreateRecordData(
+      { createFormContainer, createJsonContainer },
+      state,
+    );
 
-    if (state.createMode === 'json') {
-      record = parseRawJson(createJsonContainer, state.createNsid);
-    } else {
-      const form = createFormContainer.querySelector('.lexicon-form');
-      if (!form) {
-        throw new Error('No form found. Switch to Raw JSON mode.');
-      }
-      record = await collectFormData(form, state.createSchema, state.createLexicon, state.createNsid);
-    }
-
-    // Validate required fields
-    if (state.createSchema && state.createMode === 'form') {
-      const required = state.createSchema.required || [];
-      const missing = required.filter(f => {
-        const val = record[f];
-        return val === undefined || val === null || val === '';
-      });
-      if (missing.length > 0) {
-        throw new Error(`Required fields missing: ${missing.join(', ')}`);
-      }
-    }
+    formTemplate.validateRequired(state, record);
 
     // Create record directly via atproto
     const result = await xrpcPost(currentSession, 'com.atproto.repo.createRecord', {
@@ -1571,11 +1278,11 @@ function setupCreatePanel() {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       state.pickerActiveIndex = Math.min(state.pickerActiveIndex + 1, items.length - 1);
-      updatePickerActiveItem(items);
+      listTemplate.updatePickerActiveItem(items, state.pickerActiveIndex);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       state.pickerActiveIndex = Math.max(state.pickerActiveIndex - 1, 0);
-      updatePickerActiveItem(items);
+      listTemplate.updatePickerActiveItem(items, state.pickerActiveIndex);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (state.pickerActiveIndex >= 0 && state.pickerActiveIndex < items.length) {
@@ -1596,29 +1303,11 @@ function setupCreatePanel() {
     }, 200);
   });
 
-  // Mode toggle
-  cpModeFormBtn.addEventListener('click', () => {
-    state.cpMode = 'form';
-    cpModeFormBtn.classList.add('active');
-    cpModeJsonBtn.classList.remove('active');
-    cpFormContainer.style.display = '';
-    cpJsonContainer.style.display = 'none';
-  });
-
-  cpModeJsonBtn.addEventListener('click', () => {
-    state.cpMode = 'json';
-    cpModeJsonBtn.classList.add('active');
-    cpModeFormBtn.classList.remove('active');
-    cpFormContainer.style.display = 'none';
-    cpJsonContainer.style.display = '';
-    if (cpJsonContainer.children.length === 0 && state.cpNsid) {
-      const editor = createRawJsonEditor(state.cpNsid);
-      cpJsonContainer.appendChild(editor);
-    }
-  });
-
-  // Submit
-  cpSubmitBtn.addEventListener('click', handleCreatePanelSubmit);
+  // Mode toggle and submit — delegate to form template
+  formTemplate.setupCreatePanel(
+    { cpModeFormBtn, cpModeJsonBtn, cpFormContainer, cpJsonContainer, cpSubmitBtn },
+    state,
+  );
 }
 
 function getPickerItems() {
@@ -1651,90 +1340,16 @@ function getPickerItems() {
 
 function renderPickerResults() {
   const items = getPickerItems();
-
-  if (items.length === 0 && !state.pickerFilter) {
-    if (state.exploreLoading) {
-      pickerResults.innerHTML = '<div class="loading" style="padding: 12px 14px;">Loading lexicons...</div>';
-      pickerResults.classList.add('visible');
-      state.pickerVisible = true;
-    } else {
-      pickerResults.classList.remove('visible');
-      state.pickerVisible = false;
-    }
-    return;
-  }
-
+  const visible = listTemplate.renderPickerResults(pickerResults, {
+    items,
+    filter: state.pickerFilter,
+    loading: state.exploreLoading,
+  });
+  state.pickerVisible = visible;
   if (items.length === 0) {
-    pickerResults.innerHTML = `<div style="padding: 12px 14px; color: var(--base04); font-size: 13px;">No lexicons matching "${escapeHtml(state.pickerFilter)}"</div>`;
-    pickerResults.classList.add('visible');
-    state.pickerVisible = true;
     state.pickerActiveIndex = -1;
-    return;
-  }
-
-  // Separate into groups
-  const inRepo = items.filter(i => i.inRepo);
-  const other = items.filter(i => !i.inRepo);
-
-  let html = '';
-
-  if (inRepo.length > 0) {
-    html += '<div class="picker-group-label">In your repo</div>';
-    html += inRepo.map(item => {
-      const friendly = nsidToFriendlyName(item.nsid);
-      return `
-        <div class="picker-item" data-nsid="${escapeHtml(item.nsid)}" title="${escapeHtml(item.nsid)}">
-          <div class="picker-item-info">
-            <span class="picker-item-friendly">${escapeHtml(friendly)}</span>
-            <span class="picker-item-nsid">${escapeHtml(item.nsid)}</span>
-          </div>
-          <span class="picker-item-badge">yours</span>
-        </div>
-      `;
-    }).join('');
-  }
-
-  if (other.length > 0) {
-    const shown = other.slice(0, 50);
-    html += '<div class="picker-group-label">All lexicons</div>';
-    html += shown.map(item => {
-      const friendly = nsidToFriendlyName(item.nsid);
-      return `
-        <div class="picker-item" data-nsid="${escapeHtml(item.nsid)}" title="${escapeHtml(item.nsid)}">
-          <div class="picker-item-info">
-            <span class="picker-item-friendly">${escapeHtml(friendly)}</span>
-            <span class="picker-item-nsid">${escapeHtml(item.nsid)}</span>
-          </div>
-        </div>
-      `;
-    }).join('');
-    if (other.length > 50) {
-      html += `<div style="padding: 8px 14px; color: var(--base04); font-size: 12px;">${other.length - 50} more — type to filter</div>`;
-    }
-  }
-
-  pickerResults.innerHTML = html;
-  pickerResults.classList.add('visible');
-  state.pickerVisible = true;
-  state.pickerActiveIndex = -1;
-
-  // Click handlers
-  pickerResults.querySelectorAll('.picker-item').forEach(el => {
-    el.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      const nsid = el.dataset.nsid;
-      if (nsid) selectPickerLexicon(nsid);
-    });
-  });
-}
-
-function updatePickerActiveItem(items) {
-  items.forEach((el, i) => {
-    el.classList.toggle('active', i === state.pickerActiveIndex);
-  });
-  // Scroll active into view
-  if (state.pickerActiveIndex >= 0 && items[state.pickerActiveIndex]) {
-    items[state.pickerActiveIndex].scrollIntoView({ block: 'nearest' });
+  } else {
+    state.pickerActiveIndex = -1;
   }
 }
 
@@ -1744,106 +1359,30 @@ async function selectPickerLexicon(nsid) {
   pickerResults.classList.remove('visible');
   pickerResults.innerHTML = '';
 
-  // Show selected
-  state.cpNsid = nsid;
-  state.cpLexicon = null;
-  state.cpSchema = null;
-  state.cpMode = 'form';
-  state.cpSubmitting = false;
-
   // Track as recently used
   addRecentLexicon(nsid);
 
-  pickerInput.style.display = 'none';
-  pickerSelected.style.display = 'flex';
-  const pickerFriendly = nsidToFriendlyName(nsid);
-  pickerSelected.innerHTML = `
-    <div class="picker-selected-info">
-      <span class="picker-selected-friendly">${escapeHtml(pickerFriendly)}</span>
-      <span class="picker-selected-nsid">${escapeHtml(nsid)}</span>
-    </div>
-    <button class="picker-selected-clear" title="Change lexicon">&times;</button>
-  `;
-  pickerSelected.querySelector('.picker-selected-clear').addEventListener('click', clearPickerSelection);
-
-  // Reset form area
-  cpFormContainer.innerHTML = '';
-  cpJsonContainer.innerHTML = '';
-  cpSchemaLoading.style.display = '';
-  cpSchemaError.style.display = 'none';
-  cpEmpty.style.display = 'none';
-  cpModeToggle.style.display = 'none';
-  cpFooter.style.display = 'none';
-  cpSubmitStatus.style.display = 'none';
-  cpModeFormBtn.classList.add('active');
-  cpModeJsonBtn.classList.remove('active');
-  cpFormContainer.style.display = '';
-  cpJsonContainer.style.display = 'none';
-
-  // Fetch schema and generate form
-  try {
-    const lexicon = await resolveLexicon(nsid);
-    cpSchemaLoading.style.display = 'none';
-
-    if (!lexicon) {
-      cpSchemaError.textContent = 'Could not resolve lexicon schema. Use Raw JSON mode.';
-      cpSchemaError.style.display = '';
-      cpModeToggle.style.display = '';
-      cpModeJsonBtn.click();
-      cpFooter.style.display = '';
-      return;
-    }
-
-    state.cpLexicon = lexicon;
-    const schema = getRecordSchema(lexicon);
-
-    if (!schema) {
-      cpSchemaError.textContent = 'This lexicon does not define a record type. It may be a query or procedure.';
-      cpSchemaError.style.display = '';
-      cpModeToggle.style.display = '';
-      cpModeJsonBtn.click();
-      cpFooter.style.display = '';
-      return;
-    }
-
-    state.cpSchema = schema;
-
-    const form = await generateForm(nsid, schema, lexicon, {
-      autoFillCreatedAt: true,
-    });
-    cpFormContainer.appendChild(form);
-
-    cpModeToggle.style.display = '';
-    cpFooter.style.display = '';
-  } catch (err) {
-    cpSchemaLoading.style.display = 'none';
-    cpSchemaError.textContent = `Failed to load schema: ${err.message}`;
-    cpSchemaError.style.display = '';
-    cpModeToggle.style.display = '';
-    cpFooter.style.display = '';
-  }
+  // Delegate form loading to the template
+  await formTemplate.selectPickerLexicon(
+    {
+      pickerInput, pickerResults, pickerSelected,
+      cpFormContainer, cpJsonContainer, cpSchemaLoading, cpSchemaError, cpEmpty,
+      cpModeToggle, cpModeFormBtn, cpModeJsonBtn, cpFooter, cpSubmitStatus,
+    },
+    state,
+    nsid,
+  );
 }
 
 function clearPickerSelection() {
-  state.cpNsid = null;
-  state.cpLexicon = null;
-  state.cpSchema = null;
-
-  pickerInput.style.display = '';
-  pickerInput.value = '';
-  pickerSelected.style.display = 'none';
-
-  cpFormContainer.innerHTML = '';
-  cpJsonContainer.innerHTML = '';
-  cpSchemaLoading.style.display = 'none';
-  cpSchemaError.style.display = 'none';
-  cpEmpty.style.display = '';
-  cpModeToggle.style.display = 'none';
-  cpFooter.style.display = 'none';
-  cpSubmitStatus.style.display = 'none';
-
-  state.pickerFilter = '';
-  pickerInput.focus();
+  formTemplate.clearPickerSelection(
+    {
+      pickerInput, pickerSelected,
+      cpFormContainer, cpJsonContainer, cpSchemaLoading, cpSchemaError, cpEmpty,
+      cpModeToggle, cpFooter, cpSubmitStatus,
+    },
+    state,
+  );
 }
 
 /**
@@ -1858,27 +1397,12 @@ async function handleCreatePanelSubmit() {
   cpSubmitStatus.style.display = 'none';
 
   try {
-    let record;
+    const record = await formTemplate.collectCreatePanelData(
+      { cpFormContainer, cpJsonContainer },
+      state,
+    );
 
-    if (state.cpMode === 'json') {
-      record = parseRawJson(cpJsonContainer, state.cpNsid);
-    } else {
-      const form = cpFormContainer.querySelector('.lexicon-form');
-      if (!form) throw new Error('No form found. Switch to Raw JSON mode.');
-      record = await collectFormData(form, state.cpSchema, state.cpLexicon, state.cpNsid);
-    }
-
-    // Validate required fields
-    if (state.cpSchema && state.cpMode === 'form') {
-      const required = state.cpSchema.required || [];
-      const missing = required.filter(f => {
-        const val = record[f];
-        return val === undefined || val === null || val === '';
-      });
-      if (missing.length > 0) {
-        throw new Error(`Required fields missing: ${missing.join(', ')}`);
-      }
-    }
+    formTemplate.validateCreatePanelRequired(state, record);
 
     // Create record directly via atproto
     const result = await xrpcPost(currentSession, 'com.atproto.repo.createRecord', {
@@ -2050,45 +1574,10 @@ async function loadMoreRecords() {
 }
 
 function renderRecordsList() {
-  if (!state.recordsList || state.recordsList.length === 0) {
-    recordsListEl.innerHTML = '<div class="records-empty">No records in this collection</div>';
-    recordsPaginationEl.style.display = 'none';
-    return;
-  }
-
-  recordsListEl.innerHTML = state.recordsList.map(rec => {
-    const uri = rec.uri || '';
-    const rkey = rkeyFromUri(uri);
-    const preview = getRecordPreview(rec.value);
-    const dateStr = getRecordDate(rec.value);
-
-    return `
-      <div class="record-item" data-uri="${escapeHtml(uri)}" data-rkey="${escapeHtml(rkey)}">
-        <div class="record-item-main">
-          <span class="record-item-rkey">${escapeHtml(rkey)}</span>
-          ${preview ? `<span class="record-item-preview">${escapeHtml(preview)}</span>` : ''}
-        </div>
-        <div class="record-item-meta">
-          ${dateStr ? `<span class="record-item-date">${escapeHtml(dateStr)}</span>` : ''}
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Show/hide pagination
-  if (state.recordsCursor) {
-    recordsPaginationEl.style.display = '';
-  } else {
-    recordsPaginationEl.style.display = 'none';
-  }
-
-  // Click handlers
-  recordsListEl.querySelectorAll('.record-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const uri = el.dataset.uri;
-      const rkey = el.dataset.rkey;
-      if (uri && rkey) openRecordDetail(uri, rkey);
-    });
+  listTemplate.renderRecordsList(recordsListEl, {
+    records: state.recordsList,
+    cursor: state.recordsCursor,
+    paginationEl: recordsPaginationEl,
   });
 }
 
@@ -2097,66 +1586,6 @@ function goBackFromRecords() {
   state.recordsList = [];
   state.recordsCursor = null;
   switchPanel('my-lexicons');
-}
-
-/**
- * Extract the rkey (last segment) from an AT URI.
- * at://did:plc:xxx/app.bsky.feed.post/3abc123 -> 3abc123
- */
-function rkeyFromUri(uri) {
-  if (!uri) return '';
-  const parts = uri.split('/');
-  return parts[parts.length - 1] || '';
-}
-
-/**
- * Generate a preview string for a record value.
- * Looks for common fields: text, title, name, description, displayName, subject.
- */
-function getRecordPreview(value) {
-  if (!value || typeof value !== 'object') return '';
-
-  // Try common text fields
-  for (const key of ['text', 'title', 'name', 'displayName', 'description', 'summary']) {
-    if (typeof value[key] === 'string' && value[key].trim()) {
-      const text = value[key].trim();
-      return text.length > 120 ? text.substring(0, 120) + '...' : text;
-    }
-  }
-
-  // For records with a subject (likes, reposts, etc.)
-  if (value.subject) {
-    if (typeof value.subject === 'string') return value.subject;
-    if (value.subject.uri) return value.subject.uri;
-  }
-
-  // For follows
-  if (value.subject && typeof value.subject === 'string') {
-    return value.subject;
-  }
-
-  // $type as fallback context
-  if (value.$type) return value.$type;
-
-  return '';
-}
-
-/**
- * Format a date from record value (createdAt or indexedAt).
- */
-function getRecordDate(value) {
-  if (!value || typeof value !== 'object') return '';
-
-  const dateStr = value.createdAt || value.indexedAt;
-  if (!dateStr) return '';
-
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return '';
-  }
 }
 
 // ============================================================================
@@ -2206,151 +1635,11 @@ async function openRecordDetail(uri, rkey) {
 }
 
 function renderRecordDetail() {
-  if (!state.recordDetailValue) {
-    recordDetailContentEl.innerHTML = '<div class="records-empty">No record data</div>';
-    return;
-  }
-
-  const value = state.recordDetailValue;
-  let html = '';
-
-  // Metadata section
-  html += `
-    <div class="record-detail-section">
-      <div class="record-detail-section-title">Metadata</div>
-      <div class="record-detail-meta">
-        <div class="record-meta-row">
-          <span class="record-meta-label">URI</span>
-          <span class="record-meta-value">${escapeHtml(state.recordDetailUri)}</span>
-        </div>
-        ${state.recordDetailCid ? `
-        <div class="record-meta-row">
-          <span class="record-meta-label">CID</span>
-          <span class="record-meta-value">${escapeHtml(state.recordDetailCid)}</span>
-        </div>
-        ` : ''}
-        ${value.$type ? `
-        <div class="record-meta-row">
-          <span class="record-meta-label">Type</span>
-          <span class="record-meta-value">${escapeHtml(value.$type)}</span>
-        </div>
-        ` : ''}
-        ${value.createdAt ? `
-        <div class="record-meta-row">
-          <span class="record-meta-label">Created</span>
-          <span class="record-meta-value">${escapeHtml(formatDateTime(value.createdAt))}</span>
-        </div>
-        ` : ''}
-      </div>
-    </div>
-  `;
-
-  // Fields section - render each field
-  html += `
-    <div class="record-detail-section">
-      <div class="record-detail-section-title">Fields</div>
-      ${renderRecordFields(value)}
-    </div>
-  `;
-
-  // Raw JSON section
-  html += `
-    <div class="record-detail-section">
-      <div class="record-detail-section-title">Raw JSON</div>
-      <div class="record-json-view">${escapeHtml(JSON.stringify(value, null, 2))}</div>
-    </div>
-  `;
-
-  recordDetailContentEl.innerHTML = html;
-}
-
-/**
- * Render record fields as a structured view.
- * Skips $type and createdAt (shown in metadata).
- */
-function renderRecordFields(value) {
-  if (!value || typeof value !== 'object') return '';
-
-  const skipKeys = new Set(['$type', 'createdAt']);
-  const entries = Object.entries(value).filter(([k]) => !skipKeys.has(k));
-
-  if (entries.length === 0) {
-    return '<div class="records-empty">No fields</div>';
-  }
-
-  return entries.map(([key, val]) => {
-    return `
-      <div class="record-field">
-        <span class="record-field-name">${escapeHtml(key)}</span>
-        <div class="record-field-value">${renderFieldValue(val, key)}</div>
-      </div>
-    `;
-  }).join('');
-}
-
-/**
- * Render a single field value with appropriate formatting.
- */
-function renderFieldValue(val, key) {
-  if (val === null || val === undefined) {
-    return '<span style="color: var(--base04); font-style: italic;">null</span>';
-  }
-
-  if (typeof val === 'string') {
-    // Check if it's a URL
-    if (val.match(/^https?:\/\//)) {
-      return `<a href="${escapeHtml(val)}" target="_blank" rel="noopener">${escapeHtml(val)}</a>`;
-    }
-    // Check if it's an AT URI
-    if (val.startsWith('at://')) {
-      return `<span style="font-family: var(--theme-font-mono, monospace); font-size: 12px;">${escapeHtml(val)}</span>`;
-    }
-    // Check if it's a DID
-    if (val.startsWith('did:')) {
-      return `<span style="font-family: var(--theme-font-mono, monospace); font-size: 12px;">${escapeHtml(val)}</span>`;
-    }
-    // Check if it's a datetime
-    if (val.match(/^\d{4}-\d{2}-\d{2}T/)) {
-      return escapeHtml(formatDateTime(val));
-    }
-    // Regular string
-    return escapeHtml(val);
-  }
-
-  if (typeof val === 'number' || typeof val === 'boolean') {
-    return `<span style="color: var(--base0E);">${escapeHtml(String(val))}</span>`;
-  }
-
-  if (Array.isArray(val)) {
-    if (val.length === 0) {
-      return '<span style="color: var(--base04); font-style: italic;">[]</span>';
-    }
-    // Render array items
-    return `<div class="record-field-object">${val.map((item, i) => {
-      if (typeof item === 'object' && item !== null) {
-        return `<div style="margin-bottom: 8px; padding-bottom: 8px; ${i < val.length - 1 ? 'border-bottom: 1px solid var(--base02);' : ''}">${renderRecordFields(item)}</div>`;
-      }
-      return `<div>${renderFieldValue(item, String(i))}</div>`;
-    }).join('')}</div>`;
-  }
-
-  if (typeof val === 'object') {
-    // Check for blob ref
-    if (val.$type === 'blob' || val.ref?.$link || val.cid) {
-      const link = val.ref?.$link || val.cid;
-      const mimeType = val.mimeType || '';
-      if (link && mimeType.startsWith('image/') && currentSession) {
-        const blobUrl = `${currentSession.pdsUrl}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(currentSession.did)}&cid=${encodeURIComponent(link)}`;
-        return `<img src="${escapeHtml(blobUrl)}" alt="blob" loading="lazy" />`;
-      }
-      return `<span style="font-family: var(--theme-font-mono, monospace); font-size: 12px;">${escapeHtml(mimeType)} blob: ${escapeHtml(link || 'unknown')}</span>`;
-    }
-
-    // Render nested object
-    return `<div class="record-field-object">${renderRecordFields(val)}</div>`;
-  }
-
-  return escapeHtml(String(val));
+  recordDetailContentEl.innerHTML = lexiconTemplate.renderContent({
+    uri: state.recordDetailUri,
+    cid: state.recordDetailCid,
+    value: state.recordDetailValue,
+  });
 }
 
 function goBackFromRecordDetail() {
@@ -2414,25 +1703,6 @@ async function handleDeleteRecord() {
   }
 }
 
-/**
- * Format a datetime string.
- */
-function formatDateTime(isoStr) {
-  try {
-    const d = new Date(isoStr);
-    if (isNaN(d.getTime())) return isoStr;
-    return d.toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return isoStr;
-  }
-}
-
 // ============================================================================
 // Recent Lexicons (persisted sidebar shortcuts)
 // ============================================================================
@@ -2483,56 +1753,39 @@ function removeRecentLexicon(nsid) {
 
 function renderRecentLexicons() {
   if (!recentLexiconsEl) return;
-
-  if (state.recentLexicons.length === 0) {
-    recentLexiconsEl.innerHTML = `
-      <div class="recent-label"><span class="nav-icon">&#8986;</span> Recent</div>
-      <div class="recent-empty">No recent lexicons yet</div>
-    `;
-    return;
-  }
-
-  recentLexiconsEl.innerHTML = `
-    <div class="recent-label">Recent Lexicons</div>
-    ${state.recentLexicons.map(nsid => {
-      const friendly = nsidToFriendlyName(nsid);
-      return `
-        <div class="recent-item" data-nsid="${escapeHtml(nsid)}" title="${escapeHtml(nsid)}">
-          <span class="recent-item-name">${escapeHtml(friendly)}</span>
-          <button class="recent-item-remove" data-nsid="${escapeHtml(nsid)}" title="Remove">&times;</button>
-        </div>
-      `;
-    }).join('')}
-  `;
-
-  // Click to open create panel with that lexicon
-  recentLexiconsEl.querySelectorAll('.recent-item').forEach(el => {
-    el.addEventListener('click', (e) => {
-      if (e.target.classList.contains('recent-item-remove')) return;
-      const nsid = el.dataset.nsid;
-      switchPanel('create');
-      selectPickerLexicon(nsid);
-    });
-  });
-
-  // Remove button
-  recentLexiconsEl.querySelectorAll('.recent-item-remove').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      removeRecentLexicon(btn.dataset.nsid);
-    });
+  listTemplate.renderRecentLexicons(recentLexiconsEl, {
+    recentLexicons: state.recentLexicons,
   });
 }
 
 // ============================================================================
-// Helpers
+// Template event wiring
 // ============================================================================
 
-function escapeHtml(str) {
-  if (!str) return '';
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+function wireTemplateEvents() {
+  // App template events
+  appTemplate.on('actor-selected', ({ actor }) => selectActor(actor));
+  appTemplate.on('actor-cleared', () => clearActorSelection());
+  appTemplate.on('panel-switch', ({ panel }) => switchPanel(panel));
+
+  // List template events
+  listTemplate.on('collection-click', ({ nsid }) => openRecordsList(nsid));
+  listTemplate.on('explore-click', ({ nsid }) => openCreateRecord(nsid, 'explore'));
+  listTemplate.on('record-click', ({ uri, rkey }) => openRecordDetail(uri, rkey));
+  listTemplate.on('recent-click', ({ nsid }) => {
+    switchPanel('create');
+    selectPickerLexicon(nsid);
+  });
+  listTemplate.on('recent-remove', ({ nsid }) => removeRecentLexicon(nsid));
+  listTemplate.on('picker-select', ({ nsid }) => selectPickerLexicon(nsid));
+
+  // Form template events
+  formTemplate.on('back', () => goBackFromCreate());
+  formTemplate.on('submit-create-record', () => handleCreateSubmit());
+  formTemplate.on('submit-create-panel', () => handleCreatePanelSubmit());
+  formTemplate.on('picker-clear', () => clearPickerSelection());
+
+  // Lexicon template — session is set separately when auth state changes
 }
 
 // ============================================================================

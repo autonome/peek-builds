@@ -1,0 +1,14 @@
+{
+  "id": "raw",
+  "name": "Raw",
+  "description": "Developer debug view showing all fields, metadata, and raw JSON. The default template that preserves the original Lexicon Studio UI.",
+  "version": "1.0.0",
+  "author": "peek",
+  "targets": ["*"],
+  "default": true,
+  "views": {
+    "list": true,
+    "detail": true,
+    "edit": true
+  }
+}
