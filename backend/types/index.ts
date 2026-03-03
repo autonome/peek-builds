@@ -277,6 +277,7 @@ export type TableName =
   | 'extensions'
   | 'extension_settings'
   | 'migrations'
+  | 'themes'
   | 'items'
   | 'item_tags'
   | 'item_visits'
@@ -294,6 +295,7 @@ export const tableNames: TableName[] = [
   'extensions',
   'extension_settings',
   'migrations',
+  'themes',
   'items',
   'item_tags',
   'item_visits',

@@ -5,7 +5,7 @@
 -- Unified content storage - URLs, text notes, tagsets, and images
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY NOT NULL,
-  type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed')),
+  type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
   content TEXT,
   mimeType TEXT DEFAULT '',
   metadata TEXT DEFAULT '{}',

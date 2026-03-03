@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct SchemaItems {
     /// Unique identifier (UUID or generated ID)
     pub id: String,
-    /// Content type: url, text, tagset, image, series, or feed
+    /// Content type: url, text, tagset, image, series, feed, or entity
     pub r#type: String,
     /// URL for type=url, text content for type=text, null for tagset/image
     pub content: Option<String>,

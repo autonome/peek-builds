@@ -11,6 +11,9 @@
  * 2. Compare against required sync columns from schema/v1.json
  * 3. Verify timestamp columns use INTEGER (not TEXT)
  * 4. Verify id columns use TEXT (not INTEGER)
+ * 5. CHECK constraint validation across v1.json and all backends
+ * 6. Table completeness (datastore.ts tables in TypeScript types)
+ * 7. Column completeness (v1.json columns in datastore.ts)
  */
 
 import { readFileSync } from 'fs';
@@ -285,6 +288,224 @@ describe('Schema Fidelity Tests', () => {
       const validateJs = readFileSync(join(__dirname, 'generated/validate.js'), 'utf-8');
       assert.ok(validateJs.includes('validateSyncSchema'), 'validate.js should export validateSyncSchema');
       assert.ok(validateJs.includes('assertValidSyncSchema'), 'validate.js should export assertValidSyncSchema');
+    });
+  });
+
+  describe('CHECK Constraint Validation', () => {
+    /**
+     * Parse CHECK constraint values from a type IN (...) expression.
+     * Returns sorted array of allowed values, or null if no CHECK found.
+     */
+    function parseCheckValues(sql, tableName, columnName) {
+      const columns = parseCreateTable(sql, tableName);
+      if (!columns || !columns[columnName]) return null;
+      const def = columns[columnName].definition;
+      const match = def.match(/CHECK\s*\(\s*\w+\s+IN\s*\(([^)]+)\)\s*\)/i);
+      if (!match) return null;
+      return match[1].split(',').map(v => v.trim().replace(/'/g, '')).sort();
+    }
+
+    /**
+     * Parse CHECK constraint values from v1.json schema definition.
+     */
+    function parseSchemaCheckValues(tableName, columnName) {
+      const table = schema.tables[tableName];
+      if (!table) return null;
+      const col = table.columns[columnName];
+      if (!col || !col.check) return null;
+      const match = col.check.match(/\w+\s+IN\s*\(([^)]+)\)/i);
+      if (!match) return null;
+      return match[1].split(',').map(v => v.trim().replace(/'/g, '')).sort();
+    }
+
+    test('items.type CHECK values match between v1.json and Electron', () => {
+      const schemaValues = parseSchemaCheckValues('items', 'type');
+      const electronValues = parseCheckValues(electronSql, 'items', 'type');
+
+      assert.ok(schemaValues, 'v1.json items.type should have a CHECK constraint');
+      assert.ok(electronValues, 'Electron items.type should have a CHECK constraint');
+      assert.deepStrictEqual(
+        electronValues,
+        schemaValues,
+        `items.type CHECK values diverged:\n  v1.json:   [${schemaValues.join(', ')}]\n  Electron:  [${electronValues.join(', ')}]`
+      );
+    });
+
+    test('items.type CHECK values match between v1.json and Server', () => {
+      const schemaValues = parseSchemaCheckValues('items', 'type');
+      const serverValues = parseCheckValues(serverSql, 'items', 'type');
+
+      assert.ok(schemaValues, 'v1.json items.type should have a CHECK constraint');
+      assert.ok(serverValues, 'Server items.type should have a CHECK constraint');
+      assert.deepStrictEqual(
+        serverValues,
+        schemaValues,
+        `items.type CHECK values diverged:\n  v1.json:  [${schemaValues.join(', ')}]\n  Server:   [${serverValues.join(', ')}]`
+      );
+    });
+
+    test('items.type CHECK values match between v1.json and generated SQL', () => {
+      const schemaValues = parseSchemaCheckValues('items', 'type');
+      const generatedSql = readFileSync(join(__dirname, 'generated/sqlite-full.sql'), 'utf-8');
+      const generatedValues = parseCheckValues(generatedSql, 'items', 'type');
+
+      assert.ok(schemaValues, 'v1.json items.type should have a CHECK constraint');
+      assert.ok(generatedValues, 'Generated SQL items.type should have a CHECK constraint');
+      assert.deepStrictEqual(
+        generatedValues,
+        schemaValues,
+        `items.type CHECK values diverged:\n  v1.json:    [${schemaValues.join(', ')}]\n  Generated:  [${generatedValues.join(', ')}]`
+      );
+    });
+
+    test('ItemType in types/index.ts matches v1.json CHECK values', () => {
+      const schemaValues = parseSchemaCheckValues('items', 'type');
+      assert.ok(schemaValues, 'v1.json items.type should have a CHECK constraint');
+
+      const typesTs = readFileSync(join(__dirname, '../backend/types/index.ts'), 'utf-8');
+      const match = typesTs.match(/export type ItemType\s*=\s*([^;]+);/);
+      assert.ok(match, 'ItemType should be defined in types/index.ts');
+
+      const tsValues = match[1].match(/'([^']+)'/g).map(v => v.replace(/'/g, '')).sort();
+      assert.deepStrictEqual(
+        tsValues,
+        schemaValues,
+        `ItemType diverged from v1.json:\n  v1.json:        [${schemaValues.join(', ')}]\n  types/index.ts: [${tsValues.join(', ')}]`
+      );
+    });
+  });
+
+  describe('Table Completeness', () => {
+    test('all tables in Electron createTableStatements are in TypeScript TableName', () => {
+      const typesTs = readFileSync(join(__dirname, '../backend/types/index.ts'), 'utf-8');
+
+      // Extract TableName union values
+      const tableNameMatch = typesTs.match(/export type TableName\s*=([^;]+);/s);
+      assert.ok(tableNameMatch, 'TableName type should be defined in types/index.ts');
+      const tsTableNames = tableNameMatch[1].match(/'([^']+)'/g).map(v => v.replace(/'/g, ''));
+
+      // Extract CREATE TABLE names from Electron datastore (skip migration temp tables)
+      const createTableRegex = /CREATE TABLE IF NOT EXISTS (\w+)/g;
+      const electronTables = new Set();
+      let m;
+      while ((m = createTableRegex.exec(electronSql)) !== null) {
+        const name = m[1];
+        // Skip temporary migration tables (contain _new, _mig, _old suffixes)
+        if (/_new$|_mig$|_old$|_backup$/.test(name)) continue;
+        // Skip context_history (created in migration, not createTableStatements)
+        if (name === 'context_history') continue;
+        electronTables.add(name);
+      }
+
+      const missingFromTypes = [...electronTables].filter(t => !tsTableNames.includes(t));
+      assert.deepStrictEqual(
+        missingFromTypes,
+        [],
+        `Tables in Electron but missing from TableName type: ${missingFromTypes.join(', ')}`
+      );
+    });
+
+    test('tableNames array matches TableName union', () => {
+      const typesTs = readFileSync(join(__dirname, '../backend/types/index.ts'), 'utf-8');
+
+      // Extract TableName union values
+      const tableNameMatch = typesTs.match(/export type TableName\s*=([^;]+);/s);
+      assert.ok(tableNameMatch, 'TableName type should be defined');
+      const unionValues = tableNameMatch[1].match(/'([^']+)'/g).map(v => v.replace(/'/g, '')).sort();
+
+      // Extract tableNames array values
+      const arrayMatch = typesTs.match(/export const tableNames:\s*TableName\[\]\s*=\s*\[([^\]]+)\]/s);
+      assert.ok(arrayMatch, 'tableNames array should be defined');
+      const arrayValues = arrayMatch[1].match(/'([^']+)'/g).map(v => v.replace(/'/g, '')).sort();
+
+      assert.deepStrictEqual(
+        arrayValues,
+        unionValues,
+        `tableNames array does not match TableName union:\n  Union: [${unionValues.join(', ')}]\n  Array: [${arrayValues.join(', ')}]`
+      );
+    });
+  });
+
+  describe('Column Completeness', () => {
+    test('Electron items table has all columns from v1.json', () => {
+      const schemaColumns = Object.keys(schema.tables.items.columns);
+      const electronCols = parseCreateTable(electronSql, 'items');
+      assert.ok(electronCols, 'Table items not found in Electron');
+
+      // Some columns may be added via migrations, so also search for ALTER TABLE ADD COLUMN
+      const alterRegex = /ALTER TABLE items ADD COLUMN (\w+)/g;
+      const migratedCols = new Set();
+      let m;
+      while ((m = alterRegex.exec(electronSql)) !== null) {
+        migratedCols.add(m[1]);
+      }
+
+      const allElectronCols = new Set([...Object.keys(electronCols), ...migratedCols]);
+      const missing = schemaColumns.filter(col => !allElectronCols.has(col));
+      assert.deepStrictEqual(
+        missing,
+        [],
+        `Columns in v1.json items but missing from Electron (CREATE TABLE + migrations): ${missing.join(', ')}`
+      );
+    });
+
+    test('Electron tags table has all columns from v1.json', () => {
+      const schemaColumns = Object.keys(schema.tables.tags.columns);
+      const electronCols = parseCreateTable(electronSql, 'tags');
+      assert.ok(electronCols, 'Table tags not found in Electron');
+
+      const alterRegex = /ALTER TABLE tags ADD COLUMN (\w+)/g;
+      const migratedCols = new Set();
+      let m;
+      while ((m = alterRegex.exec(electronSql)) !== null) {
+        migratedCols.add(m[1]);
+      }
+
+      const allElectronCols = new Set([...Object.keys(electronCols), ...migratedCols]);
+      const missing = schemaColumns.filter(col => !allElectronCols.has(col));
+      assert.deepStrictEqual(
+        missing,
+        [],
+        `Columns in v1.json tags but missing from Electron (CREATE TABLE + migrations): ${missing.join(', ')}`
+      );
+    });
+
+    test('Electron item_tags table has all columns from v1.json', () => {
+      const schemaColumns = Object.keys(schema.tables.item_tags.columns);
+      const electronCols = parseCreateTable(electronSql, 'item_tags');
+      assert.ok(electronCols, 'Table item_tags not found in Electron');
+
+      const missing = schemaColumns.filter(col => !electronCols[col]);
+      assert.deepStrictEqual(
+        missing,
+        [],
+        `Columns in v1.json item_tags but missing from Electron: ${missing.join(', ')}`
+      );
+    });
+
+    test('Electron item_events table has all columns from v1.json', () => {
+      const schemaColumns = Object.keys(schema.tables.item_events.columns);
+      const electronCols = parseCreateTable(electronSql, 'item_events');
+      assert.ok(electronCols, 'Table item_events not found in Electron');
+
+      const missing = schemaColumns.filter(col => !electronCols[col]);
+      assert.deepStrictEqual(
+        missing,
+        [],
+        `Columns in v1.json item_events but missing from Electron: ${missing.join(', ')}`
+      );
+    });
+
+    test('all v1.json tables have column completeness tests', () => {
+      // Meta-test: ensure we don't forget to add column tests for new schema tables
+      const schemaTables = Object.keys(schema.tables);
+      const testedTables = ['items', 'tags', 'item_tags', 'item_events'];
+      const untested = schemaTables.filter(t => !testedTables.includes(t));
+      assert.deepStrictEqual(
+        untested,
+        [],
+        `v1.json tables without column completeness tests: ${untested.join(', ')}. Add tests above.`
+      );
     });
   });
 
