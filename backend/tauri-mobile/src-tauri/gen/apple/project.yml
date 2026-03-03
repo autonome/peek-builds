@@ -4,10 +4,6 @@ options:
   deploymentTarget:
     iOS: 16.0
 fileGroups: [../../src]
-packages:
-  GRDB:
-    url: https://github.com/groue/GRDB.swift
-    from: 6.24.0
 configs:
   debug: debug
   release: release
@@ -121,5 +117,4 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: 16.0
     dependencies:
-      - package: GRDB
-        product: GRDB
+      - framework: ../../../peek-core/PeekCore.xcframework

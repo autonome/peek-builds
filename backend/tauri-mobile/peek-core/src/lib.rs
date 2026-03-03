@@ -113,6 +113,12 @@ impl PeekStore {
         items::save_image(&conn, image_bytes, mime_type, tags, metadata, thumbnail_bytes, width, height, &self.device_id)
     }
 
+    /// Find an existing URL item by URL. Returns item info with tags if found.
+    pub fn find_existing_url(&self, url: &str) -> Result<Option<SavedUrl>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        items::find_existing_url(&conn, url)
+    }
+
     /// Get all saved URL items.
     pub fn get_saved_urls(&self) -> Result<Vec<SavedUrl>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;

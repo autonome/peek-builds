@@ -649,6 +649,38 @@ pub fn track_navigation(
 }
 
 // ============================================================================
+// Query operations
+// ============================================================================
+
+/// Find an existing URL item by URL. Returns item info with tags if found.
+pub fn find_existing_url(conn: &Connection, url: &str) -> Result<Option<SavedUrl>, String> {
+    let normalized = normalize_url(url);
+    let url_without_slash = normalized.strip_suffix('/').unwrap_or(&normalized);
+
+    let row: Option<(String, Option<String>, String)> = conn
+        .query_row(
+            "SELECT id, url, created_at FROM items WHERE type = 'url' AND (url = ? OR url = ?) AND deleted_at IS NULL",
+            params![&normalized, &url_without_slash],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .ok();
+
+    match row {
+        None => Ok(None),
+        Some((id, url, created_at)) => {
+            let tags = get_item_tag_names_ordered(conn, &id)?;
+            Ok(Some(SavedUrl {
+                id,
+                url: url.unwrap_or_default(),
+                tags,
+                saved_at: created_at,
+                metadata: None,
+            }))
+        }
+    }
+}
+
+// ============================================================================
 // Helper
 // ============================================================================
 
@@ -817,6 +849,28 @@ mod tests {
         let id1 = track_navigation(&conn, "https://example.com/page", &device_id).unwrap();
         let id2 = track_navigation(&conn, "https://example.com/page", &device_id).unwrap();
         assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_find_existing_url() {
+        let (conn, device_id) = setup_db();
+        // Not found
+        assert!(find_existing_url(&conn, "https://example.com").unwrap().is_none());
+
+        // Save and find
+        save_url(&conn, "https://example.com", &["tag1".to_string()], None, &device_id).unwrap();
+        let found = find_existing_url(&conn, "https://example.com").unwrap().unwrap();
+        assert_eq!(found.url, "https://example.com/");
+        assert!(found.tags.contains(&"tag1".to_string()));
+    }
+
+    #[test]
+    fn test_find_existing_url_normalized() {
+        let (conn, device_id) = setup_db();
+        save_url(&conn, "https://example.com/", &[], None, &device_id).unwrap();
+        // Should find with or without trailing slash
+        assert!(find_existing_url(&conn, "https://example.com").unwrap().is_some());
+        assert!(find_existing_url(&conn, "https://example.com/").unwrap().is_some());
     }
 
     #[test]

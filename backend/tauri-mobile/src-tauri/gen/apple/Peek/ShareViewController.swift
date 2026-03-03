@@ -1,15 +1,9 @@
 import UIKit
 import UniformTypeIdentifiers
-import GRDB
 import Network
 import os.log
 
 private let shareLog = OSLog(subsystem: "com.dietrich.peek-mobile.share", category: "ShareExtension")
-
-/// Schema version for tracking compatibility between Rust main app and Swift Share Extension.
-/// Increment this when making schema changes that both codepaths must understand.
-/// Both Rust and Swift code should use the same version number.
-private let SCHEMA_VERSION = "2"
 
 // MARK: - Item Types
 enum ItemType: String {
@@ -17,54 +11,6 @@ enum ItemType: String {
     case text = "text"
     case tagset = "tagset"
     case image = "image"
-}
-
-// MARK: - Database Records
-struct ItemRecord: Codable, FetchableRecord, PersistableRecord {
-    static let databaseTableName = "items"
-
-    var id: String
-    var type: String
-    var url: String?
-    var content: String?
-    var metadata: String?  // JSON-encoded metadata
-    var created_at: String
-    var updated_at: String
-    var deleted_at: String?
-}
-
-struct TagRecord: Codable, FetchableRecord, PersistableRecord {
-    static let databaseTableName = "tags"
-
-    var id: String?
-    var name: String
-    var frequency: Int
-    var lastUsed: String
-    var frecencyScore: Double
-    var createdAt: String
-    var updatedAt: String
-}
-
-struct ItemTagRecord: Codable, FetchableRecord, PersistableRecord {
-    static let databaseTableName = "item_tags"
-
-    var item_id: String
-    var tag_id: String
-    var created_at: String
-}
-
-struct BlobRecord: Codable, FetchableRecord, PersistableRecord {
-    static let databaseTableName = "blobs"
-
-    var id: String
-    var item_id: String
-    var data: Data
-    var mime_type: String
-    var size_bytes: Int64
-    var width: Int?
-    var height: Int?
-    var thumbnail: Data?
-    var created_at: String
 }
 
 // MARK: - View Models (for UI)
@@ -88,20 +34,40 @@ struct SavedItem {
 // For backward compatibility
 typealias SavedUrl = SavedItem
 
-// MARK: - Database Manager
-class DatabaseManager {
-    static let shared = DatabaseManager()
+// MARK: - PeekCore Manager (thin wrapper around PeekCoreFfi)
+class PeekCoreManager {
+    static let shared = PeekCoreManager()
 
-    private var dbQueue: DatabaseQueue?
+    private var store: PeekCoreFfi?
+    private var profileConfig: FfiProfileConfig?
     private let networkMonitor = NWPathMonitor()
     private var isConnected = false
 
-    // Cached sync settings from profiles.json
-    private var cachedSyncSettings: (serverUrl: String, apiKey: String)?
-
     private init() {
-        setupDatabase()
+        setupStore()
         setupNetworkMonitor()
+    }
+
+    private func setupStore() {
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.dietrich.peek-mobile"
+        ) else {
+            print("[PeekCore] Failed to get App Group container")
+            return
+        }
+
+        let basePath = containerURL.path
+        profileConfig = ffiLoadProfileConfig(basePath: basePath)
+        print("[PeekCore] Loaded profile config, current profile: \(profileConfig?.currentProfileId ?? "none")")
+
+        do {
+            let dbPath = try ffiGetDbPathForProfile(basePath: basePath)
+            print("[PeekCore] Opening database at: \(dbPath)")
+            store = try PeekCoreFfi(dbPath: dbPath)
+            print("[PeekCore] Database initialized successfully")
+        } catch {
+            print("[PeekCore] Failed to initialize store: \(error)")
+        }
     }
 
     private func setupNetworkMonitor() {
@@ -111,492 +77,108 @@ class DatabaseManager {
         networkMonitor.start(queue: DispatchQueue.global(qos: .background))
     }
 
-    private func getAppGroupContainerPath() -> URL? {
-        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.dietrich.peek-mobile")
-    }
-
-    /// Check if a string is a valid UUID format
-    private func isValidUUID(_ string: String) -> Bool {
-        // UUID format: 8-4-4-4-12 hex digits with hyphens (36 chars total)
-        guard string.count == 36 else { return false }
-        let parts = string.split(separator: "-")
-        guard parts.count == 5 else { return false }
-        let expectedLengths = [8, 4, 4, 4, 12]
-        for (part, expectedLen) in zip(parts, expectedLengths) {
-            guard part.count == expectedLen,
-                  part.allSatisfy({ $0.isHexDigit }) else {
-                return false
-            }
-        }
-        return true
-    }
-
-    /// Load profile configuration from profiles.json
-    /// Returns the current profile ID and sync settings (if configured)
-    private func loadProfileConfig() -> (profileId: String, syncSettings: (serverUrl: String, apiKey: String)?) {
-        guard let containerURL = getAppGroupContainerPath() else {
-            print("[DB] Failed to get App Group container for profile config")
-            return ("default", nil)
-        }
-
-        let configPath = containerURL.appendingPathComponent("profiles.json")
-        print("[DB] Looking for profile config at: \(configPath.path)")
-
-        guard FileManager.default.fileExists(atPath: configPath.path) else {
-            print("[DB] profiles.json not found, using default profile")
-            return ("default", nil)
-        }
-
-        guard let data = try? Data(contentsOf: configPath),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            print("[DB] Failed to parse profiles.json, using default profile")
-            return ("default", nil)
-        }
-
-        // Get current profile ID
-        guard let profileId = json["currentProfileId"] as? String, !profileId.isEmpty else {
-            print("[DB] No currentProfileId in profiles.json, using default profile")
-            return ("default", nil)
-        }
-
-        print("[DB] Found profile ID: \(profileId)")
-
-        // Validate that profileId is a proper UUID to prevent data corruption
-        // Invalid IDs like "default" string would create wrong database paths
-        var validatedProfileId = profileId
-        if !isValidUUID(profileId) {
-            print("[DB] WARNING: Profile ID '\(profileId)' is not a valid UUID")
-
-            // Try to get the first valid profile from the profiles array
-            if let profiles = json["profiles"] as? [[String: Any]],
-               let firstProfile = profiles.first,
-               let firstId = firstProfile["id"] as? String,
-               isValidUUID(firstId) {
-                print("[DB] Falling back to first profile: \(firstId)")
-                validatedProfileId = firstId
-            } else {
-                print("[DB] No valid profiles found, using 'default' to fall back to peek.db")
-                validatedProfileId = "default"
-            }
-        } else {
-            // Also check that the UUID exists in the profiles array
-            if let profiles = json["profiles"] as? [[String: Any]] {
-                let profileExists = profiles.contains { ($0["id"] as? String) == profileId }
-                if !profileExists && !profiles.isEmpty {
-                    print("[DB] WARNING: Profile ID '\(profileId)' not found in profiles list")
-                    if let firstProfile = profiles.first,
-                       let firstId = firstProfile["id"] as? String {
-                        print("[DB] Falling back to first profile: \(firstId)")
-                        validatedProfileId = firstId
-                    }
-                }
-            }
-        }
-
-        // Extract sync settings from profiles.json
-        var syncSettings: (serverUrl: String, apiKey: String)? = nil
-        if let sync = json["sync"] as? [String: Any],
-           let serverUrl = sync["serverUrl"] as? String,
-           !serverUrl.isEmpty {
-            let apiKey = sync["apiKey"] as? String ?? ""
-            syncSettings = (serverUrl, apiKey)
-            print("[DB] Found sync settings - serverUrl: \(serverUrl), apiKey: \(apiKey.isEmpty ? "(empty)" : "(set)")")
-        }
-
-        return (validatedProfileId, syncSettings)
-    }
-
-    private func setupDatabase() {
-        guard let containerURL = getAppGroupContainerPath() else {
-            print("[DB] Failed to get App Group container")
-            return
-        }
-
-        // Load profile config to get current profile ID and sync settings
-        let (profileId, syncSettings) = loadProfileConfig()
-        cachedSyncSettings = syncSettings
-
-        // Use profile-based database path (matches Rust main app)
-        // Main app uses "peek-{profileId}.db" after migration
-        let dbName: String
-        if profileId == "default" {
-            // Fallback to peek.db for first run before main app creates profiles.json
-            dbName = "peek.db"
-        } else {
-            dbName = "peek-\(profileId).db"
-        }
-
-        let dbPath = containerURL.appendingPathComponent(dbName)
-        print("[DB] Opening database at: \(dbPath.path) (profile: \(profileId))")
-
-        do {
-            var config = Configuration()
-            config.prepareDatabase { db in
-                // Enable WAL mode for concurrent access
-                try db.execute(sql: "PRAGMA journal_mode=WAL")
-            }
-
-            dbQueue = try DatabaseQueue(path: dbPath.path, configuration: config)
-            try createTables()
-            print("[DB] Database initialized successfully")
-        } catch {
-            print("[DB] Failed to setup database: \(error)")
-        }
-    }
-
-    private func createTables() throws {
-        try dbQueue?.write { db in
-            // Check if we need migration from old schema
-            let hasOldSchema = try db.tableExists("urls") && !db.tableExists("items")
-
-            if hasOldSchema {
-                // Migrate from old schema
-                print("[DB] Migrating from urls/url_tags to items/item_tags")
-
-                // Create new tables
-                // IMPORTANT: Schema must match Rust's items table in lib.rs
-                // - Use 'url' as default type to match ItemType.page.rawValue
-                // - Include sync columns that Rust expects
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS items (
-                        id TEXT PRIMARY KEY,
-                        type TEXT NOT NULL DEFAULT 'url',
-                        url TEXT,
-                        content TEXT,
-                        metadata TEXT,
-                        sync_id TEXT DEFAULT '',
-                        sync_source TEXT DEFAULT '',
-                        synced_at TEXT,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL,
-                        deleted_at TEXT
-                    );
-
-                    CREATE TABLE IF NOT EXISTS item_tags (
-                        item_id TEXT NOT NULL,
-                        tag_id TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        PRIMARY KEY (item_id, tag_id),
-                        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-                        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-                    );
-                """)
-
-                // Migrate data (use 'url' type to match ItemType.page.rawValue)
-                try db.execute(sql: """
-                    INSERT INTO items (id, type, url, created_at, updated_at, deleted_at)
-                        SELECT id, 'url', url, created_at, updated_at, deleted_at FROM urls;
-
-                    INSERT INTO item_tags (item_id, tag_id, created_at)
-                        SELECT url_id, tag_id, created_at FROM url_tags;
-                """)
-
-                // Drop old tables
-                try db.execute(sql: """
-                    DROP TABLE IF EXISTS url_tags;
-                    DROP TABLE IF EXISTS urls;
-                """)
-
-                print("[DB] Migration complete")
-            } else {
-                // Create new schema directly
-                // IMPORTANT: Schema must match Rust's items table in lib.rs
-                // - Use 'url' as default type to match ItemType.page.rawValue
-                // - Include sync columns that Rust expects
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS items (
-                        id TEXT PRIMARY KEY,
-                        type TEXT NOT NULL DEFAULT 'url',
-                        url TEXT,
-                        content TEXT,
-                        metadata TEXT,
-                        sync_id TEXT DEFAULT '',
-                        sync_source TEXT DEFAULT '',
-                        synced_at TEXT,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL,
-                        deleted_at TEXT
-                    );
-
-                    CREATE TABLE IF NOT EXISTS item_tags (
-                        item_id TEXT NOT NULL,
-                        tag_id TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        PRIMARY KEY (item_id, tag_id),
-                        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-                        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-                    );
-                """)
-            }
-
-            // Add metadata column if it doesn't exist (for existing installs without metadata)
-            let hasMetadataColumn = try db.columns(in: "items").contains { $0.name == "metadata" }
-            if !hasMetadataColumn {
-                print("[DB] Adding metadata column to items table...")
-                try db.execute(sql: "ALTER TABLE items ADD COLUMN metadata TEXT")
-                print("[DB] Metadata column added")
-            }
-
-            // Create settings table first (needed for migration tracking)
-            try db.execute(sql: """
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-            """)
-
-            // Migrate tags.id from INTEGER to TEXT (for existing installs with old schema)
-            // Check if tags table exists and has INTEGER id column
-            if try db.tableExists("tags") {
-                let tagsHasIntegerId = try db.columns(in: "tags")
-                    .contains { $0.name == "id" && $0.type.uppercased() == "INTEGER" }
-
-                if tagsHasIntegerId {
-                    print("[DB] Migrating tags.id from INTEGER to TEXT...")
-
-                    try db.inSavepoint {
-                        // Step 1: Create temp mapping table
-                        try db.execute(sql: """
-                            CREATE TEMP TABLE tag_id_mapping (
-                                old_id INTEGER PRIMARY KEY,
-                                new_id TEXT NOT NULL
-                            );
-                        """)
-
-                        // Step 2: Populate mapping with generated TEXT IDs
-                        let oldIds = try Int64.fetchAll(db, sql: "SELECT id FROM tags")
-                        for oldId in oldIds {
-                            let newId = generateTagId()
-                            try db.execute(sql: "INSERT INTO tag_id_mapping (old_id, new_id) VALUES (?, ?)",
-                                          arguments: [oldId, newId])
-                        }
-
-                        // Step 3: Create new tables with TEXT schema
-                        try db.execute(sql: """
-                            CREATE TABLE tags_new (
-                                id TEXT PRIMARY KEY,
-                                name TEXT NOT NULL UNIQUE,
-                                frequency INTEGER NOT NULL DEFAULT 0,
-                                lastUsed TEXT NOT NULL,
-                                frecencyScore REAL NOT NULL DEFAULT 0.0,
-                                createdAt TEXT NOT NULL,
-                                updatedAt TEXT NOT NULL
-                            );
-
-                            CREATE TABLE item_tags_new (
-                                item_id TEXT NOT NULL,
-                                tag_id TEXT NOT NULL,
-                                created_at TEXT NOT NULL,
-                                PRIMARY KEY (item_id, tag_id),
-                                FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-                                FOREIGN KEY (tag_id) REFERENCES tags_new(id) ON DELETE CASCADE
-                            );
-                        """)
-
-                        // Step 4: Copy data using mapping
-                        try db.execute(sql: """
-                            INSERT INTO tags_new (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
-                            SELECT m.new_id, t.name, t.frequency, t.lastUsed, t.frecencyScore, t.createdAt, t.updatedAt
-                            FROM tags t
-                            JOIN tag_id_mapping m ON t.id = m.old_id;
-
-                            INSERT INTO item_tags_new (item_id, tag_id, created_at)
-                            SELECT it.item_id, m.new_id, it.created_at
-                            FROM item_tags it
-                            JOIN tag_id_mapping m ON it.tag_id = m.old_id;
-                        """)
-
-                        // Step 5: Swap tables
-                        try db.execute(sql: """
-                            DROP TABLE item_tags;
-                            DROP TABLE tags;
-                            ALTER TABLE tags_new RENAME TO tags;
-                            ALTER TABLE item_tags_new RENAME TO item_tags;
-
-                            CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-                            CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
-
-                            DROP TABLE IF EXISTS tag_id_mapping;
-                        """)
-
-                        print("[DB] Tags INTEGER→TEXT migration completed successfully")
-                        return .commit
-                    }
-                }
-            }
-
-            // Create tags table (for fresh install or if migration skipped)
-            if !(try db.tableExists("tags")) {
-                try db.execute(sql: """
-                    CREATE TABLE IF NOT EXISTS tags (
-                        id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL UNIQUE,
-                        frequency INTEGER NOT NULL DEFAULT 0,
-                        lastUsed TEXT NOT NULL,
-                        frecencyScore REAL NOT NULL DEFAULT 0.0,
-                        createdAt TEXT NOT NULL,
-                        updatedAt TEXT NOT NULL
-                    );
-
-                    CREATE TABLE IF NOT EXISTS item_tags (
-                        item_id TEXT NOT NULL,
-                        tag_id TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        PRIMARY KEY (item_id, tag_id),
-                        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-                        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-                    );
-
-                    CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-                    CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
-                """)
-            }
-
-            // Create blobs table and indexes
-            try db.execute(sql: """
-                CREATE TABLE IF NOT EXISTS blobs (
-                    id TEXT PRIMARY KEY,
-                    item_id TEXT NOT NULL,
-                    data BLOB NOT NULL,
-                    mime_type TEXT NOT NULL,
-                    size_bytes INTEGER NOT NULL,
-                    width INTEGER,
-                    height INTEGER,
-                    thumbnail BLOB,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
-                CREATE INDEX IF NOT EXISTS idx_items_url ON items(url);
-                CREATE INDEX IF NOT EXISTS idx_items_deleted ON items(deleted_at);
-                CREATE INDEX IF NOT EXISTS idx_items_sync_id ON items(sync_id);
-                CREATE INDEX IF NOT EXISTS idx_blobs_item_id ON blobs(item_id);
-            """)
-        }
-
-        // Write schema version to settings table for compatibility tracking.
-        // This allows detecting mismatches between Rust main app and Swift Share Extension.
-        // Note: Swift writes to 'schema_version_swift' key so Rust can detect Swift's version
-        try dbQueue?.write { db in
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version_swift', ?)",
-                arguments: [SCHEMA_VERSION]
-            )
-
-            // Check for schema version mismatch (Rust main app may have written a different version)
-            if let row = try Row.fetchOne(db, sql: "SELECT value FROM settings WHERE key = 'schema_version'") {
-                let rustVersion = row["value"] as? String ?? ""
-                if rustVersion != SCHEMA_VERSION {
-                    print("[DB] WARNING: Schema version mismatch! Swift: \(SCHEMA_VERSION), Rust: \(rustVersion)")
-                }
-            }
-
-            print("[DB] Schema version \(SCHEMA_VERSION) written to settings")
-        }
-    }
+    // MARK: - Tag Operations
 
     func loadTags() -> [TagStats] {
+        guard let store = store else { return [] }
         do {
-            return try dbQueue?.read { db in
-                let records = try TagRecord.order(Column("frecencyScore").desc).fetchAll(db)
-                return records.map { TagStats(name: $0.name, frequency: $0.frequency, lastUsed: $0.lastUsed, frecencyScore: $0.frecencyScore) }
-            } ?? []
+            let ffiTags = try store.getTagsByFrecency()
+            return ffiTags.map { TagStats(name: $0.name, frequency: Int($0.frequency), lastUsed: $0.lastUsed, frecencyScore: $0.frecencyScore) }
         } catch {
-            print("[DB] Failed to load tags: \(error)")
+            print("[PeekCore] Failed to load tags: \(error)")
             return []
         }
     }
 
-    /// Load tags with domain affinity boost - tags used on URLs from the same domain get a 2x score multiplier
     func loadTagsWithDomainBoost(forDomain domain: String?) -> [TagStats] {
+        guard let store = store else { return [] }
         guard let domain = domain else {
             return loadTags()
         }
 
+        // Use the URL-based frecency method which applies domain affinity boost
+        // We need a representative URL for the domain to trigger the boost
+        let representativeUrl = "https://\(domain)/"
         do {
-            return try dbQueue?.read { db in
-                // Get all tags
-                let records = try TagRecord.fetchAll(db)
-
-                // Get tag IDs that have been used on items with the same domain
-                // Using LIKE pattern: %://domain/% or %://domain (for root URLs)
-                let domainPattern = "%://\(domain)/%"
-                let domainPatternRoot = "%://\(domain)"
-                let wwwDomainPattern = "%://www.\(domain)/%"
-                let wwwDomainPatternRoot = "%://www.\(domain)"
-
-                let domainTagIds = try String.fetchSet(db, sql: """
-                    SELECT DISTINCT it.tag_id
-                    FROM item_tags it
-                    JOIN items i ON it.item_id = i.id
-                    WHERE i.deleted_at IS NULL
-                      AND i.type = 'url'
-                      AND (i.url LIKE ? OR i.url LIKE ? OR i.url LIKE ? OR i.url LIKE ?)
-                """, arguments: [domainPattern, domainPatternRoot, wwwDomainPattern, wwwDomainPatternRoot])
-
-                // Apply 2x multiplier to tags used on same-domain URLs
-                let boostedTags = records.map { record -> TagStats in
-                    let boostedScore = domainTagIds.contains(record.id ?? "")
-                        ? record.frecencyScore * 2.0
-                        : record.frecencyScore
-                    return TagStats(
-                        name: record.name,
-                        frequency: record.frequency,
-                        lastUsed: record.lastUsed,
-                        frecencyScore: boostedScore
-                    )
-                }
-
-                // Sort by boosted score descending
-                return boostedTags.sorted { $0.frecencyScore > $1.frecencyScore }
-            } ?? []
+            let ffiTags = try store.getTagsByFrecencyForUrl(url: representativeUrl)
+            return ffiTags.map { TagStats(name: $0.name, frequency: Int($0.frequency), lastUsed: $0.lastUsed, frecencyScore: $0.frecencyScore) }
         } catch {
-            print("[DB] Failed to load tags with domain boost: \(error)")
+            print("[PeekCore] Failed to load tags with domain boost: \(error)")
             return loadTags()
         }
     }
 
+    // MARK: - URL Operations
+
     func findExistingUrl(_ url: String) -> SavedItem? {
-        let normalized = url.normalizeURL()
+        guard let store = store else { return nil }
         do {
-            return try dbQueue?.read { db in
-                // Check both normalized and original to match legacy data
-                guard let record = try ItemRecord
-                    .filter((Column("url") == normalized || Column("url") == url) && Column("type") == "url" && Column("deleted_at") == nil)
-                    .fetchOne(db) else {
-                    return nil
-                }
-
-                // Get tags for this item
-                let tagNames = try String.fetchAll(db, sql: """
-                    SELECT t.name FROM tags t
-                    JOIN item_tags it ON t.id = it.tag_id
-                    WHERE it.item_id = ?
-                    ORDER BY t.name
-                """, arguments: [record.id])
-
-                return SavedItem(id: record.id, itemType: .page, url: record.url, content: nil, tags: tagNames, saved_at: record.created_at)
-            }
+            guard let ffiItem = try store.findExistingUrl(url: url) else { return nil }
+            return SavedItem(
+                id: ffiItem.id,
+                itemType: .page,
+                url: ffiItem.url,
+                content: nil,
+                tags: ffiItem.tags,
+                saved_at: ffiItem.savedAt
+            )
         } catch {
-            print("[DB] Failed to find URL: \(error)")
+            print("[PeekCore] Failed to find URL: \(error)")
             return nil
         }
     }
 
-    func saveUrl(url: String, tags: [String], metadata: [String: Any]?, existingId: String?, existingSavedAt: String?, completion: @escaping () -> Void) {
-        saveItem(itemType: .page, url: url, content: nil, tags: tags, metadata: metadata, existingId: existingId, existingSavedAt: existingSavedAt, completion: completion)
+    // MARK: - Save Operations
+
+    func saveUrl(url: String, tags: [String], metadata: [String: Any]?, completion: @escaping () -> Void) {
+        guard let store = store else {
+            completion()
+            return
+        }
+
+        let metadataJson = serializeMetadata(metadata)
+
+        do {
+            let result = try store.saveUrl(url: url, tags: tags, metadataJson: metadataJson)
+            print("[PeekCore] Saved URL: \(result.itemId) (new: \(result.isNew))")
+
+            // Push to webhook
+            let savedAt = ISO8601DateFormatter.shared.string(from: Date())
+            pushToWebhook(urlId: result.itemId, urlString: url, tags: tags, metadata: metadata, savedAt: savedAt, completion: completion)
+        } catch {
+            print("[PeekCore] Failed to save URL: \(error)")
+            completion()
+        }
     }
 
-    func saveText(content: String, tags: [String], metadata: [String: Any]?, existingId: String?, existingSavedAt: String?, completion: @escaping () -> Void) {
-        saveItem(itemType: .text, url: nil, content: content, tags: tags, metadata: metadata, existingId: existingId, existingSavedAt: existingSavedAt, completion: completion)
+    func saveText(content: String, tags: [String], metadata: [String: Any]?, completion: @escaping () -> Void) {
+        guard let store = store else {
+            completion()
+            return
+        }
+
+        let metadataJson = serializeMetadata(metadata)
+
+        do {
+            let itemId = try store.saveText(content: content, tags: tags, metadataJson: metadataJson)
+            print("[PeekCore] Saved text: \(itemId)")
+
+            // Push to webhook
+            let savedAt = ISO8601DateFormatter.shared.string(from: Date())
+            pushTextToWebhook(textId: itemId, content: content, tags: tags, metadata: metadata, savedAt: savedAt, completion: completion)
+        } catch {
+            print("[PeekCore] Failed to save text: \(error)")
+            completion()
+        }
     }
 
     func saveImage(imageData: Data, mimeType: String, width: Int?, height: Int?, thumbnail: Data?, sourceUrl: String?, tags: [String], metadata: [String: Any]?, completion: @escaping (_ imageId: String?) -> Void) {
-        let now = ISO8601DateFormatter.shared.string(from: Date())
-        var savedItemId: String?
+        guard let store = store else {
+            completion(nil)
+            return
+        }
 
-        // Merge source URL into metadata
+        // Merge source URL and dimensions into metadata
         var combinedMetadata = metadata ?? [:]
         if let sourceUrl = sourceUrl {
             combinedMetadata["sourceUrl"] = sourceUrl
@@ -609,157 +191,49 @@ class DatabaseManager {
         }
         combinedMetadata["mimeType"] = mimeType
 
-        // Serialize metadata to JSON string
-        var metadataJson: String? = nil
-        if !combinedMetadata.isEmpty {
-            if let jsonData = try? JSONSerialization.data(withJSONObject: combinedMetadata),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                metadataJson = jsonString
-            }
-        }
+        let metadataJson = serializeMetadata(combinedMetadata)
 
         do {
-            try dbQueue?.write { db in
-                // Insert new item
-                let itemId = UUID().uuidString
-                let record = ItemRecord(id: itemId, type: ItemType.image.rawValue, url: sourceUrl, content: nil, metadata: metadataJson, created_at: now, updated_at: now, deleted_at: nil)
-                try record.insert(db)
-                print("[DB] Inserted new image item: \(itemId)")
+            let itemId = try store.saveImage(
+                imageBytes: imageData,
+                mimeType: mimeType,
+                tags: tags,
+                metadataJson: metadataJson,
+                thumbnailBytes: thumbnail,
+                width: width.map { UInt32($0) },
+                height: height.map { UInt32($0) }
+            )
+            print("[PeekCore] Saved image: \(itemId)")
 
-                // Insert blob data
-                let blobId = UUID().uuidString
-                let blobRecord = BlobRecord(
-                    id: blobId,
-                    item_id: itemId,
-                    data: imageData,
-                    mime_type: mimeType,
-                    size_bytes: Int64(imageData.count),
-                    width: width,
-                    height: height,
-                    thumbnail: thumbnail,
-                    created_at: now
-                )
-                try blobRecord.insert(db)
-                print("[DB] Inserted blob: \(blobId), size: \(imageData.count) bytes")
-
-                // Add tags
-                for tagName in tags {
-                    // Get or create tag
-                    var tagId: String
-
-                    if let existingTag = try TagRecord.filter(Column("name") == tagName).fetchOne(db) {
-                        tagId = existingTag.id!
-
-                        // Update frequency for this tag
-                        let newFrequency = existingTag.frequency + 1
-                        let frecency = calculateFrecency(frequency: newFrequency, lastUsed: now)
-
-                        try db.execute(sql: """
-                            UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ?
-                            WHERE id = ?
-                        """, arguments: [newFrequency, now, frecency, now, existingTag.id!])
-                    } else {
-                        // Create new tag
-                        let newTagId = generateTagId()
-                        let frecency = calculateFrecency(frequency: 1, lastUsed: now)
-                        let newTag = TagRecord(id: newTagId, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
-                        try newTag.insert(db)
-                        tagId = newTagId
-                    }
-
-                    // Create item-tag association
-                    let itemTag = ItemTagRecord(item_id: itemId, tag_id: tagId, created_at: now)
-                    try itemTag.insert(db, onConflict: .ignore)
-                }
-
-                print("[DB] Saved image with \(tags.count) tags")
-                savedItemId = itemId
-            }
-
-            // Checkpoint to ensure writes are visible to main app
-            checkpointDatabase()
-
-            // Push to webhook OUTSIDE of the database write block
-            if let itemId = savedItemId {
-                pushImageToWebhook(imageId: itemId, sourceUrl: sourceUrl, tags: tags, metadata: combinedMetadata, savedAt: now) {
-                    completion(itemId)
-                }
-            } else {
-                completion(nil)
+            // Push to webhook
+            let savedAt = ISO8601DateFormatter.shared.string(from: Date())
+            pushImageToWebhook(imageId: itemId, sourceUrl: sourceUrl, tags: tags, metadata: combinedMetadata, savedAt: savedAt) {
+                completion(itemId)
             }
         } catch {
-            print("[DB] Failed to save image: \(error)")
+            print("[PeekCore] Failed to save image: \(error)")
             completion(nil)
         }
     }
 
-    /// Update tags for an existing image
     func updateImageTags(imageId: String, tags: [String], completion: @escaping () -> Void) {
-        let now = ISO8601DateFormatter.shared.string(from: Date())
+        guard let store = store else {
+            completion()
+            return
+        }
 
         do {
-            try dbQueue?.write { db in
-                // Get existing tags for this item before removing associations
-                let existingTags = try String.fetchAll(db, sql: """
-                    SELECT t.name FROM tags t
-                    JOIN item_tags it ON t.id = it.tag_id
-                    WHERE it.item_id = ?
-                """, arguments: [imageId])
-                let existingTagNames = Set(existingTags)
-
-                // Remove old tag associations
-                try db.execute(sql: "DELETE FROM item_tags WHERE item_id = ?", arguments: [imageId])
-
-                // Update item's updated_at timestamp
-                try db.execute(sql: "UPDATE items SET updated_at = ? WHERE id = ?", arguments: [now, imageId])
-
-                // Add tags
-                for tagName in tags {
-                    var tagId: String
-                    let isNewToItem = !existingTagNames.contains(tagName)
-
-                    if let existingTag = try TagRecord.filter(Column("name") == tagName).fetchOne(db) {
-                        tagId = existingTag.id!
-
-                        if isNewToItem {
-                            let newFrequency = existingTag.frequency + 1
-                            let frecency = calculateFrecency(frequency: newFrequency, lastUsed: now)
-
-                            try db.execute(sql: """
-                                UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ?
-                                WHERE id = ?
-                            """, arguments: [newFrequency, now, frecency, now, existingTag.id!])
-                        } else {
-                            let frecency = calculateFrecency(frequency: existingTag.frequency, lastUsed: now)
-                            try db.execute(sql: """
-                                UPDATE tags SET lastUsed = ?, frecencyScore = ?, updatedAt = ?
-                                WHERE id = ?
-                            """, arguments: [now, frecency, now, existingTag.id!])
-                        }
-                    } else {
-                        let newTagId = generateTagId()
-                        let frecency = calculateFrecency(frequency: 1, lastUsed: now)
-                        let newTag = TagRecord(id: newTagId, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
-                        try newTag.insert(db)
-                        tagId = newTagId
-                    }
-
-                    let itemTag = ItemTagRecord(item_id: imageId, tag_id: tagId, created_at: now)
-                    try itemTag.insert(db, onConflict: .ignore)
-                }
-
-                print("[DB] Updated image tags for \(imageId)")
-            }
-            // Checkpoint to ensure writes are visible to main app
-            checkpointDatabase()
+            try store.updateItemTags(itemId: imageId, tags: tags)
+            print("[PeekCore] Updated image tags for \(imageId)")
             completion()
         } catch {
-            print("[DB] Failed to update image tags: \(error)")
+            print("[PeekCore] Failed to update image tags: \(error)")
             completion()
         }
     }
 
-    /// Generate a thumbnail from image data
+    // MARK: - Thumbnail Generation (UIKit — stays in Swift)
+
     func generateThumbnail(from imageData: Data, maxSize: CGFloat = 200) -> Data? {
         guard let image = UIImage(data: imageData) else { return nil }
 
@@ -778,151 +252,27 @@ class DatabaseManager {
         return thumbnail?.jpegData(compressionQuality: 0.7)
     }
 
-    private func saveItem(itemType: ItemType, url: String?, content: String?, tags: [String], metadata: [String: Any]?, existingId: String?, existingSavedAt: String?, completion: @escaping () -> Void) {
-        let now = ISO8601DateFormatter.shared.string(from: Date())
-        var savedItemId: String?
-        let savedMetadata = metadata
+    // MARK: - Metadata Helpers
 
-        // Serialize metadata to JSON string
-        var metadataJson: String? = nil
-        if let metadata = metadata, !metadata.isEmpty {
-            if let jsonData = try? JSONSerialization.data(withJSONObject: metadata),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                metadataJson = jsonString
-            }
+    private func serializeMetadata(_ metadata: [String: Any]?) -> String? {
+        guard let metadata = metadata, !metadata.isEmpty else { return nil }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: metadata),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            return nil
         }
-
-        do {
-            try dbQueue?.write { db in
-                let itemId: String
-                var existingTagNames: Set<String> = []
-
-                if let existingId = existingId {
-                    // Get existing tags for this item before removing associations
-                    let existingTags = try String.fetchAll(db, sql: """
-                        SELECT t.name FROM tags t
-                        JOIN item_tags it ON t.id = it.tag_id
-                        WHERE it.item_id = ?
-                    """, arguments: [existingId])
-                    existingTagNames = Set(existingTags)
-
-                    // Update existing item (include metadata if we have new metadata)
-                    if itemType == .page {
-                        if metadataJson != nil {
-                            try db.execute(sql: "UPDATE items SET url = ?, metadata = ?, updated_at = ? WHERE id = ?", arguments: [url, metadataJson, now, existingId])
-                        } else {
-                            try db.execute(sql: "UPDATE items SET url = ?, updated_at = ? WHERE id = ?", arguments: [url, now, existingId])
-                        }
-                    } else if itemType == .text {
-                        if metadataJson != nil {
-                            try db.execute(sql: "UPDATE items SET content = ?, metadata = ?, updated_at = ? WHERE id = ?", arguments: [content, metadataJson, now, existingId])
-                        } else {
-                            try db.execute(sql: "UPDATE items SET content = ?, updated_at = ? WHERE id = ?", arguments: [content, now, existingId])
-                        }
-                    }
-
-                    // Remove old tag associations
-                    try db.execute(sql: "DELETE FROM item_tags WHERE item_id = ?", arguments: [existingId])
-
-                    itemId = existingId
-                    print("[DB] Updated existing item: \(existingId)")
-                } else {
-                    // Insert new item
-                    let newId = UUID().uuidString
-                    let record = ItemRecord(id: newId, type: itemType.rawValue, url: url, content: content, metadata: metadataJson, created_at: now, updated_at: now, deleted_at: nil)
-                    try record.insert(db)
-                    itemId = newId
-                    print("[DB] Inserted new \(itemType.rawValue): \(newId)")
-                }
-
-                // Add tags
-                for tagName in tags {
-                    // Get or create tag
-                    var tagId: String
-                    // Only increment frequency if this tag is new to this item
-                    let isNewToItem = !existingTagNames.contains(tagName)
-
-                    if let existingTag = try TagRecord.filter(Column("name") == tagName).fetchOne(db) {
-                        tagId = existingTag.id!
-
-                        if isNewToItem {
-                            // Only update frequency for tags that are new to this item
-                            let newFrequency = existingTag.frequency + 1
-                            let frecency = calculateFrecency(frequency: newFrequency, lastUsed: now)
-
-                            try db.execute(sql: """
-                                UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ?
-                                WHERE id = ?
-                            """, arguments: [newFrequency, now, frecency, now, existingTag.id!])
-                        } else {
-                            // Tag was already on this item, just update lastUsed and recalculate frecency
-                            let frecency = calculateFrecency(frequency: existingTag.frequency, lastUsed: now)
-                            try db.execute(sql: """
-                                UPDATE tags SET lastUsed = ?, frecencyScore = ?, updatedAt = ?
-                                WHERE id = ?
-                            """, arguments: [now, frecency, now, existingTag.id!])
-                        }
-                    } else {
-                        // Create new tag
-                        let newTagId = generateTagId()
-                        let frecency = calculateFrecency(frequency: 1, lastUsed: now)
-                        let newTag = TagRecord(id: newTagId, name: tagName, frequency: 1, lastUsed: now, frecencyScore: frecency, createdAt: now, updatedAt: now)
-                        try newTag.insert(db)
-                        tagId = newTagId
-                    }
-
-                    // Create item-tag association
-                    let itemTag = ItemTagRecord(item_id: itemId, tag_id: tagId, created_at: now)
-                    try itemTag.insert(db, onConflict: .ignore)
-                }
-
-                print("[DB] Saved \(itemType.rawValue) with \(tags.count) tags")
-                savedItemId = itemId
-            }
-
-            // Checkpoint to ensure writes are visible to main app
-            checkpointDatabase()
-
-            // Push to webhook OUTSIDE of the database write block
-            if let itemId = savedItemId {
-                let savedAt = existingSavedAt ?? now
-                if itemType == .page, let url = url {
-                    pushToWebhook(urlId: itemId, urlString: url, tags: tags, metadata: savedMetadata, savedAt: savedAt, completion: completion)
-                } else if itemType == .text, let content = content {
-                    pushTextToWebhook(textId: itemId, content: content, tags: tags, metadata: savedMetadata, savedAt: savedAt, completion: completion)
-                } else {
-                    completion()
-                }
-            } else {
-                completion()
-            }
-        } catch {
-            print("[DB] Failed to save item: \(error)")
-            completion()
-        }
+        return jsonString
     }
 
-    /// Force WAL checkpoint to ensure writes are visible to other processes (main app)
-    private func checkpointDatabase() {
-        do {
-            try dbQueue?.write { db in
-                try db.execute(sql: "PRAGMA wal_checkpoint(FULL)")
-            }
-            print("[DB] WAL checkpoint completed")
-        } catch {
-            print("[DB] WAL checkpoint failed: \(error)")
-        }
-    }
+    // MARK: - Webhook Push (HTTP networking stays in Swift)
 
     private func getWebhookUrl() -> String? {
-        // Use cached sync settings from profiles.json
-        // This is where the main app stores webhook configuration
-        return cachedSyncSettings?.serverUrl
+        guard let sync = profileConfig?.sync else { return nil }
+        return sync.serverUrl.isEmpty ? nil : sync.serverUrl
     }
 
     private func getWebhookApiKey() -> String? {
-        // Use cached sync settings from profiles.json
-        return cachedSyncSettings?.apiKey
+        guard let sync = profileConfig?.sync else { return nil }
+        return sync.apiKey.isEmpty ? nil : sync.apiKey
     }
 
     private func pushToWebhook(urlId: String, urlString: String, tags: [String], metadata: [String: Any]?, savedAt: String, completion: @escaping () -> Void) {
@@ -953,7 +303,6 @@ class DatabaseManager {
             "saved_at": savedAt
         ]
 
-        // Include metadata if present
         if let metadata = metadata, !metadata.isEmpty {
             urlItem["metadata"] = metadata
         }
@@ -995,7 +344,6 @@ class DatabaseManager {
             "saved_at": savedAt
         ]
 
-        // Include metadata if present
         if let metadata = metadata, !metadata.isEmpty {
             textItem["metadata"] = metadata
         }
@@ -1036,12 +384,10 @@ class DatabaseManager {
             "saved_at": savedAt
         ]
 
-        // Include source URL if present
         if let sourceUrl = sourceUrl {
             imageItem["source_url"] = sourceUrl
         }
 
-        // Include metadata if present
         if let metadata = metadata, !metadata.isEmpty {
             imageItem["metadata"] = metadata
         }
@@ -1068,7 +414,6 @@ class DatabaseManager {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = jsonData
 
-        // Add API key if configured
         if let apiKey = getWebhookApiKey()?.trimmingCharacters(in: .whitespaces), !apiKey.isEmpty {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
@@ -1085,24 +430,6 @@ class DatabaseManager {
             }
             completion()
         }.resume()
-    }
-
-    private func calculateFrecency(frequency: Int, lastUsed: String) -> Double {
-        guard let lastUsedDate = ISO8601DateFormatter.shared.date(from: lastUsed) else {
-            return Double(frequency) * 10.0
-        }
-
-        let daysSinceUse = Date().timeIntervalSince(lastUsedDate) / 86400.0
-        let decayFactor = 1.0 / (1.0 + daysSinceUse / 7.0)
-
-        return Double(frequency) * 10.0 * decayFactor
-    }
-
-    /// Generate a unique tag ID in format: tag_{timestamp}_{random9}
-    private func generateTagId() -> String {
-        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
-        let random = UUID().uuidString.prefix(9).lowercased()
-        return "tag_\(timestamp)_\(random)"
     }
 }
 
@@ -1935,7 +1262,7 @@ class ShareViewController: UIViewController {
     func checkIfURLExists() {
         guard let url = sharedURL else { return }
 
-        let existing = DatabaseManager.shared.findExistingUrl(url)
+        let existing = PeekCoreManager.shared.findExistingUrl(url)
         if let existing = existing {
             existingSavedItem = existing
             selectedTags = Set(existing.tags)
@@ -1965,7 +1292,7 @@ class ShareViewController: UIViewController {
 
     func loadTags() {
         let domain = sharedURL?.extractDomain()
-        availableTags = DatabaseManager.shared.loadTagsWithDomainBoost(forDomain: domain)
+        availableTags = PeekCoreManager.shared.loadTagsWithDomainBoost(forDomain: domain)
         updateTagsUI()
     }
 
@@ -2004,36 +1331,27 @@ class ShareViewController: UIViewController {
         case .page:
             guard let url = sharedURL, !url.isEmpty else { return }
 
-            DatabaseManager.shared.saveUrl(
+            // PeekStore handles upsert internally (finds existing by URL, updates if exists)
+            PeekCoreManager.shared.saveUrl(
                 url: url,
                 tags: finalTags,
-                metadata: metadata,
-                existingId: existingSavedItem?.id,
-                existingSavedAt: existingSavedItem?.saved_at
+                metadata: metadata
             ) { }
 
             // Set existingSavedItem synchronously after the DB write completes
             // (saveUrl's DB write is synchronous; only the webhook push is async).
-            // Setting this in the completion handler caused a race condition where
-            // tag taps before the webhook response would see nil and INSERT again.
             if existingSavedItem == nil {
-                existingSavedItem = DatabaseManager.shared.findExistingUrl(url)
+                existingSavedItem = PeekCoreManager.shared.findExistingUrl(url)
             }
 
         case .text:
             guard let text = sharedText, !text.isEmpty else { return }
 
-            DatabaseManager.shared.saveText(
+            PeekCoreManager.shared.saveText(
                 content: text,
                 tags: finalTags,
-                metadata: metadata,
-                existingId: existingSavedItem?.id,
-                existingSavedAt: existingSavedItem?.saved_at
-            ) { [weak self] in
-                // For text items, we don't have a lookup function for existing
-                // But we track the existingSavedItem after first save
-                _ = self  // Silence warning
-            }
+                metadata: metadata
+            ) { }
 
         case .tagset:
             // Tagsets are not supported in Share Extension
@@ -2044,7 +1362,7 @@ class ShareViewController: UIViewController {
 
             // If image already saved, just update tags
             if let existingImageId = savedImageId {
-                DatabaseManager.shared.updateImageTags(
+                PeekCoreManager.shared.updateImageTags(
                     imageId: existingImageId,
                     tags: finalTags
                 ) { }
@@ -2060,9 +1378,9 @@ class ShareViewController: UIViewController {
             }
 
             // Generate thumbnail
-            let thumbnail = DatabaseManager.shared.generateThumbnail(from: imageData)
+            let thumbnail = PeekCoreManager.shared.generateThumbnail(from: imageData)
 
-            DatabaseManager.shared.saveImage(
+            PeekCoreManager.shared.saveImage(
                 imageData: imageData,
                 mimeType: mimeType,
                 width: width,

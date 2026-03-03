@@ -133,6 +133,15 @@ impl From<ProfileConfig> for FfiProfileConfig {
     }
 }
 
+#[derive(uniffi::Record)]
+pub struct FfiSavedItem {
+    pub id: String,
+    pub item_type: String,
+    pub url: Option<String>,
+    pub tags: Vec<String>,
+    pub saved_at: String,
+}
+
 // ============================================================================
 // FFI Object — wraps PeekStore for Swift/Kotlin callers
 // ============================================================================
@@ -215,6 +224,24 @@ impl PeekCoreFfi {
     pub fn get_tags_by_frecency_for_url(&self, url: String) -> Result<Vec<FfiTagStats>, FfiError> {
         let tags = self.store.get_tags_by_frecency_for_url(&url)?;
         Ok(tags.into_iter().map(Into::into).collect())
+    }
+
+    /// Find an existing URL item by URL. Returns item info with tags if found.
+    pub fn find_existing_url(&self, url: String) -> Result<Option<FfiSavedItem>, FfiError> {
+        let result = self.store.find_existing_url(&url)?;
+        Ok(result.map(|saved| FfiSavedItem {
+            id: saved.id,
+            item_type: "url".to_string(),
+            url: Some(saved.url),
+            tags: saved.tags,
+            saved_at: saved.saved_at,
+        }))
+    }
+
+    /// Update tags for any item type.
+    pub fn update_item_tags(&self, item_id: String, tags: Vec<String>) -> Result<(), FfiError> {
+        self.store.update_item_tags(&item_id, &tags)?;
+        Ok(())
     }
 }
 
@@ -352,5 +379,33 @@ mod tests {
     #[test]
     fn test_parse_metadata_json_invalid() {
         assert!(parse_metadata_json(Some("not json".to_string())).is_err());
+    }
+
+    #[test]
+    fn test_ffi_find_existing_url() {
+        let store = PeekCoreFfi::new(":memory:".to_string()).unwrap();
+        // Should return None for unknown URL
+        let result = store.find_existing_url("https://example.com".to_string()).unwrap();
+        assert!(result.is_none());
+
+        // Save a URL, then find it
+        store.save_url("https://example.com".to_string(), vec!["test".to_string()], None).unwrap();
+        let result = store.find_existing_url("https://example.com".to_string()).unwrap();
+        assert!(result.is_some());
+        let item = result.unwrap();
+        assert_eq!(item.item_type, "url");
+        assert!(item.tags.contains(&"test".to_string()));
+    }
+
+    #[test]
+    fn test_ffi_update_item_tags() {
+        let store = PeekCoreFfi::new(":memory:".to_string()).unwrap();
+        let result = store.save_url("https://example.com".to_string(), vec!["old".to_string()], None).unwrap();
+
+        store.update_item_tags(result.item_id.clone(), vec!["new".to_string()]).unwrap();
+
+        let tags = store.get_tags_by_frecency().unwrap();
+        let tag_names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
+        assert!(tag_names.contains(&"new"));
     }
 }
