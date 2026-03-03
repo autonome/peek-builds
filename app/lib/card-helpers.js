@@ -232,7 +232,10 @@ export const getItemDisplayInfo = (item, opts = {}) => {
       faviconUrl = TYPE_ICONS.image;
     } else if (itemType === 'entity') {
       title = item.title || item.content || 'Entity';
-      subtitle = 'Entity';
+      let entityMeta = {};
+      try { entityMeta = JSON.parse(item.metadata || '{}'); } catch {}
+      const entityKind = entityMeta.entityType ? entityMeta.entityType.replace('_', ' ') : 'entity';
+      subtitle = entityKind.charAt(0).toUpperCase() + entityKind.slice(1);
       faviconUrl = TYPE_ICONS.entity;
     } else if (itemType === 'feed') {
       title = item.title || item.content || 'Feed';
