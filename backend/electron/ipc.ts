@@ -2717,7 +2717,8 @@ export function registerWindowHandlers(): void {
 
           // Keyboard shortcuts inside the webview guest for page navigation
           guestWebContents.on('before-input-event', (event, input) => {
-            if (input.type !== 'keyDown' || !input.meta) return;
+            const modifier = process.platform === 'darwin' ? input.meta : input.control;
+            if (input.type !== 'keyDown' || !modifier) return;
             if (input.key === 'l') {
               publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: win.id });
               event.preventDefault();
@@ -2933,7 +2934,8 @@ export function registerWindowHandlers(): void {
       // but possible before the webview loads or if the user clicks outside the webview).
       if (useCanvas) {
         win.webContents.on('before-input-event', (event, input) => {
-          if (input.type !== 'keyDown' || !input.meta) return;
+          const modifier = process.platform === 'darwin' ? input.meta : input.control;
+          if (input.type !== 'keyDown' || !modifier) return;
           if (input.key === 'l') {
             publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: win.id });
             event.preventDefault();
