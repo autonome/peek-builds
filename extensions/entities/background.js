@@ -371,10 +371,7 @@ const extension = {
       name: 'extract entities',
       description: 'Extract entities from current page',
       execute: async () => {
-        const entities = await extractCurrentPage();
-        if (entities && entities.length > 0) {
-          openEntityBrowser();
-        }
+        await extractCurrentPage();
       }
     });
 
