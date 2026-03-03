@@ -2800,6 +2800,7 @@ dependencies = [
  "cc",
  "chrono",
  "libc",
+ "once_cell",
  "peek-core",
  "readability-rust",
  "regex",

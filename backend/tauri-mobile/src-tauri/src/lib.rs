@@ -7,10 +7,24 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::fs;
-use std::sync::{OnceLock, RwLock};
+use std::sync::RwLock;
+use once_cell::sync::OnceCell;
 use reqwest;
 use regex::Regex;
 use tauri::Manager;
+
+use peek_core::{PeekStore, SavedUrl, SavedText, SavedTagset, SavedImage, TagStats};
+
+/// Global PeekStore instance. Initialized lazily on first use.
+static STORE: OnceCell<PeekStore> = OnceCell::new();
+
+/// Get the global PeekStore, initializing it if needed.
+fn get_store() -> Result<&'static PeekStore, String> {
+    STORE.get_or_try_init(|| {
+        let db_path = get_db_path().ok_or("Failed to get database path")?;
+        PeekStore::new(db_path.to_str().ok_or("Invalid database path")?)
+    })
+}
 
 // Simple logging - println! works in debug builds and Xcode console
 fn ios_log(msg: &str) {
@@ -95,70 +109,10 @@ pub extern "C" fn track_navigation_free(ptr: *mut c_char) {
     }
 }
 
-/// Inner implementation for track_navigation — finds or creates a URL item tagged from:history
+/// Inner implementation for track_navigation — delegates to PeekStore
 fn track_navigation_inner(url: &str, _source_item_id: &str) -> Result<String, String> {
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-    let url = normalize_url(url);
-
-    // Check if this URL already exists
-    let url_without_slash = url.strip_suffix('/').unwrap_or(&url);
-    let existing_id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM items WHERE type = 'url' AND (url = ? OR url = ?) AND deleted_at IS NULL",
-            params![&url, &url_without_slash],
-            |row| row.get(0),
-        )
-        .ok();
-
-    let is_new = existing_id.is_none();
-    let item_id = if let Some(id) = existing_id {
-        // Update timestamp
-        conn.execute(
-            "UPDATE items SET updated_at = ? WHERE id = ?",
-            params![&now, &id],
-        ).map_err(|e| format!("Failed to update item: {}", e))?;
-        id
-    } else {
-        // Create new item
-        let id = uuid::Uuid::new_v4().to_string();
-        let metadata = inject_sync_metadata_for_save(None);
-        let metadata_json = serde_json::to_string(&metadata).unwrap_or_default();
-        conn.execute(
-            "INSERT INTO items (id, type, url, metadata, created_at, updated_at) VALUES (?, 'url', ?, ?, ?, ?)",
-            params![&id, &url, &metadata_json, &now, &now],
-        ).map_err(|e| format!("Failed to insert item: {}", e))?;
-        id
-    };
-
-    // Ensure from:history tag exists and is linked
-    let tag_id: String = conn
-        .query_row("SELECT id FROM tags WHERE name = 'from:history'", [], |row| row.get(0))
-        .unwrap_or_else(|_| {
-            let new_id = generate_tag_id();
-            let frecency = calculate_frecency(1, &now);
-            conn.execute(
-                "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, 'from:history', 1, ?, ?, ?, ?)",
-                params![&new_id, &now, frecency, &now, &now],
-            ).ok();
-            new_id
-        });
-
-    conn.execute(
-        "INSERT OR IGNORE INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-        params![&item_id, &tag_id, &now],
-    ).map_err(|e| format!("Failed to tag item: {}", e))?;
-
-    // Record the visit
-    let visit_id = uuid::Uuid::new_v4().to_string();
-    let timestamp = Utc::now().timestamp_millis();
-    conn.execute(
-        "INSERT INTO item_visits (id, item_id, timestamp, source, window_type) VALUES (?, ?, ?, 'webview', 'embedded')",
-        params![&visit_id, &item_id, timestamp],
-    ).map_err(|e| format!("Failed to record visit: {}", e))?;
-
-    println!("[Rust] Navigation tracked: item_id={}, new={}", item_id, is_new);
-    Ok(item_id)
+    let store = get_store()?;
+    store.track_navigation(url)
 }
 
 // Sync version constants — must match backend/version.ts and backend/server/version.js
@@ -168,61 +122,7 @@ fn track_navigation_inner(url: &str, _source_item_id: &str) -> Result<String, St
 const DATASTORE_VERSION: u32 = 1;
 const PROTOCOL_VERSION: u32 = 1;
 
-// Legacy model for backward compatibility (webhook, etc.)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SavedUrl {
-    id: String,
-    url: String,
-    tags: Vec<String>,
-    saved_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<serde_json::Value>,
-}
-
-// Text item for webhook
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SavedText {
-    id: String,
-    content: String,
-    tags: Vec<String>,
-    saved_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<serde_json::Value>,
-}
-
-// Tagset item for webhook
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SavedTagset {
-    id: String,
-    tags: Vec<String>,
-    saved_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<serde_json::Value>,
-}
-
-// Image item
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SavedImage {
-    id: String,
-    tags: Vec<String>,
-    saved_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<serde_json::Value>,
-    // Base64-encoded thumbnail for display (smaller version)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thumbnail: Option<String>,
-    mime_type: String,
-    width: Option<u32>,
-    height: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TagStats {
-    name: String,
-    frequency: u32,
-    last_used: String,
-    frecency_score: f64,
-}
+// Types SavedUrl, SavedText, SavedTagset, SavedImage, TagStats imported from peek_core
 
 // Webhook payload with all item types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1289,7 +1189,7 @@ fn get_db_path() -> Option<PathBuf> {
 }
 
 static DB_INITIALIZED: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
-static DEVICE_ID: OnceLock<String> = OnceLock::new();
+static DEVICE_ID: OnceCell<String> = OnceCell::new();
 
 /// Schema version for tracking compatibility between Rust main app and Swift Share Extension.
 /// Increment this when making schema changes that both codepaths must understand.
@@ -2067,65 +1967,13 @@ fn ensure_database_initialized() -> Result<(), String> {
     Ok(())
 }
 
-/// Get the device ID (raw UUID, no prefix). Cached in OnceLock after first DB read.
-fn get_device_id() -> &'static str {
-    DEVICE_ID.get().map(|s| s.as_str()).unwrap_or("unknown")
-}
-
-/// Inject _sync metadata for a new item (save/create).
-/// Sets createdBy, createdAt, modifiedBy, modifiedAt.
-fn inject_sync_metadata_for_save(metadata: Option<serde_json::Value>) -> serde_json::Value {
-    let mut meta = match metadata {
-        Some(v) if v.is_object() => v,
-        _ => serde_json::json!({}),
-    };
-    let device_id = get_device_id();
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    meta.as_object_mut().unwrap().insert("_sync".to_string(), serde_json::json!({
-        "createdBy": device_id,
-        "createdAt": timestamp,
-        "modifiedBy": device_id,
-        "modifiedAt": timestamp,
-    }));
-    meta
-}
-
-/// Inject _sync metadata for an update to an existing item.
-/// Preserves createdBy/createdAt, updates modifiedBy/modifiedAt.
-fn inject_sync_metadata_for_update(existing_metadata_str: Option<String>) -> String {
-    let mut meta: serde_json::Value = existing_metadata_str
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-
-    let device_id = get_device_id();
-    let timestamp = chrono::Utc::now().timestamp_millis();
-
-    let obj = meta.as_object_mut().unwrap();
-
-    let existing_sync = obj.get("_sync").cloned();
-    let mut sync = existing_sync
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-
-    // Backfill createdBy if missing (items predating this feature)
-    if !sync.contains_key("createdBy") {
-        sync.insert("createdBy".to_string(), serde_json::json!(device_id));
-        sync.insert("createdAt".to_string(), serde_json::json!(timestamp));
-    }
-
-    sync.insert("modifiedBy".to_string(), serde_json::json!(device_id));
-    sync.insert("modifiedAt".to_string(), serde_json::json!(timestamp));
-
-    obj.insert("_sync".to_string(), serde_json::Value::Object(sync));
-
-    serde_json::to_string(&meta).unwrap_or_default()
-}
+// get_device_id, inject_sync_metadata_for_save, inject_sync_metadata_for_update
+// moved to peek-core::helpers (Phase 2). Sync code will use PeekStore in Phase 3.
 
 #[tauri::command]
 async fn get_device_id_command() -> Result<String, String> {
-    ensure_database_initialized()?;
-    Ok(get_device_id().to_string())
+    let store = get_store()?;
+    Ok(store.device_id().to_string())
 }
 
 fn get_connection() -> Result<Connection, String> {
@@ -2143,13 +1991,7 @@ fn get_connection() -> Result<Connection, String> {
     Ok(conn)
 }
 
-// Parse hashtags from text content
-fn parse_hashtags(content: &str) -> Vec<String> {
-    let re = Regex::new(r"#(\w+)").unwrap();
-    re.captures_iter(content)
-        .map(|cap| cap[1].to_lowercase())
-        .collect()
-}
+// parse_hashtags moved to peek-core::helpers
 
 // Calculate frecency score
 fn calculate_frecency(frequency: u32, last_used: &str) -> f64 {
@@ -2580,139 +2422,14 @@ fn debug_export_database(app: tauri::AppHandle) -> Result<String, String> {
     Ok(format!("Exported {} bytes to {}", data.len(), locations))
 }
 
-/// Normalize a URL by ensuring a trailing slash on bare authority URLs
-/// (e.g. "https://example.com" -> "https://example.com/").
-/// URLs with an existing path, query, or fragment are left unchanged.
-fn normalize_url(url: &str) -> String {
-    // Parse with url crate if available, otherwise simple heuristic:
-    // If after stripping scheme + authority there's no path, add trailing slash
-    if let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) {
-        // rest is like "example.com" or "example.com/" or "example.com/path"
-        if !rest.contains('/') {
-            // Bare domain with no path at all -> add trailing slash
-            return format!("{}/", url);
-        }
-    }
-    url.to_string()
-}
+// normalize_url moved to peek-core::helpers
 
 #[tauri::command]
 async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::Value>) -> Result<(), String> {
-    let url = normalize_url(&url);
-    println!("[Rust] save_url called with url: {}, tags: {:?}, metadata: {:?}", url, tags, metadata);
+    println!("[Rust] save_url called with url: {}, tags: {:?}", url, tags);
 
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-    let id = uuid::Uuid::new_v4().to_string();
-
-    // Check if URL already exists (as a page type)
-    // Check both normalized and without trailing slash to match legacy data
-    let url_without_slash = url.strip_suffix('/').unwrap_or(&url);
-    let existing_id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM items WHERE type = 'url' AND (url = ? OR url = ?) AND deleted_at IS NULL",
-            params![&url, &url_without_slash],
-            |row| row.get(0),
-        )
-        .ok();
-
-    let item_id = if let Some(existing) = existing_id {
-        // Update existing item (normalize URL + update metadata)
-        // Read existing metadata, merge user-provided fields, then inject sync update
-        let existing_meta_str: Option<String> = conn
-            .query_row("SELECT metadata FROM items WHERE id = ?", params![&existing], |row| row.get(0))
-            .ok();
-        // Merge user-provided metadata fields into existing metadata
-        let merged_str = if let Some(new_meta) = &metadata {
-            let mut existing: serde_json::Value = existing_meta_str
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .unwrap_or_else(|| serde_json::json!({}));
-            if let (Some(dst), Some(src)) = (existing.as_object_mut(), new_meta.as_object()) {
-                for (k, v) in src {
-                    if k != "_sync" { dst.insert(k.clone(), v.clone()); }
-                }
-            }
-            Some(serde_json::to_string(&existing).unwrap_or_default())
-        } else {
-            existing_meta_str
-        };
-        let updated_meta = inject_sync_metadata_for_update(merged_str);
-        conn.execute(
-            "UPDATE items SET url = ?, updated_at = ?, metadata = ? WHERE id = ?",
-            params![&url, &now, &updated_meta, &existing],
-        )
-        .map_err(|e| format!("Failed to update item: {}", e))?;
-
-        // Remove old tag associations
-        conn.execute("DELETE FROM item_tags WHERE item_id = ?", params![&existing])
-            .map_err(|e| format!("Failed to remove old tags: {}", e))?;
-
-        existing
-    } else {
-        // Insert new url item
-        // IMPORTANT: Use 'url' type to match Swift's ItemType.page.rawValue = "url"
-        let meta_with_sync = inject_sync_metadata_for_save(metadata);
-        let metadata_json = serde_json::to_string(&meta_with_sync).unwrap_or_default();
-        conn.execute(
-            "INSERT INTO items (id, type, url, metadata, created_at, updated_at) VALUES (?, 'url', ?, ?, ?, ?)",
-            params![&id, &url, &metadata_json, &now, &now],
-        )
-        .map_err(|e| format!("Failed to insert item: {}", e))?;
-
-        id
-    };
-
-    // Add tags
-    for tag_name in &tags {
-        // Get or create tag
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(id) => {
-                // Update existing tag stats
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                id
-            }
-            Err(_) => {
-                // Create new tag
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        // Create item-tag association
-        conn.execute(
-            "INSERT OR IGNORE INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&item_id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
+    let store = get_store()?;
+    store.save_url(&url, &tags, metadata)?;
 
     println!("[Rust] Page saved successfully");
 
@@ -2724,182 +2441,34 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
     Ok(())
 }
 
-/// Extract domain from URL, removing www. prefix if present
-fn extract_domain(url: &str) -> Option<String> {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(|h| {
-            if h.starts_with("www.") {
-                h[4..].to_string()
-            } else {
-                h.to_string()
-            }
-        }))
-}
+// extract_domain moved to peek-core::helpers
 
 #[tauri::command]
 async fn get_tags_by_frecency() -> Result<Vec<TagStats>, String> {
-    let conn = get_connection()?;
-
-    let mut stmt = conn
-        .prepare("SELECT name, frequency, lastUsed, frecencyScore FROM tags ORDER BY frecencyScore DESC")
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-    let tags: Vec<TagStats> = stmt
-        .query_map([], |row| {
-            Ok(TagStats {
-                name: row.get(0)?,
-                frequency: row.get(1)?,
-                last_used: row.get(2)?,
-                frecency_score: row.get(3)?,
-            })
-        })
-        .map_err(|e| format!("Failed to query tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(tags)
+    let store = get_store()?;
+    store.get_tags_by_frecency()
 }
 
 /// Get tags sorted by frecency with domain affinity boost
-/// Tags used on URLs from the same domain get a 2x score multiplier
 #[tauri::command]
 async fn get_tags_by_frecency_for_url(url: String) -> Result<Vec<TagStats>, String> {
-    let domain = match extract_domain(&url) {
-        Some(d) => d,
-        None => return get_tags_by_frecency().await, // Fall back to regular frecency
-    };
-
-    let conn = get_connection()?;
-
-    // Get all tags with their IDs
-    let mut stmt = conn
-        .prepare("SELECT id, name, frequency, lastUsed, frecencyScore FROM tags")
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-    let tags_with_ids: Vec<(String, TagStats)> = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                TagStats {
-                    name: row.get(1)?,
-                    frequency: row.get(2)?,
-                    last_used: row.get(3)?,
-                    frecency_score: row.get(4)?,
-                },
-            ))
-        })
-        .map_err(|e| format!("Failed to query tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    // Get tag IDs used on URLs with the same domain
-    let domain_pattern = format!("%://{}/%", domain);
-    let domain_pattern_root = format!("%://{}", domain);
-    let www_domain_pattern = format!("%://www.{}/%", domain);
-    let www_domain_pattern_root = format!("%://www.{}", domain);
-
-    let mut domain_stmt = conn
-        .prepare(
-            "SELECT DISTINCT it.tag_id
-             FROM item_tags it
-             JOIN items i ON it.item_id = i.id
-             WHERE i.deleted_at IS NULL AND i.type = 'url'
-               AND (i.url LIKE ?1 OR i.url LIKE ?2 OR i.url LIKE ?3 OR i.url LIKE ?4)",
-        )
-        .map_err(|e| format!("Failed to prepare domain query: {}", e))?;
-
-    let domain_tag_ids: std::collections::HashSet<String> = domain_stmt
-        .query_map(
-            params![&domain_pattern, &domain_pattern_root, &www_domain_pattern, &www_domain_pattern_root],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Failed to query domain tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    // Apply 2x multiplier to tags used on same-domain URLs and sort
-    let mut boosted_tags: Vec<TagStats> = tags_with_ids
-        .into_iter()
-        .map(|(id, mut tag)| {
-            if domain_tag_ids.contains(&id) {
-                tag.frecency_score *= 2.0;
-            }
-            tag
-        })
-        .collect();
-
-    boosted_tags.sort_by(|a, b| b.frecency_score.partial_cmp(&a.frecency_score).unwrap_or(std::cmp::Ordering::Equal));
-
-    Ok(boosted_tags)
+    let store = get_store()?;
+    store.get_tags_by_frecency_for_url(&url)
 }
 
-/// Get saved pages (URLs) - backward compatible, returns only page type items
+/// Get saved pages (URLs)
 #[tauri::command]
 async fn get_saved_urls() -> Result<Vec<SavedUrl>, String> {
-    let conn = get_connection()?;
-
-    // Get all non-deleted pages (type='page')
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, url, created_at, metadata FROM items WHERE type = 'url' AND deleted_at IS NULL ORDER BY COALESCE(updated_at, created_at) DESC",
-        )
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-    let url_rows: Vec<(String, String, String, Option<String>)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-        .map_err(|e| format!("Failed to query pages: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    // Get tags for each item
-    let mut urls: Vec<SavedUrl> = Vec::new();
-    for (id, url, created_at, metadata_json) in url_rows {
-        let mut tag_stmt = conn
-            .prepare(
-                "SELECT t.name FROM tags t
-                 JOIN item_tags it ON t.id = it.tag_id
-                 WHERE it.item_id = ?
-                 ORDER BY t.name",
-            )
-            .map_err(|e| format!("Failed to prepare tag query: {}", e))?;
-
-        let tags: Vec<String> = tag_stmt
-            .query_map(params![&id], |row| row.get(0))
-            .map_err(|e| format!("Failed to query tags for item: {}", e))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        let metadata = metadata_json.and_then(|s| serde_json::from_str(&s).ok());
-
-        urls.push(SavedUrl {
-            id,
-            url,
-            tags,
-            saved_at: created_at,
-            metadata,
-        });
-    }
-
-    Ok(urls)
+    let store = get_store()?;
+    store.get_saved_urls()
 }
 
-/// Delete any item by ID (works for pages, texts, tagsets)
+/// Delete any item by ID (works for pages, texts, tagsets, images)
 #[tauri::command]
 async fn delete_url(id: String) -> Result<(), String> {
     println!("[Rust] delete_url/delete_item called for id: {}", id);
-
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-
-    // Soft delete: set deleted_at timestamp
-    // This prevents sync from re-creating the item when pulling from server
-    conn.execute(
-        "UPDATE items SET deleted_at = ?, updated_at = ? WHERE id = ?",
-        params![&now, &now, &id],
-    )
-    .map_err(|e| format!("Failed to delete item: {}", e))?;
-
+    let store = get_store()?;
+    store.delete_item(&id)?;
     println!("[Rust] Item soft-deleted successfully");
     Ok(())
 }
@@ -2908,17 +2477,8 @@ async fn delete_url(id: String) -> Result<(), String> {
 #[tauri::command]
 async fn record_visit(item_id: String, source: String, window_type: String) -> Result<String, String> {
     println!("[Rust] record_visit called for item_id: {}, source: {}, window_type: {}", item_id, source, window_type);
-
-    let conn = get_connection()?;
-    let visit_id = uuid::Uuid::new_v4().to_string();
-    let timestamp = Utc::now().timestamp_millis();
-
-    conn.execute(
-        "INSERT INTO item_visits (id, item_id, timestamp, source, window_type) VALUES (?, ?, ?, ?, ?)",
-        params![&visit_id, &item_id, timestamp, &source, &window_type],
-    )
-    .map_err(|e| format!("Failed to record visit: {}", e))?;
-
+    let store = get_store()?;
+    let visit_id = store.record_visit(&item_id, &source, &window_type)?;
     println!("[Rust] Visit recorded successfully: {}", visit_id);
     Ok(visit_id)
 }
@@ -3147,118 +2707,13 @@ async fn open_inline_webview_html(item_id: String, top_offset: f64) -> Result<()
     }
 }
 
-/// Update a page (URL) item - backward compatible
+/// Update a page (URL) item
 #[tauri::command]
 async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), String> {
     println!("[Rust] update_url called for id: {}, url: {}, tags: {:?}", id, url, tags);
 
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-
-    // Verify item exists and is a page
-    let exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM items WHERE id = ? AND type = 'url' AND deleted_at IS NULL",
-            params![&id],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !exists {
-        return Err("Page not found".to_string());
-    }
-
-    // Update URL value, timestamp, and sync metadata
-    let existing_meta: Option<String> = conn
-        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
-        .ok();
-    let updated_meta = inject_sync_metadata_for_update(existing_meta);
-    conn.execute(
-        "UPDATE items SET url = ?, updated_at = ?, metadata = ? WHERE id = ?",
-        params![&url, &now, &updated_meta, &id],
-    )
-    .map_err(|e| format!("Failed to update item: {}", e))?;
-
-    // Get existing tags for this item
-    let mut existing_tag_stmt = conn
-        .prepare(
-            "SELECT t.name FROM tags t
-             JOIN item_tags it ON t.id = it.tag_id
-             WHERE it.item_id = ?",
-        )
-        .map_err(|e| format!("Failed to prepare existing tags query: {}", e))?;
-
-    let existing_tags: std::collections::HashSet<String> = existing_tag_stmt
-        .query_map(params![&id], |row| row.get(0))
-        .map_err(|e| format!("Failed to query existing tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let new_tags_set: std::collections::HashSet<String> = tags.iter().cloned().collect();
-
-    // Determine which tags are being added vs removed
-    let tags_to_add: Vec<&String> = new_tags_set.difference(&existing_tags).collect();
-    let tags_to_remove: Vec<&String> = existing_tags.difference(&new_tags_set).collect();
-
-    // Remove only the tags that were actually removed
-    for tag_name in &tags_to_remove {
-        conn.execute(
-            "DELETE FROM item_tags WHERE item_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
-            params![&id, tag_name],
-        )
-        .map_err(|e| format!("Failed to remove tag association: {}", e))?;
-    }
-
-    // Add only the tags that are new to this item
-    for tag_name in &tags_to_add {
-        // Get or create tag
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(existing_id) => {
-                // Update existing tag stats
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&existing_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &existing_id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                existing_id
-            }
-            Err(_) => {
-                // Create new tag
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        // Create item-tag association
-        conn.execute(
-            "INSERT INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
+    let store = get_store()?;
+    let changes = store.update_url(&id, &url, &tags)?;
 
     println!("[Rust] Page updated successfully");
 
@@ -3267,7 +2722,7 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
         id: id.clone(),
         url: url.clone(),
         tags: tags.clone(),
-        saved_at: now,
+        saved_at: Utc::now().to_rfc3339(),
         metadata: None,
     };
     tauri::async_runtime::spawn(async move {
@@ -3278,10 +2733,7 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
     let config = load_profile_config();
     let offline_tag_name = config.offline_tag;
 
-    let offline_added = tags_to_add.iter().any(|t| **t == offline_tag_name);
-    let offline_removed = tags_to_remove.iter().any(|t| **t == offline_tag_name);
-
-    if offline_added {
+    if changes.tags_added.contains(&offline_tag_name) {
         let item_id = id.clone();
         let fetch_url = url.clone();
         tauri::async_runtime::spawn(async move {
@@ -3289,137 +2741,31 @@ async fn update_url(id: String, url: String, tags: Vec<String>) -> Result<(), St
                 println!("[Rust] Failed to fetch offline content: {}", e);
             }
         });
-    } else if offline_removed {
+    } else if changes.tags_removed.contains(&offline_tag_name) {
         let _ = remove_offline_content(&id);
     }
 
     Ok(())
 }
 
-/// Update tags for any item (legacy function - kept for backward compatibility)
+/// Update tags for any item type
 #[tauri::command]
 async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
     println!("[Rust] update_url_tags called for id: {}, tags: {:?}", id, tags);
 
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-
-    // Verify item exists
-    let item_info: Option<(String, Option<String>)> = conn
-        .query_row(
-            "SELECT type, url FROM items WHERE id = ? AND deleted_at IS NULL",
-            params![&id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .ok();
-
-    let (item_type, url_opt) = match item_info {
-        Some(info) => info,
-        None => return Err("Item not found".to_string()),
-    };
-
-    // Get existing tags for this item
-    let mut existing_tag_stmt = conn
-        .prepare(
-            "SELECT t.name FROM tags t
-             JOIN item_tags it ON t.id = it.tag_id
-             WHERE it.item_id = ?",
-        )
-        .map_err(|e| format!("Failed to prepare existing tags query: {}", e))?;
-
-    let existing_tags: std::collections::HashSet<String> = existing_tag_stmt
-        .query_map(params![&id], |row| row.get(0))
-        .map_err(|e| format!("Failed to query existing tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let new_tags_set: std::collections::HashSet<String> = tags.iter().cloned().collect();
-
-    // Determine which tags are being added vs removed
-    let tags_to_add: Vec<&String> = new_tags_set.difference(&existing_tags).collect();
-    let tags_to_remove: Vec<&String> = existing_tags.difference(&new_tags_set).collect();
-
-    // Update item's updated_at timestamp and sync metadata
-    let existing_meta: Option<String> = conn
-        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
-        .ok();
-    let updated_meta = inject_sync_metadata_for_update(existing_meta);
-    conn.execute(
-        "UPDATE items SET updated_at = ?, metadata = ? WHERE id = ?",
-        params![&now, &updated_meta, &id],
-    )
-    .map_err(|e| format!("Failed to update item: {}", e))?;
-
-    // Remove only the tags that were actually removed
-    for tag_name in &tags_to_remove {
-        conn.execute(
-            "DELETE FROM item_tags WHERE item_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
-            params![&id, tag_name],
-        )
-        .map_err(|e| format!("Failed to remove tag association: {}", e))?;
-    }
-
-    // Add only the tags that are new to this item
-    for tag_name in &tags_to_add {
-        // Get or create tag
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(existing_id) => {
-                // Update existing tag stats
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&existing_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &existing_id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                existing_id
-            }
-            Err(_) => {
-                // Create new tag
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        // Create item-tag association
-        conn.execute(
-            "INSERT INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
+    let store = get_store()?;
+    let result = store.update_item_tags(&id, &tags)?;
 
     println!("[Rust] Item tags updated successfully");
 
     // Push to webhook (fire and forget) - only for page types
-    if item_type == "page" {
-        if let Some(ref url) = url_opt {
+    if result.item_type == "page" {
+        if let Some(ref url) = result.url {
             let saved_url = SavedUrl {
                 id: id.clone(),
                 url: url.clone(),
                 tags: tags.clone(),
-                saved_at: now,
+                saved_at: Utc::now().to_rfc3339(),
                 metadata: None,
             };
             tauri::async_runtime::spawn(async move {
@@ -3432,11 +2778,8 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
     let config = load_profile_config();
     let offline_tag = config.offline_tag;
 
-    let offline_added = tags_to_add.iter().any(|t| **t == offline_tag);
-    let offline_removed = tags_to_remove.iter().any(|t| **t == offline_tag);
-
-    if offline_added {
-        if let Some(url) = url_opt {
+    if result.tag_changes.tags_added.contains(&offline_tag) {
+        if let Some(url) = result.url {
             let item_id = id.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = fetch_and_store_offline_content(&item_id, &url).await {
@@ -3444,7 +2787,7 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
                 }
             });
         }
-    } else if offline_removed {
+    } else if result.tag_changes.tags_removed.contains(&offline_tag) {
         let _ = remove_offline_content(&id);
     }
 
@@ -3455,79 +2798,10 @@ async fn update_url_tags(id: String, tags: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 async fn save_text(content: String, tags: Option<Vec<String>>, metadata: Option<serde_json::Value>) -> Result<(), String> {
     println!("[Rust] save_text called with content: {}", &content[..content.len().min(50)]);
-    println!("[Rust] save_text received tags: {:?}", tags);
 
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-    let id = uuid::Uuid::new_v4().to_string();
-    let meta_with_sync = inject_sync_metadata_for_save(metadata);
-    let metadata_json: Option<String> = Some(serde_json::to_string(&meta_with_sync).unwrap_or_default());
-
-    // Parse hashtags from content and merge with provided tags
-    let mut all_tags = parse_hashtags(&content);
-    if let Some(extra) = tags {
-        for tag in extra {
-            let normalized = tag.trim().to_lowercase();
-            if !normalized.is_empty() && !all_tags.contains(&normalized) {
-                all_tags.push(normalized);
-            }
-        }
-    }
-    println!("[Rust] Final tags (parsed + provided): {:?}", all_tags);
-
-    // Insert text item
-    conn.execute(
-        "INSERT INTO items (id, type, content, metadata, created_at, updated_at) VALUES (?, 'text', ?, ?, ?, ?)",
-        params![&id, &content, &metadata_json, &now, &now],
-    )
-    .map_err(|e| format!("Failed to insert text item: {}", e))?;
-
-    // Add tags
-    for tag_name in &all_tags {
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(existing_id) => {
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&existing_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &existing_id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                existing_id
-            }
-            Err(_) => {
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        conn.execute(
-            "INSERT OR IGNORE INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
+    let store = get_store()?;
+    let tag_slice = tags.as_deref();
+    store.save_text(&content, tag_slice, metadata)?;
 
     println!("[Rust] Text saved successfully");
 
@@ -3544,69 +2818,8 @@ async fn save_text(content: String, tags: Option<Vec<String>>, metadata: Option<
 async fn save_tagset(tags: Vec<String>, metadata: Option<serde_json::Value>) -> Result<(), String> {
     println!("[Rust] save_tagset called with tags: {:?}", tags);
 
-    if tags.is_empty() {
-        return Err("At least one tag is required for a tagset".to_string());
-    }
-
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-    let id = uuid::Uuid::new_v4().to_string();
-    let meta_with_sync = inject_sync_metadata_for_save(metadata);
-    let metadata_json: Option<String> = Some(serde_json::to_string(&meta_with_sync).unwrap_or_default());
-
-    // Insert tagset item
-    conn.execute(
-        "INSERT INTO items (id, type, metadata, created_at, updated_at) VALUES (?, 'tagset', ?, ?, ?)",
-        params![&id, &metadata_json, &now, &now],
-    )
-    .map_err(|e| format!("Failed to insert tagset item: {}", e))?;
-
-    // Add tags
-    for tag_name in &tags {
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(existing_id) => {
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&existing_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &existing_id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                existing_id
-            }
-            Err(_) => {
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        conn.execute(
-            "INSERT OR IGNORE INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
+    let store = get_store()?;
+    store.save_tagset(&tags, metadata)?;
 
     println!("[Rust] Tagset saved successfully");
 
@@ -3621,96 +2834,15 @@ async fn save_tagset(tags: Vec<String>, metadata: Option<serde_json::Value>) -> 
 /// Get all saved text items
 #[tauri::command]
 async fn get_saved_texts() -> Result<Vec<SavedText>, String> {
-    let conn = get_connection()?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, content, created_at, metadata FROM items WHERE type = 'text' AND deleted_at IS NULL ORDER BY COALESCE(updated_at, created_at) DESC",
-        )
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-    let rows: Vec<(String, String, String, Option<String>)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-        .map_err(|e| format!("Failed to query texts: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let mut texts: Vec<SavedText> = Vec::new();
-    for (id, content, created_at, metadata_json) in rows {
-        let mut tag_stmt = conn
-            .prepare(
-                "SELECT t.name FROM tags t
-                 JOIN item_tags it ON t.id = it.tag_id
-                 WHERE it.item_id = ?
-                 ORDER BY t.name",
-            )
-            .map_err(|e| format!("Failed to prepare tag query: {}", e))?;
-
-        let tags: Vec<String> = tag_stmt
-            .query_map(params![&id], |row| row.get(0))
-            .map_err(|e| format!("Failed to query tags: {}", e))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        let metadata = metadata_json.and_then(|s| serde_json::from_str(&s).ok());
-
-        texts.push(SavedText {
-            id,
-            content,
-            tags,
-            saved_at: created_at,
-            metadata,
-        });
-    }
-
-    Ok(texts)
+    let store = get_store()?;
+    store.get_saved_texts()
 }
 
 /// Get all saved tagsets
 #[tauri::command]
 async fn get_saved_tagsets() -> Result<Vec<SavedTagset>, String> {
-    let conn = get_connection()?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, created_at, metadata FROM items WHERE type = 'tagset' AND deleted_at IS NULL ORDER BY COALESCE(updated_at, created_at) DESC",
-        )
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-    let rows: Vec<(String, String, Option<String>)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .map_err(|e| format!("Failed to query tagsets: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let mut tagsets: Vec<SavedTagset> = Vec::new();
-    for (id, created_at, metadata_json) in rows {
-        let mut tag_stmt = conn
-            .prepare(
-                "SELECT t.name FROM tags t
-                 JOIN item_tags it ON t.id = it.tag_id
-                 WHERE it.item_id = ?
-                 ORDER BY t.name",
-            )
-            .map_err(|e| format!("Failed to prepare tag query: {}", e))?;
-
-        let tags: Vec<String> = tag_stmt
-            .query_map(params![&id], |row| row.get(0))
-            .map_err(|e| format!("Failed to query tags: {}", e))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        let metadata = metadata_json.and_then(|s| serde_json::from_str(&s).ok());
-
-        tagsets.push(SavedTagset {
-            id,
-            tags,
-            saved_at: created_at,
-            metadata,
-        });
-    }
-
-    Ok(tagsets)
+    let store = get_store()?;
+    store.get_saved_tagsets()
 }
 
 /// Update a text item
@@ -3718,121 +2850,17 @@ async fn get_saved_tagsets() -> Result<Vec<SavedTagset>, String> {
 async fn update_text(id: String, content: String, tags: Vec<String>) -> Result<(), String> {
     println!("[Rust] update_text called for id: {}, tags: {:?}", id, tags);
 
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-
-    // Verify item exists and is a text type
-    let exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM items WHERE id = ? AND type = 'text' AND deleted_at IS NULL",
-            params![&id],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !exists {
-        return Err("Text not found".to_string());
-    }
-
-    // Update content, timestamp, and sync metadata
-    let existing_meta: Option<String> = conn
-        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
-        .ok();
-    let updated_meta = inject_sync_metadata_for_update(existing_meta);
-    conn.execute(
-        "UPDATE items SET content = ?, updated_at = ?, metadata = ? WHERE id = ?",
-        params![&content, &now, &updated_meta, &id],
-    )
-    .map_err(|e| format!("Failed to update text: {}", e))?;
-
-    // Combine UI-provided tags with hashtags parsed from content
-    let hashtags = parse_hashtags(&content);
-    let mut new_tags_set: std::collections::HashSet<String> = tags.into_iter().collect();
-    new_tags_set.extend(hashtags);
-
-    // Get existing tags
-    let mut existing_tag_stmt = conn
-        .prepare(
-            "SELECT t.name FROM tags t
-             JOIN item_tags it ON t.id = it.tag_id
-             WHERE it.item_id = ?",
-        )
-        .map_err(|e| format!("Failed to prepare existing tags query: {}", e))?;
-
-    let existing_tags: std::collections::HashSet<String> = existing_tag_stmt
-        .query_map(params![&id], |row| row.get(0))
-        .map_err(|e| format!("Failed to query existing tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let tags_to_add: Vec<&String> = new_tags_set.difference(&existing_tags).collect();
-    let tags_to_remove: Vec<&String> = existing_tags.difference(&new_tags_set).collect();
-
-    // Remove old tags
-    for tag_name in &tags_to_remove {
-        conn.execute(
-            "DELETE FROM item_tags WHERE item_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
-            params![&id, tag_name],
-        )
-        .map_err(|e| format!("Failed to remove tag: {}", e))?;
-    }
-
-    // Add new tags
-    for tag_name in &tags_to_add {
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(existing_id) => {
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&existing_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &existing_id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                existing_id
-            }
-            Err(_) => {
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        conn.execute(
-            "INSERT INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
+    let store = get_store()?;
+    let final_tags = store.update_text(&id, &content, &tags)?;
 
     println!("[Rust] Text updated successfully");
 
     // Push to webhook
-    let final_tags: Vec<String> = new_tags_set.into_iter().collect();
     let saved_text = SavedText {
         id,
         content,
         tags: final_tags,
-        saved_at: now,
+        saved_at: Utc::now().to_rfc3339(),
         metadata: None,
     };
     tauri::async_runtime::spawn(async move {
@@ -3847,111 +2875,8 @@ async fn update_text(id: String, content: String, tags: Vec<String>) -> Result<(
 async fn update_tagset(id: String, tags: Vec<String>) -> Result<(), String> {
     println!("[Rust] update_tagset called for id: {}, tags: {:?}", id, tags);
 
-    if tags.is_empty() {
-        return Err("At least one tag is required for a tagset".to_string());
-    }
-
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-
-    // Verify item exists and is a tagset type
-    let exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM items WHERE id = ? AND type = 'tagset' AND deleted_at IS NULL",
-            params![&id],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !exists {
-        return Err("Tagset not found".to_string());
-    }
-
-    // Update timestamp and sync metadata
-    let existing_meta: Option<String> = conn
-        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
-        .ok();
-    let updated_meta = inject_sync_metadata_for_update(existing_meta);
-    conn.execute(
-        "UPDATE items SET updated_at = ?, metadata = ? WHERE id = ?",
-        params![&now, &updated_meta, &id],
-    )
-    .map_err(|e| format!("Failed to update tagset: {}", e))?;
-
-    // Get existing tags
-    let mut existing_tag_stmt = conn
-        .prepare(
-            "SELECT t.name FROM tags t
-             JOIN item_tags it ON t.id = it.tag_id
-             WHERE it.item_id = ?",
-        )
-        .map_err(|e| format!("Failed to prepare existing tags query: {}", e))?;
-
-    let existing_tags: std::collections::HashSet<String> = existing_tag_stmt
-        .query_map(params![&id], |row| row.get(0))
-        .map_err(|e| format!("Failed to query existing tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let new_tags_set: std::collections::HashSet<String> = tags.iter().cloned().collect();
-    let tags_to_add: Vec<&String> = new_tags_set.difference(&existing_tags).collect();
-    let tags_to_remove: Vec<&String> = existing_tags.difference(&new_tags_set).collect();
-
-    // Remove old tags
-    for tag_name in &tags_to_remove {
-        conn.execute(
-            "DELETE FROM item_tags WHERE item_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
-            params![&id, tag_name],
-        )
-        .map_err(|e| format!("Failed to remove tag: {}", e))?;
-    }
-
-    // Add new tags
-    for tag_name in &tags_to_add {
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(existing_id) => {
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&existing_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &existing_id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                existing_id
-            }
-            Err(_) => {
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        conn.execute(
-            "INSERT INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
+    let store = get_store()?;
+    store.update_tagset(&id, &tags)?;
 
     println!("[Rust] Tagset updated successfully");
 
@@ -3959,7 +2884,7 @@ async fn update_tagset(id: String, tags: Vec<String>) -> Result<(), String> {
     let saved_tagset = SavedTagset {
         id,
         tags,
-        saved_at: now,
+        saved_at: Utc::now().to_rfc3339(),
         metadata: None,
     };
     tauri::async_runtime::spawn(async move {
@@ -3984,84 +2909,19 @@ async fn save_image(
 ) -> Result<String, String> {
     println!("[Rust] save_image called, mime_type: {}, tags: {:?}", mime_type, tags);
 
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-    let item_id = uuid::Uuid::new_v4().to_string();
-    let blob_id = uuid::Uuid::new_v4().to_string();
-    let meta_with_sync = inject_sync_metadata_for_save(metadata);
-    let metadata_json: Option<String> = Some(serde_json::to_string(&meta_with_sync).unwrap_or_default());
-
-    // Decode base64 image data
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     let image_bytes = STANDARD.decode(&image_data)
         .map_err(|e| format!("Failed to decode image data: {}", e))?;
-    let size_bytes = image_bytes.len() as i64;
-
     let thumbnail_bytes: Option<Vec<u8>> = thumbnail_data
         .map(|t| STANDARD.decode(&t))
         .transpose()
         .map_err(|e| format!("Failed to decode thumbnail: {}", e))?;
 
-    // Insert image item
-    conn.execute(
-        "INSERT INTO items (id, type, metadata, created_at, updated_at) VALUES (?, 'image', ?, ?, ?)",
-        params![&item_id, &metadata_json, &now, &now],
-    )
-    .map_err(|e| format!("Failed to insert image item: {}", e))?;
-
-    // Insert blob data
-    conn.execute(
-        "INSERT INTO blobs (id, item_id, data, mime_type, size_bytes, width, height, thumbnail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        params![&blob_id, &item_id, &image_bytes, &mime_type, size_bytes, width, height, &thumbnail_bytes, &now],
-    )
-    .map_err(|e| format!("Failed to insert blob: {}", e))?;
-
-    // Add tags
-    for tag_name in &tags {
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(existing_id) => {
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&existing_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &existing_id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                existing_id
-            }
-            Err(_) => {
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        conn.execute(
-            "INSERT OR IGNORE INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&item_id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
+    let store = get_store()?;
+    let item_id = store.save_image(
+        &image_bytes, &mime_type, &tags, metadata,
+        thumbnail_bytes.as_deref(), width, height,
+    )?;
 
     println!("[Rust] Image saved successfully with id: {}", item_id);
 
@@ -4076,88 +2936,18 @@ async fn save_image(
 /// Get all saved images (returns metadata and thumbnails, not full image data)
 #[tauri::command]
 async fn get_saved_images() -> Result<Vec<SavedImage>, String> {
-    let conn = get_connection()?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT i.id, i.created_at, i.metadata, b.mime_type, b.width, b.height, b.thumbnail
-             FROM items i
-             LEFT JOIN blobs b ON b.item_id = i.id
-             WHERE i.type = 'image' AND i.deleted_at IS NULL
-             ORDER BY COALESCE(i.updated_at, i.created_at) DESC",
-        )
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-
-    let rows: Vec<(String, String, Option<String>, Option<String>, Option<u32>, Option<u32>, Option<Vec<u8>>)> = stmt
-        .query_map([], |row| Ok((
-            row.get(0)?,
-            row.get(1)?,
-            row.get(2)?,
-            row.get(3)?,
-            row.get(4)?,
-            row.get(5)?,
-            row.get(6)?,
-        )))
-        .map_err(|e| format!("Failed to query images: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let mut images: Vec<SavedImage> = Vec::new();
-    for (id, created_at, metadata_json, mime_type, width, height, thumbnail_bytes) in rows {
-        let mut tag_stmt = conn
-            .prepare(
-                "SELECT t.name FROM tags t
-                 JOIN item_tags it ON t.id = it.tag_id
-                 WHERE it.item_id = ?
-                 ORDER BY t.name",
-            )
-            .map_err(|e| format!("Failed to prepare tag query: {}", e))?;
-
-        let tags: Vec<String> = tag_stmt
-            .query_map(params![&id], |row| row.get(0))
-            .map_err(|e| format!("Failed to query tags: {}", e))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        let metadata = metadata_json.and_then(|s| serde_json::from_str(&s).ok());
-        let thumbnail = thumbnail_bytes.map(|b| STANDARD.encode(&b));
-
-        images.push(SavedImage {
-            id,
-            tags,
-            saved_at: created_at,
-            metadata,
-            thumbnail,
-            mime_type: mime_type.unwrap_or_else(|| "image/jpeg".to_string()),
-            width,
-            height,
-        });
-    }
-
-    Ok(images)
+    let store = get_store()?;
+    store.get_saved_images()
 }
 
 /// Get full image data by item ID (returns base64-encoded image)
 #[tauri::command]
 async fn get_image_data(id: String) -> Result<Option<String>, String> {
-    let conn = get_connection()?;
-
-    let result: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT data FROM blobs WHERE item_id = ?",
-            params![&id],
-            |row| row.get(0),
-        )
-        .ok();
-
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    Ok(result.map(|bytes| STANDARD.encode(&bytes)))
+    let store = get_store()?;
+    store.get_image_data(&id)
 }
 
 /// Save a captured image from camera (simplified interface)
-/// image_data is base64-encoded image bytes (without data URL prefix)
 #[tauri::command]
 async fn save_captured_image(
     image_data: String,
@@ -4165,9 +2955,6 @@ async fn save_captured_image(
     tags: Vec<String>,
 ) -> Result<String, String> {
     println!("[Rust] save_captured_image called, mime_type: {}, tags: {:?}", mime_type, tags);
-
-    // Use the image data as its own thumbnail for display
-    // (camera images are typically already reasonably sized)
     save_image(image_data.clone(), mime_type, tags, None, Some(image_data), None, None).await
 }
 
@@ -4175,109 +2962,8 @@ async fn save_captured_image(
 #[tauri::command]
 async fn update_image_tags(id: String, tags: Vec<String>) -> Result<(), String> {
     println!("[Rust] update_image_tags called for id: {}, tags: {:?}", id, tags);
-
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-
-    // Verify item exists and is an image type
-    let exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM items WHERE id = ? AND type = 'image' AND deleted_at IS NULL",
-            params![&id],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if !exists {
-        return Err("Image not found".to_string());
-    }
-
-    // Update timestamp and sync metadata
-    let existing_meta: Option<String> = conn
-        .query_row("SELECT metadata FROM items WHERE id = ?", params![&id], |row| row.get(0))
-        .ok();
-    let updated_meta = inject_sync_metadata_for_update(existing_meta);
-    conn.execute(
-        "UPDATE items SET updated_at = ?, metadata = ? WHERE id = ?",
-        params![&now, &updated_meta, &id],
-    )
-    .map_err(|e| format!("Failed to update image: {}", e))?;
-
-    // Get existing tags
-    let mut existing_tag_stmt = conn
-        .prepare(
-            "SELECT t.name FROM tags t
-             JOIN item_tags it ON t.id = it.tag_id
-             WHERE it.item_id = ?",
-        )
-        .map_err(|e| format!("Failed to prepare existing tags query: {}", e))?;
-
-    let existing_tags: std::collections::HashSet<String> = existing_tag_stmt
-        .query_map(params![&id], |row| row.get(0))
-        .map_err(|e| format!("Failed to query existing tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let new_tags_set: std::collections::HashSet<String> = tags.iter().cloned().collect();
-    let tags_to_add: Vec<&String> = new_tags_set.difference(&existing_tags).collect();
-    let tags_to_remove: Vec<&String> = existing_tags.difference(&new_tags_set).collect();
-
-    // Remove old tags
-    for tag_name in &tags_to_remove {
-        conn.execute(
-            "DELETE FROM item_tags WHERE item_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
-            params![&id, tag_name],
-        )
-        .map_err(|e| format!("Failed to remove tag: {}", e))?;
-    }
-
-    // Add new tags
-    for tag_name in &tags_to_add {
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(existing_id) => {
-                let frequency: u32 = conn
-                    .query_row(
-                        "SELECT frequency FROM tags WHERE id = ?",
-                        params![&existing_id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &existing_id],
-                )
-                .map_err(|e| format!("Failed to update tag: {}", e))?;
-
-                existing_id
-            }
-            Err(_) => {
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        conn.execute(
-            "INSERT INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![&id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
-
+    let store = get_store()?;
+    store.update_image_tags(&id, &tags)?;
     println!("[Rust] Image tags updated successfully");
     Ok(())
 }
