@@ -11,9 +11,6 @@
  * 2. Compare against required sync columns from schema/v1.json
  * 3. Verify timestamp columns use INTEGER (not TEXT)
  * 4. Verify id columns use TEXT (not INTEGER)
- * 5. CHECK constraint validation across v1.json and all backends
- * 6. Table completeness (datastore.ts tables in TypeScript types)
- * 7. Column completeness (v1.json columns in datastore.ts)
  */
 
 import { readFileSync } from 'fs';
