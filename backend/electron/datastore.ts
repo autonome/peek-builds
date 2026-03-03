@@ -2681,6 +2681,7 @@ export function getStats(): DatastoreStats {
     syncedContent: safeCount('SELECT COUNT(*) as count FROM content WHERE synced = 1'),
     totalItems: safeCount('SELECT COUNT(*) as count FROM items'),
     totalTags: safeCount('SELECT COUNT(*) as count FROM tags'),
+    syncedItems: safeCount('SELECT COUNT(*) as count FROM items WHERE syncedAt > 0'),
   };
 }
 

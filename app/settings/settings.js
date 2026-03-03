@@ -2773,10 +2773,11 @@ const renderDatastoreSettings = async () => {
 
   const statItems = [
     { label: 'Items', value: stats.totalItems || 0 },
-    { label: 'Addresses', value: stats.totalAddresses || 0 },
+    { label: 'URLs', value: stats.totalAddresses || 0 },
     { label: 'Visits', value: stats.totalVisits || 0 },
     { label: 'Tags', value: stats.totalTags || 0 },
     { label: 'Content', value: stats.totalContent || 0 },
+    { label: 'Synced', value: stats.syncedItems || 0 },
   ];
 
   statItems.forEach(({ label, value }) => {
@@ -2793,7 +2794,31 @@ const renderDatastoreSettings = async () => {
   container.appendChild(statsSection);
 
   // Table browser
-  const tables = ['items', 'item_visits', 'item_tags', 'content', 'tags', 'blobs', 'scripts_data', 'feeds', 'extensions', 'extension_settings', 'settings'];
+  const tableGroups = [
+    { label: 'Core Data', tables: ['items', 'tags', 'content', 'blobs'] },
+    { label: 'Relationships', tables: ['item_tags', 'item_visits', 'item_events', 'item_groups', 'item_group_members'] },
+    { label: 'Extensions', tables: ['extensions', 'extension_settings', 'scripts_data', 'feeds'] },
+    { label: 'System', tables: ['settings', 'migrations', 'themes'] },
+  ];
+
+  const tableDescriptions = {
+    items: 'All stored items (URLs, text, tagsets, images, series, feeds)',
+    tags: 'Tag definitions with frecency scores',
+    item_tags: 'Item-to-tag associations',
+    item_visits: 'Page visit history',
+    item_events: 'Time-series events for series and feed items',
+    item_groups: 'Item group/collection definitions',
+    item_group_members: 'Group membership associations',
+    content: 'Cached page content (legacy)',
+    blobs: 'Binary data storage',
+    scripts_data: 'Script extension data',
+    feeds: 'Feed subscription data',
+    extensions: 'Installed extension metadata',
+    extension_settings: 'Per-extension settings and preferences',
+    settings: 'Global application settings',
+    migrations: 'Schema migration history',
+    themes: 'Installed color themes',
+  };
 
   const tableSection = document.createElement('div');
   tableSection.className = 'form-section';
@@ -2805,96 +2830,140 @@ const renderDatastoreSettings = async () => {
   tableSection.appendChild(tableTitle);
 
   const tableList = document.createElement('div');
-  tableList.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;';
+  tableList.style.cssText = 'display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;';
 
   const tableDataContainer = document.createElement('div');
   tableDataContainer.style.cssText = 'margin-top: 16px; max-height: 400px; overflow: auto; border: 1px solid var(--border-primary); border-radius: 6px;';
 
-  // Load counts for each table
-  for (const tableName of tables) {
-    const btn = document.createElement('button');
-    btn.style.cssText = `
-      padding: 6px 12px;
-      font-size: 12px;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-primary);
-      border-radius: 4px;
-      color: var(--text-secondary);
-      cursor: pointer;
-    `;
+  // Helper: format timestamp if value looks like ms epoch
+  const formatTimestamp = (value) => {
+    if (typeof value === 'number' && value > 1000000000000) {
+      try {
+        const date = new Date(value);
+        return `${String(value)} (${date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')})`;
+      } catch (e) { /* ignore */ }
+    }
+    return null;
+  };
 
-    let count = 0;
+  // Load counts for all tables upfront
+  const tableCounts = {};
+  const allTables = tableGroups.flatMap(g => g.tables);
+  await Promise.all(allTables.map(async (tableName) => {
     try {
       const result = await api.datastore.getTable(tableName);
       if (result && result.success && result.data) {
-        count = Object.keys(result.data).length;
+        tableCounts[tableName] = Object.keys(result.data).length;
+      } else {
+        tableCounts[tableName] = 0;
       }
     } catch (e) {
-      // table may not exist
+      tableCounts[tableName] = 0;
+    }
+  }));
+
+  // Build grouped table buttons
+  for (const group of tableGroups) {
+    const groupContainer = document.createElement('div');
+
+    const groupLabel = document.createElement('div');
+    groupLabel.style.cssText = 'font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;';
+    groupLabel.textContent = group.label;
+    groupContainer.appendChild(groupLabel);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: 6px;';
+
+    for (const tableName of group.tables) {
+      const count = tableCounts[tableName] || 0;
+      const btn = document.createElement('button');
+      btn.style.cssText = `
+        padding: 6px 12px;
+        font-size: 12px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: 4px;
+        color: var(--text-secondary);
+        cursor: pointer;
+      `;
+      btn.textContent = `${tableName} (${count.toLocaleString()})`;
+      btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
+      btn.addEventListener('mouseleave', () => { if (!btn.classList.contains('active-table')) btn.style.background = 'var(--bg-tertiary)'; });
+
+      btn.addEventListener('click', async () => {
+        // Update active state across all groups
+        tableList.querySelectorAll('button').forEach(b => {
+          b.classList.remove('active-table');
+          b.style.background = 'var(--bg-tertiary)';
+          b.style.borderColor = 'var(--border-primary)';
+          b.style.color = 'var(--text-secondary)';
+        });
+        btn.classList.add('active-table');
+        btn.style.background = 'var(--base0D)';
+        btn.style.borderColor = 'var(--base0D)';
+        btn.style.color = 'white';
+
+        // Load table data
+        tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Loading...</div>';
+        try {
+          const result = await api.datastore.getTable(tableName);
+          if (result && result.success && result.data) {
+            const rows = Object.entries(result.data);
+
+            // Table description header
+            const desc = tableDescriptions[tableName] || '';
+            let html = '';
+            if (desc) {
+              html += `<div style="padding: 10px 12px; font-size: 12px; color: var(--text-muted); background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary);">${desc}</div>`;
+            }
+
+            if (rows.length === 0) {
+              html += '<div style="padding: 16px; color: var(--text-muted);">Table is empty.</div>';
+              tableDataContainer.innerHTML = html;
+              return;
+            }
+
+            const columns = ['id', ...Object.keys(rows[0][1]).filter(c => c !== 'id')];
+            html += '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">';
+            html += '<thead><tr>';
+            columns.forEach(col => {
+              html += `<th style="text-align: left; padding: 8px 10px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary); font-weight: 600; color: var(--text-primary); position: sticky; top: 0;">${col}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+
+            rows.slice(0, 100).forEach(([id, row]) => {
+              html += '<tr>';
+              columns.forEach(col => {
+                const value = col === 'id' ? id : row[col];
+                let display = value === null || value === undefined ? '-' : String(value);
+                const tsFormatted = formatTimestamp(typeof value === 'string' ? Number(value) : value);
+                if (tsFormatted) display = tsFormatted;
+                if (display.length > 120) display = display.substring(0, 120) + '...';
+                const escaped = display.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                html += `<td style="padding: 6px 10px; border-bottom: 1px solid var(--border-light, var(--border-primary)); color: var(--text-secondary); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escaped}">${escaped}</td>`;
+              });
+              html += '</tr>';
+            });
+
+            if (rows.length > 100) {
+              html += `<tr><td colspan="${columns.length}" style="padding: 8px 10px; color: var(--text-muted); text-align: center;">Showing first 100 of ${rows.length} rows</td></tr>`;
+            }
+
+            html += '</tbody></table>';
+            tableDataContainer.innerHTML = html;
+          } else {
+            tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Failed to load table data.</div>';
+          }
+        } catch (e) {
+          tableDataContainer.innerHTML = `<div style="padding: 16px; color: var(--error-text, #dc2626);">Error: ${e.message}</div>`;
+        }
+      });
+
+      btnRow.appendChild(btn);
     }
 
-    btn.textContent = `${tableName} (${count})`;
-    btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
-    btn.addEventListener('mouseleave', () => { if (!btn.classList.contains('active-table')) btn.style.background = 'var(--bg-tertiary)'; });
-
-    btn.addEventListener('click', async () => {
-      // Update active state
-      tableList.querySelectorAll('button').forEach(b => {
-        b.classList.remove('active-table');
-        b.style.background = 'var(--bg-tertiary)';
-        b.style.borderColor = 'var(--border-primary)';
-        b.style.color = 'var(--text-secondary)';
-      });
-      btn.classList.add('active-table');
-      btn.style.background = 'var(--base0D)';
-      btn.style.borderColor = 'var(--base0D)';
-      btn.style.color = 'white';
-
-      // Load table data
-      tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Loading...</div>';
-      try {
-        const result = await api.datastore.getTable(tableName);
-        if (result && result.success && result.data) {
-          const rows = Object.entries(result.data);
-          if (rows.length === 0) {
-            tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Table is empty.</div>';
-            return;
-          }
-
-          const columns = ['id', ...Object.keys(rows[0][1]).filter(c => c !== 'id')];
-          let html = '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">';
-          html += '<thead><tr>';
-          columns.forEach(col => {
-            html += `<th style="text-align: left; padding: 8px 10px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary); font-weight: 600; color: var(--text-primary); position: sticky; top: 0;">${col}</th>`;
-          });
-          html += '</tr></thead><tbody>';
-
-          rows.slice(0, 100).forEach(([id, row]) => {
-            html += '<tr>';
-            columns.forEach(col => {
-              const value = col === 'id' ? id : row[col];
-              let display = value === null || value === undefined ? '-' : String(value);
-              if (display.length > 80) display = display.substring(0, 80) + '...';
-              html += `<td style="padding: 6px 10px; border-bottom: 1px solid var(--border-light, var(--border-primary)); color: var(--text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${display}">${display}</td>`;
-            });
-            html += '</tr>';
-          });
-
-          if (rows.length > 100) {
-            html += `<tr><td colspan="${columns.length}" style="padding: 8px 10px; color: var(--text-muted); text-align: center;">Showing first 100 of ${rows.length} rows</td></tr>`;
-          }
-
-          html += '</tbody></table>';
-          tableDataContainer.innerHTML = html;
-        } else {
-          tableDataContainer.innerHTML = '<div style="padding: 16px; color: var(--text-muted);">Failed to load table data.</div>';
-        }
-      } catch (e) {
-        tableDataContainer.innerHTML = `<div style="padding: 16px; color: var(--error-text, #dc2626);">Error: ${e.message}</div>`;
-      }
-    });
-
-    tableList.appendChild(btn);
+    groupContainer.appendChild(btnRow);
+    tableList.appendChild(groupContainer);
   }
 
   tableSection.appendChild(tableList);

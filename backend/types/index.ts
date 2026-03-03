@@ -161,6 +161,7 @@ export interface DatastoreStats {
   syncedContent: number;
   totalItems: number;
   totalTags: number;
+  syncedItems: number;
 }
 
 // ==================== Filter Types ====================
