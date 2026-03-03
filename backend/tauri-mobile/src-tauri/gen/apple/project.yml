@@ -116,5 +116,8 @@ targets:
         DEVELOPMENT_TEAM: TXZTDLL5LC
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: 16.0
+        ARCHS: [arm64]
+        VALID_ARCHS: arm64
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
     dependencies:
       - framework: ../../../peek-core/PeekCore.xcframework
