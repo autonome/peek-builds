@@ -14,6 +14,9 @@ dist/
 backend/tauri/src-tauri/target/
 backend/tauri/src-tauri/gen/
 backend/tauri-mobile/src-tauri/target/
+backend/tauri-mobile/peek-core/target/
+backend/tauri-mobile/peek-core/generated/
+backend/tauri-mobile/peek-core/PeekCore.xcframework/
 
 # Server data (local testing)
 backend/server/data/
