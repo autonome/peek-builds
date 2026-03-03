@@ -141,6 +141,7 @@ const tagsInput = document.getElementById('tags-input');
 const tagsSuggestion = document.getElementById('tags-suggestion');
 const entitiesPanel = document.getElementById('entities-panel');
 const entitiesBody = document.getElementById('entities-body');
+const entitiesRescanBtn = document.getElementById('entities-rescan-btn');
 const extensionsPanel = document.getElementById('extensions-panel');
 const extensionsBody = document.getElementById('extensions-body');
 
@@ -2008,6 +2009,28 @@ api.subscribe('entities:get-for-url:response', (msg) => {
     // webview not ready
   }
 }, api.scopes.GLOBAL);
+
+// Rescan button — triggers re-extraction of entities for current page
+if (entitiesRescanBtn) {
+  entitiesRescanBtn.addEventListener('click', () => {
+    let currentUrl;
+    try {
+      currentUrl = webview.getURL();
+    } catch {
+      return;
+    }
+    if (!currentUrl || !currentUrl.startsWith('http')) return;
+
+    // Show loading state
+    currentPageEntities = [];
+    if (entitiesBody) {
+      entitiesBody.innerHTML = '<div class="entity-loading">Rescanning for entities...</div>';
+    }
+
+    // Request re-extraction from entities extension
+    api.publish('entities:extract', { url: currentUrl }, api.scopes.GLOBAL);
+  });
+}
 
 // On navigation, clear entities and request for current URL
 webview.addEventListener('did-navigate', (e) => {

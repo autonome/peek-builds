@@ -659,6 +659,29 @@
       color: var(--theme-text-secondary, #aaa);
     }
 
+    .panel-action-btn {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
+      border: none;
+      color: var(--theme-text-secondary, #bbb);
+      font-size: 10px;
+      font-family: inherit;
+      padding: 2px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s;
+      white-space: nowrap;
+    }
+
+    .panel-action-btn:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18));
+      color: var(--theme-text, #fff);
+    }
+
+    .panel-action-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
     .entities-panel .panel-body {
       padding: 4px 10px 10px 10px;
       max-height: 400px;
@@ -1181,6 +1204,7 @@
       <div class="entities-panel" id="entities-panel">
         <div class="panel-header">
           <span class="panel-title">Entities</span>
+          <button class="panel-action-btn" id="entities-rescan-btn" title="Re-extract entities">Rescan</button>
         </div>
         <div class="panel-body" id="entities-body">
           <div class="entity-empty">No entities detected yet</div>

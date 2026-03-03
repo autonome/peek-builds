@@ -291,6 +291,20 @@ async function extractCurrentPage() {
 
   const entities = await extractEntities(url, activeWindow.title || '');
 
+  // Publish results so page entities panel updates
+  if (entities && entities.length > 0) {
+    api.publish('entities:extracted', {
+      url,
+      entities: entities.map(e => ({
+        id: e.id,
+        name: e.name,
+        type: e.entityType,
+        confidence: e.confidence,
+        isNew: e.isNew
+      }))
+    }, api.scopes.GLOBAL);
+  }
+
   return entities;
 }
 
@@ -396,6 +410,21 @@ const extension = {
       if (msg.url) {
         extractionCache.delete(msg.url);
         const entities = await extractEntities(msg.url, msg.title || '');
+
+        // Publish extraction results so page entities panels update
+        if (entities && entities.length > 0) {
+          api.publish('entities:extracted', {
+            url: msg.url,
+            entities: entities.map(e => ({
+              id: e.id,
+              name: e.name,
+              type: e.entityType,
+              confidence: e.confidence,
+              isNew: e.isNew
+            }))
+          }, api.scopes.GLOBAL);
+        }
+
         api.publish('entities:extract:response', {
           url: msg.url,
           entities
