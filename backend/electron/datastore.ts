@@ -482,6 +482,12 @@ function migrateTinyBaseData(): void {
     return;
   }
 
+  // Check if addresses table exists (may not exist if user never had the old schema)
+  const addressesExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='addresses'`).get();
+  if (!addressesExists) {
+    return;
+  }
+
   // Check if we already migrated
   const existingData = db.prepare('SELECT COUNT(*) as count FROM addresses').get() as { count: number };
   if (existingData.count > 0) {
