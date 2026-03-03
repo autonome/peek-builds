@@ -1288,6 +1288,17 @@ function updateCommandUI() {
       }
     }
   }
+
+  // Sync scroll position so the overlay text matches the input scroll
+  syncScrollPosition();
+}
+
+function syncScrollPosition() {
+  const commandInput = document.getElementById('command-input');
+  const commandText = document.getElementById('command-text');
+  if (commandInput && commandText) {
+    commandText.scrollLeft = commandInput.scrollLeft;
+  }
 }
 
 function updateResultsUI() {
@@ -2023,6 +2034,12 @@ async function render() {
 
   commandInput.value = '';
   commandInput.focus();
+
+  // Sync overlay scroll when the input scrolls (e.g. cursor movement, long text)
+  commandInput.addEventListener('scroll', syncScrollPosition);
+  // Also sync on keyup/click since scrollLeft may change after caret moves
+  commandInput.addEventListener('keyup', syncScrollPosition);
+  commandInput.addEventListener('click', syncScrollPosition);
 
   // Input event -> dispatch to state machine
   commandInput.addEventListener('input', () => {
