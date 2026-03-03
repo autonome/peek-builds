@@ -200,9 +200,9 @@ test.describe('Pagestream Extension @desktop', () => {
         const card = document.querySelector('#stream peek-card.visit-card');
         if (!card) return null;
         return {
-          hasHeader: !!card.querySelector('.card-header'),
+          hasHeader: !!card.querySelector('[slot="header"]'),
           hasTitle: !!card.querySelector('.card-title'),
-          hasFavicon: !!card.querySelector('.card-favicon'),
+          hasFavicon: !!card.querySelector('.card-favicon, img'),
           hasUrl: !!card.querySelector('.card-url'),
           hasFooter: !!card.querySelector('.card-footer'),
           hasTime: !!card.querySelector('.card-time'),

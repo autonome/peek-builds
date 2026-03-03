@@ -13,7 +13,7 @@ import historyModule from './history.js';
 import pageModule from './page.js';
 
 // Chaining commands - for command composition pipelines
-import listsCommand from './lists.js';
+import sampleDataCommand from './sample-data.js';
 // csv and save commands moved to files extension
 
 // Source commands (commented out as they need browser extension APIs)
@@ -42,7 +42,7 @@ const activeCommands = [
   ...pageModule.commands,
 
   // Chaining commands
-  listsCommand
+  sampleDataCommand
   // csv and save commands moved to files extension
 ];
 

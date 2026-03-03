@@ -2894,7 +2894,7 @@ test.describe('Command Chaining @desktop', () => {
     }
   });
 
-  test('lists command produces array output and enters output selection mode', async () => {
+  test('sample-data command produces array output and enters output selection mode', async () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
@@ -2916,8 +2916,8 @@ test.describe('Command Chaining @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Type 'lists' command
-    await cmdWindow.fill('input', 'lists');
+    // Type 'sample-data' command
+    await cmdWindow.fill('input', 'sample-data');
 
     // Press down arrow to show results
     await cmdWindow.press('input', 'ArrowDown');
@@ -2931,8 +2931,8 @@ test.describe('Command Chaining @desktop', () => {
     await cmdWindow.press('input', 'Enter');
     await waitForResultsWithContent(cmdWindow);
 
-    // After lists executes, we should be in output selection mode
-    // Results should show the items from the lists output
+    // After sample-data executes, we should be in output selection mode
+    // Results should show the items from the sample-data output
     const hasResults = await cmdWindow.$eval('#results', (el: HTMLElement) => {
       return el.classList.contains('visible') && el.children.length > 0;
     });
@@ -2975,13 +2975,13 @@ test.describe('Command Chaining @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute lists command
-    await cmdWindow.fill('input', 'lists');
+    // Execute sample-data command
+    await cmdWindow.fill('input', 'sample-data');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
 
-    // lists returns application/json array. With downstream commands registered
+    // sample-data returns application/json array. With downstream commands registered
     // (save accepts */*), this enters chain mode directly (not output selection).
     await waitForClass(cmdWindow, '#chain-indicator', 'visible');
 
@@ -3034,8 +3034,8 @@ test.describe('Command Chaining @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute lists command — enters chain mode directly (save accepts */*)
-    await cmdWindow.fill('input', 'lists');
+    // Execute sample-data command — enters chain mode directly (save accepts */*)
+    await cmdWindow.fill('input', 'sample-data');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
@@ -3095,9 +3095,9 @@ test.describe('Command Chaining @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute lists to enter chain mode directly
-    // (lists returns application/json array, and downstream commands like save accept */*)
-    await cmdWindow.fill('input', 'lists');
+    // Execute sample-data to enter chain mode directly
+    // (sample-data returns application/json array, and downstream commands like save accept */*)
+    await cmdWindow.fill('input', 'sample-data');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
@@ -3149,8 +3149,8 @@ test.describe('Command Chaining @desktop', () => {
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute lists command
-    await cmdWindow.fill('input', 'lists');
+    // Execute sample-data command
+    await cmdWindow.fill('input', 'sample-data');
     await cmdWindow.press('input', 'ArrowDown');
     await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
