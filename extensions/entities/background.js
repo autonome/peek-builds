@@ -411,19 +411,18 @@ const extension = {
         extractionCache.delete(msg.url);
         const entities = await extractEntities(msg.url, msg.title || '');
 
-        // Publish extraction results so page entities panels update
-        if (entities && entities.length > 0) {
-          api.publish('entities:extracted', {
-            url: msg.url,
-            entities: entities.map(e => ({
-              id: e.id,
-              name: e.name,
-              type: e.entityType,
-              confidence: e.confidence,
-              isNew: e.isNew
-            }))
-          }, api.scopes.GLOBAL);
-        }
+        // Always publish extraction results so page entities panel updates
+        // (even if empty, so the panel can exit "Rescanning..." state)
+        api.publish('entities:extracted', {
+          url: msg.url,
+          entities: (entities || []).map(e => ({
+            id: e.id,
+            name: e.name,
+            type: e.entityType,
+            confidence: e.confidence,
+            isNew: e.isNew
+          }))
+        }, api.scopes.GLOBAL);
 
         api.publish('entities:extract:response', {
           url: msg.url,

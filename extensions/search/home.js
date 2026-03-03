@@ -14,6 +14,10 @@ import {
   createViewPrefs
 } from 'peek://app/lib/grid-nav.js';
 import {
+  createHeaderSlot, createFooterSlot, createFaviconEl, createUrlSpan,
+  extractTitle, formatUrl, getItemDisplayInfo
+} from 'peek://app/lib/card-helpers.js';
+import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
 

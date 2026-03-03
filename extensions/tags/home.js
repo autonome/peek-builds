@@ -17,7 +17,7 @@ import * as CodeMirror from 'peek://extensions/editor/codemirror.js';
 import { StatusLine } from 'peek://extensions/editor/status-line.js';
 import {
   createHeaderSlot, createFooterSlot, createFaviconEl, createUrlSpan,
-  extractTitle, formatUrl
+  extractTitle, formatUrl, getItemDisplayInfo
 } from 'peek://app/lib/card-helpers.js';
 import {
   createAffordanceElements, createActionRulesCache
@@ -33,27 +33,6 @@ let actionRulesCache = null;
 // View states (following groups pattern)
 const VIEW_LIST = 'list';
 const VIEW_DETAIL = 'detail';
-
-/**
- * Extract the first URL from a text string.
- * @param {string} text - The text to search for URLs
- * @returns {string|null} The first URL found, or null
- */
-const extractUrl = (text) => {
-  if (!text) return null;
-  const trimmed = text.trim();
-  // Check if the entire content is a URL (with protocol)
-  if (/^https?:\/\//i.test(trimmed)) {
-    try { new URL(trimmed); return trimmed; } catch (e) { /* fall through */ }
-  }
-  // Check if it looks like a bare domain (entire content is just a domain)
-  if (/^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/\S*)?$/.test(trimmed)) {
-    try { new URL('https://' + trimmed); return 'https://' + trimmed; } catch (e) { /* not valid */ }
-  }
-  // Don't search for embedded URLs — a text document containing URLs is still
-  // a document, not a link. Only match when the entire content IS a URL.
-  return null;
-};
 
 /**
  * Open a URL in a new page window (same webview mechanism as URL items).
@@ -399,7 +378,7 @@ const setupEventListeners = () => {
         renderCurrentTags(tags);
         renderAvailableTags(tags);
         // Update the detail title display
-        const { title } = getItemDisplayInfo(updatedItem);
+        const { title } = getLocalItemDisplayInfo(updatedItem);
         const titleEl = detailView.querySelector('.detail-title');
         if (titleEl) titleEl.textContent = title;
       } else {
@@ -1096,58 +1075,13 @@ const renderCards = () => {
 };
 
 /**
- * Compute display properties for an item (shared by card and detail view)
+ * Compute display properties for an item (shared by card and detail view).
+ * Delegates to the shared getItemDisplayInfo from card-helpers.js,
+ * passing local state tags for this item.
  */
-const getItemDisplayInfo = (item) => {
+const getLocalItemDisplayInfo = (item) => {
   const tags = state.itemTags.get(item.id) || [];
-  const isAddress = !!item.uri;
-  const itemType = item.type || 'url';
-  const noteUrl = (itemType === 'text') ? extractUrl(item.content) : null;
-
-  let title, subtitle;
-  let faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">?</text></svg>';
-
-  if (isAddress) {
-    title = extractTitle(item, item.uri);
-    subtitle = formatUrl(item.uri);
-    faviconUrl = item.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-  } else {
-    if (itemType === 'url') {
-      title = extractTitle(item, item.content);
-      subtitle = formatUrl(item.content);
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-    } else if (itemType === 'text') {
-      title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
-      // Always show document icon for text items — the item's datastore type
-      // is the primary determinant, not whether content happens to contain URLs
-      subtitle = noteUrl || 'Text';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📝</text></svg>';
-    } else if (itemType === 'tagset') {
-      title = 'Tag Set';
-      subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏷️</text></svg>';
-    } else if (itemType === 'image') {
-      title = item.content || 'Image';
-      subtitle = 'Image';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🖼️</text></svg>';
-    } else if (itemType === 'entity') {
-      title = item.title || item.content || 'Entity';
-      subtitle = 'Entity';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">💎</text></svg>';
-    } else if (itemType === 'feed') {
-      title = item.title || item.content || 'Feed';
-      subtitle = 'Feed';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📡</text></svg>';
-    } else if (itemType === 'series') {
-      title = item.title || item.content || 'Series';
-      subtitle = 'Series';
-      faviconUrl = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📚</text></svg>';
-    }
-  }
-
-  const itemUrl = isAddress ? item.uri : (itemType === 'url') ? item.content : noteUrl;
-
-  return { tags, isAddress, itemType, noteUrl, title, subtitle, faviconUrl, itemUrl };
+  return getItemDisplayInfo(item, { tags });
 };
 
 /**
@@ -1158,7 +1092,7 @@ const createItemCard = (item) => {
   card.interactive = true;
   card.dataset.itemId = item.id;
 
-  const { tags, itemUrl, title, subtitle, faviconUrl } = getItemDisplayInfo(item);
+  const { tags, itemUrl, title, subtitle, faviconUrl } = getLocalItemDisplayInfo(item);
 
   // Header slot: favicon + title + optional open button
   const favicon = createFaviconEl(faviconUrl);
@@ -1448,7 +1382,7 @@ const showDetailView = (item) => {
   state.currentView = VIEW_DETAIL;
   state.editingItem = item;
 
-  const { tags, itemType, itemUrl, title, subtitle, faviconUrl } = getItemDisplayInfo(item);
+  const { tags, itemType, itemUrl, title, subtitle, faviconUrl } = getLocalItemDisplayInfo(item);
 
   // Hide card grid, show detail view
   cardsContainer.style.display = 'none';

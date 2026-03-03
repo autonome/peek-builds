@@ -10,6 +10,18 @@
 
 const GLOBE_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F310}</text></svg>';
 
+// Emoji SVG data URIs for item type icons
+const TYPE_ICONS = {
+  url:     GLOBE_FAVICON,
+  text:    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4DD}</text></svg>',
+  tagset:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F3F7}\uFE0F</text></svg>',
+  image:   'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F5BC}\uFE0F</text></svg>',
+  entity:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F48E}</text></svg>',
+  feed:    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4E1}</text></svg>',
+  series:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4DA}</text></svg>',
+  unknown: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">?</text></svg>'
+};
+
 // ── Header / Footer slot builders ────────────────────────────────────────
 
 /**
@@ -155,6 +167,87 @@ export const withClickDebounce = (card, handler, cooldown = 500) => {
       setTimeout(() => { isOpening = false; }, cooldown);
     }
   });
+};
+
+// ── Item display info ───────────────────────────────────────────────────
+
+/**
+ * Extract the first URL from a text string (only if the entire content IS a URL).
+ * @param {string} text
+ * @returns {string|null}
+ */
+const extractUrl = (text) => {
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    try { new URL(trimmed); return trimmed; } catch (e) { /* fall through */ }
+  }
+  if (/^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/\S*)?$/.test(trimmed)) {
+    try { new URL('https://' + trimmed); return 'https://' + trimmed; } catch (e) { /* not valid */ }
+  }
+  return null;
+};
+
+/**
+ * Compute display properties (title, subtitle, faviconUrl, itemUrl) for any item.
+ *
+ * Centralizes the icon/title logic so all views (tags, search, groups) render
+ * items consistently. Call this instead of duplicating type-switch logic.
+ *
+ * @param {object} item - Item object with at least { id, type, content, title, metadata }
+ * @param {object} [opts]
+ * @param {Array}  [opts.tags]      - Tag objects for this item (used for tagset subtitle)
+ * @param {string} [opts.favicon]   - Explicit favicon URL (e.g. from address record)
+ * @returns {{ title: string, subtitle: string, faviconUrl: string, itemUrl: string|null, itemType: string, isAddress: boolean }}
+ */
+export const getItemDisplayInfo = (item, opts = {}) => {
+  const tags = opts.tags || [];
+  const isAddress = !!item.uri;
+  const itemType = item.type || 'url';
+  const noteUrl = (itemType === 'text') ? extractUrl(item.content) : null;
+
+  let title, subtitle;
+  let faviconUrl = TYPE_ICONS.unknown;
+
+  if (isAddress) {
+    title = extractTitle(item, item.uri);
+    subtitle = formatUrl(item.uri);
+    faviconUrl = item.favicon || opts.favicon || TYPE_ICONS.url;
+  } else {
+    if (itemType === 'url') {
+      title = extractTitle(item, item.content);
+      subtitle = formatUrl(item.content);
+      faviconUrl = item.favicon || opts.favicon || TYPE_ICONS.url;
+    } else if (itemType === 'text') {
+      title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
+      subtitle = noteUrl || 'Text';
+      faviconUrl = TYPE_ICONS.text;
+    } else if (itemType === 'tagset') {
+      title = 'Tag Set';
+      subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';
+      faviconUrl = TYPE_ICONS.tagset;
+    } else if (itemType === 'image') {
+      title = item.content || 'Image';
+      subtitle = 'Image';
+      faviconUrl = TYPE_ICONS.image;
+    } else if (itemType === 'entity') {
+      title = item.title || item.content || 'Entity';
+      subtitle = 'Entity';
+      faviconUrl = TYPE_ICONS.entity;
+    } else if (itemType === 'feed') {
+      title = item.title || item.content || 'Feed';
+      subtitle = 'Feed';
+      faviconUrl = TYPE_ICONS.feed;
+    } else if (itemType === 'series') {
+      title = item.title || item.content || 'Series';
+      subtitle = 'Series';
+      faviconUrl = TYPE_ICONS.series;
+    }
+  }
+
+  const itemUrl = isAddress ? item.uri : (itemType === 'url') ? item.content : noteUrl;
+
+  return { tags, isAddress, itemType, noteUrl, title, subtitle, faviconUrl, itemUrl };
 };
 
 // ── Tag Action Affordances (re-exported for convenience) ──────────────────
