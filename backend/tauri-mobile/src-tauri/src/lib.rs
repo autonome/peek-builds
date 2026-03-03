@@ -1353,7 +1353,7 @@ fn ensure_database_initialized() -> Result<(), String> {
             "
                 CREATE TABLE IF NOT EXISTS items (
                     id TEXT PRIMARY KEY,
-                    type TEXT NOT NULL DEFAULT 'url',
+                    type TEXT NOT NULL DEFAULT 'url' CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
                     url TEXT,
                     content TEXT,
                     metadata TEXT,
@@ -1428,6 +1428,18 @@ fn ensure_database_initialized() -> Result<(), String> {
                     fetched_at TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS item_events (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    itemId TEXT NOT NULL,
+                    content TEXT,
+                    value REAL,
+                    occurredAt INTEGER NOT NULL,
+                    metadata TEXT DEFAULT '{}',
+                    createdAt INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
+                CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
                 ",
         ) {
             return Err(format!("Failed to create tables: {}", e));
@@ -1614,6 +1626,36 @@ fn ensure_database_initialized() -> Result<(), String> {
                 ",
         ) {
             println!("[Rust] Warning: Failed to create offline_content table: {}", e);
+        }
+    }
+
+    // Ensure item_events table exists (for existing installs, needed for sync)
+    let has_item_events_table: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='item_events'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) > 0;
+
+    if !has_item_events_table {
+        println!("[Rust] Creating item_events table for series/feed events...");
+        if let Err(e) = conn.execute_batch(
+            "
+                CREATE TABLE IF NOT EXISTS item_events (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    itemId TEXT NOT NULL,
+                    content TEXT,
+                    value REAL,
+                    occurredAt INTEGER NOT NULL,
+                    metadata TEXT DEFAULT '{}',
+                    createdAt INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
+                CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
+                ",
+        ) {
+            println!("[Rust] Warning: Failed to create item_events table: {}", e);
         }
     }
 
