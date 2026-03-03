@@ -10,6 +10,7 @@
  */
 
 import { getItemDisplayInfo, extractTitle } from 'peek://app/lib/card-helpers.js';
+import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -314,92 +315,28 @@ const renderResults = (grouped, query) => {
 };
 
 /**
- * Create a single result item element
+ * Create a single result item element using the shared search-result-card builder.
+ * Tags are passed as simple { name } objects for display (localsearch pre-fetches them).
  */
 const createResultElement = (item, query, index) => {
-  const el = document.createElement('div');
-  el.className = 'result-item';
-  el.dataset.index = index;
-  el.dataset.type = item.type;
-  el.dataset.id = item.id;
+  // Convert tag name strings to tag-like objects for the shared card builder
+  const tagObjects = (item.tags || []).map(name => ({ name, id: name }));
 
-  // Icon — use shared getItemDisplayInfo for consistent favicon across all views
-  const icon = document.createElement('div');
-  icon.className = 'result-icon';
-  if (item.type === 'tag') {
-    // Tags are not items — use the SVG tag icon
-    icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5V2z"/><circle cx="5.5" cy="5.5" r="1" fill="currentColor"/></svg>';
-  } else {
-    const displayInfo = getItemDisplayInfo(item);
-    const img = document.createElement('img');
-    img.src = displayInfo.faviconUrl;
-    img.style.cssText = 'width:16px;height:16px;border-radius:3px;object-fit:contain;';
-    img.onerror = () => { img.style.display = 'none'; };
-    icon.appendChild(img);
-  }
-  el.appendChild(icon);
-
-  // Content
-  const content = document.createElement('div');
-  content.className = 'result-content';
-
-  // Title
-  const title = document.createElement('div');
-  title.className = 'result-title';
-  title.innerHTML = highlightMatch(item.title || item.content, query);
-  content.appendChild(title);
-
-  // Preview (for URLs show the URL below title, for notes show content preview)
-  if (item.preview && item.preview !== item.title) {
-    const preview = document.createElement('div');
-    preview.className = 'result-preview';
-    preview.innerHTML = highlightMatch(item.preview, query);
-    content.appendChild(preview);
-  }
-
-  // Meta (tags + date)
-  const meta = document.createElement('div');
-  meta.className = 'result-meta';
-
-  // Tags
-  if (item.tags && item.tags.length > 0) {
-    const displayTags = item.tags.slice(0, 3); // Show max 3 tags
-    for (const tagName of displayTags) {
-      const tagEl = document.createElement('span');
-      tagEl.className = 'result-tag';
-      tagEl.textContent = tagName;
-      meta.appendChild(tagEl);
+  const card = createSearchResultCard(item, {
+    className: 'result-item',
+    tags: tagObjects,
+    visitCount: item.visitCount,
+    onClick: async (item) => {
+      state.selectedIndex = index;
+      updateSelection();
+      await activateResult(item);
     }
-    if (item.tags.length > 3) {
-      const more = document.createElement('span');
-      more.className = 'result-tag';
-      more.textContent = `+${item.tags.length - 3}`;
-      meta.appendChild(more);
-    }
-  }
-
-  // Date
-  if (item.updatedAt) {
-    const date = document.createElement('span');
-    date.className = 'result-date';
-    date.textContent = formatDate(item.updatedAt);
-    meta.appendChild(date);
-  }
-
-  if (meta.children.length > 0) {
-    content.appendChild(meta);
-  }
-
-  el.appendChild(content);
-
-  // Click handler
-  el.addEventListener('click', () => {
-    state.selectedIndex = index;
-    updateSelection();
-    activateResult(item);
   });
 
-  return el;
+  card.dataset.index = index;
+  card.dataset.type = item.type;
+
+  return card;
 };
 
 // getTypeIcon removed — now uses shared getItemDisplayInfo from card-helpers.js
@@ -445,7 +382,9 @@ const getResultElements = () => {
 const updateSelection = () => {
   const elements = getResultElements();
   elements.forEach((el, i) => {
-    el.classList.toggle('selected', i === state.selectedIndex);
+    const isSelected = i === state.selectedIndex;
+    el.classList.toggle('selected', isSelected);
+    el.selected = isSelected;
   });
 
   // Scroll selected into view

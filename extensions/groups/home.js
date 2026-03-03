@@ -17,6 +17,7 @@ import {
 import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
+import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -855,120 +856,18 @@ const createGroupCard = (tag, options = {}) => {
 };
 
 /**
- * Create a card element for an address
- * Handles both Address (uri) and Item (content) objects
+ * Create a card element for an address using the shared search-result-card builder.
+ * Handles both Address (uri) and Item (content) objects.
  */
 const createAddressCard = (address) => {
-  const card = document.createElement('peek-card');
-  card.className = 'address-card';
-  card.interactive = true;
-  card.elevated = true;
-  card.dataset.addressId = address.id;
-
-  // Get URL from either uri (Address) or content (Item)
   const addressUrl = address.uri || address.content;
+  const rules = actionRulesCache ? actionRulesCache.getRules() : [];
 
-  // Get title - Items store title in metadata, Addresses have it directly
-  let displayTitle = address.title;
-  if (!displayTitle && address.metadata) {
-    try {
-      const meta = typeof address.metadata === 'string' ? JSON.parse(address.metadata) : address.metadata;
-      displayTitle = meta.title;
-    } catch (e) {
-      // Ignore parse errors
-    }
-  }
-  displayTitle = displayTitle || addressUrl;
-
-  // Header slot: favicon + title (matching group card structure)
-  const header = document.createElement('div');
-  header.slot = 'header';
-  header.style.display = 'flex';
-  header.style.alignItems = 'center';
-  header.style.gap = '8px';
-
-  const favicon = document.createElement('img');
-  favicon.className = 'card-favicon';
-  favicon.src = address.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-  favicon.onerror = () => {
-    favicon.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-  };
-
-  const title = document.createElement('h2');
-  title.className = 'card-title';
-  title.textContent = displayTitle;
-  title.style.margin = '0';
-  title.style.flex = '1';
-  title.style.minWidth = '0';
-
-  header.appendChild(favicon);
-  header.appendChild(title);
-
-  // Show pin indicator if item is pinned in this group
-  if (address._pinned) {
-    const pinBadge = document.createElement('span');
-    pinBadge.className = 'pin-badge';
-    pinBadge.textContent = 'pinned';
-    pinBadge.style.cssText = 'font-size:10px;padding:2px 6px;border-radius:8px;background:rgba(255,180,60,0.3);color:rgba(255,200,100,0.9);flex-shrink:0;';
-    header.appendChild(pinBadge);
-  }
-
-  card.appendChild(header);
-
-  // Footer slot: URL + visit count
-  const footer = document.createElement('div');
-  footer.slot = 'footer';
-  footer.className = 'card-meta';
-  footer.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;';
-
-  // Show URL (unless title already IS the URL)
-  if (addressUrl && displayTitle !== addressUrl) {
-    const urlSpan = document.createElement('span');
-    urlSpan.className = 'card-url';
-    try {
-      const u = new URL(addressUrl);
-      urlSpan.textContent = u.hostname + (u.pathname !== '/' ? u.pathname : '');
-    } catch {
-      urlSpan.textContent = addressUrl;
-    }
-    urlSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;opacity:0.7;';
-    footer.appendChild(urlSpan);
-  }
-
-  // Tag action affordances placeholder — loads item tags async then renders
-  const affordancePlaceholder = document.createElement('span');
-  affordancePlaceholder.className = 'tag-action-affordances-slot';
-  affordancePlaceholder.style.cssText = 'display:inline-flex;align-items:center;flex-shrink:0;';
-  footer.appendChild(affordancePlaceholder);
-
-  const visitCount = address.visitCount || 0;
-  const visitSpan = document.createElement('span');
-  visitSpan.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
-  visitSpan.style.flexShrink = '0';
-  footer.appendChild(visitSpan);
-
-  card.appendChild(footer);
-
-  // Async: load item tags and render affordances if any rules match
-  if (actionRulesCache && actionRulesCache.getRules().length > 0) {
-    api.datastore.getItemTags(address.id).then(tagsResult => {
-      if (!tagsResult.success || !tagsResult.data.length) return;
-      const tagNames = tagsResult.data.map(t => t.name);
-      const el = createAffordanceElements(address.id, tagNames, actionRulesCache.getRules(), api, {
-        onToggle: () => {
-          if (state.currentTag) loadAddressesForTag(state.currentTag.id).then(() => renderAddresses());
-        }
-      });
-      if (el) affordancePlaceholder.appendChild(el);
-    });
-  }
-
-  // Click to open address - backend handles centering and parent tracking
-  let isOpening = false;
-  card.addEventListener('card-click', async () => {
-    if (isOpening) return;
-    isOpening = true;
-    try {
+  const card = createSearchResultCard(address, {
+    className: 'address-card',
+    elevated: true,
+    visitCount: address.visitCount,
+    onClick: async () => {
       debug && console.log('Opening address:', addressUrl);
       const openOptions = {
         role: 'content',
@@ -985,10 +884,46 @@ const createAddressCard = (address) => {
       }
       const result = await api.window.open(addressUrl, openOptions);
       debug && console.log('Window opened:', result);
-    } finally {
-      setTimeout(() => { isOpening = false; }, 500);
     }
   });
+
+  card.dataset.addressId = address.id;
+
+  // Show pin indicator if item is pinned in this group
+  if (address._pinned) {
+    const header = card.querySelector('[slot="header"]');
+    if (header) {
+      const pinBadge = document.createElement('span');
+      pinBadge.className = 'pin-badge';
+      pinBadge.textContent = 'pinned';
+      pinBadge.style.cssText = 'font-size:10px;padding:2px 6px;border-radius:8px;background:rgba(255,180,60,0.3);color:rgba(255,200,100,0.9);flex-shrink:0;';
+      header.appendChild(pinBadge);
+    }
+  }
+
+  // Async: load item tags and render affordances if any rules match
+  if (rules.length > 0) {
+    api.datastore.getItemTags(address.id).then(tagsResult => {
+      if (!tagsResult.success || !tagsResult.data.length) return;
+      const tagNames = tagsResult.data.map(t => t.name);
+      const el = createAffordanceElements(address.id, tagNames, rules, api, {
+        onToggle: () => {
+          if (state.currentTag) loadAddressesForTag(state.currentTag.id).then(() => renderAddresses());
+        }
+      });
+      if (el) {
+        const footer = card.querySelector('[slot="footer"]');
+        if (footer) {
+          const lastChild = footer.lastElementChild;
+          if (lastChild) {
+            footer.insertBefore(el, lastChild);
+          } else {
+            footer.appendChild(el);
+          }
+        }
+      }
+    });
+  }
 
   return card;
 };

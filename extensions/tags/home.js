@@ -22,6 +22,7 @@ import {
 import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
+import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 const { getCM, Vim } = CodeMirror;
 
 const api = window.app;
@@ -1096,88 +1097,37 @@ const getLocalItemDisplayInfo = (item) => {
 };
 
 /**
- * Create a card element for an item using peek-card slots + shared card-helpers.
+ * Create a card element for an item using the shared search-result-card builder.
  */
 const createItemCard = (item) => {
-  const card = document.createElement('peek-card');
-  card.interactive = true;
-  card.dataset.itemId = item.id;
+  const { tags } = getLocalItemDisplayInfo(item);
+  const rules = actionRulesCache ? actionRulesCache.getRules() : [];
 
-  const { tags, itemUrl, title, subtitle, faviconUrl } = getLocalItemDisplayInfo(item);
-
-  // Header slot: favicon + title + optional open button
-  const favicon = createFaviconEl(faviconUrl);
-  const header = createHeaderSlot(favicon, title);
-
-  // Add open button for items with URLs (both url type and notes with URLs)
-  if (itemUrl) {
-    const openBtn = document.createElement('button');
-    openBtn.className = 'card-open-btn';
-    openBtn.title = 'Open page';
-    openBtn.innerHTML =
-      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-      '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>' +
-      '<polyline points="15 3 21 3 21 9"></polyline>' +
-      '<line x1="10" y1="14" x2="21" y2="3"></line>' +
-      '</svg>';
-    openBtn.style.flexShrink = '0';
-    openBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openItemUrl(itemUrl);
-    });
-    header.appendChild(openBtn);
-  }
-
-  card.appendChild(header);
-
-  // Footer slot: URL/subtitle on the left, tag chips on the right
-  const urlEl = createUrlSpan(subtitle);
-
-  const tagsContainer = document.createElement('span');
-  tagsContainer.className = 'card-tags';
-  tagsContainer.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;flex-shrink:0;';
-  tags.forEach(tag => {
-    const chip = document.createElement('span');
-    chip.className = 'card-tag';
-    chip.dataset.tagId = tag.id;
-    chip.textContent = tag.name;
-    tagsContainer.appendChild(chip);
+  const card = createSearchResultCard(item, {
+    tags,
+    showOpenButton: true,
+    onOpen: (url) => openItemUrl(url),
+    onTagClick: (tag) => {
+      const existingIndex = state.activeTags.findIndex(t => t.id === tag.id);
+      if (existingIndex >= 0) {
+        state.activeTags = state.activeTags.filter(t => t.id !== tag.id);
+      } else {
+        state.activeTags = [...state.activeTags, tag];
+      }
+      state.selectedIndex = 0;
+      render();
+    },
+    affordances: rules.length > 0 ? {
+      rules,
+      api,
+      onToggle: () => { loadData().then(() => renderCards()); }
+    } : null,
   });
 
-  // Tag action affordances (icon badges, toggle checkboxes, etc.)
-  const tagNames = tags.map(t => t.name);
-  const affordanceEl = actionRulesCache
-    ? createAffordanceElements(item.id, tagNames, actionRulesCache.getRules(), api, {
-        onToggle: () => { loadData().then(() => renderCards()); }
-      })
-    : null;
-
-  const footerRight = document.createElement('span');
-  footerRight.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
-  if (affordanceEl) footerRight.appendChild(affordanceEl);
-  footerRight.appendChild(tagsContainer);
-
-  card.appendChild(createFooterSlot(urlEl, footerRight));
-
-  // Click on card to open inline detail view
+  // Click on card to open inline detail view (card-click, not raw click for tag chips)
   card.addEventListener('click', (e) => {
-    // If clicking a tag chip, add it to filter (toggle behavior)
-    if (e.target.classList.contains('card-tag')) {
-      const tagId = parseInt(e.target.dataset.tagId, 10);
-      const tag = state.tags.find(t => t.id === tagId);
-      if (tag) {
-        const existingIndex = state.activeTags.findIndex(t => t.id === tagId);
-        if (existingIndex >= 0) {
-          state.activeTags = state.activeTags.filter(t => t.id !== tagId);
-        } else {
-          state.activeTags = [...state.activeTags, tag];
-        }
-        state.selectedIndex = 0;
-        render();
-      }
-      return;
-    }
-
+    // If clicking a tag chip, the onTagClick handler already handles it via stopPropagation
+    if (e.target.classList.contains('card-tag')) return;
     // Show inline detail view
     showDetailView(item);
   });

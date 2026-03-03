@@ -9,6 +9,7 @@
 import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
+import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -457,12 +458,21 @@ const onPageHostClosed = async (closedWindowId) => {
 };
 
 const createVisitCard = (visit, item, index) => {
-  const card = document.createElement('peek-card');
-  card.className = 'visit-card';
-  card.interactive = true;
+  const url = item.content;
+  const domain = item.domain || extractDomain(url);
+
+  const card = createSearchResultCard(item, {
+    className: 'visit-card',
+    favicon: item.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=32`,
+    onClick: async () => {
+      state.selectedIndex = index;
+      updateSelection();
+      openInPageHost(url);
+    }
+  });
+
   card.bordered = false;
   card.dataset.visitId = visit.id;
-  card.dataset.itemId = item.id;
   card.dataset.index = index;
 
   // Inject <style> into shadow DOM — permanent override for opaque bg and no borders
@@ -484,44 +494,15 @@ const createVisitCard = (visit, item, index) => {
     }
   });
 
-  const url = item.content;
-
-  let displayTitle = item.title;
-  if (!displayTitle && item.metadata) {
-    try {
-      const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
-      displayTitle = meta.title;
-    } catch {
-      // Ignore
-    }
-  }
-  displayTitle = displayTitle || extractDomain(url);
-
-  const domain = item.domain || extractDomain(url);
-
-  const header = document.createElement('div');
-  header.slot = 'header';
-  header.className = 'card-header';
-
-  const favicon = document.createElement('img');
-  favicon.className = 'card-favicon';
-  favicon.src = item.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
-  favicon.onerror = () => {
-    favicon.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">.</text></svg>';
-  };
-
-  const title = document.createElement('h2');
-  title.className = 'card-title';
-  title.textContent = displayTitle;
-
-  header.appendChild(favicon);
-  header.appendChild(title);
-  card.appendChild(header);
-
+  // Pagestream-specific: add URL body and time/domain footer
   const body = document.createElement('div');
   body.className = 'card-url';
   body.textContent = url;
   card.appendChild(body);
+
+  // Replace the default footer with pagestream-specific time + domain footer
+  const defaultFooter = card.querySelector('[slot="footer"]');
+  if (defaultFooter) defaultFooter.remove();
 
   const footer = document.createElement('div');
   footer.slot = 'footer';
@@ -539,6 +520,7 @@ const createVisitCard = (visit, item, index) => {
   footer.appendChild(domainBadge);
   card.appendChild(footer);
 
+  // Async: load tags and render tag chips + affordances
   loadItemTags(item.id).then(tags => {
     if (tags.length > 0) {
       const tagsContainer = document.createElement('div');
@@ -568,12 +550,6 @@ const createVisitCard = (visit, item, index) => {
         card.appendChild(el);
       }
     }
-  });
-
-  card.addEventListener('card-click', () => {
-    state.selectedIndex = index;
-    updateSelection();
-    openInPageHost(url);
   });
 
   return card;

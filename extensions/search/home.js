@@ -20,6 +20,7 @@ import {
 import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
+import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -260,62 +261,22 @@ const render = () => {
 
 /**
  * Create a card element for a search result item.
- * Uses shared card-helpers for consistent rendering across all views.
+ * Uses the shared search-result-card builder for consistent rendering.
  */
 const createResultCard = (item) => {
-  const card = document.createElement('peek-card');
-  card.className = 'result-card';
-  card.interactive = true;
-  card.elevated = true;
-  card.dataset.itemId = item.id;
+  const rules = actionRulesCache ? actionRulesCache.getRules() : [];
+  const { itemUrl, itemType } = getItemDisplayInfo(item);
 
-  const { title, subtitle, faviconUrl, itemUrl, itemType } = getItemDisplayInfo(item);
-
-  // Header slot: favicon + title (shared helpers)
-  const favicon = createFaviconEl(faviconUrl);
-  const header = createHeaderSlot(favicon, title);
-  card.appendChild(header);
-
-  // Footer slot: subtitle on left, visit count on right
-  const urlEl = subtitle ? createUrlSpan(subtitle) : null;
-
-  let rightEl = null;
-  const visitCount = item.visitCount || 0;
-  if (visitCount > 0) {
-    rightEl = document.createElement('span');
-    rightEl.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
-    rightEl.style.flexShrink = '0';
-  }
-
-  const footer = createFooterSlot(urlEl, rightEl);
-  card.appendChild(footer);
-
-  // Async: load item tags and render affordances if any rules match
-  if (actionRulesCache && actionRulesCache.getRules().length > 0) {
-    api.datastore.getItemTags(item.id).then(tagsResult => {
-      if (!tagsResult.success || !tagsResult.data.length) return;
-      const tagNames = tagsResult.data.map(t => t.name);
-      const el = createAffordanceElements(item.id, tagNames, actionRulesCache.getRules(), api, {
-        onToggle: () => { render(); }
-      });
-      if (el) {
-        // Insert before the last child (visit count) if it exists
-        const lastChild = footer.lastElementChild;
-        if (lastChild) {
-          footer.insertBefore(el, lastChild);
-        } else {
-          footer.appendChild(el);
-        }
-      }
-    });
-  }
-
-  // Click to open item
-  let isOpening = false;
-  card.addEventListener('card-click', async () => {
-    if (isOpening) return;
-    isOpening = true;
-    try {
+  const card = createSearchResultCard(item, {
+    className: 'result-card',
+    elevated: true,
+    visitCount: item.visitCount,
+    affordances: rules.length > 0 ? {
+      rules,
+      api,
+      onToggle: () => { render(); }
+    } : null,
+    onClick: async (item) => {
       if (itemUrl && isWebUrl(itemUrl)) {
         await api.window.open(itemUrl, {
           role: 'content',
@@ -326,10 +287,30 @@ const createResultCard = (item) => {
       } else if (itemType === 'text') {
         api.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
       }
-    } finally {
-      setTimeout(() => { isOpening = false; }, 500);
     }
   });
+
+  // Async: load item tags and render tag chips + affordances
+  if (rules.length > 0) {
+    api.datastore.getItemTags(item.id).then(tagsResult => {
+      if (!tagsResult.success || !tagsResult.data.length) return;
+      const tagNames = tagsResult.data.map(t => t.name);
+      const el = createAffordanceElements(item.id, tagNames, rules, api, {
+        onToggle: () => { render(); }
+      });
+      if (el) {
+        const footer = card.querySelector('[slot="footer"]');
+        if (footer) {
+          const lastChild = footer.lastElementChild;
+          if (lastChild) {
+            footer.insertBefore(el, lastChild);
+          } else {
+            footer.appendChild(el);
+          }
+        }
+      }
+    });
+  }
 
   return card;
 };
