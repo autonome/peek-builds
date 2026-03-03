@@ -107,11 +107,19 @@ const initShortcut = (shortcut) => {
 };
 
 const initCommands = () => {
+  // Register command handler so lazy-loading stub's re-publish of
+  // cmd:execute:pagestream is caught (not just noun:browse:pagestream)
+  api.commands.register({
+    name: 'pagestream',
+    description: 'Browsing history stream',
+    execute: () => openPagestreamWindow()
+  });
+
   registerNoun({
     name: 'pagestream',
     singular: 'pagestream',
     description: 'Browsing history stream',
-    skipBare: false,
+    skipBare: true,
     browse: async () => { openPagestreamWindow(); },
   });
 };

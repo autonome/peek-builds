@@ -609,6 +609,17 @@ const handleKeydown = (e) => {
       e.preventDefault();
       activateSelected();
       break;
+    case 'x':
+      if (isSearchFocused) return;
+      e.preventDefault();
+      {
+        const selected = cards[state.selectedIndex];
+        if (selected) {
+          const toggleBtn = selected.querySelector('.tag-action-toggle');
+          if (toggleBtn) toggleBtn.click();
+        }
+      }
+      break;
     case 'Escape':
       if (isSearchFocused) {
         searchInput.blur();

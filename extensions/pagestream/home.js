@@ -646,6 +646,16 @@ const handleKeydown = (e) => {
       e.preventDefault();
       moveSelection('last');
       break;
+    case 'x':
+      e.preventDefault();
+      {
+        const selected = cards[state.selectedIndex];
+        if (selected) {
+          const toggleBtn = selected.querySelector('.tag-action-toggle');
+          if (toggleBtn) toggleBtn.click();
+        }
+      }
+      break;
   }
 };
 

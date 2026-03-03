@@ -42,6 +42,27 @@ export const activateSelected = (state) => {
 };
 
 /**
+ * Toggle the checkbox (tag-action-toggle) on the currently selected card.
+ * Finds the first .tag-action-toggle button on the card and clicks it,
+ * reusing the existing affordance toggle logic.
+ *
+ * @param {object} state - must have `selectedIndex` property
+ * @returns {boolean} true if a toggle was found and clicked
+ */
+export const toggleSelectedCheckbox = (state) => {
+  const cards = getCards();
+  const selected = cards[state.selectedIndex];
+  if (!selected) return false;
+
+  const toggleBtn = selected.querySelector('.tag-action-toggle');
+  if (toggleBtn) {
+    toggleBtn.click();
+    return true;
+  }
+  return false;
+};
+
+/**
  * Get number of columns in the grid based on card positions
  */
 export const getGridColumns = (cards) => {
@@ -126,6 +147,11 @@ export const createKeydownHandler = (state, callbacks = {}) => {
         } else {
           activateSelected(state);
         }
+        break;
+      case 'x':
+        if (inputFocused) return;
+        e.preventDefault();
+        toggleSelectedCheckbox(state);
         break;
       case 'Escape':
         if (callbacks.onEscape) {
