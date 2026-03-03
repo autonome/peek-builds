@@ -3843,7 +3843,7 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     await hostWindow!.waitForSelector('#extensions', { timeout: 15000, state: 'attached' });
 
     // Wait for at least 4 eager iframes to load (cmd, groups, hud, websearch)
-    // Lazy extensions (editor, localsearch, windows, pagestream) load on first use
+    // Lazy extensions (editor, lists, windows, pagestream) load on first use
     await hostWindow!.waitForFunction(
       () => {
         const container = document.getElementById('extensions');
@@ -3865,7 +3865,7 @@ test.describe('Hybrid Extension Mode @desktop', () => {
 
     // Eager extensions: cmd (EAGER_EXTENSION_IDS), hud (EAGER_EXTENSION_IDS),
     // plus extensions without manifest commands (peeks, slides, page, files, etc.)
-    // Lazy extensions with manifest commands (editor, groups, localsearch, pagestream,
+    // Lazy extensions with manifest commands (editor, groups, lists, pagestream,
     // websearch, windows) load on first use
     expect(iframeData.count).toBeGreaterThanOrEqual(4);
     expect(iframeData.srcs.some(s => s.includes('peek://cmd/'))).toBe(true);

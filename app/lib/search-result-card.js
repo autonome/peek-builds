@@ -2,7 +2,7 @@
  * Shared search-result card builder for peek-card elements.
  *
  * Single source of truth for item card rendering across all extensions
- * (tags, search, localsearch, pagestream, groups). Each extension keeps
+ * (tags, search, lists, pagestream, groups). Each extension keeps
  * its own data fetching, filtering, and layout — only the card DOM
  * creation is shared here.
  *

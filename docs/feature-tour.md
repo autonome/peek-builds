@@ -358,7 +358,7 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 
 **How to try it:**
 1. Press `Option+F` (global) to open the local search window.
-2. Or type `localsearch` in the command palette.
+2. Or type `lists` in the command palette.
 3. Type a query to search across all stored items.
 
 ---
@@ -779,7 +779,7 @@ All commands accessible from `Option+Space` or `Cmd+K`:
 | `bing <query>` | Search Bing |
 | `wiki <query>` | Search Wikipedia |
 | `kagi <query>` | Search Kagi |
-| `localsearch` | Open local search window |
+| `lists` | Open lists window |
 | `feeds` | Browse subscribed feeds |
 | `new feed <url>` | Subscribe to an RSS/Atom feed |
 | `refresh feeds` | Poll all feeds for updates |

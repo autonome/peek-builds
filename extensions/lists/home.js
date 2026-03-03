@@ -1,5 +1,5 @@
 /**
- * Search - Unified search across items, history, tags, and groups
+ * Lists - Unified search across items, history, tags, and groups
  *
  * Searches across:
  * - Items (URLs, notes, tagsets)
@@ -316,7 +316,7 @@ const renderResults = (grouped, query) => {
 
 /**
  * Create a single result item element using the shared search-result-card builder.
- * Tags are passed as simple { name } objects for display (localsearch pre-fetches them).
+ * Tags are passed as simple { name } objects for display (lists pre-fetches them).
  */
 const createResultElement = (item, query, index) => {
   // Convert tag name strings to tag-like objects for the shared card builder
@@ -345,7 +345,7 @@ const createResultElement = (item, query, index) => {
  * Activate (open) a result
  */
 const activateResult = async (item) => {
-  debug && console.log('[search] Activating result:', item.type, item.id);
+  debug && console.log('[lists] Activating result:', item.type, item.id);
 
   if (item.type === 'url') {
     // Open URL in content window
@@ -370,7 +370,7 @@ const activateResult = async (item) => {
 // ===== Keyboard navigation =====
 
 /**
- * Get all result item elements
+ * Get all result item elements (now peek-card elements with .result-item class)
  */
 const getResultElements = () => {
   return Array.from(document.querySelectorAll('.result-item'));
@@ -461,7 +461,7 @@ const handleKeydown = (e) => {
 // ===== Initialization =====
 
 const init = async () => {
-  debug && console.log('[search] init');
+  debug && console.log('[lists] init');
 
   // Register escape handler
   api.escape.onEscape(handleEscape);

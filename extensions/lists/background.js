@@ -1,5 +1,5 @@
 /**
- * Local Search Extension Background Script
+ * Lists Extension Background Script
  *
  * Search across local items, tags, and history.
  *
@@ -8,7 +8,7 @@
  * The shortcut key is configurable — manifest provides the default (Option+F),
  * and if the user customizes it, the extension registers the custom key on load.
  *
- * Runs in isolated extension process (peek://ext/localsearch/background.html)
+ * Runs in isolated extension process (peek://ext/lists/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
 
@@ -17,8 +17,8 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 const api = window.app;
 const debug = api.debug;
 
-// Extension content is served from peek://ext/localsearch/
-const address = 'peek://ext/localsearch/home.html';
+// Extension content is served from peek://ext/lists/
+const address = 'peek://ext/lists/home.html';
 
 // In-memory settings cache (loaded from datastore on init)
 let currentSettings = {
@@ -49,7 +49,7 @@ const loadSettings = async () => {
 const saveSettings = async (settings) => {
   const result = await api.settings.set(settings);
   if (!result.success) {
-    console.error('[ext:localsearch] Failed to save settings:', result.error);
+    console.error('[ext:lists] Failed to save settings:', result.error);
   }
 };
 
@@ -69,7 +69,7 @@ const openSearchWindow = async () => {
 
     await api.window.open(address, params);
   } catch (error) {
-    console.error('[ext:localsearch] Failed to open search window:', error);
+    console.error('[ext:lists] Failed to open search window:', error);
   } finally {
     isOpeningSearch = false;
   }
@@ -98,7 +98,7 @@ const init = async () => {
   // Register command handler — manifest declares the command,
   // lazy stub registers metadata, this sets up the execute handler
   api.commands.register({
-    name: 'localsearch',
+    name: 'lists',
     description: 'Search local items, tags, and history',
     execute: async () => { openSearchWindow(); }
   });
@@ -107,16 +107,16 @@ const init = async () => {
   initShortcut(currentSettings.prefs.shortcutKey);
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
-  api.subscribe('localsearch:settings-changed', async () => {
-    debug && console.log('[ext:localsearch] settings changed, reinitializing');
+  api.subscribe('lists:settings-changed', async () => {
+    debug && console.log('[ext:lists] settings changed, reinitializing');
     uninitShortcut();
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
   }, api.scopes.GLOBAL);
 
   // Listen for settings updates from Settings UI
-  api.subscribe('localsearch:settings-update', async (msg) => {
-    debug && console.log('[ext:localsearch] settings-update received:', msg);
+  api.subscribe('lists:settings-update', async (msg) => {
+    debug && console.log('[ext:lists] settings-update received:', msg);
 
     try {
       if (msg.data) {
@@ -135,9 +135,9 @@ const init = async () => {
       uninitShortcut();
       initShortcut(currentSettings.prefs.shortcutKey);
 
-      api.publish('localsearch:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.publish('lists:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
-      console.error('[ext:localsearch] settings-update error:', err);
+      console.error('[ext:lists] settings-update error:', err);
     }
   }, api.scopes.GLOBAL);
 };

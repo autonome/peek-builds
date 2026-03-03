@@ -369,7 +369,7 @@ const extension = {
     // Register commands (cmd loads first with its subscribers ready via 100ms head start)
     this.registerCommands();
 
-    // Register global shortcut (Option+Shift+F to avoid conflict with localsearch's Option+F)
+    // Register global shortcut (Option+Shift+F to avoid conflict with lists' Option+F)
     api.shortcuts.register('Option+Shift+F', openFeedsUI, { global: true });
 
     // Start polling timer

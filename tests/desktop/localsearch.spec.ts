@@ -1,7 +1,7 @@
 /**
- * Local Search Extension Tests
+ * Lists Extension Tests
  *
- * Tests the local search extension for finding content across items, tags, and history.
+ * Tests the lists extension for finding content across items, tags, and history.
  *
  * Test philosophy: deterministic -- no timeouts as assertions.
  * Uses polling via evaluate()/waitForFunction instead of sleep + snapshot.
@@ -23,26 +23,26 @@ test.beforeAll(async () => {
 
 // Note: Do NOT call closeSharedApp() - tests share the app instance
 
-test.describe('Local Search Extension @desktop', () => {
-  test('localsearch command is available via lazy stub', async () => {
-    // Localsearch is lazy-loaded — the manifest command is registered by the lazy stub
+test.describe('Lists Extension @desktop', () => {
+  test('lists command is available via lazy stub', async () => {
+    // Lists is lazy-loaded — the manifest command is registered by the lazy stub
     // before the extension itself loads
-    await waitForCommand(sharedBgWindow, 'localsearch', 10000);
+    await waitForCommand(sharedBgWindow, 'lists', 10000);
   });
 
-  test('localsearch command is registered', async () => {
-    // Wait for the localsearch command to be registered
-    await waitForCommand(sharedBgWindow, 'localsearch', 10000);
+  test('lists command is registered', async () => {
+    // Wait for the lists command to be registered
+    await waitForCommand(sharedBgWindow, 'lists', 10000);
   });
 
-  test('localsearch window opens via command', async () => {
-    // Execute the localsearch command
+  test('lists window opens via command', async () => {
+    // Execute the lists command
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:localsearch', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
     });
 
     // Wait for search window to appear
-    const searchWindow = await sharedApp.getWindow('ext/localsearch/home.html', 5000);
+    const searchWindow = await sharedApp.getWindow('ext/lists/home.html', 5000);
     expect(searchWindow).toBeTruthy();
 
     // Verify basic DOM structure
@@ -57,13 +57,13 @@ test.describe('Local Search Extension @desktop', () => {
     expect(emptyState).toBeTruthy();
   });
 
-  test('localsearch input renders and is auto-focused', async () => {
-    // Open localsearch window
+  test('lists input renders and is auto-focused', async () => {
+    // Open lists window
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:localsearch', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
     });
 
-    const searchWindow = await sharedApp.getWindow('ext/localsearch/home.html', 5000);
+    const searchWindow = await sharedApp.getWindow('ext/lists/home.html', 5000);
     await searchWindow.waitForSelector('#search-input', { timeout: 5000 });
 
     // Verify search input has the expected placeholder
@@ -88,10 +88,10 @@ test.describe('Local Search Extension @desktop', () => {
 
     // Open search window
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:localsearch', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
     });
 
-    const searchWindow = await sharedApp.getWindow('ext/localsearch/home.html', 5000);
+    const searchWindow = await sharedApp.getWindow('ext/lists/home.html', 5000);
     await searchWindow.waitForSelector('#search-input', { timeout: 5000 });
 
     // Type a search query that should match our seeded data
@@ -122,10 +122,10 @@ test.describe('Local Search Extension @desktop', () => {
   test('search results are grouped by type', async () => {
     // Open search window
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:localsearch', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
     });
 
-    const searchWindow = await sharedApp.getWindow('ext/localsearch/home.html', 5000);
+    const searchWindow = await sharedApp.getWindow('ext/lists/home.html', 5000);
     await searchWindow.waitForSelector('#search-input', { timeout: 5000 });
 
     // Type a search query
@@ -155,10 +155,10 @@ test.describe('Local Search Extension @desktop', () => {
   test('empty search shows empty state', async () => {
     // Open search window
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:localsearch', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
     });
 
-    const searchWindow = await sharedApp.getWindow('ext/localsearch/home.html', 5000);
+    const searchWindow = await sharedApp.getWindow('ext/lists/home.html', 5000);
     await searchWindow.waitForSelector('#search-input', { timeout: 5000 });
 
     // Clear any previous search (window may be reused from earlier tests)
