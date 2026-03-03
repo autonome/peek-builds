@@ -151,6 +151,18 @@ export function inputMatchesShortcut(input: InputEvent, parsed: ParsedShortcut):
 }
 
 /**
+ * Translate macOS-style "Option" modifier to "Alt" on non-darwin platforms.
+ * Extension manifests use "Option+X" (macOS convention), but Electron's
+ * globalShortcut API requires "Alt" on Linux/Windows.
+ */
+function platformShortcut(shortcut: string): string {
+  if (process.platform !== 'darwin') {
+    return shortcut.replace(/\bOption\b/gi, 'Alt');
+  }
+  return shortcut;
+}
+
+/**
  * Register a global shortcut (works even when app doesn't have focus)
  */
 export function registerGlobalShortcut(
@@ -160,18 +172,20 @@ export function registerGlobalShortcut(
 ): Error | undefined {
   DEBUG && console.log('registerGlobalShortcut', shortcut);
 
+  const accelerator = platformShortcut(shortcut);
+
   // globalShortcut not available in test mode
   if (!globalShortcut) {
     globalShortcuts.set(shortcut, source);
     return undefined;
   }
 
-  if (globalShortcut.isRegistered(shortcut)) {
+  if (globalShortcut.isRegistered(accelerator)) {
     console.error('Shortcut already registered, unregistering first:', shortcut);
-    globalShortcut.unregister(shortcut);
+    globalShortcut.unregister(accelerator);
   }
 
-  const ret = globalShortcut.register(shortcut, () => {
+  const ret = globalShortcut.register(accelerator, () => {
     DEBUG && console.log('shortcut executed', shortcut);
     callback();
   });
@@ -205,8 +219,9 @@ export function unregisterGlobalShortcut(shortcut: string): Error | undefined {
     return undefined;
   }
 
-  if (globalShortcut.isRegistered(shortcut)) {
-    globalShortcut.unregister(shortcut);
+  const accelerator = platformShortcut(shortcut);
+  if (globalShortcut.isRegistered(accelerator)) {
+    globalShortcut.unregister(accelerator);
   }
 
   globalShortcuts.delete(shortcut);
@@ -371,5 +386,5 @@ export function isGlobalShortcutRegistered(shortcut: string): boolean {
   if (!globalShortcut) {
     return globalShortcuts.has(shortcut);
   }
-  return globalShortcut.isRegistered(shortcut);
+  return globalShortcut.isRegistered(platformShortcut(shortcut));
 }
