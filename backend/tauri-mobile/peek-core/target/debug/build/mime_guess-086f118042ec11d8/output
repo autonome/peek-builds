@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/mime_guess-086f118042ec11d8/out/mime_types_generated.rs

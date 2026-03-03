@@ -1,0 +1,12 @@
+/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/mime_guess-36e4078630a36532.d: /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/lib.rs /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/impl_bin_search.rs /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/mime_types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/mime_guess-086f118042ec11d8/out/mime_types_generated.rs
+
+/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/libmime_guess-36e4078630a36532.rlib: /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/lib.rs /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/impl_bin_search.rs /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/mime_types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/mime_guess-086f118042ec11d8/out/mime_types_generated.rs
+
+/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/libmime_guess-36e4078630a36532.rmeta: /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/lib.rs /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/impl_bin_search.rs /Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/mime_types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/mime_guess-086f118042ec11d8/out/mime_types_generated.rs
+
+/Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/lib.rs:
+/Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/impl_bin_search.rs:
+/Users/dietrich/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/mime_types.rs:
+/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/mime_guess-086f118042ec11d8/out/mime_types_generated.rs:
+
+# env-dep:MIME_TYPES_GENERATED_PATH=/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/mime_guess-086f118042ec11d8/out/mime_types_generated.rs

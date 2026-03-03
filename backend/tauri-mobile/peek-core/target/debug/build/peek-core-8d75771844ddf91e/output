@@ -1,0 +1,2 @@
+cargo:rerun-if-changed=src/peek_core.udl
+cargo:rerun-if-env-changed=UNIFFI_TESTS_DISABLE_EXTENSIONS

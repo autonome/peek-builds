@@ -32,6 +32,7 @@ url = "2"
 regex = "1"
 base64 = "0.22"
 readability-rust = "0.1"
+peek-core = { path = "../peek-core" }
 
 [features]
 # custom-protocol: use bundled assets instead of dev server (for release builds)
