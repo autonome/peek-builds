@@ -14,8 +14,10 @@
 
 pub mod helpers;
 pub mod items;
+pub mod offline;
 pub mod profiles;
 pub mod schema;
+pub mod sync;
 pub mod tags;
 pub mod types;
 
@@ -30,6 +32,7 @@ pub use profiles::{
     get_db_path_for_profile, get_profiles_config_path,
     load_profile_config, save_profile_config,
 };
+pub use sync::PushItem;
 pub use tags::TagChanges;
 pub use types::*;
 
@@ -201,6 +204,81 @@ impl PeekStore {
     pub fn get_tags_by_frecency_for_url(&self, url: &str) -> Result<Vec<TagStats>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
         tags::get_tags_by_frecency_for_url(&conn, url)
+    }
+
+    // ========================================================================
+    // Sync
+    // ========================================================================
+
+    /// Get the last sync timestamp.
+    pub fn get_last_sync(&self) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_last_sync(&conn)
+    }
+
+    /// Set the last sync timestamp.
+    pub fn set_last_sync(&self, timestamp: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::set_last_sync(&conn, timestamp)
+    }
+
+    /// Count items that need to be pushed to the server.
+    pub fn get_pending_sync_count(&self) -> Result<usize, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_pending_sync_count(&conn)
+    }
+
+    /// Get items that need to be pushed to the server.
+    pub fn get_items_to_push(&self) -> Result<Vec<PushItem>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_items_to_push(&conn)
+    }
+
+    /// Get tags for a specific item.
+    pub fn get_item_tags(&self, item_id: &str) -> Result<Vec<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_item_tags(&conn, item_id)
+    }
+
+    /// Mark an item as synced after successful push.
+    pub fn mark_item_synced(&self, item_id: &str, sync_id: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::mark_item_synced(&conn, item_id, sync_id)
+    }
+
+    /// Merge a server item into the local database.
+    /// Returns "pulled", "conflict", or "skipped".
+    pub fn merge_server_item(&self, server_item: &ServerItem) -> Result<&'static str, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::merge_server_item(&conn, server_item)
+    }
+
+    // ========================================================================
+    // Offline content index
+    // ========================================================================
+
+    /// Get total size of offline content storage in bytes.
+    pub fn get_offline_storage_size(&self) -> Result<u64, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        offline::get_offline_storage_size(&conn)
+    }
+
+    /// Record that offline content was stored for an item.
+    pub fn index_offline_content(&self, item_id: &str, size_bytes: i64) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        offline::index_offline_content(&conn, item_id, size_bytes)
+    }
+
+    /// Remove offline content index entry for an item.
+    pub fn remove_offline_content_index(&self, item_id: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        offline::remove_offline_content_index(&conn, item_id)
+    }
+
+    /// Get the URL for an item (used by reader content and offline features).
+    pub fn get_item_url(&self, item_id: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        offline::get_item_url(&conn, item_id)
     }
 }
 

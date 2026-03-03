@@ -1,5 +1,5 @@
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "ios")]
 use std::ffi::CStr;
@@ -8,22 +8,33 @@ use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::fs;
 use std::sync::RwLock;
-use once_cell::sync::OnceCell;
 use reqwest;
 use regex::Regex;
 use tauri::Manager;
 
-use peek_core::{PeekStore, SavedUrl, SavedText, SavedTagset, SavedImage, TagStats};
+use peek_core::{PeekStore, SavedUrl, SavedText, SavedTagset, SavedImage, TagStats, ServerItemsResponse, ServerCreateResponse, SyncStatus};
 
-/// Global PeekStore instance. Initialized lazily on first use.
-static STORE: OnceCell<PeekStore> = OnceCell::new();
+/// Global PeekStore instance. Uses RwLock to support re-init on profile switch.
+static STORE: RwLock<Option<std::sync::Arc<PeekStore>>> = RwLock::new(None);
 
 /// Get the global PeekStore, initializing it if needed.
-fn get_store() -> Result<&'static PeekStore, String> {
-    STORE.get_or_try_init(|| {
-        let db_path = get_db_path().ok_or("Failed to get database path")?;
-        PeekStore::new(db_path.to_str().ok_or("Invalid database path")?)
-    })
+fn get_store() -> Result<std::sync::Arc<PeekStore>, String> {
+    // Fast path: already initialized
+    {
+        let read = STORE.read().map_err(|e| format!("Lock error: {}", e))?;
+        if let Some(ref store) = *read {
+            return Ok(store.clone());
+        }
+    }
+    // Slow path: initialize
+    let mut write = STORE.write().map_err(|e| format!("Lock error: {}", e))?;
+    if let Some(ref store) = *write {
+        return Ok(store.clone());
+    }
+    let db_path = get_db_path().ok_or("Failed to get database path")?;
+    let store = std::sync::Arc::new(PeekStore::new(db_path.to_str().ok_or("Invalid database path")?)?);
+    *write = Some(store.clone());
+    Ok(store)
 }
 
 // Simple logging - println! works in debug builds and Xcode console
@@ -115,118 +126,10 @@ fn track_navigation_inner(url: &str, _source_item_id: &str) -> Result<String, St
     store.track_navigation(url)
 }
 
-// Sync version constants — must match backend/version.ts and backend/server/version.js
-// Bump DATASTORE_VERSION when schema changes break sync.
-// Bump PROTOCOL_VERSION when request/response shape changes.
-// Exact match required — server returns 409 on mismatch.
-const DATASTORE_VERSION: u32 = 1;
-const PROTOCOL_VERSION: u32 = 1;
-
-// Types SavedUrl, SavedText, SavedTagset, SavedImage, TagStats imported from peek_core
-
-// Webhook payload with all item types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WebhookPayload {
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    urls: Vec<SavedUrl>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    texts: Vec<SavedText>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    tagsets: Vec<SavedTagset>,
-}
-
-// Old webhook sync result (kept for backward compatibility)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SyncResult {
-    success: bool,
-    synced_count: usize,
-    message: String,
-}
-
-// New bidirectional sync result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BidirectionalSyncResult {
-    success: bool,
-    pulled: usize,
-    pushed: usize,
-    conflicts: usize,
-    message: String,
-}
-
-/// Deserialize a timestamp that may be an integer (Unix ms) or ISO 8601 string.
-/// Handles both the new server format (integer) and legacy format (string).
-fn deserialize_flexible_timestamp<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    match &value {
-        serde_json::Value::Number(n) => n
-            .as_i64()
-            .ok_or_else(|| serde::de::Error::custom("timestamp number out of i64 range")),
-        serde_json::Value::String(s) => chrono::DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.timestamp_millis())
-            .map_err(|_| serde::de::Error::custom("invalid ISO 8601 timestamp")),
-        _ => Err(serde::de::Error::custom("expected number or string for timestamp")),
-    }
-}
-
-/// Like deserialize_flexible_timestamp, but also handles absent/null fields (defaults to 0).
-fn deserialize_optional_flexible_timestamp<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    match &value {
-        serde_json::Value::Null => Ok(0),
-        serde_json::Value::Number(n) => n
-            .as_i64()
-            .ok_or_else(|| serde::de::Error::custom("timestamp number out of i64 range")),
-        serde_json::Value::String(s) => chrono::DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.timestamp_millis())
-            .map_err(|_| serde::de::Error::custom("invalid ISO 8601 timestamp")),
-        _ => Err(serde::de::Error::custom("expected number, string, or null for timestamp")),
-    }
-}
-
-// Server item format (from GET /items)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ServerItem {
-    id: String,
-    #[serde(rename = "type")]
-    item_type: String,
-    content: Option<String>,
-    tags: Vec<String>,
-    metadata: Option<serde_json::Value>,
-    #[serde(deserialize_with = "deserialize_flexible_timestamp")]
-    created_at: i64,
-    #[serde(deserialize_with = "deserialize_flexible_timestamp")]
-    updated_at: i64,
-    #[serde(default, deserialize_with = "deserialize_optional_flexible_timestamp")]
-    deleted_at: i64,
-}
-
-// Server response for GET /items
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ServerItemsResponse {
-    items: Vec<ServerItem>,
-}
-
-// Server response for POST /items
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ServerCreateResponse {
-    id: String,
-    created: bool,
-}
-
-// Sync status for UI display
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SyncStatus {
-    configured: bool,
-    last_sync_time: Option<String>,
-    pending_count: usize,
-}
+// Types imported from peek_core: SavedUrl, SavedText, SavedTagset, SavedImage, TagStats,
+// ServerItem, ServerItemsResponse, ServerCreateResponse, SyncStatus, PushItem,
+// DATASTORE_VERSION, PROTOCOL_VERSION, WebhookPayload, SyncResult, BidirectionalSyncResult
+use peek_core::{WebhookPayload, SyncResult, BidirectionalSyncResult, DATASTORE_VERSION, PROTOCOL_VERSION};
 
 // App Group bridge - just need the container path now
 #[cfg(target_os = "ios")]
@@ -1188,784 +1091,7 @@ fn get_db_path() -> Option<PathBuf> {
     Some(new_db_path)
 }
 
-static DB_INITIALIZED: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
-static DEVICE_ID: OnceCell<String> = OnceCell::new();
-
-/// Schema version for tracking compatibility between Rust main app and Swift Share Extension.
-/// Increment this when making schema changes that both codepaths must understand.
-/// Both Rust and Swift code should use the same version number.
-const SCHEMA_VERSION: &str = "2";
-
-fn ensure_database_initialized() -> Result<(), String> {
-    let mut initialized = DB_INITIALIZED.lock()
-        .map_err(|e| format!("Failed to lock DB_INITIALIZED: {}", e))?;
-    if *initialized {
-        return Ok(());
-    }
-
-    let db_path = get_db_path()
-        .ok_or_else(|| "Failed to get database path".to_string())?;
-
-    println!("[Rust] Initializing database at: {:?}", db_path);
-
-    let conn = Connection::open(&db_path)
-        .map_err(|e| format!("Failed to open database: {}", e))?;
-
-    // Enable WAL mode for concurrent access from main app and share extension
-    if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
-        return Err(format!("Failed to set WAL mode: {}", e));
-    }
-
-    // Check if we need to migrate from old schema (urls table) to new schema (items table)
-    let has_urls_table: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='urls'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    let has_items_table: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='items'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if has_urls_table && !has_items_table {
-        // Migration needed: urls -> items
-        println!("[Rust] Migrating database from urls to items schema...");
-        if let Err(e) = conn.execute_batch(
-            "
-                -- Create new items table
-                CREATE TABLE items (
-                    id TEXT PRIMARY KEY,
-                    type TEXT NOT NULL DEFAULT 'url',
-                    url TEXT,
-                    content TEXT,
-                    metadata TEXT,
-                    sync_id TEXT DEFAULT '',
-                    sync_source TEXT DEFAULT '',
-                    synced_at TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    deleted_at TEXT
-                );
-
-                -- Migrate data from urls to items
-                INSERT INTO items (id, type, url, created_at, updated_at, deleted_at)
-                    SELECT id, 'url', url, created_at, updated_at, deleted_at FROM urls;
-
-                -- Create new item_tags table
-                CREATE TABLE item_tags (
-                    item_id TEXT NOT NULL,
-                    tag_id INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
-                    PRIMARY KEY (item_id, tag_id),
-                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-                );
-
-                -- Migrate data from url_tags to item_tags
-                INSERT INTO item_tags (item_id, tag_id, created_at)
-                    SELECT url_id, tag_id, created_at FROM url_tags;
-
-                -- Drop old tables
-                DROP TABLE url_tags;
-                DROP TABLE urls;
-
-                -- Create indexes for new tables
-                CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
-                CREATE INDEX IF NOT EXISTS idx_items_url ON items(url);
-                CREATE INDEX IF NOT EXISTS idx_items_deleted ON items(deleted_at);
-                CREATE INDEX IF NOT EXISTS idx_items_sync_id ON items(sync_id);
-                ",
-        ) {
-            return Err(format!("Failed to migrate database: {}", e));
-        }
-        println!("[Rust] Database migration completed successfully");
-    } else if !has_items_table {
-        // Fresh install: create new schema
-        if let Err(e) = conn.execute_batch(
-            "
-                CREATE TABLE IF NOT EXISTS items (
-                    id TEXT PRIMARY KEY,
-                    type TEXT NOT NULL DEFAULT 'url' CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
-                    url TEXT,
-                    content TEXT,
-                    metadata TEXT,
-                    sync_id TEXT DEFAULT '',
-                    sync_source TEXT DEFAULT '',
-                    synced_at TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    deleted_at TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS tags (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL UNIQUE,
-                    frequency INTEGER NOT NULL DEFAULT 0,
-                    lastUsed TEXT NOT NULL,
-                    frecencyScore REAL NOT NULL DEFAULT 0.0,
-                    createdAt TEXT NOT NULL,
-                    updatedAt TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS item_tags (
-                    item_id TEXT NOT NULL,
-                    tag_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    PRIMARY KEY (item_id, tag_id),
-                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS blobs (
-                    id TEXT PRIMARY KEY,
-                    item_id TEXT NOT NULL,
-                    data BLOB NOT NULL,
-                    mime_type TEXT NOT NULL,
-                    size_bytes INTEGER NOT NULL,
-                    width INTEGER,
-                    height INTEGER,
-                    thumbnail BLOB,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS item_visits (
-                    id TEXT PRIMARY KEY,
-                    item_id TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL,
-                    duration INTEGER DEFAULT 0,
-                    source TEXT DEFAULT 'direct',
-                    window_type TEXT DEFAULT 'main',
-                    metadata TEXT DEFAULT '{}',
-                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
-                CREATE INDEX IF NOT EXISTS idx_items_url ON items(url);
-                CREATE INDEX IF NOT EXISTS idx_items_deleted ON items(deleted_at);
-                CREATE INDEX IF NOT EXISTS idx_items_sync_id ON items(sync_id);
-                CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-                CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
-                CREATE INDEX IF NOT EXISTS idx_blobs_item ON blobs(item_id);
-                CREATE INDEX IF NOT EXISTS idx_item_visits_item ON item_visits(item_id);
-                CREATE INDEX IF NOT EXISTS idx_item_visits_timestamp ON item_visits(timestamp);
-
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS offline_content (
-                    item_id TEXT PRIMARY KEY,
-                    fetched_at TEXT NOT NULL,
-                    size_bytes INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS item_events (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    itemId TEXT NOT NULL,
-                    content TEXT,
-                    value REAL,
-                    occurredAt INTEGER NOT NULL,
-                    metadata TEXT DEFAULT '{}',
-                    createdAt INTEGER NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
-                CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
-                ",
-        ) {
-            return Err(format!("Failed to create tables: {}", e));
-        }
-    }
-
-    // Add metadata column if it doesn't exist (for existing installs)
-    let has_metadata_column: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='metadata'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if !has_metadata_column {
-        println!("[Rust] Adding metadata column to items table...");
-        if let Err(e) = conn.execute("ALTER TABLE items ADD COLUMN metadata TEXT", []) {
-            println!("[Rust] Warning: Failed to add metadata column: {}", e);
-            // Not fatal - column may already exist
-        }
-    }
-
-    // Add sync columns if they don't exist (for existing installs)
-    let has_sync_id: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='sync_id'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if !has_sync_id {
-        println!("[Rust] Adding sync columns to items table...");
-        let _ = conn.execute("ALTER TABLE items ADD COLUMN sync_id TEXT DEFAULT ''", []);
-        let _ = conn.execute("ALTER TABLE items ADD COLUMN sync_source TEXT DEFAULT ''", []);
-        let _ = conn.execute("ALTER TABLE items ADD COLUMN synced_at TEXT", []);
-        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_items_sync_id ON items(sync_id)");
-    }
-
-    // Migrate 'page' type items to 'url' (for existing installs with old type name)
-    let page_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM items WHERE type = 'page'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-
-    if page_count > 0 {
-        println!("[Rust] Migrating {} 'page' items to 'url' type...", page_count);
-        if let Err(e) = conn.execute("UPDATE items SET type = 'url' WHERE type = 'page'", []) {
-            println!("[Rust] Warning: Failed to migrate page items: {}", e);
-        } else {
-            println!("[Rust] Page to URL migration complete");
-        }
-    }
-
-    // Migrate tags table columns from snake_case to camelCase
-    let has_last_used_snake: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('tags') WHERE name='last_used'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if has_last_used_snake {
-        ios_log("Migrating tags table columns from snake_case to camelCase...");
-        // SQLite 3.25+ supports RENAME COLUMN
-        let renames = [
-            ("last_used", "lastUsed"),
-            ("frecency_score", "frecencyScore"),
-            ("created_at", "createdAt"),
-            ("updated_at", "updatedAt"),
-        ];
-        for (old_name, new_name) in renames {
-            let sql = format!("ALTER TABLE tags RENAME COLUMN {} TO {}", old_name, new_name);
-            if let Err(e) = conn.execute(&sql, []) {
-                ios_log(&format!("Warning: Failed to rename column {} to {}: {}", old_name, new_name, e));
-            } else {
-                ios_log(&format!("Renamed tags.{} to tags.{}", old_name, new_name));
-            }
-        }
-        // Recreate index with new column name
-        let _ = conn.execute("DROP INDEX IF EXISTS idx_tags_frecency", []);
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC)", []);
-        ios_log("Tags table migration complete");
-    }
-
-    // Ensure blobs table exists (for existing installs)
-    let has_blobs_table: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='blobs'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if !has_blobs_table {
-        println!("[Rust] Creating blobs table for image support...");
-        if let Err(e) = conn.execute_batch(
-            "
-                CREATE TABLE IF NOT EXISTS blobs (
-                    id TEXT PRIMARY KEY,
-                    item_id TEXT NOT NULL,
-                    data BLOB NOT NULL,
-                    mime_type TEXT NOT NULL,
-                    size_bytes INTEGER NOT NULL,
-                    width INTEGER,
-                    height INTEGER,
-                    thumbnail BLOB,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-                );
-                CREATE INDEX IF NOT EXISTS idx_blobs_item ON blobs(item_id);
-                ",
-        ) {
-            println!("[Rust] Warning: Failed to create blobs table: {}", e);
-        }
-    }
-
-    // Ensure settings table exists (for migration case)
-    if let Err(e) = conn.execute_batch(
-        "
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            ",
-    ) {
-        return Err(format!("Failed to ensure settings table: {}", e));
-    }
-
-    // Ensure item_visits table exists (for existing installs)
-    let has_item_visits_table: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='item_visits'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if !has_item_visits_table {
-        println!("[Rust] Creating item_visits table for visit tracking...");
-        if let Err(e) = conn.execute_batch(
-            "
-                CREATE TABLE IF NOT EXISTS item_visits (
-                    id TEXT PRIMARY KEY,
-                    item_id TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL,
-                    duration INTEGER DEFAULT 0,
-                    source TEXT DEFAULT 'direct',
-                    window_type TEXT DEFAULT 'main',
-                    metadata TEXT DEFAULT '{}',
-                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-                );
-                CREATE INDEX IF NOT EXISTS idx_item_visits_item ON item_visits(item_id);
-                CREATE INDEX IF NOT EXISTS idx_item_visits_timestamp ON item_visits(timestamp);
-                ",
-        ) {
-            println!("[Rust] Warning: Failed to create item_visits table: {}", e);
-        }
-    }
-
-    // Ensure offline_content index table exists (for offline reading feature)
-    let has_offline_content_table: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='offline_content'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if !has_offline_content_table {
-        println!("[Rust] Creating offline_content table for offline reading...");
-        if let Err(e) = conn.execute_batch(
-            "
-                CREATE TABLE IF NOT EXISTS offline_content (
-                    item_id TEXT PRIMARY KEY,
-                    fetched_at TEXT NOT NULL,
-                    size_bytes INTEGER NOT NULL
-                );
-                ",
-        ) {
-            println!("[Rust] Warning: Failed to create offline_content table: {}", e);
-        }
-    }
-
-    // Ensure item_events table exists (for existing installs, needed for sync)
-    let has_item_events_table: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='item_events'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if !has_item_events_table {
-        println!("[Rust] Creating item_events table for series/feed events...");
-        if let Err(e) = conn.execute_batch(
-            "
-                CREATE TABLE IF NOT EXISTS item_events (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    itemId TEXT NOT NULL,
-                    content TEXT,
-                    value REAL,
-                    occurredAt INTEGER NOT NULL,
-                    metadata TEXT DEFAULT '{}',
-                    createdAt INTEGER NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
-                CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
-                ",
-        ) {
-            println!("[Rust] Warning: Failed to create item_events table: {}", e);
-        }
-    }
-
-    // Migrate tags.id from INTEGER to TEXT (for existing installs with old schema)
-    // Check if tags table exists and has INTEGER id column
-    let tags_has_integer_id: bool = conn
-        .query_row(
-            "SELECT type FROM pragma_table_info('tags') WHERE name='id'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map(|t| t.to_uppercase() == "INTEGER")
-        .unwrap_or(false);
-
-    if tags_has_integer_id {
-        ios_log("Migrating tags.id from INTEGER to TEXT...");
-
-        // Use savepoint for atomic rollback on error
-        if let Err(e) = conn.execute("SAVEPOINT before_tag_migration", []) {
-            ios_log(&format!("Failed to create savepoint: {}", e));
-        } else {
-            let migration_result: Result<(), String> = (|| {
-                // Step 1: Create temp mapping table
-                conn.execute_batch(
-                    "CREATE TEMP TABLE tag_id_mapping (
-                        old_id INTEGER PRIMARY KEY,
-                        new_id TEXT NOT NULL
-                    );"
-                ).map_err(|e| format!("Failed to create mapping table: {}", e))?;
-
-                // Step 2: Populate mapping with generated TEXT IDs
-                let mut stmt = conn.prepare("SELECT id FROM tags")
-                    .map_err(|e| format!("Failed to prepare tag select: {}", e))?;
-                let old_ids: Vec<i64> = stmt
-                    .query_map([], |row| row.get::<_, i64>(0))
-                    .map_err(|e| format!("Failed to query tags: {}", e))?
-                    .filter_map(|r| r.ok())
-                    .collect();
-                drop(stmt);
-
-                for old_id in old_ids {
-                    let new_id = generate_tag_id();
-                    conn.execute(
-                        "INSERT INTO tag_id_mapping (old_id, new_id) VALUES (?, ?)",
-                        params![old_id, new_id],
-                    ).map_err(|e| format!("Failed to insert mapping: {}", e))?;
-                }
-
-                // Step 3: Create new tables with TEXT schema
-                conn.execute_batch(
-                    "CREATE TABLE tags_new (
-                        id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL UNIQUE,
-                        frequency INTEGER NOT NULL DEFAULT 0,
-                        lastUsed TEXT NOT NULL,
-                        frecencyScore REAL NOT NULL DEFAULT 0.0,
-                        createdAt TEXT NOT NULL,
-                        updatedAt TEXT NOT NULL
-                    );
-
-                    CREATE TABLE item_tags_new (
-                        item_id TEXT NOT NULL,
-                        tag_id TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        PRIMARY KEY (item_id, tag_id),
-                        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-                        FOREIGN KEY (tag_id) REFERENCES tags_new(id) ON DELETE CASCADE
-                    );"
-                ).map_err(|e| format!("Failed to create new tables: {}", e))?;
-
-                // Step 4: Copy data using mapping
-                conn.execute_batch(
-                    "INSERT INTO tags_new (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
-                    SELECT m.new_id, t.name, t.frequency, t.lastUsed, t.frecencyScore, t.createdAt, t.updatedAt
-                    FROM tags t
-                    JOIN tag_id_mapping m ON t.id = m.old_id;
-
-                    INSERT INTO item_tags_new (item_id, tag_id, created_at)
-                    SELECT it.item_id, m.new_id, it.created_at
-                    FROM item_tags it
-                    JOIN tag_id_mapping m ON it.tag_id = m.old_id;"
-                ).map_err(|e| format!("Failed to copy data: {}", e))?;
-
-                // Step 5: Swap tables
-                conn.execute_batch(
-                    "DROP TABLE item_tags;
-                    DROP TABLE tags;
-                    ALTER TABLE tags_new RENAME TO tags;
-                    ALTER TABLE item_tags_new RENAME TO item_tags;
-
-                    CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-                    CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);"
-                ).map_err(|e| format!("Failed to swap tables: {}", e))?;
-
-                // Cleanup temp table
-                let _ = conn.execute("DROP TABLE IF EXISTS tag_id_mapping", []);
-
-                Ok(())
-            })();
-
-            match migration_result {
-                Ok(()) => {
-                    let _ = conn.execute("RELEASE SAVEPOINT before_tag_migration", []);
-                    ios_log("Tags INTEGER→TEXT migration completed successfully");
-                }
-                Err(e) => {
-                    ios_log(&format!("Tags migration failed, rolling back: {}", e));
-                    let _ = conn.execute("ROLLBACK TO SAVEPOINT before_tag_migration", []);
-                    let _ = conn.execute("RELEASE SAVEPOINT before_tag_migration", []);
-                }
-            }
-        }
-    }
-
-    // Ensure tags table exists (for fresh install or if migration skipped)
-    let has_tags_table: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tags'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if !has_tags_table {
-        if let Err(e) = conn.execute_batch(
-            "
-                CREATE TABLE IF NOT EXISTS tags (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL UNIQUE,
-                    frequency INTEGER NOT NULL DEFAULT 0,
-                    lastUsed TEXT NOT NULL,
-                    frecencyScore REAL NOT NULL DEFAULT 0.0,
-                    createdAt TEXT NOT NULL,
-                    updatedAt TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS item_tags (
-                    item_id TEXT NOT NULL,
-                    tag_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    PRIMARY KEY (item_id, tag_id),
-                    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-                CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
-                ",
-        ) {
-            return Err(format!("Failed to create tags tables: {}", e));
-        }
-    }
-
-    // One-time dedup migration: remove duplicate items
-    let dedup_done: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM settings WHERE key = 'dedup_cleanup_v1'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0) > 0;
-
-    if !dedup_done {
-        println!("[Rust] Running one-time dedup cleanup...");
-        let mut total_removed: i64 = 0;
-
-        // --- Deduplicate url items by (type, url) ---
-        {
-            let mut dup_stmt = conn
-                .prepare(
-                    "SELECT type, url, COUNT(*) as cnt FROM items \
-                     WHERE deleted_at IS NULL AND type = 'url' AND url IS NOT NULL AND url != '' \
-                     GROUP BY type, url HAVING cnt > 1",
-                )
-                .unwrap();
-            let dup_groups: Vec<(String, String)> = dup_stmt
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .unwrap()
-                .filter_map(|r| r.ok())
-                .collect();
-
-            for (item_type, url_val) in &dup_groups {
-                let mut item_stmt = conn
-                    .prepare(
-                        "SELECT id, sync_id, updated_at FROM items \
-                         WHERE type = ?1 AND url = ?2 AND deleted_at IS NULL \
-                         ORDER BY \
-                           CASE WHEN sync_id IS NOT NULL AND sync_id != '' THEN 0 ELSE 1 END, \
-                           updated_at DESC",
-                    )
-                    .unwrap();
-                let items: Vec<String> = item_stmt
-                    .query_map(params![item_type, url_val], |row| row.get::<_, String>(0))
-                    .unwrap()
-                    .filter_map(|r| r.ok())
-                    .collect();
-
-                for id in items.iter().skip(1) {
-                    let _ = conn.execute("DELETE FROM item_tags WHERE item_id = ?1", params![id]);
-                    let _ = conn.execute("DELETE FROM items WHERE id = ?1", params![id]);
-                    total_removed += 1;
-                }
-            }
-        }
-
-        // --- Deduplicate text items by (type, content) ---
-        {
-            let mut dup_stmt = conn
-                .prepare(
-                    "SELECT type, content, COUNT(*) as cnt FROM items \
-                     WHERE deleted_at IS NULL AND type = 'text' AND content IS NOT NULL AND content != '' \
-                     GROUP BY type, content HAVING cnt > 1",
-                )
-                .unwrap();
-            let dup_groups: Vec<(String, String)> = dup_stmt
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .unwrap()
-                .filter_map(|r| r.ok())
-                .collect();
-
-            for (item_type, content_val) in &dup_groups {
-                let mut item_stmt = conn
-                    .prepare(
-                        "SELECT id, sync_id, updated_at FROM items \
-                         WHERE type = ?1 AND content = ?2 AND deleted_at IS NULL \
-                         ORDER BY \
-                           CASE WHEN sync_id IS NOT NULL AND sync_id != '' THEN 0 ELSE 1 END, \
-                           updated_at DESC",
-                    )
-                    .unwrap();
-                let items: Vec<String> = item_stmt
-                    .query_map(params![item_type, content_val], |row| row.get::<_, String>(0))
-                    .unwrap()
-                    .filter_map(|r| r.ok())
-                    .collect();
-
-                for id in items.iter().skip(1) {
-                    let _ = conn.execute("DELETE FROM item_tags WHERE item_id = ?1", params![id]);
-                    let _ = conn.execute("DELETE FROM items WHERE id = ?1", params![id]);
-                    total_removed += 1;
-                }
-            }
-        }
-
-        // --- Deduplicate tagsets by sorted tag names ---
-        {
-            let mut ts_stmt = conn
-                .prepare(
-                    "SELECT id, sync_id, updated_at FROM items \
-                     WHERE type = 'tagset' AND deleted_at IS NULL",
-                )
-                .unwrap();
-            let tagsets: Vec<(String, String, String)> = ts_stmt
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1).unwrap_or_default(),
-                        row.get::<_, String>(2)?,
-                    ))
-                })
-                .unwrap()
-                .filter_map(|r| r.ok())
-                .collect();
-
-            let mut groups: std::collections::HashMap<String, Vec<(String, String, String)>> =
-                std::collections::HashMap::new();
-
-            for (id, sync_id, updated_at) in &tagsets {
-                let mut tag_stmt = conn
-                    .prepare(
-                        "SELECT t.name FROM tags t \
-                         JOIN item_tags it ON t.id = it.tag_id \
-                         WHERE it.item_id = ?1 \
-                         ORDER BY t.name",
-                    )
-                    .unwrap();
-                let tag_names: Vec<String> = tag_stmt
-                    .query_map(params![id], |row| row.get::<_, String>(0))
-                    .unwrap()
-                    .filter_map(|r| r.ok())
-                    .collect();
-                let key = tag_names.join("\0");
-                groups
-                    .entry(key)
-                    .or_default()
-                    .push((id.clone(), sync_id.clone(), updated_at.clone()));
-            }
-
-            for items in groups.values_mut() {
-                if items.len() <= 1 {
-                    continue;
-                }
-
-                // Sort: prefer sync_id, then newest updated_at
-                items.sort_by(|a, b| {
-                    let a_has_sync = if !a.1.is_empty() { 0 } else { 1 };
-                    let b_has_sync = if !b.1.is_empty() { 0 } else { 1 };
-                    if a_has_sync != b_has_sync {
-                        return a_has_sync.cmp(&b_has_sync);
-                    }
-                    b.2.cmp(&a.2)
-                });
-
-                for item in items.iter().skip(1) {
-                    let _ = conn.execute("DELETE FROM item_tags WHERE item_id = ?1", params![item.0]);
-                    let _ = conn.execute("DELETE FROM items WHERE id = ?1", params![item.0]);
-                    total_removed += 1;
-                }
-            }
-        }
-
-        // Set flag
-        let _ = conn.execute(
-            "INSERT OR REPLACE INTO settings (key, value) VALUES ('dedup_cleanup_v1', '1')",
-            [],
-        );
-
-        if total_removed > 0 {
-            println!("[Rust] Dedup cleanup: removed {} duplicate items", total_removed);
-        } else {
-            println!("[Rust] Dedup cleanup: no duplicates found");
-        }
-    }
-
-    // Write schema version to settings table for compatibility tracking.
-    // This allows detecting mismatches between Rust main app and Swift Share Extension.
-    let _ = conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', ?1)",
-        params![SCHEMA_VERSION],
-    );
-
-    // Check for schema version mismatch (Swift Share Extension may have written a different version)
-    if let Ok(existing_version) = conn.query_row::<String, _, _>(
-        "SELECT value FROM settings WHERE key = 'schema_version_swift'",
-        [],
-        |row| row.get(0),
-    ) {
-        if existing_version != SCHEMA_VERSION {
-            println!(
-                "[Rust] WARNING: Schema version mismatch! Rust: {}, Swift: {}",
-                SCHEMA_VERSION, existing_version
-            );
-        }
-    }
-
-    // Initialize device ID (generate and store if missing)
-    let device_id: String = conn
-        .query_row("SELECT value FROM settings WHERE key = 'device_id'", [], |row| row.get(0))
-        .unwrap_or_default();
-
-    if device_id.is_empty() {
-        let new_id = uuid::Uuid::new_v4().to_string();
-        let _ = conn.execute(
-            "INSERT OR REPLACE INTO settings (key, value) VALUES ('device_id', ?1)",
-            params![&new_id],
-        );
-        println!("[Rust] Generated new device ID: {}", new_id);
-        let _ = DEVICE_ID.set(new_id);
-    } else {
-        println!("[Rust] Loaded existing device ID: {}", device_id);
-        let _ = DEVICE_ID.set(device_id);
-    }
-
-    println!("[Rust] Database initialized successfully (schema version {})", SCHEMA_VERSION);
-
-    *initialized = true;
-    Ok(())
-}
+// ensure_database_initialized() moved to peek-core::schema
 
 // get_device_id, inject_sync_metadata_for_save, inject_sync_metadata_for_update
 // moved to peek-core::helpers (Phase 2). Sync code will use PeekStore in Phase 3.
@@ -1976,47 +1102,7 @@ async fn get_device_id_command() -> Result<String, String> {
     Ok(store.device_id().to_string())
 }
 
-fn get_connection() -> Result<Connection, String> {
-    // Ensure tables exist (only runs once)
-    ensure_database_initialized()?;
-
-    // Open a fresh connection for thread safety
-    let db_path = get_db_path().ok_or("Failed to get database path")?;
-    let conn = Connection::open(&db_path).map_err(|e| format!("Failed to open database: {}", e))?;
-
-    // Set WAL mode on this connection too
-    conn.execute_batch("PRAGMA journal_mode=WAL;")
-        .map_err(|e| format!("Failed to set WAL mode: {}", e))?;
-
-    Ok(conn)
-}
-
-// parse_hashtags moved to peek-core::helpers
-
-// Calculate frecency score
-fn calculate_frecency(frequency: u32, last_used: &str) -> f64 {
-    let now = Utc::now();
-    let last_used_time = chrono::DateTime::parse_from_rfc3339(last_used)
-        .unwrap_or_else(|_| now.into())
-        .with_timezone(&Utc);
-
-    let days_since_use = (now - last_used_time).num_days() as f64;
-    let decay_factor = 1.0 / (1.0 + days_since_use / 7.0);
-
-    frequency as f64 * 10.0 * decay_factor
-}
-
-// Generate a unique tag ID in format: tag_{timestamp}_{random9}
-fn generate_tag_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let uuid = uuid::Uuid::new_v4().to_string();
-    let random = &uuid[0..9]; // First 9 chars of UUID
-    format!("tag_{}_{}", timestamp, random)
-}
+// get_connection, calculate_frecency, generate_tag_id moved to peek-core
 
 // Helper to get webhook config
 fn get_webhook_config() -> (Option<String>, Option<String>) {
@@ -2570,14 +1656,8 @@ async fn open_inline_webview_html(item_id: String, top_offset: f64) -> Result<()
     println!("[Rust] open_inline_webview_html called for item_id: {}, top_offset: {}", item_id, top_offset);
 
     // Look up the original URL for this item (needed for resolving relative image/link URLs)
-    let conn = get_connection()?;
-    let original_url: Option<String> = conn
-        .query_row(
-            "SELECT url FROM items WHERE id = ? AND deleted_at IS NULL",
-            params![&item_id],
-            |row| row.get(0),
-        )
-        .ok();
+    let store = get_store()?;
+    let original_url = store.get_item_url(&item_id)?;
 
     // Read the offline content and metadata
     let container = get_container_path()
@@ -3115,15 +2195,8 @@ fn set_offline_tag(tag: String) -> Result<(), String> {
 /// Get total size of offline content storage in bytes
 #[tauri::command]
 fn get_offline_storage_size() -> Result<u64, String> {
-    let conn = get_connection()?;
-    let total: u64 = conn
-        .query_row(
-            "SELECT COALESCE(SUM(size_bytes), 0) FROM offline_content",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    Ok(total)
+    let store = get_store()?;
+    store.get_offline_storage_size()
 }
 
 /// Fetch URL content, extract reader-mode HTML, and store to filesystem
@@ -3156,14 +2229,8 @@ fn get_offline_content(item_id: String) -> Result<Option<String>, String> {
 /// Retrieve offline reader content + metadata for frontend HTML assembly
 #[tauri::command]
 fn get_reader_content(item_id: String) -> Result<serde_json::Value, String> {
-    let conn = get_connection()?;
-    let original_url: Option<String> = conn
-        .query_row(
-            "SELECT url FROM items WHERE id = ? AND deleted_at IS NULL",
-            params![&item_id],
-            |row| row.get(0),
-        )
-        .ok();
+    let store = get_store()?;
+    let original_url = store.get_item_url(&item_id)?;
 
     let container = get_container_path()
         .ok_or_else(|| "No container path".to_string())?;
@@ -3285,13 +2352,8 @@ async fn fetch_and_store_offline_content(item_id: &str, url: &str) -> Result<(),
         .map_err(|e| format!("Failed to write offline metadata: {}", e))?;
 
     // Update index in SQLite
-    let conn = get_connection()?;
-    let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT OR REPLACE INTO offline_content (item_id, fetched_at, size_bytes) VALUES (?, ?, ?)",
-        params![item_id, &now, size_bytes],
-    )
-    .map_err(|e| format!("Failed to update offline index: {}", e))?;
+    let store = get_store()?;
+    store.index_offline_content(item_id, size_bytes)?;
 
     println!("[Rust] Stored offline content for item {}: {} bytes", item_id, size_bytes);
     Ok(())
@@ -3311,11 +2373,8 @@ fn remove_offline_content(item_id: &str) -> Result<(), String> {
     }
 
     // Remove from index
-    if let Ok(conn) = get_connection() {
-        let _ = conn.execute(
-            "DELETE FROM offline_content WHERE item_id = ?",
-            params![item_id],
-        );
+    if let Ok(store) = get_store() {
+        let _ = store.remove_offline_content_index(item_id);
     }
 
     Ok(())
@@ -3408,13 +2467,9 @@ async fn sync_to_webhook() -> Result<SyncResult, String> {
 
     if response.status().is_success() {
         // Update last sync time
-        let conn = get_connection()?;
+        let store = get_store()?;
         let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT OR REPLACE INTO settings (key, value) VALUES ('last_sync', ?)",
-            params![&now],
-        )
-        .ok();
+        let _ = store.set_last_sync(&now);
 
         println!("[Rust] Webhook sync successful, synced {} items", total_count);
         Ok(SyncResult {
@@ -3431,15 +2486,8 @@ async fn sync_to_webhook() -> Result<SyncResult, String> {
 
 #[tauri::command]
 fn get_last_sync() -> Result<Option<String>, String> {
-    let conn = get_connection()?;
-    let last_sync: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = 'last_sync'",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
-    Ok(last_sync)
+    let store = get_store()?;
+    store.get_last_sync()
 }
 
 /// Profile info returned to the UI
@@ -3624,10 +2672,11 @@ fn reset_profile_to_default() -> Result<ProfileInfo, String> {
     }
 }
 
-/// Clear database cache to force re-initialization on profile switch
+/// Clear database cache to force re-initialization on profile switch.
+/// Drops the old PeekStore; next get_store() creates a new one for the new profile.
 fn clear_db_cache() {
-    if let Ok(mut initialized) = DB_INITIALIZED.lock() {
-        *initialized = false;
+    if let Ok(mut guard) = STORE.write() {
+        guard.take(); // Drop old PeekStore
     }
     println!("[Rust] Database cache cleared, will re-initialize on next access");
 }
@@ -3641,14 +2690,8 @@ async fn auto_sync_if_needed() -> Result<Option<SyncResult>, String> {
     }
 
     // Check last sync time (still in database as it's per-profile data)
-    let conn = get_connection()?;
-    let last_sync: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = 'last_sync'",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
+    let store = get_store()?;
+    let last_sync = store.get_last_sync()?;
 
     let should_sync = match last_sync {
         None => true, // Never synced
@@ -3663,7 +2706,7 @@ async fn auto_sync_if_needed() -> Result<Option<SyncResult>, String> {
         }
     };
 
-    drop(conn); // Close connection before async call
+    drop(store); // Release Arc before async call
 
     if should_sync {
         println!("[Rust] Auto-sync: syncing (>24h since last sync)");
@@ -3681,25 +2724,6 @@ async fn auto_sync_if_needed() -> Result<Option<SyncResult>, String> {
 }
 
 // ==================== Bidirectional Sync ====================
-
-/// Helper to convert ISO string to chrono DateTime
-fn parse_iso_datetime(iso: &str) -> Option<chrono::DateTime<Utc>> {
-    chrono::DateTime::parse_from_rfc3339(iso)
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
-}
-
-/// Convert Unix milliseconds to an ISO 8601 string for local DB storage.
-fn unix_ms_to_iso(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        .unwrap_or_else(|| Utc::now().to_rfc3339())
-}
-
-/// Convert Unix milliseconds to a DateTime<Utc> for timestamp comparison.
-fn unix_ms_to_datetime(ms: i64) -> Option<chrono::DateTime<Utc>> {
-    chrono::DateTime::from_timestamp_millis(ms)
-}
 
 /// Check server version headers in a response.
 /// If the server includes version headers that don't match ours, return an error.
@@ -3732,265 +2756,6 @@ fn check_response_version_headers(headers: &reqwest::header::HeaderMap) -> Resul
     Ok(())
 }
 
-/// Get items that need to be pushed (never synced or locally modified after their last sync)
-fn get_items_to_push(conn: &Connection) -> Result<Vec<(String, String, Option<String>, Option<String>, String, String, String, Option<String>)>, String> {
-    // Returns: (id, type, url, content, metadata, updated_at, sync_id, deleted_at)
-    // Push items that:
-    // 1. Have never been synced (synced_at IS NULL), OR
-    // 2. Have been locally modified after their last sync (updated_at > synced_at)
-    // 3. Have been soft-deleted locally with a sync_id (need to propagate delete to server)
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at FROM items
-             WHERE (deleted_at IS NULL AND (synced_at IS NULL OR updated_at > synced_at))
-             OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' AND synced_at IS NOT NULL AND updated_at > synced_at)"
-        )
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-    let items: Vec<(String, String, Option<String>, Option<String>, String, String, String, Option<String>)> = stmt
-        .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?))
-        })
-        .map_err(|e| format!("Failed to query items: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(items)
-}
-
-/// Get tags for an item
-fn get_item_tags(conn: &Connection, item_id: &str) -> Result<Vec<String>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT t.name FROM tags t
-             JOIN item_tags it ON t.id = it.tag_id
-             WHERE it.item_id = ?
-             ORDER BY t.name"
-        )
-        .map_err(|e| format!("Failed to prepare tag query: {}", e))?;
-
-    let tags: Vec<String> = stmt
-        .query_map(params![item_id], |row| row.get(0))
-        .map_err(|e| format!("Failed to query tags: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(tags)
-}
-
-/// Merge a server item into the local database
-fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<&'static str, String> {
-    let now = Utc::now().to_rfc3339();
-    let server_updated = unix_ms_to_datetime(server_item.updated_at)
-        .ok_or("Invalid server updated_at timestamp")?;
-
-    // Find local item by sync_id matching server id (include deleted items)
-    let local_item: Option<(String, String, Option<String>)> = conn
-        .query_row(
-            "SELECT id, updated_at, deleted_at FROM items WHERE sync_id = ?1",
-            params![&server_item.id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        )
-        .ok();
-
-    // Handle server-side deletes
-    if server_item.deleted_at > 0 {
-        if local_item.is_none() {
-            // No local item to delete
-            println!("[Rust] Sync: Server deleted item {} but no local copy, skipping", server_item.id);
-            return Ok("skipped");
-        }
-        let (local_id, _local_updated_str, local_deleted_at) = local_item.unwrap();
-        if local_deleted_at.is_some() {
-            // Already deleted locally, just update synced_at
-            println!("[Rust] Sync: Item {} already deleted locally, updating synced_at", server_item.id);
-            conn.execute(
-                "UPDATE items SET synced_at = ? WHERE id = ?",
-                params![&now, &local_id],
-            ).map_err(|e| format!("Failed to update synced_at: {}", e))?;
-            return Ok("pulled");
-        }
-        // Soft-delete the local item
-        println!("[Rust] Sync: Soft-deleting local item {} from server delete", server_item.id);
-        conn.execute(
-            "UPDATE items SET deleted_at = ?, updated_at = ?, synced_at = ? WHERE id = ?",
-            params![&now, &now, &now, &local_id],
-        ).map_err(|e| format!("Failed to soft-delete item: {}", e))?;
-        return Ok("pulled");
-    }
-
-    // Handle locally deleted items when server sends a non-deleted update
-    if let Some((ref local_id, ref local_updated_str, ref local_deleted_at)) = local_item {
-        if local_deleted_at.is_some() {
-            // Local item is deleted but server has it alive - compare timestamps
-            let local_updated = parse_iso_datetime(local_updated_str);
-            if let Some(local_dt) = local_updated {
-                if server_updated > local_dt {
-                    // Server is newer - undelete local item and update content
-                    println!("[Rust] Sync: Undeleting local item {} - server is newer", server_item.id);
-
-                    let metadata_json = server_item.metadata.as_ref()
-                        .map(|m| serde_json::to_string(m).unwrap_or_default());
-                    let item_type = &server_item.item_type;
-                    let (url_val, content_val): (Option<&str>, Option<&str>) = match item_type.as_str() {
-                        "url" | "page" => (server_item.content.as_deref(), None),
-                        _ => (None, server_item.content.as_deref()),
-                    };
-
-                    conn.execute(
-                        "UPDATE items SET deleted_at = NULL, type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ? WHERE id = ?",
-                        params![item_type, url_val, content_val, &metadata_json, &unix_ms_to_iso(server_item.updated_at), &now, local_id],
-                    ).map_err(|e| format!("Failed to undelete item: {}", e))?;
-
-                    update_item_tags_from_server(conn, local_id, &server_item.tags)?;
-                    return Ok("pulled");
-                } else {
-                    // Local delete is newer - conflict, local wins
-                    println!("[Rust] Sync: Conflict - local delete is newer for {}, keeping deleted", server_item.id);
-                    return Ok("conflict");
-                }
-            }
-        }
-    }
-
-    if let Some((local_id, local_updated_str, _local_deleted_at)) = local_item {
-        // Item exists locally - check timestamps for conflict resolution
-        let local_updated = parse_iso_datetime(&local_updated_str);
-
-        if let Some(local_dt) = local_updated {
-            if server_updated > local_dt {
-                // Server is newer - update local
-                println!("[Rust] Sync: Updating local item from server: {}", server_item.id);
-
-                let metadata_json = server_item.metadata.as_ref()
-                    .map(|m| serde_json::to_string(m).unwrap_or_default());
-
-                // Map server type to local type (server uses "url", mobile may have used "page")
-                let item_type = &server_item.item_type;
-
-                // Determine content field based on type
-                let (url_val, content_val): (Option<&str>, Option<&str>) = match item_type.as_str() {
-                    "url" | "page" => (server_item.content.as_deref(), None),
-                    _ => (None, server_item.content.as_deref()),
-                };
-
-                conn.execute(
-                    "UPDATE items SET type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ? WHERE id = ?",
-                    params![item_type, url_val, content_val, &metadata_json, &unix_ms_to_iso(server_item.updated_at), &now, &local_id],
-                )
-                .map_err(|e| format!("Failed to update item: {}", e))?;
-
-                // Update tags
-                update_item_tags_from_server(conn, &local_id, &server_item.tags)?;
-
-                return Ok("pulled");
-            } else if local_dt > server_updated {
-                // Local is newer - conflict, local wins
-                println!("[Rust] Sync: Conflict - local is newer for {}, keeping local", server_item.id);
-                return Ok("conflict");
-            }
-        }
-
-        // Same timestamp - skip
-        return Ok("skipped");
-    }
-
-    // Item doesn't exist locally - insert it
-    println!("[Rust] Sync: Inserting new item from server: {}", server_item.id);
-
-    let new_id = uuid::Uuid::new_v4().to_string();
-    let metadata_json = server_item.metadata.as_ref()
-        .map(|m| serde_json::to_string(m).unwrap_or_default());
-
-    // Map server type to local type
-    let item_type = &server_item.item_type;
-
-    // Determine content field based on type
-    let (url_val, content_val): (Option<&str>, Option<&str>) = match item_type.as_str() {
-        "url" | "page" => (server_item.content.as_deref(), None),
-        _ => (None, server_item.content.as_deref()),
-    };
-
-    conn.execute(
-        "INSERT INTO items (id, type, url, content, metadata, sync_id, synced_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        params![
-            &new_id,
-            item_type,
-            url_val,
-            content_val,
-            &metadata_json,
-            &server_item.id,
-            &now,
-            &unix_ms_to_iso(server_item.created_at),
-            &unix_ms_to_iso(server_item.updated_at)
-        ],
-    )
-    .map_err(|e| format!("Failed to insert item: {}", e))?;
-
-    // Add tags
-    update_item_tags_from_server(conn, &new_id, &server_item.tags)?;
-
-    Ok("pulled")
-}
-
-/// Update tags for an item based on server data
-fn update_item_tags_from_server(conn: &Connection, item_id: &str, tag_names: &[String]) -> Result<(), String> {
-    let now = Utc::now().to_rfc3339();
-
-    // Remove existing tags for this item
-    conn.execute("DELETE FROM item_tags WHERE item_id = ?", params![item_id])
-        .map_err(|e| format!("Failed to remove old tags: {}", e))?;
-
-    // Add new tags
-    for tag_name in tag_names {
-        // Get or create tag
-        let tag_id: String = match conn.query_row(
-            "SELECT id FROM tags WHERE name = ?",
-            params![tag_name],
-            |row| row.get(0),
-        ) {
-            Ok(id) => {
-                // Update existing tag stats
-                let frequency: u32 = conn
-                    .query_row("SELECT frequency FROM tags WHERE id = ?", params![&id], |row| row.get(0))
-                    .unwrap_or(0);
-
-                let new_frequency = frequency + 1;
-                let frecency = calculate_frecency(new_frequency, &now);
-
-                conn.execute(
-                    "UPDATE tags SET frequency = ?, lastUsed = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?",
-                    params![new_frequency, &now, frecency, &now, &id],
-                ).ok();
-
-                id
-            }
-            Err(_) => {
-                // Create new tag
-                let new_tag_id = generate_tag_id();
-                let frecency = calculate_frecency(1, &now);
-                conn.execute(
-                    "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, ?, ?, ?)",
-                    params![&new_tag_id, tag_name, &now, frecency, &now, &now],
-                )
-                .map_err(|e| format!("Failed to insert tag: {}", e))?;
-
-                new_tag_id
-            }
-        };
-
-        // Create item-tag association
-        conn.execute(
-            "INSERT OR IGNORE INTO item_tags (item_id, tag_id, created_at) VALUES (?, ?, ?)",
-            params![item_id, tag_id, &now],
-        )
-        .map_err(|e| format!("Failed to link tag: {}", e))?;
-    }
-
-    Ok(())
-}
-
 /// Pull items from server and merge into local database
 #[tauri::command]
 async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
@@ -4011,16 +2776,8 @@ async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
     };
 
     // Get last sync time from database (per-profile data)
-    let conn = get_connection()?;
-    let last_sync: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = 'last_sync'",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
-
-    drop(conn); // Close connection before async call
+    let store = get_store()?;
+    let last_sync = store.get_last_sync()?;
 
     // Build request URL with profile parameter
     let base_url = if let Some(ref sync_time) = last_sync {
@@ -4076,12 +2833,11 @@ async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
     println!("[Rust] Received {} items from server", server_response.items.len());
 
     // Merge items into local database
-    let conn = get_connection()?;
     let mut pulled = 0;
     let mut conflicts = 0;
 
     for server_item in &server_response.items {
-        match merge_server_item(&conn, server_item)? {
+        match store.merge_server_item(server_item)? {
             "pulled" => pulled += 1,
             "conflict" => conflicts += 1,
             _ => {}
@@ -4118,10 +2874,10 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
         Some(config.sync.api_key.clone())
     };
 
-    let conn = get_connection()?;
+    let store = get_store()?;
 
     // Get items to push (uses per-item synced_at, not global last_sync)
-    let items = get_items_to_push(&conn)?;
+    let items = store.get_items_to_push()?;
     println!("[Rust] Found {} items to push", items.len());
 
     if items.is_empty() {
@@ -4140,28 +2896,28 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
     let mut pushed = 0;
     let mut failed = 0;
 
-    for (item_id, item_type, url_opt, content_opt, metadata_str, _updated_at, sync_id, deleted_at_opt) in &items {
+    for item in &items {
         // Get tags for this item
-        let tags = get_item_tags(&conn, item_id)?;
+        let tags = store.get_item_tags(&item.id)?;
 
         // Determine content based on type
-        let content = match item_type.as_str() {
-            "url" | "page" => url_opt.clone(),
-            _ => content_opt.clone(),
+        let content = match item.item_type.as_str() {
+            "url" | "page" => item.url.clone(),
+            _ => item.content.clone(),
         };
 
         // Map "page" type to "url" for server
-        let server_type = if item_type == "page" { "url" } else { item_type };
+        let server_type = if item.item_type == "page" { "url" } else { &item.item_type };
 
         // Parse metadata
-        let metadata: Option<serde_json::Value> = if !metadata_str.is_empty() {
-            serde_json::from_str(metadata_str).ok()
+        let metadata: Option<serde_json::Value> = if !item.metadata.is_empty() {
+            serde_json::from_str(&item.metadata).ok()
         } else {
             None
         };
 
         // Use server ID (sync_id) when available for dedup, otherwise local ID for first push
-        let sync_id_to_send = if !sync_id.is_empty() { sync_id } else { item_id };
+        let sync_id_to_send = if !item.sync_id.is_empty() { &item.sync_id } else { &item.id };
 
         // Build request body
         let mut body = serde_json::json!({
@@ -4173,8 +2929,8 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
         });
 
         // Include deletedAt if the item was soft-deleted locally
-        if let Some(ref deleted_at_str) = deleted_at_opt {
-            if let Some(dt) = parse_iso_datetime(deleted_at_str) {
+        if let Some(ref deleted_at_str) = item.deleted_at {
+            if let Some(dt) = peek_core::sync::parse_iso_datetime(deleted_at_str) {
                 body["deletedAt"] = serde_json::json!(dt.timestamp_millis());
             }
         }
@@ -4200,25 +2956,21 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
                     // Parse response to get server ID
                     if let Ok(create_response) = response.json::<ServerCreateResponse>().await {
                         // Update local item with sync info
-                        let now = Utc::now().to_rfc3339();
-                        conn.execute(
-                            "UPDATE items SET sync_id = ?, synced_at = ? WHERE id = ?",
-                            params![&create_response.id, &now, item_id],
-                        ).ok();
+                        let _ = store.mark_item_synced(&item.id, &create_response.id);
 
-                        println!("[Rust] Pushed item {} -> {}", item_id, create_response.id);
+                        println!("[Rust] Pushed item {} -> {}", item.id, create_response.id);
                         pushed += 1;
                     } else {
                         failed += 1;
                     }
                 } else {
                     let status = response.status();
-                    println!("[Rust] Failed to push item {}: {}", item_id, status);
+                    println!("[Rust] Failed to push item {}: {}", item.id, status);
                     failed += 1;
                 }
             }
             Err(e) => {
-                println!("[Rust] Failed to push item {}: {}", item_id, e);
+                println!("[Rust] Failed to push item {}: {}", item.id, e);
                 failed += 1;
             }
         }
@@ -4250,12 +3002,9 @@ async fn sync_all_internal() -> Result<BidirectionalSyncResult, String> {
     let push_result = push_to_server().await?;
 
     // Update last sync time
-    let conn = get_connection()?;
+    let store = get_store()?;
     let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('last_sync', ?)",
-        params![&now],
-    ).ok();
+    let _ = store.set_last_sync(&now);
 
     let total_pulled = pull_result.pulled;
     let total_pushed = push_result.pushed;
@@ -4281,28 +3030,15 @@ async fn sync_all() -> Result<BidirectionalSyncResult, String> {
 /// Get current sync status
 #[tauri::command]
 fn get_sync_status() -> Result<SyncStatus, String> {
-    let conn = get_connection()?;
+    let store = get_store()?;
 
     // Check if configured (from profiles.json)
     let config = load_profile_config();
     let configured = !config.sync.server_url.is_empty() && !config.sync.api_key.is_empty();
 
-    // Get last sync time (per-profile data)
-    let last_sync_time: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = 'last_sync'",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
-
-    // Count pending items (never synced, locally modified after last sync, or locally deleted needing push)
-    let pending_count: usize = conn.query_row(
-        "SELECT COUNT(*) FROM items WHERE (deleted_at IS NULL AND (synced_at IS NULL OR updated_at > synced_at)) OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' AND synced_at IS NOT NULL AND updated_at > synced_at)",
-        [],
-        |row| row.get::<_, i64>(0),
-    )
-    .unwrap_or(0) as usize;
+    // Get last sync time and pending count from PeekStore
+    let last_sync_time = store.get_last_sync()?;
+    let pending_count = store.get_pending_sync_count()?;
 
     Ok(SyncStatus {
         configured,
@@ -4331,8 +3067,8 @@ pub fn run() {
         .setup(move |_app| {
             // Eagerly initialize database on app start (runs migrations including dedup)
             // This ensures one-time migrations run even if the frontend hasn't loaded yet
-            match ensure_database_initialized() {
-                Ok(()) => println!("[Rust] Database initialized on startup"),
+            match get_store() {
+                Ok(_) => println!("[Rust] Database initialized on startup"),
                 Err(e) => println!("[Rust] WARNING: Database init on startup failed: {}", e),
             }
 
@@ -4452,7 +3188,8 @@ pub fn run() {
 mod tests {
     use rusqlite::{params, Connection};
     use chrono::Utc;
-    use super::{is_valid_uuid, generate_tag_id, ProfileConfig, ProfileEntry, SyncSettings};
+    use super::{is_valid_uuid, ProfileConfig, ProfileEntry, SyncSettings};
+    use peek_core::generate_tag_id;
 
     /// Create the database schema for testing (unified model with sync columns)
     fn create_test_schema(conn: &Connection) {
@@ -4887,6 +3624,11 @@ mod tests {
             ],
             sync: SyncSettings::default(),
             archive_tag: "archive".to_string(),
+            todo_tag: "todo".to_string(),
+            done_tag: "done".to_string(),
+            readme_tag: "readme".to_string(),
+            read_tag: "read".to_string(),
+            offline_tag: "offline".to_string(),
         };
 
         // Serialize to JSON

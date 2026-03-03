@@ -1,14 +1,16 @@
-/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/peek_core-824710095e9bf50d.d: src/lib.rs src/helpers.rs src/items.rs src/profiles.rs src/schema.rs src/tags.rs src/types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/Cargo.toml /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/peek-core-8d75771844ddf91e/out/peek_core.uniffi.rs
+/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/peek_core-824710095e9bf50d.d: src/lib.rs src/helpers.rs src/items.rs src/offline.rs src/profiles.rs src/schema.rs src/sync.rs src/tags.rs src/types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/Cargo.toml /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/peek-core-8d75771844ddf91e/out/peek_core.uniffi.rs
 
-/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/libpeek_core-824710095e9bf50d.rlib: src/lib.rs src/helpers.rs src/items.rs src/profiles.rs src/schema.rs src/tags.rs src/types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/Cargo.toml /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/peek-core-8d75771844ddf91e/out/peek_core.uniffi.rs
+/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/libpeek_core-824710095e9bf50d.rlib: src/lib.rs src/helpers.rs src/items.rs src/offline.rs src/profiles.rs src/schema.rs src/sync.rs src/tags.rs src/types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/Cargo.toml /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/peek-core-8d75771844ddf91e/out/peek_core.uniffi.rs
 
-/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/libpeek_core-824710095e9bf50d.rmeta: src/lib.rs src/helpers.rs src/items.rs src/profiles.rs src/schema.rs src/tags.rs src/types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/Cargo.toml /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/peek-core-8d75771844ddf91e/out/peek_core.uniffi.rs
+/Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/deps/libpeek_core-824710095e9bf50d.rmeta: src/lib.rs src/helpers.rs src/items.rs src/offline.rs src/profiles.rs src/schema.rs src/sync.rs src/tags.rs src/types.rs /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/Cargo.toml /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/target/debug/build/peek-core-8d75771844ddf91e/out/peek_core.uniffi.rs
 
 src/lib.rs:
 src/helpers.rs:
 src/items.rs:
+src/offline.rs:
 src/profiles.rs:
 src/schema.rs:
+src/sync.rs:
 src/tags.rs:
 src/types.rs:
 /Users/dietrich/misc/mpeek/tmp/release-7140/backend/tauri-mobile/peek-core/Cargo.toml:
