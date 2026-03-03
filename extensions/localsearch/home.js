@@ -9,6 +9,8 @@
  * Results are grouped by type with relevance-based ordering.
  */
 
+import { getItemDisplayInfo, extractTitle } from 'peek://app/lib/card-helpers.js';
+
 const api = window.app;
 const debug = api.debug;
 
@@ -67,21 +69,7 @@ const formatDate = (timestamp) => {
   return date.toLocaleDateString();
 };
 
-/**
- * Get title from item metadata
- */
-const getItemTitle = (item) => {
-  if (item.title) return item.title;
-  if (item.metadata) {
-    try {
-      const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
-      if (meta.title) return meta.title;
-    } catch (e) {
-      // Ignore parse errors
-    }
-  }
-  return null;
-};
+// getItemTitle removed — now uses shared extractTitle from card-helpers.js
 
 /**
  * Check if a URL is a navigable web URL
@@ -131,7 +119,7 @@ const performSearch = async (query) => {
       // Skip deleted items
       if (item.deleted) continue;
 
-      const title = getItemTitle(item) || '';
+      const title = extractTitle(item, '') || '';
       const content = item.content || '';
       const titleMatch = title.toLowerCase().includes(q);
       const contentMatch = content.toLowerCase().includes(q);
@@ -335,10 +323,20 @@ const createResultElement = (item, query, index) => {
   el.dataset.type = item.type;
   el.dataset.id = item.id;
 
-  // Icon
+  // Icon — use shared getItemDisplayInfo for consistent favicon across all views
   const icon = document.createElement('div');
   icon.className = 'result-icon';
-  icon.innerHTML = getTypeIcon(item.type);
+  if (item.type === 'tag') {
+    // Tags are not items — use the SVG tag icon
+    icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5V2z"/><circle cx="5.5" cy="5.5" r="1" fill="currentColor"/></svg>';
+  } else {
+    const displayInfo = getItemDisplayInfo(item);
+    const img = document.createElement('img');
+    img.src = displayInfo.faviconUrl;
+    img.style.cssText = 'width:16px;height:16px;border-radius:3px;object-fit:contain;';
+    img.onerror = () => { img.style.display = 'none'; };
+    icon.appendChild(img);
+  }
   el.appendChild(icon);
 
   // Content
@@ -404,23 +402,7 @@ const createResultElement = (item, query, index) => {
   return el;
 };
 
-/**
- * Get icon HTML for a result type
- */
-const getTypeIcon = (type) => {
-  switch (type) {
-    case 'url':
-      return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6.5 11.5L4 14a2.12 2.12 0 01-3-3l2.5-2.5M9.5 4.5L12 2a2.12 2.12 0 013 3l-2.5 2.5M5.5 10.5l5-5"/></svg>';
-    case 'text':
-      return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h10M3 6.5h7M3 10h9M3 13.5h5"/></svg>';
-    case 'tag':
-      return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5V2z"/><circle cx="5.5" cy="5.5" r="1" fill="currentColor"/></svg>';
-    case 'tagset':
-      return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 3h5l5.5 5.5-5 5L1 8V3z"/><path d="M5 1h5l5.5 5.5-5 5" opacity="0.5"/></svg>';
-    default:
-      return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/></svg>';
-  }
-};
+// getTypeIcon removed — now uses shared getItemDisplayInfo from card-helpers.js
 
 /**
  * Activate (open) a result

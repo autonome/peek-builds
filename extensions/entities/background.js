@@ -291,19 +291,18 @@ async function extractCurrentPage() {
 
   const entities = await extractEntities(url, activeWindow.title || '');
 
-  // Publish results so page entities panel updates
-  if (entities && entities.length > 0) {
-    api.publish('entities:extracted', {
-      url,
-      entities: entities.map(e => ({
-        id: e.id,
-        name: e.name,
-        type: e.entityType,
-        confidence: e.confidence,
-        isNew: e.isNew
-      }))
-    }, api.scopes.GLOBAL);
-  }
+  // Always publish results so page entities panel updates
+  // (even if empty, so the panel can exit "Rescanning..." state)
+  api.publish('entities:extracted', {
+    url,
+    entities: (entities || []).map(e => ({
+      id: e.id,
+      name: e.name,
+      type: e.entityType,
+      confidence: e.confidence,
+      isNew: e.isNew
+    }))
+  }, api.scopes.GLOBAL);
 
   return entities;
 }

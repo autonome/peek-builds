@@ -259,7 +259,8 @@ const render = () => {
 };
 
 /**
- * Create a card element for a search result item
+ * Create a card element for a search result item.
+ * Uses shared card-helpers for consistent rendering across all views.
  */
 const createResultCard = (item) => {
   const card = document.createElement('peek-card');
@@ -268,89 +269,25 @@ const createResultCard = (item) => {
   card.elevated = true;
   card.dataset.itemId = item.id;
 
-  const itemUrl = item.content;
-  const isUrl = item.type === 'url';
+  const { title, subtitle, faviconUrl, itemUrl, itemType } = getItemDisplayInfo(item);
 
-  // Get display title
-  let displayTitle = item.title;
-  if (!displayTitle && item.metadata) {
-    try {
-      const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
-      displayTitle = meta.title;
-    } catch (e) {
-      // Ignore parse errors
-    }
-  }
-  displayTitle = displayTitle || itemUrl || '(untitled)';
-
-  // Header slot: favicon/icon + title
-  const header = document.createElement('div');
-  header.slot = 'header';
-  header.style.display = 'flex';
-  header.style.alignItems = 'center';
-  header.style.gap = '8px';
-
-  if (isUrl && isWebUrl(itemUrl)) {
-    const favicon = document.createElement('img');
-    favicon.className = 'card-favicon';
-    favicon.src = item.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-    favicon.onerror = () => {
-      favicon.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🌐</text></svg>';
-    };
-    header.appendChild(favicon);
-  } else {
-    // Text/other item type icon
-    const icon = document.createElement('span');
-    icon.className = 'card-type-icon';
-    icon.textContent = item.type === 'text' ? 'T' : '#';
-    icon.style.cssText = 'font-size:12px;font-weight:700;opacity:0.5;';
-    header.appendChild(icon);
-  }
-
-  const title = document.createElement('h2');
-  title.className = 'card-title';
-  title.textContent = displayTitle;
-  title.style.margin = '0';
-  title.style.flex = '1';
-  title.style.minWidth = '0';
-
-  header.appendChild(title);
+  // Header slot: favicon + title (shared helpers)
+  const favicon = createFaviconEl(faviconUrl);
+  const header = createHeaderSlot(favicon, title);
   card.appendChild(header);
 
-  // Footer slot: URL/content preview + visit count
-  const footer = document.createElement('div');
-  footer.slot = 'footer';
-  footer.className = 'card-meta';
-  footer.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;';
+  // Footer slot: subtitle on left, visit count on right
+  const urlEl = subtitle ? createUrlSpan(subtitle) : null;
 
-  if (isUrl && itemUrl && displayTitle !== itemUrl) {
-    const urlSpan = document.createElement('span');
-    urlSpan.className = 'card-url';
-    try {
-      const u = new URL(itemUrl);
-      urlSpan.textContent = u.hostname + (u.pathname !== '/' ? u.pathname : '');
-    } catch {
-      urlSpan.textContent = itemUrl;
-    }
-    urlSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;opacity:0.7;';
-    footer.appendChild(urlSpan);
-  } else if (!isUrl && itemUrl) {
-    // Show content preview for non-URL items
-    const preview = document.createElement('span');
-    preview.className = 'card-url';
-    preview.textContent = itemUrl.length > 60 ? itemUrl.slice(0, 60) + '...' : itemUrl;
-    preview.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;opacity:0.7;';
-    footer.appendChild(preview);
-  }
-
+  let rightEl = null;
   const visitCount = item.visitCount || 0;
   if (visitCount > 0) {
-    const visitSpan = document.createElement('span');
-    visitSpan.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
-    visitSpan.style.flexShrink = '0';
-    footer.appendChild(visitSpan);
+    rightEl = document.createElement('span');
+    rightEl.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
+    rightEl.style.flexShrink = '0';
   }
 
+  const footer = createFooterSlot(urlEl, rightEl);
   card.appendChild(footer);
 
   // Async: load item tags and render affordances if any rules match
@@ -359,7 +296,7 @@ const createResultCard = (item) => {
       if (!tagsResult.success || !tagsResult.data.length) return;
       const tagNames = tagsResult.data.map(t => t.name);
       const el = createAffordanceElements(item.id, tagNames, actionRulesCache.getRules(), api, {
-        onToggle: () => { renderResults(); }
+        onToggle: () => { render(); }
       });
       if (el) {
         // Insert before the last child (visit count) if it exists
@@ -379,16 +316,14 @@ const createResultCard = (item) => {
     if (isOpening) return;
     isOpening = true;
     try {
-      if (isUrl && isWebUrl(itemUrl)) {
-        // Open URL in a content window
+      if (itemUrl && isWebUrl(itemUrl)) {
         await api.window.open(itemUrl, {
           role: 'content',
           key: itemUrl,
           width: 800,
           height: 600
         });
-      } else if (item.type === 'text') {
-        // Open text item in editor
+      } else if (itemType === 'text') {
         api.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
       }
     } finally {
