@@ -407,14 +407,19 @@ const extension = {
     // Listen for manual extraction requests via pubsub
     api.subscribe('entities:extract', async (msg) => {
       if (msg.url) {
-        extractionCache.delete(msg.url);
-        const entities = await extractEntities(msg.url, msg.title || '');
+        let entities = [];
+        try {
+          extractionCache.delete(msg.url);
+          entities = await extractEntities(msg.url, msg.title || '') || [];
+        } catch (err) {
+          console.error('[entities] entities:extract handler failed:', err);
+        }
 
         // Always publish extraction results so page entities panel updates
         // (even if empty, so the panel can exit "Rescanning..." state)
         api.publish('entities:extracted', {
           url: msg.url,
-          entities: (entities || []).map(e => ({
+          entities: entities.map(e => ({
             id: e.id,
             name: e.name,
             type: e.entityType,

@@ -77,7 +77,7 @@ let extensionHostWindow: BrowserWindow | null = null;
 const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'localsearch', 'peeks', 'search', 'slides', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
-const EAGER_EXTENSION_IDS = new Set(['cmd', 'hud']);
+const EAGER_EXTENSION_IDS = new Set(['cmd', 'hud', 'entities']);
 
 // Track which lazy extensions have been loaded
 const lazyExtensionLoaded = new Set<string>();
