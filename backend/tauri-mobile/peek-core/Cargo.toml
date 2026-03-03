@@ -5,6 +5,13 @@ description = "Shared database and business logic for Peek (iOS, Android, deskto
 authors = ["dietrich"]
 edition = "2021"
 
+[lib]
+crate-type = ["lib", "staticlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -16,7 +23,7 @@ regex = "1"
 base64 = "0.22"
 readability-rust = "0.1"
 thiserror = "2"
-uniffi = "0.28"
+uniffi = { version = "0.28", features = ["cli"] }
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }

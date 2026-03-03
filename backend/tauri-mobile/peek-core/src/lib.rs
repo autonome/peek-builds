@@ -12,6 +12,7 @@
 //! - No platform-specific code (no iOS FFI, no Tauri dependency).
 //! - UniFFI annotations enable Swift and Kotlin binding generation.
 
+pub mod ffi;
 pub mod helpers;
 pub mod items;
 pub mod offline;
