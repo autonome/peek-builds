@@ -333,6 +333,45 @@ describe('Shortcuts Module Tests', () => {
     });
   });
 
+  describe('platformShortcut', () => {
+    it('should replace Option with Alt on linux', () => {
+      assert.strictEqual(shortcuts.platformShortcut('Option+Space', 'linux'), 'Alt+Space');
+    });
+
+    it('should replace Option with Alt on win32', () => {
+      assert.strictEqual(shortcuts.platformShortcut('Option+H', 'win32'), 'Alt+H');
+    });
+
+    it('should not change Option on darwin', () => {
+      assert.strictEqual(shortcuts.platformShortcut('Option+Space', 'darwin'), 'Option+Space');
+    });
+
+    it('should be case-insensitive', () => {
+      assert.strictEqual(shortcuts.platformShortcut('OPTION+Space', 'linux'), 'Alt+Space');
+      assert.strictEqual(shortcuts.platformShortcut('option+h', 'linux'), 'Alt+h');
+    });
+
+    it('should respect word boundaries and not match partial words like Optional', () => {
+      assert.strictEqual(shortcuts.platformShortcut('Optional+Space', 'linux'), 'Optional+Space');
+    });
+
+    it('should replace multiple Option modifiers in one string', () => {
+      assert.strictEqual(shortcuts.platformShortcut('Option+Shift+Option', 'linux'), 'Alt+Shift+Alt');
+    });
+
+    it('should handle real-world manifest shortcuts', () => {
+      assert.strictEqual(shortcuts.platformShortcut('Option+Space', 'linux'), 'Alt+Space');
+      assert.strictEqual(shortcuts.platformShortcut('Option+H', 'win32'), 'Alt+H');
+      assert.strictEqual(shortcuts.platformShortcut('Option+e', 'linux'), 'Alt+e');
+      assert.strictEqual(shortcuts.platformShortcut('Option+Shift+F', 'win32'), 'Alt+Shift+F');
+    });
+
+    it('should return shortcut unchanged when no Option modifier present', () => {
+      assert.strictEqual(shortcuts.platformShortcut('Ctrl+A', 'linux'), 'Ctrl+A');
+      assert.strictEqual(shortcuts.platformShortcut('Alt+Q', 'win32'), 'Alt+Q');
+    });
+  });
+
   describe('unregisterShortcutsForAddress', () => {
     it('should unregister all shortcuts for an address', () => {
       let callCount = 0;

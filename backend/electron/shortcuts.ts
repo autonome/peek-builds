@@ -155,8 +155,8 @@ export function inputMatchesShortcut(input: InputEvent, parsed: ParsedShortcut):
  * Extension manifests use "Option+X" (macOS convention), but Electron's
  * globalShortcut API requires "Alt" on Linux/Windows.
  */
-function platformShortcut(shortcut: string): string {
-  if (process.platform !== 'darwin') {
+export function platformShortcut(shortcut: string, platform: string = process.platform): string {
+  if (platform !== 'darwin') {
     return shortcut.replace(/\bOption\b/gi, 'Alt');
   }
   return shortcut;
