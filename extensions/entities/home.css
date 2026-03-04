@@ -166,6 +166,23 @@ peek-card[selected] {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+
+.card-header-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--base05);
+}
+
+.entity-type-prefix {
+  color: var(--base04);
+  text-transform: capitalize;
 }
 
 .entity-name {
@@ -175,12 +192,6 @@ peek-card[selected] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.entity-type {
-  font-size: 10px;
-  color: var(--base04);
-  text-transform: capitalize;
 }
 
 .entity-confidence {
@@ -217,11 +228,8 @@ peek-card[selected] {
   color: var(--base03);
 }
 
-/* Open link button - positioned top-right of card */
+/* Open link button - inline in header */
 .card-open-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -235,12 +243,6 @@ peek-card[selected] {
   color: var(--base04);
   flex-shrink: 0;
   transition: all 0.15s;
-  opacity: 0;
-  z-index: 1;
-}
-
-peek-card:hover .card-open-btn {
-  opacity: 1;
 }
 
 .card-open-btn:hover {
@@ -269,15 +271,6 @@ peek-card:hover .card-open-btn {
   cursor: pointer;
   color: var(--base03);
   transition: all 0.15s;
-  opacity: 0;
-}
-
-peek-card:hover .feedback-btn {
-  opacity: 1;
-}
-
-.feedback-btn.active {
-  opacity: 1;
 }
 
 .feedback-btn:hover {

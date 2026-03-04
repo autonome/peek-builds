@@ -430,26 +430,23 @@ async function renderEntities() {
       </div>`;
     }
 
-    // Top-right open link button (positioned absolutely over the card)
+    const headerDiv = document.createElement('div');
+    headerDiv.slot = 'header';
+    const entityTypeLabel = entityType.replace('_', ' ');
+    const entityName = escapeHtml(entity.content || entity.name || '');
+    let openBtnHtml = '';
     if (sourceUrl) {
-      const openBtn = document.createElement('button');
-      openBtn.className = 'card-open-btn';
-      openBtn.dataset.url = sourceUrl;
-      openBtn.title = 'Open source page';
-      openBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      openBtnHtml = `<button class="card-open-btn" data-url="${escapeHtml(sourceUrl)}" title="Open source page"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
         <polyline points="15 3 21 3 21 9"></polyline>
         <line x1="10" y1="14" x2="21" y2="3"></line>
-      </svg>`;
-      card.appendChild(openBtn);
+      </svg></button>`;
     }
-
-    const headerDiv = document.createElement('div');
-    headerDiv.slot = 'header';
     headerDiv.innerHTML = `
       <div class="card-header">
         <span class="entity-type-icon type-${entityType}">${icon}</span>
-        <span class="entity-name">${escapeHtml(entity.content || entity.name || '')}</span>
+        <span class="card-header-label"><span class="entity-type-prefix">${escapeHtml(entityTypeLabel)}:</span> ${entityName}</span>
+        ${openBtnHtml}
       </div>
     `;
     card.appendChild(headerDiv);
@@ -457,7 +454,6 @@ async function renderEntities() {
     const bodyDiv = document.createElement('div');
     bodyDiv.className = 'card-body';
     bodyDiv.innerHTML = `
-      <div class="entity-type">${escapeHtml(entityType.replace('_', ' '))}</div>
       ${attrHtml}
       ${aliasHtml}
       ${sourceHtml}
