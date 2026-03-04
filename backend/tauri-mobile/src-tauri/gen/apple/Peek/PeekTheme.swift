@@ -161,12 +161,12 @@ struct PeekTheme {
 
     // MARK: - Tag Padding (from CSS)
 
-    /// .current-tag padding: 2px 7px → scaled ~1.25x for native
-    static let currentTagPaddingV: CGFloat = 3
+    /// .current-tag padding — matched to input box height (32pt)
+    static let currentTagPaddingV: CGFloat = 7
     static let currentTagPaddingH: CGFloat = 9
 
-    /// .available-tag padding: 3px 8px → scaled ~1.25x for native
-    static let availableTagPaddingV: CGFloat = 4
+    /// .available-tag padding — matched to input box height (32pt)
+    static let availableTagPaddingV: CGFloat = 7
     static let availableTagPaddingH: CGFloat = 10
 
     /// .card-tag padding: 1px 6px
