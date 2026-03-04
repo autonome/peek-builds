@@ -412,7 +412,8 @@ const initShortcut = (prefs) => {
   });
 
   // URL mode shortcut (Cmd+L) — opens panel in URL-only navigation mode
-  // Page host windows intercept Cmd+L via before-input-event for their navbar,
+  // Page host windows have their own Cmd+L handler for the floating navbar.
+  // main.ts skips local shortcut dispatch for Cmd+L on page host windows,
   // so this only fires from non-page windows.
   api.shortcuts.register(URL_MODE_SHORTCUT, () => {
     api.publish('cmd:url-mode', {}, api.scopes.GLOBAL);

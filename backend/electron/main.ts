@@ -351,6 +351,20 @@ export async function initialize(): Promise<void> {
 
     // Handle local shortcuts (with window ID for mode-conditional shortcuts)
     window.webContents.on('before-input-event', (event, input) => {
+      // Page host windows (canvas) have their own Cmd+L handler for the floating navbar
+      // (registered in openWindow). Skip local shortcut handling for Cmd+L on those windows
+      // so the page host's before-input-event handler can handle it instead.
+      if (input.type === 'keyDown' && input.key === 'l') {
+        const mod = process.platform === 'darwin' ? input.meta : input.control;
+        if (mod && !input.alt && !input.shift) {
+          const winInfo = getWindowInfo(windowId);
+          const addr = winInfo?.params?.address as string | undefined;
+          if (addr && (addr.startsWith('http://') || addr.startsWith('https://') || addr.startsWith('file:///'))) {
+            return; // Let the page host's own handler deal with Cmd+L
+          }
+        }
+      }
+
       if (handleLocalShortcut(input, windowId)) {
         event.preventDefault();
       }

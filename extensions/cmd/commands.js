@@ -61,7 +61,14 @@ function removeCommand(name) {
 /**
  * Initializes all command sources and registers them
  */
+let _sourcesInitialized = false;
+
 async function initializeCommandSources() {
+  if (_sourcesInitialized) {
+    debug && console.log('[cmd:commands] sources already initialized, skipping');
+    return;
+  }
+  _sourcesInitialized = true;
   debug && console.log('[cmd:commands] initializeCommandSources');
 
   // Load commands from the commands module
