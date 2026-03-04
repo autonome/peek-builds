@@ -146,12 +146,34 @@ peek-input.search-input::part(input) {
   margin-top: 4px;
 }
 
+/* Legacy result-tag (unused after shared card migration) */
 .result-tag {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 3px;
   background: var(--base02);
   color: var(--base04);
+}
+
+/* Shared search-result-card tag chips */
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.card-tag {
+  padding: 1px 6px;
+  background: var(--base02);
+  border-radius: 8px;
+  font-size: 10px;
+  color: var(--base04);
+  transition: all 0.15s;
+}
+
+.card-tag:hover {
+  background: var(--base03);
+  color: var(--base05);
 }
 
 .result-date {
