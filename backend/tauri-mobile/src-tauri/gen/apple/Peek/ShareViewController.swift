@@ -497,7 +497,11 @@ class ShareViewController: UIViewController {
         layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
         layout.minimumInteritemSpacing = PeekTheme.spacingSM
         layout.minimumLineSpacing = PeekTheme.spacingSM
-        return SelfSizingCollectionView(frame: .zero, collectionViewLayout: layout)
+        layout.sectionInset = .zero
+        let cv = SelfSizingCollectionView(frame: .zero, collectionViewLayout: layout)
+        cv.contentInset = .zero
+        cv.contentInsetAdjustmentBehavior = .never
+        return cv
     }()
 
     // Unused tags at bottom - self-sizing
@@ -506,7 +510,11 @@ class ShareViewController: UIViewController {
         layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
         layout.minimumInteritemSpacing = PeekTheme.spacingSM
         layout.minimumLineSpacing = PeekTheme.spacingSM
-        return SelfSizingCollectionView(frame: .zero, collectionViewLayout: layout)
+        layout.sectionInset = .zero
+        let cv = SelfSizingCollectionView(frame: .zero, collectionViewLayout: layout)
+        cv.contentInset = .zero
+        cv.contentInsetAdjustmentBehavior = .never
+        return cv
     }()
 
     let newTagTextField = UITextField()
@@ -608,11 +616,6 @@ class ShareViewController: UIViewController {
         headerView.backgroundColor = PeekTheme.bg
         view.addSubview(headerView)
 
-        // Header bottom border (matches --base02 border)
-        let headerBorder = UIView()
-        headerBorder.backgroundColor = PeekTheme.border
-        headerBorder.translatesAutoresizingMaskIntoConstraints = false
-        headerView.addSubview(headerBorder)
 
         // Close button (✕) on the RIGHT side of the header
         var closeBtnConfig = UIButton.Configuration.filled()
@@ -635,7 +638,7 @@ class ShareViewController: UIViewController {
         // Title label on the TOP LEFT
         let titleLabel = UILabel()
         titleLabel.text = "Peek"
-        titleLabel.font = PeekTheme.headerTitle
+        titleLabel.font = PeekTheme.mono(size: 22, weight: .semibold)
         titleLabel.textColor = PeekTheme.text
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerView.addSubview(titleLabel)
@@ -694,6 +697,9 @@ class ShareViewController: UIViewController {
         // Input container (text field + add button)
         inputContainerView.translatesAutoresizingMaskIntoConstraints = false
         contentStackView.addArrangedSubview(inputContainerView)
+        // Equal spacing above and below the input field
+        contentStackView.setCustomSpacing(PeekTheme.spacingMD, after: selectedTagsCollectionView)
+        contentStackView.setCustomSpacing(PeekTheme.spacingMD, after: inputContainerView)
 
         // Text field styled like .new-tag-input
         newTagTextField.placeholder = "Add new tag..."
@@ -754,12 +760,6 @@ class ShareViewController: UIViewController {
             headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             headerView.heightAnchor.constraint(equalToConstant: 44),
 
-            // Header bottom border
-            headerBorder.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
-            headerBorder.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
-            headerBorder.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
-            headerBorder.heightAnchor.constraint(equalToConstant: 1),
-
             // Title on the LEFT
             titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: PeekTheme.paddingH),
             titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
@@ -794,9 +794,7 @@ class ShareViewController: UIViewController {
             addTagButton.centerYAnchor.constraint(equalTo: inputContainerView.centerYAnchor),
             addTagButton.trailingAnchor.constraint(equalTo: inputContainerView.trailingAnchor),
 
-            // Minimum heights for collection views
-            selectedTagsCollectionView.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
-            unusedTagsCollectionView.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            // No minimum heights — self-sizing handles it via intrinsicContentSize
 
             // Image preview size
             imagePreviewView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
@@ -1685,12 +1683,21 @@ class LeftAlignedFlowLayout: UICollectionViewFlowLayout {
 class SelfSizingCollectionView: UICollectionView {
     override var contentSize: CGSize {
         didSet {
-            invalidateIntrinsicContentSize()
+            if oldValue != contentSize {
+                invalidateIntrinsicContentSize()
+            }
         }
     }
 
     override var intrinsicContentSize: CGSize {
-        layoutIfNeeded()
-        return CGSize(width: UIView.noIntrinsicMetric, height: contentSize.height)
+        let size = collectionViewLayout.collectionViewContentSize
+        return CGSize(width: UIView.noIntrinsicMetric, height: size.height)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if bounds.size != intrinsicContentSize {
+            invalidateIntrinsicContentSize()
+        }
     }
 }

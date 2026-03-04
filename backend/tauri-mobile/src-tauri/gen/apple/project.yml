@@ -111,6 +111,7 @@ targets:
           NSExtensionAttributes:
             NSExtensionActivationRule:
               NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsImageWithMaxCount: 20
           NSExtensionMainStoryboard: MainInterface
           NSExtensionPointIdentifier: com.apple.share-services
     entitlements:
