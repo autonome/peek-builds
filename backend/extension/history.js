@@ -9,6 +9,7 @@
  */
 
 import { addItem, queryItems, getOrCreateTag, tagItem, updateItem, getItemsByTag, recordItemVisit } from './datastore.js';
+import { getDeviceId } from './environment.js';
 
 const CONFIG_KEY = 'peek_history_enabled';
 const HISTORY_TAG = 'from:history';
@@ -63,9 +64,16 @@ async function getExistingUrlMap() {
 
 // ==================== Visit Metadata ====================
 
-function buildHistoryMetadata(historyItem, visits) {
+async function buildHistoryMetadata(historyItem, visits) {
+  const deviceId = await getDeviceId();
+  const now = Date.now();
   return {
-    importSource: 'history',
+    _sync: {
+      createdBy: deviceId,
+      createdAt: historyItem.lastVisitTime || now,
+      modifiedBy: deviceId,
+      modifiedAt: now,
+    },
     title: historyItem.title || '',
     lastVisitTime: historyItem.lastVisitTime || 0,
     visitCount: historyItem.visitCount || 0,
@@ -90,7 +98,7 @@ function buildHistoryMetadata(historyItem, visits) {
 async function addOrUpdateHistoryItem(url, historyItem, visits, existingUrlMap) {
   if (isInternalUrl(url)) return 'skipped';
 
-  const metadata = buildHistoryMetadata(historyItem, visits);
+  const metadata = await buildHistoryMetadata(historyItem, visits);
   const existing = existingUrlMap.get(url);
   let itemId;
 
@@ -101,6 +109,11 @@ async function addOrUpdateHistoryItem(url, historyItem, visits, existingUrlMap) 
     if (visitTimes.length > 0) {
       earliestVisitTime = Math.min(...visitTimes);
     }
+  }
+
+  // Use earliest visit time for _sync.createdAt to preserve original history date
+  if (earliestVisitTime > 0) {
+    metadata._sync.createdAt = earliestVisitTime;
   }
 
   if (existing) {
@@ -150,28 +163,37 @@ async function addOrUpdateHistoryItem(url, historyItem, visits, existingUrlMap) 
 }
 
 /**
- * Map Chrome's transition types to our source types
+ * Map browser visit types to our source enum.
+ *
+ * Chrome uses string transition types.
+ * Firefox uses numeric visitType values:
+ *   1 = TRANSITION_LINK, 2 = TRANSITION_TYPED, 3 = TRANSITION_BOOKMARK,
+ *   4 = TRANSITION_EMBED, 5 = TRANSITION_REDIRECT_PERMANENT,
+ *   6 = TRANSITION_REDIRECT_TEMPORARY, 7 = TRANSITION_DOWNLOAD,
+ *   8 = TRANSITION_FRAMED_LINK
  */
 function mapTransitionToSource(transition) {
+  // Firefox numeric visit types
+  if (typeof transition === 'number') {
+    switch (transition) {
+      case 1: return 'link';       // TRANSITION_LINK
+      case 2: return 'typed';      // TRANSITION_TYPED
+      case 3: return 'bookmark';   // TRANSITION_BOOKMARK
+      default: return 'direct';
+    }
+  }
+
+  // Chrome string transition types
   switch (transition) {
     case 'link':
       return 'link';
     case 'typed':
-      return 'direct';
+      return 'typed';
     case 'auto_bookmark':
+    case 'keyword':
       return 'bookmark';
-    case 'auto_subframe':
-    case 'manual_subframe':
-      return 'frame';
-    case 'generated':
-    case 'auto_toplevel':
-      return 'generated';
-    case 'form_submit':
-      return 'form';
-    case 'reload':
-      return 'reload';
     default:
-      return 'other';
+      return 'direct';
   }
 }
 
@@ -212,7 +234,7 @@ export async function importAllHistory() {
 /**
  * Returns { historyItems, imported, synced }.
  * historyItems = count from chrome.history.search() excluding internal URLs
- * imported = Peek items with metadata.importSource 'history'
+ * imported = Peek items tagged with from:history
  * synced = subset of imported that have been synced (syncedAt > 0)
  */
 export async function getHistoryStats() {

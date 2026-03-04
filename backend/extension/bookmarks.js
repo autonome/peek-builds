@@ -6,7 +6,8 @@
  * Behind a test feature toggle (peek_bookmarks_enabled).
  */
 
-import { addItem, queryItems, getOrCreateTag, tagItem, getItemsByTag } from './datastore.js';
+import { addItem, queryItems, getOrCreateTag, tagItem, getItemsByTag, recordItemVisit } from './datastore.js';
+import { getDeviceId } from './environment.js';
 
 const CONFIG_KEY = 'peek_bookmarks_enabled';
 const BOOKMARK_TAG = 'from:bookmark';
@@ -75,12 +76,28 @@ async function addBookmarkItem(url, title, dateAdded, existingUrlMap) {
     if (tagResult.success) {
       await tagItem(existing.id, tagResult.data.tag.id);
     }
+    // Record a bookmark visit for frecency
+    await recordItemVisit(existing.id, {
+      timestamp: dateAdded || Date.now(),
+      source: 'bookmark',
+    });
     return false;
   }
 
+  const deviceId = await getDeviceId();
+  const now = Date.now();
   const result = await addItem('url', {
     content: url,
-    metadata: { importSource: 'bookmark', title, dateAdded },
+    metadata: {
+      _sync: {
+        createdBy: deviceId,
+        createdAt: dateAdded || now,
+        modifiedBy: deviceId,
+        modifiedAt: now,
+      },
+      title,
+      dateAdded,
+    },
     createdAt: dateAdded || undefined,
   });
 
@@ -89,6 +106,11 @@ async function addBookmarkItem(url, title, dateAdded, existingUrlMap) {
     if (tagResult.success) {
       await tagItem(result.data.id, tagResult.data.tag.id);
     }
+    // Record a bookmark visit for frecency
+    await recordItemVisit(result.data.id, {
+      timestamp: dateAdded || now,
+      source: 'bookmark',
+    });
     existingUrlMap.set(url, { id: result.data.id, content: url });
   }
 
@@ -121,7 +143,7 @@ export async function importAllBookmarks() {
 /**
  * Returns { browserBookmarks, imported, synced }.
  * browserBookmarks = total URLs in the bookmark tree
- * imported = Peek items with metadata.importSource 'bookmark'
+ * imported = Peek items tagged with from:bookmark
  * synced = subset of imported that have been synced (syncedAt > 0)
  */
 export async function getBookmarkStats() {

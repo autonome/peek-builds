@@ -6,7 +6,8 @@
  * Behind a test feature toggle (peek_tabs_enabled).
  */
 
-import { addItem, queryItems, getOrCreateTag, tagItem, getItemsByTag } from './datastore.js';
+import { addItem, queryItems, getOrCreateTag, tagItem, getItemsByTag, recordItemVisit } from './datastore.js';
+import { getDeviceId } from './environment.js';
 
 const CONFIG_KEY = 'peek_tabs_enabled';
 const TAB_TAG = 'from:tab';
@@ -113,6 +114,11 @@ async function addTabItem(tab, existingUrlMap) {
     if (groupTagResult.success) {
       await tagItem(existing.id, groupTagResult.data.tag.id);
     }
+    // Record a tab visit for frecency
+    await recordItemVisit(existing.id, {
+      timestamp: Date.now(),
+      source: 'direct',
+    });
     return false;
   }
 
@@ -132,9 +138,19 @@ async function addTabItem(tab, existingUrlMap) {
 
   const metadata = buildTabMetadata(tab, groupName !== 'unfiled' ? groupName : undefined, groupColor);
 
+  const deviceId = await getDeviceId();
+  const now = Date.now();
   const result = await addItem('url', {
     content: url,
-    metadata: { ...metadata, importSource: 'tab' },
+    metadata: {
+      ...metadata,
+      _sync: {
+        createdBy: deviceId,
+        createdAt: now,
+        modifiedBy: deviceId,
+        modifiedAt: now,
+      },
+    },
   });
 
   if (result.success) {
@@ -150,6 +166,12 @@ async function addTabItem(tab, existingUrlMap) {
     if (groupTagResult.success) {
       await tagItem(result.data.id, groupTagResult.data.tag.id);
     }
+
+    // Record a tab visit for frecency
+    await recordItemVisit(result.data.id, {
+      timestamp: now,
+      source: 'direct',
+    });
 
     existingUrlMap.set(url, { id: result.data.id, content: url });
   }
@@ -188,7 +210,7 @@ export async function importAllTabs() {
 /**
  * Returns { openTabs, imported, synced }.
  * openTabs = count from chrome.tabs.query (excluding internal URLs)
- * imported = Peek items with metadata.importSource 'tab'
+ * imported = Peek items tagged with from:tab
  * synced = subset of imported that have been synced (syncedAt > 0)
  */
 export async function getTabStats() {
