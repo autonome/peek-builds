@@ -5,22 +5,8 @@
  * Used by urls.js and notes.js to avoid duplicating query logic.
  */
 import api from 'peek://app/api.js';
-
-/**
- * Extract a display title from an item's metadata or content
- * @param {Object} item - Datastore item
- * @returns {string}
- */
-export function extractTitle(item) {
-  if (item.metadata) {
-    try {
-      const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
-      if (meta.title) return meta.title;
-      if (meta.name) return meta.name;
-    } catch (e) {}
-  }
-  return item.content || 'Untitled';
-}
+export { extractTitle } from './extract-title.js';
+import { extractTitle } from './extract-title.js';
 
 /**
  * Query items by type with optional search filtering

@@ -3189,6 +3189,329 @@ test.describe('Command Chaining @desktop', () => {
 });
 
 // ============================================================================
+// Type-Specific Noun Commands Tests (uses shared app)
+// ============================================================================
+
+test.describe('Type-Specific Noun Commands @desktop', () => {
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    bgWindow = sharedBgWindow;
+  });
+
+  test('list notes command produces array output', async () => {
+    // Seed a text item so list notes has data
+    const seedResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.addItem('text', {
+        content: 'Noun test note content'
+      });
+    });
+    expect(seedResult.success).toBe(true);
+    const seedId = seedResult.data.id;
+
+    // Open cmd panel
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    expect(cmdWindow).toBeTruthy();
+
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Type 'list notes' command
+    await cmdWindow.fill('input', 'list notes');
+    await cmdWindow.press('input', 'ArrowDown');
+    await waitForClass(cmdWindow, '#results', 'visible');
+
+    // Execute
+    await cmdWindow.press('input', 'Enter');
+    await waitForResultsWithContent(cmdWindow);
+
+    // Should have results showing
+    const hasResults = await cmdWindow.$eval('#results', (el: HTMLElement) => {
+      return el.classList.contains('visible') && el.children.length > 0;
+    });
+    expect(hasResults).toBe(true);
+
+    // Close the window
+    if (openResult.id) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, openResult.id);
+    }
+
+    // Clean up seeded item
+    await bgWindow.evaluate(async (id: string) => {
+      return await (window as any).app.datastore.deleteItem(id);
+    }, seedId);
+  });
+
+  test('list notes chains with csv', async () => {
+    // Wait for csv command to be registered
+    await waitForCommand(bgWindow, 'csv', 10000);
+
+    // Seed a text item
+    const seedResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.datastore.addItem('text', {
+        content: 'CSV chain test note'
+      });
+    });
+    expect(seedResult.success).toBe(true);
+    const seedId = seedResult.data.id;
+
+    // Open cmd panel
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    expect(cmdWindow).toBeTruthy();
+
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Execute list notes — enters chain mode directly (save accepts */*)
+    await cmdWindow.fill('input', 'list notes');
+    await cmdWindow.press('input', 'ArrowDown');
+    await waitForClass(cmdWindow, '#results', 'visible');
+    await cmdWindow.press('input', 'Enter');
+    await waitForClass(cmdWindow, '#chain-indicator', 'visible');
+
+    // Now in chain mode - type 'csv' and execute
+    await cmdWindow.fill('input', 'csv');
+
+    // Wait for csv to appear in results
+    await cmdWindow.waitForFunction(() => {
+      const results = document.getElementById('results');
+      return results && results.textContent && results.textContent.toLowerCase().includes('csv');
+    }, { timeout: 5000 });
+
+    await cmdWindow.press('input', 'ArrowDown');
+    await waitForClass(cmdWindow, '#results', 'visible');
+    await cmdWindow.press('input', 'Enter');
+
+    // CSV command produces text/csv output
+    await cmdWindow.waitForFunction(() => {
+      const el = document.getElementById('chain-mime');
+      return el && el.textContent === 'text/csv';
+    }, { timeout: 10000 });
+
+    const chainMime = await cmdWindow.$eval('#chain-mime', (el: HTMLElement) => el.textContent || '');
+    expect(chainMime).toBe('text/csv');
+
+    // Close the window
+    if (openResult.id) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, openResult.id);
+    }
+
+    // Clean up
+    await bgWindow.evaluate(async (id: string) => {
+      return await (window as any).app.datastore.deleteItem(id);
+    }, seedId);
+  });
+
+  test('new note with content saves to datastore', async () => {
+    const uniqueContent = `New note test ${Date.now()}`;
+
+    // Open cmd panel
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    expect(cmdWindow).toBeTruthy();
+
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Type 'new note' followed by content text
+    await cmdWindow.fill('input', `new note ${uniqueContent}`);
+    await cmdWindow.press('input', 'ArrowDown');
+    await waitForClass(cmdWindow, '#results', 'visible');
+
+    // Execute
+    await cmdWindow.press('input', 'Enter');
+
+    // Wait for execution to complete — the note should be saved
+    // The command returns an 'item' mimeType output with the new item data.
+    // Chain mode or output display will appear.
+    await waitForResultsWithContent(cmdWindow);
+
+    // Close the window
+    if (openResult.id) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, openResult.id);
+    }
+
+    // Verify the note was actually saved in the datastore
+    const queryResult = await bgWindow.evaluate(async (content: string) => {
+      const result = await (window as any).app.datastore.queryItems({ type: 'text' });
+      if (!result.success) return { found: false };
+      const match = result.data.find((item: any) => item.content && item.content.includes(content));
+      return { found: !!match, itemId: match?.id };
+    }, uniqueContent);
+
+    expect(queryResult.found).toBe(true);
+
+    // Clean up
+    if (queryResult.itemId) {
+      await bgWindow.evaluate(async (id: string) => {
+        return await (window as any).app.datastore.deleteItem(id);
+      }, queryResult.itemId);
+    }
+  });
+
+  test('new note without content signals editor open', async () => {
+    // Open cmd panel
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    expect(cmdWindow).toBeTruthy();
+
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Type just 'new note' with no additional content — enter param mode with space
+    await cmdWindow.fill('input', 'new note');
+    await cmdWindow.press('input', 'ArrowDown');
+    await waitForClass(cmdWindow, '#results', 'visible');
+
+    // Execute with no search text (just the command name)
+    await cmdWindow.press('input', 'Enter');
+
+    // The command returns mimeType 'new-item' which signals editor should open.
+    // This should complete execution without error — verify the panel doesn't show an error state.
+    await cmdWindow.waitForFunction(() => {
+      const s = (window as any)._cmdState;
+      // Should either be in chain mode, output selection, or back to idle after execution
+      return s.currentState !== 'EXECUTING';
+    }, { timeout: 10000 });
+
+    const state = await cmdWindow.evaluate(() => {
+      return (window as any)._cmdState?.currentState;
+    });
+    // Should not be in error state
+    expect(state).not.toBe('ERROR');
+
+    // Close the window
+    if (openResult.id) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, openResult.id);
+    }
+  });
+
+  test('list urls search filtering returns matching items', async () => {
+    const ts = Date.now();
+    // Seed URLs with distinct titles
+    const seed1 = await bgWindow.evaluate(async (ts: number) => {
+      return await (window as any).app.datastore.addItem('url', {
+        content: `https://filter-alpha-${ts}.example.com`,
+        metadata: JSON.stringify({ title: `Alpha Filter Test ${ts}` })
+      });
+    }, ts);
+    expect(seed1.success).toBe(true);
+
+    const seed2 = await bgWindow.evaluate(async (ts: number) => {
+      return await (window as any).app.datastore.addItem('url', {
+        content: `https://filter-beta-${ts}.example.com`,
+        metadata: JSON.stringify({ title: `Beta Filter Test ${ts}` })
+      });
+    }, ts);
+    expect(seed2.success).toBe(true);
+
+    // Open cmd panel
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    expect(cmdWindow).toBeTruthy();
+
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+
+    // Execute 'list urls alpha' to filter
+    await cmdWindow.fill('input', `list urls alpha`);
+    await cmdWindow.press('input', 'ArrowDown');
+    await waitForClass(cmdWindow, '#results', 'visible');
+    await cmdWindow.press('input', 'Enter');
+    await waitForResultsWithContent(cmdWindow);
+
+    // Verify results contain the 'alpha' item
+    const resultText = await cmdWindow.$eval('#results', (el: HTMLElement) => el.textContent || '');
+    expect(resultText.toLowerCase()).toContain('alpha');
+
+    // Close the window
+    if (openResult.id) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, openResult.id);
+    }
+
+    // Clean up seeded items
+    await bgWindow.evaluate(async (id: string) => {
+      return await (window as any).app.datastore.deleteItem(id);
+    }, seed1.data.id);
+    await bgWindow.evaluate(async (id: string) => {
+      return await (window as any).app.datastore.deleteItem(id);
+    }, seed2.data.id);
+  });
+});
+
+// ============================================================================
 // Edit Command Param Mode Tests (uses shared app)
 // ============================================================================
 
