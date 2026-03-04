@@ -364,6 +364,19 @@ function findMatchingCommands(text) {
 
 function updateAdaptiveFeedback(typed, name) {
   log('cmd:panel', 'updateAdaptiveFeedback', typed, '->', name);
+
+  // Apply decay to existing entries for this typed prefix (adapts to changing behavior)
+  const DECAY = 0.95;
+  const PRUNE_THRESHOLD = 0.1;
+  if (state.adaptiveFeedback[typed]) {
+    for (const key of Object.keys(state.adaptiveFeedback[typed])) {
+      state.adaptiveFeedback[typed][key] *= DECAY;
+      if (state.adaptiveFeedback[typed][key] < PRUNE_THRESHOLD) {
+        delete state.adaptiveFeedback[typed][key];
+      }
+    }
+  }
+
   if (!state.adaptiveFeedback[typed]) {
     state.adaptiveFeedback[typed] = {};
   }
@@ -380,6 +393,15 @@ function updateAdaptiveFeedback(typed, name) {
     if (lowerTyped.startsWith(word) || word.startsWith(lowerTyped)) continue;
     for (let len = 2; len <= word.length; len++) {
       const sub = word.substring(0, len);
+      // Decay sub-prefix entries too
+      if (state.adaptiveFeedback[sub]) {
+        for (const key of Object.keys(state.adaptiveFeedback[sub])) {
+          state.adaptiveFeedback[sub][key] *= DECAY;
+          if (state.adaptiveFeedback[sub][key] < PRUNE_THRESHOLD) {
+            delete state.adaptiveFeedback[sub][key];
+          }
+        }
+      }
       if (!state.adaptiveFeedback[sub]) state.adaptiveFeedback[sub] = {};
       if (!state.adaptiveFeedback[sub][name]) state.adaptiveFeedback[sub][name] = 0;
       state.adaptiveFeedback[sub][name] += 0.25;

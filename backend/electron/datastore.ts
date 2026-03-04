@@ -1046,14 +1046,39 @@ function migrateItemFrecencyColumns(): void {
  * Uses a time-decay algorithm where recent visits contribute more.
  * NOTE: Shared copy lives in app/lib/frecency.js for frontend/Tauri use.
  */
-export function calculateItemFrecency(visits: Array<{ timestamp: number; interacted: number; source: string }>): number {
+/**
+ * Visit source weights. "typed" = user typed URL (strongest intent).
+ * "direct" treated as typed for backwards compat.
+ */
+const VISIT_WEIGHTS: Record<string, number> = {
+  interacted: 2,
+  typed: 3,
+  bookmark: 1.5,
+  direct: 3,
+  default: 1
+};
+
+export function calculateItemFrecency(visits: Array<{ timestamp: number; interacted: number; source: string }>, totalVisitCount?: number): number {
+  const SAMPLE_CAP = 20;
+  const GRACE_PERIOD_DAYS = 3;
+  const HALF_LIFE = 7;
+
+  const sample = visits.length > SAMPLE_CAP ? visits.slice(0, SAMPLE_CAP) : visits;
+  const total = totalVisitCount || visits.length;
+
   let score = 0;
-  for (const visit of visits) {
-    const ageDays = (Date.now() - visit.timestamp) / (1000 * 60 * 60 * 24);
-    const decay = 1 / (1 + Math.pow(ageDays / 7, 0.5));
-    const weight = visit.interacted ? 2 : (visit.source === 'direct' ? 0.5 : 1);
+  for (const visit of sample) {
+    const rawAgeDays = (Date.now() - visit.timestamp) / (1000 * 60 * 60 * 24);
+    const ageDays = Math.max(0, rawAgeDays - GRACE_PERIOD_DAYS);
+    const decay = 1 / (1 + Math.pow(ageDays / HALF_LIFE, 0.5));
+    const weight = visit.interacted ? VISIT_WEIGHTS.interacted : (VISIT_WEIGHTS[visit.source] || VISIT_WEIGHTS.default);
     score += weight * decay;
   }
+
+  if (sample.length < total && sample.length > 0) {
+    score = score * total / sample.length;
+  }
+
   return Math.round(score * 10);
 }
 
@@ -3073,7 +3098,7 @@ export function queryItems(filter: ItemFilter = {}): Item[] {
   let orderBy: string;
   switch (filter.sortBy) {
     case 'frecency':
-      orderBy = 'frecencyScore DESC, lastVisitAt DESC';
+      orderBy = 'starred DESC, frecencyScore DESC, lastVisitAt DESC';
       break;
     case 'lastVisit':
       orderBy = 'lastVisitAt DESC';
@@ -3276,12 +3301,13 @@ export function updateItemVisitStats(itemId: string): void {
   const d = getDb();
   const timestamp = now();
 
-  // Get all visits for this item
-  const visits = d.prepare('SELECT timestamp, interacted, source FROM item_visits WHERE itemId = ?').all(itemId) as Array<{ timestamp: number; interacted: number; source: string }>;
+  // Get total visit count and last 20 visits (most recent first) for frecency sampling
+  const countResult = d.prepare('SELECT COUNT(*) as cnt FROM item_visits WHERE itemId = ?').get(itemId) as { cnt: number };
+  const visitCount = countResult.cnt;
+  const visits = d.prepare('SELECT timestamp, interacted, source FROM item_visits WHERE itemId = ? ORDER BY timestamp DESC LIMIT 20').all(itemId) as Array<{ timestamp: number; interacted: number; source: string }>;
 
-  const visitCount = visits.length;
-  const lastVisitAt = visits.length > 0 ? Math.max(...visits.map(v => v.timestamp)) : 0;
-  const frecencyScore = calculateItemFrecency(visits);
+  const lastVisitAt = visits.length > 0 ? visits[0].timestamp : 0;
+  const frecencyScore = calculateItemFrecency(visits, visitCount);
 
   d.prepare('UPDATE items SET visitCount = ?, lastVisitAt = ?, frecencyScore = ?, updatedAt = ? WHERE id = ?').run(
     visitCount,
@@ -3407,7 +3433,7 @@ export function queryItemsByFrecency(filter: {
   const limit = filter.limit ? `LIMIT ${filter.limit}` : 'LIMIT 50';
 
   return getDb().prepare(
-    `SELECT * FROM items ${whereClause} ORDER BY frecencyScore DESC, lastVisitAt DESC ${limit}`
+    `SELECT * FROM items ${whereClause} ORDER BY starred DESC, frecencyScore DESC, lastVisitAt DESC ${limit}`
   ).all(...values) as Item[];
 }
 
