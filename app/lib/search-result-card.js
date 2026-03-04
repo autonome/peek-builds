@@ -26,6 +26,13 @@ const OPEN_BUTTON_SVG =
   '<line x1="10" y1="14" x2="21" y2="3"></line>' +
   '</svg>';
 
+// Delete button SVG icon (trash can)
+const DELETE_BUTTON_SVG =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<polyline points="3 6 5 6 21 6"></polyline>' +
+  '<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>' +
+  '</svg>';
+
 /**
  * Create a fully-built peek-card element for an item.
  *
@@ -34,7 +41,9 @@ const OPEN_BUTTON_SVG =
  * @param {Array}  [opts.tags] - Tag objects for this item (used for display and affordances)
  * @param {boolean} [opts.showOpenButton] - Show an open-in-new-window button for URL items (default: false)
  * @param {function} [opts.onTagClick] - Called with (tag, event) when a tag chip is clicked
+ * @param {function} [opts.onTagRemove] - Called with (item, tag) when a tag remove x is clicked (no confirm)
  * @param {function} [opts.onOpen] - Called with (url) when the open button is clicked
+ * @param {function} [opts.onDelete] - Called with (item) when the delete button is clicked (should confirm)
  * @param {function} [opts.onClick] - Called with (item, event) on card-click (overrides default)
  * @param {object}  [opts.affordances] - { rules, api, onToggle } for tag action affordances
  * @param {boolean} [opts.selected] - Whether the card starts in selected state
@@ -79,6 +88,19 @@ export const createSearchResultCard = (item, opts = {}) => {
     header.appendChild(openBtn);
   }
 
+  if (opts.onDelete) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'card-delete-btn';
+    deleteBtn.title = 'Delete item';
+    deleteBtn.innerHTML = DELETE_BUTTON_SVG;
+    deleteBtn.style.flexShrink = '0';
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      opts.onDelete(item);
+    });
+    header.appendChild(deleteBtn);
+  }
+
   card.appendChild(header);
 
   // ── Footer slot: URL/subtitle on left, tags + affordances + visit count on right ──
@@ -113,6 +135,17 @@ export const createSearchResultCard = (item, opts = {}) => {
           e.stopPropagation();
           opts.onTagClick(tag, e);
         });
+      }
+      if (opts.onTagRemove) {
+        const removeBtn = document.createElement('span');
+        removeBtn.className = 'card-tag-remove';
+        removeBtn.textContent = '\u00D7';
+        removeBtn.title = `Remove ${tag.name}`;
+        removeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          opts.onTagRemove(item, tag);
+        });
+        chip.appendChild(removeBtn);
       }
       tagsContainer.appendChild(chip);
     });

@@ -1107,6 +1107,15 @@ const createItemCard = (item) => {
     tags,
     showOpenButton: true,
     onOpen: (url) => openItemUrl(url),
+    onDelete: async (item) => {
+      if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
+      await api.datastore.deleteItem(item.id);
+      loadData().then(() => renderCards());
+    },
+    onTagRemove: async (item, tag) => {
+      await api.datastore.untagItem(item.id, tag.id);
+      loadData().then(() => renderCards());
+    },
     onTagClick: (tag) => {
       const existingIndex = state.activeTags.findIndex(t => t.id === tag.id);
       if (existingIndex >= 0) {

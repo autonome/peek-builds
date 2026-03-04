@@ -271,6 +271,12 @@ const createResultCard = (item) => {
     className: 'result-card',
     elevated: true,
     visitCount: item.visitCount,
+    onDelete: async (item) => {
+      if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
+      await api.datastore.deleteItem(item.id);
+      state.results = state.results.filter(r => r.id !== item.id);
+      render();
+    },
     affordances: rules.length > 0 ? {
       rules,
       api,

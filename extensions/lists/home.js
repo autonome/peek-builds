@@ -326,6 +326,14 @@ const createResultElement = (item, query, index) => {
     className: 'result-item',
     tags: tagObjects,
     visitCount: item.visitCount,
+    onDelete: async (item) => {
+      if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
+      await api.datastore.deleteItem(item.id);
+      api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+    },
+    onTagRemove: async (item, tag) => {
+      await api.datastore.untagItem(item.id, tag.id);
+    },
     onClick: async (item) => {
       state.selectedIndex = index;
       updateSelection();

@@ -555,7 +555,7 @@ peek-grid.cards[view-mode="masonry"] peek-card {
   width: 22px;
   height: 22px;
   background: var(--base02);
-  border: 1px solid var(--base03);
+  border: none;
   border-radius: 4px;
   cursor: pointer;
   color: var(--base04);
@@ -566,8 +566,51 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 
 .card-open-btn:hover {
   background: var(--base0D);
-  border-color: var(--base0D);
   color: var(--base00);
+}
+
+/* Card delete button */
+.card-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base03);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
+  opacity: 0;
+}
+
+peek-card:hover .card-delete-btn {
+  opacity: 1;
+}
+
+.card-delete-btn:hover {
+  background: var(--base08);
+  color: var(--base00);
+}
+
+/* Tag remove button */
+.card-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 3px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--base03);
+  transition: color 0.15s;
+}
+
+.card-tag-remove:hover {
+  color: var(--base08);
 }
 
 /* ==================== Inline Detail View ==================== */

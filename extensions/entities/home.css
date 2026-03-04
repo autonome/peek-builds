@@ -237,7 +237,7 @@ peek-card[selected] {
   height: 22px;
   padding: 0;
   background: var(--base02);
-  border: 1px solid var(--base02);
+  border: none;
   border-radius: 4px;
   cursor: pointer;
   color: var(--base04);
@@ -248,7 +248,33 @@ peek-card[selected] {
 .card-open-btn:hover {
   background: var(--base03);
   color: var(--base05);
-  border-color: var(--base03);
+}
+
+/* Card delete button */
+.card-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base03);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  opacity: 0;
+}
+
+peek-card:hover .card-delete-btn {
+  opacity: 1;
+}
+
+.card-delete-btn:hover {
+  background: var(--base08);
+  color: var(--base00);
 }
 
 /* Feedback buttons */
