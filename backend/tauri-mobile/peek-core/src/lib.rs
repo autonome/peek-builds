@@ -179,6 +179,12 @@ impl PeekStore {
         items::update_image_tags(&conn, id, tags, &self.device_id)
     }
 
+    /// Get item content text (e.g. OCR text for images).
+    pub fn get_item_content(&self, id: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        items::get_item_content(&conn, id)
+    }
+
     /// Update item content text (e.g. OCR text for images).
     pub fn update_item_content(&self, id: &str, content: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;

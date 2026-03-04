@@ -283,6 +283,15 @@ class PeekCoreManager {
     }
 
     /// Save OCR/vision text as item content so it's visible in the main app.
+    func getItemContent(itemId: String) -> String? {
+        do {
+            return try store?.getItemContent(itemId: itemId)
+        } catch {
+            debugLog("getItemContent error: \(error)")
+            return nil
+        }
+    }
+
     func updateItemContent(itemId: String, content: String) {
         do {
             try store?.updateItemContent(itemId: itemId, content: content)
@@ -726,7 +735,7 @@ class VisionAnalyzer {
 }
 
 // MARK: - ShareViewController
-class ShareViewController: UIViewController {
+class ShareViewController: UIViewController, UITextViewDelegate {
     var sharedURL: String?
     var sharedText: String?
     var sharedImageData: Data?
@@ -746,7 +755,7 @@ class ShareViewController: UIViewController {
 
     let scrollView = UIScrollView()
     let contentStackView = UIStackView()
-    let contentLabel = UILabel()  // Shows URL or text content
+    let contentTextView = UITextView()  // Editable content (URL, text, or image description)
     let imagePreviewView = UIImageView()  // Shows image preview
 
     // Selected tags at top - self-sizing
@@ -787,7 +796,7 @@ class ShareViewController: UIViewController {
     let analyzeButton = UIButton(type: .system)
     let analyzeSpinner = UIActivityIndicatorView(style: .medium)
     let visionResultsContainer = UIStackView()
-    let ocrTextLabel = UILabel()
+    let ocrTextView = UITextView()
     let ocrShowMoreButton = UIButton(type: .system)
     let barcodesLabel = UILabel()
     let suggestedTagsCollectionView: SelfSizingCollectionView = {
@@ -853,6 +862,8 @@ class ShareViewController: UIViewController {
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             // Update cgColor-based borders which don't respond to dynamic colors automatically
             newTagTextField.layer.borderColor = PeekTheme.border.cgColor
+            contentTextView.layer.borderColor = PeekTheme.border.cgColor
+            ocrTextView.layer.borderColor = PeekTheme.border.cgColor
         }
     }
 
@@ -991,13 +1002,25 @@ class ShareViewController: UIViewController {
         visionResultsContainer.translatesAutoresizingMaskIntoConstraints = false
         contentStackView.addArrangedSubview(visionResultsContainer)
 
-        // OCR text label
-        ocrTextLabel.font = PeekTheme.caption
-        ocrTextLabel.textColor = PeekTheme.textSecondary
-        ocrTextLabel.numberOfLines = 4
-        ocrTextLabel.lineBreakMode = .byTruncatingTail
-        ocrTextLabel.isHidden = true
-        visionResultsContainer.addArrangedSubview(ocrTextLabel)
+        // OCR text view (editable)
+        ocrTextView.font = PeekTheme.caption
+        ocrTextView.textColor = PeekTheme.textSecondary
+        ocrTextView.backgroundColor = PeekTheme.bgSecondary
+        ocrTextView.layer.cornerRadius = PeekTheme.inputCornerRadius
+        ocrTextView.layer.borderWidth = 1
+        ocrTextView.layer.borderColor = PeekTheme.border.cgColor
+        ocrTextView.textContainerInset = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
+        ocrTextView.isScrollEnabled = false  // Let it grow with content
+        ocrTextView.isEditable = true
+        ocrTextView.delegate = self
+        ocrTextView.isHidden = true
+        ocrTextView.translatesAutoresizingMaskIntoConstraints = false
+        visionResultsContainer.addArrangedSubview(ocrTextView)
+        // Constrain to ~4 lines initially, expanded via show more
+        let ocrMaxHeight = ocrTextView.heightAnchor.constraint(lessThanOrEqualToConstant: 80)
+        ocrMaxHeight.priority = .defaultHigh
+        ocrMaxHeight.isActive = true
+        ocrTextView.tag = 100  // Tag to find the height constraint later
 
         // "Show more" button for OCR text
         ocrShowMoreButton.setTitle("Show more", for: .normal)
@@ -1034,14 +1057,24 @@ class ShareViewController: UIViewController {
         suggestedTagsCollectionView.isHidden = true
         visionResultsContainer.addArrangedSubview(suggestedTagsCollectionView)
 
-        // URL/Text Label — base05 (primary text) to stay visible against share sheet bg
-        contentLabel.font = PeekTheme.body
-        contentLabel.numberOfLines = 1
-        contentLabel.textColor = PeekTheme.text
-        contentLabel.lineBreakMode = .byTruncatingTail
-        contentStackView.addArrangedSubview(contentLabel)
-        // Extra space below URL since it's the focal point
-        contentStackView.setCustomSpacing(PeekTheme.spacingMD * 3, after: contentLabel)
+        // Editable content area — base05 (primary text) to stay visible against share sheet bg
+        contentTextView.font = PeekTheme.body
+        contentTextView.textColor = PeekTheme.text
+        contentTextView.backgroundColor = PeekTheme.bgSecondary
+        contentTextView.layer.cornerRadius = PeekTheme.inputCornerRadius
+        contentTextView.layer.borderWidth = 1
+        contentTextView.layer.borderColor = PeekTheme.border.cgColor
+        contentTextView.textContainerInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
+        contentTextView.isScrollEnabled = false  // Let it grow with content
+        contentTextView.isEditable = true
+        contentTextView.delegate = self
+        contentTextView.translatesAutoresizingMaskIntoConstraints = false
+        contentStackView.addArrangedSubview(contentTextView)
+        // Constrain max height so it doesn't grow unbounded
+        let contentTextViewMaxHeight = contentTextView.heightAnchor.constraint(lessThanOrEqualToConstant: 120)
+        contentTextViewMaxHeight.isActive = true
+        // Extra space below content since it's the focal point
+        contentStackView.setCustomSpacing(PeekTheme.spacingMD * 3, after: contentTextView)
 
         // Selected Tags Collection View - self-sizing
         selectedTagsCollectionView.backgroundColor = .clear
@@ -1445,8 +1478,7 @@ class ShareViewController: UIViewController {
         os_log("Setting shared URL: %{public}@ (normalized: %{public}@)", log: shareLog, type: .info, urlString, normalized)
         sharedURL = normalized
         sharedItemType = .page
-        contentLabel.text = urlString
-        contentLabel.numberOfLines = 2
+        contentTextView.text = urlString
         checkIfURLExists()
     }
 
@@ -1458,8 +1490,7 @@ class ShareViewController: UIViewController {
         os_log("Setting shared text: %{public}@", log: shareLog, type: .info, String(text.prefix(50)))
         sharedText = text
         sharedItemType = .text
-        contentLabel.text = text
-        contentLabel.numberOfLines = 4  // Show more lines for text
+        contentTextView.text = text
 
         // Parse hashtags from text and add them as tags
         let hashtags = parseHashtags(from: text)
@@ -1534,21 +1565,20 @@ class ShareViewController: UIViewController {
         print("[ShareExt] Generated title: \(title ?? "nil") from filename: \(effectiveFilename ?? "nil")")
         if let title = title {
             sharedMetadata["title"] = title
-            contentLabel.text = title
+            contentTextView.text = title
             print("[ShareExt] Set title in metadata and label: \(title)")
         } else if let sourceUrl = sourceUrl {
             // Fallback: try to get title from source URL
             if let urlTitle = titleFromFilename(URL(string: sourceUrl)?.lastPathComponent) {
                 sharedMetadata["title"] = urlTitle
-                contentLabel.text = urlTitle
+                contentTextView.text = urlTitle
             } else {
-                contentLabel.text = "Image from: \(sourceUrl)"
+                contentTextView.text = "Image from: \(sourceUrl)"
             }
         } else {
             let sizeKB = imageData.count / 1024
-            contentLabel.text = "Image (\(sizeKB) KB)"
+            contentTextView.text = "Image (\(sizeKB) KB)"
         }
-        contentLabel.numberOfLines = 2
 
         // Store source URL in metadata if present
         if let sourceUrl = sourceUrl {
@@ -1761,6 +1791,19 @@ class ShareViewController: UIViewController {
     /// Save the current state of selectedTags to the database (called instantly on tag changes)
     func saveCurrentState() {
         let finalTags = Array(selectedTags).sorted()
+
+        // Include edited content from the text view in metadata
+        let editedContent = contentTextView.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let content = editedContent, !content.isEmpty {
+            sharedMetadata["content"] = content
+        }
+
+        // Include edited OCR text if present
+        let editedOcr = ocrTextView.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let ocr = editedOcr, !ocr.isEmpty {
+            sharedMetadata["ocrText"] = ocr
+        }
+
         let metadata = sharedMetadata.isEmpty ? nil : sharedMetadata
         print("[ShareExt] saveCurrentState - sharedMetadata: \(sharedMetadata)")
 
@@ -1782,10 +1825,12 @@ class ShareViewController: UIViewController {
             }
 
         case .text:
-            guard let text = sharedText, !text.isEmpty else { return }
+            // Use edited text from the text view, falling back to original shared text
+            let textContent = editedContent ?? sharedText ?? ""
+            guard !textContent.isEmpty else { return }
 
             PeekCoreManager.shared.saveText(
-                content: text,
+                content: textContent,
                 tags: finalTags,
                 metadata: metadata
             ) { }
@@ -1839,6 +1884,16 @@ class ShareViewController: UIViewController {
                 PeekCoreManager.shared.debugLog("saveImage completion: imageId=\(imageId ?? "nil")")
                 if let imageId = imageId {
                     self.savedImageId = imageId
+                    // If this was a dedup (image already existed), load and show existing OCR content
+                    if let existingContent = PeekCoreManager.shared.getItemContent(itemId: imageId),
+                       !existingContent.isEmpty {
+                        DispatchQueue.main.async {
+                            self.ocrTextView.text = existingContent
+                            self.ocrTextView.isHidden = false
+                            self.visionResultsContainer.isHidden = false
+                            self.showStatus("\u{2713} Saved", color: .secondaryLabel)
+                        }
+                    }
                 }
                 self.isSavingImage = false
             }
@@ -1933,8 +1988,8 @@ class ShareViewController: UIViewController {
 
         // Show OCR text
         if let text = result.ocrText, !text.isEmpty {
-            ocrTextLabel.text = text
-            ocrTextLabel.isHidden = false
+            ocrTextView.text = text
+            ocrTextView.isHidden = false
             // Show "show more" if text is long
             let lineCount = text.components(separatedBy: "\n").count
             ocrShowMoreButton.isHidden = lineCount <= 4
@@ -1950,12 +2005,24 @@ class ShareViewController: UIViewController {
 
     @objc func toggleOcrText() {
         isOcrExpanded.toggle()
+        // Find the max height constraint (tag 100) and toggle it
+        if let maxConstraint = ocrTextView.constraints.first(where: { $0.firstAttribute == .height && $0.relation == .lessThanOrEqual }) {
+            maxConstraint.isActive = !isOcrExpanded
+        }
+        ocrTextView.isScrollEnabled = isOcrExpanded  // Scroll when expanded
         if isOcrExpanded {
-            ocrTextLabel.numberOfLines = 0
             ocrShowMoreButton.setTitle("Show less", for: .normal)
+            // Set a taller max when expanded
+            let expandedHeight = ocrTextView.heightAnchor.constraint(lessThanOrEqualToConstant: 300)
+            expandedHeight.priority = .defaultHigh
+            expandedHeight.isActive = true
         } else {
-            ocrTextLabel.numberOfLines = 4
+            ocrTextView.isScrollEnabled = false
             ocrShowMoreButton.setTitle("Show more", for: .normal)
+            // Re-enable the compact constraint
+            if let maxConstraint = ocrTextView.constraints.first(where: { $0.firstAttribute == .height && $0.relation == .lessThanOrEqual }) {
+                maxConstraint.isActive = true
+            }
         }
         view.layoutIfNeeded()
         updatePreferredContentSize()
@@ -2053,12 +2120,26 @@ extension ShareViewController: UITextFieldDelegate {
     }
 }
 
+// MARK: - UITextViewDelegate methods
+extension ShareViewController {
+    func textViewDidChange(_ textView: UITextView) {
+        // Resize the text view and update layout
+        view.layoutIfNeeded()
+        updatePreferredContentSize()
+    }
+
+    func textViewDidEndEditing(_ textView: UITextView) {
+        // Auto-save when user finishes editing
+        saveCurrentState()
+    }
+}
+
 // MARK: - UIGestureRecognizerDelegate
 extension ShareViewController: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         // Don't intercept touches on interactive elements
         let touchedView = touch.view
-        if touchedView is UIButton || touchedView is UITextField || touchedView is UICollectionViewCell {
+        if touchedView is UIButton || touchedView is UITextField || touchedView is UITextView || touchedView is UICollectionViewCell {
             return false
         }
         // Check if touch is inside a collection view cell

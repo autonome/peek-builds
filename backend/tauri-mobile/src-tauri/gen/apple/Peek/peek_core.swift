@@ -532,6 +532,11 @@ public protocol PeekCoreFfiProtocol : AnyObject {
     func findExistingUrl(url: String) throws  -> FfiSavedItem?
     
     /**
+     * Get item content text (e.g. OCR text for images).
+     */
+    func getItemContent(itemId: String) throws  -> String?
+    
+    /**
      * Get all tags ordered by frecency score.
      */
     func getTagsByFrecency() throws  -> [FfiTagStats]
@@ -661,6 +666,17 @@ open func findExistingUrl(url: String)throws  -> FfiSavedItem? {
     return try  FfiConverterOptionTypeFfiSavedItem.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
     uniffi_peek_core_fn_method_peekcoreffi_find_existing_url(self.uniffiClonePointer(),
         FfiConverterString.lower(url),$0
+    )
+})
+}
+    
+    /**
+     * Get item content text (e.g. OCR text for images).
+     */
+open func getItemContent(itemId: String)throws  -> String? {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_peek_core_fn_method_peekcoreffi_get_item_content(self.uniffiClonePointer(),
+        FfiConverterString.lower(itemId),$0
     )
 })
 }
@@ -1639,6 +1655,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_peek_core_checksum_method_peekcoreffi_find_existing_url() != 16518) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_peek_core_checksum_method_peekcoreffi_get_item_content() != 62284) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_peek_core_checksum_method_peekcoreffi_get_tags_by_frecency() != 27194) {

@@ -604,6 +604,18 @@ pub fn update_image_tags(
 
 /// Update item metadata by merging new JSON into existing metadata.
 /// Update item content text (e.g. OCR text for images).
+pub fn get_item_content(
+    conn: &Connection,
+    id: &str,
+) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT content FROM items WHERE id = ? AND deleted_at IS NULL",
+        params![id],
+        |row| row.get(0),
+    )
+    .map_err(|e| format!("Failed to get item content: {}", e))
+}
+
 pub fn update_item_content(
     conn: &Connection,
     id: &str,

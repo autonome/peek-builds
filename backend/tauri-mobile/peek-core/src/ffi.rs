@@ -244,6 +244,12 @@ impl PeekCoreFfi {
         Ok(())
     }
 
+    /// Get item content text (e.g. OCR text for images).
+    pub fn get_item_content(&self, item_id: String) -> Result<Option<String>, FfiError> {
+        let content = self.store.get_item_content(&item_id)?;
+        Ok(content)
+    }
+
     /// Update item content text (e.g. OCR text for images).
     pub fn update_item_content(&self, item_id: String, content: String) -> Result<(), FfiError> {
         self.store.update_item_content(&item_id, &content)?;

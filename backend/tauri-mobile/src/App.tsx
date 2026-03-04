@@ -2279,26 +2279,32 @@ function App() {
       if (!item) return null;
       const metadata = item.metadata as Record<string, unknown> | undefined;
       const title = metadata?.title as string | undefined;
+      console.log('[DEBUG EDITOR IMAGE]', JSON.stringify({ id: item.id, hasContent: !!item.content, contentLength: item.content?.length, contentPreview: item.content?.substring(0, 100) }));
 
       return (
         <EditorOverlay onDismiss={requestCancelEditingImage} keyboardHeight={keyboardHeight} className="text-editor-overlay">
-          <div className="editor-image-preview">
-            {item.thumbnail ? (
-              <img
-                src={`data:image/jpeg;base64,${item.thumbnail}`}
-                alt={title || "Preview"}
-                className="edit-modal-image"
-              />
-            ) : (
-              <div className="image-placeholder">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                  <polyline points="21 15 16 10 5 21"></polyline>
-                </svg>
-              </div>
-            )}
-            {title && <div className="edit-image-title">{title}</div>}
+          <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto" }}>
+            <div className="editor-image-preview">
+              {item.thumbnail ? (
+                <img
+                  src={`data:image/jpeg;base64,${item.thumbnail}`}
+                  alt={title || "Preview"}
+                  className="edit-modal-image"
+                />
+              ) : (
+                <div className="image-placeholder">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                  </svg>
+                </div>
+              )}
+              {title && <div className="edit-image-title">{title}</div>}
+            </div>
+            <div className="edit-image-content" style={{ padding: "0 16px 12px", fontSize: "14px", opacity: 0.85, lineHeight: "1.5", whiteSpace: "pre-wrap" }}>
+              {item.content || `[no content — keys: ${Object.keys(item).join(', ')}]`}
+            </div>
           </div>
           <TagsSection
             selectedTags={editingImageTags}
