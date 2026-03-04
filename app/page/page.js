@@ -1919,7 +1919,7 @@ function renderEntities(entities) {
   }
 
   // Display order for entity types
-  const typeOrder = ['person', 'organization', 'place', 'event', 'email', 'phone', 'product', 'creative_work', 'date', 'tracking_number', 'link', 'other'];
+  const typeOrder = ['person', 'organization', 'place', 'event', 'email', 'phone', 'product', 'creative_work', 'date', 'tracking_number', 'other'];
   const typeLabels = {
     person: 'People',
     organization: 'Organizations',
@@ -1931,7 +1931,6 @@ function renderEntities(entities) {
     creative_work: 'Works',
     date: 'Dates',
     tracking_number: 'Tracking',
-    link: 'External Links',
     other: 'Other',
   };
 
@@ -2117,23 +2116,6 @@ async function extractSimpleEntities() {
                 extractLdItem(item);
               }
             });
-          } catch(e) {}
-        }
-
-        // --- Extract external links ---
-        var links = document.querySelectorAll('a[href]');
-        for (var i = 0; i < Math.min(links.length, 200); i++) {
-          var href = links[i].href;
-          if (!href || !href.startsWith('http')) continue;
-          try {
-            var host = new URL(href).hostname;
-            if (host === window.location.hostname) continue;
-            if (seen.has(host)) continue;
-            seen.add(host);
-            var text = links[i].textContent.trim().slice(0, 60);
-            if (text && text.length > 2) {
-              entities.push({ name: text + ' (' + host + ')', type: 'link' });
-            }
           } catch(e) {}
         }
 
