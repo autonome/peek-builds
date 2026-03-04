@@ -1459,18 +1459,21 @@ function updateCommandUI() {
       commandText.appendChild(paramsSpan);
     }
   } else if (matchIdx > 0) {
-    const beforeSpan = document.createElement('span');
-    beforeSpan.textContent = selectedMatch.substring(0, matchIdx);
-    commandText.appendChild(beforeSpan);
-
+    // Substring match: show typed text at position 0 (aligned with input cursor),
+    // then the remainder of the command after the match as ghost completion.
+    // e.g. typing "t" matching "open tags" at position 5 → "t" (typed) + "ags" (ghost)
+    // This keeps the cursor aligned with the overlay text.
     const typedSpan = document.createElement('span');
     typedSpan.className = 'typed';
-    typedSpan.textContent = selectedMatch.substring(matchIdx, matchIdx + typedCommand.length);
+    typedSpan.textContent = typedCommand;
     commandText.appendChild(typedSpan);
 
-    const afterSpan = document.createElement('span');
-    afterSpan.textContent = selectedMatch.substring(matchIdx + typedCommand.length);
-    commandText.appendChild(afterSpan);
+    const remainderAfterMatch = selectedMatch.substring(matchIdx + typedCommand.length);
+    if (remainderAfterMatch) {
+      const ghostSpan = document.createElement('span');
+      ghostSpan.textContent = remainderAfterMatch;
+      commandText.appendChild(ghostSpan);
+    }
 
     if (typedParams) {
       const paramsSpan = document.createElement('span');
