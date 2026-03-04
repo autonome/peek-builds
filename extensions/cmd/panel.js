@@ -1381,8 +1381,6 @@ function updateCommandUI_UrlMode(trimmedText) {
   typedSpan.className = 'typed';
   typedSpan.textContent = trimmedText;
   commandText.appendChild(typedSpan);
-
-  syncScrollPosition();
 }
 
 function hasModifier(e) {
@@ -1459,21 +1457,18 @@ function updateCommandUI() {
       commandText.appendChild(paramsSpan);
     }
   } else if (matchIdx > 0) {
-    // Substring match: show typed text at position 0 (aligned with input cursor),
-    // then the remainder of the command after the match as ghost completion.
-    // e.g. typing "t" matching "open tags" at position 5 → "t" (typed) + "ags" (ghost)
-    // This keeps the cursor aligned with the overlay text.
+    const beforeSpan = document.createElement('span');
+    beforeSpan.textContent = selectedMatch.substring(0, matchIdx);
+    commandText.appendChild(beforeSpan);
+
     const typedSpan = document.createElement('span');
     typedSpan.className = 'typed';
-    typedSpan.textContent = typedCommand;
+    typedSpan.textContent = selectedMatch.substring(matchIdx, matchIdx + typedCommand.length);
     commandText.appendChild(typedSpan);
 
-    const remainderAfterMatch = selectedMatch.substring(matchIdx + typedCommand.length);
-    if (remainderAfterMatch) {
-      const ghostSpan = document.createElement('span');
-      ghostSpan.textContent = remainderAfterMatch;
-      commandText.appendChild(ghostSpan);
-    }
+    const afterSpan = document.createElement('span');
+    afterSpan.textContent = selectedMatch.substring(matchIdx + typedCommand.length);
+    commandText.appendChild(afterSpan);
 
     if (typedParams) {
       const paramsSpan = document.createElement('span');
@@ -1511,17 +1506,6 @@ function updateCommandUI() {
         commandText.appendChild(ghostSpan);
       }
     }
-  }
-
-  // Sync scroll position so the overlay text matches the input scroll
-  syncScrollPosition();
-}
-
-function syncScrollPosition() {
-  const commandInput = document.getElementById('command-input');
-  const commandText = document.getElementById('command-text');
-  if (commandInput && commandText) {
-    commandText.scrollLeft = commandInput.scrollLeft;
   }
 }
 
@@ -2266,12 +2250,6 @@ async function render() {
 
   commandInput.value = '';
   commandInput.focus();
-
-  // Sync overlay scroll when the input scrolls (e.g. cursor movement, long text)
-  commandInput.addEventListener('scroll', syncScrollPosition);
-  // Also sync on keyup/click since scrollLeft may change after caret moves
-  commandInput.addEventListener('keyup', syncScrollPosition);
-  commandInput.addEventListener('click', syncScrollPosition);
 
   // Input event -> dispatch to state machine (or filter URL mode)
   commandInput.addEventListener('input', () => {
