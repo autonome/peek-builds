@@ -12,6 +12,41 @@ import {
   runInTransaction,
 } from '../datastore.js';
 
+/**
+ * Map browser-specific visit type codes to the normalized source enum.
+ *
+ * Firefox visit types: 1=LINK, 2=TYPED, 3=BOOKMARK, 4=EMBED, 5=REDIRECT_PERMANENT,
+ *   6=REDIRECT_TEMPORARY, 7=DOWNLOAD, 8=FRAMED_LINK
+ *
+ * Chrome core transition types (transition & 0xFF):
+ *   0=LINK, 1=TYPED, 2=AUTO_BOOKMARK, 3=AUTO_SUBFRAME, 4=MANUAL_SUBFRAME,
+ *   5=GENERATED, 6=AUTO_TOPLEVEL, 7=FORM_SUBMIT, 8=RELOAD, 9=KEYWORD
+ */
+function mapVisitTypeToSource(
+  visitType: number | undefined,
+  browser: BrowserName,
+): 'typed' | 'bookmark' | 'link' | 'direct' {
+  if (visitType === undefined) return 'direct';
+
+  if (browser === 'firefox') {
+    switch (visitType) {
+      case 2: return 'typed';
+      case 3: return 'bookmark';
+      case 1: return 'link';
+      default: return 'direct';
+    }
+  }
+
+  // Chrome / Brave (Chromium-based)
+  switch (visitType) {
+    case 1: return 'typed';
+    case 2: // AUTO_BOOKMARK
+    case 9: return 'bookmark'; // KEYWORD
+    case 0: return 'link';
+    default: return 'direct';
+  }
+}
+
 export function importHistory(
   entries: HistoryEntry[],
   browserName: BrowserName,
@@ -58,6 +93,7 @@ export function importHistory(
               recordVisit(existingId, visit.timestamp, {
                 eventType: 'visit',
                 visitType: visit.visitType,
+                source: mapVisitTypeToSource(visit.visitType, browserName),
                 sourceBrowser: browserName,
               });
             }
@@ -95,6 +131,7 @@ export function importHistory(
             recordVisit(itemId, visit.timestamp, {
               eventType: 'visit',
               visitType: visit.visitType,
+              source: mapVisitTypeToSource(visit.visitType, browserName),
               sourceBrowser: browserName,
             });
           }

@@ -79,6 +79,7 @@ export function importBookmarks(
             title: entry.title,
             folderPath: entry.folderPath,
             dateAdded: entry.dateAdded,
+            source: 'bookmark',
             sourceProfile: profileName,
             sourceBrowser: browserName,
             importedAt: importTimestamp,

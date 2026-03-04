@@ -58,6 +58,7 @@ export function importSessions(
 
         const metadata: Record<string, unknown> = {
           title: tab.title,
+          source: 'direct',
           sourceProfile: profileName,
           sourceBrowser: browserName,
           importedAt: importTimestamp,
