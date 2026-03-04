@@ -34,7 +34,8 @@
     "sim:log:webview": "xcrun simctl spawn booted log stream --predicate 'process == \"Peek Save\" AND eventMessage CONTAINS \"webview\"' --style compact",
     "sim:install": "xcrun simctl install booted '/tmp/peek-xcodebuild-sim/Build/Products/debug-iphonesimulator/Peek Save.app'",
     "xcode:clean": "cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild-sim -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean",
-    "xcode:build": "rm -rf /tmp/peek-xcodebuild-sim && cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild-sim -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean build"
+    "xcode:build": "rm -rf /tmp/peek-xcodebuild-sim && cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild-sim -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean build",
+    "build:share-ext": "src-tauri/gen/apple/build-share-ext.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",

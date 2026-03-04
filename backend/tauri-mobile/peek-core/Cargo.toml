@@ -6,7 +6,7 @@ authors = ["dietrich"]
 edition = "2021"
 
 [lib]
-crate-type = ["lib", "staticlib"]
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [[bin]]
 name = "uniffi-bindgen"

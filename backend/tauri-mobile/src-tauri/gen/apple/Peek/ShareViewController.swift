@@ -495,8 +495,8 @@ class ShareViewController: UIViewController {
     let selectedTagsCollectionView: SelfSizingCollectionView = {
         let layout = LeftAlignedFlowLayout()
         layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
-        layout.minimumInteritemSpacing = 8
-        layout.minimumLineSpacing = 8
+        layout.minimumInteritemSpacing = PeekTheme.spacingSM
+        layout.minimumLineSpacing = PeekTheme.spacingSM
         return SelfSizingCollectionView(frame: .zero, collectionViewLayout: layout)
     }()
 
@@ -504,8 +504,8 @@ class ShareViewController: UIViewController {
     let unusedTagsCollectionView: SelfSizingCollectionView = {
         let layout = LeftAlignedFlowLayout()
         layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
-        layout.minimumInteritemSpacing = 8
-        layout.minimumLineSpacing = 8
+        layout.minimumInteritemSpacing = PeekTheme.spacingSM
+        layout.minimumLineSpacing = PeekTheme.spacingSM
         return SelfSizingCollectionView(frame: .zero, collectionViewLayout: layout)
     }()
 
@@ -520,7 +520,7 @@ class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = PeekTheme.bg
 
         setupUI()
         setupGestures()
@@ -561,6 +561,14 @@ class ShareViewController: UIViewController {
         updatePreferredContentSize()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            // Update cgColor-based borders which don't respond to dynamic colors automatically
+            newTagTextField.layer.borderColor = PeekTheme.border.cgColor
+        }
+    }
+
     private func configureSheetPresentation() {
         // For Share Extensions, we use preferredContentSize instead of UISheetPresentationController
         // because iOS controls the presentation, not our code
@@ -572,14 +580,14 @@ class ShareViewController: UIViewController {
         view.layoutIfNeeded()
 
         let contentHeight = contentStackView.systemLayoutSizeFitting(
-            CGSize(width: view.bounds.width - 32, height: UIView.layoutFittingCompressedSize.height),
+            CGSize(width: view.bounds.width - (PeekTheme.paddingH * 2), height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
 
-        // Add padding: top (20) + bottom (20) + safe area
+        // Add padding: header top margin (spacingMD) + header height (44) + content top (spacingMD) + bottom (paddingH) + safe area
         let safeAreaBottom = view.safeAreaInsets.bottom
-        let totalHeight = contentHeight + 40 + safeAreaBottom
+        let totalHeight = contentHeight + PeekTheme.spacingMD + 44 + PeekTheme.spacingMD + PeekTheme.paddingH + safeAreaBottom
 
         // Clamp between min and max
         let minHeight: CGFloat = 250
@@ -597,23 +605,44 @@ class ShareViewController: UIViewController {
         // Header with close button
         let headerView = UIView()
         headerView.translatesAutoresizingMaskIntoConstraints = false
+        headerView.backgroundColor = PeekTheme.bg
         view.addSubview(headerView)
 
-        closeButton.setTitle("Done", for: .normal)
-        closeButton.titleLabel?.font = .boldSystemFont(ofSize: 17)
+        // Header bottom border (matches --base02 border)
+        let headerBorder = UIView()
+        headerBorder.backgroundColor = PeekTheme.border
+        headerBorder.translatesAutoresizingMaskIntoConstraints = false
+        headerView.addSubview(headerBorder)
+
+        // Close button (✕) on the RIGHT side of the header
+        var closeBtnConfig = UIButton.Configuration.filled()
+        closeBtnConfig.contentInsets = NSDirectionalEdgeInsets(top: PeekTheme.buttonPaddingV, leading: PeekTheme.buttonPaddingH, bottom: PeekTheme.buttonPaddingV, trailing: PeekTheme.buttonPaddingH)
+        closeBtnConfig.baseBackgroundColor = PeekTheme.accent
+        closeBtnConfig.baseForegroundColor = PeekTheme.bg
+        closeBtnConfig.cornerStyle = .fixed
+        closeBtnConfig.background.cornerRadius = PeekTheme.buttonCornerRadius
+        closeBtnConfig.title = "\u{00D7}"  // multiplication sign ✕
+        closeBtnConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = PeekTheme.inputMedium
+            return outgoing
+        }
+        closeButton.configuration = closeBtnConfig
         closeButton.addTarget(self, action: #selector(closePressed), for: .touchUpInside)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         headerView.addSubview(closeButton)
 
+        // Title label on the TOP LEFT
         let titleLabel = UILabel()
-        titleLabel.text = "Save to Peek"
-        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.text = "Peek"
+        titleLabel.font = PeekTheme.headerTitle
+        titleLabel.textColor = PeekTheme.text
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerView.addSubview(titleLabel)
 
-        // Status label (shows "Saved!" or "Already saved")
-        statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        statusLabel.textColor = .systemGreen
+        // Status label (shows "✓ Saved") — LEFT-ALIGNED after title
+        statusLabel.font = PeekTheme.captionMedium
+        statusLabel.textColor = PeekTheme.success
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.alpha = 0
         headerView.addSubview(statusLabel)
@@ -622,41 +651,38 @@ class ShareViewController: UIViewController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = false
         scrollView.keyboardDismissMode = .interactive
+        scrollView.backgroundColor = PeekTheme.bg
         view.addSubview(scrollView)
 
         // Content stack view inside scroll view
         contentStackView.axis = .vertical
-        contentStackView.spacing = 12
+        contentStackView.spacing = PeekTheme.spacingMD
         contentStackView.alignment = .fill
         contentStackView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStackView)
 
         // Image preview (hidden by default)
         imagePreviewView.contentMode = .scaleAspectFit
-        imagePreviewView.layer.cornerRadius = 8
+        imagePreviewView.layer.cornerRadius = PeekTheme.cardCornerRadius
         imagePreviewView.layer.masksToBounds = true
-        imagePreviewView.backgroundColor = .secondarySystemBackground
+        imagePreviewView.backgroundColor = PeekTheme.bgSecondary
         imagePreviewView.isHidden = true
         imagePreviewView.translatesAutoresizingMaskIntoConstraints = false
         contentStackView.addArrangedSubview(imagePreviewView)
+        // Extra space above URL since it's the focal point
+        contentStackView.setCustomSpacing(PeekTheme.spacingMD * 1.5, after: imagePreviewView)
 
-        // URL/Text Label
-        contentLabel.font = .systemFont(ofSize: 16, weight: .regular)
-        contentLabel.numberOfLines = 2
-        contentLabel.textColor = .secondaryLabel
+        // URL/Text Label — base05 (primary text) to stay visible against share sheet bg
+        contentLabel.font = PeekTheme.body
+        contentLabel.numberOfLines = 1
+        contentLabel.textColor = PeekTheme.text
         contentLabel.lineBreakMode = .byTruncatingTail
         contentStackView.addArrangedSubview(contentLabel)
-
-        // Selected tags section label
-        let selectedLabel = UILabel()
-        selectedLabel.text = "Selected Tags"
-        selectedLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        selectedLabel.textColor = .secondaryLabel
-        contentStackView.addArrangedSubview(selectedLabel)
-        contentStackView.setCustomSpacing(8, after: contentLabel)
+        // Extra space below URL since it's the focal point
+        contentStackView.setCustomSpacing(PeekTheme.spacingMD * 1.5, after: contentLabel)
 
         // Selected Tags Collection View - self-sizing
-        selectedTagsCollectionView.backgroundColor = .systemBackground
+        selectedTagsCollectionView.backgroundColor = .clear
         selectedTagsCollectionView.delegate = self
         selectedTagsCollectionView.dataSource = self
         selectedTagsCollectionView.tag = 1
@@ -668,26 +694,41 @@ class ShareViewController: UIViewController {
         inputContainerView.translatesAutoresizingMaskIntoConstraints = false
         contentStackView.addArrangedSubview(inputContainerView)
 
+        // Text field styled like .new-tag-input
         newTagTextField.placeholder = "Add new tag..."
-        newTagTextField.borderStyle = .roundedRect
+        newTagTextField.borderStyle = .none
         newTagTextField.autocapitalizationType = .none
         newTagTextField.autocorrectionType = .no
-        newTagTextField.font = .systemFont(ofSize: 16)
+        newTagTextField.font = PeekTheme.input
+        newTagTextField.textColor = PeekTheme.text
         newTagTextField.returnKeyType = .done
         newTagTextField.translatesAutoresizingMaskIntoConstraints = false
         newTagTextField.delegate = self
         newTagTextField.addTarget(self, action: #selector(tagTextFieldChanged), for: .editingChanged)
+        newTagTextField.backgroundColor = PeekTheme.bgSecondary
+        newTagTextField.layer.cornerRadius = PeekTheme.inputCornerRadius
+        newTagTextField.layer.borderWidth = 1
+        newTagTextField.layer.borderColor = PeekTheme.border.cgColor
+        // Add left padding
+        newTagTextField.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 8, height: 1))
+        newTagTextField.leftViewMode = .always
+        newTagTextField.attributedPlaceholder = NSAttributedString(
+            string: "Add new tag...",
+            attributes: [.foregroundColor: PeekTheme.textMuted, .font: PeekTheme.input]
+        )
         inputContainerView.addSubview(newTagTextField)
 
+        // Add button — same style as close button
         var btnConfig = UIButton.Configuration.filled()
-        btnConfig.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
-        btnConfig.baseBackgroundColor = .systemGreen
-        btnConfig.baseForegroundColor = .white
-        btnConfig.cornerStyle = .medium
+        btnConfig.contentInsets = NSDirectionalEdgeInsets(top: PeekTheme.buttonPaddingV, leading: PeekTheme.buttonPaddingH, bottom: PeekTheme.buttonPaddingV, trailing: PeekTheme.buttonPaddingH)
+        btnConfig.baseBackgroundColor = PeekTheme.accent
+        btnConfig.baseForegroundColor = PeekTheme.bg
+        btnConfig.cornerStyle = .fixed
+        btnConfig.background.cornerRadius = PeekTheme.buttonCornerRadius
         btnConfig.title = "Add"
         btnConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
-            outgoing.font = .boldSystemFont(ofSize: 15)
+            outgoing.font = PeekTheme.inputMedium
             return outgoing
         }
         addTagButton.configuration = btnConfig
@@ -695,15 +736,8 @@ class ShareViewController: UIViewController {
         addTagButton.translatesAutoresizingMaskIntoConstraints = false
         inputContainerView.addSubview(addTagButton)
 
-        // Available tags section label
-        let availableLabel = UILabel()
-        availableLabel.text = "Available Tags"
-        availableLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        availableLabel.textColor = .secondaryLabel
-        contentStackView.addArrangedSubview(availableLabel)
-
         // Unused Tags Collection View - self-sizing
-        unusedTagsCollectionView.backgroundColor = .systemBackground
+        unusedTagsCollectionView.backgroundColor = .clear
         unusedTagsCollectionView.delegate = self
         unusedTagsCollectionView.dataSource = self
         unusedTagsCollectionView.tag = 2
@@ -711,21 +745,30 @@ class ShareViewController: UIViewController {
         unusedTagsCollectionView.register(TagCell.self, forCellWithReuseIdentifier: "TagCell")
         contentStackView.addArrangedSubview(unusedTagsCollectionView)
 
-        // Layout constraints
+        // Layout constraints — using PeekTheme spacing constants
         NSLayoutConstraint.activate([
             // Header at top
-            headerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            headerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: PeekTheme.spacingMD),
             headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             headerView.heightAnchor.constraint(equalToConstant: 44),
 
-            titleLabel.centerXAnchor.constraint(equalTo: headerView.centerXAnchor),
+            // Header bottom border
+            headerBorder.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
+            headerBorder.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
+            headerBorder.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+            headerBorder.heightAnchor.constraint(equalToConstant: 1),
+
+            // Title on the LEFT
+            titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: PeekTheme.paddingH),
             titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
-            statusLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            // Status label LEFT-ALIGNED (to the right of the title)
+            statusLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: PeekTheme.spacingMD),
             statusLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
-            closeButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            // Close button (✕) on the RIGHT
+            closeButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -PeekTheme.paddingH),
             closeButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
             // Scroll view below header
@@ -735,24 +778,24 @@ class ShareViewController: UIViewController {
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
 
             // Content stack view inside scroll view
-            contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
-            contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
-            contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
-            contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
-            contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -32),
+            contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: PeekTheme.spacingMD),
+            contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: PeekTheme.paddingH),
+            contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -PeekTheme.paddingH),
+            contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -PeekTheme.paddingH),
+            contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -(PeekTheme.paddingH * 2)),
 
             // Input container internal layout
-            inputContainerView.heightAnchor.constraint(equalToConstant: 40),
+            inputContainerView.heightAnchor.constraint(equalToConstant: 32),
             newTagTextField.topAnchor.constraint(equalTo: inputContainerView.topAnchor),
             newTagTextField.leadingAnchor.constraint(equalTo: inputContainerView.leadingAnchor),
-            newTagTextField.trailingAnchor.constraint(equalTo: addTagButton.leadingAnchor, constant: -8),
+            newTagTextField.trailingAnchor.constraint(equalTo: addTagButton.leadingAnchor, constant: -PeekTheme.spacingMD),
             newTagTextField.bottomAnchor.constraint(equalTo: inputContainerView.bottomAnchor),
             addTagButton.centerYAnchor.constraint(equalTo: inputContainerView.centerYAnchor),
             addTagButton.trailingAnchor.constraint(equalTo: inputContainerView.trailingAnchor),
 
             // Minimum heights for collection views
-            selectedTagsCollectionView.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
-            unusedTagsCollectionView.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
+            selectedTagsCollectionView.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            unusedTagsCollectionView.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
 
             // Image preview size
             imagePreviewView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
@@ -1067,7 +1110,7 @@ class ShareViewController: UIViewController {
         saveCurrentState()
 
         // Show status
-        showStatus("Saved!", color: .systemGreen)
+        showStatus("\u{2713} Saved", color: .systemGreen)
     }
 
     private func setSharedImage(_ imageData: Data, mimeType: String, sourceUrl: String?, filename: String?) {
@@ -1143,7 +1186,7 @@ class ShareViewController: UIViewController {
         saveCurrentState()
 
         // Show status
-        showStatus("Saved!", color: .systemGreen)
+        showStatus("\u{2713} Saved", color: .systemGreen)
     }
 
     /// Convert a filename to a readable title
@@ -1275,17 +1318,24 @@ class ShareViewController: UIViewController {
 
         // Show status indicator
         if existing != nil {
-            showStatus("Already saved", color: .secondaryLabel)
+            showStatus("\u{2713} Saved", color: .secondaryLabel)
         } else {
-            showStatus("Saved!", color: .systemGreen)
+            showStatus("\u{2713} Saved", color: .systemGreen)
         }
     }
 
     private func showStatus(_ text: String, color: UIColor) {
         statusLabel.text = text
-        statusLabel.textColor = color
+        // Map system colors to Peek theme colors
+        if color == .systemGreen {
+            statusLabel.textColor = PeekTheme.success
+        } else if color == .secondaryLabel {
+            statusLabel.textColor = PeekTheme.textSecondary
+        } else {
+            statusLabel.textColor = color
+        }
 
-        UIView.animate(withDuration: 0.2) {
+        UIView.animate(withDuration: 0.15) {
             self.statusLabel.alpha = 1
         }
     }
@@ -1487,24 +1537,26 @@ extension ShareViewController: UIGestureRecognizerDelegate {
 }
 
 // MARK: - TagCell
+/// Styled to match .available-tag in home.css:
+/// padding: 3px 8px, bg: base01, border: 1px base02, radius: 10px, font: 11px
 class TagCell: UICollectionViewCell {
     let label = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
 
-        label.font = .systemFont(ofSize: 14)
+        label.font = PeekTheme.caption
         label.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(label)
 
-        contentView.layer.cornerRadius = 8
+        contentView.layer.cornerRadius = PeekTheme.tagCornerRadius
         contentView.layer.borderWidth = 1
 
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
+            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: PeekTheme.availableTagPaddingV),
+            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: PeekTheme.availableTagPaddingH),
+            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -PeekTheme.availableTagPaddingH),
+            label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -PeekTheme.availableTagPaddingV)
         ])
     }
 
@@ -1516,18 +1568,35 @@ class TagCell: UICollectionViewCell {
         label.text = text
 
         if isSelected {
-            contentView.backgroundColor = .systemBlue
-            contentView.layer.borderColor = UIColor.systemBlue.cgColor
-            label.textColor = .white
+            // Matches .tag-chip.selected: color-mix(blue 20%, bg) with blue border
+            contentView.backgroundColor = PeekTheme.selectedTagBg
+            contentView.layer.borderColor = PeekTheme.selectedTagBorder.cgColor
+            label.textColor = PeekTheme.text
         } else {
-            contentView.backgroundColor = .systemBackground
-            contentView.layer.borderColor = UIColor.systemGray4.cgColor
-            label.textColor = .label
+            // Matches .available-tag: bg base01, border base02
+            contentView.backgroundColor = PeekTheme.bgSecondary
+            contentView.layer.borderColor = PeekTheme.border.cgColor
+            label.textColor = PeekTheme.text
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // Update border colors when dark/light mode changes (cgColor is not dynamic)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            let isSelected = contentView.backgroundColor != PeekTheme.bgSecondary
+            if isSelected {
+                contentView.layer.borderColor = PeekTheme.selectedTagBorder.cgColor
+            } else {
+                contentView.layer.borderColor = PeekTheme.border.cgColor
+            }
         }
     }
 }
 
 // MARK: - SelectedTagCell (with remove button)
+/// Styled to match .current-tag in home.css:
+/// padding: 2px 7px, bg: color-mix(blue 20%, base01), border: 1px color-mix(blue 30%, transparent), radius: 10px
 class SelectedTagCell: UICollectionViewCell {
     let label = UILabel()
     let removeButton = UIButton(type: .system)
@@ -1536,30 +1605,33 @@ class SelectedTagCell: UICollectionViewCell {
     override init(frame: CGRect) {
         super.init(frame: frame)
 
-        label.font = .systemFont(ofSize: 14)
-        label.textColor = .white
+        label.font = PeekTheme.caption
+        label.textColor = PeekTheme.text
         label.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(label)
 
-        removeButton.setTitle("×", for: .normal)
-        removeButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .medium)
-        removeButton.setTitleColor(.white.withAlphaComponent(0.8), for: .normal)
+        removeButton.setTitle("\u{00D7}", for: .normal)  // multiplication sign
+        removeButton.titleLabel?.font = PeekTheme.body
+        removeButton.setTitleColor(PeekTheme.textSecondary, for: .normal)
         removeButton.translatesAutoresizingMaskIntoConstraints = false
         removeButton.addTarget(self, action: #selector(removeTapped), for: .touchUpInside)
         contentView.addSubview(removeButton)
 
-        contentView.backgroundColor = .systemBlue
-        contentView.layer.cornerRadius = 16
+        // Matches .current-tag styling
+        contentView.backgroundColor = PeekTheme.selectedTagBg
+        contentView.layer.cornerRadius = PeekTheme.tagCornerRadius
+        contentView.layer.borderWidth = 1
+        contentView.layer.borderColor = PeekTheme.selectedTagBorder.cgColor
 
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
-            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
+            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: PeekTheme.currentTagPaddingV),
+            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: PeekTheme.currentTagPaddingH),
+            label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -PeekTheme.currentTagPaddingV),
 
-            removeButton.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
-            removeButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            removeButton.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: PeekTheme.spacingSM),
+            removeButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -PeekTheme.spacingXS),
             removeButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            removeButton.widthAnchor.constraint(equalToConstant: 20)
+            removeButton.widthAnchor.constraint(equalToConstant: 16)
         ])
     }
 
@@ -1574,6 +1646,13 @@ class SelectedTagCell: UICollectionViewCell {
 
     @objc func removeTapped() {
         onRemove?()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            contentView.layer.borderColor = PeekTheme.selectedTagBorder.cgColor
+        }
     }
 }
 

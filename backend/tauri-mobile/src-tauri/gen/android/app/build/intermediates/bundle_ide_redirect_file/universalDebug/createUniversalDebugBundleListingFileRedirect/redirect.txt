@@ -1,0 +1,2 @@
+#- File Locator -
+listingFile=../../../bundle_ide_model/universalDebug/produceUniversalDebugBundleIdeListingFile/output-metadata.json

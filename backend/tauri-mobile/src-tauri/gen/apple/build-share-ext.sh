@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the Peek Share Extension target only
+# Build the full app (including Share Extension) and install on simulator
 set -e
 
 cd "$(dirname "$0")"
@@ -10,12 +10,19 @@ if command -v xcodegen &> /dev/null; then
     xcodegen generate
 fi
 
-echo "=== Building Peek Share Extension ==="
+echo "=== Building full app with Share Extension ==="
 xcodebuild \
-    -target Peek \
-    -sdk iphonesimulator \
+    -scheme peek-save_iOS \
     -configuration debug \
-    ONLY_ACTIVE_ARCH=YES \
-    build 2>&1 | tee /tmp/peek-ext-build.log
+    -sdk iphonesimulator \
+    -derivedDataPath /tmp/peek-xcodebuild-sim \
+    -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+    clean build 2>&1 | tee /tmp/peek-ext-build.log
 
-echo "=== Build complete ==="
+echo "=== Installing on simulator ==="
+xcrun simctl install booted '/tmp/peek-xcodebuild-sim/Build/Products/debug-iphonesimulator/Peek Save.app'
+
+echo "=== Opening Safari ==="
+xcrun simctl openurl booted https://example.com
+
+echo "=== Done ==="

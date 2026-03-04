@@ -32,6 +32,8 @@ targets:
       - path: Sources
       - path: Assets.xcassets
       - path: Externals
+        excludes:
+          - "*/Release/*"
       - path: peek-save_iOS
       - path: assets
         buildPhase: resources
@@ -56,6 +58,9 @@ targets:
         CFBundleVersion: "0.1.0"
     entitlements:
       path: peek-save_iOS/peek-save_iOS.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.dietrich.peek-mobile
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
@@ -110,6 +115,9 @@ targets:
           NSExtensionPointIdentifier: com.apple.share-services
     entitlements:
       path: Peek/Peek.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.dietrich.peek-mobile
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.dietrich.peek-mobile.share
