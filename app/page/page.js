@@ -321,25 +321,25 @@ function updatePositions() {
     tagsPanel.style.width = `${PANEL_WIDTH}px`;
   }
 
-  // Entities Panel — right side, below tags panel
-  if (entitiesPanel) {
-    entitiesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
-    const tagsHeight = (tagsPanel && tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
-    const entitiesPanelTop = panelTopOffset + (tagsHeight > 0 ? tagsHeight + 12 : 0);
-    entitiesPanel.style.top = `${entitiesPanelTop}px`;
-    entitiesPanel.style.width = `${PANEL_WIDTH}px`;
-  }
-
-  // Notes Panel — right side, below entities panel
+  // Notes Panel — right side, below tags panel
   if (notesPanel) {
     notesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
     const tagsHeight = (tagsPanel && tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
-    const entitiesHeight = (entitiesPanel && entitiesPanel.classList.contains('visible')) ? entitiesPanel.offsetHeight : 0;
-    let notesPanelTop = panelTopOffset;
-    if (tagsHeight > 0) notesPanelTop += tagsHeight + 12;
-    if (entitiesHeight > 0) notesPanelTop += entitiesHeight + 12;
+    const notesPanelTop = panelTopOffset + (tagsHeight > 0 ? tagsHeight + 12 : 0);
     notesPanel.style.top = `${notesPanelTop}px`;
     notesPanel.style.width = `${PANEL_WIDTH}px`;
+  }
+
+  // Entities Panel — right side, below notes panel
+  if (entitiesPanel) {
+    entitiesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
+    const tagsHeight = (tagsPanel && tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
+    const notesHeight = (notesPanel && notesPanel.classList.contains('visible')) ? notesPanel.offsetHeight : 0;
+    let entitiesPanelTop = panelTopOffset;
+    if (tagsHeight > 0) entitiesPanelTop += tagsHeight + 12;
+    if (notesHeight > 0) entitiesPanelTop += notesHeight + 12;
+    entitiesPanel.style.top = `${entitiesPanelTop}px`;
+    entitiesPanel.style.width = `${PANEL_WIDTH}px`;
   }
 }
 
