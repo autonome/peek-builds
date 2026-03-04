@@ -331,7 +331,6 @@
 				CBC30D9965009103CFAAAD73 /* Assets.xcassets in Resources */,
 				13B292625212D3B9E663B27B /* LaunchScreen.storyboard in Resources */,
 				667F01FF0CBECC615A3CB4F3 /* assets in Resources */,
-				08967E466852F2FE960A90A8 /* libapp.a in Resources */,
 				66715C6E3F8700EB5C75570C /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
