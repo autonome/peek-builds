@@ -451,6 +451,51 @@ peek/
 | [docs/sync.md](docs/sync.md) | Cross-device sync |
 | [docs/mobile.md](docs/mobile.md) | Mobile development (iOS/Android) |
 
+### Tests
+
+~2,000 tests across 69 files, using Node.js test runner, Playwright, and Cargo test.
+
+| Suite | Runner | Tests | Command |
+|-------|--------|------:|---------|
+| **Electron Unit (TS)** | Node `--test` via Electron | 764 | `yarn test:unit` |
+| **Unit (JS)** | Node `--test` | 459 | `yarn test:unit` |
+| **Playwright Desktop** | Playwright | 211 | `yarn test:electron` |
+| **Playwright Components** | Playwright | 56 | `npx playwright test tests/components/` |
+| **Playwright Editor** | Playwright | 90 | `npx playwright test tests/editor/` |
+| **Playwright Extension** | Playwright | 41 | `yarn test:extension:browser` |
+| **Extension Backend** | Node `--test` | 130 | `yarn test:extension` |
+| **Server** | Node `--test` | 110 | `yarn server:test` |
+| **Schema Fidelity** | Node `--test` | 40 | `yarn schema:test` |
+| **Sync Integration** | Script-style | 59 | `yarn test:sync` and variants |
+| **Mobile (JS)** | Script-style | 9 | `yarn test:mobile` |
+| **Mobile (Rust)** | `cargo test` | 19 | In `backend/tauri-mobile/` |
+| **Tauri Desktop (Rust)** | `cargo test` | 16 | `yarn test:tauri:rust` |
+| **Lex Extension** | Node `--test` | 38 | `node --test extensions/lex/tests/` |
+
+**Electron Unit (TS)** — Backend logic: entities extraction, session management, IZUI state, cmd palette logic, cmd chaining, OAuth bridge, display watcher, noun registry, shortcuts, datastore, completers, tag affordances, page loading.
+
+**Unit (JS)** — Frontend logic: cmd state machine, groups, name validation, tags search, editor outline/preview, page widgets, item queries, Chrome API polyfills (storage, alarms, events, navigation, IPC, offscreen).
+
+**Playwright Desktop** — End-to-end: smoke tests (window lifecycle, navigation, IZUI escape protocol, cards, groups), history, cmd state machine, web search, HUD, local search, pagestream, page widgets, groups context, page navbar.
+
+**Playwright Components** — Web component rendering and behavior tests for shared UI components.
+
+**Playwright Editor** — Editor pane layout and code folding tests.
+
+**Playwright Extension** — Browser extension options page and popup UI tests.
+
+**Extension Backend** — Browser extension logic: datastore, tabs, history, bookmarks, sync, profiles, environment.
+
+**Server** — Sync server: API endpoints, backup, migration.
+
+**Schema Fidelity** — Validates schema consistency across desktop, mobile, server, and extension datastores.
+
+**Sync Integration** — Cross-device sync: integration tests, E2E tests, three-way merge, version compatibility.
+
+**Lex Extension** — Lexicon extension: UI logic and background processing.
+
+Background test commands: `yarn test:electron:bg` runs Playwright headless in background (logs to `/tmp/test-electron.log`).
+
 ### Notes
 
 Design thinking, research, and implementation notes in `notes/`:
