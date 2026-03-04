@@ -129,7 +129,6 @@ const resizeHandles = {
   navNe: document.getElementById('resize-nav-ne'),
   navNw: document.getElementById('resize-nav-nw'),
 };
-const modeIndicator = document.getElementById('mode-indicator');
 const widgetContainer = document.getElementById('widget-container');
 const centerColumn = document.getElementById('center-column');
 const pageInfoPanel = document.getElementById('page-info-panel');
@@ -282,19 +281,6 @@ function updatePositions() {
     resizeHandles.navNw.style.top = `0px`;
   }
 
-  // Mode indicator — top-right corner of the webview
-  if (modeIndicator) {
-    modeIndicator.style.left = `${webviewLeft + webviewWidth - 120}px`;
-    modeIndicator.style.top = `${webviewTop + 8}px`;
-  }
-
-  // Widget container — right side of the webview with a gap
-  if (widgetContainer) {
-    const widgetGap = 12;
-    widgetContainer.style.left = `${webviewLeft + webviewWidth + widgetGap}px`;
-    widgetContainer.style.top = `${webviewTop}px`;
-  }
-
   // Panel top offset — enough clearance below the top edge of the web content area
   const panelTopOffset = webviewTop + 40;
 
@@ -314,31 +300,41 @@ function updatePositions() {
     extensionsPanel.style.width = `${PANEL_WIDTH}px`;
   }
 
-  // Tags Panel — right side, top of right stack
+  // Right-side stack: widgets first (top), then tags, notes, entities
+  const rightLeft = webviewLeft + webviewWidth - PANEL_OVERLAP;
+  let rightStackTop = panelTopOffset;
+
+  // Widget container — top of right stack
+  if (widgetContainer) {
+    widgetContainer.style.left = `${rightLeft}px`;
+    widgetContainer.style.top = `${rightStackTop}px`;
+    widgetContainer.style.width = `${PANEL_WIDTH}px`;
+    const widgetH = (widgetContainer.classList.contains('visible') && widgetContainer.offsetHeight > 0) ? widgetContainer.offsetHeight : 0;
+    if (widgetH > 0) rightStackTop += widgetH + 12;
+  }
+
+  // Tags Panel — right side, below widgets
   if (tagsPanel) {
-    tagsPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
-    tagsPanel.style.top = `${panelTopOffset}px`;
+    tagsPanel.style.left = `${rightLeft}px`;
+    tagsPanel.style.top = `${rightStackTop}px`;
     tagsPanel.style.width = `${PANEL_WIDTH}px`;
+    const tagsH = (tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
+    if (tagsH > 0) rightStackTop += tagsH + 12;
   }
 
-  // Notes Panel — right side, below tags panel
+  // Notes Panel — right side, below tags
   if (notesPanel) {
-    notesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
-    const tagsHeight = (tagsPanel && tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
-    const notesPanelTop = panelTopOffset + (tagsHeight > 0 ? tagsHeight + 12 : 0);
-    notesPanel.style.top = `${notesPanelTop}px`;
+    notesPanel.style.left = `${rightLeft}px`;
+    notesPanel.style.top = `${rightStackTop}px`;
     notesPanel.style.width = `${PANEL_WIDTH}px`;
+    const notesH = (notesPanel.classList.contains('visible')) ? notesPanel.offsetHeight : 0;
+    if (notesH > 0) rightStackTop += notesH + 12;
   }
 
-  // Entities Panel — right side, below notes panel
+  // Entities Panel — right side, below notes
   if (entitiesPanel) {
-    entitiesPanel.style.left = `${webviewLeft + webviewWidth - PANEL_OVERLAP}px`;
-    const tagsHeight = (tagsPanel && tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
-    const notesHeight = (notesPanel && notesPanel.classList.contains('visible')) ? notesPanel.offsetHeight : 0;
-    let entitiesPanelTop = panelTopOffset;
-    if (tagsHeight > 0) entitiesPanelTop += tagsHeight + 12;
-    if (notesHeight > 0) entitiesPanelTop += notesHeight + 12;
-    entitiesPanel.style.top = `${entitiesPanelTop}px`;
+    entitiesPanel.style.left = `${rightLeft}px`;
+    entitiesPanel.style.top = `${rightStackTop}px`;
     entitiesPanel.style.width = `${PANEL_WIDTH}px`;
   }
 }
@@ -1000,6 +996,7 @@ async function show(opts) {
   if (entitiesPanel) entitiesPanel.classList.add('visible');
   if (extensionsPanel) extensionsPanel.classList.add('visible');
   if (notesPanel) notesPanel.classList.add('visible');
+  if (widgetContainer) widgetContainer.classList.add('visible');
   // Re-run positions now that panels are visible (offsetHeight is accurate)
   updatePositions();
   await setWindowPadding(PANEL_OVERHANG * 2);
@@ -1030,6 +1027,7 @@ async function hide() {
   if (entitiesPanel) entitiesPanel.classList.remove('visible');
   if (extensionsPanel) extensionsPanel.classList.remove('visible');
   if (notesPanel) notesPanel.classList.remove('visible');
+  if (widgetContainer) widgetContainer.classList.remove('visible');
   updatePositions();
   // Restore visibility now that the window has been resized
   centerColumn.style.opacity = '1';
@@ -1045,7 +1043,8 @@ document.addEventListener('mousedown', (e) => {
       && !(tagsPanel && tagsPanel.contains(e.target))
       && !(entitiesPanel && entitiesPanel.contains(e.target))
       && !(extensionsPanel && extensionsPanel.contains(e.target))
-      && !(notesPanel && notesPanel.contains(e.target))) {
+      && !(notesPanel && notesPanel.contains(e.target))
+      && !(widgetContainer && widgetContainer.contains(e.target))) {
     hide();
   }
 });
@@ -1138,6 +1137,12 @@ if (extensionsPanel) {
 if (notesPanel) {
   notesPanel.addEventListener('mouseenter', () => { cancelHide(); });
   notesPanel.addEventListener('mouseleave', () => {
+    if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
+  });
+}
+if (widgetContainer) {
+  widgetContainer.addEventListener('mouseenter', () => { cancelHide(); });
+  widgetContainer.addEventListener('mouseleave', () => {
     if (showSource === 'hover' || showSource === 'shortcut') scheduleHide();
   });
 }
@@ -1413,33 +1418,55 @@ api.commands.register({
   execute: () => webview.reload()
 });
 
-// --- Mode indicator ---
+// --- Group mode widget ---
+// Shows as a widget in the top-right widget container when in group mode.
+// Uses the standard widget system (addWidget/removeWidget/updateWidget).
 
+const GROUP_MODE_WIDGET_ID = '__group-mode__';
 let currentMode = 'page';
 let currentModeMetadata = {};
 
-function updateModeIndicator() {
-  if (!modeIndicator) return;
+function buildGroupModeContent(metadata) {
+  const container = document.createElement('div');
+  container.className = 'group-mode-widget-body';
 
-  const label = modeIndicator.querySelector('.mode-label');
-  const groupName = modeIndicator.querySelector('.group-name');
+  const dot = document.createElement('span');
+  dot.className = 'group-mode-dot';
+  dot.style.background = metadata.color || '#9966cc';
+  container.appendChild(dot);
 
-  modeIndicator.setAttribute('data-mode', currentMode);
+  const name = document.createElement('span');
+  name.className = 'group-mode-name';
+  name.textContent = metadata.groupName || 'Group';
+  container.appendChild(name);
 
-  if (label) {
-    label.textContent = currentMode;
-  }
+  return container;
+}
 
-  if (groupName) {
-    if (currentMode === 'group' && currentModeMetadata.groupName) {
-      groupName.textContent = currentModeMetadata.groupName;
-      groupName.style.display = 'inline';
+function updateGroupModeWidget() {
+  if (currentMode === 'group' && currentModeMetadata.groupName) {
+    // Show or update the group mode widget
+    if (widgets.has(GROUP_MODE_WIDGET_ID)) {
+      updateWidget(GROUP_MODE_WIDGET_ID, {
+        title: 'Group',
+        content: buildGroupModeContent(currentModeMetadata),
+      });
     } else {
-      groupName.style.display = 'none';
+      addWidget(GROUP_MODE_WIDGET_ID, {
+        title: 'Group',
+        content: buildGroupModeContent(currentModeMetadata),
+        closable: false,
+        collapsible: false,
+      });
+    }
+    DEBUG && console.log('[page] Group mode widget shown:', currentModeMetadata);
+  } else {
+    // Remove the group mode widget when not in group mode
+    if (widgets.has(GROUP_MODE_WIDGET_ID)) {
+      removeWidget(GROUP_MODE_WIDGET_ID);
+      DEBUG && console.log('[page] Group mode widget removed');
     }
   }
-
-  DEBUG && console.log('[page] Mode indicator updated:', currentMode, currentModeMetadata);
 }
 
 async function initModeContext() {
@@ -1468,14 +1495,14 @@ async function initModeContext() {
     if (modeResult.success && modeResult.data) {
       currentMode = modeResult.data.value || 'page';
       currentModeMetadata = modeResult.data.metadata || {};
-      updateModeIndicator();
+      updateGroupModeWidget();
     }
 
     api.context.watchMode((mode, entry) => {
       if (mode) {
         currentMode = mode;
         currentModeMetadata = entry?.metadata || {};
-        updateModeIndicator();
+        updateGroupModeWidget();
       }
     });
 
@@ -1490,7 +1517,7 @@ initModeContext();
 
 const widgets = new Map();
 
-function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
+function addWidget(id, { title, content, autoDismiss = 0, onClose, closable = true, collapsible = true } = {}) {
   if (widgets.has(id)) {
     removeWidget(id);
   }
@@ -1502,27 +1529,32 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
   const header = document.createElement('div');
   header.className = 'widget-header';
 
-  const toggle = document.createElement('button');
-  toggle.className = 'widget-toggle';
-  toggle.textContent = '\u25BC';
-  toggle.title = 'Collapse';
-
   const titleEl = document.createElement('span');
   titleEl.className = 'widget-title';
   titleEl.textContent = title || '';
 
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'widget-close';
-  closeBtn.textContent = '\u00D7';
-  closeBtn.title = 'Dismiss';
-  closeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    removeWidget(id);
-  });
+  let toggle = null;
+  if (collapsible) {
+    toggle = document.createElement('button');
+    toggle.className = 'widget-toggle';
+    toggle.textContent = '\u25BC';
+    toggle.title = 'Collapse';
+    header.appendChild(toggle);
+  }
 
-  header.appendChild(toggle);
   header.appendChild(titleEl);
-  header.appendChild(closeBtn);
+
+  if (closable) {
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'widget-close';
+    closeBtn.textContent = '\u00D7';
+    closeBtn.title = 'Dismiss';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeWidget(id);
+    });
+    header.appendChild(closeBtn);
+  }
   el.appendChild(header);
 
   const bodyWrap = document.createElement('div');
@@ -1538,12 +1570,14 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
   bodyWrap.appendChild(body);
   el.appendChild(bodyWrap);
 
-  toggle.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const collapsed = toggle.classList.toggle('collapsed');
-    bodyWrap.classList.toggle('collapsed', collapsed);
-    toggle.title = collapsed ? 'Expand' : 'Collapse';
-  });
+  if (toggle) {
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const collapsed = toggle.classList.toggle('collapsed');
+      bodyWrap.classList.toggle('collapsed', collapsed);
+      toggle.title = collapsed ? 'Expand' : 'Collapse';
+    });
+  }
 
   widgetContainer.appendChild(el);
 
