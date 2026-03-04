@@ -22,6 +22,7 @@ url = "2"
 regex = "1"
 base64 = "0.22"
 readability-rust = "0.1"
+sha2 = "0.10"
 thiserror = "2"
 uniffi = { version = "0.28", features = ["cli"] }
 

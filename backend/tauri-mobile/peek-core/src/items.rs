@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection};
+use sha2::{Sha256, Digest};
 
 use crate::helpers::{
     inject_sync_metadata_for_save, inject_sync_metadata_for_update,
@@ -178,12 +179,48 @@ pub fn save_image(
     height: Option<u32>,
     device_id: &str,
 ) -> Result<String, String> {
+    let size_bytes = image_bytes.len() as i64;
+
+    // Hash thumbnail for dedup — raw image bytes may differ between shares
+    // because iOS re-encodes images (HEIC/JPEG variations, EXIF changes).
+    // Thumbnail is generated deterministically from decoded pixels at a
+    // fixed size and JPEG quality, so same image = same hash.
+    let data_hash = match thumbnail_bytes {
+        Some(thumb) => format!("{:x}", Sha256::digest(thumb)),
+        None => format!("{:x}", Sha256::digest(image_bytes)),
+    };
+
+    let existing_item_id: Option<String> = conn
+        .query_row(
+            "SELECT b.item_id FROM blobs b JOIN items i ON i.id = b.item_id \
+             WHERE b.data_hash = ? AND i.type = 'image' AND i.deleted_at IS NULL \
+             LIMIT 1",
+            params![&data_hash],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(item_id) = existing_item_id {
+        // Update tags and metadata on existing item instead of creating a duplicate
+        let now = chrono::Utc::now().to_rfc3339();
+        if let Some(meta) = metadata {
+            let meta_json = serde_json::to_string(&meta).unwrap_or_default();
+            let _ = update_item_metadata(conn, &item_id, &meta_json, device_id);
+        }
+        update_item_tags(conn, &item_id, tags)?;
+        conn.execute(
+            "UPDATE items SET updated_at = ? WHERE id = ?",
+            params![&now, &item_id],
+        )
+        .map_err(|e| format!("Failed to update item: {}", e))?;
+        return Ok(item_id);
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
     let item_id = uuid::Uuid::new_v4().to_string();
     let blob_id = uuid::Uuid::new_v4().to_string();
     let meta_with_sync = inject_sync_metadata_for_save(metadata, device_id);
     let metadata_json = serde_json::to_string(&meta_with_sync).unwrap_or_default();
-    let size_bytes = image_bytes.len() as i64;
 
     conn.execute(
         "INSERT INTO items (id, type, metadata, created_at, updated_at) VALUES (?, 'image', ?, ?, ?)",
@@ -192,8 +229,8 @@ pub fn save_image(
     .map_err(|e| format!("Failed to insert image item: {}", e))?;
 
     conn.execute(
-        "INSERT INTO blobs (id, item_id, data, mime_type, size_bytes, width, height, thumbnail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        params![&blob_id, &item_id, image_bytes, mime_type, size_bytes, width, height, thumbnail_bytes, &now],
+        "INSERT INTO blobs (id, item_id, data, mime_type, size_bytes, width, height, thumbnail, data_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params![&blob_id, &item_id, image_bytes, mime_type, size_bytes, width, height, thumbnail_bytes, &data_hash, &now],
     )
     .map_err(|e| format!("Failed to insert blob: {}", e))?;
 
@@ -304,7 +341,7 @@ pub fn get_saved_images(conn: &Connection) -> Result<Vec<SavedImage>, String> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT i.id, i.created_at, i.metadata, b.mime_type, b.width, b.height, b.thumbnail
+            "SELECT i.id, i.created_at, i.metadata, b.mime_type, b.width, b.height, b.thumbnail, i.content
              FROM items i
              LEFT JOIN blobs b ON b.item_id = i.id
              WHERE i.type = 'image' AND i.deleted_at IS NULL
@@ -312,7 +349,7 @@ pub fn get_saved_images(conn: &Connection) -> Result<Vec<SavedImage>, String> {
         )
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-    let rows: Vec<(String, String, Option<String>, Option<String>, Option<u32>, Option<u32>, Option<Vec<u8>>)> = stmt
+    let rows: Vec<(String, String, Option<String>, Option<String>, Option<u32>, Option<u32>, Option<Vec<u8>>, Option<String>)> = stmt
         .query_map([], |row| Ok((
             row.get(0)?,
             row.get(1)?,
@@ -321,13 +358,14 @@ pub fn get_saved_images(conn: &Connection) -> Result<Vec<SavedImage>, String> {
             row.get(4)?,
             row.get(5)?,
             row.get(6)?,
+            row.get(7)?,
         )))
         .map_err(|e| format!("Failed to query images: {}", e))?
         .filter_map(|r| r.ok())
         .collect();
 
     let mut images: Vec<SavedImage> = Vec::new();
-    for (id, created_at, metadata_json, mime_type, width, height, thumbnail_bytes) in rows {
+    for (id, created_at, metadata_json, mime_type, width, height, thumbnail_bytes, content) in rows {
         let tags = get_item_tag_names_ordered(conn, &id)?;
         let metadata = metadata_json.and_then(|s| serde_json::from_str(&s).ok());
         let thumbnail = thumbnail_bytes.map(|b| STANDARD.encode(&b));
@@ -337,6 +375,7 @@ pub fn get_saved_images(conn: &Connection) -> Result<Vec<SavedImage>, String> {
             tags,
             saved_at: created_at,
             metadata,
+            content,
             thumbnail,
             mime_type: mime_type.unwrap_or_else(|| "image/jpeg".to_string()),
             width,
@@ -561,6 +600,64 @@ pub fn update_image_tags(
     .map_err(|e| format!("Failed to update image: {}", e))?;
 
     update_item_tags(conn, id, tags)
+}
+
+/// Update item metadata by merging new JSON into existing metadata.
+/// Update item content text (e.g. OCR text for images).
+pub fn update_item_content(
+    conn: &Connection,
+    id: &str,
+    content: &str,
+    _device_id: &str,
+) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE items SET content = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        params![content, &now, id],
+    )
+    .map_err(|e| format!("Failed to update content: {}", e))?;
+    Ok(())
+}
+
+pub fn update_item_metadata(
+    conn: &Connection,
+    id: &str,
+    metadata_json: &str,
+    device_id: &str,
+) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Get existing metadata
+    let existing_meta: Option<String> = conn
+        .query_row("SELECT metadata FROM items WHERE id = ? AND deleted_at IS NULL", params![id], |row| row.get(0))
+        .map_err(|e| format!("Item not found: {}", e))?;
+
+    // Merge new metadata into existing
+    let mut merged: serde_json::Value = existing_meta
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let new_meta: serde_json::Value = serde_json::from_str(metadata_json)
+        .map_err(|e| format!("Invalid metadata JSON: {}", e))?;
+
+    if let (Some(merged_obj), Some(new_obj)) = (merged.as_object_mut(), new_meta.as_object()) {
+        for (k, v) in new_obj {
+            merged_obj.insert(k.clone(), v.clone());
+        }
+    }
+
+    // Inject sync metadata
+    let merged_str = serde_json::to_string(&merged).unwrap_or_default();
+    let final_meta = inject_sync_metadata_for_update(Some(merged_str), device_id);
+
+    conn.execute(
+        "UPDATE items SET metadata = ?, updated_at = ? WHERE id = ?",
+        params![&final_meta, &now, id],
+    )
+    .map_err(|e| format!("Failed to update metadata: {}", e))?;
+
+    Ok(())
 }
 
 // ============================================================================

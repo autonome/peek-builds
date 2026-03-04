@@ -11,6 +11,12 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
         return Err(format!("Failed to set WAL mode: {}", e));
     }
 
+    // Multi-process safety: wait up to 5s if another process holds the lock
+    let _ = conn.execute_batch("PRAGMA busy_timeout=5000;");
+
+    // Checkpoint any existing WAL data from other processes (e.g. share extension)
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+
     // Check if we need to migrate from old schema (urls table) to new schema (items table)
     let has_urls_table: bool = conn
         .query_row(
@@ -126,9 +132,11 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     width INTEGER,
                     height INTEGER,
                     thumbnail BLOB,
+                    data_hash TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
                 );
+                CREATE INDEX IF NOT EXISTS idx_blobs_hash ON blobs(data_hash);
 
                 CREATE TABLE IF NOT EXISTS item_visits (
                     id TEXT PRIMARY KEY,
@@ -293,6 +301,20 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
         ) {
             println!("[peek-core] Warning: Failed to create blobs table: {}", e);
         }
+    }
+
+    // Add data_hash column to blobs for image dedup
+    let has_data_hash: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('blobs') WHERE name='data_hash'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) > 0;
+
+    if !has_data_hash {
+        let _ = conn.execute("ALTER TABLE blobs ADD COLUMN data_hash TEXT", []);
+        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_blobs_hash ON blobs(data_hash)");
     }
 
     // Ensure settings table exists (for migration case)

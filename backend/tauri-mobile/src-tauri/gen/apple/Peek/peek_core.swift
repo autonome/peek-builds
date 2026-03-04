@@ -517,6 +517,11 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 public protocol PeekCoreFfiProtocol : AnyObject {
     
     /**
+     * Force WAL checkpoint so data is visible to other processes.
+     */
+    func checkpoint() throws 
+    
+    /**
      * Get the device ID for this database.
      */
     func deviceId()  -> String
@@ -551,6 +556,16 @@ public protocol PeekCoreFfiProtocol : AnyObject {
      * `metadata_json` is an optional JSON string parsed into serde_json::Value.
      */
     func saveUrl(url: String, tags: [String], metadataJson: String?) throws  -> FfiSaveUrlResult
+    
+    /**
+     * Update item content text (e.g. OCR text for images).
+     */
+    func updateItemContent(itemId: String, content: String) throws 
+    
+    /**
+     * Update item metadata (merges with existing).
+     */
+    func updateItemMetadata(itemId: String, metadataJson: String) throws 
     
     /**
      * Update tags for any item type.
@@ -619,6 +634,15 @@ public convenience init(dbPath: String)throws  {
 
     
 
+    
+    /**
+     * Force WAL checkpoint so data is visible to other processes.
+     */
+open func checkpoint()throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_peek_core_fn_method_peekcoreffi_checkpoint(self.uniffiClonePointer(),$0
+    )
+}
+}
     
     /**
      * Get the device ID for this database.
@@ -704,6 +728,28 @@ open func saveUrl(url: String, tags: [String], metadataJson: String?)throws  -> 
         FfiConverterOptionString.lower(metadataJson),$0
     )
 })
+}
+    
+    /**
+     * Update item content text (e.g. OCR text for images).
+     */
+open func updateItemContent(itemId: String, content: String)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_peek_core_fn_method_peekcoreffi_update_item_content(self.uniffiClonePointer(),
+        FfiConverterString.lower(itemId),
+        FfiConverterString.lower(content),$0
+    )
+}
+}
+    
+    /**
+     * Update item metadata (merges with existing).
+     */
+open func updateItemMetadata(itemId: String, metadataJson: String)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_peek_core_fn_method_peekcoreffi_update_item_metadata(self.uniffiClonePointer(),
+        FfiConverterString.lower(itemId),
+        FfiConverterString.lower(metadataJson),$0
+    )
+}
 }
     
     /**
@@ -1586,6 +1632,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_peek_core_checksum_func_ffi_load_profile_config() != 49454) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_peek_core_checksum_method_peekcoreffi_checkpoint() != 7196) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_peek_core_checksum_method_peekcoreffi_device_id() != 30770) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1605,6 +1654,12 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_peek_core_checksum_method_peekcoreffi_save_url() != 18278) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_peek_core_checksum_method_peekcoreffi_update_item_content() != 40163) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_peek_core_checksum_method_peekcoreffi_update_item_metadata() != 55810) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_peek_core_checksum_method_peekcoreffi_update_item_tags() != 61927) {

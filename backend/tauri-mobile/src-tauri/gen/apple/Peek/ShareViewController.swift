@@ -60,13 +60,10 @@ class PeekCoreManager {
 
         let basePath = containerURL.path
         profileConfig = ffiLoadProfileConfig(basePath: basePath)
-        print("[PeekCore] Loaded profile config, current profile: \(profileConfig?.currentProfileId ?? "none")")
 
         do {
             let dbPath = try ffiGetDbPathForProfile(basePath: basePath)
-            print("[PeekCore] Opening database at: \(dbPath)")
             store = try PeekCoreFfi(dbPath: dbPath)
-            print("[PeekCore] Database initialized successfully")
         } catch {
             print("[PeekCore] Failed to initialize store: \(error)")
         }
@@ -207,11 +204,12 @@ class PeekCoreManager {
             )
             print("[PeekCore] Saved image: \(itemId)")
 
-            // Push to webhook
+            // Set completion immediately — don't wait for webhook
+            completion(itemId)
+
+            // Push to webhook (fire-and-forget)
             let savedAt = ISO8601DateFormatter.shared.string(from: Date())
-            pushImageToWebhook(imageId: itemId, sourceUrl: sourceUrl, tags: tags, metadata: combinedMetadata, savedAt: savedAt) {
-                completion(itemId)
-            }
+            pushImageToWebhook(imageId: itemId, sourceUrl: sourceUrl, tags: tags, metadata: combinedMetadata, savedAt: savedAt) { }
         } catch {
             print("[PeekCore] Failed to save image: \(error)")
             completion(nil)
@@ -231,6 +229,75 @@ class PeekCoreManager {
         } catch {
             print("[PeekCore] Failed to update image tags: \(error)")
             completion()
+        }
+    }
+
+    // Debug: write trace to app group container file
+    func debugLog(_ msg: String) {
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.dietrich.peek-mobile"
+        ) else { return }
+        let logFile = containerURL.appendingPathComponent("share-debug.log")
+        let timestamp = ISO8601DateFormatter.shared.string(from: Date())
+        let line = "[\(timestamp)] \(msg)\n"
+        if let handle = try? FileHandle(forWritingTo: logFile) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            handle.closeFile()
+        } else {
+            try? line.write(to: logFile, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func updateImageTagsAndMetadata(imageId: String, tags: [String], metadata: [String: Any], completion: @escaping () -> Void) {
+        debugLog("updateImageTagsAndMetadata called: imageId=\(imageId), metadataKeys=\(metadata.keys.sorted())")
+
+        guard let store = store else {
+            debugLog("updateImageTagsAndMetadata: store is NIL")
+            completion()
+            return
+        }
+
+        do {
+            try store.updateItemTags(itemId: imageId, tags: tags)
+            debugLog("updateItemTags OK")
+
+            if !metadata.isEmpty {
+                if let jsonData = try? JSONSerialization.data(withJSONObject: metadata),
+                   let jsonStr = String(data: jsonData, encoding: .utf8) {
+                    debugLog("updateItemMetadata calling with \(jsonStr.count) chars")
+                    try store.updateItemMetadata(itemId: imageId, metadataJson: jsonStr)
+                    debugLog("updateItemMetadata OK")
+                } else {
+                    debugLog("JSON serialization FAILED for keys: \(metadata.keys.sorted())")
+                }
+            } else {
+                debugLog("metadata is empty, skipping update")
+            }
+
+            completion()
+        } catch {
+            debugLog("updateImageTagsAndMetadata CAUGHT ERROR: \(error)")
+            completion()
+        }
+    }
+
+    /// Save OCR/vision text as item content so it's visible in the main app.
+    func updateItemContent(itemId: String, content: String) {
+        do {
+            try store?.updateItemContent(itemId: itemId, content: content)
+            debugLog("updateItemContent OK (\(content.count) chars)")
+        } catch {
+            debugLog("updateItemContent error: \(error)")
+        }
+    }
+
+    /// Force WAL checkpoint so main app sees share extension writes.
+    func checkpoint() {
+        do {
+            try store?.checkpoint()
+        } catch {
+            debugLog("checkpoint error: \(error)")
         }
     }
 
@@ -520,31 +587,49 @@ struct VisionAnalysisResult {
 // MARK: - Vision Analyzer
 class VisionAnalyzer {
 
-    /// Downscale image to max dimension for memory-safe processing
+    /// Downscale image to max dimension for memory-safe processing.
+    /// Always renders through a graphics context to handle HEIC/CIImage-backed UIImages
+    /// where .cgImage returns nil.
     static func downscaleImage(_ image: UIImage, maxDimension: CGFloat = 2048) -> CGImage? {
         let size = image.size
-        let scale = min(maxDimension / size.width, maxDimension / size.height)
-        if scale >= 1.0 {
-            return image.cgImage
-        }
+        guard size.width > 0, size.height > 0 else { return nil }
+        let scale = min(maxDimension / size.width, maxDimension / size.height, 1.0)
         let newSize = CGSize(width: size.width * scale, height: size.height * scale)
-        UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
-        image.draw(in: CGRect(origin: .zero, size: newSize))
-        let scaled = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        return scaled?.cgImage
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let rendered = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: newSize))
+        }
+        return rendered.cgImage
     }
 
     /// Run Vision analysis on image data — must be called on a background queue
+    /// Extension memory limit is ~220MB. We must minimize peak memory usage.
+    /// Uses CGImageSource thumbnail API to decode at reduced size without
+    /// fully decompressing the original image (avoids 30-50MB HEIC decode).
     static func analyze(imageData: Data, completion: @escaping (VisionAnalysisResult?) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             autoreleasepool {
-                guard let uiImage = UIImage(data: imageData),
-                      let cgImage = downscaleImage(uiImage) else {
+                // Use CGImageSource to create a thumbnail directly from compressed data.
+                // This decodes only enough pixels for the thumbnail size, avoiding the
+                // full HEIC decompression that UIImage(data:) would trigger.
+                guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else {
+                    os_log("Vision: Cannot create image source from data (%d bytes)", log: OSLog.default, type: .error, imageData.count)
                     DispatchQueue.main.async { completion(nil) }
                     return
                 }
-
+                // Use 2048px for Vision analysis — enough for good OCR/barcode detection
+                // while staying well under the 220MB extension memory limit.
+                // (2048x2048x4 = 16MB bitmap vs ~195MB for full 48MP)
+                let thumbOpts: [CFString: Any] = [
+                    kCGImageSourceThumbnailMaxPixelSize: 2048,
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true
+                ]
+                guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOpts as CFDictionary) else {
+                    os_log("Vision: Cannot create thumbnail from image source", log: OSLog.default, type: .error)
+                    DispatchQueue.main.async { completion(nil) }
+                    return
+                }
                 let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
 
                 // OCR request — .fast for memory safety in extension
@@ -558,7 +643,7 @@ class VisionAnalyzer {
                 do {
                     try requestHandler.perform([textRequest, barcodeRequest])
                 } catch {
-                    print("[Vision] Analysis failed: \(error)")
+                    os_log("Vision: Analysis failed: %{public}@", log: OSLog.default, type: .error, error.localizedDescription)
                     DispatchQueue.main.async { completion(nil) }
                     return
                 }
@@ -654,6 +739,7 @@ class ShareViewController: UIViewController {
     var tagFilterText = ""
     var existingSavedItem: SavedItem?
     var savedImageId: String?  // Track saved image ID to prevent duplicates
+    var isSavingImage = false  // Guard against concurrent image saves
     var pendingImageUrl: String?  // Store image URL when seen, for use by image handler
     var visionResult: VisionAnalysisResult?
     var isAnalyzing = false
@@ -843,6 +929,25 @@ class ShareViewController: UIViewController {
         statusLabel.alpha = 0
         headerView.addSubview(statusLabel)
 
+        // Analyze button (text.viewfinder icon only) — in header, adjacent to close button
+        var analyzeBtnConfig = UIButton.Configuration.filled()
+        analyzeBtnConfig.contentInsets = NSDirectionalEdgeInsets(top: PeekTheme.buttonPaddingV, leading: PeekTheme.buttonPaddingV, bottom: PeekTheme.buttonPaddingV, trailing: PeekTheme.buttonPaddingV)
+        analyzeBtnConfig.baseBackgroundColor = PeekTheme.accent
+        analyzeBtnConfig.baseForegroundColor = PeekTheme.bg
+        analyzeBtnConfig.cornerStyle = .fixed
+        analyzeBtnConfig.background.cornerRadius = PeekTheme.buttonCornerRadius
+        analyzeBtnConfig.image = UIImage(systemName: "text.viewfinder")
+        analyzeButton.configuration = analyzeBtnConfig
+        analyzeButton.addTarget(self, action: #selector(analyzePressed), for: .touchUpInside)
+        analyzeButton.translatesAutoresizingMaskIntoConstraints = false
+        analyzeButton.isHidden = true
+        headerView.addSubview(analyzeButton)
+
+        // Spinner next to analyze button
+        analyzeSpinner.translatesAutoresizingMaskIntoConstraints = false
+        analyzeSpinner.hidesWhenStopped = true
+        headerView.addSubview(analyzeSpinner)
+
         // Scroll view for content
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = false
@@ -870,43 +975,12 @@ class ShareViewController: UIViewController {
         imagePreviewView.translatesAutoresizingMaskIntoConstraints = false
         imageRow.addSubview(imagePreviewView)
 
-        // Analyze button — SF Symbol text.viewfinder, same style as close/add buttons
-        var analyzeBtnConfig = UIButton.Configuration.filled()
-        analyzeBtnConfig.contentInsets = NSDirectionalEdgeInsets(top: PeekTheme.buttonPaddingV, leading: PeekTheme.buttonPaddingH, bottom: PeekTheme.buttonPaddingV, trailing: PeekTheme.buttonPaddingH)
-        analyzeBtnConfig.baseBackgroundColor = PeekTheme.accent
-        analyzeBtnConfig.baseForegroundColor = PeekTheme.bg
-        analyzeBtnConfig.cornerStyle = .fixed
-        analyzeBtnConfig.background.cornerRadius = PeekTheme.buttonCornerRadius
-        analyzeBtnConfig.image = UIImage(systemName: "text.viewfinder")
-        analyzeBtnConfig.imagePadding = 4
-        analyzeBtnConfig.title = "Analyze"
-        analyzeBtnConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = PeekTheme.inputMedium
-            return outgoing
-        }
-        analyzeButton.configuration = analyzeBtnConfig
-        analyzeButton.addTarget(self, action: #selector(analyzePressed), for: .touchUpInside)
-        analyzeButton.translatesAutoresizingMaskIntoConstraints = false
-        analyzeButton.isHidden = true
-        imageRow.addSubview(analyzeButton)
-
-        // Spinner for analysis
-        analyzeSpinner.color = PeekTheme.textSecondary
-        analyzeSpinner.hidesWhenStopped = true
-        analyzeSpinner.translatesAutoresizingMaskIntoConstraints = false
-        imageRow.addSubview(analyzeSpinner)
-
         NSLayoutConstraint.activate([
             imageRow.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
             imagePreviewView.topAnchor.constraint(equalTo: imageRow.topAnchor),
             imagePreviewView.leadingAnchor.constraint(equalTo: imageRow.leadingAnchor),
             imagePreviewView.bottomAnchor.constraint(equalTo: imageRow.bottomAnchor),
-            imagePreviewView.trailingAnchor.constraint(equalTo: analyzeButton.leadingAnchor, constant: -PeekTheme.spacingMD),
-            analyzeButton.topAnchor.constraint(equalTo: imageRow.topAnchor),
-            analyzeButton.trailingAnchor.constraint(equalTo: imageRow.trailingAnchor),
-            analyzeSpinner.centerXAnchor.constraint(equalTo: analyzeButton.centerXAnchor),
-            analyzeSpinner.topAnchor.constraint(equalTo: analyzeButton.bottomAnchor, constant: PeekTheme.spacingSM),
+            imagePreviewView.trailingAnchor.constraint(equalTo: imageRow.trailingAnchor),
         ])
 
         // Vision results container (hidden by default)
@@ -1048,9 +1122,19 @@ class ShareViewController: UIViewController {
             titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: PeekTheme.paddingH),
             titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
-            // Status label RIGHT-ALIGNED (to the left of the close button)
-            statusLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -PeekTheme.spacingMD),
+            // Status label centered between title and buttons
             statusLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: PeekTheme.spacingMD),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: analyzeButton.leadingAnchor, constant: -PeekTheme.spacingMD),
+
+            // Analyze button — adjacent to close button, same height
+            analyzeButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -PeekTheme.spacingSM),
+            analyzeButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            analyzeButton.heightAnchor.constraint(equalTo: closeButton.heightAnchor),
+
+            // Spinner overlays analyze button
+            analyzeSpinner.centerXAnchor.constraint(equalTo: analyzeButton.centerXAnchor),
+            analyzeSpinner.centerYAnchor.constraint(equalTo: analyzeButton.centerYAnchor),
 
             // Close button (✕) on the RIGHT
             closeButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -PeekTheme.paddingH),
@@ -1399,20 +1483,31 @@ class ShareViewController: UIViewController {
             return
         }
         print("[ShareExt] Setting shared image: \(imageData.count) bytes, type: \(mimeType)")
-        print("[ShareExt] Image filename: \(filename ?? "nil"), sourceUrl: \(sourceUrl ?? "nil")")
 
         sharedImageData = imageData
         sharedImageMimeType = mimeType
         sharedImageSourceUrl = sourceUrl
         sharedItemType = .image
 
-        // Get image dimensions and show preview
-        if let image = UIImage(data: imageData) {
-            sharedMetadata["width"] = Int(image.size.width)
-            sharedMetadata["height"] = Int(image.size.height)
+        // Get image dimensions and show preview using CGImageSource
+        // CRITICAL: Do NOT use UIImage(data:) here — it fully decompresses HEIC
+        // images into a bitmap (~195MB for 48MP), blowing the 220MB extension limit.
+        if let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let pixelWidth = properties[kCGImagePropertyPixelWidth] as? Int,
+           let pixelHeight = properties[kCGImagePropertyPixelHeight] as? Int {
+            sharedMetadata["width"] = pixelWidth
+            sharedMetadata["height"] = pixelHeight
 
-            // Show image preview + analyze button
-            imagePreviewView.image = image
+            // Create a small thumbnail for preview (decodes only needed pixels)
+            let thumbOpts: [CFString: Any] = [
+                kCGImageSourceThumbnailMaxPixelSize: 400,
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true
+            ]
+            if let cgThumb = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOpts as CFDictionary) {
+                imagePreviewView.image = UIImage(cgImage: cgThumb)
+            }
             imagePreviewView.superview?.isHidden = false  // imageRow
             analyzeButton.isHidden = false
         }
@@ -1605,11 +1700,13 @@ class ShareViewController: UIViewController {
         }
     }
 
-    private func showStatus(_ text: String, color: UIColor) {
+    private func showStatus(_ text: String, color: UIColor, autoDismissAfter: TimeInterval? = nil) {
         statusLabel.text = text
         // Map system colors to Peek theme colors
         if color == .systemGreen {
             statusLabel.textColor = PeekTheme.success
+        } else if color == .systemRed {
+            statusLabel.textColor = PeekTheme.danger
         } else if color == .secondaryLabel {
             statusLabel.textColor = PeekTheme.textSecondary
         } else {
@@ -1618,6 +1715,15 @@ class ShareViewController: UIViewController {
 
         UIView.animate(withDuration: 0.15) {
             self.statusLabel.alpha = 1
+        }
+
+        if let delay = autoDismissAfter {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self else { return }
+                // Only revert if still showing the same text
+                guard self.statusLabel.text == text else { return }
+                self.showStatus("\u{2713} Saved", color: .systemGreen)
+            }
         }
     }
 
@@ -1691,22 +1797,30 @@ class ShareViewController: UIViewController {
         case .image:
             guard let imageData = sharedImageData, let mimeType = sharedImageMimeType else { return }
 
-            // If image already saved, just update tags
+            PeekCoreManager.shared.debugLog("saveCurrentState .image: savedImageId=\(savedImageId ?? "nil"), isSavingImage=\(isSavingImage)")
+
+            // If image already saved, update tags and metadata (includes _vision data)
             if let existingImageId = savedImageId {
-                PeekCoreManager.shared.updateImageTags(
+                PeekCoreManager.shared.debugLog("saveCurrentState: taking UPDATE path for \(existingImageId)")
+                PeekCoreManager.shared.updateImageTagsAndMetadata(
                     imageId: existingImageId,
-                    tags: finalTags
+                    tags: finalTags,
+                    metadata: metadata ?? [:]
                 ) { }
                 return
             }
 
-            // Get image dimensions
-            var width: Int?
-            var height: Int?
-            if let image = UIImage(data: imageData) {
-                width = Int(image.size.width)
-                height = Int(image.size.height)
+            // Prevent concurrent saves from creating duplicate images
+            guard !isSavingImage else {
+                PeekCoreManager.shared.debugLog("saveCurrentState: BLOCKED by isSavingImage")
+                return
             }
+            isSavingImage = true
+            PeekCoreManager.shared.debugLog("saveCurrentState: taking CREATE path")
+
+            // Get image dimensions from sharedMetadata (set by CGImageSource in setSharedImage)
+            let width = sharedMetadata["width"] as? Int
+            let height = sharedMetadata["height"] as? Int
 
             // Generate thumbnail
             let thumbnail = PeekCoreManager.shared.generateThumbnail(from: imageData)
@@ -1721,10 +1835,12 @@ class ShareViewController: UIViewController {
                 tags: finalTags,
                 metadata: metadata
             ) { [weak self] imageId in
-                // Track the saved image ID to prevent duplicates
-                DispatchQueue.main.async {
-                    self?.savedImageId = imageId
+                guard let self = self else { return }
+                PeekCoreManager.shared.debugLog("saveImage completion: imageId=\(imageId ?? "nil")")
+                if let imageId = imageId {
+                    self.savedImageId = imageId
                 }
+                self.isSavingImage = false
             }
         }
     }
@@ -1742,9 +1858,21 @@ class ShareViewController: UIViewController {
             self.analyzeButton.isEnabled = true
 
             guard let result = result else {
+                os_log("Vision: Analysis returned nil", log: shareLog, type: .error)
+                #if targetEnvironment(simulator)
+                self.showStatus("Requires device", color: .systemOrange)
+                #else
                 self.showStatus("Analysis failed", color: .systemRed)
+                #endif
                 return
             }
+            os_log("Vision: OCR=%{public}@, barcodes=%d, entities: people=%d places=%d orgs=%d",
+                   log: shareLog, type: .info,
+                   result.ocrText != nil ? "yes" : "no",
+                   result.barcodes.count,
+                   result.entities.people.count,
+                   result.entities.places.count,
+                   result.entities.organizations.count)
 
             self.visionResult = result
             self.displayVisionResults(result)
@@ -1776,9 +1904,24 @@ class ShareViewController: UIViewController {
                 }
             }
 
-            // Re-save with vision metadata
-            self.saveCurrentState()
-            self.showStatus("\u{2713} Analyzed", color: .systemGreen)
+            // Save vision metadata + OCR text to the item
+            PeekCoreManager.shared.debugLog("analyzePressed completion: savedImageId=\(self.savedImageId ?? "nil"), _vision in metadata=\(self.sharedMetadata["_vision"] != nil)")
+            if let imageId = self.savedImageId {
+                let metadata = self.sharedMetadata.isEmpty ? [:] : self.sharedMetadata
+                PeekCoreManager.shared.updateImageTagsAndMetadata(
+                    imageId: imageId,
+                    tags: Array(self.selectedTags).sorted(),
+                    metadata: metadata
+                ) { }
+                // Save OCR text as item content so main app can display it
+                if let ocrText = result.ocrText, !ocrText.isEmpty {
+                    PeekCoreManager.shared.updateItemContent(itemId: imageId, content: ocrText)
+                }
+            }
+            // If savedImageId is nil, _vision is already in sharedMetadata and will be
+            // included when the image is saved via saveCurrentState() (e.g., on close).
+            // Do NOT call saveCurrentState() here — it would create a duplicate image.
+            self.showStatus("\u{2713} Analyzed", color: .systemGreen, autoDismissAfter: 2.0)
 
             self.view.layoutIfNeeded()
             self.updatePreferredContentSize()
@@ -1822,6 +1965,8 @@ class ShareViewController: UIViewController {
         // Commit any tag text the user typed but didn't explicitly "Add"
         addTagPressed()
         saveCurrentState()
+        // Checkpoint WAL so main app sees our writes immediately
+        PeekCoreManager.shared.checkpoint()
         extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
     }
 

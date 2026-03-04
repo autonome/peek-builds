@@ -243,6 +243,24 @@ impl PeekCoreFfi {
         self.store.update_item_tags(&item_id, &tags)?;
         Ok(())
     }
+
+    /// Update item content text (e.g. OCR text for images).
+    pub fn update_item_content(&self, item_id: String, content: String) -> Result<(), FfiError> {
+        self.store.update_item_content(&item_id, &content)?;
+        Ok(())
+    }
+
+    /// Update item metadata (merges with existing).
+    pub fn update_item_metadata(&self, item_id: String, metadata_json: String) -> Result<(), FfiError> {
+        self.store.update_item_metadata(&item_id, &metadata_json)?;
+        Ok(())
+    }
+
+    /// Force WAL checkpoint so data is visible to other processes.
+    pub fn checkpoint(&self) -> Result<(), FfiError> {
+        self.store.checkpoint()?;
+        Ok(())
+    }
 }
 
 // ============================================================================

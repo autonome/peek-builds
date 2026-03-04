@@ -45,6 +45,7 @@ interface SavedImage {
   tags: string[];
   saved_at: string;
   metadata?: ItemMetadata;
+  content?: string;
   thumbnail?: string; // Base64-encoded thumbnail
   mime_type: string;
   width?: number;
@@ -3051,6 +3052,11 @@ ${content.html}
             </svg>
           </button>
         </div>
+        {item.content && (
+          <div className="card-content" style={{ padding: "0 12px 8px", fontSize: "13px", opacity: 0.8, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const }}>
+            {item.content.length > 200 ? item.content.substring(0, 200) + "..." : item.content}
+          </div>
+        )}
         <div className="card-footer">
           {(item.tags.includes("todo") || item.tags.includes("done")) && (
             <button

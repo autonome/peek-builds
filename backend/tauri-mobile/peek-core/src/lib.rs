@@ -179,6 +179,18 @@ impl PeekStore {
         items::update_image_tags(&conn, id, tags, &self.device_id)
     }
 
+    /// Update item content text (e.g. OCR text for images).
+    pub fn update_item_content(&self, id: &str, content: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        items::update_item_content(&conn, id, content, &self.device_id)
+    }
+
+    /// Update item metadata JSON (merges with existing metadata).
+    pub fn update_item_metadata(&self, id: &str, metadata_json: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        items::update_item_metadata(&conn, id, metadata_json, &self.device_id)
+    }
+
     /// Soft-delete any item by ID.
     pub fn delete_item(&self, id: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -286,6 +298,14 @@ impl PeekStore {
     pub fn get_item_url(&self, item_id: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
         offline::get_item_url(&conn, item_id)
+    }
+
+    /// Force a WAL checkpoint so data is visible to other processes.
+    /// Call before the share extension terminates.
+    pub fn checkpoint(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        conn.execute_batch("PRAGMA wal_checkpoint(RESTART);")
+            .map_err(|e| format!("Checkpoint failed: {}", e))
     }
 }
 
