@@ -414,25 +414,34 @@ async function renderEntities() {
     // Source page (first observation)
     const observations = observationMap.get(entity.id) || [];
     let sourceHtml = '';
+    let sourceUrl = '';
     if (observations.length > 0) {
       const firstObs = observations[0];
       const sourceTitle = firstObs.pageTitle || '';
       const displayUrl = truncate(firstObs.url, 50);
       const sourceCount = observations.length;
+      sourceUrl = firstObs.url;
       sourceHtml = `<div class="entity-source">
         <div class="source-info">
           ${sourceTitle ? `<span class="source-page-title">${escapeHtml(truncate(sourceTitle, 40))}</span>` : ''}
           <span class="source-url">${escapeHtml(displayUrl)}</span>
         </div>
-        <button class="source-open-btn" data-url="${escapeHtml(firstObs.url)}" title="Open source page">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-            <polyline points="15 3 21 3 21 9"></polyline>
-            <line x1="10" y1="14" x2="21" y2="3"></line>
-          </svg>
-        </button>
         ${sourceCount > 1 ? `<span class="source-count">+${sourceCount - 1} more</span>` : ''}
       </div>`;
+    }
+
+    // Top-right open link button (positioned absolutely over the card)
+    if (sourceUrl) {
+      const openBtn = document.createElement('button');
+      openBtn.className = 'card-open-btn';
+      openBtn.dataset.url = sourceUrl;
+      openBtn.title = 'Open source page';
+      openBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+        <polyline points="15 3 21 3 21 9"></polyline>
+        <line x1="10" y1="14" x2="21" y2="3"></line>
+      </svg>`;
+      card.appendChild(openBtn);
     }
 
     const headerDiv = document.createElement('div');
@@ -501,10 +510,10 @@ async function renderEntities() {
         return;
       }
 
-      const sourceBtn = e.target.closest('.source-open-btn[data-url]');
-      if (sourceBtn) {
+      const openBtn = e.target.closest('.card-open-btn[data-url]');
+      if (openBtn) {
         e.stopPropagation();
-        openSourceUrl(sourceBtn.dataset.url);
+        openSourceUrl(openBtn.dataset.url);
         return;
       }
       // Otherwise open detail view

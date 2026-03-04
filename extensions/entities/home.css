@@ -124,10 +124,11 @@ peek-grid {
 peek-card {
   --peek-card-bg: var(--base01);
   --peek-card-border: transparent;
-  --peek-card-radius: 8px;
-  --peek-card-padding: 14px;
-  --peek-card-gap: 10px;
+  --peek-card-radius: 6px;
+  --peek-card-padding: 10px;
+  --peek-card-gap: 4px;
   cursor: pointer;
+  position: relative;
 }
 
 peek-card[selected] {
@@ -141,10 +142,10 @@ peek-card[selected] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  font-size: 13px;
+  font-size: 11px;
   flex-shrink: 0;
 }
 
@@ -164,11 +165,11 @@ peek-card[selected] {
 .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .entity-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--base05);
   white-space: nowrap;
@@ -177,7 +178,7 @@ peek-card[selected] {
 }
 
 .entity-type {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--base04);
   text-transform: capitalize;
 }
@@ -188,32 +189,64 @@ peek-card[selected] {
 }
 
 .entity-meta {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--base04);
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .entity-attrs {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--base04);
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .entity-attrs span {
   display: inline-block;
-  margin-right: 8px;
+  margin-right: 6px;
 }
 
 .card-body {
-  padding: 4px 0;
+  padding: 0;
 }
 
 .card-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--base03);
+}
+
+/* Open link button - positioned top-right of card */
+.card-open-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: var(--base02);
+  border: 1px solid var(--base02);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  opacity: 0;
+  z-index: 1;
+}
+
+peek-card:hover .card-open-btn {
+  opacity: 1;
+}
+
+.card-open-btn:hover {
+  background: var(--base03);
+  color: var(--base05);
+  border-color: var(--base03);
 }
 
 /* Feedback buttons */
@@ -227,8 +260,8 @@ peek-card[selected] {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
@@ -316,8 +349,8 @@ peek-grid[view-mode="masonry"] peek-card {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
-  font-size: 11px;
+  margin-top: 4px;
+  font-size: 10px;
   color: var(--base04);
   min-width: 0;
 }
@@ -332,7 +365,7 @@ peek-grid[view-mode="masonry"] peek-card {
 
 .entity-source .source-page-title {
   color: var(--base05);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -345,28 +378,6 @@ peek-grid[view-mode="masonry"] peek-card {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.entity-source .source-open-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: var(--base02);
-  border: 1px solid var(--base02);
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--base04);
-  flex-shrink: 0;
-  transition: all 0.15s;
-}
-
-.entity-source .source-open-btn:hover {
-  background: var(--base03);
-  color: var(--base05);
-  border-color: var(--base03);
 }
 
 .entity-source .source-count {
