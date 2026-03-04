@@ -269,13 +269,30 @@ const createResultCard = (item) => {
 
   const card = createSearchResultCard(item, {
     className: 'result-card',
-    elevated: true,
     visitCount: item.visitCount,
+    showOpenButton: itemUrl && isWebUrl(itemUrl),
+    onOpen: (url) => {
+      api.window.open(url, {
+        role: 'content',
+        key: url,
+        width: 800,
+        height: 600
+      });
+    },
     onDelete: async (item) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       await api.datastore.deleteItem(item.id);
+      api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
       state.results = state.results.filter(r => r.id !== item.id);
       render();
+    },
+    onTagRemove: async (item, tag) => {
+      try {
+        await api.datastore.untagItem(item.id, tag.id);
+        api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+      } catch (err) {
+        console.error('[search] Failed to remove tag:', err);
+      }
     },
     affordances: rules.length > 0 ? {
       rules,
@@ -296,27 +313,58 @@ const createResultCard = (item) => {
     }
   });
 
-  // Async: load item tags and render tag chips + affordances
-  if (rules.length > 0) {
-    api.datastore.getItemTags(item.id).then(tagsResult => {
-      if (!tagsResult.success || !tagsResult.data.length) return;
-      const tagNames = tagsResult.data.map(t => t.name);
+  // Async: load item tags and render tag chips + affordances in footer
+  api.datastore.getItemTags(item.id).then(tagsResult => {
+    if (!tagsResult.success || !tagsResult.data.length) return;
+    const tags = tagsResult.data;
+    const footer = card.querySelector('[slot="footer"]');
+    if (!footer) return;
+
+    // Build right-side container for tags and affordances
+    let footerRight = footer.querySelector('span:last-child');
+    if (!footerRight || footerRight.className === 'card-url') {
+      footerRight = document.createElement('span');
+      footerRight.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
+      footer.appendChild(footerRight);
+    }
+
+    // Tag action affordances
+    if (rules.length > 0) {
+      const tagNames = tags.map(t => t.name);
       const el = createAffordanceElements(item.id, tagNames, rules, api, {
         onToggle: () => { render(); }
       });
-      if (el) {
-        const footer = card.querySelector('[slot="footer"]');
-        if (footer) {
-          const lastChild = footer.lastElementChild;
-          if (lastChild) {
-            footer.insertBefore(el, lastChild);
-          } else {
-            footer.appendChild(el);
-          }
+      if (el) footerRight.appendChild(el);
+    }
+
+    // Tag chips with remove buttons
+    const tagsContainer = document.createElement('span');
+    tagsContainer.className = 'card-tags';
+    tagsContainer.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;';
+    tags.forEach(tag => {
+      const chip = document.createElement('span');
+      chip.className = 'card-tag';
+      chip.dataset.tagId = tag.id;
+      chip.textContent = tag.name;
+
+      const removeBtn = document.createElement('span');
+      removeBtn.className = 'card-tag-remove';
+      removeBtn.textContent = '\u00D7';
+      removeBtn.title = `Remove ${tag.name}`;
+      removeBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await api.datastore.untagItem(item.id, tag.id);
+          api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+        } catch (err) {
+          console.error('[search] Failed to remove tag:', err);
         }
-      }
+      });
+      chip.appendChild(removeBtn);
+      tagsContainer.appendChild(chip);
     });
-  }
+    footerRight.appendChild(tagsContainer);
+  });
 
   return card;
 };

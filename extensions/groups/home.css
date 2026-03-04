@@ -114,7 +114,6 @@ peek-card {
   --peek-card-radius: 6px;
   --peek-card-padding: 8px;
   --peek-card-gap: 4px;
-  max-width: 260px;
 }
 
 peek-card[selected] {
@@ -133,18 +132,26 @@ peek-card[selected]:hover {
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 /* Address card slotted content */
 .address-card .card-favicon {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   border-radius: 3px;
   flex-shrink: 0;
   background: var(--base02);
   object-fit: contain;
-  margin-top: 2px;
+  margin-top: 1px;
+}
+
+/* Card button group - standardized icon button container in card header */
+.card-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 /* Card open button */
@@ -154,7 +161,7 @@ peek-card[selected]:hover {
   justify-content: center;
   width: 22px;
   height: 22px;
-  background: var(--base02);
+  background: transparent;
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -165,8 +172,7 @@ peek-card[selected]:hover {
 }
 
 .card-open-btn:hover {
-  background: var(--base0D);
-  color: var(--base00);
+  color: var(--base05);
 }
 
 /* Card delete button */
@@ -184,11 +190,6 @@ peek-card[selected]:hover {
   flex-shrink: 0;
   transition: all 0.15s;
   padding: 0;
-  opacity: 0;
-}
-
-peek-card:hover .card-delete-btn {
-  opacity: 1;
 }
 
 .card-delete-btn:hover {
@@ -237,12 +238,22 @@ peek-card:hover .card-delete-btn {
 
 /* Shared slotted content styles */
 .card-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--base05);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.card-url {
+  font-size: 11px;
+  color: var(--base04);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
 }
 
 .card-meta {

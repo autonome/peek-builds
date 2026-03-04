@@ -794,7 +794,6 @@ const createGroupCard = (tag, options = {}) => {
   const card = document.createElement('peek-card');
   card.className = 'group-card';
   card.interactive = true;
-  card.elevated = true;
   if (tag.isSpecial) {
     card.classList.add('special-group');
   }
@@ -865,8 +864,40 @@ const createAddressCard = (address) => {
 
   const card = createSearchResultCard(address, {
     className: 'address-card',
-    elevated: true,
     visitCount: address.visitCount,
+    showOpenButton: isWebUrl(addressUrl),
+    onOpen: (url) => {
+      api.window.open(url, {
+        role: 'content',
+        key: url,
+        width: 800,
+        height: 600
+      });
+    },
+    onDelete: async (item) => {
+      if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
+      try {
+        await api.datastore.deleteItem(item.id);
+        api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+      } catch (err) {
+        console.error('[groups] Failed to delete item:', err);
+      }
+    },
+    onTagRemove: async (item, tag) => {
+      try {
+        await api.datastore.untagItem(item.id, tag.id);
+        api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+      } catch (err) {
+        console.error('[groups] Failed to remove tag:', err);
+      }
+    },
+    onTagClick: (tag) => {
+      // Navigate to addresses view for the clicked tag
+      const matchingTag = state.tags.find(t => t.name === tag.name || t.id === tag.id);
+      if (matchingTag) {
+        showAddresses(matchingTag);
+      }
+    },
     onClick: async () => {
       debug && console.log('Opening address:', addressUrl);
       const openOptions = {
@@ -901,29 +932,66 @@ const createAddressCard = (address) => {
     }
   }
 
-  // Async: load item tags and render affordances if any rules match
-  if (rules.length > 0) {
-    api.datastore.getItemTags(address.id).then(tagsResult => {
-      if (!tagsResult.success || !tagsResult.data.length) return;
-      const tagNames = tagsResult.data.map(t => t.name);
+  // Async: load item tags and render tag chips + affordances
+  api.datastore.getItemTags(address.id).then(tagsResult => {
+    if (!tagsResult.success || !tagsResult.data.length) return;
+    const tags = tagsResult.data;
+    const footer = card.querySelector('[slot="footer"]');
+    if (!footer) return;
+
+    // Build right-side container for tags and affordances
+    let footerRight = footer.querySelector('span:last-child');
+    if (!footerRight || footerRight.className === 'card-url') {
+      footerRight = document.createElement('span');
+      footerRight.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
+      footer.appendChild(footerRight);
+    }
+
+    // Tag action affordances
+    if (rules.length > 0) {
+      const tagNames = tags.map(t => t.name);
       const el = createAffordanceElements(address.id, tagNames, rules, api, {
         onToggle: () => {
           if (state.currentTag) loadAddressesForTag(state.currentTag.id).then(() => renderAddresses());
         }
       });
-      if (el) {
-        const footer = card.querySelector('[slot="footer"]');
-        if (footer) {
-          const lastChild = footer.lastElementChild;
-          if (lastChild) {
-            footer.insertBefore(el, lastChild);
-          } else {
-            footer.appendChild(el);
-          }
+      if (el) footerRight.appendChild(el);
+    }
+
+    // Tag chips with remove buttons
+    const tagsContainer = document.createElement('span');
+    tagsContainer.className = 'card-tags';
+    tagsContainer.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;';
+    tags.forEach(tag => {
+      const chip = document.createElement('span');
+      chip.className = 'card-tag';
+      chip.dataset.tagId = tag.id;
+      chip.textContent = tag.name;
+      chip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const matchingTag = state.tags.find(t => t.name === tag.name || t.id === tag.id);
+        if (matchingTag) showAddresses(matchingTag);
+      });
+
+      const removeBtn = document.createElement('span');
+      removeBtn.className = 'card-tag-remove';
+      removeBtn.textContent = '\u00D7';
+      removeBtn.title = `Remove ${tag.name}`;
+      removeBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await api.datastore.untagItem(address.id, tag.id);
+          api.publish('tag:item-removed', { itemId: address.id, tagId: tag.id }, api.scopes.GLOBAL);
+        } catch (err) {
+          console.error('[groups] Failed to remove tag:', err);
         }
-      }
+      });
+      chip.appendChild(removeBtn);
+
+      tagsContainer.appendChild(chip);
     });
-  }
+    footerRight.appendChild(tagsContainer);
+  });
 
   return card;
 };

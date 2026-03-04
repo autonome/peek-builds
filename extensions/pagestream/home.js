@@ -464,6 +464,32 @@ const createVisitCard = (visit, item, index) => {
   const card = createSearchResultCard(item, {
     className: 'visit-card',
     favicon: item.favicon || `https://www.google.com/s2/favicons?domain=${domain}&sz=32`,
+    showOpenButton: isWebUrl(url),
+    onOpen: (openUrl) => {
+      api.window.open(openUrl, {
+        role: 'content',
+        key: openUrl,
+        width: 1024,
+        height: 768
+      });
+    },
+    onDelete: async (item) => {
+      if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
+      try {
+        await api.datastore.deleteItem(item.id);
+        api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+      } catch (err) {
+        console.error('[pagestream] Failed to delete item:', err);
+      }
+    },
+    onTagRemove: async (item, tag) => {
+      try {
+        await api.datastore.untagItem(item.id, tag.id);
+        api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+      } catch (err) {
+        console.error('[pagestream] Failed to remove tag:', err);
+      }
+    },
     onClick: async () => {
       state.selectedIndex = index;
       updateSelection();
@@ -528,12 +554,29 @@ const createVisitCard = (visit, item, index) => {
       tagsContainer.slot = 'footer';
       tags.forEach(tag => {
         const chip = document.createElement('span');
-        chip.className = 'tag-chip';
+        chip.className = 'card-tag';
+        chip.dataset.tagId = tag.id;
         chip.textContent = tag.name;
         chip.addEventListener('click', (e) => {
           e.stopPropagation();
           filterByTag(tag.id, tag.name);
         });
+
+        const removeBtn = document.createElement('span');
+        removeBtn.className = 'card-tag-remove';
+        removeBtn.textContent = '\u00D7';
+        removeBtn.title = `Remove ${tag.name}`;
+        removeBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          try {
+            await api.datastore.untagItem(item.id, tag.id);
+            api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+          } catch (err) {
+            console.error('[pagestream] Failed to remove tag:', err);
+          }
+        });
+        chip.appendChild(removeBtn);
+
         tagsContainer.appendChild(chip);
       });
       card.appendChild(tagsContainer);

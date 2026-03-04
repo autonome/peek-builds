@@ -7,7 +7,7 @@
  * @element peek-grid
  *
  * @prop {number} minItemWidth - Minimum item width in pixels (default: 250)
- * @prop {number} gap - Gap between items in pixels (default: 16)
+ * @prop {number} gap - Gap between items in pixels (default: 10)
  * @prop {number} columns - Fixed column count (overrides auto-fit if set)
  * @prop {string} align - Item alignment: 'start' | 'center' | 'end' | 'stretch'
  * @prop {boolean} dense - Enable dense packing algorithm
@@ -129,7 +129,7 @@ export class PeekGrid extends PeekElement {
   constructor() {
     super();
     this.minItemWidth = 250;
-    this.gap = 16;
+    this.gap = 10;
     this.columns = null;
     this.align = 'stretch';
     this.dense = false;

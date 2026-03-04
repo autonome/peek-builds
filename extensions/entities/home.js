@@ -442,11 +442,15 @@ async function renderEntities() {
         <line x1="10" y1="14" x2="21" y2="3"></line>
       </svg></button>`;
     }
+    const deleteBtnHtml = `<button class="card-delete-btn" data-entity-id="${escapeHtml(entity.id)}" title="Delete entity"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="3 6 5 6 21 6"></polyline>
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+    </svg></button>`;
     headerDiv.innerHTML = `
       <div class="card-header">
         <span class="entity-type-icon type-${entityType}">${icon}</span>
         <span class="card-header-label"><span class="entity-type-prefix">${escapeHtml(entityTypeLabel)}:</span> ${entityName}</span>
-        ${openBtnHtml}
+        <span class="card-btn-group">${openBtnHtml}${deleteBtnHtml}</span>
       </div>
     `;
     card.appendChild(headerDiv);
@@ -510,6 +514,19 @@ async function renderEntities() {
       if (openBtn) {
         e.stopPropagation();
         openSourceUrl(openBtn.dataset.url);
+        return;
+      }
+
+      const deleteBtn = e.target.closest('.card-delete-btn[data-entity-id]');
+      if (deleteBtn) {
+        e.stopPropagation();
+        if (!confirm(`Delete entity "${entity.content || entity.name || 'this entity'}"?`)) return;
+        try {
+          await api.datastore.deleteItem(entity.id);
+          renderEntities();
+        } catch (err) {
+          console.error('[entities:ui] Failed to delete entity:', err);
+        }
         return;
       }
       // Otherwise open detail view

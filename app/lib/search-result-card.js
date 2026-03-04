@@ -69,36 +69,45 @@ export const createSearchResultCard = (item, opts = {}) => {
 
   const { title, subtitle, faviconUrl, itemUrl, itemType } = getItemDisplayInfo(item, displayOpts);
 
-  // ── Header slot: favicon + title + optional open button ──────────
+  // ── Header slot: favicon + title + button group ──────────
   const favicon = createFaviconEl(faviconUrl);
   const header = createHeaderSlot(favicon, title);
 
-  if (opts.showOpenButton && itemUrl) {
-    const openBtn = document.createElement('button');
-    openBtn.className = 'card-open-btn';
-    openBtn.title = 'Open page';
-    openBtn.innerHTML = OPEN_BUTTON_SVG;
-    openBtn.style.flexShrink = '0';
-    openBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (opts.onOpen) {
-        opts.onOpen(itemUrl);
-      }
-    });
-    header.appendChild(openBtn);
-  }
+  // Collect action buttons into a grouped container
+  const hasOpenBtn = opts.showOpenButton && itemUrl;
+  const hasDeleteBtn = !!opts.onDelete;
 
-  if (opts.onDelete) {
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'card-delete-btn';
-    deleteBtn.title = 'Delete item';
-    deleteBtn.innerHTML = DELETE_BUTTON_SVG;
-    deleteBtn.style.flexShrink = '0';
-    deleteBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      opts.onDelete(item);
-    });
-    header.appendChild(deleteBtn);
+  if (hasOpenBtn || hasDeleteBtn) {
+    const btnGroup = document.createElement('span');
+    btnGroup.className = 'card-btn-group';
+
+    if (hasOpenBtn) {
+      const openBtn = document.createElement('button');
+      openBtn.className = 'card-open-btn';
+      openBtn.title = 'Open page';
+      openBtn.innerHTML = OPEN_BUTTON_SVG;
+      openBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (opts.onOpen) {
+          opts.onOpen(itemUrl);
+        }
+      });
+      btnGroup.appendChild(openBtn);
+    }
+
+    if (hasDeleteBtn) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'card-delete-btn';
+      deleteBtn.title = 'Delete item';
+      deleteBtn.innerHTML = DELETE_BUTTON_SVG;
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        opts.onDelete(item);
+      });
+      btnGroup.appendChild(deleteBtn);
+    }
+
+    header.appendChild(btnGroup);
   }
 
   card.appendChild(header);
@@ -124,7 +133,7 @@ export const createSearchResultCard = (item, opts = {}) => {
   if (tags.length > 0) {
     const tagsContainer = document.createElement('span');
     tagsContainer.className = 'card-tags';
-    tagsContainer.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;flex-shrink:0;';
+    tagsContainer.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;';
     tags.forEach(tag => {
       const chip = document.createElement('span');
       chip.className = 'card-tag';

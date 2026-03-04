@@ -322,10 +322,20 @@ const createResultElement = (item, query, index) => {
   // Convert tag name strings to tag-like objects for the shared card builder
   const tagObjects = (item.tags || []).map(name => ({ name, id: name }));
 
+  const itemUrl = item.content;
   const card = createSearchResultCard(item, {
     className: 'result-item',
     tags: tagObjects,
     visitCount: item.visitCount,
+    showOpenButton: item.type === 'url' && isWebUrl(itemUrl),
+    onOpen: (url) => {
+      api.window.open(url, {
+        role: 'content',
+        key: url,
+        width: 1024,
+        height: 768
+      });
+    },
     onDelete: async (item) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       await api.datastore.deleteItem(item.id);
@@ -333,6 +343,7 @@ const createResultElement = (item, query, index) => {
     },
     onTagRemove: async (item, tag) => {
       await api.datastore.untagItem(item.id, tag.id);
+      api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
     },
     onClick: async (item) => {
       state.selectedIndex = index;

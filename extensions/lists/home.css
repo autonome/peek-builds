@@ -22,10 +22,10 @@ body {
 
 /* Search */
 .search-container {
-  padding: 24px 24px 0 24px;
+  padding: 12px 16px 0 16px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 /* Component customization for peek-input */
@@ -34,12 +34,12 @@ peek-input.search-input {
   flex: 1;
   --peek-input-bg: var(--base01);
   --peek-input-border: var(--base02);
-  --peek-input-height: 44px;
+  --peek-input-height: 32px;
 }
 
 peek-input.search-input::part(input) {
   color: var(--base05);
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .result-count {
@@ -49,16 +49,29 @@ peek-input.search-input::part(input) {
   flex-shrink: 0;
 }
 
+/* Component customization for peek-card */
+peek-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-border: transparent;
+  --peek-card-radius: 6px;
+  --peek-card-padding: 8px;
+  --peek-card-gap: 4px;
+}
+
+peek-card[selected] {
+  --peek-card-bg: var(--base02);
+}
+
 /* Results container */
 .results {
-  padding: 16px 24px;
+  padding: 10px 16px;
   overflow-y: auto;
-  max-height: calc(100vh - 100px);
+  max-height: calc(100vh - 80px);
 }
 
 /* Result group (URLs, Notes, Tags, etc.) */
 .result-group {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .result-group-header {
@@ -69,93 +82,41 @@ peek-input.search-input::part(input) {
   color: var(--base03);
   padding: 0 4px 6px 4px;
   border-bottom: 1px solid var(--base02);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
-/* Result item (card-like row) */
-.result-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 0.1s;
-}
-
-.result-item:hover {
-  background: var(--base01);
-}
-
-.result-item.selected {
-  background: var(--base02);
-}
-
-.result-item.selected:hover {
-  background: var(--base03);
-}
-
-/* Type icon */
-.result-icon {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  margin-top: 2px;
-  color: var(--base03);
-}
-
-.result-icon img {
+/* Card favicon */
+.card-favicon {
   width: 16px;
   height: 16px;
   border-radius: 3px;
+  flex-shrink: 0;
+  background: var(--base02);
   object-fit: contain;
+  margin-top: 1px;
 }
 
-/* Result content */
-.result-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.result-title {
-  font-size: 14px;
+/* Card title */
+.card-title {
+  font-size: 12px;
   font-weight: 500;
   color: var(--base05);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.3;
 }
 
-.result-preview {
-  font-size: 12px;
-  color: var(--base03);
+.card-url {
+  font-size: 11px;
+  color: var(--base04);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
-.result-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-/* Legacy result-tag (unused after shared card migration) */
-.result-tag {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: var(--base02);
-  color: var(--base04);
-}
-
-/* Shared search-result-card tag chips */
+/* Card tags */
 .card-tags {
   display: flex;
   flex-wrap: wrap;
@@ -168,12 +129,21 @@ peek-input.search-input::part(input) {
   border-radius: 8px;
   font-size: 10px;
   color: var(--base04);
+  cursor: pointer;
   transition: all 0.15s;
 }
 
 .card-tag:hover {
   background: var(--base03);
   color: var(--base05);
+}
+
+/* Card button group - standardized icon button container in card header */
+.card-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 /* Card open button */
@@ -183,7 +153,7 @@ peek-input.search-input::part(input) {
   justify-content: center;
   width: 22px;
   height: 22px;
-  background: var(--base02);
+  background: transparent;
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -194,8 +164,7 @@ peek-input.search-input::part(input) {
 }
 
 .card-open-btn:hover {
-  background: var(--base0D);
-  color: var(--base00);
+  color: var(--base05);
 }
 
 /* Card delete button */
@@ -213,11 +182,6 @@ peek-input.search-input::part(input) {
   flex-shrink: 0;
   transition: all 0.15s;
   padding: 0;
-  opacity: 0;
-}
-
-peek-card:hover .card-delete-btn {
-  opacity: 1;
 }
 
 .card-delete-btn:hover {
@@ -242,7 +206,7 @@ peek-card:hover .card-delete-btn {
   color: var(--base08);
 }
 
-.result-date {
+.card-meta {
   font-size: 11px;
   color: var(--base03);
 }
@@ -258,15 +222,15 @@ mark {
 /* Empty state */
 .empty-state {
   text-align: center;
-  padding: 48px 24px;
+  padding: 32px 16px;
   color: var(--base03);
-  font-size: 15px;
+  font-size: 13px;
 }
 
 /* No results state */
 .no-results {
   text-align: center;
-  padding: 32px 24px;
+  padding: 32px 16px;
   color: var(--base03);
-  font-size: 14px;
+  font-size: 13px;
 }
