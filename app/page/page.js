@@ -1502,6 +1502,11 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
   const header = document.createElement('div');
   header.className = 'widget-header';
 
+  const toggle = document.createElement('button');
+  toggle.className = 'widget-toggle';
+  toggle.textContent = '\u25BC';
+  toggle.title = 'Collapse';
+
   const titleEl = document.createElement('span');
   titleEl.className = 'widget-title';
   titleEl.textContent = title || '';
@@ -1515,9 +1520,13 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
     removeWidget(id);
   });
 
+  header.appendChild(toggle);
   header.appendChild(titleEl);
   header.appendChild(closeBtn);
   el.appendChild(header);
+
+  const bodyWrap = document.createElement('div');
+  bodyWrap.className = 'widget-body-wrap';
 
   const body = document.createElement('div');
   body.className = 'widget-body';
@@ -1526,7 +1535,15 @@ function addWidget(id, { title, content, autoDismiss = 0, onClose } = {}) {
   } else if (content instanceof HTMLElement) {
     body.appendChild(content);
   }
-  el.appendChild(body);
+  bodyWrap.appendChild(body);
+  el.appendChild(bodyWrap);
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const collapsed = toggle.classList.toggle('collapsed');
+    bodyWrap.classList.toggle('collapsed', collapsed);
+    toggle.title = collapsed ? 'Expand' : 'Collapse';
+  });
 
   widgetContainer.appendChild(el);
 
@@ -1600,6 +1617,22 @@ function updateWidget(id, { content, title } = {}) {
 
   DEBUG && console.log('[page] Widget updated:', id);
 }
+
+// --- Panel collapse toggles (built-in panels in HTML) ---
+
+document.querySelectorAll('.panel-toggle').forEach((toggle) => {
+  const header = toggle.closest('.panel-header');
+  const panel = header?.parentElement;
+  const bodyWrap = panel?.querySelector('.panel-body-wrap');
+  if (!bodyWrap) return;
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const collapsed = toggle.classList.toggle('collapsed');
+    bodyWrap.classList.toggle('collapsed', collapsed);
+    toggle.title = collapsed ? 'Expand' : 'Collapse';
+  });
+});
 
 // --- Page Widget Host (extension-provided widgets via pubsub) ---
 

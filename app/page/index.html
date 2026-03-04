@@ -213,6 +213,50 @@
       display: inline;
     }
 
+    /* --- Panel / Widget collapse toggle --- */
+
+    .panel-toggle, .widget-toggle {
+      background: none;
+      border: none;
+      color: var(--theme-text-muted, #666);
+      font-size: 9px;
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: transform 0.2s ease, color 0.15s;
+      font-family: system-ui;
+      line-height: 1;
+    }
+
+    .panel-toggle:hover, .widget-toggle:hover {
+      color: var(--theme-text-secondary, #aaa);
+    }
+
+    .panel-toggle.collapsed, .widget-toggle.collapsed {
+      transform: rotate(-90deg);
+    }
+
+    .panel-body-wrap, .widget-body-wrap {
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows 0.2s ease;
+      overflow: hidden;
+    }
+
+    .panel-body-wrap.collapsed, .widget-body-wrap.collapsed {
+      grid-template-rows: 0fr;
+    }
+
+    .panel-body-wrap > *, .widget-body-wrap > * {
+      overflow: hidden;
+      min-height: 0;
+    }
+
     /* --- Widget system --- */
 
     .widget-container {
@@ -1176,24 +1220,30 @@
       <!-- Page Info Panel (top-left, shown with navbar) -->
       <div class="page-info-panel" id="page-info-panel">
         <div class="panel-header">
+          <button class="panel-toggle" title="Collapse">&#x25BC;</button>
           <span class="panel-title">Page Info</span>
         </div>
-        <div class="panel-body" id="page-info-body">
-          <div class="info-empty">Loading page info...</div>
+        <div class="panel-body-wrap">
+          <div class="panel-body" id="page-info-body">
+            <div class="info-empty">Loading page info...</div>
+          </div>
         </div>
       </div>
 
       <!-- Tags Panel (right side, top of right stack, shown with navbar) -->
       <div class="tags-panel" id="tags-panel">
         <div class="panel-header">
+          <button class="panel-toggle" title="Collapse">&#x25BC;</button>
           <span class="panel-title">Tags</span>
         </div>
-        <div class="panel-body" id="tags-body">
-          <div class="tags-list" id="tags-list"></div>
-          <div class="tags-input-row">
-            <div class="tags-input-wrapper">
-              <input type="text" class="tags-input" id="tags-input" placeholder="Add tag..." autocomplete="off" spellcheck="false">
-              <span class="tags-suggestion" id="tags-suggestion"></span>
+        <div class="panel-body-wrap">
+          <div class="panel-body" id="tags-body">
+            <div class="tags-list" id="tags-list"></div>
+            <div class="tags-input-row">
+              <div class="tags-input-wrapper">
+                <input type="text" class="tags-input" id="tags-input" placeholder="Add tag..." autocomplete="off" spellcheck="false">
+                <span class="tags-suggestion" id="tags-suggestion"></span>
+              </div>
             </div>
           </div>
         </div>
@@ -1206,21 +1256,27 @@
       <!-- Entities Panel (right side, below notes, shown with navbar) -->
       <div class="entities-panel" id="entities-panel">
         <div class="panel-header">
+          <button class="panel-toggle" title="Collapse">&#x25BC;</button>
           <span class="panel-title">Entities</span>
           <button class="panel-action-btn" id="entities-rescan-btn" title="Re-extract entities">Rescan</button>
         </div>
-        <div class="panel-body" id="entities-body">
-          <div class="entity-empty">No entities detected yet</div>
+        <div class="panel-body-wrap">
+          <div class="panel-body" id="entities-body">
+            <div class="entity-empty">No entities detected yet</div>
+          </div>
         </div>
       </div>
 
       <!-- Extensions Panel (left side, below page info, shown with navbar) -->
       <div class="extensions-panel" id="extensions-panel">
         <div class="panel-header">
+          <button class="panel-toggle" title="Collapse">&#x25BC;</button>
           <span class="panel-title">Extensions</span>
         </div>
-        <div class="panel-body" id="extensions-body">
-          <div class="ext-loading">Loading extensions...</div>
+        <div class="panel-body-wrap">
+          <div class="panel-body" id="extensions-body">
+            <div class="ext-loading">Loading extensions...</div>
+          </div>
         </div>
       </div>
 

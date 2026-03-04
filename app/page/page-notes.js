@@ -24,6 +24,12 @@ export class PageNotesPane {
     const header = document.createElement('div');
     header.className = 'panel-header';
 
+    const toggle = document.createElement('button');
+    toggle.className = 'panel-toggle';
+    toggle.textContent = '\u25BC';
+    toggle.title = 'Collapse';
+    header.appendChild(toggle);
+
     const title = document.createElement('span');
     title.className = 'panel-title';
     title.textContent = 'Notes';
@@ -44,10 +50,23 @@ export class PageNotesPane {
 
     this.element.appendChild(header);
 
+    // Content wrap (for collapse toggle)
+    const bodyWrap = document.createElement('div');
+    bodyWrap.className = 'panel-body-wrap';
+
     // Content area
     this.content = document.createElement('div');
     this.content.className = 'notes-body';
-    this.element.appendChild(this.content);
+    bodyWrap.appendChild(this.content);
+    this.element.appendChild(bodyWrap);
+
+    // Toggle collapse
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const collapsed = toggle.classList.toggle('collapsed');
+      bodyWrap.classList.toggle('collapsed', collapsed);
+      toggle.title = collapsed ? 'Expand' : 'Collapse';
+    });
 
     // Subscribe to relevant events
     api.subscribe('item:created', () => this._reload(), api.scopes.GLOBAL);
