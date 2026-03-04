@@ -1,7 +1,9 @@
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "ios")]
 use std::ffi::CStr;
+#[cfg(target_os = "ios")]
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::fs;
@@ -65,6 +67,7 @@ extern "C" {
 /// FFI function called by Swift when the user navigates to a new URL in the webview.
 /// Creates or finds a URL item, tags it with from:history, and records a visit.
 /// Returns the item ID as a C string (caller must free with track_navigation_free).
+#[cfg(target_os = "ios")]
 #[no_mangle]
 pub extern "C" fn track_webview_navigation(url_ptr: *const c_char, source_item_id_ptr: *const c_char) -> *mut c_char {
     let url = unsafe { CStr::from_ptr(url_ptr) }.to_string_lossy().to_string();
@@ -84,6 +87,7 @@ pub extern "C" fn track_webview_navigation(url_ptr: *const c_char, source_item_i
 }
 
 /// Free the C string returned by track_webview_navigation
+#[cfg(target_os = "ios")]
 #[no_mangle]
 pub extern "C" fn track_navigation_free(ptr: *mut c_char) {
     if !ptr.is_null() {
@@ -325,6 +329,7 @@ struct SyncStatus {
 }
 
 // App Group bridge - just need the container path now
+#[cfg(target_os = "ios")]
 extern "C" {
     fn get_app_group_container_path() -> *const c_char;
     fn get_documents_path() -> *const c_char;
@@ -334,8 +339,14 @@ extern "C" {
 }
 
 /// Check if this is an App Store/TestFlight build (has receipt) vs Xcode install
+#[cfg(target_os = "ios")]
 fn is_production_build() -> bool {
     unsafe { is_app_store_build() == 1 }
+}
+
+#[cfg(not(target_os = "ios"))]
+fn is_production_build() -> bool {
+    false
 }
 
 // ============================================================================
@@ -417,6 +428,7 @@ struct ProfileEntry {
 static PROFILE_CONFIG: RwLock<Option<ProfileConfig>> = RwLock::new(None);
 
 /// Get the App Group container path
+#[cfg(target_os = "ios")]
 fn get_container_path() -> Option<PathBuf> {
     unsafe {
         let c_str = get_app_group_container_path();
@@ -430,7 +442,20 @@ fn get_container_path() -> Option<PathBuf> {
     }
 }
 
+#[cfg(not(target_os = "ios"))]
+fn get_container_path() -> Option<PathBuf> {
+    // On Android, use the app's files directory via HOME env or a reasonable default
+    let base = std::env::var("HOME")
+        .unwrap_or_else(|_| "/data/data/com.dietrich.peek_mobile/files".to_string());
+    let path = PathBuf::from(base).join(".peek");
+    if let Err(e) = std::fs::create_dir_all(&path) {
+        println!("[Rust] Failed to create container dir: {}", e);
+    }
+    Some(path)
+}
+
 /// Get the Documents directory path (visible in Finder via File Sharing)
+#[cfg(target_os = "ios")]
 fn get_docs_path() -> Option<PathBuf> {
     unsafe {
         let c_str = get_documents_path();
@@ -444,8 +469,14 @@ fn get_docs_path() -> Option<PathBuf> {
     }
 }
 
+#[cfg(not(target_os = "ios"))]
+fn get_docs_path() -> Option<PathBuf> {
+    None
+}
+
 /// Get the iCloud Documents directory path (synced across devices)
 /// Returns None if iCloud is not available (user not signed in or capability not enabled)
+#[cfg(target_os = "ios")]
 fn get_icloud_path() -> Option<PathBuf> {
     unsafe {
         let c_str = get_icloud_documents_path();
@@ -460,9 +491,15 @@ fn get_icloud_path() -> Option<PathBuf> {
     }
 }
 
+#[cfg(not(target_os = "ios"))]
+fn get_icloud_path() -> Option<PathBuf> {
+    None
+}
+
 /// Restore data from Documents folder to App Group container
 /// Drag files named *.restore via Finder, app will restore on next launch
 /// e.g., profiles.json.restore -> profiles.json in App Group
+#[cfg(target_os = "ios")]
 fn restore_from_documents() {
     let docs = match get_docs_path() {
         Some(p) => p,
@@ -513,6 +550,7 @@ fn restore_from_documents() {
 
 /// Backup App Group data to Documents folder (visible in Finder)
 /// This runs on every startup to ensure data is always recoverable
+#[cfg(target_os = "ios")]
 fn backup_app_group_to_documents() {
     ios_log("=== Starting backup to Documents ===");
 
@@ -2301,59 +2339,51 @@ fn get_shared_url() -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn debug_list_container_files() -> Result<Vec<String>, String> {
-    unsafe {
-        let c_str = get_app_group_container_path();
-        if c_str.is_null() {
-            return Err("Failed to get App Group container path".to_string());
+    let container_path = get_container_path()
+        .ok_or_else(|| "Failed to get container path".to_string())?;
+
+    let mut files = Vec::new();
+    files.push(format!("Container: {}", container_path.display()));
+
+    // List all files including hidden ones
+    if let Ok(entries) = std::fs::read_dir(&container_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let metadata = std::fs::metadata(&path);
+            let size = metadata.map(|m| m.len()).unwrap_or(0);
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            files.push(format!("{} ({} bytes)", name, size));
         }
-        let path_str = CStr::from_ptr(c_str).to_string_lossy().to_string();
-        libc::free(c_str as *mut libc::c_void);
+    }
 
-        let container_path = PathBuf::from(&path_str);
+    // Also check for WAL and SHM files
+    let wal_path = container_path.join("peek.db-wal");
+    let shm_path = container_path.join("peek.db-shm");
+    if wal_path.exists() {
+        let size = std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
+        files.push(format!("peek.db-wal ({} bytes)", size));
+    }
+    if shm_path.exists() {
+        let size = std::fs::metadata(&shm_path).map(|m| m.len()).unwrap_or(0);
+        files.push(format!("peek.db-shm ({} bytes)", size));
+    }
 
-        let mut files = Vec::new();
-        files.push(format!("Container: {}", path_str));
-
-        // List all files including hidden ones
-        if let Ok(entries) = std::fs::read_dir(&container_path) {
+    // Check Library folder for other databases
+    let lib_path = container_path.join("Library");
+    if lib_path.exists() {
+        files.push("--- Library folder: ---".to_string());
+        if let Ok(entries) = std::fs::read_dir(&lib_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let metadata = std::fs::metadata(&path);
                 let size = metadata.map(|m| m.len()).unwrap_or(0);
                 let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                files.push(format!("{} ({} bytes)", name, size));
+                files.push(format!("  {} ({} bytes)", name, size));
             }
         }
-
-        // Also check for WAL and SHM files
-        let wal_path = container_path.join("peek.db-wal");
-        let shm_path = container_path.join("peek.db-shm");
-        if wal_path.exists() {
-            let size = std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
-            files.push(format!("peek.db-wal ({} bytes)", size));
-        }
-        if shm_path.exists() {
-            let size = std::fs::metadata(&shm_path).map(|m| m.len()).unwrap_or(0);
-            files.push(format!("peek.db-shm ({} bytes)", size));
-        }
-
-        // Check Library folder for other databases
-        let lib_path = container_path.join("Library");
-        if lib_path.exists() {
-            files.push("--- Library folder: ---".to_string());
-            if let Ok(entries) = std::fs::read_dir(&lib_path) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let metadata = std::fs::metadata(&path);
-                    let size = metadata.map(|m| m.len()).unwrap_or(0);
-                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    files.push(format!("  {} ({} bytes)", name, size));
-                }
-            }
-        }
-
-        Ok(files)
     }
+
+    Ok(files)
 }
 
 #[tauri::command]
@@ -4254,7 +4284,14 @@ async fn update_image_tags(id: String, tags: Vec<String>) -> Result<(), String> 
 
 #[tauri::command]
 fn is_dark_mode() -> bool {
-    unsafe { get_system_is_dark_mode() != 0 }
+    #[cfg(target_os = "ios")]
+    {
+        unsafe { get_system_is_dark_mode() != 0 }
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        false // Default to light mode on non-iOS platforms
+    }
 }
 
 #[tauri::command]
@@ -5590,10 +5627,12 @@ fn get_sync_status() -> Result<SyncStatus, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // RESTORE: Check for *.restore files in Documents and copy to App Group
+    // RESTORE: Check for *.restore files in Documents and copy to App Group (iOS only)
+    #[cfg(target_os = "ios")]
     restore_from_documents();
 
-    // BACKUP: Copy App Group data to Documents for recovery via Finder File Sharing
+    // BACKUP: Copy App Group data to Documents for recovery via Finder File Sharing (iOS only)
+    #[cfg(target_os = "ios")]
     backup_app_group_to_documents();
 
     // Check for auto-sync environment variable (used by e2e tests)
