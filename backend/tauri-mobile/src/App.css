@@ -2864,6 +2864,28 @@ body.dark .editor-image-preview .edit-image-title {
   color: #999;
 }
 
+/* Scrollable area below image preview — holds content text + tags */
+.editor-image-scrollable {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Image content text in editor */
+.edit-image-content {
+  padding: 0.75rem 1.15rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  opacity: 0.85;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+body.dark .edit-image-content {
+  color: #e0e0e0;
+}
+
 /* Legacy text editor classes - keep for backwards compatibility */
 .text-editor-overlay {
   align-items: stretch;

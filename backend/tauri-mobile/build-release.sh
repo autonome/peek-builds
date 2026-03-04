@@ -36,6 +36,11 @@ done
 echo "Building frontend..."
 npm run build
 
+# Always copy frontend assets to Xcode location (even on Rust cache hit)
+echo "Copying frontend assets..."
+rm -rf "$TAURI_DIR/gen/apple/assets"
+cp -R "$SCRIPT_DIR/dist" "$TAURI_DIR/gen/apple/assets"
+
 cd "$TAURI_DIR"
 
 # Check cache unless forced or disabled
