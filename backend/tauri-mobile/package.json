@@ -35,7 +35,14 @@
     "sim:install": "xcrun simctl install booted '/tmp/peek-xcodebuild-sim/Build/Products/debug-iphonesimulator/Peek Save.app'",
     "xcode:clean": "cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild-sim -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean",
     "xcode:build": "rm -rf /tmp/peek-xcodebuild-sim && cd src-tauri/gen/apple && xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator -derivedDataPath /tmp/peek-xcodebuild-sim -destination 'platform=iOS Simulator,name=iPhone 17 Pro' clean build",
-    "build:share-ext": "src-tauri/gen/apple/build-share-ext.sh"
+    "build:share-ext": "src-tauri/gen/apple/build-share-ext.sh",
+    "build:android": "./build-android.sh",
+    "build:android:force": "./build-android.sh --force",
+    "build:android:release": "./build-android-release.sh",
+    "build:android:release:force": "./build-android-release.sh --force",
+    "build:android:aab": "./build-android-release.sh --aab",
+    "dev:android": "./dev-android.sh",
+    "clean:android": "cd src-tauri && rm -rf target/aarch64-linux-android target/x86_64-linux-android target/i686-linux-android target/armv7-linux-androideabi 2>/dev/null; echo 'Android build cache cleaned'"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
