@@ -3,6 +3,7 @@
  *
  * Both Chrome and Brave use the same Chromium profile format.
  * History is in a SQLite DB, bookmarks in a JSON file.
+ * Sessions use SNSS binary format (complex to parse).
  */
 
 import { existsSync, readFileSync, copyFileSync, mkdtempSync } from 'fs';
@@ -10,7 +11,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import Database from 'better-sqlite3';
 import type { BrowserReader } from './types.js';
-import type { HistoryEntry, BookmarkEntry, DataInspection } from '../types.js';
+import type { HistoryEntry, BookmarkEntry, SessionTab, DataInspection, VisitRecord } from '../types.js';
 
 /**
  * Copy a SQLite DB to a temp location before reading.
@@ -96,6 +97,85 @@ function flattenBookmarks(node: ChromeBookmarkNode, folderPath: string): Bookmar
   return entries;
 }
 
+/**
+ * Try to read session tabs from Chrome's Preferences JSON.
+ *
+ * Chrome's full session data is in SNSS binary format (Current Session, Current Tabs,
+ * Sessions/Session_*, Sessions/Tabs_*), which is complex to parse without a dedicated
+ * library. For now, we extract what we can from the Preferences JSON:
+ * - Pinned tabs (session.startup_urls when restore_on_startup = 4)
+ * - Tab groups metadata
+ *
+ * TODO: Full SNSS parsing. The SNSS format uses Pickle serialization with command types
+ * for UpdateTabNavigation, SetSelectedTabInWindow, SetTabGroup, etc. No reliable npm
+ * package exists for this format. Consider writing a custom parser or using the
+ * chrome-session-parser approach (reverse-engineered format).
+ */
+function readChromeSessionTabs(profilePath: string): SessionTab[] {
+  const tabs: SessionTab[] = [];
+
+  // Try reading Preferences for startup/pinned tabs
+  const prefsPath = join(profilePath, 'Preferences');
+  if (!existsSync(prefsPath)) return tabs;
+
+  try {
+    const prefs = JSON.parse(readFileSync(prefsPath, 'utf-8'));
+
+    // Check for startup URLs (when user has "Open a specific page or set of pages")
+    const startupUrls = prefs?.session?.startup_urls;
+    if (Array.isArray(startupUrls)) {
+      for (const url of startupUrls) {
+        if (typeof url === 'string' && !url.startsWith('chrome://') &&
+            !url.startsWith('chrome-extension://') && !url.startsWith('brave://')) {
+          tabs.push({
+            url,
+            title: '', // Preferences doesn't store titles for startup URLs
+            pinned: false,
+          });
+        }
+      }
+    }
+
+    // Check for pinned tabs
+    const pinnedTabs = prefs?.pinned_tabs;
+    if (Array.isArray(pinnedTabs)) {
+      for (const tab of pinnedTabs) {
+        if (tab && tab.url && typeof tab.url === 'string' &&
+            !tab.url.startsWith('chrome://') && !tab.url.startsWith('brave://')) {
+          tabs.push({
+            url: tab.url,
+            title: tab.title || '',
+            pinned: true,
+          });
+        }
+      }
+    }
+
+    // Extract tab group names if available (for tagging reference)
+    // Chrome stores tab_groups in Preferences with group IDs mapping to titles
+    const tabGroups = prefs?.tab_groups;
+    if (tabGroups && typeof tabGroups === 'object') {
+      // Tab group data is stored but can't be fully linked without SNSS session data
+      // We store the group names for reference
+    }
+  } catch {
+    // Can't parse preferences
+  }
+
+  return tabs;
+}
+
+/**
+ * Count session tabs from Chrome Preferences
+ */
+function countChromeSessionTabs(profilePath: string): number {
+  try {
+    return readChromeSessionTabs(profilePath).length;
+  } catch {
+    return 0;
+  }
+}
+
 export const chromeReader: BrowserReader = {
   readHistory(profilePath: string): HistoryEntry[] {
     const dbPath = join(profilePath, 'History');
@@ -124,11 +204,48 @@ export const chromeReader: BrowserReader = {
         last_visit_time: number;
       }>;
 
+      // Build visit timeline from visits table
+      const visitsByUrl = new Map<string, VisitRecord[]>();
+      try {
+        const visitRows = db.prepare(`
+          SELECT
+            u.url,
+            v.visit_time,
+            v.transition
+          FROM visits v
+          JOIN urls u ON v.url = u.id
+          WHERE u.url NOT LIKE 'chrome://%'
+            AND u.url NOT LIKE 'chrome-extension://%'
+            AND u.url NOT LIKE 'brave://%'
+            AND u.url NOT LIKE 'edge://%'
+          ORDER BY v.visit_time ASC
+        `).all() as Array<{
+          url: string;
+          visit_time: number;
+          transition: number;
+        }>;
+
+        for (const vr of visitRows) {
+          let visits = visitsByUrl.get(vr.url);
+          if (!visits) {
+            visits = [];
+            visitsByUrl.set(vr.url, visits);
+          }
+          visits.push({
+            timestamp: chromeTimeToUnixMs(vr.visit_time),
+            visitType: vr.transition & 0xFF, // Core transition type is in lower bits
+          });
+        }
+      } catch {
+        // visits query failed, continue without individual visits
+      }
+
       return rows.map(row => ({
         url: row.url,
         title: row.title || '',
         visitCount: row.visit_count,
         lastVisitTime: chromeTimeToUnixMs(row.last_visit_time),
+        visits: visitsByUrl.get(row.url),
       }));
     } catch {
       return [];
@@ -160,6 +277,10 @@ export const chromeReader: BrowserReader = {
     }
   },
 
+  readSessions(profilePath: string): SessionTab[] {
+    return readChromeSessionTabs(profilePath);
+  },
+
   inspect(profilePath: string): DataInspection[] {
     const results: DataInspection[] = [];
 
@@ -187,13 +308,24 @@ export const chromeReader: BrowserReader = {
     const bookmarksPath = join(profilePath, 'Bookmarks');
     if (existsSync(bookmarksPath)) {
       try {
-        const data = JSON.parse(readFileSync(bookmarksPath, 'utf-8'));
         const entries = this.readBookmarks(profilePath);
         results.push({ type: 'bookmarks', count: entries.length, importable: true, label: 'Bookmarks' });
       } catch {
         results.push({ type: 'bookmarks', count: 0, importable: true, label: 'Bookmarks' });
       }
     }
+
+    // Sessions (from Preferences, partial)
+    const sessionCount = countChromeSessionTabs(profilePath);
+    const sessionLabel = sessionCount > 0
+      ? 'Session Tabs (from Preferences, partial)'
+      : 'Session Tabs (SNSS format, not yet supported)';
+    results.push({
+      type: 'sessions',
+      count: sessionCount,
+      importable: sessionCount > 0,
+      label: sessionLabel,
+    });
 
     // Passwords (Login Data SQLite)
     const loginDb = openSafely(join(profilePath, 'Login Data'));

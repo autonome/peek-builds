@@ -2,6 +2,7 @@
  * Firefox profile reader
  *
  * Reads history and bookmarks from Firefox's places.sqlite,
+ * sessions from sessionstore-backups/recovery.jsonlz4,
  * and inspects other data files (passwords, cookies, form data, extensions).
  */
 
@@ -10,7 +11,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import Database from 'better-sqlite3';
 import type { BrowserReader } from './types.js';
-import type { HistoryEntry, BookmarkEntry, DataInspection } from '../types.js';
+import type { HistoryEntry, BookmarkEntry, SessionTab, DataInspection, VisitRecord } from '../types.js';
+import { decompressJsonlz4 } from '../util/jsonlz4.js';
 
 /**
  * Copy a SQLite DB to a temp location before reading.
@@ -42,6 +44,90 @@ function openSafely(dbPath: string): Database.Database | null {
   }
 }
 
+/**
+ * Find the Firefox session file. Tries multiple locations in priority order:
+ * 1. sessionstore-backups/recovery.jsonlz4 (most current, written every ~15s)
+ * 2. sessionstore.jsonlz4 (written on clean shutdown)
+ */
+function findSessionFile(profilePath: string): string | null {
+  const candidates = [
+    join(profilePath, 'sessionstore-backups', 'recovery.jsonlz4'),
+    join(profilePath, 'sessionstore.jsonlz4'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Parse a Firefox session JSON structure into SessionTab entries.
+ * Session structure: { windows: [{ tabs: [{ entries: [{ url, title }], index, ... }] }] }
+ */
+function parseFirefoxSession(sessionData: any): SessionTab[] {
+  const tabs: SessionTab[] = [];
+
+  if (!sessionData || !Array.isArray(sessionData.windows)) return tabs;
+
+  for (let windowIndex = 0; windowIndex < sessionData.windows.length; windowIndex++) {
+    const window = sessionData.windows[windowIndex];
+    if (!window || !Array.isArray(window.tabs)) continue;
+
+    for (const tab of window.tabs) {
+      if (!tab || !Array.isArray(tab.entries) || tab.entries.length === 0) continue;
+
+      // Current entry is at index - 1 (1-based)
+      const currentIndex = (tab.index || tab.entries.length) - 1;
+      const entry = tab.entries[Math.min(currentIndex, tab.entries.length - 1)];
+
+      if (!entry || !entry.url) continue;
+
+      // Skip internal Firefox URLs
+      if (entry.url.startsWith('about:') || entry.url.startsWith('resource:') ||
+          entry.url.startsWith('chrome:') || entry.url.startsWith('moz-extension:')) {
+        continue;
+      }
+
+      // Determine tab group name (Firefox 131+ tab groups)
+      let tabGroup: string | undefined;
+      if (tab.groupId !== undefined && tab.groupId !== -1 && window.tabGroups) {
+        const group = window.tabGroups.find?.((g: any) => g.id === tab.groupId);
+        if (group && group.name) {
+          tabGroup = group.name;
+        }
+      }
+
+      tabs.push({
+        url: entry.url,
+        title: entry.title || '',
+        tabGroup,
+        pinned: !!tab.pinned,
+        lastAccessed: tab.lastAccessed || undefined,
+        windowIndex,
+      });
+    }
+  }
+
+  return tabs;
+}
+
+/**
+ * Count tabs in a Firefox session file without fully parsing
+ */
+function countSessionTabs(profilePath: string): number {
+  const sessionFile = findSessionFile(profilePath);
+  if (!sessionFile) return 0;
+
+  try {
+    const sessionData = decompressJsonlz4(sessionFile);
+    const tabs = parseFirefoxSession(sessionData);
+    return tabs.length;
+  } catch {
+    return 0;
+  }
+}
+
 export const firefoxReader: BrowserReader = {
   readHistory(profilePath: string): HistoryEntry[] {
     const dbPath = join(profilePath, 'places.sqlite');
@@ -49,6 +135,7 @@ export const firefoxReader: BrowserReader = {
     if (!db) return [];
 
     try {
+      // Get history entries with aggregated visit data
       const rows = db.prepare(`
         SELECT
           p.url,
@@ -68,12 +155,47 @@ export const firefoxReader: BrowserReader = {
         last_visit_date: number;
       }>;
 
+      // Build a map of place URL -> individual visits for visit timeline
+      const visitsByUrl = new Map<string, VisitRecord[]>();
+      try {
+        const visitRows = db.prepare(`
+          SELECT
+            p.url,
+            v.visit_date,
+            v.visit_type
+          FROM moz_historyvisits v
+          JOIN moz_places p ON v.place_id = p.id
+          WHERE p.url NOT LIKE 'place:%'
+            AND p.url NOT LIKE 'about:%'
+          ORDER BY v.visit_date ASC
+        `).all() as Array<{
+          url: string;
+          visit_date: number;
+          visit_type: number;
+        }>;
+
+        for (const vr of visitRows) {
+          let visits = visitsByUrl.get(vr.url);
+          if (!visits) {
+            visits = [];
+            visitsByUrl.set(vr.url, visits);
+          }
+          visits.push({
+            timestamp: Math.floor(vr.visit_date / 1000), // microseconds to ms
+            visitType: vr.visit_type,
+          });
+        }
+      } catch {
+        // visits query failed, continue without individual visits
+      }
+
       return rows.map(row => ({
         url: row.url,
         title: row.title || '',
         visitCount: row.visit_count,
         // Firefox stores timestamps in microseconds since epoch
         lastVisitTime: Math.floor(row.last_visit_date / 1000),
+        visits: visitsByUrl.get(row.url),
       }));
     } catch {
       return [];
@@ -148,6 +270,18 @@ export const firefoxReader: BrowserReader = {
     }
   },
 
+  readSessions(profilePath: string): SessionTab[] {
+    const sessionFile = findSessionFile(profilePath);
+    if (!sessionFile) return [];
+
+    try {
+      const sessionData = decompressJsonlz4(sessionFile);
+      return parseFirefoxSession(sessionData);
+    } catch {
+      return [];
+    }
+  },
+
   inspect(profilePath: string): DataInspection[] {
     const results: DataInspection[] = [];
 
@@ -174,6 +308,15 @@ export const firefoxReader: BrowserReader = {
         placesDb.close();
       }
     }
+
+    // Sessions
+    const sessionTabCount = countSessionTabs(profilePath);
+    results.push({
+      type: 'sessions',
+      count: sessionTabCount,
+      importable: true,
+      label: 'Session Tabs',
+    });
 
     // Passwords (logins.json)
     const loginsPath = join(profilePath, 'logins.json');

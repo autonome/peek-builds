@@ -38,6 +38,7 @@ const BROWSER_PATHS: Record<BrowserName, BrowserPaths> = {
 const FIREFOX_DATA_FILES: Array<{ type: DataType; filename: string; importable: boolean }> = [
   { type: 'history', filename: 'places.sqlite', importable: true },
   { type: 'bookmarks', filename: 'places.sqlite', importable: true },
+  { type: 'sessions', filename: 'sessionstore-backups', importable: true },
   { type: 'passwords', filename: 'logins.json', importable: false },
   { type: 'cookies', filename: 'cookies.sqlite', importable: false },
   { type: 'formdata', filename: 'formhistory.sqlite', importable: false },
@@ -48,6 +49,7 @@ const FIREFOX_DATA_FILES: Array<{ type: DataType; filename: string; importable: 
 const CHROMIUM_DATA_FILES: Array<{ type: DataType; filename: string; importable: boolean }> = [
   { type: 'history', filename: 'History', importable: true },
   { type: 'bookmarks', filename: 'Bookmarks', importable: true },
+  { type: 'sessions', filename: 'Preferences', importable: true },
   { type: 'passwords', filename: 'Login Data', importable: false },
   { type: 'cookies', filename: 'Cookies', importable: false },
   { type: 'formdata', filename: 'Web Data', importable: false },

@@ -18,7 +18,7 @@ import { resolve } from 'path';
 import { discoverAllProfiles, findProfile } from './profiles.js';
 import { firefoxReader } from './browsers/firefox.js';
 import { chromeReader } from './browsers/chrome.js';
-import { importHistory, importBookmarks } from './importers/index.js';
+import { importHistory, importBookmarks, importSessions } from './importers/index.js';
 import { openDatabase, closeDatabase } from './datastore.js';
 import type { BrowserProfile, BrowserName, ImportType } from './types.js';
 import type { BrowserReader } from './browsers/types.js';
@@ -27,7 +27,7 @@ const program = new Command();
 
 program
   .name('browser-import')
-  .description('Import browser history and bookmarks into a Peek datastore')
+  .description('Import browser history, bookmarks, and sessions into a Peek datastore')
   .version('1.0.0');
 
 // ==================== discover ====================
@@ -121,9 +121,16 @@ program
   .description('Import browser data into a Peek datastore')
   .argument('<profile>', 'Profile path or "browser/name"')
   .option('--db <path>', 'Path to Peek database file', './peek.db')
-  .option('--types <types>', 'Comma-separated import types: history,bookmarks', 'history,bookmarks')
+  .option('--types <types>', 'Comma-separated import types: history,bookmarks,sessions', 'history,bookmarks,sessions')
+  .option('--tag-folders', 'Create tags from bookmark folder hierarchy (default: true)', true)
+  .option('--no-tag-folders', 'Skip creating tags from bookmark folder hierarchy')
   .option('--dry-run', 'Show what would be imported without writing', false)
-  .action((profileQuery: string, options: { db: string; types: string; dryRun: boolean }) => {
+  .action((profileQuery: string, options: {
+    db: string;
+    types: string;
+    dryRun: boolean;
+    tagFolders: boolean;
+  }) => {
     const profiles = discoverAllProfiles();
     const profile = findProfile(profileQuery, profiles);
 
@@ -146,6 +153,9 @@ program
     console.log(chalk.dim(`  Source: ${profile.profilePath}`));
     console.log(chalk.dim(`  Target: ${dbPath}`));
     console.log(chalk.dim(`  Types:  ${importTypes.join(', ')}`));
+    if (importTypes.includes('bookmarks')) {
+      console.log(chalk.dim(`  Tag folders: ${options.tagFolders ? 'yes' : 'no'}`));
+    }
     console.log();
 
     if (options.dryRun) {
@@ -168,6 +178,11 @@ program
         console.log(chalk.cyan('Reading history...'));
         const entries = reader.readHistory(profile.profilePath);
         console.log(chalk.dim(`  Found ${entries.length.toLocaleString()} entries`));
+
+        const totalVisits = entries.reduce((sum, e) => sum + (e.visits?.length || 0), 0);
+        if (totalVisits > 0) {
+          console.log(chalk.dim(`  Including ${totalVisits.toLocaleString()} individual visit records`));
+        }
 
         if (entries.length > 0) {
           console.log(chalk.cyan('Importing history...'));
@@ -202,7 +217,45 @@ program
 
         if (entries.length > 0) {
           console.log(chalk.cyan('Importing bookmarks...'));
-          const result = importBookmarks(entries, profile.browser, profile.profileName);
+          const result = importBookmarks(entries, profile.browser, profile.profileName, {
+            tagFolders: options.tagFolders,
+          });
+          totalImported += result.itemsImported;
+          totalTags += result.tagsCreated;
+          totalDuplicates += result.duplicatesSkipped;
+          totalErrors += result.errors.length;
+
+          console.log(chalk.green(`  Imported: ${result.itemsImported.toLocaleString()}`));
+          if (result.duplicatesSkipped > 0) {
+            console.log(chalk.yellow(`  Skipped (duplicates): ${result.duplicatesSkipped.toLocaleString()}`));
+          }
+          if (result.errors.length > 0) {
+            console.log(chalk.red(`  Errors: ${result.errors.length}`));
+            for (const err of result.errors.slice(0, 5)) {
+              console.log(chalk.red(`    ${err}`));
+            }
+          }
+        }
+        console.log();
+      }
+
+      // Import sessions
+      if (importTypes.includes('sessions')) {
+        console.log(chalk.cyan('Reading session tabs...'));
+        const tabs = reader.readSessions(profile.profilePath);
+        console.log(chalk.dim(`  Found ${tabs.length.toLocaleString()} tabs`));
+
+        if (tabs.length > 0) {
+          const pinnedCount = tabs.filter(t => t.pinned).length;
+          const groupedCount = tabs.filter(t => t.tabGroup).length;
+          const windowCount = new Set(tabs.map(t => t.windowIndex)).size;
+
+          if (pinnedCount > 0) console.log(chalk.dim(`  Pinned: ${pinnedCount}`));
+          if (groupedCount > 0) console.log(chalk.dim(`  In tab groups: ${groupedCount}`));
+          if (windowCount > 1) console.log(chalk.dim(`  Across ${windowCount} windows`));
+
+          console.log(chalk.cyan('Importing session tabs...'));
+          const result = importSessions(tabs, profile.browser, profile.profileName);
           totalImported += result.itemsImported;
           totalTags += result.tagsCreated;
           totalDuplicates += result.duplicatesSkipped;
@@ -268,9 +321,13 @@ function dryRun(
     const entries = reader.readHistory(profile.profilePath);
     console.log(`  History: ${chalk.white(entries.length.toLocaleString())} entries would be imported`);
     if (entries.length > 0) {
+      const totalVisits = entries.reduce((sum, e) => sum + (e.visits?.length || 0), 0);
+      if (totalVisits > 0) {
+        console.log(chalk.dim(`    Including ${totalVisits.toLocaleString()} individual visit records`));
+      }
       console.log(chalk.dim('  Sample entries:'));
       for (const entry of entries.slice(0, 5)) {
-        console.log(chalk.dim(`    ${entry.title || entry.url}`));
+        console.log(chalk.dim(`    ${entry.title || entry.url} (${entry.visitCount} visits)`));
       }
     }
   }
@@ -283,6 +340,30 @@ function dryRun(
       for (const entry of entries.slice(0, 5)) {
         const folder = entry.folderPath ? ` [${entry.folderPath}]` : '';
         console.log(chalk.dim(`    ${entry.title || entry.url}${folder}`));
+      }
+    }
+  }
+
+  if (importTypes.includes('sessions')) {
+    const tabs = reader.readSessions(profile.profilePath);
+    console.log(`  Sessions: ${chalk.white(tabs.length.toLocaleString())} tabs would be imported`);
+    if (tabs.length > 0) {
+      const pinnedCount = tabs.filter(t => t.pinned).length;
+      const groupedCount = tabs.filter(t => t.tabGroup).length;
+      const windowCount = new Set(tabs.map(t => t.windowIndex)).size;
+
+      if (pinnedCount > 0) console.log(chalk.dim(`    Pinned: ${pinnedCount}`));
+      if (groupedCount > 0) console.log(chalk.dim(`    In tab groups: ${groupedCount}`));
+      if (windowCount > 1) console.log(chalk.dim(`    Across ${windowCount} windows`));
+
+      console.log(chalk.dim('  Sample tabs:'));
+      for (const tab of tabs.slice(0, 5)) {
+        const flags = [
+          tab.pinned ? 'pinned' : '',
+          tab.tabGroup ? `group:${tab.tabGroup}` : '',
+        ].filter(Boolean).join(', ');
+        const flagStr = flags ? ` (${flags})` : '';
+        console.log(chalk.dim(`    ${tab.title || tab.url}${flagStr}`));
       }
     }
   }

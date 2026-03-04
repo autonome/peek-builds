@@ -234,6 +234,43 @@ export function tagItem(itemId: string, tagId: string): boolean {
 }
 
 /**
+ * Get the item ID for a URL, or null if it doesn't exist
+ */
+export function getItemIdByUrl(url: string): string | null {
+  if (!db) throw new Error('Database not opened');
+  const row = db.prepare(
+    "SELECT id FROM items WHERE type = 'url' AND content = ? AND deletedAt = 0"
+  ).get(url) as { id: string } | undefined;
+  return row ? row.id : null;
+}
+
+/**
+ * Update visit count and lastVisitAt on an existing item
+ */
+export function updateItemVisitData(itemId: string, visitCount: number, lastVisitAt: number): void {
+  if (!db) throw new Error('Database not opened');
+  db.prepare(
+    'UPDATE items SET visitCount = MAX(visitCount, ?), lastVisitAt = MAX(lastVisitAt, ?) WHERE id = ?'
+  ).run(visitCount, lastVisitAt, itemId);
+}
+
+/**
+ * Record a visit event for an item in the item_events table
+ */
+export function recordVisit(itemId: string, timestamp: number, metadata?: Record<string, unknown>): void {
+  if (!db) throw new Error('Database not opened');
+
+  const eventId = generateId('evt');
+  const ts = now();
+  const metadataJson = JSON.stringify(metadata || { eventType: 'visit' });
+
+  db.prepare(`
+    INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+    VALUES (?, ?, 'visit', NULL, ?, ?, ?)
+  `).run(eventId, itemId, timestamp, metadataJson, ts);
+}
+
+/**
  * Run a function inside a transaction for performance
  */
 export function runInTransaction<T>(fn: () => T): T {

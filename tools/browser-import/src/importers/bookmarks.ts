@@ -31,7 +31,10 @@ export function importBookmarks(
   entries: BookmarkEntry[],
   browserName: BrowserName,
   profileName: string,
+  options?: { tagFolders?: boolean },
 ): ImportResult {
+  const tagFolders = options?.tagFolders !== false; // default true
+
   const result: ImportResult = {
     itemsImported: 0,
     tagsCreated: 0,
@@ -88,17 +91,19 @@ export function importBookmarks(
         tagItem(itemId, profileTag.tagId);
         tagItem(itemId, bookmarkTag.tagId);
 
-        // Apply folder hierarchy tags
-        const folderTags = folderPathToTags(entry.folderPath);
-        for (const folderTagName of folderTags) {
-          let folderTagId = folderTagCache.get(folderTagName);
-          if (!folderTagId) {
-            const { tagId, created } = getOrCreateTag(folderTagName);
-            folderTagId = tagId;
-            folderTagCache.set(folderTagName, tagId);
-            if (created) result.tagsCreated++;
+        // Apply folder hierarchy tags (when enabled)
+        if (tagFolders) {
+          const folderTags = folderPathToTags(entry.folderPath);
+          for (const folderTagName of folderTags) {
+            let folderTagId = folderTagCache.get(folderTagName);
+            if (!folderTagId) {
+              const { tagId, created } = getOrCreateTag(folderTagName);
+              folderTagId = tagId;
+              folderTagCache.set(folderTagName, tagId);
+              if (created) result.tagsCreated++;
+            }
+            tagItem(itemId, folderTagId);
           }
-          tagItem(itemId, folderTagId);
         }
 
         result.itemsImported++;
