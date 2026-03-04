@@ -87,6 +87,16 @@ loadAdaptiveData().then(data => {
   log('cmd:panel', 'Loaded adaptive data');
 });
 
+// Listen for URL mode activation (from Cmd+L shortcut in background.js)
+api.subscribe('cmd:url-mode', () => {
+  log('cmd:panel', 'URL mode requested');
+  pendingUrlMode = true;
+  // If panel is already visible (no upcoming visibilitychange), enter immediately
+  if (!document.hidden && !urlModeActive) {
+    enterUrlMode();
+  }
+}, api.scopes.GLOBAL);
+
 // Chain popup state (module-level for cleanup)
 let chainPopupWindowId = null;
 
@@ -100,6 +110,11 @@ const MAJOR_MODES = ['default', 'page', 'group', 'settings'];
 let currentMode = 'default';
 let currentModeMetadata = {};
 let modeWasSet = false;
+
+// URL mode state — activated by Cmd+L shortcut
+let pendingUrlMode = false;
+let urlModeActive = false;
+let urlModeItems = [];  // frecency-sorted URL items for display
 
 // Expose state for testing — allows waitForFunction to check command loading
 // Provide backward-compatible boolean accessors on top of machine data
@@ -1186,6 +1201,190 @@ function findMatchingUrlCommand(url) {
   return bestMatch;
 }
 
+// ===== URL Mode Functions =====
+
+/**
+ * Query frecency-sorted URL items from the datastore.
+ * Optionally filter by search text (matches title, domain, content).
+ */
+async function queryUrlsByFrecency(search = '', limit = 20) {
+  const query = { type: 'url', sortBy: 'frecency', limit };
+  if (search) query.search = search;
+
+  const result = await api.datastore.queryItems(query);
+  if (!result.success) return [];
+  return result.data || [];
+}
+
+/**
+ * Enter URL mode: query frecency URLs and show them as results.
+ */
+async function enterUrlMode() {
+  urlModeActive = true;
+  pendingUrlMode = false;
+
+  // Set mode indicator
+  currentMode = 'url';
+  updateModeIndicator();
+
+  // Update placeholder
+  const input = document.getElementById('command-input');
+  if (input) {
+    input.placeholder = 'Search URLs or type an address...';
+  }
+
+  // Query frecency-sorted URLs
+  urlModeItems = await queryUrlsByFrecency('', 20);
+  log('cmd:panel', 'URL mode: loaded', urlModeItems.length, 'frecency URLs');
+
+  // Show results immediately
+  renderUrlResults(urlModeItems);
+}
+
+/**
+ * Exit URL mode and restore normal panel behavior.
+ */
+function exitUrlMode() {
+  urlModeActive = false;
+  urlModeItems = [];
+
+  const input = document.getElementById('command-input');
+  if (input) {
+    input.placeholder = 'Feed meeeee';
+  }
+}
+
+/**
+ * Filter URL mode items based on typed text.
+ */
+async function filterUrlModeItems(text) {
+  if (!urlModeActive) return;
+
+  if (!text) {
+    // Show default frecency list
+    urlModeItems = await queryUrlsByFrecency('', 20);
+  } else {
+    // Query with search filter
+    urlModeItems = await queryUrlsByFrecency(text, 20);
+  }
+
+  renderUrlResults(urlModeItems);
+}
+
+/**
+ * Render URL results in the results container.
+ * Shows favicon, title, and domain/URL for each item.
+ */
+function renderUrlResults(items) {
+  const resultsContainer = document.getElementById('results');
+  resultsContainer.innerHTML = '';
+
+  if (items.length === 0) {
+    resultsContainer.classList.remove('visible');
+    updateWindowSize();
+    return;
+  }
+
+  resultsContainer.classList.add('visible');
+
+  items.forEach((item, index) => {
+    const el = document.createElement('div');
+    el.className = 'command-item url-result-item';
+    if (index === state.matchIndex) el.classList.add('selected');
+
+    // Favicon
+    const faviconUrl = item.favicon || '';
+    if (faviconUrl) {
+      const favicon = document.createElement('img');
+      favicon.className = 'url-favicon';
+      favicon.src = faviconUrl;
+      favicon.width = 16;
+      favicon.height = 16;
+      favicon.onerror = () => { favicon.style.display = 'none'; };
+      el.appendChild(favicon);
+    }
+
+    // Title
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'cmd-name url-title';
+    let title = item.title || '';
+    if (!title && item.metadata) {
+      try {
+        const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
+        title = meta.title || '';
+      } catch (e) {}
+    }
+    titleSpan.textContent = title || item.content || 'Untitled';
+    el.appendChild(titleSpan);
+
+    // Domain / URL subtitle
+    const urlSpan = document.createElement('span');
+    urlSpan.className = 'cmd-desc url-subtitle';
+    urlSpan.textContent = item.domain || item.content || '';
+    el.appendChild(urlSpan);
+
+    el.addEventListener('click', () => {
+      state.matchIndex = index;
+      openUrlModeItem(index);
+    });
+
+    resultsContainer.appendChild(el);
+  });
+
+  // Update match state for keyboard navigation
+  state.matches = items.map((_, i) => `__url_${i}`);
+  state.matchIndex = 0;
+
+  updateWindowSize();
+}
+
+/**
+ * Open a URL from URL mode results by index.
+ */
+function openUrlModeItem(index) {
+  const item = urlModeItems[index];
+  if (!item) return;
+
+  const url = item.content;
+  if (!url) return;
+
+  log('cmd:panel', 'URL mode: opening', url);
+
+  api.window.open(url, {
+    role: 'content',
+    width: 1024,
+    height: 768,
+    trackingSource: 'cmd',
+    trackingSourceId: 'url-mode'
+  }).catch(error => {
+    log.error('cmd:panel', 'Failed to open URL from URL mode:', error);
+  });
+
+  // Record frecency
+  updateMatchCount(url);
+
+  // Close panel
+  setTimeout(() => window.close(), 100);
+}
+
+/**
+ * Update the ghost text overlay in URL mode.
+ * Shows the selected URL's title as ghost completion.
+ */
+function updateCommandUI_UrlMode(trimmedText) {
+  const commandText = document.getElementById('command-text');
+  commandText.innerHTML = '';
+
+  if (!trimmedText) return;
+
+  const typedSpan = document.createElement('span');
+  typedSpan.className = 'typed';
+  typedSpan.textContent = trimmedText;
+  commandText.appendChild(typedSpan);
+
+  syncScrollPosition();
+}
+
 function hasModifier(e) {
   return e.altKey || e.ctrlKey || e.metaKey;
 }
@@ -2024,6 +2223,9 @@ function actionHandlers() {
       state.chainPopupActive = false;
       state.showResults = false;
 
+      // Exit URL mode if active from previous invocation
+      exitUrlMode();
+
       currentMode = 'default';
       currentModeMetadata = {};
       modeWasSet = false;
@@ -2044,6 +2246,11 @@ function actionHandlers() {
 
       updateCommandUI();
       updateResultsUI();
+
+      // Check if URL mode was requested (Cmd+L)
+      if (pendingUrlMode) {
+        enterUrlMode();
+      }
     },
   };
 }
@@ -2063,10 +2270,19 @@ async function render() {
   commandInput.addEventListener('keyup', syncScrollPosition);
   commandInput.addEventListener('click', syncScrollPosition);
 
-  // Input event -> dispatch to state machine
+  // Input event -> dispatch to state machine (or filter URL mode)
   commandInput.addEventListener('input', () => {
     const value = commandInput.value;
     const trimmedText = value.trim();
+
+    // URL mode: filter URLs instead of dispatching normal command matching
+    if (urlModeActive) {
+      state.typed = value;
+      state.matchIndex = 0;
+      filterUrlModeItems(trimmedText);
+      updateCommandUI_UrlMode(trimmedText);
+      return;
+    }
 
     // Pre-compute whether param mode should be entered
     // (the action handler will check, but the guard needs the signal)
@@ -2113,6 +2329,68 @@ async function render() {
 
   // Keydown event -> dispatch special keys through state machine
   commandInput.addEventListener('keydown', (e) => {
+    // URL mode handles its own key events
+    if (urlModeActive) {
+      if (e.key === 'Escape' && !hasModifier(e)) {
+        e.preventDefault();
+        exitUrlMode();
+        machine.dispatch(Events.ESCAPE);
+        return;
+      }
+      if (e.key === 'Enter' && !hasModifier(e)) {
+        e.preventDefault();
+        const trimmedText = commandInput.value.trim();
+        const urlResult = getValidURL(trimmedText);
+
+        if (urlModeItems.length > 0 && state.matchIndex < urlModeItems.length) {
+          // Open selected URL from results
+          openUrlModeItem(state.matchIndex);
+        } else if (urlResult.valid) {
+          // Open typed URL directly
+          log('cmd:panel', 'URL mode: opening typed URL', urlResult.url);
+          api.window.open(urlResult.url, {
+            role: 'content',
+            width: 1024,
+            height: 768,
+            trackingSource: 'cmd',
+            trackingSourceId: 'url-mode-typed'
+          }).catch(error => {
+            log.error('cmd:panel', 'Failed to open typed URL:', error);
+          });
+          updateMatchCount(urlResult.url);
+          setTimeout(() => window.close(), 100);
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (urlModeItems.length > 0) {
+          state.matchIndex = Math.min(state.matchIndex + 1, urlModeItems.length - 1);
+          renderUrlResults(urlModeItems);
+        }
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (urlModeItems.length > 0) {
+          state.matchIndex = Math.max(state.matchIndex - 1, 0);
+          renderUrlResults(urlModeItems);
+        }
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        // Tab cycles forward through results in URL mode
+        if (urlModeItems.length > 0) {
+          state.matchIndex = (state.matchIndex + 1) % urlModeItems.length;
+          renderUrlResults(urlModeItems);
+        }
+        return;
+      }
+      // Let other keys through to the input handler
+      return;
+    }
+
     if (e.key === 'Escape' && !hasModifier(e)) {
       // Primary escape handler — dispatch directly to the state machine.
       // The IZUI before-input-event handler may also fire (calling onEscape below),
@@ -2240,5 +2518,8 @@ render();
 
 // Register IZUI escape handler — single escape through dispatch (bug fix #1)
 api.escape.onEscape(() => {
+  if (urlModeActive) {
+    exitUrlMode();
+  }
   return machine.handleEscape();
 });

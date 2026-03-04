@@ -392,12 +392,14 @@ const openPanelWindow = (prefs) => {
  * Register shortcuts: global (Option+Space) and local (Cmd+K)
  */
 const LOCAL_SHORTCUT = 'CommandOrControl+K';
+const URL_MODE_SHORTCUT = 'CommandOrControl+L';
 
 const initShortcut = (prefs) => {
   if (registeredShortcut) {
     api.shortcuts.unregister(registeredShortcut, { global: true });
   }
   api.shortcuts.unregister(LOCAL_SHORTCUT);
+  api.shortcuts.unregister(URL_MODE_SHORTCUT);
 
   registeredShortcut = prefs.shortcutKey;
   api.shortcuts.register(prefs.shortcutKey, () => {
@@ -409,7 +411,15 @@ const initShortcut = (prefs) => {
     openPanelWindow(prefs);
   });
 
-  log('ext:cmd', 'Registered shortcuts:', prefs.shortcutKey, '(global),', LOCAL_SHORTCUT, '(local)');
+  // URL mode shortcut (Cmd+L) — opens panel in URL-only navigation mode
+  // Page host windows intercept Cmd+L via before-input-event for their navbar,
+  // so this only fires from non-page windows.
+  api.shortcuts.register(URL_MODE_SHORTCUT, () => {
+    api.publish('cmd:url-mode', {}, api.scopes.GLOBAL);
+    openPanelWindow(prefs);
+  });
+
+  log('ext:cmd', 'Registered shortcuts:', prefs.shortcutKey, '(global),', LOCAL_SHORTCUT, '(local),', URL_MODE_SHORTCUT, '(url-mode)');
 };
 
 /**
@@ -423,6 +433,7 @@ const uninit = () => {
     registeredShortcut = null;
   }
   api.shortcuts.unregister(LOCAL_SHORTCUT);
+  api.shortcuts.unregister(URL_MODE_SHORTCUT);
 
   // Note: We don't clear the command registry here because other extensions
   // may still be running. The registry will be rebuilt on next init.
@@ -440,6 +451,7 @@ const reinit = async () => {
     registeredShortcut = null;
   }
   api.shortcuts.unregister(LOCAL_SHORTCUT);
+  api.shortcuts.unregister(URL_MODE_SHORTCUT);
 
   // Load new settings and re-register
   currentSettings = await loadSettings();

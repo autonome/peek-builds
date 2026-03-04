@@ -189,6 +189,34 @@
         margin-left: 4px;
       }
 
+      /* URL mode result items */
+      .url-result-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .url-favicon {
+        flex-shrink: 0;
+        border-radius: 2px;
+      }
+
+      .url-title {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .url-subtitle {
+        flex-shrink: 0;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       /* Chain indicator */
       #chain-indicator {
         display: none;
@@ -465,6 +493,11 @@
       .mode-indicator[data-mode="settings"] {
         background: rgba(204, 153, 102, 0.4);
         border-color: rgba(204, 153, 102, 0.6);
+      }
+
+      .mode-indicator[data-mode="url"] {
+        background: rgba(52, 199, 89, 0.4);
+        border-color: rgba(52, 199, 89, 0.6);
       }
 
       .mode-indicator[data-mode="default"] {
