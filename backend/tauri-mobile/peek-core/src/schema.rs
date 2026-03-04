@@ -550,20 +550,6 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
         params![SCHEMA_VERSION],
     );
 
-    // Check for schema version mismatch (Swift Share Extension may have written a different version)
-    if let Ok(existing_version) = conn.query_row::<String, _, _>(
-        "SELECT value FROM settings WHERE key = 'schema_version_swift'",
-        [],
-        |row| row.get(0),
-    ) {
-        if existing_version != SCHEMA_VERSION {
-            println!(
-                "[peek-core] WARNING: Schema version mismatch! Rust: {}, Swift: {}",
-                SCHEMA_VERSION, existing_version
-            );
-        }
-    }
-
     // Initialize device ID (generate and store if missing)
     let device_id: String = conn
         .query_row("SELECT value FROM settings WHERE key = 'device_id'", [], |row| row.get(0))
