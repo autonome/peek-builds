@@ -12,8 +12,9 @@ import urlModule from './url.js';
 import historyModule from './history.js';
 import pageModule from './page.js';
 
-// Chaining commands - for command composition pipelines
-import sampleDataCommand from './sample-data.js';
+// Type-specific noun modules (registered as sources, not static commands)
+import urlsNounModule from './urls.js';
+import notesNounModule from './notes.js';
 // csv and save commands moved to files extension
 
 // Source commands (commented out as they need browser extension APIs)
@@ -33,16 +34,18 @@ import emailCommand from './email.js';
 // Note: sync command is dynamically registered by the sync extension
 // Note: open/modal commands are dynamically registered by the page extension
 // Note: tag, tags, untag, tagset commands are dynamically registered by the tags extension
+// Note: notes/list notes commands are now provided by the notes noun module (notes.js)
+
+// Filter out note.js commands that overlap with the notes noun module
+const noteCommands = noteModule.commands.filter(c => c.name !== 'notes' && c.name !== 'list notes');
+
 const activeCommands = [
   debugCommand,
-  ...noteModule.commands,
+  ...noteCommands,
   ...editModule.commands,
   ...urlModule.commands,
   ...historyModule.commands,
   ...pageModule.commands,
-
-  // Chaining commands
-  sampleDataCommand
   // csv and save commands moved to files extension
 ];
 
@@ -67,7 +70,9 @@ const commands = [...activeCommands];
 
 // Source commands - these are modules that generate multiple commands dynamically
 const sources = [
-  historyModule
+  historyModule,
+  urlsNounModule,
+  notesNounModule
 ];
 
 /**
