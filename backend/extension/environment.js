@@ -16,7 +16,7 @@ let cachedDeviceId = null;
  * Stored in settings store (key: system-deviceId).
  * Requires initialize() to have been called first.
  *
- * Migration: Strips 'extension-' prefix from old IDs to use raw UUIDs.
+ * Format: 'extension-' + UUID.
  */
 export async function getDeviceId() {
   if (cachedDeviceId) {
@@ -29,10 +29,10 @@ export async function getDeviceId() {
     if (value) {
       const parsed = JSON.parse(value);
       if (typeof parsed === 'string') {
-        // Migration: Strip 'extension-' prefix if present
-        if (parsed.startsWith('extension-')) {
-          cachedDeviceId = parsed.substring(10); // Remove 'extension-' prefix
-          console.log('[extension] Migrating device ID: removing extension- prefix');
+        // Migration: Add 'extension-' prefix if missing
+        if (!parsed.startsWith('extension-')) {
+          cachedDeviceId = `extension-${parsed}`;
+          console.log('[extension] Migrating device ID: adding extension- prefix');
 
           // Persist migrated ID
           try {
@@ -41,7 +41,6 @@ export async function getDeviceId() {
             // Non-fatal
           }
         } else {
-          // Already migrated or new format
           cachedDeviceId = parsed;
         }
         return cachedDeviceId;
@@ -51,8 +50,8 @@ export async function getDeviceId() {
     // Setting may not exist yet
   }
 
-  // Generate new ID (raw UUID, no prefix)
-  cachedDeviceId = crypto.randomUUID();
+  // Generate new ID with extension- prefix
+  cachedDeviceId = `extension-${crypto.randomUUID()}`;
 
   // Persist
   try {

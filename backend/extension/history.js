@@ -68,6 +68,7 @@ async function buildHistoryMetadata(historyItem, visits) {
   const deviceId = await getDeviceId();
   const now = Date.now();
   return {
+    importSource: 'history',
     _sync: {
       createdBy: deviceId,
       createdAt: historyItem.lastVisitTime || now,

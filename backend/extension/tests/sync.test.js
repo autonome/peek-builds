@@ -190,7 +190,7 @@ describe('sync', () => {
       await data.updateItem(id, {});
       const item = await data.getItem(id);
       // Directly update DB to set syncedAt = updatedAt (simulating synced state)
-      await data._adapter.db.transaction(['items'], 'readwrite')
+      await data.adapter.db.transaction(['items'], 'readwrite')
         .objectStore('items').put({ ...item, syncedAt: item.updatedAt });
 
       let pushCount = 0;
@@ -359,7 +359,7 @@ describe('sync', () => {
       });
       // Simulate synced state
       const item = await data.getItem(id);
-      await data._adapter.db.transaction(['items'], 'readwrite')
+      await data.adapter.db.transaction(['items'], 'readwrite')
         .objectStore('items').put({ ...item, syncedAt: item.updatedAt });
 
       // Save current server config
@@ -388,7 +388,7 @@ describe('sync', () => {
       });
       // Simulate synced state
       const item = await data.getItem(id);
-      await data._adapter.db.transaction(['items'], 'readwrite')
+      await data.adapter.db.transaction(['items'], 'readwrite')
         .objectStore('items').put({ ...item, syncedAt: item.updatedAt });
 
       // Save config with same URL
@@ -413,7 +413,7 @@ describe('sync', () => {
       });
       // Simulate synced state
       const item = await data.getItem(id);
-      await data._adapter.db.transaction(['items'], 'readwrite')
+      await data.adapter.db.transaction(['items'], 'readwrite')
         .objectStore('items').put({ ...item, syncedAt: item.updatedAt });
 
       // No stored config yet — unified engine does NOT reset on first run

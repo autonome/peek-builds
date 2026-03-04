@@ -144,6 +144,7 @@ async function addTabItem(tab, existingUrlMap) {
     content: url,
     metadata: {
       ...metadata,
+      importSource: 'tab',
       _sync: {
         createdBy: deviceId,
         createdAt: now,

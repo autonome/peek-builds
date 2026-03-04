@@ -89,6 +89,7 @@ async function addBookmarkItem(url, title, dateAdded, existingUrlMap) {
   const result = await addItem('url', {
     content: url,
     metadata: {
+      importSource: 'bookmark',
       _sync: {
         createdBy: deviceId,
         createdAt: dateAdded || now,

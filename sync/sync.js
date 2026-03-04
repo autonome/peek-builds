@@ -119,6 +119,17 @@ export class SyncEngine {
     );
     itemsToPush = itemsToPush.concat(deletedToPush);
 
+    // Exclude browser-imported items (history, bookmarks, tabs) — they stay local
+    itemsToPush = itemsToPush.filter(i => {
+      if (!i.metadata || i.metadata === '{}') return true;
+      try {
+        const meta = JSON.parse(i.metadata);
+        return !meta.importSource;
+      } catch {
+        return true;
+      }
+    });
+
     let pushed = 0;
     let failed = 0;
 
