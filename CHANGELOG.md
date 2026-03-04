@@ -13,6 +13,36 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-03-04
+
+Desktop - Shortcuts
+- [x] Fix Linux keyboard shortcuts — translate Option→Alt for global shortcuts, use Ctrl instead of Meta for page navigation ([007b](https://tangled.org/burrito.space/peek/commit/007b), [c157](https://tangled.org/burrito.space/peek/commit/c157))
+
+Desktop - Cards & UI
+- [x] Extract shared search-result-card component — single source of truth for item cards across tags, search, lists, pagestream, and groups ([bb96](https://tangled.org/burrito.space/peek/commit/bb96))
+- [x] Add x-key toggle for checkboxes in item cards — works in all card UIs via tag-action-toggle ([1fba](https://tangled.org/burrito.space/peek/commit/1fba))
+- [x] Show entity type (Person, Organization, etc.) in shared card subtitle ([e0d8](https://tangled.org/burrito.space/peek/commit/e0d8))
+- [x] Update all hardcoded 800x600 window sizes to XGA default 1024x768 ([99c9](https://tangled.org/burrito.space/peek/commit/99c9))
+
+Desktop - Extensions
+- [x] Rename localsearch extension to lists ([7426](https://tangled.org/burrito.space/peek/commit/7426))
+- [x] Fix pagestream not loading — add command registration for lazy loading compatibility ([1fba](https://tangled.org/burrito.space/peek/commit/1fba))
+- [x] Fix entities not auto-scanning — load extension eagerly, always publish extraction results, add rescan button ([rmyy](https://tangled.org/burrito.space/peek/commit/rmyy), [wqmp](https://tangled.org/burrito.space/peek/commit/wqmp))
+- [x] Remove entity browser popup from extract command ([uxxu](https://tangled.org/burrito.space/peek/commit/uxxu))
+
+Desktop - Command Palette
+- [x] Fix input text overflow — scroll to keep cursor visible when text longer than bar width ([1730](https://tangled.org/burrito.space/peek/commit/1730))
+- [x] Fix sample-data command name collision with lists extension ([9419](https://tangled.org/burrito.space/peek/commit/9419))
+
+Desktop - Settings
+- [x] Overhaul datastore pane — grouped tables, descriptions, row counts, timestamps, synced stats ([wplz](https://tangled.org/burrito.space/peek/commit/wplz))
+
+Desktop - Search
+- [x] Fix search icons showing "T" for all items — refactor to shared card-helpers with getItemDisplayInfo ([smky](https://tangled.org/burrito.space/peek/commit/smky), [mwtn](https://tangled.org/burrito.space/peek/commit/mwtn))
+
+Schema & Sync
+- [x] Add item_events table and entity type to server, Tauri desktop, and mobile backends ([vzwv](https://tangled.org/burrito.space/peek/commit/vzwv), [rtnz](https://tangled.org/burrito.space/peek/commit/rtnz), [mkpw](https://tangled.org/burrito.space/peek/commit/mkpw))
+
 ## 2026-03-01
 
 Desktop - Editor
