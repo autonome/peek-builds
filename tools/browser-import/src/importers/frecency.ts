@@ -1,9 +1,10 @@
 /**
- * Firefox Frecency & Adaptive Matching — Research and Planning
+ * Firefox Frecency & Adaptive Matching — Import Module
  *
- * This module reads Firefox's frecency scores and adaptive matching data
- * from places.sqlite. These provide rich ranking signals that can enhance
- * Peek's own frecency system.
+ * Reads Firefox's frecency scores and adaptive matching data from places.sqlite,
+ * normalizes scores to Peek's scale, and updates imported items.
+ *
+ * For Chrome/Brave, calculates a frecency proxy from visit count + recency.
  *
  * ============================================================
  * FIREFOX FRECENCY ALGORITHM
@@ -61,50 +62,31 @@
  * The adaptive matching data is decay-weighted: each time the entry is used,
  * use_count = (use_count * 0.9) + 1. Old associations decay toward 0.
  *
- * This is extremely valuable for command palette matching in Peek — it
- * captures the user's actual abbreviation patterns.
+ * This is valuable for command palette matching in Peek — it captures the
+ * user's actual abbreviation patterns.
  *
  * ============================================================
- * TODO: MAPPING TO PEEK'S SYSTEM
+ * NORMALIZATION APPROACH
  * ============================================================
  *
- * Peek has its own frecency system (items.frecencyScore column). Potential
- * integration approaches:
+ * Peek's calculateItemFrecency produces scores by summing per-visit
+ * contributions: weight * decay * 10, where decay = 1/(1 + sqrt(ageDays/7)).
+ * For a heavily used site with 10 recent visits, scores reach ~200.
+ * Realistic range: 0-2000 for very active users.
  *
- * 1. **Direct import**: Copy Firefox's frecency score into Peek's
- *    frecencyScore column. Simple but scores may not be comparable
- *    with Peek's internally-generated scores.
- *
- * 2. **Normalized import**: Scale Firefox frecency scores to match
- *    Peek's expected range. Need to analyze Peek's frecency calculation
- *    to determine the right normalization.
- *
- * 3. **Seed data**: Import Firefox frecency as metadata, then let Peek
- *    rebuild its own frecency using Firefox's visit data as a starting
- *    point. This is the most correct approach.
- *
- * For adaptive matching:
- *
- * 1. **Metadata storage**: Import input associations into item metadata
- *    as `{ adaptiveMatches: [{ input: "gi", useCount: 5.2 }, ...] }`.
- *    The cmd palette could read these for boosting.
- *
- * 2. **Separate table**: Create a dedicated search_hints table for
- *    input->URL associations. More structured but requires schema change.
- *
- * 3. **item_events**: Record each adaptive match as an item_event with
- *    content = input text. Preserves the timeline.
- *
- * Recommended approach: Option 3 (seed data) for frecency, Option 1
- * (metadata) for adaptive matching. The visit timeline is already being
- * imported into item_events, so Peek can recalculate frecency from that
- * raw data. The adaptive matches are small enough to fit in metadata.
+ * Firefox scores range from 0 to 100,000+. We normalize by mapping
+ * Firefox's observed min/max range onto 0-2000 (Peek's practical max),
+ * using a logarithmic scale since Firefox scores are heavily skewed.
  */
 
 import { existsSync, copyFileSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import Database from 'better-sqlite3';
+import type { BrowserName, FrecencyImportResult } from '../types.js';
+import {
+  getItemIdByUrl, updateFrecencyScore, updateItemMetadata, runInTransaction,
+} from '../datastore.js';
 
 export interface FrecencyData {
   url: string;
@@ -116,6 +98,14 @@ export interface AdaptiveMatch {
   url: string;
   input: string;
   useCount: number;
+}
+
+/**
+ * Stats returned by inspect for frecency data
+ */
+export interface FrecencyInspection {
+  frecencyCount: number;
+  adaptiveCount: number;
 }
 
 /**
@@ -216,4 +206,207 @@ export function readAdaptiveMatchingData(profilePath: string): AdaptiveMatch[] {
   } finally {
     if (db) db.close();
   }
+}
+
+/**
+ * Read Chrome/Brave history with visit count and last visit time for frecency proxy.
+ * Returns URL -> { visitCount, lastVisitTime } map.
+ */
+export function readChromeFrecencyData(profilePath: string): FrecencyData[] {
+  const dbPath = join(profilePath, 'History');
+  if (!existsSync(dbPath)) return [];
+
+  let db: Database.Database | null = null;
+  try {
+    const tempPath = copyToTemp(dbPath);
+    db = new Database(tempPath, { readonly: true });
+
+    const rows = db.prepare(`
+      SELECT url, title, visit_count,
+             (last_visit_time / 1000 - 11644473600000) as last_visit_ms
+      FROM urls
+      WHERE visit_count > 0
+        AND url NOT LIKE 'chrome://%'
+        AND url NOT LIKE 'chrome-extension://%'
+        AND url NOT LIKE 'brave://%'
+      ORDER BY visit_count DESC
+    `).all() as Array<{
+      url: string;
+      title: string | null;
+      visit_count: number;
+      last_visit_ms: number;
+    }>;
+
+    // Calculate a frecency proxy using Peek's own algorithm approach:
+    // score = visitCount * decay, where decay is based on recency
+    return rows.map(row => {
+      const ageDays = Math.max(0, (Date.now() - row.last_visit_ms) / (1000 * 60 * 60 * 24));
+      const decay = 1 / (1 + Math.pow(ageDays / 7, 0.5));
+      // Scale similar to Peek: each visit contributes decay * 10
+      const score = Math.round(row.visit_count * decay * 10);
+      return {
+        url: row.url,
+        title: row.title || '',
+        frecency: score,
+      };
+    });
+  } catch {
+    return [];
+  } finally {
+    if (db) db.close();
+  }
+}
+
+// Peek's practical frecency max — heavily used sites with many recent visits
+const PEEK_FRECENCY_MAX = 2000;
+
+/**
+ * Normalize Firefox frecency scores to Peek's range (0 to PEEK_FRECENCY_MAX).
+ *
+ * Uses log scale because Firefox scores are heavily skewed:
+ * most pages score < 100, while typed URLs can score > 20,000.
+ */
+function normalizeFirefoxScores(data: FrecencyData[]): Map<string, number> {
+  const result = new Map<string, number>();
+  if (data.length === 0) return result;
+
+  // Use log scale for normalization
+  const logScores = data.map(d => Math.log1p(d.frecency));
+  const logMin = Math.min(...logScores);
+  const logMax = Math.max(...logScores);
+  const logRange = logMax - logMin;
+
+  for (let i = 0; i < data.length; i++) {
+    const logScore = logScores[i];
+    // Map log(score) from [logMin, logMax] to [0, PEEK_FRECENCY_MAX]
+    const normalized = logRange > 0
+      ? Math.round(((logScore - logMin) / logRange) * PEEK_FRECENCY_MAX)
+      : Math.round(PEEK_FRECENCY_MAX / 2);
+    result.set(data[i].url, normalized);
+  }
+
+  return result;
+}
+
+/**
+ * Group adaptive matches by URL for efficient metadata storage.
+ */
+function groupAdaptiveByUrl(matches: AdaptiveMatch[]): Map<string, Array<{ input: string; useCount: number }>> {
+  const grouped = new Map<string, Array<{ input: string; useCount: number }>>();
+  for (const match of matches) {
+    const existing = grouped.get(match.url);
+    if (existing) {
+      existing.push({ input: match.input, useCount: match.useCount });
+    } else {
+      grouped.set(match.url, [{ input: match.input, useCount: match.useCount }]);
+    }
+  }
+  return grouped;
+}
+
+/**
+ * Inspect frecency data available in a profile without importing.
+ */
+export function inspectFrecency(profilePath: string, browser: BrowserName): FrecencyInspection {
+  if (browser === 'firefox') {
+    const frecencyData = readFrecencyData(profilePath);
+    const adaptiveData = readAdaptiveMatchingData(profilePath);
+    return {
+      frecencyCount: frecencyData.length,
+      adaptiveCount: adaptiveData.length,
+    };
+  } else {
+    // Chrome/Brave — frecency proxy from visit data, no adaptive matching
+    const frecencyData = readChromeFrecencyData(profilePath);
+    return {
+      frecencyCount: frecencyData.length,
+      adaptiveCount: 0,
+    };
+  }
+}
+
+/**
+ * Import frecency scores and adaptive matching data into Peek's datastore.
+ *
+ * For Firefox: normalizes frecency scores from Firefox's scale to Peek's range,
+ * and imports adaptive matching data as item metadata.
+ *
+ * For Chrome/Brave: calculates a frecency proxy from visit count + recency.
+ *
+ * Only updates items that already exist in the database (matched by URL).
+ */
+export function importFrecency(
+  profilePath: string,
+  browser: BrowserName,
+): FrecencyImportResult {
+  const result: FrecencyImportResult = {
+    frecencyUpdated: 0,
+    adaptiveImported: 0,
+    notFound: 0,
+    errors: [],
+  };
+
+  // Step 1: Read and normalize frecency data
+  let normalizedScores: Map<string, number>;
+
+  if (browser === 'firefox') {
+    const frecencyData = readFrecencyData(profilePath);
+    if (frecencyData.length === 0) {
+      result.errors.push('No frecency data found in Firefox profile');
+      return result;
+    }
+    normalizedScores = normalizeFirefoxScores(frecencyData);
+  } else {
+    // Chrome/Brave — scores are already in Peek-compatible range
+    const frecencyData = readChromeFrecencyData(profilePath);
+    if (frecencyData.length === 0) {
+      result.errors.push(`No frecency data found in ${browser} profile`);
+      return result;
+    }
+    normalizedScores = new Map(frecencyData.map(d => [d.url, d.frecency]));
+  }
+
+  // Step 2: Update frecency scores for matching items
+  runInTransaction(() => {
+    for (const [url, score] of normalizedScores) {
+      try {
+        const itemId = getItemIdByUrl(url);
+        if (itemId) {
+          updateFrecencyScore(itemId, score);
+          result.frecencyUpdated++;
+        } else {
+          result.notFound++;
+        }
+      } catch (err) {
+        result.errors.push(`Frecency update failed for ${url}: ${(err as Error).message}`);
+      }
+    }
+  });
+
+  // Step 3: Import adaptive matching data (Firefox only)
+  if (browser === 'firefox') {
+    const adaptiveData = readAdaptiveMatchingData(profilePath);
+    if (adaptiveData.length > 0) {
+      const grouped = groupAdaptiveByUrl(adaptiveData);
+
+      runInTransaction(() => {
+        for (const [url, matches] of grouped) {
+          try {
+            const itemId = getItemIdByUrl(url);
+            if (itemId) {
+              // Sort matches by useCount descending for readability
+              matches.sort((a, b) => b.useCount - a.useCount);
+              updateItemMetadata(itemId, 'adaptiveMatches', matches);
+              result.adaptiveImported++;
+            }
+            // Don't increment notFound again — already counted in frecency pass
+          } catch (err) {
+            result.errors.push(`Adaptive match import failed for ${url}: ${(err as Error).message}`);
+          }
+        }
+      });
+    }
+  }
+
+  return result;
 }

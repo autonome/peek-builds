@@ -18,7 +18,7 @@ import { resolve } from 'path';
 import { discoverAllProfiles, findProfile } from './profiles.js';
 import { firefoxReader } from './browsers/firefox.js';
 import { chromeReader } from './browsers/chrome.js';
-import { importHistory, importBookmarks, importSessions } from './importers/index.js';
+import { importHistory, importBookmarks, importSessions, importFrecency, inspectFrecency } from './importers/index.js';
 import { openDatabase, closeDatabase } from './datastore.js';
 import type { BrowserProfile, BrowserName, ImportType } from './types.js';
 import type { BrowserReader } from './browsers/types.js';
@@ -110,6 +110,15 @@ program
       console.log(`  ${icon} ${item.label}: ${count} entries ${status}`);
     }
 
+    // Show frecency stats
+    const frecencyStats = inspectFrecency(profile.profilePath, profile.browser);
+    if (frecencyStats.frecencyCount > 0) {
+      console.log(`  ${chalk.green('\u2713')} Frecency: ${chalk.white(frecencyStats.frecencyCount.toLocaleString())} scored URLs ${chalk.green('(importable, opt-in)')}`);
+    }
+    if (frecencyStats.adaptiveCount > 0) {
+      console.log(`  ${chalk.green('\u2713')} Adaptive Matching: ${chalk.white(frecencyStats.adaptiveCount.toLocaleString())} input associations ${chalk.green('(importable, opt-in)')}`);
+    }
+
     console.log();
     console.log(chalk.dim('Use "browser-import import <profile>" to import data.'));
   });
@@ -121,13 +130,15 @@ program
   .description('Import browser data into a Peek datastore')
   .argument('<profile>', 'Profile path or "browser/name"')
   .option('--db <path>', 'Path to Peek database file', './peek.db')
-  .option('--types <types>', 'Comma-separated import types: history,bookmarks,sessions', 'history,bookmarks,sessions')
+  .option('--types <types>', 'Comma-separated import types: history,bookmarks,sessions,frecency', 'history,bookmarks,sessions')
+  .option('--import-frecency', 'Import frecency scores and adaptive matching data (shorthand for --types ...,frecency)')
   .option('--tag-folders', 'Create tags from bookmark folder hierarchy (default: true)', true)
   .option('--no-tag-folders', 'Skip creating tags from bookmark folder hierarchy')
   .option('--dry-run', 'Show what would be imported without writing', false)
   .action((profileQuery: string, options: {
     db: string;
     types: string;
+    importFrecency: boolean;
     dryRun: boolean;
     tagFolders: boolean;
   }) => {
@@ -144,6 +155,10 @@ program
     }
 
     const importTypes = options.types.split(',').map(t => t.trim()) as ImportType[];
+    // --import-frecency is a shorthand to add frecency to the types list
+    if (options.importFrecency && !importTypes.includes('frecency')) {
+      importTypes.push('frecency');
+    }
     const reader = getReader(profile.browser);
     const dbPath = resolve(options.db);
 
@@ -275,11 +290,47 @@ program
         console.log();
       }
 
+      // Import frecency
+      let frecencyUpdated = 0;
+      let adaptiveImported = 0;
+      if (importTypes.includes('frecency')) {
+        console.log(chalk.cyan('Importing frecency data...'));
+
+        const frecencyResult = importFrecency(profile.profilePath, profile.browser);
+        frecencyUpdated = frecencyResult.frecencyUpdated;
+        adaptiveImported = frecencyResult.adaptiveImported;
+        totalErrors += frecencyResult.errors.length;
+
+        console.log(chalk.green(`  Updated frecency for ${frecencyResult.frecencyUpdated.toLocaleString()} items`));
+        if (frecencyResult.adaptiveImported > 0) {
+          console.log(chalk.green(`  Imported ${frecencyResult.adaptiveImported.toLocaleString()} adaptive matches`));
+        }
+        if (frecencyResult.notFound > 0) {
+          console.log(chalk.yellow(`  Not found in DB: ${frecencyResult.notFound.toLocaleString()} URLs`));
+        }
+        if (frecencyResult.errors.length > 0) {
+          console.log(chalk.red(`  Errors: ${frecencyResult.errors.length}`));
+          for (const err of frecencyResult.errors.slice(0, 5)) {
+            console.log(chalk.red(`    ${err}`));
+          }
+          if (frecencyResult.errors.length > 5) {
+            console.log(chalk.dim(`    ... and ${frecencyResult.errors.length - 5} more`));
+          }
+        }
+        console.log();
+      }
+
       // Summary
       console.log(chalk.bold('Summary:'));
       console.log(`  Items imported:     ${chalk.green(totalImported.toLocaleString())}`);
       console.log(`  Tags created:       ${chalk.green(totalTags.toLocaleString())}`);
       console.log(`  Duplicates skipped: ${chalk.yellow(totalDuplicates.toLocaleString())}`);
+      if (frecencyUpdated > 0) {
+        console.log(`  Frecency updated:   ${chalk.green(frecencyUpdated.toLocaleString())}`);
+      }
+      if (adaptiveImported > 0) {
+        console.log(`  Adaptive matches:   ${chalk.green(adaptiveImported.toLocaleString())}`);
+      }
       if (totalErrors > 0) {
         console.log(`  Errors:             ${chalk.red(totalErrors.toLocaleString())}`);
       }
@@ -365,6 +416,14 @@ function dryRun(
         const flagStr = flags ? ` (${flags})` : '';
         console.log(chalk.dim(`    ${tab.title || tab.url}${flagStr}`));
       }
+    }
+  }
+
+  if (importTypes.includes('frecency')) {
+    const stats = inspectFrecency(profile.profilePath, profile.browser);
+    console.log(`  Frecency: ${chalk.white(stats.frecencyCount.toLocaleString())} scored URLs would update frecency scores`);
+    if (stats.adaptiveCount > 0) {
+      console.log(`  Adaptive Matching: ${chalk.white(stats.adaptiveCount.toLocaleString())} input associations would be imported as metadata`);
     }
   }
 }

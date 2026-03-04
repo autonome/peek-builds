@@ -65,4 +65,11 @@ export interface ImportResult {
   errors: string[];
 }
 
-export type ImportType = 'history' | 'bookmarks' | 'sessions';
+export type ImportType = 'history' | 'bookmarks' | 'sessions' | 'frecency';
+
+export interface FrecencyImportResult {
+  frecencyUpdated: number;
+  adaptiveImported: number;
+  notFound: number;
+  errors: string[];
+}

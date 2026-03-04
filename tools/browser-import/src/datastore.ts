@@ -279,6 +279,43 @@ export function runInTransaction<T>(fn: () => T): T {
 }
 
 /**
+ * Update the frecencyScore for an item
+ */
+export function updateFrecencyScore(itemId: string, score: number): void {
+  if (!db) throw new Error('Database not opened');
+  db.prepare(
+    'UPDATE items SET frecencyScore = ?, updatedAt = ? WHERE id = ?'
+  ).run(score, now(), itemId);
+}
+
+/**
+ * Merge a key into an item's existing metadata JSON.
+ * Reads the current metadata, adds/overwrites the given key, writes back.
+ */
+export function updateItemMetadata(itemId: string, key: string, value: unknown): void {
+  if (!db) throw new Error('Database not opened');
+
+  const row = db.prepare(
+    'SELECT metadata FROM items WHERE id = ?'
+  ).get(itemId) as { metadata: string } | undefined;
+
+  if (!row) return;
+
+  let metadata: Record<string, unknown>;
+  try {
+    metadata = JSON.parse(row.metadata || '{}');
+  } catch {
+    metadata = {};
+  }
+
+  metadata[key] = value;
+
+  db.prepare(
+    'UPDATE items SET metadata = ?, updatedAt = ? WHERE id = ?'
+  ).run(JSON.stringify(metadata), now(), itemId);
+}
+
+/**
  * Close the database
  */
 export function closeDatabase(): void {
