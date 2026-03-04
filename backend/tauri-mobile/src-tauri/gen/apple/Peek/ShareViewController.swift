@@ -640,7 +640,7 @@ class ShareViewController: UIViewController {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerView.addSubview(titleLabel)
 
-        // Status label (shows "✓ Saved") — LEFT-ALIGNED after title
+        // Status label (shows "✓ Saved") — RIGHT-ALIGNED before close button
         statusLabel.font = PeekTheme.captionMedium
         statusLabel.textColor = PeekTheme.success
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -670,7 +670,8 @@ class ShareViewController: UIViewController {
         imagePreviewView.translatesAutoresizingMaskIntoConstraints = false
         contentStackView.addArrangedSubview(imagePreviewView)
         // Extra space above URL since it's the focal point
-        contentStackView.setCustomSpacing(PeekTheme.spacingMD * 1.5, after: imagePreviewView)
+        // NOTE: setCustomSpacing after imagePreviewView has no effect when hidden.
+        // Space above URL is controlled by contentStackView top padding instead.
 
         // URL/Text Label — base05 (primary text) to stay visible against share sheet bg
         contentLabel.font = PeekTheme.body
@@ -679,7 +680,7 @@ class ShareViewController: UIViewController {
         contentLabel.lineBreakMode = .byTruncatingTail
         contentStackView.addArrangedSubview(contentLabel)
         // Extra space below URL since it's the focal point
-        contentStackView.setCustomSpacing(PeekTheme.spacingMD * 1.5, after: contentLabel)
+        contentStackView.setCustomSpacing(PeekTheme.spacingMD * 3, after: contentLabel)
 
         // Selected Tags Collection View - self-sizing
         selectedTagsCollectionView.backgroundColor = .clear
@@ -763,8 +764,8 @@ class ShareViewController: UIViewController {
             titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: PeekTheme.paddingH),
             titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
-            // Status label LEFT-ALIGNED (to the right of the title)
-            statusLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: PeekTheme.spacingMD),
+            // Status label RIGHT-ALIGNED (to the left of the close button)
+            statusLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -PeekTheme.spacingMD),
             statusLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
             // Close button (✕) on the RIGHT
@@ -778,7 +779,7 @@ class ShareViewController: UIViewController {
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
 
             // Content stack view inside scroll view
-            contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: PeekTheme.spacingMD),
+            contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: PeekTheme.spacingMD * 3),
             contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: PeekTheme.paddingH),
             contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -PeekTheme.paddingH),
             contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -PeekTheme.paddingH),
