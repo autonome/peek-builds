@@ -149,8 +149,8 @@ const promoteTagToGroup = async (tag) => {
 
 /**
  * Internal ESC handler for groups navigation
- * Returns { handled: true } if we navigated internally
- * Returns { handled: false } if at root (groups list) and window should close
+ * Returns { handled: true } if we navigated internally (search clear, back to groups list)
+ * Returns { handled: false } at root — backend escPolicy decides (workspace role = never close)
  */
 const handleEscape = () => {
   // If search has content, clear it first
@@ -172,7 +172,8 @@ const handleEscape = () => {
     }, 0);
     return { handled: true };
   }
-  // At root (groups list) - let window close
+  // At root (groups list) — defer to backend escPolicy.
+  // Groups window has role:'workspace', so escPolicy returns 'nothing' (never close).
   return { handled: false };
 };
 

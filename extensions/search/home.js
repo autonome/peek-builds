@@ -407,11 +407,10 @@ const init = async () => {
   // Keyboard navigation
   document.addEventListener('keydown', handleKeydown);
 
-  // Register escape handler
+  // Register escape handler — defer to backend escPolicy (workspace role = never close)
   if (api.escape) {
     api.escape.onEscape(() => {
-      window.close();
-      return { handled: true };
+      return { handled: false };
     });
   }
 

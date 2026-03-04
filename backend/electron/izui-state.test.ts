@@ -715,8 +715,12 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(escPolicy('active', 'content'), 'nothing');
     });
 
-    it('should close workspace in transient session', () => {
-      assert.strictEqual(escPolicy('transient', 'workspace'), 'close');
+    // REGRESSION TEST: workspace must NEVER close on ESC regardless of session state.
+    // Workspace windows are root/persistent extension windows (groups, search, etc.)
+    // that should never be dismissed by the backend ESC policy.
+    it('should NOT close workspace in transient session (regression test)', () => {
+      assert.strictEqual(escPolicy('transient', 'workspace'), 'nothing',
+        'workspace windows must never close on ESC — they are root/persistent extension windows');
     });
 
     it('should NOT close workspace in active session', () => {
@@ -786,10 +790,11 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.getState(), 'transient');
       assert.strictEqual(coordinator.isTransient(), true);
 
-      // In transient mode, ESC should close all content roles
+      // In transient mode, ESC should close content roles but NOT workspace
       assert.strictEqual(escPolicy(coordinator.getState(), 'child-content'), 'close');
       assert.strictEqual(escPolicy(coordinator.getState(), 'content'), 'close');
-      assert.strictEqual(escPolicy(coordinator.getState(), 'workspace'), 'close');
+      assert.strictEqual(escPolicy(coordinator.getState(), 'workspace'), 'nothing',
+        'workspace windows must never close on ESC, even in transient sessions');
     });
   });
 });

@@ -378,7 +378,11 @@ function escPolicy(sessionState, role) {
   // These roles always close regardless of session state
   if (['quick-view', 'palette', 'utility'].includes(role)) return 'close';
   if (role === 'overlay') return 'close-and-restore';
-  // child-content, workspace, and content: only close in transient sessions.
+  // Workspace windows are root/persistent extension windows (groups, search, etc.).
+  // They must NEVER close on ESC regardless of session state — the renderer handles
+  // internal navigation and the window persists.
+  if (role === 'workspace') return 'nothing';
+  // child-content and content: only close in transient sessions.
   // In active sessions, ESC navigates internally (renderer handles it) but
   // never closes the window — even child-content windows are user-opened
   // content that should persist.
