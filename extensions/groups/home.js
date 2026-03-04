@@ -85,7 +85,8 @@ let state = {
   untaggedCount: 0,
   selectedIndex: 0,
   searchQuery: '',
-  showAllTags: false
+  showAllTags: false,
+  lastViewedTagId: null
 };
 
 // Expose state for debugging in tests
@@ -601,6 +602,10 @@ const filterAddresses = (addresses) => {
  * Show the groups (tags) view
  */
 const showGroups = async () => {
+  // Remember which group was being viewed so we can focus it in the list
+  if (state.currentTag) {
+    state.lastViewedTagId = state.currentTag.id;
+  }
   state.view = VIEW_GROUPS;
   state.currentTag = null;
   state.searchQuery = '';
@@ -694,8 +699,15 @@ const renderGroups = () => {
     }
   }
 
-  // Reset selection
-  state.selectedIndex = 0;
+  // Select the last-viewed group if returning from addresses view, otherwise reset to 0
+  if (state.lastViewedTagId) {
+    const cards = Array.from(container.querySelectorAll('peek-card'));
+    const targetIndex = cards.findIndex(card => card.dataset.tagId === String(state.lastViewedTagId));
+    state.selectedIndex = targetIndex >= 0 ? targetIndex : 0;
+    state.lastViewedTagId = null;
+  } else {
+    state.selectedIndex = 0;
+  }
   updateSelection();
 };
 

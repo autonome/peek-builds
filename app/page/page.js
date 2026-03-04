@@ -1249,6 +1249,14 @@ api.escape.onEscape(() => {
     webview.goBack();
     return { handled: true };
   }
+  // In group mode, ESC at root should close this page and return to the group view.
+  // The backend escPolicy returns 'nothing' for content windows in active sessions,
+  // so we must close the window directly from the renderer.
+  if (currentMode === 'group') {
+    DEBUG && console.log('[page] ESC: group mode at root, closing window');
+    window.close();
+    return { handled: true };
+  }
   DEBUG && console.log('[page] ESC: at root, letting backend decide');
   return { handled: false };
 });
