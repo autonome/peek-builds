@@ -150,7 +150,7 @@ peek-card[selected]:hover {
 .card-btn-group {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex-shrink: 0;
 }
 
