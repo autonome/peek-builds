@@ -130,3 +130,5 @@ targets:
         EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
     dependencies:
       - framework: ../../../peek-core/PeekCore.xcframework
+      - sdk: Vision.framework
+      - sdk: NaturalLanguage.framework

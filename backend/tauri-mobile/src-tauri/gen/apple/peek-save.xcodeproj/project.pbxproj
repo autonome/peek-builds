@@ -26,7 +26,9 @@
 		B4A1743D23ED32DD2732AF02 /* Peek.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 87362C2B9728A9D63E803091 /* Peek.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CBC30D9965009103CFAAAD73 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E16D90FC8F0DB42A3A94CEAC /* Assets.xcassets */; };
 		D80112643ECCCEAAE585D6A7 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6FB40D9550C8B6FDEFE1195D /* main.mm */; };
+		DD6DD20C25720241CBE83691 /* Vision.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 04D7801CFED952AE9158B2C3 /* Vision.framework */; };
 		ECD9F835247CC84F27376D4D /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4BD4E6729B964EE37517F6 /* ShareViewController.swift */; };
+		F872FBD1FDB7F8A050214FCC /* NaturalLanguage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F06FDC3CCF43C74525D99581 /* NaturalLanguage.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +58,7 @@
 /* Begin PBXFileReference section */
 		0158B5ABEB2554BCA0EF2E02 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		02F9BD59F09D9496A417E052 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		04D7801CFED952AE9158B2C3 /* Vision.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Vision.framework; path = System/Library/Frameworks/Vision.framework; sourceTree = SDKROOT; };
 		0969BC8ADA46ECFD8A561627 /* peek-save_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "peek-save_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1CF30F6DE821F39D640DB4EA /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
 		1D98489BDC660658292105ED /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -81,6 +84,7 @@
 		D8D993CE6F13D4F9E39CCAAD /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
 		DD9DA09B0C30C8D325835182 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		E16D90FC8F0DB42A3A94CEAC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F06FDC3CCF43C74525D99581 /* NaturalLanguage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NaturalLanguage.framework; path = System/Library/Frameworks/NaturalLanguage.framework; sourceTree = SDKROOT; };
 		F6CAEC6EAEC2C869B9770376 /* PeekCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = PeekCore.xcframework; path = "../../../peek-core/PeekCore.xcframework"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -105,6 +109,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				283216BC5F9949742DE80E55 /* PeekCore.xcframework in Frameworks */,
+				DD6DD20C25720241CBE83691 /* Vision.framework in Frameworks */,
+				F872FBD1FDB7F8A050214FCC /* NaturalLanguage.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -169,10 +175,12 @@
 				6FEA80EAA17D73FBCE7E540F /* libapp.a */,
 				8A87760D121F5C9EBC861634 /* Metal.framework */,
 				4224417CC98ED40BDB03C9EE /* MetalKit.framework */,
+				F06FDC3CCF43C74525D99581 /* NaturalLanguage.framework */,
 				F6CAEC6EAEC2C869B9770376 /* PeekCore.xcframework */,
 				55966F3B7FE19416202A5B9C /* QuartzCore.framework */,
 				0158B5ABEB2554BCA0EF2E02 /* Security.framework */,
 				33E9F754E77A1BE0BCBF7393 /* UIKit.framework */,
+				04D7801CFED952AE9158B2C3 /* Vision.framework */,
 				C1C83CAF4D649A878469BF1B /* WebKit.framework */,
 			);
 			name = Frameworks;

@@ -2,6 +2,8 @@ import UIKit
 import UniformTypeIdentifiers
 import Network
 import os.log
+import Vision
+import NaturalLanguage
 
 private let shareLog = OSLog(subsystem: "com.dietrich.peek-mobile.share", category: "ShareExtension")
 
@@ -470,6 +472,174 @@ extension String {
     }
 }
 
+// MARK: - Vision Analysis Results
+struct VisionAnalysisResult {
+    var ocrText: String?
+    var barcodes: [String]
+    var entities: VisionEntities
+
+    struct VisionEntities {
+        var people: [String]
+        var places: [String]
+        var organizations: [String]
+        var dates: [String]
+        var urls: [String]
+        var phones: [String]
+
+        func allTags() -> [String] {
+            var tags: [String] = []
+            if !people.isEmpty { tags.append(contentsOf: people.prefix(3).map { $0.lowercased() }) }
+            if !places.isEmpty { tags.append(contentsOf: places.prefix(3).map { $0.lowercased() }) }
+            if !organizations.isEmpty { tags.append(contentsOf: organizations.prefix(3).map { $0.lowercased() }) }
+            return tags
+        }
+    }
+
+    func toMetadata() -> [String: Any] {
+        var result: [String: Any] = [:]
+        if let text = ocrText, !text.isEmpty {
+            result["ocrText"] = text
+        }
+        if !barcodes.isEmpty {
+            result["barcodes"] = barcodes
+        }
+        var entitiesDict: [String: Any] = [:]
+        if !entities.people.isEmpty { entitiesDict["people"] = entities.people }
+        if !entities.places.isEmpty { entitiesDict["places"] = entities.places }
+        if !entities.organizations.isEmpty { entitiesDict["organizations"] = entities.organizations }
+        if !entities.dates.isEmpty { entitiesDict["dates"] = entities.dates }
+        if !entities.urls.isEmpty { entitiesDict["urls"] = entities.urls }
+        if !entities.phones.isEmpty { entitiesDict["phones"] = entities.phones }
+        if !entitiesDict.isEmpty {
+            result["entities"] = entitiesDict
+        }
+        return result
+    }
+}
+
+// MARK: - Vision Analyzer
+class VisionAnalyzer {
+
+    /// Downscale image to max dimension for memory-safe processing
+    static func downscaleImage(_ image: UIImage, maxDimension: CGFloat = 2048) -> CGImage? {
+        let size = image.size
+        let scale = min(maxDimension / size.width, maxDimension / size.height)
+        if scale >= 1.0 {
+            return image.cgImage
+        }
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
+        image.draw(in: CGRect(origin: .zero, size: newSize))
+        let scaled = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        return scaled?.cgImage
+    }
+
+    /// Run Vision analysis on image data — must be called on a background queue
+    static func analyze(imageData: Data, completion: @escaping (VisionAnalysisResult?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            autoreleasepool {
+                guard let uiImage = UIImage(data: imageData),
+                      let cgImage = downscaleImage(uiImage) else {
+                    DispatchQueue.main.async { completion(nil) }
+                    return
+                }
+
+                let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+
+                // OCR request — .fast for memory safety in extension
+                let textRequest = VNRecognizeTextRequest()
+                textRequest.recognitionLevel = .fast
+                textRequest.usesLanguageCorrection = false
+
+                // Barcode request
+                let barcodeRequest = VNDetectBarcodesRequest()
+
+                do {
+                    try requestHandler.perform([textRequest, barcodeRequest])
+                } catch {
+                    print("[Vision] Analysis failed: \(error)")
+                    DispatchQueue.main.async { completion(nil) }
+                    return
+                }
+
+                // Extract OCR text
+                var ocrText: String?
+                if let observations = textRequest.results {
+                    let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+                    if !lines.isEmpty {
+                        ocrText = lines.joined(separator: "\n")
+                    }
+                }
+
+                // Extract barcodes
+                var barcodes: [String] = []
+                if let observations = barcodeRequest.results {
+                    for obs in observations {
+                        if let payload = obs.payloadStringValue {
+                            barcodes.append(payload)
+                        }
+                    }
+                }
+
+                // NLP entity extraction from OCR text
+                var entities = VisionAnalysisResult.VisionEntities(
+                    people: [], places: [], organizations: [],
+                    dates: [], urls: [], phones: []
+                )
+
+                if let text = ocrText, !text.isEmpty {
+                    // NLTagger for named entities
+                    let tagger = NLTagger(tagSchemes: [.nameType])
+                    tagger.string = text
+                    let options: NLTagger.Options = [.omitWhitespace, .omitPunctuation]
+
+                    tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .nameType, options: options) { tag, range in
+                        let entity = String(text[range])
+                        switch tag {
+                        case .personalName:
+                            if !entities.people.contains(entity) { entities.people.append(entity) }
+                        case .placeName:
+                            if !entities.places.contains(entity) { entities.places.append(entity) }
+                        case .organizationName:
+                            if !entities.organizations.contains(entity) { entities.organizations.append(entity) }
+                        default:
+                            break
+                        }
+                        return true
+                    }
+
+                    // NSDataDetector for dates, URLs, phones
+                    let detectorTypes: NSTextCheckingResult.CheckingType = [.date, .link, .phoneNumber]
+                    if let detector = try? NSDataDetector(types: detectorTypes.rawValue) {
+                        let nsRange = NSRange(text.startIndex..., in: text)
+                        let matches = detector.matches(in: text, range: nsRange)
+                        for match in matches {
+                            if match.resultType == .date, let date = match.date {
+                                let formatted = ISO8601DateFormatter.shared.string(from: date)
+                                if !entities.dates.contains(formatted) { entities.dates.append(formatted) }
+                            } else if match.resultType == .link, let url = match.url {
+                                let urlStr = url.absoluteString
+                                if !entities.urls.contains(urlStr) { entities.urls.append(urlStr) }
+                            } else if match.resultType == .phoneNumber, let phone = match.phoneNumber {
+                                if !entities.phones.contains(phone) { entities.phones.append(phone) }
+                            }
+                        }
+                    }
+                }
+
+                let result = VisionAnalysisResult(
+                    ocrText: ocrText,
+                    barcodes: barcodes,
+                    entities: entities
+                )
+
+                DispatchQueue.main.async { completion(result) }
+            }
+        }
+    }
+}
+
 // MARK: - ShareViewController
 class ShareViewController: UIViewController {
     var sharedURL: String?
@@ -485,6 +655,8 @@ class ShareViewController: UIViewController {
     var existingSavedItem: SavedItem?
     var savedImageId: String?  // Track saved image ID to prevent duplicates
     var pendingImageUrl: String?  // Store image URL when seen, for use by image handler
+    var visionResult: VisionAnalysisResult?
+    var isAnalyzing = false
 
     let scrollView = UIScrollView()
     let contentStackView = UIStackView()
@@ -524,6 +696,27 @@ class ShareViewController: UIViewController {
 
     let noTagsLabel = UILabel()
     let inputContainerView = UIView()
+
+    // Vision analysis UI
+    let analyzeButton = UIButton(type: .system)
+    let analyzeSpinner = UIActivityIndicatorView(style: .medium)
+    let visionResultsContainer = UIStackView()
+    let ocrTextLabel = UILabel()
+    let ocrShowMoreButton = UIButton(type: .system)
+    let barcodesLabel = UILabel()
+    let suggestedTagsCollectionView: SelfSizingCollectionView = {
+        let layout = LeftAlignedFlowLayout()
+        layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
+        layout.minimumInteritemSpacing = PeekTheme.spacingSM
+        layout.minimumLineSpacing = PeekTheme.spacingSM
+        layout.sectionInset = .zero
+        let cv = SelfSizingCollectionView(frame: .zero, collectionViewLayout: layout)
+        cv.contentInset = .zero
+        cv.contentInsetAdjustmentBehavior = .never
+        return cv
+    }()
+    var suggestedTags: [String] = []
+    var isOcrExpanded = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -664,17 +857,108 @@ class ShareViewController: UIViewController {
         contentStackView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStackView)
 
-        // Image preview (hidden by default)
+        // Image preview container (preview + analyze button side by side)
+        let imageRow = UIView()
+        imageRow.translatesAutoresizingMaskIntoConstraints = false
+        imageRow.isHidden = true
+        contentStackView.addArrangedSubview(imageRow)
+
         imagePreviewView.contentMode = .scaleAspectFit
         imagePreviewView.layer.cornerRadius = PeekTheme.cardCornerRadius
         imagePreviewView.layer.masksToBounds = true
         imagePreviewView.backgroundColor = PeekTheme.bgSecondary
-        imagePreviewView.isHidden = true
         imagePreviewView.translatesAutoresizingMaskIntoConstraints = false
-        contentStackView.addArrangedSubview(imagePreviewView)
-        // Extra space above URL since it's the focal point
-        // NOTE: setCustomSpacing after imagePreviewView has no effect when hidden.
-        // Space above URL is controlled by contentStackView top padding instead.
+        imageRow.addSubview(imagePreviewView)
+
+        // Analyze button — SF Symbol text.viewfinder, same style as close/add buttons
+        var analyzeBtnConfig = UIButton.Configuration.filled()
+        analyzeBtnConfig.contentInsets = NSDirectionalEdgeInsets(top: PeekTheme.buttonPaddingV, leading: PeekTheme.buttonPaddingH, bottom: PeekTheme.buttonPaddingV, trailing: PeekTheme.buttonPaddingH)
+        analyzeBtnConfig.baseBackgroundColor = PeekTheme.accent
+        analyzeBtnConfig.baseForegroundColor = PeekTheme.bg
+        analyzeBtnConfig.cornerStyle = .fixed
+        analyzeBtnConfig.background.cornerRadius = PeekTheme.buttonCornerRadius
+        analyzeBtnConfig.image = UIImage(systemName: "text.viewfinder")
+        analyzeBtnConfig.imagePadding = 4
+        analyzeBtnConfig.title = "Analyze"
+        analyzeBtnConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = PeekTheme.inputMedium
+            return outgoing
+        }
+        analyzeButton.configuration = analyzeBtnConfig
+        analyzeButton.addTarget(self, action: #selector(analyzePressed), for: .touchUpInside)
+        analyzeButton.translatesAutoresizingMaskIntoConstraints = false
+        analyzeButton.isHidden = true
+        imageRow.addSubview(analyzeButton)
+
+        // Spinner for analysis
+        analyzeSpinner.color = PeekTheme.textSecondary
+        analyzeSpinner.hidesWhenStopped = true
+        analyzeSpinner.translatesAutoresizingMaskIntoConstraints = false
+        imageRow.addSubview(analyzeSpinner)
+
+        NSLayoutConstraint.activate([
+            imageRow.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
+            imagePreviewView.topAnchor.constraint(equalTo: imageRow.topAnchor),
+            imagePreviewView.leadingAnchor.constraint(equalTo: imageRow.leadingAnchor),
+            imagePreviewView.bottomAnchor.constraint(equalTo: imageRow.bottomAnchor),
+            imagePreviewView.trailingAnchor.constraint(equalTo: analyzeButton.leadingAnchor, constant: -PeekTheme.spacingMD),
+            analyzeButton.topAnchor.constraint(equalTo: imageRow.topAnchor),
+            analyzeButton.trailingAnchor.constraint(equalTo: imageRow.trailingAnchor),
+            analyzeSpinner.centerXAnchor.constraint(equalTo: analyzeButton.centerXAnchor),
+            analyzeSpinner.topAnchor.constraint(equalTo: analyzeButton.bottomAnchor, constant: PeekTheme.spacingSM),
+        ])
+
+        // Vision results container (hidden by default)
+        visionResultsContainer.axis = .vertical
+        visionResultsContainer.spacing = PeekTheme.spacingSM
+        visionResultsContainer.alignment = .fill
+        visionResultsContainer.isHidden = true
+        visionResultsContainer.translatesAutoresizingMaskIntoConstraints = false
+        contentStackView.addArrangedSubview(visionResultsContainer)
+
+        // OCR text label
+        ocrTextLabel.font = PeekTheme.caption
+        ocrTextLabel.textColor = PeekTheme.textSecondary
+        ocrTextLabel.numberOfLines = 4
+        ocrTextLabel.lineBreakMode = .byTruncatingTail
+        ocrTextLabel.isHidden = true
+        visionResultsContainer.addArrangedSubview(ocrTextLabel)
+
+        // "Show more" button for OCR text
+        ocrShowMoreButton.setTitle("Show more", for: .normal)
+        ocrShowMoreButton.titleLabel?.font = PeekTheme.micro
+        ocrShowMoreButton.setTitleColor(PeekTheme.accent, for: .normal)
+        ocrShowMoreButton.contentHorizontalAlignment = .leading
+        ocrShowMoreButton.addTarget(self, action: #selector(toggleOcrText), for: .touchUpInside)
+        ocrShowMoreButton.isHidden = true
+        visionResultsContainer.addArrangedSubview(ocrShowMoreButton)
+
+        // Barcodes label
+        barcodesLabel.font = PeekTheme.caption
+        barcodesLabel.textColor = PeekTheme.textSecondary
+        barcodesLabel.numberOfLines = 0
+        barcodesLabel.isHidden = true
+        visionResultsContainer.addArrangedSubview(barcodesLabel)
+
+        // Suggested tags section label
+        let suggestedLabel = UILabel()
+        suggestedLabel.text = "SUGGESTED TAGS"
+        suggestedLabel.font = PeekTheme.sectionLabel
+        suggestedLabel.textColor = PeekTheme.textMuted
+        suggestedLabel.isHidden = true
+        suggestedLabel.tag = 99  // Tag to find it later
+        visionResultsContainer.addArrangedSubview(suggestedLabel)
+
+        // Suggested tags collection view
+        suggestedTagsCollectionView.backgroundColor = .clear
+        suggestedTagsCollectionView.delegate = self
+        suggestedTagsCollectionView.dataSource = self
+        suggestedTagsCollectionView.tag = 3
+        suggestedTagsCollectionView.isScrollEnabled = false
+        suggestedTagsCollectionView.register(TagCell.self, forCellWithReuseIdentifier: "TagCell")
+        suggestedTagsCollectionView.isHidden = true
+        visionResultsContainer.addArrangedSubview(suggestedTagsCollectionView)
 
         // URL/Text Label — base05 (primary text) to stay visible against share sheet bg
         contentLabel.font = PeekTheme.body
@@ -795,9 +1079,6 @@ class ShareViewController: UIViewController {
             addTagButton.trailingAnchor.constraint(equalTo: inputContainerView.trailingAnchor),
 
             // No minimum heights — self-sizing handles it via intrinsicContentSize
-
-            // Image preview size
-            imagePreviewView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
         ])
     }
 
@@ -1130,9 +1411,10 @@ class ShareViewController: UIViewController {
             sharedMetadata["width"] = Int(image.size.width)
             sharedMetadata["height"] = Int(image.size.height)
 
-            // Show image preview
+            // Show image preview + analyze button
             imagePreviewView.image = image
-            imagePreviewView.isHidden = false
+            imagePreviewView.superview?.isHidden = false  // imageRow
+            analyzeButton.isHidden = false
         }
 
         // Generate title from filename, or try to extract from selectedText
@@ -1447,6 +1729,95 @@ class ShareViewController: UIViewController {
         }
     }
 
+    @objc func analyzePressed() {
+        guard let imageData = sharedImageData, !isAnalyzing else { return }
+        isAnalyzing = true
+        analyzeButton.isEnabled = false
+        analyzeSpinner.startAnimating()
+
+        VisionAnalyzer.analyze(imageData: imageData) { [weak self] result in
+            guard let self = self else { return }
+            self.isAnalyzing = false
+            self.analyzeSpinner.stopAnimating()
+            self.analyzeButton.isEnabled = true
+
+            guard let result = result else {
+                self.showStatus("Analysis failed", color: .systemRed)
+                return
+            }
+
+            self.visionResult = result
+            self.displayVisionResults(result)
+
+            // Merge _vision into metadata
+            let visionMeta = result.toMetadata()
+            if !visionMeta.isEmpty {
+                self.sharedMetadata["_vision"] = visionMeta
+            }
+
+            // Add suggested entity tags
+            let entityTags = result.entities.allTags()
+            if !entityTags.isEmpty {
+                self.suggestedTags = entityTags.filter { !self.selectedTags.contains($0) }
+            }
+
+            // Update suggested tags UI
+            if !self.suggestedTags.isEmpty {
+                // Show the "SUGGESTED TAGS" label
+                for subview in self.visionResultsContainer.arrangedSubviews {
+                    if subview.tag == 99 {
+                        subview.isHidden = false
+                    }
+                }
+                self.suggestedTagsCollectionView.isHidden = false
+                self.suggestedTagsCollectionView.reloadData()
+                DispatchQueue.main.async {
+                    self.suggestedTagsCollectionView.invalidateIntrinsicContentSize()
+                }
+            }
+
+            // Re-save with vision metadata
+            self.saveCurrentState()
+            self.showStatus("\u{2713} Analyzed", color: .systemGreen)
+
+            self.view.layoutIfNeeded()
+            self.updatePreferredContentSize()
+        }
+    }
+
+    private func displayVisionResults(_ result: VisionAnalysisResult) {
+        visionResultsContainer.isHidden = false
+
+        // Show OCR text
+        if let text = result.ocrText, !text.isEmpty {
+            ocrTextLabel.text = text
+            ocrTextLabel.isHidden = false
+            // Show "show more" if text is long
+            let lineCount = text.components(separatedBy: "\n").count
+            ocrShowMoreButton.isHidden = lineCount <= 4
+        }
+
+        // Show barcodes
+        if !result.barcodes.isEmpty {
+            let barcodeText = result.barcodes.map { "Barcode: \($0)" }.joined(separator: "\n")
+            barcodesLabel.text = barcodeText
+            barcodesLabel.isHidden = false
+        }
+    }
+
+    @objc func toggleOcrText() {
+        isOcrExpanded.toggle()
+        if isOcrExpanded {
+            ocrTextLabel.numberOfLines = 0
+            ocrShowMoreButton.setTitle("Show less", for: .normal)
+        } else {
+            ocrTextLabel.numberOfLines = 4
+            ocrShowMoreButton.setTitle("Show more", for: .normal)
+        }
+        view.layoutIfNeeded()
+        updatePreferredContentSize()
+    }
+
     @objc func closePressed() {
         // Commit any tag text the user typed but didn't explicitly "Add"
         addTagPressed()
@@ -1467,6 +1838,9 @@ extension ShareViewController: UICollectionViewDelegate, UICollectionViewDataSou
         if collectionView.tag == 1 {
             // Selected tags
             return getSortedSelectedTags().count
+        } else if collectionView.tag == 3 {
+            // Suggested tags from vision analysis
+            return suggestedTags.count
         } else {
             // Unused tags
             return getUnusedTags().count
@@ -1484,6 +1858,12 @@ extension ShareViewController: UICollectionViewDelegate, UICollectionViewDataSou
                 self?.saveCurrentState()
             }
             return cell
+        } else if collectionView.tag == 3 {
+            // Suggested tags from vision
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "TagCell", for: indexPath) as! TagCell
+            let tagName = suggestedTags[indexPath.item]
+            cell.configure(with: tagName, isSelected: false)
+            return cell
         } else {
             // Unused tags
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "TagCell", for: indexPath) as! TagCell
@@ -1498,6 +1878,15 @@ extension ShareViewController: UICollectionViewDelegate, UICollectionViewDataSou
             // Tapping selected tag removes it
             let tagName = getSortedSelectedTags()[indexPath.item]
             selectedTags.remove(tagName)
+        } else if collectionView.tag == 3 {
+            // Tapping suggested tag adds it and removes from suggestions
+            let tagName = suggestedTags[indexPath.item]
+            selectedTags.insert(tagName)
+            suggestedTags.removeAll { $0 == tagName }
+            suggestedTagsCollectionView.reloadData()
+            DispatchQueue.main.async { [weak self] in
+                self?.suggestedTagsCollectionView.invalidateIntrinsicContentSize()
+            }
         } else {
             // Tapping unused tag adds it
             let tag = getUnusedTags()[indexPath.item]
