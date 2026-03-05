@@ -1858,69 +1858,60 @@ const renderExtensionsSettings = async () => {
       const coreStore = _coreStore || await createDatastoreStore('core', appConfig.defaults);
       const features = coreStore.get(appConfig.storageKeys.ITEMS) || [];
 
-      // Get both running extensions and datastore extensions
-      const [runningResult, datastoreResult] = await Promise.all([
+      // Get running, all registered (discovered), and datastore extensions
+      const [runningResult, registeredResult, datastoreResult] = await Promise.all([
         api.extensions.list(),
+        api.extensions.listAllRegistered(),
         api.extensions.getAll()
       ]);
 
       loading.remove();
 
       const runningExts = runningResult.success ? runningResult.data || [] : [];
+      const registeredExts = registeredResult.success ? registeredResult.data || [] : [];
       const datastoreExts = datastoreResult.success ? datastoreResult.data || [] : [];
 
-      // Merge: builtin running + datastore external
-      // Running extensions have manifest info, datastore has persisted info
+      // Merge: builtin registered + datastore external
+      // Registered extensions include ALL discovered builtins (running or not)
       const runningById = new Map(runningExts.map(e => [e.id, e]));
 
       // Build combined list
       const allExtensions = [];
 
-      // Derive builtin extension IDs from running extensions
-      // All running extensions are discovered from the extensions/ directory or loaded externally.
-      // We treat any running extension as builtin if it's not in the external datastore.
+      // Use all registered (discovered) extensions as builtins, excluding datastore externals
       const datastoreIds = new Set(datastoreExts.map(e => e.id));
-      const builtinExtIds = runningExts
+      const builtinExtIds = registeredExts
         .filter(e => !datastoreIds.has(e.id))
         .map(e => e.id);
+
+      // Build a map of registered extensions for manifest lookup
+      const registeredById = new Map(registeredExts.map(e => [e.id, e]));
 
       // Add builtin extensions (whether running or not)
       builtinExtIds.forEach(extId => {
         const running = runningById.get(extId);
+        const registered = registeredById.get(extId);
         // Find matching feature to get enabled state
         // For builtins: if running, they're enabled. Otherwise check stored state, default true.
         const feature = features.find(f => f.name.toLowerCase() === extId);
         const isEnabled = running ? true : (feature ? feature.enabled !== false : true);
 
-        if (running) {
-          // Extension is running
-          allExtensions.push({
-            ...running,
-            manifest: running.manifest || {
-              id: extId,
-              name: extId.charAt(0).toUpperCase() + extId.slice(1),
-              shortname: extId,
-              builtin: true
-            },
-            source: 'builtin',
-            isRunning: true,
-            enabled: isEnabled
-          });
-        } else {
-          // Extension not running - show it as stopped
-          allExtensions.push({
-            id: extId,
-            manifest: {
-              id: extId,
-              name: extId.charAt(0).toUpperCase() + extId.slice(1),
-              shortname: extId,
-              builtin: true
-            },
-            source: 'builtin',
-            isRunning: false,
-            enabled: isEnabled
-          });
-        }
+        // Use manifest from running or registered data (registered always has it from discovery)
+        const manifest = (running && running.manifest) || (registered && registered.manifest) || {
+          id: extId,
+          name: extId.charAt(0).toUpperCase() + extId.slice(1),
+          shortname: extId,
+          builtin: true
+        };
+
+        allExtensions.push({
+          ...(running || {}),
+          id: extId,
+          manifest,
+          source: 'builtin',
+          isRunning: !!running,
+          enabled: isEnabled
+        });
       });
 
       // Add datastore extensions (external)
