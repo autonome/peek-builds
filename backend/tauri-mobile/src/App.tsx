@@ -2228,21 +2228,23 @@ function App() {
             onDelete: () => requestDelete(editingUrlId, "page"),
           }}
         >
-          <div className="input-with-clear editor-url-wrapper">
-            <input
-              type="url"
-              className="editor-url-input"
-              value={editingUrlValue}
-              onChange={(e) => setEditingUrlValue(e.target.value)}
-              onFocus={() => {
-                // Counter iOS viewport scroll on focus
-                requestAnimationFrame(() => window.scrollTo(0, 0));
-              }}
-              placeholder="URL"
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
-            <ClearButton show={editingUrlValue.length > 0} onClear={() => setEditingUrlValue('')} />
+          <div className="resizable-input-wrapper editor-url-content-wrapper">
+            <div className="input-with-clear editor-url-wrapper">
+              <input
+                type="url"
+                className="editor-url-input"
+                value={editingUrlValue}
+                onChange={(e) => setEditingUrlValue(e.target.value)}
+                onFocus={() => {
+                  // Counter iOS viewport scroll on focus
+                  requestAnimationFrame(() => window.scrollTo(0, 0));
+                }}
+                placeholder="URL"
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+              <ClearButton show={editingUrlValue.length > 0} onClear={() => setEditingUrlValue('')} />
+            </div>
           </div>
         </EditorLayout>
       );

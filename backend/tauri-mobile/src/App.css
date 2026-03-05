@@ -2686,7 +2686,13 @@ body.dark .expandable-card-buttons .save-btn {
   padding-right: 32px;
 }
 
-/* URL editor wrapper */
+/* URL editor content wrapper - matches resizable-input-wrapper flex behavior
+   so the URL editor has the same DOM structure as note/image editors */
+.editor-url-content-wrapper {
+  align-items: stretch;
+}
+
+/* URL editor wrapper - inner row with input + clear button */
 .editor-url-wrapper {
   flex-shrink: 0;
 }
