@@ -2486,6 +2486,8 @@ body.dark .captured-image-preview {
   align-items: center;
   padding: 0.5rem;
   padding-top: env(safe-area-inset-top, 4px);
+  /* Ensure safe area padding at bottom when keyboard is hidden */
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.5rem);
   /* Prevent iOS from scrolling the viewport when keyboard appears */
   overflow: hidden;
   overscroll-behavior: contain;
@@ -2686,9 +2688,10 @@ body.dark .expandable-card-buttons .save-btn {
   padding-right: 32px;
 }
 
-/* URL editor content wrapper - matches resizable-input-wrapper flex behavior
-   so the URL editor has the same DOM structure as note/image editors */
+/* URL editor content wrapper - fixed size, does not flex-grow.
+   Tags section fills remaining space below. */
 .editor-url-content-wrapper {
+  flex-shrink: 0;
   align-items: stretch;
 }
 

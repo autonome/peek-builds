@@ -157,8 +157,8 @@ interface EditorOverlayProps {
 const SWIPE_THRESHOLD = 80;
 
 const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyboardHeight, className = '' }) => {
-  // Use actual keyboard height when available, fall back to fixed estimate
-  const effectiveKeyboardPadding = keyboardHeight > 0 ? keyboardHeight + 4 : 350;
+  // Use actual keyboard height when available; when keyboard is hidden, only pad for safe area
+  const effectiveKeyboardPadding = keyboardHeight > 0 ? keyboardHeight + 4 : 0;
 
   // Swipe-down-to-close state
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -209,7 +209,7 @@ const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyb
   return (
     <div
       className={`edit-overlay ${className}`}
-      style={{ paddingBottom: `${effectiveKeyboardPadding}px` }}
+      style={effectiveKeyboardPadding > 0 ? { paddingBottom: `${effectiveKeyboardPadding}px` } : undefined}
       onClick={(e) => e.target === e.currentTarget && onDismiss()}
     >
       <div
@@ -471,8 +471,8 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     }
   };
 
-  // Use actual keyboard height when available, fall back to fixed estimate
-  const FIXED_KEYBOARD_HEIGHT = keyboardHeight > 0 ? keyboardHeight : 350;
+  // Use actual keyboard height when available; when keyboard is hidden, no keyboard offset
+  const FIXED_KEYBOARD_HEIGHT = keyboardHeight > 0 ? keyboardHeight : 0;
 
   // Calculate default height (initial size) and min height (resize floor)
   const headerHeight = 56;
@@ -567,13 +567,14 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => handleDragMove(e.clientY);
     const handleTouchMove = (e: TouchEvent) => {
+      if (isDraggingRef.current && e.cancelable) e.preventDefault();
       if (e.touches.length === 1) handleDragMove(e.touches[0].clientY);
     };
     const handleEnd = () => handleDragEnd();
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleEnd);
-    document.addEventListener('touchmove', handleTouchMove, { passive: true });
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
     document.addEventListener('touchend', handleEnd);
 
     return () => {
@@ -619,7 +620,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     <div
       className="resizable-input-wrapper"
       ref={wrapperRef}
-      style={height != null ? { height: `${currentHeight}px`, minHeight: `${minHeight}px` } : { minHeight: `${minHeight}px` }}
+      style={height != null ? { height: `${currentHeight}px`, minHeight: `${minHeight}px`, flex: 'none' } : { minHeight: `${minHeight}px` }}
     >
       <textarea
         ref={textareaRef}
@@ -873,6 +874,7 @@ function App() {
     };
     const handleMouseMove = (e: MouseEvent) => handleMove(e.clientY);
     const handleTouchMove = (e: TouchEvent) => {
+      if (filterTagsDraggingRef.current && e.cancelable) e.preventDefault();
       if (e.touches.length === 1) handleMove(e.touches[0].clientY);
     };
     const handleEnd = () => {
@@ -887,7 +889,7 @@ function App() {
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleEnd);
-    document.addEventListener('touchmove', handleTouchMove, { passive: true });
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
     document.addEventListener('touchend', handleEnd);
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
@@ -2228,7 +2230,7 @@ function App() {
             onDelete: () => requestDelete(editingUrlId, "page"),
           }}
         >
-          <div className="resizable-input-wrapper editor-url-content-wrapper">
+          <div className="editor-url-content-wrapper">
             <div className="input-with-clear editor-url-wrapper">
               <input
                 type="url"
