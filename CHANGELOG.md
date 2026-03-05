@@ -13,6 +13,56 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-03-05
+
+Desktop - Shortcuts
+- [x] Fix extension shortcuts — change most extension shortcuts from global to local so they work on Linux Wayland; cmd palette shortcut registered as both global and local ([51e4](https://tangled.org/burrito.space/peek/commit/51e4))
+
+Desktop - Extensions
+- [x] Add dropzone diagnostic extension for inspecting dropped content ([6b91](https://tangled.org/burrito.space/peek/commit/6b91))
+- [x] Wire up ext:ready pubsub to resolve lazy extension loading ([680a](https://tangled.org/burrito.space/peek/commit/680a))
+- [x] Show all discovered extensions in Features settings, not just running ones ([d506](https://tangled.org/burrito.space/peek/commit/d506))
+- [x] Restore importSource metadata and extension- prefix for device IDs ([ae80](https://tangled.org/burrito.space/peek/commit/ae80))
+
+Desktop - Command Palette
+- [x] Stop forwarding history registration logs to main process terminal ([7f0c](https://tangled.org/burrito.space/peek/commit/7f0c))
+- [x] Add 'open groups' to manifest for immediate cmd palette availability ([d43c](https://tangled.org/burrito.space/peek/commit/d43c))
+
+Desktop - Cards & UI
+- [x] Restructure card layout — remove Text label, URL row, footer reorder ([2bc8](https://tangled.org/burrito.space/peek/commit/2bc8))
+
+Desktop - Settings
+- [x] Consolidate sync config into single Sync pane ([a035](https://tangled.org/burrito.space/peek/commit/a035))
+- [x] Restore settings hotkey and add shortcuts to settings UI ([f2dd](https://tangled.org/burrito.space/peek/commit/f2dd))
+
+Desktop - Codebase
+- [x] Rename extensions/ → features/ and move chrome-extensions to project root ([a809](https://tangled.org/burrito.space/peek/commit/a809))
+
+iOS - Share Extension
+- [x] Make share extension content and OCR text editable ([33a9](https://tangled.org/burrito.space/peek/commit/33a9))
+- [x] Add Vision image analysis to Share Extension ([f06b](https://tangled.org/burrito.space/peek/commit/f06b))
+- [x] Image dedup via thumbnail hash, OCR content persistence, WAL safety ([4538](https://tangled.org/burrito.space/peek/commit/4538))
+- [x] Share extension styling, theme generator, reader mode ([4461](https://tangled.org/burrito.space/peek/commit/4461))
+- [x] Fix collection view spacing, image sharing activation ([e9fa](https://tangled.org/burrito.space/peek/commit/e9fa))
+- [x] Add app group entitlements and webhook push tests ([b72a](https://tangled.org/burrito.space/peek/commit/b72a))
+
+iOS - PeekCore
+- [x] Create peek-core crate with types, schema, helpers, profiles ([68a9](https://tangled.org/burrito.space/peek/commit/68a9))
+- [x] Extract item CRUD and tags, wire up PeekStore ([5b22](https://tangled.org/burrito.space/peek/commit/5b22))
+- [x] Extract sync/offline DB operations ([97c9](https://tangled.org/burrito.space/peek/commit/97c9))
+- [x] Add UniFFI annotations and XCFramework build pipeline ([82b6](https://tangled.org/burrito.space/peek/commit/82b6))
+- [x] Migrate Share Extension from GRDB to PeekCore FFI ([e382](https://tangled.org/burrito.space/peek/commit/e382))
+
+iOS - Editor
+- [x] Shared EditorLayout component for all editor types ([eed9](https://tangled.org/burrito.space/peek/commit/eed9))
+- [x] Full-screen height, working resizers, URL editor flex layout ([4999](https://tangled.org/burrito.space/peek/commit/4999))
+- [x] Image editor content display + build script asset copy ([4732](https://tangled.org/burrito.space/peek/commit/4732))
+
+Android
+- [x] Add Tauri Android generated project files ([d7ee](https://tangled.org/burrito.space/peek/commit/d7ee))
+- [x] Add Android build scripts and configuration ([b213](https://tangled.org/burrito.space/peek/commit/b213))
+- [x] Add platform cfg guards for iOS-specific FFI ([b6a2](https://tangled.org/burrito.space/peek/commit/b6a2))
+
 ## 2026-03-04
 
 Desktop - Shortcuts
