@@ -995,4 +995,60 @@ mod tests {
         let decoded = STANDARD.decode(data.unwrap()).unwrap();
         assert_eq!(decoded, image_bytes);
     }
+
+    #[test]
+    fn test_image_has_null_content_by_default() {
+        let (conn, device_id) = setup_db();
+        let image_bytes = b"image without content";
+        let id = save_image(&conn, image_bytes, "image/jpeg", &[], None, None, None, None, &device_id).unwrap();
+
+        // Newly saved images should have NULL content
+        let images = get_saved_images(&conn).unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].id, id);
+        assert!(images[0].content.is_none(), "Newly saved image should have NULL content");
+
+        // Also verify via get_item_content
+        let content = get_item_content(&conn, &id).unwrap();
+        assert!(content.is_none(), "get_item_content should return None for new image");
+    }
+
+    #[test]
+    fn test_get_item_content_after_update() {
+        let (conn, device_id) = setup_db();
+        let image_bytes = b"image for content test";
+        let id = save_image(&conn, image_bytes, "image/jpeg", &[], None, None, None, None, &device_id).unwrap();
+
+        // Set content via update_item_content
+        update_item_content(&conn, &id, "OCR extracted text from image", &device_id).unwrap();
+
+        // get_item_content should return the content
+        let content = get_item_content(&conn, &id).unwrap();
+        assert_eq!(content, Some("OCR extracted text from image".to_string()));
+    }
+
+    #[test]
+    fn test_get_saved_images_returns_content_field() {
+        let (conn, device_id) = setup_db();
+        let image_bytes = b"image with content";
+        let id = save_image(&conn, image_bytes, "image/png", &["photo".to_string()], None, None, Some(640), Some(480), &device_id).unwrap();
+
+        // Initially no content
+        let images = get_saved_images(&conn).unwrap();
+        assert_eq!(images.len(), 1);
+        assert!(images[0].content.is_none());
+
+        // Set content
+        update_item_content(&conn, &id, "A description of the image contents", &device_id).unwrap();
+
+        // get_saved_images should now include the content
+        let images = get_saved_images(&conn).unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].content, Some("A description of the image contents".to_string()));
+        // Other fields should still be correct
+        assert_eq!(images[0].id, id);
+        assert_eq!(images[0].width, Some(640));
+        assert_eq!(images[0].height, Some(480));
+        assert!(images[0].tags.contains(&"photo".to_string()));
+    }
 }
