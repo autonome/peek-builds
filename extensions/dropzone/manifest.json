@@ -1,0 +1,25 @@
+{
+  "id": "dropzone",
+  "shortname": "dropzone",
+  "name": "Drop Zone",
+  "description": "Drop anything to inspect its metadata and content",
+  "version": "1.0.0",
+  "background": false,
+  "commands": [
+    {
+      "name": "dropzone",
+      "description": "Open drop zone inspector",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/dropzone/home.html",
+        "options": {
+          "role": "workspace",
+          "key": "dropzone-home",
+          "width": 720,
+          "height": 600,
+          "title": "Drop Zone"
+        }
+      }
+    }
+  ]
+}
