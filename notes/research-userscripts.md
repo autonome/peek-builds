@@ -259,7 +259,7 @@ Stack:
 ### 5.2 Script Executor Class
 
 ```javascript
-// extensions/scripts/script-executor.js
+// features/scripts/script-executor.js
 
 export class ScriptExecutor {
   /**
@@ -380,7 +380,7 @@ export class ScriptExecutor {
 Provide a minimal GM_* compatibility layer:
 
 ```javascript
-// extensions/scripts/gm-api.js
+// features/scripts/gm-api.js
 
 export function createGMAPI(scriptId, namespace) {
   const store = openStore(`gm_${scriptId}`, {});
@@ -467,7 +467,7 @@ Scripts can be triggered by:
 ### 6.2 Background Execution Model
 
 ```javascript
-// extensions/scripts/background.js (in existing background script context)
+// features/scripts/background.js (in existing background script context)
 
 const backgroundExecutor = {
   async runScheduledScripts() {

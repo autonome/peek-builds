@@ -102,8 +102,8 @@ All in `backend/electron/datastore.ts`:
 
 ### 1.8 Already on Items System
 
-- `extensions/editor/`, `extensions/tags/`, `extensions/groups/`, `extensions/cmd/commands/history.js`
-- `extensions/feeds/`, `extensions/entities/`, `app/page/page.js`
+- `features/editor/`, `features/tags/`, `features/groups/`, `features/cmd/commands/history.js`
+- `features/feeds/`, `features/entities/`, `app/page/page.js`
 - `backend/electron/sync.ts`, `backend/extension/` (browser extension)
 - `schema/v1.json` — Canonical schema defines ONLY the new system
 

@@ -1,7 +1,7 @@
 /**
  * Hot Reload for Development
  *
- * Watches app/ and extensions/ directories and reloads windows when files change.
+ * Watches app/ and features/ directories and reloads windows when files change.
  * Uses Node.js native fs.watch (recursive support in Node 18+).
  */
 
@@ -19,7 +19,7 @@ const DEBOUNCE_MS = 300;
  */
 export function startHotReload(rootDir: string): void {
   const appDir = path.join(rootDir, 'app');
-  const extensionsDir = path.join(rootDir, 'extensions');
+  const extensionsDir = path.join(rootDir, 'features');
 
   DEBUG && console.log('[hotreload] Starting hot reload...');
   DEBUG && console.log('[hotreload] Watching:', appDir);
@@ -44,12 +44,12 @@ export function startHotReload(rootDir: string): void {
     try {
       const watcher = fs.watch(extensionsDir, { recursive: true }, (eventType, filename) => {
         if (filename && shouldReload(filename)) {
-          scheduleReload(`extensions/${filename}`);
+          scheduleReload(`features/${filename}`);
         }
       });
       watchers.push(watcher);
     } catch (err) {
-      console.error('[hotreload] Failed to watch extensions/:', err);
+      console.error('[hotreload] Failed to watch features/:', err);
     }
   }
 

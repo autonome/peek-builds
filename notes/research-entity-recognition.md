@@ -24,8 +24,8 @@ The codebase already has the primitives needed:
 ### 2.2 Content Access
 
 - **`trackWindowLoad()`** in `backend/electron/datastore.ts`: Called on every `did-navigate` event and new window open. This is the natural hook point for triggering entity extraction on page loads.
-- **Scripts extension** (`extensions/scripts/`): Has `ScriptExecutor` with pattern matching and code execution against page DOM. Entity extraction scripts can run through this pipeline.
-- **Feeds extension** (`extensions/feeds/`): Demonstrates the pattern of using `item_events` for per-item data streams. Entity observations follow the same model.
+- **Scripts extension** (`features/scripts/`): Has `ScriptExecutor` with pattern matching and code execution against page DOM. Entity extraction scripts can run through this pipeline.
+- **Feeds extension** (`features/feeds/`): Demonstrates the pattern of using `item_events` for per-item data streams. Entity observations follow the same model.
 - **Context API** (`app/context/`): Per-window context with persistence. Could store active entity context per window.
 
 ### 2.3 Extension Patterns
@@ -98,12 +98,12 @@ Confidence >= 0.5 → store. This catches the common case: a person or org menti
 
 ## 4. Architecture
 
-### 4.1 New Extension: `extensions/entities/`
+### 4.1 New Extension: `features/entities/`
 
 Entity recognition is implemented as a built-in extension, following the established extension pattern:
 
 ```
-extensions/entities/
+features/entities/
   manifest.json            # Extension metadata
   background.html          # Entry point
   background.js            # Core logic: lifecycle, commands, pubsub
@@ -592,7 +592,7 @@ When typing in cmd, entity names appear as suggestions alongside URLs and comman
 ### Phase 1: Foundation + Structured Data (regex + microformats + JSON-LD)
 
 1. **Schema migration**: Add `entity` to items type CHECK constraint.
-2. **`extensions/entities/` skeleton**: Manifest, background script, init/uninit lifecycle.
+2. **`features/entities/` skeleton**: Manifest, background script, init/uninit lifecycle.
 3. **Regex extractors**: Email, phone, date/time, tracking numbers, prices.
 4. **Structured data extractors**: JSON-LD, microformats (h-card, h-event, h-adr), Open Graph. People and orgs come "free" from microformats on many pages — include from day one.
 5. **Entity store**: CRUD operations using `api.datastore` item and item_event APIs.

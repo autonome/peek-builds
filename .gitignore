@@ -51,7 +51,7 @@ TODO-mine.md
 device-backup-*/
 
 # Chrome extension resources (large binaries)
-resources/chrome-extensions/
+chrome-extensions/
 
 # Experimental/unused files
 babel.config.json

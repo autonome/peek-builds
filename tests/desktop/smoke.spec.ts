@@ -2615,7 +2615,7 @@ test.describe('Extension Lifecycle @desktop', () => {
   let app: DesktopApp;
   let bgWindow: Page;
 
-  const EXAMPLE_EXT_PATH = path.join(ROOT, 'extensions', 'example');
+  const EXAMPLE_EXT_PATH = path.join(ROOT, 'features', 'example');
 
   test.beforeAll(async () => {
     app = await launchDesktopApp('test-ext-lifecycle');

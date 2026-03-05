@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const EXT_DIR = path.join(ROOT, 'resources', 'chrome-extensions');
+const EXT_DIR = path.join(ROOT, 'chrome-extensions');
 
 const SHIM_MARKER = '/* Peek: chrome.permissions';
 

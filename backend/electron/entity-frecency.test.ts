@@ -29,7 +29,7 @@ describe('Entity Frecency Ranking', () => {
     calculateFrecency = datastoreMod.calculateFrecency;
 
     // Load regex extractor
-    const extensionsDir = resolve(projectRoot, 'extensions', 'entities');
+    const extensionsDir = resolve(projectRoot, 'features', 'entities');
     const regexMod = await import(resolve(extensionsDir, 'extractors', 'regex.js'));
     extractRegexEntities = regexMod.extractRegexEntities;
   });
@@ -376,7 +376,7 @@ describe('Entity Regex Extraction Filters', () => {
   let extractRegexEntities: (text: string, url: string) => any[];
 
   before(async () => {
-    const extensionsDir = resolve(projectRoot, 'extensions', 'entities');
+    const extensionsDir = resolve(projectRoot, 'features', 'entities');
     const regexMod = await import(resolve(extensionsDir, 'extractors', 'regex.js'));
     extractRegexEntities = regexMod.extractRegexEntities;
   });

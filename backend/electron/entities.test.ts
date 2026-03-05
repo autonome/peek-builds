@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, '..', '..', '..');
-const extensionsDir = resolve(projectRoot, 'extensions', 'entities');
+const extensionsDir = resolve(projectRoot, 'features', 'entities');
 
 // Module references loaded in before()
 let extractRegexEntities: (text: string, url: string) => any[];

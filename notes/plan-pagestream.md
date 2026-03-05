@@ -29,7 +29,7 @@ Pagestream is implemented as a Peek extension, following the same structural pat
 ### Extension file structure
 
 ```
-extensions/pagestream/
+features/pagestream/
   manifest.json        # Extension metadata
   config.js            # ID, labels, schemas, defaults (same pattern as groups/config.js)
   background.html      # Boots background.js (same boilerplate as groups/background.html)
@@ -281,13 +281,13 @@ The todo references screenshots for pages. Currently there is no screenshot cach
 **Goal**: A working extension that opens an empty pagestream window via command and shortcut.
 
 Files to create:
-- `extensions/pagestream/manifest.json` -- following groups manifest pattern
-- `extensions/pagestream/config.js` -- ID (UUID), labels, schemas, defaults (shortcut key)
-- `extensions/pagestream/background.html` -- standard boilerplate (same as groups)
-- `extensions/pagestream/background.js` -- init/uninit, register shortcut, register `open pagestream` command, open window function
-- `extensions/pagestream/home.html` -- basic HTML with importmap, imports for peek-carousel, peek-card, peek-input
-- `extensions/pagestream/home.css` -- minimal styles
-- `extensions/pagestream/home.js` -- init function, empty state
+- `features/pagestream/manifest.json` -- following groups manifest pattern
+- `features/pagestream/config.js` -- ID (UUID), labels, schemas, defaults (shortcut key)
+- `features/pagestream/background.html` -- standard boilerplate (same as groups)
+- `features/pagestream/background.js` -- init/uninit, register shortcut, register `open pagestream` command, open window function
+- `features/pagestream/home.html` -- basic HTML with importmap, imports for peek-carousel, peek-card, peek-input
+- `features/pagestream/home.css` -- minimal styles
+- `features/pagestream/home.js` -- init function, empty state
 
 **Verification**: Run Peek, type "open pagestream" in cmd, see an empty window.
 

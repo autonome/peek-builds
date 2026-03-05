@@ -442,7 +442,7 @@ function startHttpServer(): Promise<http.Server> {
       // Route based on URL prefix
       if (url.startsWith('/ext/')) {
         // Serve from extensions directory
-        filePath = path.join(ROOT, 'extensions', url.replace('/ext/', ''));
+        filePath = path.join(ROOT, 'features', url.replace('/ext/', ''));
       } else {
         // Serve from app directory
         filePath = path.join(ROOT, 'app', url);

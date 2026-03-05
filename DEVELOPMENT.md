@@ -74,7 +74,7 @@ yarn test:grep "pattern"  # Run specific test by name
    - Core app logic loads from `peek://app/background.html`
    - Extension loader at `app/extensions/loader.js`
    - Feature modules: scripts, cmd (registered in `app/features.js`)
-   - Built-in extensions: groups, peeks, slides, tags, editor (in `./extensions/`)
+   - Built-in extensions: groups, peeks, slides, tags, editor (in `./features/`)
    - Settings UI at `peek://app/settings/settings.html`
 
 3. **Peek API** (`window.app`):
@@ -129,7 +129,7 @@ backend/
 Extensions run in isolated BrowserWindow processes at `peek://ext/{id}/background.html`.
 
 ```
-extensions/
+features/
 ├── cmd/                  # Command palette
 │   └── commands/         # Built-in command modules (note, url, tagset, tag, etc.)
 ├── editor/               # Item CRUD: add, edit content, delete
@@ -214,10 +214,10 @@ registerNoun({
 | `new group X` | create | create |
 
 **Key files:**
-- `extensions/cmd/noun-registry.js` — Pure command generation (no deps)
-- `extensions/cmd/nouns.js` — Registration API (uses `window.app` pubsub)
-- `extensions/cmd/background.js` — Noun registry + command broadcasting
-- `extensions/cmd/commands.js` — Noun-aware proxy execution
+- `features/cmd/noun-registry.js` — Pure command generation (no deps)
+- `features/cmd/nouns.js` — Registration API (uses `window.app` pubsub)
+- `features/cmd/background.js` — Noun registry + command broadcasting
+- `features/cmd/commands.js` — Noun-aware proxy execution
 
 **Converted extensions:**
 
@@ -235,7 +235,7 @@ registerNoun({
 
 ### Editor Extension
 
-The editor extension (`extensions/editor/`) is the canonical surface for creating, editing, and deleting items. It complements the tags extension, which focuses on browsing and tag management.
+The editor extension (`features/editor/`) is the canonical surface for creating, editing, and deleting items. It complements the tags extension, which focuses on browsing and tag management.
 
 **Features:**
 - Inline add with smart type detection (URLs auto-detected vs text notes)
@@ -253,7 +253,7 @@ The editor extension (`extensions/editor/`) is the canonical surface for creatin
 
 ### Lexicon Studio (AT Protocol Identity)
 
-The Lexicon Studio extension (`extensions/lex/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
+The Lexicon Studio extension (`features/lex/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
 
 **Files:**
 - `background.js` — Extension lifecycle, session management, pubsub API for the home UI
@@ -284,7 +284,7 @@ The Lexicon Studio extension (`extensions/lex/`) connects Peek to the AT Protoco
 
 ### Cmd Commands (Item Creation)
 
-Commands live in `extensions/cmd/commands/` and are loaded by the cmd panel.
+Commands live in `features/cmd/commands/` and are loaded by the cmd panel.
 
 | Command | With args | Without args |
 |---------|-----------|--------------|

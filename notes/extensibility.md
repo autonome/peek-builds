@@ -6,10 +6,10 @@ Balance minimal install/development/distribution barriers with web-level safety 
 
 ### Extension Structure
 
-Extensions live in `./extensions/{name}/` with:
+Extensions live in `./features/{name}/` with:
 
 ```
-extensions/
+features/
 ├── groups/
 │   ├── manifest.json      # Extension metadata
 │   ├── background.js      # Main logic (ES module)
@@ -109,7 +109,7 @@ await api.extensions.reload('groups');
 ### Background Script Pattern
 
 ```javascript
-// extensions/myext/background.js
+// features/myext/background.js
 import { openStore } from 'peek://app/utils.js';
 import appConfig from './config.js';
 

@@ -598,7 +598,7 @@ Datastore & UI
 - [x] Clean up settings and diagnostic UI
 
 Code Cleanup
-- [x] Remove vestigial app/cmd/ directory (24 files, replaced by extensions/cmd/)
+- [x] Remove vestigial app/cmd/ directory (24 files, replaced by features/cmd/)
 - [x] Remove app/scripts/ (disabled feature with missing HTML files)
 - [x] Remove dead functions from app/index.js
 - [x] Remove Cmd and Scripts entries from app/config.js

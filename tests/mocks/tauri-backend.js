@@ -462,7 +462,7 @@
     store.extensions.set(id, {
       id,
       name: id.charAt(0).toUpperCase() + id.slice(1),
-      path: `/extensions/${id}`,
+      path: `/features/${id}`,
       enabled: true,
       builtin: true,
       createdAt: Date.now()

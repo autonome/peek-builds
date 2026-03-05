@@ -429,7 +429,7 @@ Peek supports multiple backends sharing the same storage/api approach:
 ```
 peek/
 ├── app/                    # Renderer (backend-agnostic)
-├── extensions/             # Built-in extensions
+├── features/               # Built-in extensions
 ├── backend/
 │   ├── electron/           # Desktop (primary)
 │   ├── tauri/              # Desktop (Rust alternative)
@@ -470,7 +470,7 @@ peek/
 | **Mobile (JS)** | Script-style | 9 | `yarn test:mobile` |
 | **Mobile (Rust)** | `cargo test` | 19 | In `backend/tauri-mobile/` |
 | **Tauri Desktop (Rust)** | `cargo test` | 16 | `yarn test:tauri:rust` |
-| **Lex Extension** | Node `--test` | 38 | `node --test extensions/lex/tests/` |
+| **Lex Extension** | Node `--test` | 38 | `node --test features/lex/tests/` |
 
 **Electron Unit (TS)** — Backend logic: entities extraction, session management, IZUI state, cmd palette logic, cmd chaining, OAuth bridge, display watcher, noun registry, shortcuts, datastore, completers, tag affordances, page loading.
 

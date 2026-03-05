@@ -278,10 +278,10 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     // Handle extensions infrastructure: peek://extensions/{path}
     // This serves the extension loader and other shared extension code
     if (host === 'extensions') {
-      const absolutePath = path.resolve(rootDir, 'extensions', pathname);
+      const absolutePath = path.resolve(rootDir, 'features', pathname);
 
-      // Security: ensure path stays within extensions folder
-      const extensionsBase = path.resolve(rootDir, 'extensions');
+      // Security: ensure path stays within features folder
+      const extensionsBase = path.resolve(rootDir, 'features');
       if (!absolutePath.startsWith(extensionsBase)) {
         console.error('Path traversal attempt blocked:', absolutePath);
         return new Response('Forbidden', { status: 403 });

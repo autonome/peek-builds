@@ -519,8 +519,8 @@ const onReady = async () => {
   // are called early (before app.whenReady) for proper URL forwarding.
   // See the block after setProfile(PROFILE) above.
 
-  // Discover and register built-in extensions from extensions/ folder
-  discoverBuiltinExtensions(path.join(ROOT_DIR, 'extensions'));
+  // Discover and register built-in extensions from features/ folder
+  discoverBuiltinExtensions(path.join(ROOT_DIR, 'features'));
 
   // Register dev extensions from CLI arguments
   // These are transient (not persisted) and load with devtools open
@@ -537,11 +537,11 @@ const onReady = async () => {
     }
   }
 
-  // Discover and register built-in themes from extensions/ (type: "theme") with legacy themes/ fallback
-  discoverBuiltinThemes(path.join(ROOT_DIR, 'extensions'), path.join(ROOT_DIR, 'themes'));
+  // Discover and register built-in themes from features/ (type: "theme") with legacy themes/ fallback
+  discoverBuiltinThemes(path.join(ROOT_DIR, 'features'), path.join(ROOT_DIR, 'themes'));
 
   // Initialize bundled web extensions infrastructure
-  const chromeExtensionsDir = path.join(ROOT_DIR, 'resources', 'chrome-extensions');
+  const chromeExtensionsDir = path.join(ROOT_DIR, 'chrome-extensions');
   initChromeExtensionManager(chromeExtensionsDir);
 
   // Restore saved theme preference (must be after themes are discovered)

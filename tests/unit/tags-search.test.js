@@ -4,7 +4,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const modulePath = join(__dirname, '..', '..', 'extensions', 'tags', 'search.js');
+const modulePath = join(__dirname, '..', '..', 'features', 'tags', 'search.js');
 
 const { parseSearchQuery, filterItems, filterTags } = await import(modulePath);
 

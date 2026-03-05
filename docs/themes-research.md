@@ -126,7 +126,7 @@ Per-window color scheme override is supported: `theme:setWindowColorScheme` send
 
 ### Extension System Capabilities
 
-**Extension manifest format** (`extensions/*/manifest.json`):
+**Extension manifest format** (`features/*/manifest.json`):
 ```json
 {
   "id": "groups",
@@ -276,9 +276,9 @@ Cons: Two parallel install flows to maintain, two discovery mechanisms.
 
 ### Default Theme as Built-in Extension
 
-The `basic` theme becomes a built-in theme extension at `extensions/theme-basic/`. The `peek` theme becomes `extensions/theme-peek/`. They have `"builtin": true` in their manifests and cannot be uninstalled (only disabled if another theme is active — at least one theme must always be enabled).
+The `basic` theme becomes a built-in theme extension at `features/theme-basic/`. The `peek` theme becomes `features/theme-peek/`. They have `"builtin": true` in their manifests and cannot be uninstalled (only disabled if another theme is active — at least one theme must always be enabled).
 
-Migration path: Move `themes/basic/` to `extensions/theme-basic/`, `themes/peek/` to `extensions/theme-peek/`. Update `discoverBuiltinThemes` to use the extensions directory.
+Migration path: Move `themes/basic/` to `features/theme-basic/`, `themes/peek/` to `features/theme-peek/`. Update `discoverBuiltinThemes` to use the features directory.
 
 ### Theme Switching via Cmd Palette
 
@@ -371,8 +371,8 @@ This is a future addition that builds on the base themes-as-extensions work.
 
 Tasks:
 - Add `type` field to extension manifest interface (`"theme"` | `"extension"` | undefined)
-- Move built-in themes from `themes/` to `extensions/theme-basic/` and `extensions/theme-peek/`
-- Update `discoverBuiltinThemes` to scan `extensions/` for `type: "theme"` manifests
+- Move built-in themes from `themes/` to `features/theme-basic/` and `features/theme-peek/`
+- Update `discoverBuiltinThemes` to scan `features/` for `type: "theme"` manifests
 - Update Settings UI "Themes" section to use the extensions install/remove flow
 - Add theme validation on install (check all required variables present)
 - Ensure at least one theme is always enabled (prevent disabling last active theme)

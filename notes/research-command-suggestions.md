@@ -32,14 +32,14 @@ This should not be specific to `edit` or notes. It should be a generic pattern t
 
 | File | Role |
 |------|------|
-| `extensions/cmd/background.js` | Command registry (provider pattern), shortcut handling, caching |
-| `extensions/cmd/panel.js` | Panel UI, input handling, matching, execution, chain mode |
-| `extensions/cmd/panel.html` | Panel layout and CSS |
-| `extensions/cmd/commands.js` | Command loader, proxy command creation for cross-extension dispatch |
-| `extensions/cmd/commands/index.js` | Aggregates built-in commands (edit, note, url, history, lists) |
-| `extensions/cmd/commands/edit.js` | Edit command -- search notes, return items |
-| `extensions/cmd/commands/note.js` | Note command -- save items |
-| `extensions/cmd/config.js` | Extension ID, defaults, schemas |
+| `features/cmd/background.js` | Command registry (provider pattern), shortcut handling, caching |
+| `features/cmd/panel.js` | Panel UI, input handling, matching, execution, chain mode |
+| `features/cmd/panel.html` | Panel layout and CSS |
+| `features/cmd/commands.js` | Command loader, proxy command creation for cross-extension dispatch |
+| `features/cmd/commands/index.js` | Aggregates built-in commands (edit, note, url, history, lists) |
+| `features/cmd/commands/edit.js` | Edit command -- search notes, return items |
+| `features/cmd/commands/note.js` | Note command -- save items |
+| `features/cmd/config.js` | Extension ID, defaults, schemas |
 
 ### 2.2 Command Registration Flow
 
@@ -421,7 +421,7 @@ The history command currently registers every URL as a separate command. With th
 
 **Goal:** Panel can call `suggest()` on built-in commands and render results in the dropdown.
 
-**Changes to `extensions/cmd/panel.js`:**
+**Changes to `features/cmd/panel.js`:**
 - Add `suggestionMode` state: `{ active, commandName, query, results, selectedIndex, generation }`
 - In `input` event handler: detect when typed text matches a command + has a space + command has `suggest`
 - Call `command.suggest(query)` with debounce (150ms)
@@ -432,7 +432,7 @@ The history command currently registers every URL as a separate command. With th
 - On Escape: exit suggestion mode
 - On Backspace past space: exit suggestion mode
 
-**Changes to `extensions/cmd/panel.html`:**
+**Changes to `features/cmd/panel.html`:**
 - Add CSS for suggestion items (title + subtitle layout, type badge, timestamp)
 
 **Estimated effort:** 1-2 days
@@ -441,7 +441,7 @@ The history command currently registers every URL as a separate command. With th
 
 **Goal:** `edit` command has a working `suggest()` method.
 
-**Changes to `extensions/cmd/commands/edit.js`:**
+**Changes to `features/cmd/commands/edit.js`:**
 - Add `suggest(query)` method that calls `queryItems({ type: 'text', search: query })` (use server-side search instead of client-side filter)
 - Return formatted suggestion items: `{ id, title: firstLine, subtitle: 'text -- relative time' }`
 - Modify `execute()` to check `ctx.selectedSuggestion` for fast-path routing
@@ -458,11 +458,11 @@ The history command currently registers every URL as a separate command. With th
 - Subscribe to `cmd:suggest:{name}` topic
 - On receive: call local suggest handler, publish result to `cmd:suggest:{name}:result`
 
-**Changes to `extensions/cmd/commands.js`:**
+**Changes to `features/cmd/commands.js`:**
 - When creating proxy commands, check if source extension declared `suggest` capability
 - Add `suggest()` method on proxy that publishes `cmd:suggest:{name}` and awaits response
 
-**Changes to `extensions/cmd/background.js`:**
+**Changes to `features/cmd/background.js`:**
 - Store `hasSuggest` flag in command registry metadata
 - Include in `cmd:query-commands-response`
 
@@ -494,15 +494,15 @@ The history command currently registers every URL as a separate command. With th
 
 | File | Change Type | Description |
 |------|------------|-------------|
-| `extensions/cmd/panel.js` | Major | Add suggestion mode state machine, debounced suggest calls, suggestion rendering, keyboard navigation within suggestions |
-| `extensions/cmd/panel.html` | Minor | CSS for suggestion item layout (title/subtitle/badge/time) |
-| `extensions/cmd/commands.js` | Moderate | Proxy command `suggest()` via pubsub for extension commands |
-| `extensions/cmd/commands/edit.js` | Moderate | Add `suggest()` method, update `execute()` with selectedSuggestion fast-path |
-| `extensions/cmd/commands/history.js` | Moderate | Add `suggest()` method, potentially remove dynamic command registration |
-| `extensions/cmd/background.js` | Minor | Track `hasSuggest` in registry metadata |
+| `features/cmd/panel.js` | Major | Add suggestion mode state machine, debounced suggest calls, suggestion rendering, keyboard navigation within suggestions |
+| `features/cmd/panel.html` | Minor | CSS for suggestion item layout (title/subtitle/badge/time) |
+| `features/cmd/commands.js` | Moderate | Proxy command `suggest()` via pubsub for extension commands |
+| `features/cmd/commands/edit.js` | Moderate | Add `suggest()` method, update `execute()` with selectedSuggestion fast-path |
+| `features/cmd/commands/history.js` | Moderate | Add `suggest()` method, potentially remove dynamic command registration |
+| `features/cmd/background.js` | Minor | Track `hasSuggest` in registry metadata |
 | `preload.js` | Moderate | Accept and wire `suggest` handler in command registration, pubsub plumbing |
-| `extensions/tags/background.js` | Minor | Add `suggest()` to tag command |
-| `extensions/groups/background.js` | Minor | Add `suggest()` to open group command |
+| `features/tags/background.js` | Minor | Add `suggest()` to tag command |
+| `features/groups/background.js` | Minor | Add `suggest()` to open group command |
 
 ---
 

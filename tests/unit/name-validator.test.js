@@ -5,13 +5,13 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const modulePath = join(__dirname, '..', '..', 'extensions', 'entities', 'name-validator.js');
+const modulePath = join(__dirname, '..', '..', 'features', 'entities', 'name-validator.js');
 
 // Dynamic import since the module uses ESM exports
 const { classifyNamePattern, isLikelyPersonName, validateEntityType, loadNameDatabaseSync } = await import(modulePath);
 
 // Load the name database synchronously before tests
-const namesPath = join(__dirname, '..', '..', 'extensions', 'entities', 'data', 'names.json');
+const namesPath = join(__dirname, '..', '..', 'features', 'entities', 'data', 'names.json');
 const namesData = JSON.parse(readFileSync(namesPath, 'utf-8'));
 loadNameDatabaseSync(namesData);
 

@@ -219,7 +219,7 @@ Peek currently lacks a standardized way to perform web searches through the cmd 
 ### Component Structure
 
 ```
-extensions/search/
+features/search/
 ├── manifest.json              # Extension metadata
 ├── background.js              # Main extension logic
 ├── content-discovery.js       # Content script for OpenSearch detection
@@ -729,7 +729,7 @@ loadEngines();
 
 **Goal:** Basic search command system
 
-- [ ] Create `extensions/search/` directory structure
+- [ ] Create `features/search/` directory structure
 - [ ] Define datastore schema for `search_engines` table
 - [ ] Implement engine storage CRUD (add, remove, update, list)
 - [ ] Seed built-in engines (Google, DuckDuckGo, Bing, Wikipedia)
@@ -1149,7 +1149,7 @@ loadEngines();
 ### Related Peek Documentation
 - `notes/research-ui-componentry.md` - Peek component system
 - `notes/extensibility.md` - Extension architecture
-- `extensions/cmd/` - Command palette implementation
+- `features/cmd/` - Command palette implementation
 - `app/components/README.md` - Component library docs
 
 ---
@@ -1158,10 +1158,10 @@ loadEngines();
 
 Based on this research, here are the most critical files for implementing the search extension:
 
-1. **`extensions/search/background.js`** - Main extension logic, engine registry, command registration, OpenSearch discovery orchestration
-2. **`extensions/search/suggestion-provider.js`** - Handles API calls to search engines, caching, parsing responses, privacy controls
-3. **`extensions/search/settings.js`** - Management UI logic using peek-components, CRUD operations for engines
-4. **`extensions/cmd/panel.js`** (existing) - Integration point for search suggestions dropdown, fallback handler for unmatched input
+1. **`features/search/background.js`** - Main extension logic, engine registry, command registration, OpenSearch discovery orchestration
+2. **`features/search/suggestion-provider.js`** - Handles API calls to search engines, caching, parsing responses, privacy controls
+3. **`features/search/settings.js`** - Management UI logic using peek-components, CRUD operations for engines
+4. **`features/cmd/panel.js`** (existing) - Integration point for search suggestions dropdown, fallback handler for unmatched input
 5. **`app/datastore/schema.js`** (existing) - Add `search_engines` table schema, migration for built-in engines
 
 ---

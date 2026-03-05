@@ -43,7 +43,7 @@ function startServer(): Promise<string> {
         filePath = path.join(ROOT, req.url);
       }
 
-      if (req.url?.startsWith('/extensions/')) {
+      if (req.url?.startsWith('/features/')) {
         filePath = path.join(ROOT, req.url);
       }
 

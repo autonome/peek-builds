@@ -48,10 +48,10 @@ This prevents cross-extension access to localStorage, DOM, and globals.
 
 ## Extension Structure
 
-Each extension lives in its own directory under `extensions/`:
+Each extension lives in its own directory under `features/`:
 
 ```
-extensions/
+features/
   example/
     manifest.json           # Extension metadata
     settings-schema.json    # Settings UI schema (optional)
