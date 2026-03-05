@@ -395,6 +395,7 @@ interface ResizableInputProps {
   onAutoSave?: (value: string) => void;
   autoCapitalize?: string;
   autoCorrect?: string;
+  showUndoRedo?: boolean;
 }
 
 const ResizableInput: React.FC<ResizableInputProps> = ({
@@ -407,7 +408,8 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   showClearButton = true,
   onAutoSave,
   autoCapitalize: autoCapitalizeProp = "sentences",
-  autoCorrect: autoCorrectProp = "on"
+  autoCorrect: autoCorrectProp = "on",
+  showUndoRedo = true
 }) => {
   const [height, setHeight] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -600,7 +602,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
 
   return (
     <>
-    <div className="undo-redo-buttons">
+    {showUndoRedo && <div className="undo-redo-buttons">
       <button type="button" onClick={handleUndo} disabled={historyIndexRef.current <= 0} title="Undo">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="1 4 1 10 7 10"></polyline>
@@ -613,7 +615,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
           <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"></path>
         </svg>
       </button>
-    </div>
+    </div>}
     <div
       className="resizable-input-wrapper"
       ref={wrapperRef}
@@ -734,6 +736,7 @@ function App() {
 
   // Image editing state
   const [editingImageId, setEditingImageId] = useState<string | null>(null);
+  const [editingImageContent, setEditingImageContent] = useState("");
   const [editingImageTags, setEditingImageTags] = useState<Set<string>>(new Set());
   const [editingImageTagInput, setEditingImageTagInput] = useState("");
 
@@ -1400,7 +1403,7 @@ function App() {
   };
   const hasImageChanges = (): boolean => {
     if (!originalEditValues) return false;
-    return JSON.stringify(Array.from(editingImageTags).sort()) !== JSON.stringify(originalEditValues.tags);
+    return editingImageContent !== (originalEditValues.content ?? "") || JSON.stringify(Array.from(editingImageTags).sort()) !== JSON.stringify(originalEditValues.tags);
   };
 
   const startEditing = async (item: SavedUrl) => {
@@ -1886,13 +1889,15 @@ function App() {
   const startEditingImage = (item: SavedImage) => {
     keyboardPrimerRef.current?.focus();
     setEditingImageId(item.id);
+    setEditingImageContent(item.content || "");
     setEditingImageTags(new Set(item.tags));
     setEditingImageTagInput("");
-    setOriginalEditValues({ tags: [...item.tags].sort() });
+    setOriginalEditValues({ content: item.content || "", tags: [...item.tags].sort() });
   };
 
   const cancelEditingImage = () => {
     setEditingImageId(null);
+    setEditingImageContent("");
     setEditingImageTags(new Set());
     setEditingImageTagInput("");
     setOriginalEditValues(null);
@@ -2310,6 +2315,14 @@ function App() {
         <EditorLayout
           onDismiss={requestCancelEditingImage}
           keyboardHeight={keyboardHeight}
+          tags={{
+            selectedTags: editingImageTags,
+            availableTags: allTags,
+            tagInput: editingImageTagInput,
+            onTagInputChange: setEditingImageTagInput,
+            onToggleTag: toggleEditingImageTag,
+            onAddTag: addEditingImageTag,
+          }}
           buttons={{
             onSave: saveImageChanges,
             onCancel: requestCancelEditingImage,
@@ -2332,23 +2345,15 @@ function App() {
                 </svg>
               </div>
             )}
-            {title && <div className="edit-image-title">{title}</div>}
           </div>
-          <div className="editor-image-scrollable">
-          {item.content && (
-            <div className="edit-image-content">
-              {item.content}
-            </div>
-          )}
-          <TagsSection
-            selectedTags={editingImageTags}
-            availableTags={allTags}
-            tagInput={editingImageTagInput}
-            onTagInputChange={setEditingImageTagInput}
-            onToggleTag={toggleEditingImageTag}
-            onAddTag={addEditingImageTag}
+          <ResizableInput
+            value={editingImageContent}
+            onChange={setEditingImageContent}
+            placeholder="Image description..."
+            keyboardHeight={keyboardHeight}
+            showClearButton={false}
+            showUndoRedo={false}
           />
-          </div>
         </EditorLayout>
       );
     }

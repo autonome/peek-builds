@@ -2771,7 +2771,8 @@ body.dark .clear-btn {
   bottom: auto;
   transform: none;
   height: auto;
-  padding: 4px 0;
+  padding: 12px 0;
+  flex-shrink: 0;
 }
 
 body.dark .resizable-input-textarea {
@@ -2827,7 +2828,6 @@ body.dark .editor-url-input {
 /* Image preview for editor */
 .editor-image-preview {
   padding: 0.75rem 1.15rem;
-  border-bottom: 1px solid #e0e0e0;
   text-align: center;
   flex-shrink: 0;
 }
@@ -2847,43 +2847,7 @@ body.dark .editor-url-input {
   color: #999;
 }
 
-.editor-image-preview .edit-image-title {
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
-  color: #666;
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
 body.dark .editor-image-preview {
-  border-bottom-color: #444;
-}
-
-body.dark .editor-image-preview .edit-image-title {
-  color: #999;
-}
-
-/* Scrollable area below image preview — holds content text + tags */
-.editor-image-scrollable {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Image content text in editor */
-.edit-image-content {
-  padding: 0.75rem 1.15rem;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  opacity: 0.85;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-body.dark .edit-image-content {
-  color: #e0e0e0;
 }
 
 /* Legacy text editor classes - keep for backwards compatibility */
@@ -3021,12 +2985,6 @@ body.dark .text-editor-drag-handle {
   margin-bottom: 0.5rem;
 }
 
-.edit-image-title {
-  font-size: 0.9rem;
-  color: #333;
-  text-align: center;
-  margin-bottom: 1rem;
-}
 
 .edit-modal-buttons {
   display: flex;
@@ -3088,9 +3046,6 @@ body.dark .edit-modal-image {
   background: #1c1c1e;
 }
 
-body.dark .edit-image-title {
-  color: #f6f6f6;
-}
 
 body.dark .edit-modal-buttons {
   border-top-color: #444;
