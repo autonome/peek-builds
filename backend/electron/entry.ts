@@ -5,7 +5,7 @@
  * All Electron-specific code lives here.
  */
 
-import { app, globalShortcut, ipcMain } from 'electron';
+import { app, globalShortcut, ipcMain, Menu } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -406,6 +406,50 @@ const onReady = async () => {
 
   // Initialize backend (database, protocol handler, pubsub broadcaster)
   await initialize();
+
+  // Set a custom application menu so Electron's default macOS menu doesn't
+  // intercept Cmd+, (Preferences accelerator). The default Electron menu on
+  // macOS includes a Preferences item with Cmd+, which consumes the keystroke
+  // before before-input-event fires, preventing our local shortcut handler
+  // from seeing it. We keep standard Edit accelerators (copy/paste/etc.) and
+  // the app submenu (hide/quit), but omit the Preferences accelerator.
+  if (process.platform === 'darwin') {
+    const template: Electron.MenuItemConstructorOptions[] = [
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' }
+        ]
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'pasteAndMatchStyle' },
+          { role: 'delete' },
+          { role: 'selectAll' }
+        ]
+      }
+    ];
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  } else {
+    // On non-macOS platforms, remove the menu entirely so it doesn't
+    // consume any shortcut accelerators
+    Menu.setApplicationMenu(null);
+  }
 
   // Initialize display change watcher (repositions windows when monitors change)
   initDisplayWatcher();

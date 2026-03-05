@@ -75,11 +75,20 @@ const openSettingsWindow = async (prefs, section) => {
   }
 };
 
+let _registeredSettingsShortcut = null;
 const initSettingsShortcut = (prefs) => {
-  api.shortcuts.register(prefs.shortcutKey, () => {
+  const newKey = prefs.shortcutKey;
+  // Unregister old shortcut if it changed
+  if (_registeredSettingsShortcut && _registeredSettingsShortcut !== newKey) {
+    log('core', 'unregistering old settings shortcut:', _registeredSettingsShortcut);
+    api.shortcuts.unregister(_registeredSettingsShortcut);
+  }
+  log('core', 'registering settings shortcut:', newKey);
+  api.shortcuts.register(newKey, () => {
     log('core', 'settings shortcut executed');
     openSettingsWindow(prefs);
   });
+  _registeredSettingsShortcut = newKey;
 };
 
 const initFeature = f => {
@@ -760,6 +769,14 @@ const init = async () => {
   });
 
   initSettingsShortcut(p);
+
+  // Re-register settings shortcut when prefs change (e.g., user edits shortcut in settings UI)
+  api.subscribe(topicCorePrefs, (msg) => {
+    if (msg && msg.prefs && msg.prefs.shortcutKey) {
+      log('core', 'prefs changed, updating settings shortcut');
+      initSettingsShortcut(msg.prefs);
+    }
+  }, api.scopes.SYSTEM);
 
   // Initialize core features (non-extension features only)
   features().forEach(initFeature);
