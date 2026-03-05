@@ -14,6 +14,15 @@
       "action": { "type": "execute" }
     },
     {
+      "name": "open groups",
+      "description": "Open groups browser",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/groups/home.html",
+        "options": { "role": "workspace", "width": 800, "height": 600 }
+      }
+    },
+    {
       "name": "close group",
       "description": "Hide all windows in the current group (restore later)",
       "action": { "type": "execute" }
