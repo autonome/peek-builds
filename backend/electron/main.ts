@@ -1038,16 +1038,9 @@ async function createExtensionHostWindow(): Promise<BrowserWindow> {
             loadedConsolidatedExtensions.add(extId);
             DEBUG && console.log(`[ext:host] Frame loaded: ${extId} (${loadedConsolidatedExtensions.size} total)`);
 
-            // Handle lazy extension ready callbacks
-            if (lazyLoadCallbacks.has(extId)) {
-              lazyExtensionLoaded.add(extId);
-              const callbacks = lazyLoadCallbacks.get(extId) || [];
-              lazyLoadCallbacks.delete(extId);
-              // Give the extension a moment to register its commands before replaying
-              setTimeout(() => {
-                for (const cb of callbacks) cb();
-              }, 200);
-            }
+            // Note: lazy extension ready callbacks are resolved via ext:ready pubsub
+            // (see subscribe('ext:ready', ...) below), not here — did-frame-finish-load
+            // fires before the extension's JS modules have executed and registered handlers.
           }
         }
       }
@@ -1194,6 +1187,15 @@ export async function loadExtensions(): Promise<number> {
       console.error('[ext:host] Failed to create iframe for', id, err);
     });
   };
+
+  // Subscribe to ext:ready — extensions publish this after registering their handlers.
+  // This resolves lazy-load promises so the stub can safely re-publish commands.
+  subscribe(getSystemAddress(), scopes.SYSTEM, 'ext:ready', (data: unknown) => {
+    const extId = (data as { id?: string })?.id;
+    if (extId) {
+      handleLazyExtensionReady(extId);
+    }
+  });
 
   // Create extension host window for consolidated extensions
   if (consolidatedIds.length > 0) {
