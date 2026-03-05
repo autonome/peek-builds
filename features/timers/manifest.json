@@ -36,8 +36,7 @@
   "shortcuts": [
     {
       "keys": "Option+t",
-      "command": "timers",
-      "global": true
+      "command": "timers"
     },
     {
       "keys": "CommandOrControl+T",

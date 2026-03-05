@@ -51,8 +51,7 @@
   "shortcuts": [
     {
       "keys": "Option+g",
-      "command": "groups",
-      "global": true
+      "command": "groups"
     },
     {
       "keys": "CommandOrControl+G",

@@ -17,8 +17,7 @@
   "shortcuts": [
     {
       "keys": "Option+e",
-      "command": "editor",
-      "global": true
+      "command": "editor"
     },
     {
       "keys": "CommandOrControl+E",

@@ -16,8 +16,7 @@
   "shortcuts": [
     {
       "keys": "Option+f",
-      "command": "lists",
-      "global": true
+      "command": "lists"
     }
   ]
 }

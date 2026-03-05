@@ -397,6 +397,7 @@ const URL_MODE_SHORTCUT = 'CommandOrControl+L';
 const initShortcut = (prefs) => {
   if (registeredShortcut) {
     api.shortcuts.unregister(registeredShortcut, { global: true });
+    api.shortcuts.unregister(registeredShortcut);
   }
   api.shortcuts.unregister(LOCAL_SHORTCUT);
   api.shortcuts.unregister(URL_MODE_SHORTCUT);
@@ -405,6 +406,11 @@ const initShortcut = (prefs) => {
   api.shortcuts.register(prefs.shortcutKey, () => {
     openPanelWindow(prefs);
   }, { global: true });
+
+  // Also register as local so it works on Linux Wayland where global shortcuts may fail
+  api.shortcuts.register(prefs.shortcutKey, () => {
+    openPanelWindow(prefs);
+  });
 
   // Local shortcut (Cmd+K) — works when a Peek window is focused
   api.shortcuts.register(LOCAL_SHORTCUT, () => {
@@ -431,6 +437,7 @@ const uninit = () => {
 
   if (registeredShortcut) {
     api.shortcuts.unregister(registeredShortcut, { global: true });
+    api.shortcuts.unregister(registeredShortcut);
     registeredShortcut = null;
   }
   api.shortcuts.unregister(LOCAL_SHORTCUT);

@@ -16,8 +16,7 @@
   "shortcuts": [
     {
       "keys": "Option+p",
-      "command": "pagestream",
-      "global": true
+      "command": "pagestream"
     }
   ]
 }

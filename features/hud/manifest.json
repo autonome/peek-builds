@@ -16,8 +16,7 @@
   "shortcuts": [
     {
       "keys": "Option+H",
-      "command": "hud",
-      "global": true
+      "command": "hud"
     },
     {
       "keys": "CommandOrControl+H",

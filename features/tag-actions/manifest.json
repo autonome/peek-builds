@@ -27,8 +27,7 @@
   "shortcuts": [
     {
       "keys": "Option+Shift+T",
-      "command": "tag actions",
-      "global": true
+      "command": "tag actions"
     }
   ]
 }
