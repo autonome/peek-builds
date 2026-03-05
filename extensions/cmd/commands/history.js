@@ -154,7 +154,7 @@ export const initializeSources = async (addCommand, batchApi = {}) => {
     [...currentUrls].every(url => _registeredUrls.has(url));
 
   if (isSameSet && _registeredUrls.size > 0) {
-    mainLog('[history] no changes, skipping re-registration (' + _registeredUrls.size + ' URL commands cached)');
+    debug && console.log('[history] no changes, skipping re-registration (' + _registeredUrls.size + ' URL commands cached)');
     return;
   }
 
@@ -184,13 +184,13 @@ export const initializeSources = async (addCommand, batchApi = {}) => {
       mainLog('[history] WARNING: no URL items in datastore — cmd palette will have no URL suggestions');
     }
     history.forEach(item => registerHistoryItem(addFn, item));
-    mainLog('[history] registered', history.length, 'URL commands');
+    debug && console.log('[history] registered', history.length, 'URL commands');
   } else {
     // Incremental update — only register new items
     const addedItems = history.filter(item => addedUrls.includes(item.content));
     addedItems.forEach(item => registerHistoryItem(addFn, item));
     if (addedUrls.length > 0 || removedUrls.length > 0) {
-      mainLog('[history] updated: +' + addedUrls.length + ' -' + removedUrls.length + ' URL commands (total: ' + _registeredUrls.size + ')');
+      debug && console.log('[history] updated: +' + addedUrls.length + ' -' + removedUrls.length + ' URL commands (total: ' + _registeredUrls.size + ')');
     }
   }
 
