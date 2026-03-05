@@ -365,6 +365,25 @@ const EditorButtons: React.FC<EditorButtonsProps> = ({
   </div>
 );
 
+interface EditorLayoutProps {
+  onDismiss: () => void;
+  keyboardHeight: number;
+  children?: React.ReactNode;
+  tags?: TagsSectionProps;
+  buttons: EditorButtonsProps;
+  className?: string;
+}
+
+const EditorLayout: React.FC<EditorLayoutProps> = ({
+  onDismiss, keyboardHeight, children, tags, buttons, className
+}) => (
+  <EditorOverlay onDismiss={onDismiss} keyboardHeight={keyboardHeight} className={className || "text-editor-overlay"}>
+    {children}
+    {tags && <TagsSection {...tags} />}
+    <EditorButtons {...buttons} />
+  </EditorOverlay>
+);
+
 interface ResizableInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -2187,7 +2206,23 @@ function App() {
       if (!item) return null;
 
       return (
-        <EditorOverlay onDismiss={requestCancelEditing} keyboardHeight={keyboardHeight} className="text-editor-overlay">
+        <EditorLayout
+          onDismiss={requestCancelEditing}
+          keyboardHeight={keyboardHeight}
+          tags={{
+            selectedTags: editingTags,
+            availableTags: editingUrlTags,
+            tagInput: newTagInput,
+            onTagInputChange: setNewTagInput,
+            onToggleTag: toggleTag,
+            onAddTag: addNewTag,
+          }}
+          buttons={{
+            onSave: saveChanges,
+            onCancel: requestCancelEditing,
+            onDelete: () => requestDelete(editingUrlId, "page"),
+          }}
+        >
           <div className="input-with-clear editor-url-wrapper">
             <input
               type="url"
@@ -2204,27 +2239,31 @@ function App() {
             />
             <ClearButton show={editingUrlValue.length > 0} onClear={() => setEditingUrlValue('')} />
           </div>
-          <TagsSection
-            selectedTags={editingTags}
-            availableTags={editingUrlTags}
-            tagInput={newTagInput}
-            onTagInputChange={setNewTagInput}
-            onToggleTag={toggleTag}
-            onAddTag={addNewTag}
-          />
-          <EditorButtons
-            onSave={saveChanges}
-            onCancel={requestCancelEditing}
-            onDelete={() => requestDelete(editingUrlId, "page")}
-          />
-        </EditorOverlay>
+        </EditorLayout>
       );
     }
 
     // Text/Note editing
     if (editingTextId) {
       return (
-        <EditorOverlay onDismiss={requestCancelEditingText} keyboardHeight={keyboardHeight} className="text-editor-overlay">
+        <EditorLayout
+          onDismiss={requestCancelEditingText}
+          keyboardHeight={keyboardHeight}
+          tags={{
+            selectedTags: editingTextTags,
+            availableTags: allTags,
+            tagInput: editingTextTagInput,
+            onTagInputChange: setEditingTextTagInput,
+            onToggleTag: toggleEditingTextTag,
+            onAddTag: addEditingTextTag,
+          }}
+          buttons={{
+            onSave: saveTextChanges,
+            onCancel: requestCancelEditingText,
+            onDelete: () => requestDelete(editingTextId, "text"),
+            saveLabel: "Done",
+          }}
+        >
           <ResizableInput
             value={editingTextContent}
             onChange={setEditingTextContent}
@@ -2234,42 +2273,30 @@ function App() {
             showClearButton={false}
             onAutoSave={scheduleAutoSave}
           />
-          <TagsSection
-            selectedTags={editingTextTags}
-            availableTags={allTags}
-            tagInput={editingTextTagInput}
-            onTagInputChange={setEditingTextTagInput}
-            onToggleTag={toggleEditingTextTag}
-            onAddTag={addEditingTextTag}
-          />
-          <EditorButtons
-            onSave={saveTextChanges}
-            onCancel={requestCancelEditingText}
-            onDelete={() => requestDelete(editingTextId, "text")}
-            saveLabel="Done"
-          />
-        </EditorOverlay>
+        </EditorLayout>
       );
     }
 
     // Tagset editing
     if (editingTagsetId) {
       return (
-        <EditorOverlay onDismiss={requestCancelEditingTagset} keyboardHeight={keyboardHeight} className="text-editor-overlay">
-          <TagsSection
-            selectedTags={editingTagsetTags}
-            availableTags={allTags}
-            tagInput={editingTagsetInput}
-            onTagInputChange={setEditingTagsetInput}
-            onToggleTag={toggleEditingTagsetTag}
-            onAddTag={addEditingTagsetTag}
-          />
-          <EditorButtons
-            onSave={saveTagsetChanges}
-            onCancel={requestCancelEditingTagset}
-            onDelete={() => requestDelete(editingTagsetId, "tagset")}
-          />
-        </EditorOverlay>
+        <EditorLayout
+          onDismiss={requestCancelEditingTagset}
+          keyboardHeight={keyboardHeight}
+          tags={{
+            selectedTags: editingTagsetTags,
+            availableTags: allTags,
+            tagInput: editingTagsetInput,
+            onTagInputChange: setEditingTagsetInput,
+            onToggleTag: toggleEditingTagsetTag,
+            onAddTag: addEditingTagsetTag,
+          }}
+          buttons={{
+            onSave: saveTagsetChanges,
+            onCancel: requestCancelEditingTagset,
+            onDelete: () => requestDelete(editingTagsetId, "tagset"),
+          }}
+        />
       );
     }
 
@@ -2280,7 +2307,15 @@ function App() {
       const metadata = item.metadata as Record<string, unknown> | undefined;
       const title = metadata?.title as string | undefined;
       return (
-        <EditorOverlay onDismiss={requestCancelEditingImage} keyboardHeight={keyboardHeight} className="text-editor-overlay">
+        <EditorLayout
+          onDismiss={requestCancelEditingImage}
+          keyboardHeight={keyboardHeight}
+          buttons={{
+            onSave: saveImageChanges,
+            onCancel: requestCancelEditingImage,
+            onDelete: () => requestDelete(editingImageId, "image"),
+          }}
+        >
           <div className="editor-image-preview">
             {item.thumbnail ? (
               <img
@@ -2314,12 +2349,7 @@ function App() {
             onAddTag={addEditingImageTag}
           />
           </div>
-          <EditorButtons
-            onSave={saveImageChanges}
-            onCancel={requestCancelEditingImage}
-            onDelete={() => requestDelete(editingImageId, "image")}
-          />
-        </EditorOverlay>
+        </EditorLayout>
       );
     }
 
