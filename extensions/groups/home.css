@@ -256,6 +256,10 @@ peek-card[selected]:hover {
   margin-top: 1px;
 }
 
+.card-url-row {
+  margin-top: -2px;
+}
+
 .card-meta {
   font-size: 11px;
   color: var(--base03);

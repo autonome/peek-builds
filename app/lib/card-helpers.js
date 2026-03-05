@@ -220,7 +220,7 @@ export const getItemDisplayInfo = (item, opts = {}) => {
       faviconUrl = item.favicon || opts.favicon || TYPE_ICONS.url;
     } else if (itemType === 'text') {
       title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
-      subtitle = noteUrl || 'Text';
+      subtitle = noteUrl || '';
       faviconUrl = TYPE_ICONS.text;
     } else if (itemType === 'tagset') {
       title = 'Tag Set';

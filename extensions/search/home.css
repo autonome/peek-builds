@@ -221,6 +221,10 @@ peek-grid.cards[view-mode="masonry"] peek-card {
   margin-top: 1px;
 }
 
+.card-url-row {
+  margin-top: -2px;
+}
+
 /* Empty state */
 .empty-state {
   grid-column: 1 / -1;

@@ -491,6 +491,10 @@ peek-card[selected] {
   margin-top: 1px;
 }
 
+.card-url-row {
+  margin-top: -2px;
+}
+
 /* Card tags */
 .card-tags {
   display: flex;

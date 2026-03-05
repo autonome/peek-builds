@@ -12,7 +12,7 @@
 
 import {
   createHeaderSlot, createFooterSlot, createFaviconEl, createUrlSpan,
-  getItemDisplayInfo
+  formatUrl, getItemDisplayInfo
 } from 'peek://app/lib/card-helpers.js';
 import {
   createAffordanceElements
@@ -67,7 +67,7 @@ export const createSearchResultCard = (item, opts = {}) => {
   if (tags.length > 0) displayOpts.tags = tags;
   if (opts.favicon) displayOpts.favicon = opts.favicon;
 
-  const { title, subtitle, faviconUrl, itemUrl, itemType } = getItemDisplayInfo(item, displayOpts);
+  const { title, subtitle, faviconUrl, itemUrl, itemType, isAddress } = getItemDisplayInfo(item, displayOpts);
 
   // ── Header slot: favicon + title + button group ──────────
   const favicon = createFaviconEl(faviconUrl);
@@ -112,13 +112,20 @@ export const createSearchResultCard = (item, opts = {}) => {
 
   card.appendChild(header);
 
-  // ── Footer slot: URL/subtitle on left, tags + affordances + visit count on right ──
-  const urlEl = subtitle ? createUrlSpan(subtitle) : null;
+  // ── URL row (body slot): show URL between header and footer for items with URLs ──
+  if (itemUrl) {
+    const urlRow = document.createElement('div');
+    urlRow.className = 'card-url-row';
+    const urlSpan = createUrlSpan(formatUrl(itemUrl));
+    urlRow.appendChild(urlSpan);
+    card.appendChild(urlRow);
+  }
 
-  const footerRight = document.createElement('span');
-  footerRight.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
+  // ── Footer slot: affordances on left, tags + visit count on right ──
+  const footerLeft = document.createElement('span');
+  footerLeft.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
 
-  // Tag action affordances (icon badges, toggle checkboxes)
+  // Tag action affordances (icon badges, toggle checkboxes) — bottom left
   if (opts.affordances && opts.affordances.rules && opts.affordances.rules.length > 0 && tags.length > 0) {
     const tagNames = tags.map(t => t.name);
     const el = createAffordanceElements(
@@ -126,10 +133,28 @@ export const createSearchResultCard = (item, opts = {}) => {
         onToggle: opts.affordances.onToggle || (() => {})
       }
     );
-    if (el) footerRight.appendChild(el);
+    if (el) footerLeft.appendChild(el);
   }
 
-  // Tag chips
+  // Visit count — bottom left after affordances
+  const visitCount = opts.visitCount || item.visitCount || 0;
+  if (visitCount > 0) {
+    const visitSpan = document.createElement('span');
+    visitSpan.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
+    visitSpan.style.flexShrink = '0';
+    footerLeft.appendChild(visitSpan);
+  }
+
+  // For non-URL items that have a subtitle (e.g. entity type), show it on the left
+  if (subtitle && !itemUrl) {
+    const subtitleEl = createUrlSpan(subtitle);
+    footerLeft.appendChild(subtitleEl);
+  }
+
+  const footerRight = document.createElement('span');
+  footerRight.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:auto;';
+
+  // Tag chips — right-aligned
   if (tags.length > 0) {
     const tagsContainer = document.createElement('span');
     tagsContainer.className = 'card-tags';
@@ -161,18 +186,15 @@ export const createSearchResultCard = (item, opts = {}) => {
     footerRight.appendChild(tagsContainer);
   }
 
-  // Visit count
-  const visitCount = opts.visitCount || item.visitCount || 0;
-  if (visitCount > 0) {
-    const visitSpan = document.createElement('span');
-    visitSpan.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
-    visitSpan.style.flexShrink = '0';
-    footerRight.appendChild(visitSpan);
-  }
-
-  // Only add footer right if it has children
+  // Only add footer if there's content
+  const hasFooterLeft = footerLeft.children.length > 0;
   const hasFooterRight = footerRight.children.length > 0;
-  card.appendChild(createFooterSlot(urlEl, hasFooterRight ? footerRight : null));
+  if (hasFooterLeft || hasFooterRight) {
+    card.appendChild(createFooterSlot(
+      hasFooterLeft ? footerLeft : null,
+      hasFooterRight ? footerRight : null
+    ));
+  }
 
   // ── Click handler ────────────────────────────────────────────────
   if (opts.onClick) {
