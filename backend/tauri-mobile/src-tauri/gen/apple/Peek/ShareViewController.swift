@@ -50,6 +50,15 @@ class PeekCoreManager {
         setupNetworkMonitor()
     }
 
+    /// Re-read profile config and reconnect to the DB.
+    /// Call this each time the share extension is presented,
+    /// since iOS may keep the extension process (and this singleton)
+    /// alive across invocations — a profile switch in the main app
+    /// would otherwise go unnoticed.
+    func reloadProfile() {
+        setupStore()
+    }
+
     private func setupStore() {
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.dietrich.peek-mobile"
@@ -815,6 +824,11 @@ class ShareViewController: UIViewController, UITextViewDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        // Re-read profile config every time the share sheet opens.
+        // iOS may keep the extension process alive between invocations,
+        // so the singleton could hold a stale profile / DB path.
+        PeekCoreManager.shared.reloadProfile()
 
         view.backgroundColor = PeekTheme.bg
 

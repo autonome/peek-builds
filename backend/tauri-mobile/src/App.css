@@ -2704,7 +2704,9 @@ body.dark .clear-btn {
   display: flex;
   flex-direction: column;
   max-height: 100%;
-  height: auto;
+  flex: 1;
+  height: 0;
+  min-height: 0;
 }
 
 /* Resizable Input Component */
@@ -2785,7 +2787,7 @@ body.dark .drag-handle-bar {
 
 /* Tags Section - expands to fill available space, scrolls when full */
 .editor-tags-section {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
