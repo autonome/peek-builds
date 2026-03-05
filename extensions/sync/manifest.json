@@ -5,6 +5,7 @@
   "description": "Sync commands and functionality",
   "background": false,
   "builtin": true,
+  "hidden": true,
   "commands": [
     {
       "name": "Sync now",

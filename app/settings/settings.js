@@ -403,6 +403,27 @@ const renderCoreSettings = async () => {
 
   container.appendChild(windowsGroup);
 
+  // --- Group 4: Keyboard Shortcuts ---
+  const shortcutsGroup = createSettingsGroup('Keyboard Shortcuts');
+
+  shortcutsGroup.appendChild(createInput(getLabel('shortcutKey'), getVal('shortcutKey'), (newVal) => {
+    prefs.shortcutKey = newVal;
+    save();
+  }, {
+    helpText: pProps.shortcutKey.description,
+    placeholder: 'e.g. CommandOrControl+,'
+  }));
+
+  shortcutsGroup.appendChild(createInput(getLabel('quitShortcut'), getVal('quitShortcut'), (newVal) => {
+    prefs.quitShortcut = newVal;
+    save();
+  }, {
+    helpText: pProps.quitShortcut.description,
+    placeholder: 'e.g. CommandOrControl+Q'
+  }));
+
+  container.appendChild(shortcutsGroup);
+
   return container;
 };
 
@@ -1508,6 +1529,227 @@ const renderSyncSettings = async () => {
 
   container.appendChild(syncSection);
 
+  // Profile Sync section
+  const profileSyncSection = document.createElement('div');
+  profileSyncSection.className = 'form-section';
+  profileSyncSection.style.marginTop = '24px';
+
+  const profileSyncTitle = document.createElement('h3');
+  profileSyncTitle.className = 'form-section-title';
+  profileSyncTitle.textContent = 'Profiles';
+  profileSyncSection.appendChild(profileSyncTitle);
+
+  const profileSyncDesc = document.createElement('div');
+  profileSyncDesc.className = 'help-text';
+  profileSyncDesc.style.marginBottom = '12px';
+  profileSyncDesc.textContent = 'Enable or disable sync for each profile and configure its server profile ID.';
+  profileSyncSection.appendChild(profileSyncDesc);
+
+  const profileSyncList = document.createElement('div');
+  profileSyncList.style.cssText = 'display: flex; flex-direction: column; gap: 12px;';
+
+  // Load profiles and their sync configs
+  try {
+    const listResult = await api.profiles.list();
+    const profiles = (listResult.success && listResult.data) ? listResult.data : [];
+
+    for (const profile of profiles) {
+      let syncConfig = null;
+      try {
+        const configResult = await api.profiles.getSyncConfig(profile.id);
+        if (configResult.success && configResult.data) {
+          syncConfig = configResult.data;
+        }
+      } catch (err) {
+        console.error('[settings] Failed to get sync config for profile:', err);
+      }
+
+      const row = document.createElement('div');
+      row.style.cssText = `
+        padding: 12px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      `;
+
+      const rowHeader = document.createElement('div');
+      rowHeader.style.cssText = 'display: flex; align-items: center; justify-content: space-between;';
+
+      const profileName = document.createElement('span');
+      profileName.textContent = profile.name;
+      profileName.style.cssText = 'font-weight: 500;';
+      rowHeader.appendChild(profileName);
+
+      if (syncConfig) {
+        // Sync enabled — show status and disable button
+        const statusBadge = document.createElement('span');
+        statusBadge.textContent = 'Enabled';
+        statusBadge.style.cssText = 'font-size: 12px; color: var(--success-text, #16a34a); font-weight: 500;';
+        rowHeader.appendChild(statusBadge);
+        row.appendChild(rowHeader);
+
+        const detailsRow = document.createElement('div');
+        detailsRow.style.cssText = 'font-size: 12px; color: var(--text-secondary);';
+        detailsRow.textContent = `Server profile: ${syncConfig.serverProfileId}`;
+        row.appendChild(detailsRow);
+
+        const disableBtn = document.createElement('button');
+        disableBtn.textContent = 'Disable Sync';
+        disableBtn.style.cssText = `
+          padding: 4px 12px;
+          background: var(--bg-tertiary);
+          border: 1px solid var(--border-primary);
+          border-radius: 4px;
+          color: var(--text-secondary);
+          font-size: 12px;
+          cursor: pointer;
+          align-self: flex-start;
+        `;
+        disableBtn.addEventListener('click', async () => {
+          if (confirm(`Disable sync for profile "${profile.name}"?`)) {
+            const result = await api.profiles.disableSync(profile.id);
+            if (result.success) {
+              // Refresh the sync pane
+              const newContent = await renderSyncSettings();
+              container.replaceWith(newContent);
+            } else {
+              alert(`Failed to disable sync: ${result.error}`);
+            }
+          }
+        });
+        row.appendChild(disableBtn);
+      } else {
+        // Sync not enabled — show enable button
+        const statusBadge = document.createElement('span');
+        statusBadge.textContent = 'Disabled';
+        statusBadge.style.cssText = 'font-size: 12px; color: var(--text-tertiary);';
+        rowHeader.appendChild(statusBadge);
+        row.appendChild(rowHeader);
+
+        // Inline enable form (hidden by default)
+        const enableForm = document.createElement('div');
+        enableForm.style.cssText = 'display: none; flex-direction: column; gap: 8px;';
+
+        const formApiKeyInput = document.createElement('input');
+        formApiKeyInput.type = 'password';
+        formApiKeyInput.placeholder = 'API Key';
+        formApiKeyInput.style.cssText = `
+          width: 100%;
+          padding: 8px;
+          border: 1px solid var(--border-primary);
+          border-radius: 4px;
+          background: var(--bg-tertiary);
+          color: var(--text-primary);
+          font-size: 13px;
+        `;
+        enableForm.appendChild(formApiKeyInput);
+
+        const formProfileIdInput = document.createElement('input');
+        formProfileIdInput.type = 'text';
+        formProfileIdInput.placeholder = 'Server profile ID (UUID from server)';
+        formProfileIdInput.style.cssText = `
+          width: 100%;
+          padding: 8px;
+          border: 1px solid var(--border-primary);
+          border-radius: 4px;
+          background: var(--bg-tertiary);
+          color: var(--text-primary);
+          font-size: 13px;
+        `;
+        enableForm.appendChild(formProfileIdInput);
+
+        const formButtons = document.createElement('div');
+        formButtons.style.cssText = 'display: flex; gap: 8px;';
+
+        const formSaveBtn = document.createElement('button');
+        formSaveBtn.textContent = 'Enable';
+        formSaveBtn.style.cssText = `
+          padding: 6px 14px;
+          background: var(--accent-primary);
+          border: none;
+          border-radius: 4px;
+          color: white;
+          font-size: 12px;
+          cursor: pointer;
+        `;
+        formSaveBtn.addEventListener('click', async () => {
+          const apiKey = formApiKeyInput.value.trim();
+          const serverProfileId = formProfileIdInput.value.trim();
+          if (!apiKey) { alert('Please enter an API key'); return; }
+          if (!serverProfileId) { alert('Please enter a server profile ID'); return; }
+          const result = await api.profiles.enableSync(profile.id, apiKey, serverProfileId);
+          if (result.success) {
+            const newContent = await renderSyncSettings();
+            container.replaceWith(newContent);
+          } else {
+            alert(`Failed to enable sync: ${result.error}`);
+          }
+        });
+        formButtons.appendChild(formSaveBtn);
+
+        const formCancelBtn = document.createElement('button');
+        formCancelBtn.textContent = 'Cancel';
+        formCancelBtn.style.cssText = `
+          padding: 6px 14px;
+          background: var(--bg-tertiary);
+          border: 1px solid var(--border-primary);
+          border-radius: 4px;
+          color: var(--text-secondary);
+          font-size: 12px;
+          cursor: pointer;
+        `;
+        formCancelBtn.addEventListener('click', () => {
+          enableForm.style.display = 'none';
+          enableBtn.style.display = '';
+        });
+        formButtons.appendChild(formCancelBtn);
+
+        enableForm.appendChild(formButtons);
+        row.appendChild(enableForm);
+
+        const enableBtn = document.createElement('button');
+        enableBtn.textContent = 'Enable Sync';
+        enableBtn.style.cssText = `
+          padding: 4px 12px;
+          background: var(--accent-primary);
+          border: none;
+          border-radius: 4px;
+          color: white;
+          font-size: 12px;
+          cursor: pointer;
+          align-self: flex-start;
+        `;
+        enableBtn.addEventListener('click', () => {
+          enableBtn.style.display = 'none';
+          enableForm.style.display = 'flex';
+          formApiKeyInput.focus();
+        });
+        row.appendChild(enableBtn);
+      }
+
+      profileSyncList.appendChild(row);
+    }
+
+    if (profiles.length === 0) {
+      const emptyNote = document.createElement('div');
+      emptyNote.className = 'help-text';
+      emptyNote.textContent = 'No profiles found.';
+      profileSyncList.appendChild(emptyNote);
+    }
+  } catch (err) {
+    console.error('[settings] Failed to load profiles for sync section:', err);
+    const errorNote = document.createElement('div');
+    errorNote.className = 'help-text';
+    errorNote.textContent = 'Failed to load profiles.';
+    profileSyncList.appendChild(errorNote);
+  }
+
+  profileSyncSection.appendChild(profileSyncList);
+  container.appendChild(profileSyncSection);
+
   return container;
 };
 
@@ -1738,7 +1980,7 @@ const renderExtensionsSettings = async () => {
       title.textContent = 'Installed Features';
       extSection.appendChild(title);
 
-      allExtensions.forEach(ext => {
+      allExtensions.filter(ext => !(ext.manifest || {}).hidden).forEach(ext => {
         const manifest = ext.manifest || {};
         const isBuiltin = manifest.builtin || ext.source === 'builtin';
 
@@ -2422,92 +2664,32 @@ const renderProfilesSettings = async () => {
 
     card.appendChild(header);
 
-    // Sync configuration section
-    const syncSection = document.createElement('div');
-    syncSection.style.cssText = `
+    // Sync link — config is now in the Sync pane
+    const syncNote = document.createElement('div');
+    syncNote.style.cssText = `
       padding: 8px;
       background: var(--bg-tertiary);
       border-radius: 4px;
+      font-size: 12px;
+      color: var(--text-secondary);
       display: flex;
-      flex-direction: column;
+      align-items: center;
       gap: 6px;
     `;
+    const syncLabel = document.createElement('span');
+    syncLabel.textContent = 'Sync:';
+    syncNote.appendChild(syncLabel);
+    const syncLink = document.createElement('a');
+    syncLink.textContent = 'configure in Sync section';
+    syncLink.href = '#';
+    syncLink.style.cssText = 'color: var(--accent-primary); cursor: pointer; text-decoration: none;';
+    syncLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      showSection('sync');
+    });
+    syncNote.appendChild(syncLink);
 
-    const syncTitle = document.createElement('div');
-    syncTitle.textContent = 'Sync Configuration';
-    syncTitle.style.cssText = 'font-size: 12px; font-weight: 500; color: var(--text-secondary);';
-    syncSection.appendChild(syncTitle);
-
-    // Check if sync is enabled
-    let syncConfig = null;
-    try {
-      const configResult = await api.profiles.getSyncConfig(profile.id);
-      if (configResult.success && configResult.data) {
-        syncConfig = configResult.data;
-      }
-    } catch (err) {
-      console.error('[settings] Failed to get sync config for profile:', err);
-    }
-
-    if (syncConfig) {
-      // Sync enabled - show details and disable button
-      const syncDetails = document.createElement('div');
-      syncDetails.style.cssText = 'font-size: 12px; color: var(--text-secondary);';
-      syncDetails.innerHTML = `
-        <div>✓ Sync enabled</div>
-        <div>Server profile: <strong>${syncConfig.serverProfileId}</strong></div>
-      `;
-      syncSection.appendChild(syncDetails);
-
-      const disableBtn = document.createElement('button');
-      disableBtn.textContent = 'Disable Sync';
-      disableBtn.style.cssText = `
-        padding: 4px 12px;
-        background: var(--bg-tertiary);
-        border: 1px solid var(--border-primary);
-        border-radius: 4px;
-        color: var(--text-secondary);
-        font-size: 12px;
-        cursor: pointer;
-        align-self: flex-start;
-      `;
-      disableBtn.addEventListener('click', async () => {
-        if (confirm(`Disable sync for profile "${profile.name}"?`)) {
-          const result = await api.profiles.disableSync(profile.id);
-          if (result.success) {
-            // Refresh the profiles section
-            const newContent = await renderProfilesSettings();
-            container.replaceWith(newContent);
-          } else {
-            alert(`Failed to disable sync: ${result.error}`);
-          }
-        }
-      });
-      syncSection.appendChild(disableBtn);
-    } else {
-      // Sync not enabled - show enable button
-      const syncDisabled = document.createElement('div');
-      syncDisabled.style.cssText = 'font-size: 12px; color: var(--text-secondary);';
-      syncDisabled.textContent = 'Sync not configured';
-      syncSection.appendChild(syncDisabled);
-
-      const enableBtn = document.createElement('button');
-      enableBtn.textContent = 'Enable Sync';
-      enableBtn.style.cssText = `
-        padding: 4px 12px;
-        background: var(--accent-primary);
-        border: none;
-        border-radius: 4px;
-        color: white;
-        font-size: 12px;
-        cursor: pointer;
-        align-self: flex-start;
-      `;
-      enableBtn.addEventListener('click', () => showEnableSyncDialog(profile, container));
-      syncSection.appendChild(enableBtn);
-    }
-
-    card.appendChild(syncSection);
+    card.appendChild(syncNote);
     profilesList.appendChild(card);
   }
 
@@ -2615,133 +2797,6 @@ const showAddProfileDialog = async (parentContainer) => {
   document.body.appendChild(dialog);
 
   input.focus();
-};
-
-// Show enable sync dialog
-const showEnableSyncDialog = async (profile, parentContainer) => {
-  const dialog = document.createElement('div');
-  dialog.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 10000;
-  `;
-
-  const content = document.createElement('div');
-  content.style.cssText = `
-    background: var(--bg-primary);
-    padding: 24px;
-    border-radius: 8px;
-    width: 500px;
-    max-width: 90%;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  `;
-
-  const title = document.createElement('h3');
-  title.textContent = `Enable Sync for "${profile.name}"`;
-  title.style.cssText = 'margin: 0 0 16px 0;';
-  content.appendChild(title);
-
-  const description = document.createElement('p');
-  description.textContent = 'Enter your server API key and the server profile ID (UUID) to sync to.';
-  description.style.cssText = 'margin: 0 0 16px 0; font-size: 13px; color: var(--text-secondary);';
-  content.appendChild(description);
-
-  const apiKeyInput = document.createElement('input');
-  apiKeyInput.type = 'password';
-  apiKeyInput.placeholder = 'API Key';
-  apiKeyInput.style.cssText = `
-    width: 100%;
-    padding: 8px;
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    font-size: 14px;
-    margin-bottom: 12px;
-  `;
-  content.appendChild(apiKeyInput);
-
-  const profileIdInput = document.createElement('input');
-  profileIdInput.type = 'text';
-  profileIdInput.placeholder = 'Server profile ID (UUID from server)';
-  profileIdInput.style.cssText = `
-    width: 100%;
-    padding: 8px;
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    font-size: 14px;
-    margin-bottom: 16px;
-  `;
-  content.appendChild(profileIdInput);
-
-  const buttons = document.createElement('div');
-  buttons.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.style.cssText = `
-    padding: 8px 16px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 4px;
-    color: var(--text-secondary);
-    font-size: 13px;
-    cursor: pointer;
-  `;
-  cancelBtn.addEventListener('click', () => dialog.remove());
-  buttons.appendChild(cancelBtn);
-
-  const enableBtn = document.createElement('button');
-  enableBtn.textContent = 'Enable';
-  enableBtn.style.cssText = `
-    padding: 8px 16px;
-    background: var(--accent-primary);
-    border: none;
-    border-radius: 4px;
-    color: white;
-    font-size: 13px;
-    cursor: pointer;
-  `;
-  enableBtn.addEventListener('click', async () => {
-    const apiKey = apiKeyInput.value.trim();
-    const serverProfileId = profileIdInput.value.trim();
-
-    if (!apiKey) {
-      alert('Please enter an API key');
-      return;
-    }
-
-    if (!serverProfileId) {
-      alert('Please enter a server profile ID');
-      return;
-    }
-
-    const result = await api.profiles.enableSync(profile.id, apiKey, serverProfileId);
-    if (result.success) {
-      dialog.remove();
-      // Refresh the profiles section
-      const newContent = await renderProfilesSettings();
-      parentContainer.replaceWith(newContent);
-    } else {
-      alert(`Failed to enable sync: ${result.error}`);
-    }
-  });
-  buttons.appendChild(enableBtn);
-
-  content.appendChild(buttons);
-  dialog.appendChild(content);
-  document.body.appendChild(dialog);
-
-  apiKeyInput.focus();
 };
 
 // Render datastore settings (inline pane instead of separate window)
