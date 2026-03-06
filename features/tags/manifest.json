@@ -36,15 +36,5 @@
         "options": { "role": "workspace", "key": "tags-home", "width": 900, "height": 700, "title": "Tags" }
       }
     }
-  ],
-  "shortcuts": [
-    {
-      "keys": "Option+t",
-      "command": "open tags"
-    },
-    {
-      "keys": "CommandOrControl+T",
-      "command": "open tags"
-    }
   ]
 }

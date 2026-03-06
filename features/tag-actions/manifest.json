@@ -23,11 +23,5 @@
         }
       }
     }
-  ],
-  "shortcuts": [
-    {
-      "keys": "Option+Shift+T",
-      "command": "tag actions"
-    }
   ]
 }

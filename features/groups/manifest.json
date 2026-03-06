@@ -50,10 +50,6 @@
   ],
   "shortcuts": [
     {
-      "keys": "Option+g",
-      "command": "groups"
-    },
-    {
       "keys": "CommandOrControl+G",
       "command": "groups"
     }

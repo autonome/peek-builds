@@ -17,11 +17,5 @@
         "options": { "key": "scripts-manager", "width": 1200, "height": 800, "title": "Scripts Manager" }
       }
     }
-  ],
-  "shortcuts": [
-    {
-      "keys": "Command+Shift+S",
-      "command": "open scripts"
-    }
   ]
 }

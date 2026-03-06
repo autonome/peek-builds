@@ -16,10 +16,6 @@
   ],
   "shortcuts": [
     {
-      "keys": "Option+e",
-      "command": "editor"
-    },
-    {
       "keys": "CommandOrControl+E",
       "command": "editor"
     }

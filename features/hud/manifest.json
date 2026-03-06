@@ -15,10 +15,6 @@
   ],
   "shortcuts": [
     {
-      "keys": "Option+H",
-      "command": "hud"
-    },
-    {
       "keys": "CommandOrControl+H",
       "command": "hud"
     }

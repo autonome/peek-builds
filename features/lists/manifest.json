@@ -15,7 +15,7 @@
   ],
   "shortcuts": [
     {
-      "keys": "Option+f",
+      "keys": "CommandOrControl+Shift+F",
       "command": "lists"
     }
   ]
