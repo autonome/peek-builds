@@ -373,6 +373,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateUnformattedPhoneEntities();
   migrateLowQualityEntities();
   migrateInvalidPersonEntities();
+  migrateInvalidPlaceEntities();
   migrateTagNavigationHistory();
   dropLegacyAddressTables();
 
@@ -2033,6 +2034,57 @@ function migrateInvalidPersonEntities(): void {
   db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
   if (removedCount > 0 || retypedCount > 0) {
     console.log(`[datastore] Person entity validation: removed ${removedCount}, retyped ${retypedCount} to organization`);
+  }
+}
+
+/**
+ * Remove false-positive place entities from the regex extractor.
+ * Previously ADDRESS_RE was too loose (case-insensitive, allowed zero-length
+ * words) and matched strings like "16 yarn test" as street addresses.
+ * Re-validates regex-extracted places against the tightened ADDRESS_RE.
+ * Non-regex places (from structured data, microformats) are left untouched.
+ */
+function migrateInvalidPlaceEntities(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'validate_place_entities_v1';
+
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') return;
+
+  // Tightened ADDRESS_RE: case-sensitive suffixes, 2+ char words, mandatory whitespace
+  const validAddressPattern = /\b\d{1,5}\s+(?:[A-Z][a-zA-Z]+\s+){1,4}(?:Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Road|Rd|Lane|Ln|Way|Court|Ct|Place|Pl|Circle|Cir|Trail|Trl|Parkway|Pkwy|Highway|Hwy)\.?\b/;
+
+  const regexPlaceEntities = db.prepare(`
+    SELECT id, content, metadata FROM items
+    WHERE type = 'entity'
+      AND deletedAt = 0
+      AND json_extract(metadata, '$.entityType') = 'place'
+      AND json_extract(metadata, '$.extractor') = 'regex'
+  `).all() as { id: string; content: string; metadata: string }[];
+
+  let removedCount = 0;
+
+  for (const entity of regexPlaceEntities) {
+    const name = (entity.content || '').trim();
+
+    // Keep if it matches the tightened address pattern
+    if (validAddressPattern.test(name)) continue;
+
+    // Doesn't match — remove as false positive from old loose regex
+    try {
+      db!.prepare('DELETE FROM item_events WHERE itemId = ?').run(entity.id);
+      db!.prepare('DELETE FROM item_tags WHERE itemId = ?').run(entity.id);
+      db!.prepare('DELETE FROM items WHERE id = ?').run(entity.id);
+      removedCount++;
+    } catch (error) {
+      console.error(`Failed to remove invalid place entity ${entity.id}:`, error);
+    }
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
+  if (removedCount > 0) {
+    console.log(`[datastore] Place entity validation: removed ${removedCount} false-positive regex-extracted place entities`);
   }
 }
 

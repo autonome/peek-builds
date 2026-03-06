@@ -570,4 +570,178 @@ describe('Entity Regex Extraction Filters', () => {
       assert.strictEqual(dates.length, 0, 'Date regex extraction is disabled');
     });
   });
+
+  // ─── Address/place: true positives SHOULD be detected ────────────
+
+  describe('addresses: valid street addresses SHOULD be detected as places', () => {
+    it('should detect "123 Main Street"', () => {
+      const text = 'Our office is at 123 Main Street';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, '"123 Main Street" should be detected');
+    });
+
+    it('should detect "456 Oak Avenue"', () => {
+      const text = 'Located at 456 Oak Avenue';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, '"456 Oak Avenue" should be detected');
+    });
+
+    it('should detect "789 Elm Boulevard"', () => {
+      const text = 'Visit 789 Elm Boulevard';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, '"789 Elm Boulevard" should be detected');
+    });
+
+    it('should detect "1600 Pennsylvania Ave"', () => {
+      const text = 'The address is 1600 Pennsylvania Ave';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, '"1600 Pennsylvania Ave" should be detected');
+    });
+
+    it('should detect "42 Wallaby Way"', () => {
+      const text = 'Find us at 42 Wallaby Way';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, '"42 Wallaby Way" should be detected');
+    });
+
+    it('should detect "100 Technology Drive, Suite 200"', () => {
+      const text = 'Headquarters: 100 Technology Drive, Suite 200';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, '"100 Technology Drive, Suite 200" should be detected');
+    });
+
+    it('should detect full address with city, state, zip', () => {
+      const text = 'Leavening Heaven, 123 Main St, Dorktown, IA 52001';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, 'Full address should be detected');
+      assert.ok(places[0].attributes.address.includes('Dorktown'), 'Should include city');
+      assert.ok(places[0].attributes.address.includes('IA'), 'Should include state');
+      assert.ok(places[0].attributes.label === 'Leavening Heaven', 'Should extract label');
+    });
+
+    it('should detect address with city and state but no zip', () => {
+      const text = '456 Oak Avenue, Portland, OR';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, 'Address with city/state should be detected');
+      assert.ok(places[0].attributes.address.includes('Portland'), 'Should include city');
+      assert.ok(places[0].attributes.address.includes('OR'), 'Should include state');
+    });
+
+    it('should detect address with zip+4', () => {
+      const text = '789 Elm Boulevard, Austin, TX 78701-1234';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, 'Address with zip+4 should be detected');
+      assert.ok(places[0].attributes.address.includes('78701-1234'), 'Should include full zip');
+    });
+  });
+
+  // ─── Address/place: false positives should NOT be detected ───────
+
+  describe('addresses: non-address text should NOT be detected as places', () => {
+    it('should NOT detect "16 yarn test" as a place', () => {
+      const text = '16 yarn test';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.strictEqual(places.length, 0,
+        '"16 yarn test" should not be a place');
+    });
+
+    it('should NOT detect "9 yarn test" as a place', () => {
+      const text = '9 yarn test';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.strictEqual(places.length, 0,
+        '"9 yarn test" should not be a place');
+    });
+
+    it('should NOT detect "90 npx playwright test" as a place', () => {
+      const text = '90 npx playwright test';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.strictEqual(places.length, 0,
+        '"90 npx playwright test" should not be a place');
+    });
+
+    it('should NOT detect numbered list items as places', () => {
+      const text = '3 Configure Settings';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.strictEqual(places.length, 0,
+        'Numbered list item should not be a place');
+    });
+
+    it('should NOT detect "5 Install Dependencies" as a place', () => {
+      const text = '5 Install Dependencies';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.strictEqual(places.length, 0,
+        '"5 Install Dependencies" should not be a place');
+    });
+
+    it('should NOT detect "10 Create Account" as a place', () => {
+      const text = '10 Create Account';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.strictEqual(places.length, 0,
+        '"10 Create Account" should not be a place');
+    });
+
+    it('should NOT detect "2 Run Tests" as a place', () => {
+      const text = '2 Run Tests';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.strictEqual(places.length, 0,
+        '"2 Run Tests" should not be a place');
+    });
+  });
+
+  // ─── Address/place: label/name context extraction ────────────────
+
+  describe('addresses: label/name context extraction', () => {
+    it('should extract label from text before address (newline-separated)', () => {
+      const text = "Madison Square Garden\n4 Pennsylvania Ave";
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, 'Should detect the address');
+      assert.ok(places[0].attributes.label, 'Should have a label');
+      assert.ok(places[0].attributes.label.includes('Madison Square Garden'));
+      assert.ok(places[0].name.includes('Madison Square Garden'));
+    });
+
+    it('should extract label from "at" pattern', () => {
+      const text = "Joe's Pizza at 123 Doughy Ln";
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1, 'Should detect the address');
+      assert.ok(places[0].attributes.label, 'Should have a label');
+      assert.ok(places[0].attributes.label.includes("Joe's Pizza"));
+    });
+
+    it('should store address separately in attributes', () => {
+      const text = "Acme Corp\n456 Oak Avenue";
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1);
+      assert.ok(places[0].attributes.address.includes('456 Oak Avenue'));
+      assert.ok(places[0].attributes.label === 'Acme Corp');
+    });
+
+    it('should have no label when no context precedes address', () => {
+      const text = '123 Main Street';
+      const result = extractRegexEntities(text, 'https://example.com');
+      const places = result.filter((e: any) => e.entityType === 'place');
+      assert.ok(places.length >= 1);
+      assert.strictEqual(places[0].attributes.label, undefined);
+      assert.strictEqual(places[0].name, '123 Main Street');
+    });
+  });
 });

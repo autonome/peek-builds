@@ -32,8 +32,11 @@ const DATE_PATTERNS = [
 const PRICE_CONTEXT_RE = /(?:\$|EUR|GBP|USD|CAD|AUD|JPY|CHF)\s?[\d,]+(?:\.\d{2})?|\d+(?:,\d{3})*(?:\.\d{2})?\s?(?:USD|EUR|GBP|CAD|AUD|JPY|CHF)/gi;
 
 // US/international street address pattern
-// Matches patterns like "123 Main St", "456 Oak Avenue, Suite 200"
-const ADDRESS_RE = /\b\d{1,5}\s+(?:[A-Z][a-zA-Z]*\s*){1,4}(?:Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Road|Rd|Lane|Ln|Way|Court|Ct|Place|Pl|Circle|Cir|Trail|Trl|Parkway|Pkwy|Highway|Hwy)\.?(?:\s*,?\s*(?:Suite|Ste|Apt|Unit|#)\s*\w+)?\b/gi;
+// Matches patterns like "123 Main St", "456 Oak Avenue, Suite 200", "123 Main St, Portland, OR 97201"
+// Case-sensitive: street suffixes must be capitalized (prevents "test" matching "St")
+// Requires 2+ char words with mandatory whitespace between them
+// Optional tail: Suite/Apt, then City, State (2-letter), ZIP
+const ADDRESS_RE = /\b\d{1,5}\s+(?:[A-Z][a-zA-Z]+\s+){1,4}(?:Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Road|Rd|Lane|Ln|Way|Court|Ct|Place|Pl|Circle|Cir|Trail|Trl|Parkway|Pkwy|Highway|Hwy)\.?\b(?:\s*,?\s*(?:Suite|Ste|Apt|Unit|#)\s*\w+)?(?:\s*,\s*[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)?(?:\s*,\s*[A-Z]{2})?(?:\s+\d{5}(?:-\d{4})?)?\b/g;
 
 // Tracking number patterns
 const TRACKING_PATTERNS = [
@@ -173,6 +176,50 @@ function extractPriceContext(text, matchIndex) {
 }
 
 /**
+ * Extract the name/label associated with a street address.
+ * Looks at the text before the address (up to 100 chars) for a business name,
+ * person name, or venue title. Common patterns:
+ *   - "Joe's Pizza\n123 Main St" (newline-separated)
+ *   - "Madison Square Garden, 4 Pennsylvania Plaza"
+ *   - "Ship to: John Doe 456 Oak Ave"
+ * @param {string} text - Full text
+ * @param {number} matchIndex - Index of the address match in text
+ * @returns {string|null} Name/label or null
+ */
+function extractAddressContext(text, matchIndex) {
+  const beforeStart = Math.max(0, matchIndex - 100);
+  const before = text.slice(beforeStart, matchIndex).trim();
+
+  // Split by newlines, bullets, pipes — the label is typically on the line above or same line
+  const segments = before.split(/[\n\r|•·–—]/).filter(s => s.trim().length > 0);
+  const lastSegment = (segments.length > 0 ? segments[segments.length - 1] : '').trim();
+
+  if (!lastSegment || lastSegment.length < 2) return null;
+
+  // Remove trailing connector words ("at", "located at", "ship to:", etc.)
+  const cleaned = lastSegment
+    .replace(/\s*\b(?:at|located\s+at|ship\s+to|deliver\s+to|send\s+to|mail\s+to|address|located)\s*:?\s*$/i, '')
+    .replace(/\s*[-:,]\s*$/, '')
+    .trim();
+
+  if (!cleaned || cleaned.length < 2) return null;
+  if (/^[\d\s.,;:!?$%/\-]+$/.test(cleaned)) return null;
+
+  // Reject generic noise
+  const noiseWords = /^(?:the|a|an|and|or|for|to|in|on|at|is|it|our|your|home|menu|contact|address|location|directions|map|visit|find)\s*$/i;
+  if (noiseWords.test(cleaned)) return null;
+
+  // Take up to ~60 chars, trim to word boundary
+  let label = cleaned.slice(-60).trim();
+  if (cleaned.length > 60) {
+    const spaceIdx = label.indexOf(' ');
+    if (spaceIdx > 0) label = label.slice(spaceIdx + 1);
+  }
+
+  return label || null;
+}
+
+/**
  * Extract person names from text using lightweight NER.
  * Scans for capitalized word sequences (2-3 words) where the first word
  * matches a known first name from the name database.
@@ -285,21 +332,26 @@ export function extractRegexEntities(text, url) {
   // The price regex matches currency codes in non-price contexts (e.g. "2025 AUD" as a price).
   // Dates and prices from structured data (JSON-LD) are still extracted by other extractors.
 
-  // Extract street addresses
+  // Extract street addresses (with optional name/label context)
   ADDRESS_RE.lastIndex = 0;
-  const addresses = text.match(ADDRESS_RE) || [];
   const seenAddresses = new Set();
-  for (const addr of addresses) {
-    const normalized = addr.trim().replace(/\s+/g, ' ');
+  let addrMatch;
+  while ((addrMatch = ADDRESS_RE.exec(text)) !== null) {
+    const normalized = addrMatch[0].trim().replace(/\s+/g, ' ');
     const key = normalized.toLowerCase();
     if (seenAddresses.has(key)) continue;
     seenAddresses.add(key);
+
+    const label = extractAddressContext(text, addrMatch.index);
+    const attrs = { address: normalized };
+    if (label) attrs.label = label;
+
     entities.push({
-      name: normalized,
+      name: label ? `${label}, ${normalized}` : normalized,
       entityType: 'place',
       confidence: 0.75,
       extractor: 'regex',
-      attributes: { address: normalized },
+      attributes: attrs,
       sourceUrl: url
     });
   }

@@ -298,7 +298,7 @@ export function validateEntityType(name, claimedType) {
   }
 
   // --- Other types: minimal validation ---
-  // For events, places, products, creative works — just check for URL/path
+  // For events, products, creative works — just check for URL/path
   return { valid: true };
 }
 
