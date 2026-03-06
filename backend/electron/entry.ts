@@ -5,7 +5,7 @@
  * All Electron-specific code lives here.
  */
 
-import { app, globalShortcut, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -64,6 +64,7 @@ import {
   isTestProfile,
   isHeadless,
   // Window helpers
+  closeOrHideWindow,
   setPrefsGetter,
   updateDockVisibility,
   // Extension loading
@@ -441,6 +442,16 @@ const onReady = async () => {
           { role: 'pasteAndMatchStyle' },
           { role: 'delete' },
           { role: 'selectAll' }
+        ]
+      },
+      {
+        label: 'Window',
+        submenu: [
+          { label: 'Close Window', accelerator: 'CommandOrControl+W', click: () => {
+              const win = BrowserWindow.getFocusedWindow();
+              if (win) closeOrHideWindow(win.id);
+          }},
+          { role: 'minimize' },
         ]
       }
     ];
