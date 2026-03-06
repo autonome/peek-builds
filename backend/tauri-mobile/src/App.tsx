@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import snarkdown from "snarkdown";
 import "./App.css";
 import readerCss from "./reader.css?raw";
 
@@ -396,6 +397,7 @@ interface ResizableInputProps {
   autoCapitalize?: string;
   autoCorrect?: string;
   showUndoRedo?: boolean;
+  extraButtons?: React.ReactNode;
 }
 
 const ResizableInput: React.FC<ResizableInputProps> = ({
@@ -409,7 +411,8 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   onAutoSave,
   autoCapitalize: autoCapitalizeProp = "sentences",
   autoCorrect: autoCorrectProp = "on",
-  showUndoRedo = true
+  showUndoRedo = true,
+  extraButtons
 }) => {
   const [height, setHeight] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -603,7 +606,8 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
 
   return (
     <>
-    {showUndoRedo && <div className="undo-redo-buttons">
+    {(showUndoRedo || extraButtons) && <div className="undo-redo-buttons">
+      {showUndoRedo && <>
       <button type="button" onClick={handleUndo} disabled={historyIndexRef.current <= 0} title="Undo">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="1 4 1 10 7 10"></polyline>
@@ -616,6 +620,8 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
           <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"></path>
         </svg>
       </button>
+      </>}
+      {extraButtons}
     </div>}
     <div
       className="resizable-input-wrapper"
@@ -729,6 +735,8 @@ function App() {
   const [editingTextContent, setEditingTextContent] = useState("");
   const [editingTextTags, setEditingTextTags] = useState<Set<string>>(new Set());
   const [editingTextTagInput, setEditingTextTagInput] = useState("");
+  const [textReaderMode, setTextReaderMode] = useState<string | null>(null); // item ID being viewed in reader mode
+  const [editorReaderMode, setEditorReaderMode] = useState(false);
 
   // Tagset editing state
   const [editingTagsetId, setEditingTagsetId] = useState<string | null>(null);
@@ -740,6 +748,7 @@ function App() {
   const [editingImageContent, setEditingImageContent] = useState("");
   const [editingImageTags, setEditingImageTags] = useState<Set<string>>(new Set());
   const [editingImageTagInput, setEditingImageTagInput] = useState("");
+  const [fullscreenImageData, setFullscreenImageData] = useState<string | null>(null);
 
   // Unified add input state
   const [addInputText, setAddInputText] = useState("");
@@ -841,6 +850,10 @@ function App() {
   const [readmeTagInput, setReadmeTagInput] = useState("readme");
   const [readTag, setReadTag] = useState("read");
   const [readTagInput, setReadTagInput] = useState("read");
+  const [todayTag, setTodayTag] = useState("today");
+  const [todayTagInput, setTodayTagInput] = useState("today");
+  const [laterTag, setLaterTag] = useState("later");
+  const [laterTagInput, setLaterTagInput] = useState("later");
   const [offlineTag, setOfflineTag] = useState("offline");
   const [offlineTagInput, setOfflineTagInput] = useState("offline");
   const [offlineStorageSize, setOfflineStorageSize] = useState(0);
@@ -1700,6 +1713,7 @@ function App() {
     setEditingTextTags(new Set(existingTags));
     setEditingTextTagInput("");
     setOriginalEditValues({ content: item.content, tags: [...existingTags].sort() });
+    setEditorReaderMode(false);
   };
 
   const cancelEditingText = () => {
@@ -1708,6 +1722,7 @@ function App() {
     setEditingTextTags(new Set());
     setEditingTextTagInput("");
     setOriginalEditValues(null);
+    setEditorReaderMode(false);
   };
 
   const requestCancelEditingText = () => {
@@ -2273,15 +2288,53 @@ function App() {
             saveLabel: "Done",
           }}
         >
-          <ResizableInput
-            value={editingTextContent}
-            onChange={setEditingTextContent}
-            placeholder="Note text..."
-            keyboardHeight={keyboardHeight}
-            autoFocus
-            showClearButton={false}
-            onAutoSave={scheduleAutoSave}
-          />
+          {editorReaderMode ? (
+            <>
+            <div className="undo-redo-buttons">
+              <button
+                type="button"
+                className={`card-action-btn reader-active`}
+                onClick={() => setEditorReaderMode(false)}
+                title="Edit"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+            <div className="note-reader-content" dangerouslySetInnerHTML={{ __html: (() => {
+                const rendered = editingTextContent.split(/\n\n+/).map(block => {
+                  const html = snarkdown(block.trim());
+                  return /^<(h[1-6]|ul|ol|pre|blockquote|table|hr)/i.test(html) ? html : `<p>${html}</p>`;
+                }).join('');
+                return rendered || `<p>${editingTextContent}</p>`;
+              })() }} />
+            </>
+          ) : (
+            <ResizableInput
+              value={editingTextContent}
+              onChange={setEditingTextContent}
+              placeholder="Note text..."
+              keyboardHeight={keyboardHeight}
+              autoFocus
+              showClearButton={false}
+              onAutoSave={scheduleAutoSave}
+              extraButtons={
+                <button
+                  type="button"
+                  className="card-action-btn"
+                  onClick={() => setEditorReaderMode(true)}
+                  title="Preview"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              }
+            />
+          )}
         </EditorLayout>
       );
     }
@@ -2339,6 +2392,11 @@ function App() {
                 src={`data:image/jpeg;base64,${item.thumbnail}`}
                 alt={title || "Preview"}
                 className="edit-modal-image"
+                style={{ cursor: "pointer" }}
+                onClick={async () => {
+                  const data = await invoke<string | null>("get_image_data", { id: editingImageId });
+                  if (data) setFullscreenImageData(data);
+                }}
               />
             ) : (
               <div className="image-placeholder">
@@ -2557,6 +2615,15 @@ function App() {
               )}
             </button>
           )}
+          {(item.tags.includes(todayTag) || item.tags.includes(laterTag)) && (
+            <button
+              className="todo-checkbox today-checkbox"
+              onClick={(e) => toggleTagPair(e, item.id, "page", item.tags, todayTag, laterTag)}
+              title={item.tags.includes(todayTag) ? "Today" : "Later"}
+            >
+              {item.tags.includes(todayTag) ? "‼" : "💤"}
+            </button>
+          )}
           <div className="card-tags">
             {item.tags.map((tag) => (
               <span key={tag} className="card-tag">{tag}</span>
@@ -2601,6 +2668,19 @@ function App() {
           </div>
           <div className="card-title">{summary}</div>
           <div className="card-actions">
+            <button
+              className={`card-action-btn ${textReaderMode === item.id ? 'reader-active' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setTextReaderMode(textReaderMode === item.id ? null : item.id);
+              }}
+              title="Reader mode"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
             {urlMatch && (
               <button
                 className="card-action-btn"
@@ -2640,6 +2720,15 @@ function App() {
             </button>
           </div>
         </div>
+        {textReaderMode === item.id && (
+          <div className="note-reader-content" dangerouslySetInnerHTML={{ __html: (() => {
+                const rendered = item.content.split(/\n\n+/).map(block => {
+                  const html = snarkdown(block.trim());
+                  return /^<(h[1-6]|ul|ol|pre|blockquote|table|hr)/i.test(html) ? html : `<p>${html}</p>`;
+                }).join('');
+                return rendered || `<p>${item.content}</p>`;
+              })() }} />
+        )}
         {isExpanded && renderWebviewInline(expandedWebview.url)}
         <div className="card-footer">
           {(tags.includes(todoTag) || tags.includes(doneTag)) && (
@@ -2676,6 +2765,15 @@ function App() {
                   <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
                 </svg>
               )}
+            </button>
+          )}
+          {(tags.includes(todayTag) || tags.includes(laterTag)) && (
+            <button
+              className="todo-checkbox today-checkbox"
+              onClick={(e) => toggleTagPair(e, item.id, "text", tags, todayTag, laterTag)}
+              title={tags.includes(todayTag) ? "Today" : "Later"}
+            >
+              {tags.includes(todayTag) ? "‼" : "💤"}
             </button>
           )}
           <div className="card-tags">
@@ -3076,6 +3174,12 @@ ${content.html}
               <img
                 src={`data:image/jpeg;base64,${item.thumbnail}`}
                 alt={title || "Preview"}
+                style={{ cursor: "pointer" }}
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const data = await invoke<string | null>("get_image_data", { id: item.id });
+                  if (data) setFullscreenImageData(data);
+                }}
               />
             ) : (
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -3120,6 +3224,15 @@ ${content.html}
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                 </svg>
               )}
+            </button>
+          )}
+          {(item.tags.includes(todayTag) || item.tags.includes(laterTag)) && (
+            <button
+              className="todo-checkbox today-checkbox"
+              onClick={(e) => toggleTagPair(e, item.id, "image", item.tags, todayTag, laterTag)}
+              title={item.tags.includes(todayTag) ? "Today" : "Later"}
+            >
+              {item.tags.includes(todayTag) ? "‼" : "💤"}
             </button>
           )}
           <div className="card-tags">
@@ -3732,6 +3845,15 @@ ${content.html}
 
   return (
     <div className={`app ${expandedWebview ? 'webview-active' : ''}`} ref={appRef}>
+      {fullscreenImageData && (
+        <div className="image-fullscreen-overlay" onClick={() => setFullscreenImageData(null)}>
+          <img
+            className="image-fullscreen-img"
+            src={`data:image/jpeg;base64,${fullscreenImageData}`}
+            alt="Fullscreen"
+          />
+        </div>
+      )}
       <input ref={keyboardPrimerRef} style={{ position: 'fixed', opacity: 0, top: '-100px' }} readOnly />
       {cameraInput}
       <header>

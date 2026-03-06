@@ -1466,6 +1466,7 @@ __metadata:
     "@vitejs/plugin-react": "npm:^4.6.0"
     react: "npm:^19.1.0"
     react-dom: "npm:^19.1.0"
+    snarkdown: "npm:^2.0.0"
     typescript: "npm:~5.8.3"
     vite: "npm:^7.0.4"
   languageName: unknown
@@ -1662,6 +1663,13 @@ __metadata:
   version: 4.2.0
   resolution: "smart-buffer@npm:4.2.0"
   checksum: 10c0/a16775323e1404dd43fabafe7460be13a471e021637bc7889468eb45ce6a6b207261f454e4e530a19500cc962c4cc5348583520843b363f4193cee5c00e1e539
+  languageName: node
+  linkType: hard
+
+"snarkdown@npm:^2.0.0":
+  version: 2.0.0
+  resolution: "snarkdown@npm:2.0.0"
+  checksum: 10c0/2e1645924041f0a69804b2d0eac3eef0403d1d769da374c73102f1f8a401401990c79e6dd1ee0ea302585ecea232e358c11134781b389b0afffb987f4db5b36d
   languageName: node
   linkType: hard
 

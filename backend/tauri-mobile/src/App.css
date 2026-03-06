@@ -526,6 +526,11 @@ a.card-title {
   color: #34c759; /* Green for read/completed */
 }
 
+.todo-checkbox.today-checkbox {
+  font-size: 16px;
+  line-height: 1;
+}
+
 /* Legacy styles for edit mode - keep for now */
 .saved-url-item {
   padding: 1.15rem;
@@ -3557,3 +3562,125 @@ body.dark .webview-iframe {
 body.dark .webview-error {
   color: #999;
 }
+
+.image-fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.95);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.image-fullscreen-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* Note reader mode - rendered markdown */
+.note-reader-content {
+  padding: 0.75rem 1rem;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--base05, #333);
+  overflow-y: auto;
+  flex: 1 1 0;
+  min-height: 100px;
+}
+
+.note-reader-content h1, .note-reader-content h2, .note-reader-content h3 {
+  margin: 0.5em 0 0.3em;
+  line-height: 1.3;
+}
+
+.note-reader-content h1 { font-size: 1.4em; }
+.note-reader-content h2 { font-size: 1.2em; }
+.note-reader-content h3 { font-size: 1.1em; }
+
+.note-reader-content p {
+  margin: 0.4em 0;
+}
+
+.note-reader-content code {
+  background: var(--base01, #f0f0f0);
+  padding: 0.15em 0.3em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.note-reader-content pre {
+  background: var(--base01, #f0f0f0);
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.note-reader-content pre code {
+  background: none;
+  padding: 0;
+}
+
+.note-reader-content blockquote {
+  border-left: 3px solid var(--base03, #ccc);
+  margin: 0.5em 0;
+  padding: 0.25em 0.75em;
+  color: var(--base04, #666);
+}
+
+.note-reader-content ul, .note-reader-content ol {
+  padding-left: 1.5em;
+  margin: 0.4em 0;
+}
+
+.note-reader-content a {
+  color: var(--base0D, #007aff);
+}
+
+.note-reader-content img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+/* Active eye icon for reader mode */
+.card-action-btn.reader-active {
+  color: var(--base0D, #007aff);
+}
+
+/* When reader mode is active (note-reader-content present), constrain tags section
+   so it doesn't compete for flex space with the reader content */
+.note-reader-content ~ .editor-tags-section {
+  flex: 0 0 auto;
+  max-height: 140px;
+}
+
+/* Dark mode styles for note reader content */
+body.dark .note-reader-content {
+  color: #e0e0e0;
+}
+
+body.dark .note-reader-content code {
+  background: #3a3a3c;
+  color: #f0f0f0;
+}
+
+body.dark .note-reader-content pre {
+  background: #3a3a3c;
+  color: #f0f0f0;
+}
+
+body.dark .note-reader-content blockquote {
+  border-left-color: #555;
+  color: #aaa;
+}
+
+body.dark .note-reader-content a {
+  color: #0a84ff;
+}
+
+/* Editor reader mode toggle — eye icon is now inside undo-redo-buttons row */
