@@ -122,7 +122,8 @@ body.dark .pull-indicator.ready {
 header {
   background: #ffffff;
   padding: 0.25rem 0.75rem;
-  padding-top: calc(env(safe-area-inset-top, 0px) + 0.4rem);
+  /* Android injects --android-safe-area-top via MainActivity; iOS uses env() */
+  padding-top: calc(var(--android-safe-area-top, env(safe-area-inset-top, 0px)) + 0.4rem);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   position: sticky;
   top: 0;
@@ -1156,7 +1157,7 @@ body.dark .header-btn {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   padding: 1rem;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+  padding-bottom: calc(var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 1rem);
   max-width: 600px;
   width: 100%;
   margin: 0 auto;
@@ -2490,9 +2491,9 @@ body.dark .captured-image-preview {
   flex-direction: column;
   align-items: center;
   padding: 0.5rem;
-  padding-top: env(safe-area-inset-top, 4px);
+  padding-top: var(--android-safe-area-top, env(safe-area-inset-top, 4px));
   /* Ensure safe area padding at bottom when keyboard is hidden */
-  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.5rem);
+  padding-bottom: max(var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)), 0.5rem);
   /* Prevent iOS from scrolling the viewport when keyboard appears */
   overflow: hidden;
   overscroll-behavior: contain;
@@ -3165,7 +3166,7 @@ body.dark .confirm-modal-buttons .delete-btn {
 /* Toast notifications */
 .toast {
   position: fixed;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
+  bottom: calc(var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 80px);
   left: 50%;
   transform: translateX(-50%);
   padding: 0.75rem 1.25rem;
@@ -3574,7 +3575,7 @@ body.dark .webview-error {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding: var(--android-safe-area-top, env(safe-area-inset-top)) env(safe-area-inset-right) var(--android-safe-area-bottom, env(safe-area-inset-bottom)) env(safe-area-inset-left);
 }
 
 .image-fullscreen-img {
@@ -3647,6 +3648,23 @@ body.dark .webview-error {
   border-radius: 6px;
 }
 
+/* Checkbox list items in reader mode */
+.note-reader-content li.checkbox-item {
+  list-style: none;
+  margin-left: -1.5em;
+}
+
+.note-reader-content li.checkbox-item input[type="checkbox"] {
+  margin-right: 0.4em;
+  vertical-align: middle;
+  pointer-events: none;
+}
+
+.note-reader-content li.checkbox-checked {
+  color: var(--base04, #888);
+  text-decoration: line-through;
+}
+
 /* Active eye icon for reader mode */
 .card-action-btn.reader-active {
   color: var(--base0D, #007aff);
@@ -3681,6 +3699,10 @@ body.dark .note-reader-content blockquote {
 
 body.dark .note-reader-content a {
   color: #0a84ff;
+}
+
+body.dark .note-reader-content li.checkbox-checked {
+  color: #777;
 }
 
 /* Editor reader mode toggle — eye icon is now inside undo-redo-buttons row */

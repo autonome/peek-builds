@@ -30,12 +30,16 @@ fi
 echo "=== Building peek-core for iOS ==="
 
 # Step 1: Build static libraries
+# Use cargo rustc with --crate-type to override Cargo.toml's crate-type list.
+# Cargo.toml has ["lib", "staticlib", "cdylib"] for Android compatibility,
+# but cdylib triggers full linking which can fail on iOS targets.
+# iOS only needs staticlib to produce the .a file for XCFramework.
 echo "--- Building for simulator ($SIM_TARGET) ---"
-cargo build --release --target "$SIM_TARGET"
+cargo rustc --lib --crate-type staticlib --release --target "$SIM_TARGET"
 
 if [[ "$SIM_ONLY" == false ]]; then
     echo "--- Building for device ($DEVICE_TARGET) ---"
-    cargo build --release --target "$DEVICE_TARGET"
+    cargo rustc --lib --crate-type staticlib --release --target "$DEVICE_TARGET"
 fi
 
 # Step 2: Generate Swift bindings from the simulator library

@@ -91,7 +91,12 @@ export IPHONEOS_DEPLOYMENT_TARGET=16.0
 # Swift FFI symbols (webview_plugin_*) are provided by Xcode at final link time
 # custom-protocol is required so Tauri serves bundled assets via scheme handler;
 # for dev builds the "assets" are a bootstrap HTML that redirects to the dev server
-cargo build --lib --target aarch64-apple-ios-sim --features custom-protocol
+# Use cargo rustc with --crate-type to override Cargo.toml's crate-type list.
+# Cargo.toml has ["staticlib", "cdylib", "rlib"] for Android compatibility,
+# but cdylib triggers full linking which fails on iOS because Swift FFI symbols
+# (webview_plugin_*) are only provided by Xcode at final link time.
+# iOS only needs staticlib to produce the .a file for Xcode.
+cargo rustc --lib --crate-type staticlib --target aarch64-apple-ios-sim --features custom-protocol
 
 # Copy to Xcode location
 mkdir -p "$DEST_DIR"

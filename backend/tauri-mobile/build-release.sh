@@ -68,7 +68,12 @@ export IPHONEOS_DEPLOYMENT_TARGET=16.0
 # Build only the lib target - the bin target would fail to link because
 # Swift FFI symbols (webview_plugin_*) are provided by Xcode at final link time
 # Use custom-protocol feature for bundled assets (not dev server)
-cargo build --lib --release --features custom-protocol --target aarch64-apple-ios
+# Use cargo rustc with --crate-type to override Cargo.toml's crate-type list.
+# Cargo.toml has ["staticlib", "cdylib", "rlib"] for Android compatibility,
+# but cdylib triggers full linking which fails on iOS because Swift FFI symbols
+# (webview_plugin_*) are only provided by Xcode at final link time.
+# iOS only needs staticlib to produce the .a file for Xcode.
+cargo rustc --lib --crate-type staticlib --release --features custom-protocol --target aarch64-apple-ios
 
 echo "Copying library to Xcode location..."
 mkdir -p "$DEST_DIR"

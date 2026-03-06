@@ -1,13 +1,14 @@
 #!/bin/bash
-# Start Android emulator dev environment with HMR
-# Analogous to dev-ios-sim.sh for iOS simulator
-#
+# Start Android emulator dev environment with HMR.
 # Usage: ./dev-android.sh
+#
+# Uses `tauri android dev` which handles:
+# - Starting Vite with TAURI_DEV_HOST for mobile HMR
+# - adb reverse port forwarding
+# - Building APK, installing, and launching on emulator
 
 set -e
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TAURI_DIR="$SCRIPT_DIR/src-tauri"
 
 # Ensure ANDROID_HOME and JAVA_HOME are set
 if [ -z "$ANDROID_HOME" ]; then
@@ -46,17 +47,55 @@ echo "JAVA_HOME=$JAVA_HOME"
 echo "NDK_HOME=$NDK_HOME"
 
 # Ensure local.properties exists
+TAURI_DIR="$SCRIPT_DIR/src-tauri"
 if [ ! -f "$TAURI_DIR/gen/android/local.properties" ]; then
+    mkdir -p "$TAURI_DIR/gen/android"
     echo "sdk.dir=$ANDROID_HOME" > "$TAURI_DIR/gen/android/local.properties"
     echo "Created local.properties"
 fi
 
-cd "$SCRIPT_DIR"
+# Bump build number
+BUILD_FILE="$SCRIPT_DIR/BUILD_NUMBER"
+BUILD_NUM=$(($(cat "$BUILD_FILE") + 1))
+echo "$BUILD_NUM" > "$BUILD_FILE"
+echo "[dev] Build number: v$BUILD_NUM"
 
-echo "Starting Android dev environment..."
-echo "Tauri will build frontend, compile Rust, and launch on emulator with HMR"
+# Start emulator if no devices connected
+ADB="$ANDROID_HOME/platform-tools/adb"
+if [ -x "$ADB" ]; then
+    DEVICES=$("$ADB" devices 2>/dev/null | grep -c 'device$' || true)
+    if [ "$DEVICES" -eq 0 ]; then
+        echo "[dev] No Android devices/emulators found."
+        EMULATOR="$ANDROID_HOME/emulator/emulator"
+        if [ -x "$EMULATOR" ]; then
+            AVD=$("$EMULATOR" -list-avds 2>/dev/null | head -1)
+            if [ -n "$AVD" ]; then
+                echo "[dev] Starting emulator: $AVD"
+                "$EMULATOR" -avd "$AVD" -no-snapshot-load &
+                echo "[dev] Waiting for emulator to boot..."
+                "$ADB" wait-for-device
+                # Wait for boot to complete
+                while [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do
+                    sleep 1
+                done
+                echo "[dev] Emulator ready"
+            else
+                echo "ERROR: No AVDs found. Create one in Android Studio."
+                exit 1
+            fi
+        else
+            echo "ERROR: No emulator binary found. Connect a device or install an emulator."
+            exit 1
+        fi
+    fi
+fi
+
+# Let tauri android dev handle everything:
+# - Starts Vite with TAURI_DEV_HOST set (for mobile HMR WebSocket config)
+# - Sets up adb reverse port forwarding
+# - Builds Rust + APK without custom-protocol
+# - Installs and launches on device/emulator
+echo "[dev] Starting tauri android dev..."
 echo ""
-
-# custom-protocol needed for asset serving
-export TAURI_ANDROID_FEATURES="custom-protocol"
-npx tauri android dev
+cd "$SCRIPT_DIR"
+npx tauri android dev --target aarch64

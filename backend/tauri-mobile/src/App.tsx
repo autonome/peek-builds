@@ -5,8 +5,23 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import snarkdown from "snarkdown";
 import "./App.css";
 import readerCss from "./reader.css?raw";
+import { autoListContinue } from "./auto-list.js";
 
 declare const __BUILD_NUMBER__: string;
+
+/** Pre-process markdown to protect checkbox syntax from snarkdown's link parsing */
+function preProcessCheckboxes(md: string): string {
+  return md
+    .replace(/^(\s*[-*])\s+\[ \]/gm, '$1 CBTODO')
+    .replace(/^(\s*[-*])\s+\[x\]/gim, '$1 CBDONE');
+}
+
+/** Post-process HTML to render checkbox placeholders as actual checkboxes */
+function postProcessCheckboxes(html: string): string {
+  return html
+    .replace(/<li>\s*CBTODO\s*/g, '<li class="checkbox-item"><input type="checkbox" disabled /> ')
+    .replace(/<li>\s*CBDONE\s*/g, '<li class="checkbox-item checkbox-checked"><input type="checkbox" checked disabled /> ');
+}
 
 type ItemType = "page" | "text" | "tagset" | "image";
 
@@ -184,6 +199,21 @@ const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyb
     return () => viewport.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // On Android, the Kotlin bridge injects --android-safe-area-top via evaluateJavascript,
+  // but it may fire before the page DOM is ready (race condition). Set a sensible default
+  // so the header isn't behind the status bar while waiting for the native bridge.
+  // The Kotlin bridge will overwrite this with the exact value once it fires.
+  useEffect(() => {
+    const isAndroid = /android/i.test(navigator.userAgent);
+    if (isAndroid) {
+      const root = document.documentElement;
+      // Only set default if the Kotlin bridge hasn't already provided a value
+      if (!root.style.getPropertyValue('--android-safe-area-top')) {
+        root.style.setProperty('--android-safe-area-top', '24px');
+      }
+    }
+  }, []);
+
   const handleTouchStart = (e: React.TouchEvent) => {
     swipeStartYRef.current = e.touches[0].clientY;
   };
@@ -324,7 +354,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
       ) : (
         <div className="expandable-card-section">
           {availableTags.length === 0 ? (
-            <div className="tags-empty-message">Add some tags!</div>
+            <div className="tags-empty-message">This is where your tags live - tag something!</div>
           ) : tagInput.trim() ? (
             <div className="tags-empty-message">No matching tags</div>
           ) : null}
@@ -509,7 +539,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     delete document.body.dataset.resizing;
   };
 
-  // Auto markdown list continuation on Enter
+  // Auto markdown list continuation on Enter (includes checkbox support)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== 'Enter') return;
 
@@ -517,54 +547,17 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     if (!textarea) return;
 
     const { selectionStart, value: domValue } = textarea;
-    const textBefore = domValue.substring(0, selectionStart);
-    const textAfter = domValue.substring(selectionStart);
-
-    // Find current line
-    const lastNewline = textBefore.lastIndexOf('\n');
-    const currentLine = textBefore.substring(lastNewline + 1);
-
-    // Match list marker: optional whitespace + marker (-, *, +, or number.) + space
-    const listMatch = currentLine.match(/^(\s*)([-*+]|\d+\.)\s/);
-    if (!listMatch) return; // Not a list line, let default Enter happen
+    const result = autoListContinue(domValue, selectionStart);
+    if (!result) return; // Not a list line, let default Enter happen
 
     e.preventDefault();
-
-    const indent = listMatch[1];
-    const marker = listMatch[2];
-    const contentAfterMarker = currentLine.substring(listMatch[0].length);
-
-    if (contentAfterMarker.trim() === '') {
-      // Empty list item — remove the marker (end the list)
-      const lineStart = lastNewline + 1;
-      const newValue = domValue.substring(0, lineStart) + '\n' + textAfter;
-      onChange(newValue);
-      // Set cursor after the newline
-      requestAnimationFrame(() => {
-        if (textareaRef.current) {
-          const pos = lineStart + 1;
-          textareaRef.current.selectionStart = pos;
-          textareaRef.current.selectionEnd = pos;
-        }
-      });
-    } else {
-      // Continue the list
-      let nextMarker = marker;
-      const numMatch = marker.match(/^(\d+)\.$/);
-      if (numMatch) {
-        nextMarker = `${parseInt(numMatch[1], 10) + 1}.`;
+    onChange(result.newValue);
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.selectionStart = result.cursorPos;
+        textareaRef.current.selectionEnd = result.cursorPos;
       }
-      const insertion = `\n${indent}${nextMarker} `;
-      const newValue = textBefore + insertion + textAfter;
-      onChange(newValue);
-      requestAnimationFrame(() => {
-        if (textareaRef.current) {
-          const pos = selectionStart + insertion.length;
-          textareaRef.current.selectionStart = pos;
-          textareaRef.current.selectionEnd = pos;
-        }
-      });
-    }
+    });
   };
 
   useEffect(() => {
@@ -850,10 +843,10 @@ function App() {
   const [readmeTagInput, setReadmeTagInput] = useState("readme");
   const [readTag, setReadTag] = useState("read");
   const [readTagInput, setReadTagInput] = useState("read");
-  const [todayTag, setTodayTag] = useState("today");
-  const [todayTagInput, setTodayTagInput] = useState("today");
-  const [laterTag, setLaterTag] = useState("later");
-  const [laterTagInput, setLaterTagInput] = useState("later");
+  const [todayTag, _setTodayTag] = useState("today");
+  const [_todayTagInput, _setTodayTagInput] = useState("today");
+  const [laterTag, _setLaterTag] = useState("later");
+  const [_laterTagInput, _setLaterTagInput] = useState("later");
   const [offlineTag, setOfflineTag] = useState("offline");
   const [offlineTagInput, setOfflineTagInput] = useState("offline");
   const [offlineStorageSize, setOfflineStorageSize] = useState(0);
@@ -2304,11 +2297,12 @@ function App() {
               </button>
             </div>
             <div className="note-reader-content" dangerouslySetInnerHTML={{ __html: (() => {
-                const rendered = editingTextContent.split(/\n\n+/).map(block => {
+                const preprocessed = preProcessCheckboxes(editingTextContent);
+                const rendered = preprocessed.split(/\n\n+/).map(block => {
                   const html = snarkdown(block.trim());
                   return /^<(h[1-6]|ul|ol|pre|blockquote|table|hr)/i.test(html) ? html : `<p>${html}</p>`;
                 }).join('');
-                return rendered || `<p>${editingTextContent}</p>`;
+                return postProcessCheckboxes(rendered || `<p>${editingTextContent}</p>`);
               })() }} />
             </>
           ) : (
@@ -2422,6 +2416,154 @@ function App() {
 
     return null;
   };
+
+  // ============================================================================
+  // Shared Icon Constants & Item Footer Components
+  // ============================================================================
+
+  const ICON_TODAY = "!";
+  const ICON_LATER = "\u{1F4A4}"; // 💤
+
+  const ICON_TODO_CHECKED = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+      <polyline points="9 11 12 14 22 4"></polyline>
+    </svg>
+  );
+
+  const ICON_TODO_UNCHECKED = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+    </svg>
+  );
+
+  const ICON_READING_CHECKED = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+      <polyline points="9 11 12 14 22 4"></polyline>
+    </svg>
+  );
+
+  const ICON_READING_UNCHECKED = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+    </svg>
+  );
+
+  const ICON_DELETE = (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6"></polyline>
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+    </svg>
+  );
+
+  /** Todo/Done checkbox button */
+  const TodoCheckbox: React.FC<{
+    tags: string[];
+    itemId: string;
+    itemType: ItemType;
+    onClick: (e: React.MouseEvent) => void;
+  }> = ({ tags, onClick }) => {
+    if (!tags.includes(todoTag) && !tags.includes(doneTag)) return null;
+    const isDone = tags.includes(doneTag);
+    return (
+      <button
+        className={`todo-checkbox ${isDone ? "checked" : ""}`}
+        onClick={onClick}
+      >
+        {isDone ? ICON_TODO_CHECKED : ICON_TODO_UNCHECKED}
+      </button>
+    );
+  };
+
+  /** Reading (readme/read) checkbox button */
+  const ReadingCheckbox: React.FC<{
+    tags: string[];
+    onClick: (e: React.MouseEvent) => void;
+  }> = ({ tags, onClick }) => {
+    if (!tags.includes(readmeTag) && !tags.includes(readTag)) return null;
+    const isRead = tags.includes(readTag);
+    return (
+      <button
+        className={`todo-checkbox reading-checkbox ${isRead ? "checked" : ""}`}
+        onClick={onClick}
+      >
+        {isRead ? ICON_READING_CHECKED : ICON_READING_UNCHECKED}
+      </button>
+    );
+  };
+
+  /** Today/Later toggle button */
+  const TodayToggleButton: React.FC<{
+    tags: string[];
+    onClick: (e: React.MouseEvent) => void;
+  }> = ({ tags, onClick }) => {
+    if (!tags.includes(todayTag) && !tags.includes(laterTag)) return null;
+    const isToday = tags.includes(todayTag);
+    return (
+      <button
+        className="todo-checkbox today-checkbox"
+        onClick={onClick}
+        title={isToday ? "Today" : "Later"}
+      >
+        {isToday ? ICON_TODAY : ICON_LATER}
+      </button>
+    );
+  };
+
+  /** Delete button (trash icon) */
+  const DeleteButton: React.FC<{
+    itemId: string;
+    itemType: ItemType;
+  }> = ({ itemId, itemType }) => (
+    <button
+      className="card-delete-btn"
+      onClick={(e) => {
+        e.stopPropagation();
+        requestDelete(itemId, itemType);
+      }}
+    >
+      {ICON_DELETE}
+    </button>
+  );
+
+  /** Card footer with tag checkboxes, tags list, and date */
+  const CardFooter: React.FC<{
+    tags: string[];
+    itemId: string;
+    itemType: ItemType;
+    savedAt: string;
+    showReadingCheckbox?: boolean;
+  }> = ({ tags, itemId, itemType, savedAt, showReadingCheckbox = false }) => (
+    <div className="card-footer">
+      <TodoCheckbox
+        tags={tags}
+        itemId={itemId}
+        itemType={itemType}
+        onClick={(e) => toggleTagPair(e, itemId, itemType, tags, todoTag, doneTag)}
+      />
+      {showReadingCheckbox && (
+        <ReadingCheckbox
+          tags={tags}
+          onClick={(e) => toggleTagPair(e, itemId, itemType, tags, readmeTag, readTag)}
+        />
+      )}
+      <TodayToggleButton
+        tags={tags}
+        onClick={(e) => toggleTagPair(e, itemId, itemType, tags, todayTag, laterTag)}
+      />
+      <div className="card-tags">
+        {tags.map((tag) => (
+          <span key={tag} className="card-tag">{tag}</span>
+        ))}
+        <span className="card-date">
+          {new Date(savedAt).toLocaleDateString()}
+        </span>
+      </div>
+    </div>
+  );
 
   // Render unified item based on type
   const renderUnifiedItem = (item: UnifiedItem) => {
@@ -2563,76 +2705,11 @@ function App() {
                 </svg>
               </button>
             )}
-            <button
-              className="card-delete-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                requestDelete(item.id, "page");
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-            </button>
+            <DeleteButton itemId={item.id} itemType="page" />
           </div>
         </div>
         {isExpanded && renderWebviewInline(expandedWebview.url)}
-        <div className="card-footer">
-          {(item.tags.includes(todoTag) || item.tags.includes(doneTag)) && (
-            <button
-              className={`todo-checkbox ${item.tags.includes(doneTag) ? "checked" : ""}`}
-              onClick={(e) => toggleTagPair(e, item.id, "page", item.tags, todoTag, doneTag)}
-            >
-              {item.tags.includes(doneTag) ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  <polyline points="9 11 12 14 22 4"></polyline>
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                </svg>
-              )}
-            </button>
-          )}
-          {(item.tags.includes(readmeTag) || item.tags.includes(readTag)) && (
-            <button
-              className={`todo-checkbox reading-checkbox ${item.tags.includes(readTag) ? "checked" : ""}`}
-              onClick={(e) => toggleTagPair(e, item.id, "page", item.tags, readmeTag, readTag)}
-            >
-              {item.tags.includes(readTag) ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
-                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
-                  <polyline points="9 11 12 14 22 4"></polyline>
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
-                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
-                </svg>
-              )}
-            </button>
-          )}
-          {(item.tags.includes(todayTag) || item.tags.includes(laterTag)) && (
-            <button
-              className="todo-checkbox today-checkbox"
-              onClick={(e) => toggleTagPair(e, item.id, "page", item.tags, todayTag, laterTag)}
-              title={item.tags.includes(todayTag) ? "Today" : "Later"}
-            >
-              {item.tags.includes(todayTag) ? "‼" : "💤"}
-            </button>
-          )}
-          <div className="card-tags">
-            {item.tags.map((tag) => (
-              <span key={tag} className="card-tag">{tag}</span>
-            ))}
-            <span className="card-date">
-              {new Date(item.saved_at).toLocaleDateString()}
-            </span>
-          </div>
-        </div>
+        <CardFooter tags={item.tags} itemId={item.id} itemType="page" savedAt={item.saved_at} showReadingCheckbox />
       </div>
     );
   };
@@ -2706,85 +2783,21 @@ function App() {
                 </svg>
               </button>
             )}
-            <button
-              className="card-delete-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                requestDelete(item.id, "text");
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-            </button>
+            <DeleteButton itemId={item.id} itemType="text" />
           </div>
         </div>
         {textReaderMode === item.id && (
           <div className="note-reader-content" dangerouslySetInnerHTML={{ __html: (() => {
-                const rendered = item.content.split(/\n\n+/).map(block => {
+                const preprocessed = preProcessCheckboxes(item.content);
+                const rendered = preprocessed.split(/\n\n+/).map(block => {
                   const html = snarkdown(block.trim());
                   return /^<(h[1-6]|ul|ol|pre|blockquote|table|hr)/i.test(html) ? html : `<p>${html}</p>`;
                 }).join('');
-                return rendered || `<p>${item.content}</p>`;
+                return postProcessCheckboxes(rendered || `<p>${item.content}</p>`);
               })() }} />
         )}
         {isExpanded && renderWebviewInline(expandedWebview.url)}
-        <div className="card-footer">
-          {(tags.includes(todoTag) || tags.includes(doneTag)) && (
-            <button
-              className={`todo-checkbox ${tags.includes(doneTag) ? "checked" : ""}`}
-              onClick={(e) => toggleTagPair(e, item.id, "text", tags, todoTag, doneTag)}
-            >
-              {tags.includes(doneTag) ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  <polyline points="9 11 12 14 22 4"></polyline>
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                </svg>
-              )}
-            </button>
-          )}
-          {(tags.includes(readmeTag) || tags.includes(readTag)) && (
-            <button
-              className={`todo-checkbox reading-checkbox ${tags.includes(readTag) ? "checked" : ""}`}
-              onClick={(e) => toggleTagPair(e, item.id, "text", tags, readmeTag, readTag)}
-            >
-              {tags.includes(readTag) ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
-                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
-                  <polyline points="9 11 12 14 22 4"></polyline>
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
-                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
-                </svg>
-              )}
-            </button>
-          )}
-          {(tags.includes(todayTag) || tags.includes(laterTag)) && (
-            <button
-              className="todo-checkbox today-checkbox"
-              onClick={(e) => toggleTagPair(e, item.id, "text", tags, todayTag, laterTag)}
-              title={tags.includes(todayTag) ? "Today" : "Later"}
-            >
-              {tags.includes(todayTag) ? "‼" : "💤"}
-            </button>
-          )}
-          <div className="card-tags">
-            {tags.map((tag) => (
-              <span key={tag} className="card-tag">{tag}</span>
-            ))}
-            <span className="card-date">
-              {new Date(item.saved_at).toLocaleDateString()}
-            </span>
-          </div>
-        </div>
+        <CardFooter tags={tags} itemId={item.id} itemType="text" savedAt={item.saved_at} showReadingCheckbox />
       </div>
     );
   };
@@ -2804,18 +2817,7 @@ function App() {
               <span key={tag} className="card-tag">{tag}</span>
             ))}
           </div>
-          <button
-            className="card-delete-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              requestDelete(item.id, "tagset");
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-          </button>
+          <DeleteButton itemId={item.id} itemType="tagset" />
         </div>
         <div className="card-footer">
           <div className="card-tags">
@@ -2953,11 +2955,6 @@ function App() {
     } catch (error) {
       console.error("Failed to toggle tag pair:", error);
     }
-  };
-
-  // Legacy wrapper for backward compatibility
-  const toggleTodoDone = (e: React.MouseEvent, id: string, type: ItemType, currentTags: string[]) => {
-    toggleTagPair(e, id, type, currentTags, todoTag, doneTag);
   };
 
   // Open URL in system browser (Safari)
@@ -3190,60 +3187,14 @@ ${content.html}
             )}
           </div>
           <div className="card-title">{title || sourceUrl || "Image"}</div>
-          <button
-            className="card-delete-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              requestDelete(item.id, "image");
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3 6 5 6 21 6"></polyline>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-          </button>
+          <DeleteButton itemId={item.id} itemType="image" />
         </div>
         {item.content && (
           <div className="card-content" style={{ padding: "0 12px 8px", fontSize: "13px", opacity: 0.8, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const }}>
             {item.content.length > 200 ? item.content.substring(0, 200) + "..." : item.content}
           </div>
         )}
-        <div className="card-footer">
-          {(item.tags.includes("todo") || item.tags.includes("done")) && (
-            <button
-              className={`todo-checkbox ${item.tags.includes("done") ? "checked" : ""}`}
-              onClick={(e) => toggleTodoDone(e, item.id, "image", item.tags)}
-            >
-              {item.tags.includes("done") ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  <polyline points="9 11 12 14 22 4"></polyline>
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                </svg>
-              )}
-            </button>
-          )}
-          {(item.tags.includes(todayTag) || item.tags.includes(laterTag)) && (
-            <button
-              className="todo-checkbox today-checkbox"
-              onClick={(e) => toggleTagPair(e, item.id, "image", item.tags, todayTag, laterTag)}
-              title={item.tags.includes(todayTag) ? "Today" : "Later"}
-            >
-              {item.tags.includes(todayTag) ? "‼" : "💤"}
-            </button>
-          )}
-          <div className="card-tags">
-            {item.tags.map((tag) => (
-              <span key={tag} className="card-tag">{tag}</span>
-            ))}
-            <span className="card-date">
-              {new Date(item.saved_at).toLocaleDateString()}
-            </span>
-          </div>
-        </div>
+        <CardFooter tags={item.tags} itemId={item.id} itemType="image" savedAt={item.saved_at} />
       </div>
     );
   };
@@ -4012,7 +3963,9 @@ ${content.html}
             ref={filterTagsRef}
             style={{ height: `${filterTagsHeight}px` }}
           >
-            {getFilteredTags().length === 0 ? (
+            {allTags.length === 0 ? (
+              <div className="filter-tags-empty">This is where your tags live - tag something!</div>
+            ) : getFilteredTags().length === 0 ? (
               <div className="filter-tags-empty">No matching tags</div>
             ) : (
               <div className="filter-tags">

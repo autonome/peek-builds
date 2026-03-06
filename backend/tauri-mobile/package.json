@@ -42,6 +42,7 @@
     "build:android:release:force": "./build-android-release.sh --force",
     "build:android:aab": "./build-android-release.sh --aab",
     "dev:android": "./dev-android.sh",
+    "dev:both": "./dev-both.sh",
     "clean:android": "cd src-tauri && rm -rf target/aarch64-linux-android target/x86_64-linux-android target/i686-linux-android target/armv7-linux-androideabi 2>/dev/null; echo 'Android build cache cleaned'"
   },
   "dependencies": {
@@ -53,7 +54,7 @@
     "snarkdown": "^2.0.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.0",
+    "@tauri-apps/cli": "^2.10.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",

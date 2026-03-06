@@ -12,13 +12,28 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const cssSource = readFileSync(join(__dirname, '..', 'src', 'App.css'), 'utf-8');
 const tsxSource = readFileSync(join(__dirname, '..', 'src', 'App.tsx'), 'utf-8');
 
-// Reproduce the exact rendering logic from App.tsx (lines 2307-2311)
+/** Pre-process markdown to protect checkbox syntax from snarkdown's link parsing */
+function preProcessCheckboxes(md) {
+  return md
+    .replace(/^(\s*[-*])\s+\[ \]/gm, '$1 CBTODO')
+    .replace(/^(\s*[-*])\s+\[x\]/gim, '$1 CBDONE');
+}
+
+/** Post-process HTML to render checkbox placeholders as actual checkboxes */
+function postProcessCheckboxes(html) {
+  return html
+    .replace(/<li>\s*CBTODO\s*/g, '<li class="checkbox-item"><input type="checkbox" disabled /> ')
+    .replace(/<li>\s*CBDONE\s*/g, '<li class="checkbox-item checkbox-checked"><input type="checkbox" checked disabled /> ');
+}
+
+// Reproduce the exact rendering logic from App.tsx
 function renderMarkdown(content) {
-  const rendered = content.split(/\n\n+/).map(block => {
+  const preprocessed = preProcessCheckboxes(content);
+  const rendered = preprocessed.split(/\n\n+/).map(block => {
     const html = snarkdown(block.trim());
     return /^<(h[1-6]|ul|ol|pre|blockquote|table|hr)/i.test(html) ? html : `<p>${html}</p>`;
   }).join('');
-  return rendered || `<p>${content}</p>`;
+  return postProcessCheckboxes(rendered || `<p>${content}</p>`);
 }
 
 describe('snarkdown basic functionality', () => {
@@ -96,6 +111,65 @@ describe('renderMarkdown (App.tsx logic)', () => {
     const result = renderMarkdown(content);
     assert.ok(result.length > 0, 'Should produce non-empty output');
     assert.ok(result.includes('My note'), 'Should contain note text');
+  });
+});
+
+describe('checkbox list items in reader mode', () => {
+  it('renders unchecked checkbox for - [ ] syntax', () => {
+    const result = renderMarkdown('- [ ] todo item');
+    assert.ok(result.includes('<input type="checkbox" disabled />'), `Expected disabled checkbox in: ${result}`);
+    assert.ok(result.includes('class="checkbox-item"'), `Expected checkbox-item class in: ${result}`);
+    assert.ok(result.includes('todo item'), `Expected text in: ${result}`);
+    assert.ok(!result.includes('checked'), `Should not be checked in: ${result}`);
+  });
+
+  it('renders checked checkbox for - [x] syntax', () => {
+    const result = renderMarkdown('- [x] done item');
+    assert.ok(result.includes('<input type="checkbox" checked disabled />'), `Expected checked checkbox in: ${result}`);
+    assert.ok(result.includes('checkbox-checked'), `Expected checkbox-checked class in: ${result}`);
+    assert.ok(result.includes('done item'), `Expected text in: ${result}`);
+  });
+
+  it('renders checked checkbox for - [X] syntax (uppercase)', () => {
+    const result = renderMarkdown('- [X] done item');
+    assert.ok(result.includes('checked'), `Expected checked for uppercase X in: ${result}`);
+  });
+
+  it('renders mixed checkboxes in a list', () => {
+    const result = renderMarkdown('- [ ] first\n- [x] second\n- [ ] third');
+    const uncheckedCount = (result.match(/checkbox-item/g) || []).length;
+    const checkedCount = (result.match(/checkbox-checked/g) || []).length;
+    assert.equal(uncheckedCount, 3, `Expected 3 checkbox-item classes (got ${uncheckedCount}) in: ${result}`);
+    assert.equal(checkedCount, 1, `Expected 1 checkbox-checked (got ${checkedCount}) in: ${result}`);
+  });
+
+  it('does not affect regular list items', () => {
+    const result = renderMarkdown('- regular item\n- another item');
+    assert.ok(!result.includes('checkbox-item'), `Regular items should not get checkbox class: ${result}`);
+    assert.ok(!result.includes('type="checkbox"'), `Regular items should not get checkbox input: ${result}`);
+  });
+});
+
+describe('CSS: checkbox styles', () => {
+  it('has styles for checkbox-item class', () => {
+    assert.ok(
+      cssSource.includes('.note-reader-content li.checkbox-item'),
+      'CSS must include styles for checkbox list items'
+    );
+  });
+
+  it('has styles for checkbox-checked class', () => {
+    assert.ok(
+      cssSource.includes('.note-reader-content li.checkbox-checked'),
+      'CSS must include styles for checked checkbox items'
+    );
+  });
+
+  it('has dark mode styles for checked checkboxes', () => {
+    assert.ok(
+      cssSource.includes('body.dark .note-reader-content li.checkbox-checked'),
+      'CSS must include dark mode styles for checked checkboxes'
+    );
   });
 });
 
