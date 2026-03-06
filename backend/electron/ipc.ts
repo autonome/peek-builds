@@ -2567,140 +2567,10 @@ export function registerWindowHandlers(): void {
       const detectedMode = detectModeFromUrl(modeUrl);
       DEBUG && console.log('Set window mode:', win.id, 'url:', modeUrl, 'mode:', detectedMode);
 
-      // Load the URL AFTER mode/context is set, so page.js can read inherited mode
-      console.log(`[page-host:${win.id}] Loading: ${loadUrl.substring(0, 120)}`);
-      await win.loadURL(loadUrl);
-      console.log(`[page-host:${win.id}] loadURL resolved`);
-
-      // Background detection for non-canvas web pages (slides, modals, quick-views).
-      // Canvas pages get this via the webview dom-ready handler in page.js.
-      // Non-canvas pages load directly in the BrowserWindow, so we detect here.
-      // Without this, pages that don't set a background show dark text on a dark
-      // BrowserWindow backgroundColor — unreadable in dark mode.
-      if (isWebPage && !useCanvas) {
-        win.webContents.on('dom-ready', async () => {
-          try {
-            const needsBackground = await win.webContents.executeJavaScript(`
-              (function() {
-                function isTransparentColor(color) {
-                  if (!color) return true;
-                  if (color === 'transparent') return true;
-                  if (color === 'rgba(0, 0, 0, 0)') return true;
-                  var rgbaMatch = color.match(/rgba\\s*\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*([\\d.]+)\\s*\\)/);
-                  if (rgbaMatch && parseFloat(rgbaMatch[1]) === 0) return true;
-                  return false;
-                }
-                function hasBackground(el) {
-                  if (!el) return false;
-                  var style = window.getComputedStyle(el);
-                  var bgColor = style.backgroundColor;
-                  var hasColor = !isTransparentColor(bgColor);
-                  var bgImage = style.backgroundImage;
-                  var hasImage = bgImage && bgImage !== 'none';
-                  return hasColor || hasImage;
-                }
-                var html = document.documentElement;
-                var body = document.body;
-                return !(hasBackground(html) || hasBackground(body));
-              })();
-            `);
-            if (needsBackground) {
-              await win.webContents.executeJavaScript(`
-                document.documentElement.style.backgroundColor = '#ffffff';
-              `);
-              DEBUG && console.log('[non-canvas-bg] No background detected, set default white for window:', win.id);
-            } else {
-              DEBUG && console.log('[non-canvas-bg] Page has background, skipping default for window:', win.id);
-            }
-          } catch (err) {
-            console.error('[non-canvas-bg] Failed to check/set background:', err);
-          }
-        });
-      }
-
-      // Update item titles when the page finishes loading (non-canvas web pages).
-      // Canvas pages have a guest webContents handler below via did-attach-webview.
-      // Non-canvas pages (modals, slides, quick-views) load directly in the BrowserWindow.
-      if (isWebPage && !useCanvas && !url.startsWith('peek://')) {
-        win.webContents.on('page-title-updated', (_event: Electron.Event, title: string) => {
-          if (title && title !== 'Loading...') {
-            const pageUrl = win.webContents.getURL() || url;
-            try {
-              updateItemTitle(pageUrl, title);
-            } catch (e) {
-              DEBUG && console.log('Failed to update title from page-title-updated:', e);
-            }
-            // Notify extensions that page content is available for extraction
-            publish('system', PubSubScopes.GLOBAL, 'page:content-ready', {
-              url: pageUrl,
-              title,
-              windowId: win.id,
-            });
-          }
-        });
-      }
-
-      // Track this load in history (skip internal peek:// URLs)
-      if (!url.startsWith('peek://')) {
-        try {
-          const trackResult = trackWindowLoad(url, {
-            source: options.trackingSource || options.feature || 'window',
-            sourceId: options.trackingSourceId || '',
-            windowType: options.modal ? 'modal' : 'main',
-            title: options.title || (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
-          });
-          if (trackResult.created) {
-            publish('system', PubSubScopes.GLOBAL, 'item:created', {
-              itemId: trackResult.itemId,
-              itemType: 'url',
-              content: url
-            });
-          }
-          // Auto-tag with group if this window is in group mode
-          const loadModeEntry = getContextEntry('mode', win.id);
-          console.log('[openWindow] trackWindowLoad auto-tag check:', { winId: win.id, mode: loadModeEntry?.value, groupId: loadModeEntry?.metadata?.groupId, itemId: trackResult.itemId });
-          if (loadModeEntry && loadModeEntry.value === 'group' && loadModeEntry.metadata?.groupId) {
-            tagItemAndPublish(trackResult.itemId, loadModeEntry.metadata.groupId as string);
-            console.log('[openWindow] Auto-tagged item', trackResult.itemId, 'with group', loadModeEntry.metadata.groupId);
-          }
-        } catch (e) {
-          DEBUG && console.log('Failed to track window load:', e);
-        }
-      }
-
-      // Track in-page navigation (link clicks within the window)
-      // Skip tracking for peek:// URLs - these are internal (container pages, etc.)
-      // Web pages inside peek://app/page container handle their own tracking via webview events
-      win.webContents.on('did-navigate', (_event: Electron.Event, navUrl: string) => {
-        // Skip if it's the same URL we just loaded
-        if (navUrl === url) return;
-        // Skip internal peek:// URLs
-        if (navUrl.startsWith('peek://')) return;
-        try {
-          const navTrack = trackWindowLoad(navUrl, {
-            source: 'navigation',
-            sourceId: '',
-            windowType: options.modal ? 'modal' : 'main',
-            title: (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
-          });
-          if (navTrack.created) {
-            publish('system', PubSubScopes.GLOBAL, 'item:created', {
-              itemId: navTrack.itemId,
-              itemType: 'url',
-              content: navUrl
-            });
-          }
-          // Auto-tag with group if this window is in group mode
-          const navModeEntry = getContextEntry('mode', win.id);
-          if (navModeEntry && navModeEntry.value === 'group' && navModeEntry.metadata?.groupId) {
-            tagItemAndPublish(navTrack.itemId, navModeEntry.metadata.groupId as string);
-            DEBUG && console.log('[did-navigate] Auto-tagged item', navTrack.itemId, 'with group', navModeEntry.metadata.groupId);
-          }
-        } catch (e) {
-          DEBUG && console.log('Failed to track did-navigate:', e);
-        }
-      });
-
+      // Register did-attach-webview BEFORE loadURL so we don't miss the event.
+      // The webview attaches during loadURL, so if we register after, the event is missed
+      // and Cmd+L / window.open handlers never get wired up on the guest webContents.
+      //
       // Handle window.open() / target="_blank" from <webview> guest webContents.
       // The host BrowserWindow loads peek://app/page/index.html which contains a <webview>.
       // Keystrokes and window.open() calls from web content go to the guest's webContents,
@@ -2925,9 +2795,6 @@ export function registerWindowHandlers(): void {
         });
       }
 
-      // Add escape key handler to all windows
-      addEscHandler(win);
-
       // Add keyboard shortcuts on the HOST webContents as a fallback.
       // The primary handlers are on the webview guest (added via did-attach-webview above).
       // These host-level handlers fire when the page container's own DOM has focus (rare,
@@ -2951,6 +2818,143 @@ export function registerWindowHandlers(): void {
           }
         });
       }
+
+      // Load the URL AFTER mode/context is set, so page.js can read inherited mode
+      console.log(`[page-host:${win.id}] Loading: ${loadUrl.substring(0, 120)}`);
+      await win.loadURL(loadUrl);
+      console.log(`[page-host:${win.id}] loadURL resolved`);
+
+      // Background detection for non-canvas web pages (slides, modals, quick-views).
+      // Canvas pages get this via the webview dom-ready handler in page.js.
+      // Non-canvas pages load directly in the BrowserWindow, so we detect here.
+      // Without this, pages that don't set a background show dark text on a dark
+      // BrowserWindow backgroundColor — unreadable in dark mode.
+      if (isWebPage && !useCanvas) {
+        win.webContents.on('dom-ready', async () => {
+          try {
+            const needsBackground = await win.webContents.executeJavaScript(`
+              (function() {
+                function isTransparentColor(color) {
+                  if (!color) return true;
+                  if (color === 'transparent') return true;
+                  if (color === 'rgba(0, 0, 0, 0)') return true;
+                  var rgbaMatch = color.match(/rgba\\s*\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*([\\d.]+)\\s*\\)/);
+                  if (rgbaMatch && parseFloat(rgbaMatch[1]) === 0) return true;
+                  return false;
+                }
+                function hasBackground(el) {
+                  if (!el) return false;
+                  var style = window.getComputedStyle(el);
+                  var bgColor = style.backgroundColor;
+                  var hasColor = !isTransparentColor(bgColor);
+                  var bgImage = style.backgroundImage;
+                  var hasImage = bgImage && bgImage !== 'none';
+                  return hasColor || hasImage;
+                }
+                var html = document.documentElement;
+                var body = document.body;
+                return !(hasBackground(html) || hasBackground(body));
+              })();
+            `);
+            if (needsBackground) {
+              await win.webContents.executeJavaScript(`
+                document.documentElement.style.backgroundColor = '#ffffff';
+              `);
+              DEBUG && console.log('[non-canvas-bg] No background detected, set default white for window:', win.id);
+            } else {
+              DEBUG && console.log('[non-canvas-bg] Page has background, skipping default for window:', win.id);
+            }
+          } catch (err) {
+            console.error('[non-canvas-bg] Failed to check/set background:', err);
+          }
+        });
+      }
+
+      // Update item titles when the page finishes loading (non-canvas web pages).
+      // Canvas pages have a guest webContents handler via did-attach-webview (registered above, before loadURL).
+      // Non-canvas pages (modals, slides, quick-views) load directly in the BrowserWindow.
+      if (isWebPage && !useCanvas && !url.startsWith('peek://')) {
+        win.webContents.on('page-title-updated', (_event: Electron.Event, title: string) => {
+          if (title && title !== 'Loading...') {
+            const pageUrl = win.webContents.getURL() || url;
+            try {
+              updateItemTitle(pageUrl, title);
+            } catch (e) {
+              DEBUG && console.log('Failed to update title from page-title-updated:', e);
+            }
+            // Notify extensions that page content is available for extraction
+            publish('system', PubSubScopes.GLOBAL, 'page:content-ready', {
+              url: pageUrl,
+              title,
+              windowId: win.id,
+            });
+          }
+        });
+      }
+
+      // Track this load in history (skip internal peek:// URLs)
+      if (!url.startsWith('peek://')) {
+        try {
+          const trackResult = trackWindowLoad(url, {
+            source: options.trackingSource || options.feature || 'window',
+            sourceId: options.trackingSourceId || '',
+            windowType: options.modal ? 'modal' : 'main',
+            title: options.title || (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
+          });
+          if (trackResult.created) {
+            publish('system', PubSubScopes.GLOBAL, 'item:created', {
+              itemId: trackResult.itemId,
+              itemType: 'url',
+              content: url
+            });
+          }
+          // Auto-tag with group if this window is in group mode
+          const loadModeEntry = getContextEntry('mode', win.id);
+          console.log('[openWindow] trackWindowLoad auto-tag check:', { winId: win.id, mode: loadModeEntry?.value, groupId: loadModeEntry?.metadata?.groupId, itemId: trackResult.itemId });
+          if (loadModeEntry && loadModeEntry.value === 'group' && loadModeEntry.metadata?.groupId) {
+            tagItemAndPublish(trackResult.itemId, loadModeEntry.metadata.groupId as string);
+            console.log('[openWindow] Auto-tagged item', trackResult.itemId, 'with group', loadModeEntry.metadata.groupId);
+          }
+        } catch (e) {
+          DEBUG && console.log('Failed to track window load:', e);
+        }
+      }
+
+      // Track in-page navigation (link clicks within the window)
+      // Skip tracking for peek:// URLs - these are internal (container pages, etc.)
+      // Web pages inside peek://app/page container handle their own tracking via webview events
+      win.webContents.on('did-navigate', (_event: Electron.Event, navUrl: string) => {
+        // Skip if it's the same URL we just loaded
+        if (navUrl === url) return;
+        // Skip internal peek:// URLs
+        if (navUrl.startsWith('peek://')) return;
+        try {
+          const navTrack = trackWindowLoad(navUrl, {
+            source: 'navigation',
+            sourceId: '',
+            windowType: options.modal ? 'modal' : 'main',
+            title: (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
+          });
+          if (navTrack.created) {
+            publish('system', PubSubScopes.GLOBAL, 'item:created', {
+              itemId: navTrack.itemId,
+              itemType: 'url',
+              content: navUrl
+            });
+          }
+          // Auto-tag with group if this window is in group mode
+          const navModeEntry = getContextEntry('mode', win.id);
+          if (navModeEntry && navModeEntry.value === 'group' && navModeEntry.metadata?.groupId) {
+            tagItemAndPublish(navTrack.itemId, navModeEntry.metadata.groupId as string);
+            DEBUG && console.log('[did-navigate] Auto-tagged item', navTrack.itemId, 'with group', navModeEntry.metadata.groupId);
+          }
+        } catch (e) {
+          DEBUG && console.log('Failed to track did-navigate:', e);
+        }
+      });
+
+      // Add escape key handler to all windows
+      addEscHandler(win);
 
       // Track content window focus for devtools command
       win.on('focus', () => {

@@ -16,7 +16,7 @@
  * - Migration is safe: copy first, mark complete only on success
  */
 
-import { session, Session } from 'electron';
+import { app, session, Session, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { registerProtocolOnSession } from './protocol.js';
@@ -53,6 +53,9 @@ export function getProfileSession(): Session {
 
     // Register the peek:// protocol handler on the profile session
     registerProtocolOnSession(profileSession);
+
+    // Handle file downloads — without this, download URLs leave windows stuck in loading state
+    registerDownloadHandler(profileSession);
   }
 
   return profileSession;
@@ -219,6 +222,39 @@ function copyDirectoryRecursive(src: string, dest: string): void {
       }
     }
   }
+}
+
+/**
+ * Register a will-download handler on a session.
+ * Saves downloads to the user's Downloads folder and closes the
+ * originating window (since there's no page content to display).
+ */
+function registerDownloadHandler(ses: Session): void {
+  ses.on('will-download', (_event, item, webContents) => {
+    const filename = item.getFilename();
+    const savePath = path.join(app.getPath('downloads'), filename);
+    item.setSavePath(savePath);
+    console.log('[download] Saving:', filename, '→', savePath);
+
+    // Close the window that triggered the download — it has no page to show.
+    // webContents may be a webview guest; try the host (embedder) webContents first.
+    let win = BrowserWindow.fromWebContents(webContents);
+    if (!win && (webContents as any).hostWebContents) {
+      win = BrowserWindow.fromWebContents((webContents as any).hostWebContents);
+    }
+    if (win && !win.isDestroyed()) {
+      DEBUG && console.log('[download] Closing download-trigger window:', win.id);
+      win.close();
+    }
+
+    item.on('done', (_e, state) => {
+      if (state === 'completed') {
+        console.log('[download] Completed:', filename);
+      } else {
+        console.log('[download] Failed/cancelled:', filename, state);
+      }
+    });
+  });
 }
 
 /**

@@ -398,9 +398,12 @@ async function initWebview() {
 // Simple state machine: 'loading' or 'loaded'.
 // Visual effect (CSS class) subscribes to state changes.
 
+const LOADING_TIMEOUT_MS = 30000; // 30 second safety net
+
 const loadingLifecycle = {
   _state: 'idle',
   _listeners: [],
+  _timeoutId: null,
 
   get state() { return this._state; },
 
@@ -409,10 +412,20 @@ const loadingLifecycle = {
     this._state = 'loading';
     this._notify();
     DEBUG && console.log('[page] Loading started');
+
+    // Safety net: auto-clear loading state after timeout to prevent permanently frozen windows
+    this._clearTimeout();
+    this._timeoutId = setTimeout(() => {
+      if (this._state === 'loading') {
+        console.warn('[page] Loading timeout after', LOADING_TIMEOUT_MS, 'ms — force clearing loading state');
+        this.stopLoading();
+      }
+    }, LOADING_TIMEOUT_MS);
   },
 
   stopLoading() {
     if (this._state === 'loaded') return;
+    this._clearTimeout();
     this._state = 'loaded';
     this._notify();
     DEBUG && console.log('[page] Loading finished');
@@ -420,6 +433,13 @@ const loadingLifecycle = {
 
   onChange(fn) {
     this._listeners.push(fn);
+  },
+
+  _clearTimeout() {
+    if (this._timeoutId) {
+      clearTimeout(this._timeoutId);
+      this._timeoutId = null;
+    }
   },
 
   _notify() {
@@ -453,6 +473,10 @@ loadingLifecycle.onChange((state) => {
     }
   }
 });
+
+// Track whether the webview has ever successfully loaded a page.
+// Used to distinguish download-abort errors (-3) from legitimate re-navigation.
+let hasEverLoaded = false;
 
 initWebview();
 loadingLifecycle.startLoading();
@@ -1305,7 +1329,16 @@ webview.addEventListener('did-navigate-in-page', (e) => {
 });
 
 webview.addEventListener('did-fail-load', (e) => {
-  if (e.errorCode === -3) return; // Aborted navigation (e.g. replaced by new nav)
+  if (e.errorCode === -3) {
+    // Error -3 (ABORTED) normally fires during legitimate re-navigation and is safe to ignore.
+    // However, if no page has ever loaded (e.g. URL triggered a download instead),
+    // the window is stuck in loading state forever — clear it.
+    if (!hasEverLoaded) {
+      console.log('[page] Load aborted before any page loaded (likely download), clearing loading state');
+      loadingLifecycle.stopLoading();
+    }
+    return;
+  }
   console.error('[page] Load failed:', e.errorCode, e.errorDescription);
   loadingLifecycle.stopLoading();
 });
@@ -1365,6 +1398,7 @@ webview.addEventListener('dom-ready', async () => {
 // --- OpenSearch discovery, loading lifecycle & page:loaded event ---
 
 webview.addEventListener('did-finish-load', async () => {
+  hasEverLoaded = true;
   loadingLifecycle.stopLoading();
   const pageUrl = webview.getURL();
   if (!pageUrl) return;
