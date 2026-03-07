@@ -2453,17 +2453,41 @@ if (tagsInput) {
 
 // --- React to tag pubsub events ---
 
-api.subscribe('tag:item-added', (msg) => {
+api.subscribe('tag:item-added', async (msg) => {
   if (msg && msg.itemId === currentItemId) {
     loadTagsForCurrentPage();
+  } else if (!currentItemId && msg && msg.itemId) {
+    // Item may have just been created by the tag command — try to resolve
+    try {
+      const url = webview.getURL();
+      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+        const resolved = await resolveItemId(url);
+        if (resolved && resolved === msg.itemId) {
+          currentItemId = resolved;
+          loadTagsForCurrentPage();
+        }
+      }
+    } catch { /* ignore */ }
   }
   // Refresh autocomplete cache on any tag creation
   loadAllTags();
 }, api.scopes.GLOBAL);
 
-api.subscribe('tag:item-removed', (msg) => {
+api.subscribe('tag:item-removed', async (msg) => {
   if (msg && msg.itemId === currentItemId) {
     loadTagsForCurrentPage();
+  } else if (!currentItemId && msg && msg.itemId) {
+    // Item may have just been created — try to resolve
+    try {
+      const url = webview.getURL();
+      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+        const resolved = await resolveItemId(url);
+        if (resolved && resolved === msg.itemId) {
+          currentItemId = resolved;
+          loadTagsForCurrentPage();
+        }
+      }
+    } catch { /* ignore */ }
   }
 }, api.scopes.GLOBAL);
 

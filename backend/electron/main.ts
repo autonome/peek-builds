@@ -15,7 +15,7 @@ import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, 
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
-import { scopes, publish, subscribe, unsubscribe, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
+import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
 import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, DEBUG } from './config.js';
 import { trackWindow } from './display-watcher.js';
 import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
@@ -74,7 +74,7 @@ let extensionHostWindow: BrowserWindow | null = null;
 
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
-const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'lists', 'peeks', 'search', 'slides', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers'];
+const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'lex', 'lists', 'peeks', 'search', 'slides', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
 const EAGER_EXTENSION_IDS = new Set(['cmd', 'hud', 'entities']);
@@ -552,6 +552,8 @@ function executeDeclarativeAction(cmd: ManifestCommand, ctx: Record<string, unkn
  * Sends ext:lazy-load to the extension host and waits for ext:lazy-ready.
  * Returns a promise that resolves when the extension is loaded and ready.
  */
+const LAZY_LOAD_TIMEOUT_MS = 10000;
+
 function loadLazyExtension(extId: string): Promise<void> {
   if (lazyExtensionLoaded.has(extId)) {
     return Promise.resolve();
@@ -566,6 +568,19 @@ function loadLazyExtension(extId: string): Promise<void> {
 
     // Only send load request once (first callback triggers it)
     if (lazyLoadCallbacks.get(extId)!.length === 1) {
+      // Safety timeout: if ext:ready never arrives, resolve all callbacks
+      setTimeout(() => {
+        if (lazyExtensionLoaded.has(extId)) return; // Already resolved normally
+        console.error(`[ext:lazy] Timeout waiting for ext:ready from ${extId} (${LAZY_LOAD_TIMEOUT_MS}ms)`);
+        lazyExtensionLoaded.add(extId);
+        loadedConsolidatedExtensions.add(extId);
+        const callbacks = lazyLoadCallbacks.get(extId) || [];
+        lazyLoadCallbacks.delete(extId);
+        for (const cb of callbacks) {
+          cb();
+        }
+      }, LAZY_LOAD_TIMEOUT_MS);
+
       if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
         DEBUG && console.log(`[ext:lazy] Loading lazy extension: ${extId}`);
         // Create iframe directly via executeJavaScript (bypasses IPC/contextBridge)
@@ -589,24 +604,62 @@ function loadLazyExtension(extId: string): Promise<void> {
 }
 
 /**
- * Handle ext:lazy-ready IPC from extension host.
- * Called when a lazy-loaded extension iframe has finished loading.
+ * Get the expected pubsub topics for an extension's execute-type commands.
  */
+function getExpectedCommandTopics(extId: string): string[] {
+  const extPath = getExtensionPath(extId);
+  if (!extPath) return [];
+  const manifest = loadExtensionManifest(extPath);
+  if (!manifest) return [];
+  return (manifest.commands || [])
+    .filter((cmd: ManifestCommand) => cmd.action.type === 'execute')
+    .map((cmd: ManifestCommand) => `cmd:execute:${cmd.name}`);
+}
+
+const VERIFY_POLL_INTERVAL_MS = 5;
+const VERIFY_MAX_ATTEMPTS = 10;
+
 function handleLazyExtensionReady(extId: string): void {
   DEBUG && console.log(`[ext:lazy] Extension ready: ${extId}`);
   lazyExtensionLoaded.add(extId);
   loadedConsolidatedExtensions.add(extId);
 
-  // Resolve all pending callbacks
   const callbacks = lazyLoadCallbacks.get(extId) || [];
   lazyLoadCallbacks.delete(extId);
 
-  // Give the extension a moment to register its commands before replaying
-  setTimeout(() => {
+  const expectedTopics = getExpectedCommandTopics(extId);
+
+  function allSubscribed(): boolean {
+    // Exclude lazy-stub subscribers — they're about to be removed
+    return expectedTopics.every(topic => hasSubscriber(topic, undefined, 'lazy-stub/'));
+  }
+
+  function resolveAll(): void {
     for (const cb of callbacks) {
       cb();
     }
-  }, 200);
+  }
+
+  // Fast path: all subscriptions already registered (common case)
+  if (expectedTopics.length === 0 || allSubscribed()) {
+    resolveAll();
+    return;
+  }
+
+  // Poll briefly for subscriptions to appear
+  let attempts = 0;
+  const timer = setInterval(() => {
+    attempts++;
+    if (allSubscribed()) {
+      clearInterval(timer);
+      resolveAll();
+    } else if (attempts >= VERIFY_MAX_ATTEMPTS) {
+      clearInterval(timer);
+      const missing = expectedTopics.filter(t => !hasSubscriber(t));
+      console.warn(`[ext:lazy] Extension ${extId} ready but missing subscribers after ${VERIFY_MAX_ATTEMPTS} attempts: ${missing.join(', ')}`);
+      resolveAll(); // Resolve anyway to avoid hang
+    }
+  }, VERIFY_POLL_INTERVAL_MS);
 }
 
 /**
@@ -614,22 +667,39 @@ function handleLazyExtensionReady(extId: string): void {
  * When the command is invoked, the extension is loaded first, then the
  * command is re-published for the extension's own handler to pick up.
  */
+// Track pending messages for lazy command stubs (cmd name -> buffered msg)
+const lazyCommandPending = new Map<string, unknown>();
+
 function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
-  const stubSource = `peek://ext/${extId}/lazy-stub`;
+  const stubSource = `lazy-stub/${cmd.name}`;
+  const topic = `cmd:execute:${cmd.name}`;
 
-  // Subscribe to execution requests — on first invoke, load the extension
-  subscribe(stubSource, scopes.GLOBAL, `cmd:execute:${cmd.name}`, async (msg: unknown) => {
+  subscribe(stubSource, scopes.GLOBAL, topic, async (msg: unknown) => {
+    // Extension already loaded — forward directly and clean up
+    if (lazyExtensionLoaded.has(extId)) {
+      unsubscribe(stubSource, topic);
+      publish(stubSource, scopes.GLOBAL, topic, msg);
+      return;
+    }
+
+    // Buffer the message (latest wins for concurrent invocations)
+    const alreadyLoading = lazyCommandPending.has(cmd.name);
+    lazyCommandPending.set(cmd.name, msg);
+
+    if (alreadyLoading) {
+      DEBUG && console.log(`[ext:lazy] Command ${cmd.name} invoked again during load, buffering`);
+      return;
+    }
+
     DEBUG && console.log(`[ext:lazy] Lazy command invoked: ${cmd.name}, loading extension: ${extId}`);
-
-    // Load the extension if not already loaded
     await loadLazyExtension(extId);
 
-    // Unsubscribe this stub so it doesn't catch the re-published event
-    unsubscribe(stubSource, `cmd:execute:${cmd.name}`);
-
-    // Re-publish the execute event so the extension's own handler picks it up
+    // Unsubscribe stub and replay buffered message exactly once
+    unsubscribe(stubSource, topic);
+    const bufferedMsg = lazyCommandPending.get(cmd.name);
+    lazyCommandPending.delete(cmd.name);
     DEBUG && console.log(`[ext:lazy] Extension ${extId} loaded, re-publishing command: ${cmd.name}`);
-    publish(stubSource, scopes.GLOBAL, `cmd:execute:${cmd.name}`, msg);
+    publish(stubSource, scopes.GLOBAL, topic, bufferedMsg);
   });
 
   // Register the command metadata with the cmd registry
@@ -704,28 +774,38 @@ export function registerLazyExtensionCommands(): void {
  * the target extension is loaded. These interceptors ensure the extension
  * is loaded first, then re-publish the event so the extension receives it.
  */
+// Track pending messages for lazy event interceptors (topic -> buffered msg)
+const lazyInterceptorPending = new Map<string, unknown>();
+
 export function registerLazyEventInterceptors(): void {
   const editorEvents = ['editor:open', 'editor:add'];
-  const interceptorSource = 'peek://ext/editor/lazy-interceptor';
 
   for (const topic of editorEvents) {
+    const interceptorSource = `lazy-interceptor/${topic}`;
+
     subscribe(interceptorSource, scopes.GLOBAL, topic, async (msg: unknown) => {
       // If editor is already loaded, nothing to do — the extension's own handler
       // will fire from the same publish (pubsub iterates all subscribers).
       if (lazyExtensionLoaded.has('editor')) return;
 
-      DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired but editor not loaded, loading...`);
+      // Buffer the message (latest wins for concurrent events)
+      const alreadyLoading = lazyInterceptorPending.has(topic);
+      lazyInterceptorPending.set(topic, msg);
 
-      // Load the editor extension
+      if (alreadyLoading) {
+        DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired again during load, buffering`);
+        return;
+      }
+
+      DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired but editor not loaded, loading...`);
       await loadLazyExtension('editor');
 
-      // Unsubscribe this interceptor so it doesn't catch future events
-      // (the extension's own handler is now registered)
+      // Unsubscribe and replay buffered message exactly once
       unsubscribe(interceptorSource, topic);
-
-      // Re-publish the event so the extension's newly-registered handler picks it up
+      const bufferedMsg = lazyInterceptorPending.get(topic);
+      lazyInterceptorPending.delete(topic);
       DEBUG && console.log(`[ext:lazy-interceptor] Editor loaded, re-publishing ${topic}`);
-      publish(interceptorSource, scopes.GLOBAL, topic, msg);
+      publish(interceptorSource, scopes.GLOBAL, topic, bufferedMsg);
     });
   }
 

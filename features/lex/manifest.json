@@ -4,7 +4,8 @@
   "name": "Lexicon Studio",
   "description": "Your AT Protocol identity and data",
   "version": "1.0.0",
-  "background": false,
+  "background": "background.html",
+  "builtin": true,
   "commands": [
     {
       "name": "lexicon studio",
@@ -23,20 +24,9 @@
       }
     },
     {
-      "name": "new",
-      "description": "Create a new AT Protocol record",
-      "action": {
-        "type": "window",
-        "url": "peek://lex/home.html",
-        "options": {
-          "role": "workspace",
-          "key": "lex-home",
-          "width": 860,
-          "height": 620,
-          "title": "Lexicon Studio",
-          "webPreferences": { "webSecurity": false }
-        }
-      }
+      "name": "lex",
+      "description": "Browse lexicons",
+      "action": { "type": "execute" }
     }
   ]
 }

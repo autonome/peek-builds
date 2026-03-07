@@ -2004,6 +2004,87 @@ test.describe('Command Execution @desktop', () => {
     expect(afterCheck.removed).toBe(true);
   });
 
+  test('tags page widget updates dynamically when tag is added via command', async () => {
+    const timestamp = Date.now();
+    const setupTag = `setupdyn${timestamp}`;
+    const dynamicTag = `testdynamic${timestamp}`;
+
+    // Helper to execute a tag command and wait for the result
+    const executeTag = async (tag: string) => {
+      return bgWindow.evaluate(async (args: { name: string; search: string }) => {
+        const api = (window as any).app;
+        return new Promise((resolve) => {
+          const resultTopic = `cmd:execute:${args.name}:result`;
+          api.subscribe(resultTopic, (result: any) => {
+            resolve(result);
+          }, api.scopes.GLOBAL);
+          api.publish(`cmd:execute:${args.name}`, {
+            search: args.search,
+            params: [],
+            expectResult: true,
+            resultTopic
+          }, api.scopes.GLOBAL);
+          setTimeout(() => resolve({ error: 'timeout' }), 10000);
+        });
+      }, { name: 'tag', search: tag });
+    };
+
+    // First tag establishes the item in the datastore and triggers the page's
+    // resolveItemId fallback, setting currentItemId for subsequent events
+    const setupResult = await executeTag(setupTag);
+    expect((setupResult as any).success).toBe(true);
+
+    // Get the specific page window opened by this test suite (matches URL key)
+    const pageWindow = await sharedApp.getWindow('cmd-exec-test', 10000);
+    expect(pageWindow).toBeTruthy();
+
+    // Wait for page.js to initialize and for the setup tag to appear
+    // (proves the reactive update path works and currentItemId is set)
+    await pageWindow.waitForFunction(
+      (expected: string) => {
+        const list = document.getElementById('tags-list');
+        if (!list) return false;
+        const names = Array.from(list.querySelectorAll('.tag-name'))
+          .map(el => el.textContent);
+        return names.includes(expected);
+      },
+      setupTag,
+      { timeout: 10000 }
+    );
+
+    // Record tag count after setup
+    const tagCountBefore = await pageWindow.evaluate(() => {
+      const list = document.getElementById('tags-list');
+      return list ? list.querySelectorAll('.tag-btn').length : 0;
+    });
+
+    // Now add a second tag — this should update the widget reactively
+    // because currentItemId is already set from the first tag
+    const result = await executeTag(dynamicTag);
+    expect((result as any).success).toBe(true);
+    expect((result as any).added).toContain(dynamicTag);
+
+    // Verify the tags widget updates dynamically
+    await pageWindow.waitForFunction(
+      (expectedTag: string) => {
+        const list = document.getElementById('tags-list');
+        if (!list) return false;
+        const tagNames = Array.from(list.querySelectorAll('.tag-name'))
+          .map(el => el.textContent);
+        return tagNames.includes(expectedTag);
+      },
+      dynamicTag,
+      { timeout: 10000 }
+    );
+
+    // Tag count increased
+    const tagCountAfter = await pageWindow.evaluate(() => {
+      const list = document.getElementById('tags-list');
+      return list ? list.querySelectorAll('.tag-btn').length : 0;
+    });
+    expect(tagCountAfter).toBeGreaterThan(tagCountBefore);
+  });
+
   test('tag command with no args returns current tags', async () => {
     const timestamp = Date.now();
     const tagName = `showme${timestamp}`;

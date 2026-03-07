@@ -39,65 +39,6 @@ const listTemplate = new pack.ListTemplate();
 const lexiconTemplate = new pack.LexiconTemplate();
 const formTemplate = new pack.FormTemplate();
 
-// ============================================================================
-// "new" command system
-// ============================================================================
-
-let registeredNewCommands = [];
-let knownCollectionNsids = [];
-let knownRecentNsids = [];
-
-function nsidDomainLabel(nsid) {
-  const parts = nsid.split('.');
-  return parts.length >= 2 ? parts[1] : parts[0];
-}
-
-function rebuildNewCommands() {
-  // Unregister old commands
-  for (const name of registeredNewCommands) {
-    try { api.commands.unregister(name); } catch {}
-  }
-  registeredNewCommands = [];
-
-  const allNsids = [...new Set([...knownRecentNsids, ...knownCollectionNsids])];
-  if (allNsids.length === 0) return;
-
-  const nameToNsids = new Map();
-  for (const nsid of allNsids) {
-    const friendly = nsidToFriendlyName(nsid);
-    if (!nameToNsids.has(friendly)) nameToNsids.set(friendly, []);
-    nameToNsids.get(friendly).push(nsid);
-  }
-
-  for (const nsid of allNsids) {
-    const friendly = nsidToFriendlyName(nsid);
-    const siblings = nameToNsids.get(friendly);
-    const displayName = siblings.length > 1 ? `${friendly} (${nsidDomainLabel(nsid)})` : friendly;
-    const cmdName = `new ${displayName} — ${nsid}`;
-
-    api.commands.register({
-      name: cmdName,
-      description: `Create ${nsid} record`,
-      execute: () => {
-        if (!currentSession) {
-          openLexWindow();
-          return { success: false, message: 'Not logged in. Opening login...' };
-        }
-        return {
-          success: true,
-          output: {
-            data: { nsid },
-            mimeType: 'application/x-lexicon-form',
-            title: displayName,
-            interactive: 'peek://lex/chain-form.html',
-          },
-        };
-      },
-    });
-    registeredNewCommands.push(cmdName);
-  }
-}
-
 function openLexWindow() {
   api.window.open('peek://lex/home.html', {
     role: 'workspace',
@@ -118,55 +59,12 @@ function openLexWindowWithLexicon(nsid) {
   }
 }
 
-function registerCommands() {
-  api.commands.register({
-    name: 'lexicon studio',
-    description: 'Open AT Protocol identity panel',
-    execute: () => {
-      openLexWindow();
-      return { success: true };
-    },
-  });
-
-  api.commands.register({
-    name: 'new',
-    description: 'Create a new AT Protocol record',
-    execute: async (ctx) => {
-      if (!currentSession) {
-        openLexWindow();
-        return { success: false, message: 'Not logged in. Opening login...' };
-      }
-      if (ctx.search && ctx.search.includes('.')) {
-        const nsid = ctx.search.trim();
-        const friendlyName = nsidToFriendlyName(nsid);
-        return {
-          success: true,
-          output: {
-            data: { nsid },
-            mimeType: 'application/x-lexicon-form',
-            title: friendlyName,
-            interactive: 'peek://lex/chain-form.html',
-          },
-        };
-      }
-      openLexWindowWithLexicon('');
-      return { success: true };
-    },
-  });
-
-  // Load recent nsids and build "new {Name}" commands
-  knownRecentNsids = [...(state.recentLexicons || [])];
-  rebuildNewCommands();
-}
 
 function onCollectionsChanged(nsids) {
-  knownCollectionNsids = nsids;
-  rebuildNewCommands();
+  // Collections are now handled by the background script's noun system
 }
 
 function onRecentLexiconsChanged() {
-  knownRecentNsids = [...(state.recentLexicons || [])];
-  rebuildNewCommands();
   // Also publish for chain-form.js (runs in separate modal window)
   api.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
 }
@@ -185,8 +83,6 @@ api.subscribe('lex:recent-lexicons-changed', (msg) => {
     }
     saveRecentLexicons();
     renderRecentLexicons();
-    knownRecentNsids = [...state.recentLexicons];
-    rebuildNewCommands();
   }
 }, api.scopes.GLOBAL);
 
@@ -207,6 +103,8 @@ async function saveSession() {
     if (currentProfile) {
       await api.settings.setKey(PROFILE_KEY, currentProfile);
     }
+    // Notify background script of session change
+    api.publish('lex:session-changed', { session: currentSession }, api.scopes.GLOBAL);
   } catch (err) {
     console.warn('[lex] Failed to save session:', err);
   }
@@ -236,6 +134,8 @@ async function clearSession() {
     try {
       await api.settings.setKey(STORAGE_KEY, null);
       await api.settings.setKey(PROFILE_KEY, null);
+      // Notify background script of session clear
+      api.publish('lex:session-changed', { session: null }, api.scopes.GLOBAL);
     } catch (err) {
       console.warn('[lex] Failed to clear session:', err);
     }
@@ -745,9 +645,6 @@ async function init() {
 
   // Load session from storage directly
   await loadSession();
-
-  // Register commands (after session loaded so auth checks work)
-  registerCommands();
 
   if (currentSession) {
     // Session exists — show account view

@@ -17,6 +17,31 @@
       "name": "open web search",
       "description": "Open the web search window",
       "action": { "type": "execute" }
+    },
+    {
+      "name": "kagi",
+      "description": "Search Kagi",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "google",
+      "description": "Search Google",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "ddg",
+      "description": "Search DuckDuckGo",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "bing",
+      "description": "Search Bing",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "wiki",
+      "description": "Search Wikipedia",
+      "action": { "type": "execute" }
     }
   ]
 }

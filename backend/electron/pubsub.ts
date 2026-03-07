@@ -137,6 +137,25 @@ export function unsubscribeAll(source: string): void {
 }
 
 /**
+ * Check if a topic has subscribers
+ * If source is provided, checks for that specific source.
+ * If excludePrefix is provided, checks for any subscriber whose key
+ * does NOT start with that prefix.
+ */
+export function hasSubscriber(topic: string, source?: string, excludePrefix?: string): boolean {
+  const subscribers = topics.get(topic);
+  if (!subscribers) return false;
+  if (source) return subscribers.has(source);
+  if (excludePrefix) {
+    for (const key of subscribers.keys()) {
+      if (!key.startsWith(excludePrefix)) return true;
+    }
+    return false;
+  }
+  return subscribers.size > 0;
+}
+
+/**
  * Get the system address constant
  */
 export function getSystemAddress(): string {
