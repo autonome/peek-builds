@@ -13,6 +13,18 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-03-07
+
+Desktop - Extensions
+- [x] Deterministic lazy extension loading — replace setImmediate with hasSubscriber verification, message buffering for stubs/interceptors, 10s safety timeout ([upxv](https://tangled.org/burrito.space/peek/commit/upxv))
+- [x] Convert lex to noun system — single `lex` noun with query/create/browse replaces 176+ dynamic command registrations ([upxv](https://tangled.org/burrito.space/peek/commit/upxv))
+
+Desktop - Page View
+- [x] Tags widget updates reactively when tags added/removed via commands ([upxv](https://tangled.org/burrito.space/peek/commit/upxv))
+
+Desktop - Testing
+- [x] Add pubsub and lazy-loading unit tests (24 tests), Playwright test for dynamic tags widget ([upxv](https://tangled.org/burrito.space/peek/commit/upxv))
+
 ## 2026-03-05
 
 Desktop - Shortcuts

@@ -4,9 +4,24 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Thu, 05 Mar 2026 15:20:12 GMT</lastBuildDate>
+    <lastBuildDate>Sat, 07 Mar 2026 18:03:22 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-03-07</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-07</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-03-07</guid>
+      <pubDate>Sat, 07 Mar 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Extensions
+- Deterministic lazy extension loading — replace setImmediate with hasSubscriber verification, message buffering for stubs/interceptors, 10s safety timeout (upxv (https://tangled.org/burrito.space/peek/commit/upxv))
+- Convert lex to noun system — single lex noun with query/create/browse replaces 176+ dynamic command registrations (upxv (https://tangled.org/burrito.space/peek/commit/upxv))
+
+Desktop - Page View
+- Tags widget updates reactively when tags added/removed via commands (upxv (https://tangled.org/burrito.space/peek/commit/upxv))
+
+Desktop - Testing
+- Add pubsub and lazy-loading unit tests (24 tests), Playwright test for dynamic tags widget (upxv (https://tangled.org/burrito.space/peek/commit/upxv))</description>
+    </item>
     <item>
       <title>2026-03-05</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-05</link>
