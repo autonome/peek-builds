@@ -20,44 +20,18 @@ import { id, labels, schemas, storageKeys, defaults, builtinEngines } from './co
 const api = window.app;
 const debug = api.debug;
 
-// ===== BroadcastChannel for intra-extension messaging =====
-// Falls back to IPC pubsub if BroadcastChannel is unavailable (e.g., custom protocol origins)
-
-let wsChannel = null;
-const wsChannelHandlers = {};
-
-try {
-  wsChannel = new BroadcastChannel('websearch');
-  wsChannel.onmessage = (e) => {
-    const { topic, data } = e.data;
-    if (wsChannelHandlers[topic]) {
-      for (const handler of wsChannelHandlers[topic]) {
-        handler(data);
-      }
-    }
-  };
-} catch (err) {
-  console.warn('[ext:websearch] BroadcastChannel unavailable, using IPC fallback:', err.message);
-}
+// ===== IPC pubsub messaging =====
+// Background runs at peek://ext/websearch/ while home runs at peek://websearch/
+// — different origins, so BroadcastChannel cannot work. Use IPC pubsub instead.
 
 function onChannel(topic, handler) {
-  if (!wsChannelHandlers[topic]) wsChannelHandlers[topic] = [];
-  wsChannelHandlers[topic].push(handler);
-  // IPC fallback
-  if (!wsChannel) {
-    api.subscribe(topic, handler, api.scopes.GLOBAL);
-  }
+  api.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
-  if (wsChannel) {
-    wsChannel.postMessage({ topic, data });
-  } else {
-    api.publish(topic, data, api.scopes.GLOBAL);
-  }
+  api.publish(topic, data, api.scopes.GLOBAL);
 }
 
-// Use peek://websearch/ origin (same as background iframe) so BroadcastChannel works
 const address = 'peek://websearch/home.html';
 
 // ===== State =====
@@ -224,18 +198,16 @@ const executeSearch = async (engine, query) => {
   const url = buildSearchUrl(engine.searchUrl, query.trim());
   debug && console.log('[ext:websearch] Searching:', engine.name, query, '->', url);
 
-  try {
-    await api.window.open(url, {
-      role: 'content',
-      key: url,
-      width: 1024,
-      height: 768,
-      trackingSource: 'websearch',
-      trackingSourceId: engine.id
-    });
-  } catch (err) {
+  api.window.open(url, {
+    role: 'content',
+    key: url,
+    width: 1024,
+    height: 768,
+    trackingSource: 'websearch',
+    trackingSourceId: engine.id
+  }).catch(err => {
     console.error('[ext:websearch] Failed to open search window:', err);
-  }
+  });
 };
 
 // ===== Search Suggestions =====
@@ -459,27 +431,27 @@ const discoverEngine = async (opensearchUrl, pageUrl) => {
 // ===== Search Window =====
 
 let isOpeningSearch = false;
-const openSearchWindow = async () => {
+const openSearchWindow = () => {
   if (isOpeningSearch) return;
   isOpeningSearch = true;
-  try {
-    const params = {
-      role: 'workspace',
-      key: address,
-      height: 500,
-      width: 600,
-      trackingSource: 'cmd',
-      trackingSourceId: 'websearch'
-    };
 
-    const window = await api.window.open(address, params);
+  const params = {
+    role: 'workspace',
+    key: address,
+    height: 500,
+    width: 600,
+    trackingSource: 'cmd',
+    trackingSourceId: 'websearch'
+  };
+
+  api.window.open(address, params).then(window => {
     debug && console.log('[ext:websearch] Search window opened:', window);
     searchWindowId = window?.id || null;
-  } catch (error) {
+  }).catch(error => {
     console.error('[ext:websearch] Failed to open search window:', error);
-  } finally {
+  }).finally(() => {
     isOpeningSearch = false;
-  }
+  });
 };
 
 // ===== Command Definitions =====
@@ -496,6 +468,7 @@ const staticCommandDefinitions = [
       } else {
         openSearchWindow();
       }
+      return { success: true };
     }
   },
   {
@@ -503,6 +476,7 @@ const staticCommandDefinitions = [
     description: 'Open the web search window',
     execute: async (ctx) => {
       openSearchWindow();
+      return { success: true };
     }
   }
 ];
@@ -528,6 +502,7 @@ const registerEngineCommands = () => {
         } else {
           openSearchWindow();
         }
+        return { success: true };
       }
     };
     api.commands.register(cmd);
@@ -694,7 +669,7 @@ const init = async () => {
   // Load custom engines from datastore
   await loadEngines();
 
-  // Register commands (cmd loads first with its subscribers ready via 100ms head start)
+  // Register commands (after settings/engines are loaded so we register once)
   initCommands();
 
   // Listen for page load events for OpenSearch discovery

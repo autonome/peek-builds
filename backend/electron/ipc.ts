@@ -104,6 +104,7 @@ import {
   getWindowInfo,
   removeWindow,
   findWindowByKey,
+  findWindowByUrl,
   getAllWindows,
   validateThemeCSS,
   popClosedWindow,
@@ -2204,6 +2205,20 @@ export function registerWindowHandlers(): void {
 
       // Mark this key as pending creation
       pendingWindowKeys.add(fullKey);
+    }
+
+    // Check if any existing window already has this URL loaded (for http/https URLs).
+    // This catches duplicate windows even when no key was provided.
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      const existingByUrl = findWindowByUrl(url);
+      if (existingByUrl) {
+        DEBUG && console.log('Reusing existing window with same URL:', url);
+        if (!isHeadless()) {
+          existingByUrl.window.show();
+          existingByUrl.window.focus();
+        }
+        return { success: true, id: existingByUrl.id, reused: true };
+      }
     }
 
     // Determine frame setting based on explicit option or preference

@@ -1290,6 +1290,8 @@ api.commands = {
             });
           }
         }
+      } else {
+        DEBUG && console.log('cmd:execute no handler for', command.name);
       }
     });
 

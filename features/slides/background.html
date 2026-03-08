@@ -14,6 +14,13 @@
 
   console.log(`[ext:${extId}] background.html loaded`);
 
+  // Initialize extension BEFORE publishing ext:ready
+  // (commands must be registered before lazy stub re-publishes)
+  if (extension.init) {
+    console.log(`[ext:${extId}] calling init()`);
+    await extension.init();
+  }
+
   // Signal ready to main process
   api.publish('ext:ready', {
     id: extId,
@@ -23,12 +30,6 @@
       version: '1.0.0'
     }
   }, api.scopes.SYSTEM);
-
-  // Initialize extension
-  if (extension.init) {
-    console.log(`[ext:${extId}] calling init()`);
-    extension.init();
-  }
 
   // Handle shutdown request from main process
   api.subscribe('app:shutdown', () => {

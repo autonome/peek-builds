@@ -18,9 +18,14 @@
     await extension.init();
   }
 
+  // Collect registered command topics for assertion verification
+  const registeredTopics = Object.keys(window._cmdHandlers || {})
+    .map(name => `cmd:execute:${name}`);
+
   // Signal ready to main process
   api.publish('ext:ready', {
     id: extId,
+    registeredTopics,
     manifest: {
       id: extension.id,
       version: '1.0.0'

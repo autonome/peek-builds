@@ -616,50 +616,35 @@ function getExpectedCommandTopics(extId: string): string[] {
     .map((cmd: ManifestCommand) => `cmd:execute:${cmd.name}`);
 }
 
-const VERIFY_POLL_INTERVAL_MS = 5;
-const VERIFY_MAX_ATTEMPTS = 10;
-
-function handleLazyExtensionReady(extId: string): void {
-  DEBUG && console.log(`[ext:lazy] Extension ready: ${extId}`);
+function handleLazyExtensionReady(extId: string, registeredTopics?: string[]): void {
   lazyExtensionLoaded.add(extId);
   loadedConsolidatedExtensions.add(extId);
 
   const callbacks = lazyLoadCallbacks.get(extId) || [];
   lazyLoadCallbacks.delete(extId);
 
+  // Assert-and-trust: verify subscribers are registered, log errors but resolve immediately
   const expectedTopics = getExpectedCommandTopics(extId);
-
-  function allSubscribed(): boolean {
-    // Exclude lazy-stub subscribers — they're about to be removed
-    return expectedTopics.every(topic => hasSubscriber(topic, undefined, 'lazy-stub/'));
-  }
-
-  function resolveAll(): void {
-    for (const cb of callbacks) {
-      cb();
+  if (expectedTopics.length > 0) {
+    const missing = expectedTopics.filter(t => !hasSubscriber(t, undefined, 'lazy-stub/'));
+    if (missing.length > 0) {
+      // Cross-check with registeredTopics from the extension if provided
+      if (registeredTopics && registeredTopics.length > 0) {
+        const extMissing = expectedTopics.filter(t => !registeredTopics.includes(t));
+        if (extMissing.length > 0) {
+          console.error(`[ext:lazy] Extension ${extId} did not register expected topics: ${extMissing.join(', ')}`);
+        }
+      }
+      console.error(`[ext:lazy] Extension ${extId} ready but missing subscribers: ${missing.join(', ')}`);
     }
   }
 
-  // Fast path: all subscriptions already registered (common case)
-  if (expectedTopics.length === 0 || allSubscribed()) {
-    resolveAll();
-    return;
-  }
+  DEBUG && console.log(`[ext:lazy] Extension ${extId} ready, resolving ${callbacks.length} callbacks`);
 
-  // Poll briefly for subscriptions to appear
-  let attempts = 0;
-  const timer = setInterval(() => {
-    attempts++;
-    if (allSubscribed()) {
-      clearInterval(timer);
-      resolveAll();
-    } else if (attempts >= VERIFY_MAX_ATTEMPTS) {
-      clearInterval(timer);
-      const missing = expectedTopics.filter(t => !hasSubscriber(t));
-      console.warn(`[ext:lazy] Extension ${extId} ready but missing subscribers after ${VERIFY_MAX_ATTEMPTS} attempts: ${missing.join(', ')}`);
-      resolveAll(); // Resolve anyway to avoid hang
-    }
-  }, VERIFY_POLL_INTERVAL_MS);
+  // Resolve immediately — the extension said it's ready, trust it
+  for (const cb of callbacks) {
+    cb();
+  }
 }
 
 /**
@@ -687,7 +672,6 @@ function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
     lazyCommandPending.set(cmd.name, msg);
 
     if (alreadyLoading) {
-      DEBUG && console.log(`[ext:lazy] Command ${cmd.name} invoked again during load, buffering`);
       return;
     }
 
@@ -1272,8 +1256,9 @@ export async function loadExtensions(): Promise<number> {
   // This resolves lazy-load promises so the stub can safely re-publish commands.
   subscribe(getSystemAddress(), scopes.SYSTEM, 'ext:ready', (data: unknown) => {
     const extId = (data as { id?: string })?.id;
+    const registeredTopics = (data as { registeredTopics?: string[] })?.registeredTopics;
     if (extId) {
-      handleLazyExtensionReady(extId);
+      handleLazyExtensionReady(extId, registeredTopics);
     }
   });
 
@@ -1646,6 +1631,24 @@ export function findWindowByKey(source: string, key: string): { id: number; wind
     if (win.source === source && win.params && win.params.key === key) {
       const browserWindow = BrowserWindow.fromId(id);
       if (browserWindow) {
+        return { id, window: browserWindow, data: win };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Find an existing window that has the given URL loaded (by address param).
+ * Only searches for http/https URLs. Returns the first match.
+ */
+export function findWindowByUrl(url: string): { id: number; window: BrowserWindow; data: unknown } | null {
+  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
+
+  for (const [id, win] of windowRegistry) {
+    if (win.params && win.params.address === url) {
+      const browserWindow = BrowserWindow.fromId(id);
+      if (browserWindow && !browserWindow.isDestroyed()) {
         return { id, window: browserWindow, data: win };
       }
     }

@@ -20,21 +20,27 @@
   if (hasPeekAPI) {
     // Running as a Peek extension - full functionality
 
+    // Initialize extension BEFORE publishing ext:ready
+    // (commands must be registered before lazy stub re-publishes)
+    if (extension.init) {
+      console.log(`[ext:${extId}] calling init()`);
+      await extension.init();
+    }
+
+    // Collect registered command topics for assertion verification
+    const registeredTopics = Object.keys(window._cmdHandlers || {})
+      .map(name => `cmd:execute:${name}`);
+
     // Signal ready to main process
     api.publish('ext:ready', {
       id: extId,
+      registeredTopics,
       manifest: {
         id: extension.id,
         labels: extension.labels,
         version: '1.0.0'
       }
     }, api.scopes.SYSTEM);
-
-    // Initialize extension
-    if (extension.init) {
-      console.log(`[ext:${extId}] calling init()`);
-      extension.init();
-    }
 
     // Handle shutdown request from main process
     api.subscribe('app:shutdown', () => {

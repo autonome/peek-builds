@@ -1,4 +1,4 @@
-const id = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+const id = 'websearch';
 
 const labels = {
   name: 'Web Search',

@@ -1175,6 +1175,36 @@
       font-size: 10px;
       color: var(--theme-text-muted, #777);
     }
+
+    /* --- Link status bar (bottom-left, shown on hover over links) --- */
+
+    .link-status-bar {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      z-index: 200;
+      max-width: 60%;
+      padding: 4px 8px;
+      background: color-mix(in srgb, var(--base00, #1e1e1e) 90%, transparent);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid color-mix(in srgb, var(--theme-border, rgba(255,255,255,0.1)) 40%, transparent);
+      border-radius: 6px;
+      color: var(--theme-text-secondary, #aaa);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+      font-size: 11px;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+
+    .link-status-bar.visible {
+      opacity: 1;
+    }
   </style>
 </head>
 <body data-no-drag>
@@ -1258,6 +1288,8 @@
       </div>
 
       <div class="widget-container" id="widget-container"></div>
+      <!-- Link status bar (shows URL on hover, like browser status bar) -->
+      <div class="link-status-bar" id="link-status-bar"></div>
     </div>
     <div class="right-gutter"></div>
   </div>

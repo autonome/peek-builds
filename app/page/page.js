@@ -3115,4 +3115,16 @@ webview.addEventListener('did-finish-load', () => {
   }
 });
 
+// --- Link hover status bar ---
+// Show the URL of the link the user is hovering over, like a browser status bar.
+const linkStatusBar = document.getElementById('link-status-bar');
+webview.addEventListener('update-target-url', (e) => {
+  if (e.url) {
+    linkStatusBar.textContent = e.url;
+    linkStatusBar.classList.add('visible');
+  } else {
+    linkStatusBar.classList.remove('visible');
+  }
+});
+
 DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);

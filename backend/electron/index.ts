@@ -162,6 +162,7 @@ export {
   registerWindow,
   getWindowInfo,
   findWindowByKey,
+  findWindowByUrl,
   removeWindow,
   getChildWindows,
   getAllWindows,

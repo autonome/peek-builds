@@ -1,4 +1,4 @@
-const id = '82de735f-a4b7-4fe6-a458-ec29939ae00d';
+const id = 'groups';
 
 const labels = {
   name: 'Groups',

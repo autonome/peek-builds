@@ -11,40 +11,16 @@
 const api = window.app;
 const debug = api.debug;
 
-// ===== BroadcastChannel for intra-extension messaging =====
-// Falls back to IPC pubsub if BroadcastChannel is unavailable (e.g., custom protocol origins)
-
-let wsChannel = null;
-const wsChannelHandlers = {};
-
-try {
-  wsChannel = new BroadcastChannel('websearch');
-  wsChannel.onmessage = (e) => {
-    const { topic, data } = e.data;
-    if (wsChannelHandlers[topic]) {
-      for (const handler of wsChannelHandlers[topic]) {
-        handler(data);
-      }
-    }
-  };
-} catch (err) {
-  console.warn('[websearch] BroadcastChannel unavailable, using IPC fallback:', err.message);
-}
+// ===== IPC pubsub messaging =====
+// Background runs at peek://ext/websearch/ while home runs at peek://websearch/
+// — different origins, so BroadcastChannel cannot work. Use IPC pubsub instead.
 
 function onChannel(topic, handler) {
-  if (!wsChannelHandlers[topic]) wsChannelHandlers[topic] = [];
-  wsChannelHandlers[topic].push(handler);
-  if (!wsChannel) {
-    api.subscribe(topic, handler, api.scopes.GLOBAL);
-  }
+  api.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
-  if (wsChannel) {
-    wsChannel.postMessage({ topic, data });
-  } else {
-    api.publish(topic, data, api.scopes.GLOBAL);
-  }
+  api.publish(topic, data, api.scopes.GLOBAL);
 }
 
 // ===== Utilities =====

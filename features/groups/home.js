@@ -933,6 +933,38 @@ const createAddressCard = (address) => {
 
   card.dataset.addressId = address.id;
 
+  // Add "remove from group" button when viewing a real tag group (not untagged)
+  if (state.currentTag && !state.currentTag.isSpecial) {
+    const header = card.querySelector('[slot="header"]');
+    if (header) {
+      // Find or create the button group container
+      let btnGroup = header.querySelector('.card-btn-group');
+      if (!btnGroup) {
+        btnGroup = document.createElement('span');
+        btnGroup.className = 'card-btn-group';
+        header.appendChild(btnGroup);
+      }
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'card-remove-group-btn';
+      removeBtn.title = `Remove from ${state.currentTag.name}`;
+      removeBtn.innerHTML =
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<line x1="18" y1="6" x2="6" y2="18"></line>' +
+        '<line x1="6" y1="6" x2="18" y2="18"></line>' +
+        '</svg>';
+      removeBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await api.datastore.untagItem(address.id, state.currentTag.id);
+          api.publish('tag:item-removed', { itemId: address.id, tagId: state.currentTag.id }, api.scopes.GLOBAL);
+        } catch (err) {
+          console.error('[groups] Failed to remove item from group:', err);
+        }
+      });
+      btnGroup.appendChild(removeBtn);
+    }
+  }
+
   // Show pin indicator if item is pinned in this group
   if (address._pinned) {
     const header = card.querySelector('[slot="header"]');

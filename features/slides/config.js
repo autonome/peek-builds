@@ -1,4 +1,4 @@
-const id = '434108f3-18a6-437a-b507-2f998f693bb2';
+const id = 'slides';
 
 const labels = {
   name: 'Slides',

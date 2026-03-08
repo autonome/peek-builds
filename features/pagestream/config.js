@@ -1,4 +1,4 @@
-const id = 'f7a3c1d2-8e4b-4f6a-9d2c-1b3e5a7f9c0d';
+const id = 'pagestream';
 
 const labels = {
   name: 'Pagestream',
