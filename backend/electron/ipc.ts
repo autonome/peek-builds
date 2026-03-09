@@ -2313,13 +2313,15 @@ export function registerWindowHandlers(): void {
     }
 
     // Center window on screen if no position specified (fallback when no opener)
+    // Use the display where the cursor is (the active display), not the primary display,
+    // so windows open on the screen the user is currently working on.
     if (winOptions.x === undefined && winOptions.y === undefined) {
-      const primaryDisplay = screen.getPrimaryDisplay();
-      const { width: screenW, height: screenH } = primaryDisplay.workAreaSize;
+      const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+      const wa = cursorDisplay.workArea;
       const winW = winOptions.width as number || APP_DEF_WIDTH;
       const winH = winOptions.height as number || APP_DEF_HEIGHT;
-      winOptions.x = Math.round((screenW - winW) / 2);
-      winOptions.y = Math.round((screenH - winH) / 2);
+      winOptions.x = wa.x + Math.round((wa.width - winW) / 2);
+      winOptions.y = wa.y + Math.round((wa.height - winH) / 2);
     }
 
     if (options.modal === true) {
@@ -2350,13 +2352,14 @@ export function registerWindowHandlers(): void {
       // When no explicit position is provided (e.g., external URLs, pubsub-triggered opens),
       // compute a centered position first so canvas bounds adjustment has valid coordinates.
       // Without this, undefined x/y produces NaN which breaks window positioning.
+      // Use the display where the cursor is (the active display), not the primary display.
       if (winOptions.x === undefined || winOptions.y === undefined) {
-        const primaryDisplay = screen.getPrimaryDisplay();
-        const { width: screenW, height: screenH } = primaryDisplay.workAreaSize;
+        const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+        const wa = cursorDisplay.workArea;
         const winW = winOptions.width as number || APP_DEF_WIDTH;
         const winH = winOptions.height as number || APP_DEF_HEIGHT;
-        winOptions.x = Math.round((screenW - winW) / 2);
-        winOptions.y = Math.round((screenH - winH) / 2);
+        winOptions.x = wa.x + Math.round((wa.width - winW) / 2);
+        winOptions.y = wa.y + Math.round((wa.height - winH) / 2);
       }
 
       // winOptions.x/y/width/height are currently the webview screen coordinates
@@ -3027,9 +3030,9 @@ export function registerWindowHandlers(): void {
       // Use explicit bounds instead of win.maximize() because panel-type windows
       // on macOS don't respond to maximize() properly
       if (options.maximize === true && !isHeadless()) {
-        const display = screen.getPrimaryDisplay();
-        const { width, height } = display.workAreaSize;
-        win.setBounds({ x: 0, y: 0, width, height });
+        const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+        const wa = display.workArea;
+        win.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height });
       }
 
       // Handle overlay mode: hide other windows after this one is ready

@@ -13,13 +13,8 @@ import {
   setupToolbar as _setupToolbar,
   createViewPrefs
 } from 'peek://app/lib/grid-nav.js';
-import {
-  createHeaderSlot, createFooterSlot, createFaviconEl, createUrlSpan,
-  extractTitle, formatUrl, getItemDisplayInfo
-} from 'peek://app/lib/card-helpers.js';
-import {
-  createAffordanceElements, createActionRulesCache
-} from 'peek://app/lib/tag-action-affordances.js';
+import { getItemDisplayInfo } from 'peek://app/lib/card-helpers.js';
+import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 
 const api = window.app;
@@ -35,6 +30,7 @@ let state = {
   parsedTags: [],    // tag name strings (without #)
   parsedText: '',    // free-text portion
   results: [],
+  itemTags: new Map(),  // Map of itemId -> [tags]
   selectedIndex: 0
 };
 
@@ -202,6 +198,16 @@ const runSearch = async () => {
   }
 
   state.results = items;
+
+  // Pre-load tags for all result items
+  state.itemTags.clear();
+  for (const item of items) {
+    const tagsResult = await api.datastore.getItemTags(item.id);
+    if (tagsResult.success) {
+      state.itemTags.set(item.id, tagsResult.data);
+    }
+  }
+
   debug && console.log('[search] Results:', items.length);
 };
 
@@ -264,11 +270,13 @@ const render = () => {
  * Uses the shared search-result-card builder for consistent rendering.
  */
 const createResultCard = (item) => {
+  const tags = state.itemTags.get(item.id) || [];
   const rules = actionRulesCache ? actionRulesCache.getRules() : [];
-  const { itemUrl, itemType } = getItemDisplayInfo(item);
+  const { itemUrl, itemType } = getItemDisplayInfo(item, { tags });
 
   const card = createSearchResultCard(item, {
     className: 'result-card',
+    tags,
     visitCount: item.visitCount,
     showOpenButton: itemUrl && isWebUrl(itemUrl),
     onOpen: (url) => {
@@ -284,12 +292,17 @@ const createResultCard = (item) => {
       await api.datastore.deleteItem(item.id);
       api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
       state.results = state.results.filter(r => r.id !== item.id);
+      state.itemTags.delete(item.id);
       render();
     },
     onTagRemove: async (item, tag) => {
       try {
         await api.datastore.untagItem(item.id, tag.id);
         api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+        // Update local tag cache and re-render
+        const currentTags = state.itemTags.get(item.id) || [];
+        state.itemTags.set(item.id, currentTags.filter(t => t.id !== tag.id));
+        render();
       } catch (err) {
         console.error('[search] Failed to remove tag:', err);
       }
@@ -311,59 +324,6 @@ const createResultCard = (item) => {
         api.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
       }
     }
-  });
-
-  // Async: load item tags and render tag chips + affordances in footer
-  api.datastore.getItemTags(item.id).then(tagsResult => {
-    if (!tagsResult.success || !tagsResult.data.length) return;
-    const tags = tagsResult.data;
-    const footer = card.querySelector('[slot="footer"]');
-    if (!footer) return;
-
-    // Build right-side container for tags and affordances
-    let footerRight = footer.querySelector('span:last-child');
-    if (!footerRight || footerRight.className === 'card-url') {
-      footerRight = document.createElement('span');
-      footerRight.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
-      footer.appendChild(footerRight);
-    }
-
-    // Tag action affordances
-    if (rules.length > 0) {
-      const tagNames = tags.map(t => t.name);
-      const el = createAffordanceElements(item.id, tagNames, rules, api, {
-        onToggle: () => { render(); }
-      });
-      if (el) footerRight.appendChild(el);
-    }
-
-    // Tag chips with remove buttons
-    const tagsContainer = document.createElement('span');
-    tagsContainer.className = 'card-tags';
-    tagsContainer.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;';
-    tags.forEach(tag => {
-      const chip = document.createElement('span');
-      chip.className = 'card-tag';
-      chip.dataset.tagId = tag.id;
-      chip.textContent = tag.name;
-
-      const removeBtn = document.createElement('span');
-      removeBtn.className = 'card-tag-remove';
-      removeBtn.textContent = '\u00D7';
-      removeBtn.title = `Remove ${tag.name}`;
-      removeBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        try {
-          await api.datastore.untagItem(item.id, tag.id);
-          api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
-        } catch (err) {
-          console.error('[search] Failed to remove tag:', err);
-        }
-      });
-      chip.appendChild(removeBtn);
-      tagsContainer.appendChild(chip);
-    });
-    footerRight.appendChild(tagsContainer);
   });
 
   return card;

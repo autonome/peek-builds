@@ -226,8 +226,14 @@ function copyDirectoryRecursive(src: string, dest: string): void {
 
 /**
  * Register a will-download handler on a session.
- * Saves downloads to the user's Downloads folder and closes the
- * originating window (since there's no page content to display).
+ * Saves downloads to the user's Downloads folder.
+ *
+ * Three cases:
+ * 1. Top-level BrowserWindow (not webview): close it — no page to show.
+ * 2. Webview guest with a real page loaded: keep open — user is browsing,
+ *    Chromium aborts the download navigation and the webview stays put.
+ * 3. Webview guest in a popup window opened for a download URL: close
+ *    the host window — the webview has no real content (blank page).
  */
 function registerDownloadHandler(ses: Session): void {
   ses.on('will-download', (_event, item, webContents) => {
@@ -236,15 +242,70 @@ function registerDownloadHandler(ses: Session): void {
     item.setSavePath(savePath);
     console.log('[download] Saving:', filename, '→', savePath);
 
-    // Close the window that triggered the download — it has no page to show.
-    // webContents may be a webview guest; try the host (embedder) webContents first.
-    let win = BrowserWindow.fromWebContents(webContents);
-    if (!win && (webContents as any).hostWebContents) {
-      win = BrowserWindow.fromWebContents((webContents as any).hostWebContents);
-    }
-    if (win && !win.isDestroyed()) {
-      DEBUG && console.log('[download] Closing download-trigger window:', win.id);
-      win.close();
+    // Detect whether the download originated from a <webview> guest.
+    // Use webContents.getType() which reliably returns 'webview' for guest contents.
+    // (hostWebContents was deprecated and may be undefined in modern Electron.)
+    const isWebviewGuest = webContents.getType() === 'webview';
+
+    if (!isWebviewGuest) {
+      // Top-level window opened just for this download — close it.
+      const win = BrowserWindow.fromWebContents(webContents);
+      if (win && !win.isDestroyed()) {
+        DEBUG && console.log('[download] Closing download-trigger window:', win.id);
+        win.close();
+      }
+    } else {
+      // Download from a webview guest. Two cases:
+      //
+      // 1. User clicked a download link on a page they're browsing.
+      //    Chromium aborts the download navigation (error -3) and the webview
+      //    stays on (or reverts to) its previous URL — a real http(s) page.
+      //    → Keep the host window open.
+      //
+      // 2. A popup window (target="_blank") was opened for a download URL.
+      //    The download URL was the first URL loaded in the webview. After
+      //    Chromium aborts the navigation, the webview has no URL or a blank URL.
+      //    → Close the host window (it has no content to show).
+      //
+      // We distinguish these by checking the webview's current URL after
+      // the download navigation was aborted. If it's a real page, keep open.
+      // Use a short delay to let Chromium finish aborting the navigation.
+      setTimeout(() => {
+        if (webContents.isDestroyed()) return;
+        const currentUrl = webContents.getURL();
+        const hasRealPage = currentUrl && currentUrl.startsWith('http') && currentUrl !== item.getURL();
+        if (hasRealPage) {
+          DEBUG && console.log('[download] Webview guest has loaded page, keeping window open:', currentUrl);
+        } else {
+          // No real page loaded — close the host BrowserWindow.
+          // Find the host window: try hostWebContents first, fall back to
+          // scanning all windows (hostWebContents is deprecated in newer Electron).
+          let hostWin: BrowserWindow | null = null;
+          const hostWC = (webContents as any).hostWebContents;
+          if (hostWC) {
+            hostWin = BrowserWindow.fromWebContents(hostWC);
+          }
+          if (!hostWin) {
+            // Fallback: find which BrowserWindow owns this guest webContents
+            for (const bw of BrowserWindow.getAllWindows()) {
+              if (bw.isDestroyed()) continue;
+              // Check if this window's webContents has the guest attached
+              // by looking at the page URL pattern (peek://app/page/index.html?url=...)
+              const bwUrl = bw.webContents.getURL();
+              if (bwUrl.includes('page/index.html') && bwUrl.includes(encodeURIComponent(item.getURL()))) {
+                hostWin = bw;
+                break;
+              }
+            }
+          }
+          if (hostWin && !hostWin.isDestroyed()) {
+            console.log('[download] Closing popup window opened for download:', hostWin.id);
+            hostWin.close();
+          } else {
+            DEBUG && console.log('[download] Download from webview guest (no page, no host window found)');
+          }
+        }
+      }, 500);
     }
 
     item.on('done', (_e, state) => {
