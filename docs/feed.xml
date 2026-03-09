@@ -4,9 +4,42 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Sat, 07 Mar 2026 18:03:22 GMT</lastBuildDate>
+    <lastBuildDate>Mon, 09 Mar 2026 22:56:45 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-03-09</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-09</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-03-09</guid>
+      <pubDate>Mon, 09 Mar 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Extensions
+- Fix extension ID mismatch — config.js IDs now match manifest IDs, fixing websearch and other lazy-loaded commands
+- Fix ext:ready ordering — all extensions call init() before publishing ext:ready, fixing cold-start command execution
+- Assert-and-trust lazy loading — remove polling, resolve immediately on ext:ready with subscriber verification
+- Fix websearch BroadcastChannel origin mismatch — switch to IPC pubsub for cross-origin communication
+
+Desktop - Windows
+- URL-based window dedup — opening same http/https URL focuses existing window instead of creating duplicate
+- Fix window centering on display switch — use cursor display instead of primary display
+- Fix download navigation — page stays loaded when clicking download links, cleanup blank popups
+
+Desktop - Page View
+- Add link hover tooltip — status bar shows URL destination on webview link hover
+
+Desktop - Search
+- Migrate search list view to standard peek-card components
+
+Desktop - Groups
+- Add remove-from-group icon on URL item cards in group detail view
+
+Desktop - Testing
+- Add Playwright tests for websearch commands, window URL handling, and download navigation
+
+Mobile
+- Android safe area, dark mode, crash fix, launcher icons, editor layout, 16KB alignment
+- Dual simulator dev command, DRY item components, fix iOS/Android crate-type conflict
+- Fullscreen image tap, today/later toggle, markdown reader mode for notes</description>
+    </item>
     <item>
       <title>2026-03-07</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-07</link>

@@ -13,6 +13,36 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-03-09
+
+Desktop - Extensions
+- [x] Fix extension ID mismatch — config.js IDs now match manifest IDs, fixing websearch and other lazy-loaded commands
+- [x] Fix ext:ready ordering — all extensions call init() before publishing ext:ready, fixing cold-start command execution
+- [x] Assert-and-trust lazy loading — remove polling, resolve immediately on ext:ready with subscriber verification
+- [x] Fix websearch BroadcastChannel origin mismatch — switch to IPC pubsub for cross-origin communication
+
+Desktop - Windows
+- [x] URL-based window dedup — opening same http/https URL focuses existing window instead of creating duplicate
+- [x] Fix window centering on display switch — use cursor display instead of primary display
+- [x] Fix download navigation — page stays loaded when clicking download links, cleanup blank popups
+
+Desktop - Page View
+- [x] Add link hover tooltip — status bar shows URL destination on webview link hover
+
+Desktop - Search
+- [x] Migrate search list view to standard peek-card components
+
+Desktop - Groups
+- [x] Add remove-from-group icon on URL item cards in group detail view
+
+Desktop - Testing
+- [x] Add Playwright tests for websearch commands, window URL handling, and download navigation
+
+Mobile
+- [x] Android safe area, dark mode, crash fix, launcher icons, editor layout, 16KB alignment
+- [x] Dual simulator dev command, DRY item components, fix iOS/Android crate-type conflict
+- [x] Fullscreen image tap, today/later toggle, markdown reader mode for notes
+
 ## 2026-03-07
 
 Desktop - Extensions
