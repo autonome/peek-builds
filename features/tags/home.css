@@ -585,7 +585,7 @@ peek-grid.cards[view-mode="masonry"] peek-card {
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  color: var(--base03);
+  color: var(--base04);
   flex-shrink: 0;
   transition: all 0.15s;
   padding: 0;

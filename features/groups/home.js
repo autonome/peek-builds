@@ -961,7 +961,13 @@ const createAddressCard = (address) => {
           console.error('[groups] Failed to remove item from group:', err);
         }
       });
-      btnGroup.appendChild(removeBtn);
+      // Insert before the delete button so remove-from-group is to the LEFT of delete
+      const deleteBtn = btnGroup.querySelector('.card-delete-btn');
+      if (deleteBtn) {
+        btnGroup.insertBefore(removeBtn, deleteBtn);
+      } else {
+        btnGroup.appendChild(removeBtn);
+      }
     }
   }
 

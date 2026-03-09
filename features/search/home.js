@@ -11,7 +11,9 @@ import {
   updateSelection as _updateSelection,
   createKeydownHandler,
   setupToolbar as _setupToolbar,
-  createViewPrefs
+  createViewPrefs,
+  getCards,
+  toggleSelectedCheckbox
 } from 'peek://app/lib/grid-nav.js';
 import { getItemDisplayInfo } from 'peek://app/lib/card-helpers.js';
 import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
@@ -310,7 +312,14 @@ const createResultCard = (item) => {
     affordances: rules.length > 0 ? {
       rules,
       api,
-      onToggle: () => { render(); }
+      onToggle: async () => {
+        // Refresh tags for the toggled item so re-render shows the new state
+        const tagsResult = await api.datastore.getItemTags(item.id);
+        if (tagsResult.success) {
+          state.itemTags.set(item.id, tagsResult.data);
+        }
+        render();
+      }
     } : null,
     onClick: async (item) => {
       if (itemUrl && isWebUrl(itemUrl)) {
@@ -333,9 +342,44 @@ const createResultCard = (item) => {
 
 const updateSelection = () => _updateSelection(state);
 
-const handleKeydown = createKeydownHandler(state, {
+/**
+ * Delete the currently selected search result item.
+ * Matches the onDelete callback used by card delete buttons.
+ */
+const deleteSelectedItem = async () => {
+  const cards = getCards();
+  const selected = cards[state.selectedIndex];
+  if (!selected) return;
+
+  const itemId = selected.dataset.itemId;
+  const item = state.results.find(r => r.id === itemId);
+  if (!item) return;
+
+  if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
+
+  await api.datastore.deleteItem(item.id);
+  api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+  state.results = state.results.filter(r => r.id !== item.id);
+  state.itemTags.delete(item.id);
+  render();
+};
+
+const _baseKeydownHandler = createKeydownHandler(state, {
   onEscape: () => window.close()
 });
+
+/**
+ * Extended keydown handler: delegates to shared grid-nav handler,
+ * plus adds Delete key for deleting items.
+ */
+const handleKeydown = (e) => {
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    deleteSelectedItem();
+    return;
+  }
+  _baseKeydownHandler(e);
+};
 
 // ── Toolbar ────────────────────────────────────────────────────────────
 
