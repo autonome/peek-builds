@@ -13,7 +13,7 @@
 }
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: "ServerMono", monospace;
   font-size: 16px;
   line-height: 1.5;
@@ -21,6 +21,10 @@
   color: #0f0f0f;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+body.dark {
+  color-scheme: dark;
 }
 
 * {
@@ -33,6 +37,7 @@
 input, textarea {
   -webkit-user-select: text;
   user-select: text;
+  color: inherit;
 }
 
 html, body {
@@ -122,8 +127,9 @@ body.dark .pull-indicator.ready {
 header {
   background: #ffffff;
   padding: 0.25rem 0.75rem;
-  /* Android injects --android-safe-area-top via MainActivity; iOS uses env() */
-  padding-top: calc(var(--android-safe-area-top, env(safe-area-inset-top, 0px)) + 0.4rem);
+  /* Safe area: --safe-area-top is set by JS on mount (env() for iOS, Kotlin bridge for Android).
+     Fallback 40px ensures header clears notch/status bar even before JS runs. */
+  padding-top: calc(var(--safe-area-top, 40px) + 0.4rem);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   position: sticky;
   top: 0;
@@ -1157,7 +1163,7 @@ body.dark .header-btn {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   padding: 1rem;
-  padding-bottom: calc(var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 1rem);
+  padding-bottom: calc(var(--safe-area-bottom, 0px) + 1rem);
   max-width: 600px;
   width: 100%;
   margin: 0 auto;
@@ -2484,19 +2490,26 @@ body.dark .captured-image-preview {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* height is set dynamically via visualViewport — no bottom: 0 */
+  height: 100%;
   background: rgba(0, 0, 0, 0.4);
   z-index: 1000;
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: 0.5rem;
-  padding-top: var(--android-safe-area-top, env(safe-area-inset-top, 4px));
+  padding-top: var(--safe-area-top, 40px);
   /* Ensure safe area padding at bottom when keyboard is hidden */
-  padding-bottom: max(var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)), 0.5rem);
+  padding-bottom: max(var(--safe-area-bottom, 0px), 0.5rem);
   /* Prevent iOS from scrolling the viewport when keyboard appears */
   overflow: hidden;
   overscroll-behavior: contain;
+  box-sizing: border-box;
+}
+
+/* When keyboard is open, no bottom safe-area padding needed — keyboard covers it */
+.edit-overlay.keyboard-open {
+  padding-bottom: 4px;
 }
 
 .edit-overlay.transition-padding {
@@ -2547,6 +2560,7 @@ body.dark .edit-overlay {
   font-family: inherit;
   background: transparent;
   box-sizing: border-box;
+  color: #0f0f0f;
 }
 
 .expandable-card-input:focus {
@@ -2731,6 +2745,8 @@ body.dark .clear-btn {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  /* Cap textarea at half the card so tags + buttons stay visible */
+  max-height: 50%;
 }
 
 .resizable-input-textarea {
@@ -2746,6 +2762,7 @@ body.dark .clear-btn {
   min-height: 0;
   box-sizing: border-box;
   background: transparent;
+  color: #0f0f0f;
 }
 
 .resizable-input-textarea:focus {
@@ -2813,6 +2830,15 @@ body.dark .drag-handle-bar {
 .resizable-input-wrapper ~ .editor-tags-section {
   flex: 0 0 auto;
   max-height: 140px;
+}
+
+/* When keyboard is open, limit tags to ~3 rows and scroll overflow.
+   Each tag row is ~32px + gap, so 3 rows ≈ 108px plus input row. */
+.keyboard-open .editor-tags-section {
+  flex: 0 1 auto;
+  /* ~3 rows of tags (32px each) + tag input row (~44px) + padding */
+  max-height: 152px;
+  overflow-y: auto;
 }
 
 /* Editor Buttons - always visible at bottom */
@@ -2895,6 +2921,7 @@ body.dark .editor-image-preview {
   border-radius: 12px 12px 0 0;
   resize: none;
   min-height: 0;
+  color: #0f0f0f;
 }
 
 .text-editor-drag-handle {
@@ -3166,7 +3193,7 @@ body.dark .confirm-modal-buttons .delete-btn {
 /* Toast notifications */
 .toast {
   position: fixed;
-  bottom: calc(var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)) + 80px);
+  bottom: calc(var(--safe-area-bottom, 0px) + 80px);
   left: 50%;
   transform: translateX(-50%);
   padding: 0.75rem 1.25rem;
@@ -3575,7 +3602,7 @@ body.dark .webview-error {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--android-safe-area-top, env(safe-area-inset-top)) env(safe-area-inset-right) var(--android-safe-area-bottom, env(safe-area-inset-bottom)) env(safe-area-inset-left);
+  padding: var(--safe-area-top, 0px) var(--safe-area-right, 0px) var(--safe-area-bottom, 0px) var(--safe-area-left, 0px);
 }
 
 .image-fullscreen-img {

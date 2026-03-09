@@ -98,4 +98,4 @@ fi
 echo "[dev] Starting tauri android dev..."
 echo ""
 cd "$SCRIPT_DIR"
-npx tauri android dev --target aarch64
+npx tauri android dev

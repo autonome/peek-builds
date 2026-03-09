@@ -173,8 +173,21 @@ interface EditorOverlayProps {
 const SWIPE_THRESHOLD = 80;
 
 const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyboardHeight, className = '' }) => {
-  // Use actual keyboard height when available; when keyboard is hidden, only pad for safe area
-  const effectiveKeyboardPadding = keyboardHeight > 0 ? keyboardHeight + 4 : 0;
+  const keyboardOpen = keyboardHeight > 0;
+
+  // Track visual viewport height so the overlay never extends behind the keyboard.
+  // visualViewport.height shrinks when the keyboard opens — we use it directly.
+  const [viewportHeight, setViewportHeight] = useState(() =>
+    window.visualViewport ? window.visualViewport.height : window.innerHeight
+  );
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => setViewportHeight(vv.height);
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, []);
 
   // Swipe-down-to-close state
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -199,18 +212,14 @@ const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyb
     return () => viewport.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // On Android, the Kotlin bridge injects --android-safe-area-top via evaluateJavascript,
-  // but it may fire before the page DOM is ready (race condition). Set a sensible default
-  // so the header isn't behind the status bar while waiting for the native bridge.
-  // The Kotlin bridge will overwrite this with the exact value once it fires.
+  // Set --safe-area-top CSS variable for status bar / notch clearance.
+  // On iOS: read from env(safe-area-inset-top) via a CSS trick.
+  // On Android: Kotlin bridge overwrites with real WindowInsets value.
+  // Default 40px ensures header clears notch even if bridge is slow.
   useEffect(() => {
-    const isAndroid = /android/i.test(navigator.userAgent);
-    if (isAndroid) {
-      const root = document.documentElement;
-      // Only set default if the Kotlin bridge hasn't already provided a value
-      if (!root.style.getPropertyValue('--android-safe-area-top')) {
-        root.style.setProperty('--android-safe-area-top', '24px');
-      }
+    const root = document.documentElement;
+    if (!root.style.getPropertyValue('--safe-area-top')) {
+      root.style.setProperty('--safe-area-top', '40px');
     }
   }, []);
 
@@ -239,8 +248,8 @@ const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyb
 
   return (
     <div
-      className={`edit-overlay ${className}`}
-      style={effectiveKeyboardPadding > 0 ? { paddingBottom: `${effectiveKeyboardPadding}px` } : undefined}
+      className={`edit-overlay ${className}${keyboardOpen ? ' keyboard-open' : ''}`}
+      style={{ height: `${viewportHeight}px` }}
       onClick={(e) => e.target === e.currentTarget && onDismiss()}
     >
       <div
@@ -930,16 +939,21 @@ function App() {
     }
   }, []);
 
-  // Detect system dark mode via native iOS API
+  // Detect system dark mode via native API (iOS) or Android bridge
   useEffect(() => {
     const checkDarkMode = async () => {
       try {
         const nativeDark = await invoke<boolean>("is_dark_mode");
         setIsDark(nativeDark);
       } catch (error) {
-        // Fallback to JS media query
-        const jsMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-        setIsDark(jsMediaQuery.matches);
+        // Check Android-injected global (set by MainActivity.kt)
+        if (typeof (window as any).__ANDROID_DARK_MODE__ === "boolean") {
+          setIsDark((window as any).__ANDROID_DARK_MODE__);
+        } else {
+          // Fallback to JS media query
+          const jsMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+          setIsDark(jsMediaQuery.matches);
+        }
       }
     };
 
