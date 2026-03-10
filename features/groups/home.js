@@ -439,6 +439,12 @@ const init = async () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
+  // Subscribe to tag rename events for reactive updates
+  api.subscribe('tag:renamed', (msg) => {
+    debug && console.log('[groups] tag:renamed event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
   // Subscribe to pin change events for reactive updates
   api.subscribe('group:pin-changed', (msg) => {
     debug && console.log('[groups] group:pin-changed event received:', msg);
@@ -766,12 +772,126 @@ const showAddresses = async (tag) => {
 };
 
 /**
+ * Render the group detail header with group name and rename support.
+ * Double-click the name to rename.
+ */
+const renderGroupHeader = () => {
+  const container = document.querySelector('.cards');
+  const tag = state.currentTag;
+  if (!tag) return;
+
+  // Remove existing header if present
+  const existing = container.querySelector('.group-detail-header');
+  if (existing) existing.remove();
+
+  const header = document.createElement('div');
+  header.className = 'group-detail-header';
+
+  const colorDot = document.createElement('div');
+  colorDot.className = 'group-header-dot';
+  colorDot.style.backgroundColor = tag.color || '#999';
+  header.appendChild(colorDot);
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'group-header-name';
+  nameEl.textContent = tag.name;
+  // Double-click to rename (not for special groups like Untagged)
+  if (!tag.isSpecial) {
+    nameEl.title = 'Double-click to rename';
+    nameEl.addEventListener('dblclick', () => startRenameGroup(header, tag));
+  }
+  header.appendChild(nameEl);
+
+  // Rename button (not for special groups)
+  if (!tag.isSpecial) {
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'group-rename-btn';
+    renameBtn.title = 'Rename group';
+    renameBtn.innerHTML =
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>' +
+      '<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>' +
+      '</svg>';
+    renameBtn.addEventListener('click', () => startRenameGroup(header, tag));
+    header.appendChild(renameBtn);
+  }
+
+  container.insertBefore(header, container.firstChild);
+};
+
+/**
+ * Start inline rename of a group
+ */
+const startRenameGroup = (headerEl, tag) => {
+  // Replace name element with input
+  const nameEl = headerEl.querySelector('.group-header-name');
+  const renameBtn = headerEl.querySelector('.group-rename-btn');
+  if (!nameEl) return;
+
+  const input = document.createElement('input');
+  input.className = 'group-rename-input';
+  input.type = 'text';
+  input.value = tag.name;
+
+  const finishRename = async (commit) => {
+    const newName = input.value.trim();
+    if (commit && newName && newName !== tag.name) {
+      try {
+        const result = await api.datastore.renameTag(tag.id, newName);
+        if (result.success) {
+          tag.name = newName;
+          // Update search placeholder
+          const searchInput = document.querySelector('peek-input.search-input');
+          searchInput.placeholder = `Search in ${newName}...`;
+          // Update mode context
+          if (api.context) {
+            await api.context.setMode('group', {
+              metadata: { groupId: tag.id, groupName: newName, color: tag.color }
+            });
+          }
+          debug && console.log('[groups] Renamed group to:', newName);
+        } else {
+          console.error('[groups] Failed to rename group:', result.error);
+        }
+      } catch (err) {
+        console.error('[groups] Error renaming group:', err);
+      }
+    }
+    // Restore display
+    nameEl.textContent = tag.name;
+    nameEl.style.display = '';
+    input.remove();
+    if (renameBtn) renameBtn.style.display = '';
+  };
+
+  nameEl.style.display = 'none';
+  if (renameBtn) renameBtn.style.display = 'none';
+  headerEl.insertBefore(input, nameEl.nextSibling);
+  input.focus();
+  input.select();
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      finishRename(true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      finishRename(false);
+    }
+  });
+  input.addEventListener('blur', () => finishRename(true));
+};
+
+/**
  * Render address cards (separate from showAddresses for filtering)
  */
 const renderAddresses = () => {
   const container = document.querySelector('.cards');
   container.innerHTML = '';
   updateToolbarSortOptions();
+
+  // Render group detail header
+  renderGroupHeader();
 
   // Apply search filter
   let filteredAddresses = filterAddresses(state.addresses);
