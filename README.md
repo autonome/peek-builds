@@ -4,60 +4,64 @@ Peek is a web user agent application designed for using the web where, when and 
 
 Today's browsers are one-size-fits-all applications, cramming the vast universe of user needs across an unimaginably large web into in an unmodifiable tabbed-window design.
 
-Peek is a web user agent that is a workbench for experimenting with task alignment - making it easy to create new user interface shapes for the web which fit our need in the moment.
+We often use the web with a specific goal in mind - that goal should drive the design of the interface of the web user agent. We should be the driver, creator, maker, shaper of that design and interface.
 
-We often use the web with a specific goal in mind - that goal should drive the design of the interface of the web user agent.
+Peek is designed to allow you to experiment and create flows for task alignment in interfaces that are personal. It aims to make it easy to create new user interface shapes for the web which fit your need in the moment.
 
-<img width="969" alt="settings screenshot" src="settings-screenshot.png">
+Peek is a workbench for the web.
+Peek is a window manager for the web.
+Peek is what you want it to be.
+
+<img width="969" alt="peek desktop screenshot" src="peek-desktop-screenshot.png">
 
 ## Important notes
 
-___PEEK IS NOT A WEB BROWSER___
+___PEEK IS NOT A BROWSER___
 
-Peek is not a web browser, and will never be a browser in the way you are probably familiar with: There are no tabs, and no windows in the tabbed-browser-like sense of them. Peek likely does not have many other of many details we are used to in web browsers, but do not notice until they are missing. Peek may be most useful to you if you view it as an entirely different type of application than a traditional web browser.
+Peek is not a browser, and will never be a browser in the way you are probably familiar with: There are no tabs, and no windows in the tabbed-browser-like sense of them. Peek likely does not have many other of many details we are used to in web browsers, but do not notice until they are missing. Peek may be most useful to you if you view it as an entirely different type of application than a traditional web browser.
 
 ___PEEK IS A CONCEPT PREVIEW___
 
 Peek is not safe for daily use yet! It is a proof of concept. Do not use it for anything critical. Peek does not have the same security approach as traditional web browsers, and its security model and security user interface have not yet been determined. Peek has not had a security audit.
 
+## Core
+
+Built-in capabilities that form the foundation of Peek.
+
+- **IZUI Navigation** — Inverted Zooming User Interface. ESC-key-based navigation model that provides consistent "zoom out" behavior across all interfaces. Enter from anywhere, ESC to go back — predictable at every level.
+- **Window Management** — Heterogeneous windowing: chromeless modals, overlays, slides, workspaces and content windows, each with role-specific behavior.
+- **Extension System** — All features are extensions with manifest-declared commands, shortcuts, and settings. Extensions can be eager, lazy-loaded, or fully declarative.
+- **PubSub Messaging** — Cross-window event system for communication between extensions and windows.
+- **Data Persistence** — SQLite datastore with schema management, history tracking, and cross-device sync support.
+- **peek:// Protocol** — Custom protocol for internal navigation and cross-origin access.
+- **Settings** — Per-extension configuration with live reload. `Cmd/Ctrl+,` or tray icon.
+
 ## Features
 
-You can use Peek in a few ways, with more coming:
+- **Commands** — Graphical command palette (GCLI) for opening pages, executing commands, chaining outputs, and parameter entry. `Ctrl+Cmd+P`
+- **Groups** — Categorize, recall and interact with groups of pages. Tag-based with smart and curated grouping. `Ctrl+G`
+- **Peeks** — Keyboard-activated modal chromeless web pages for quickly glancing at or interacting with pages. `Opt+0-9`
+- **Slides** — Keyboard-activated modal chromeless web pages which slide in from any screen edge. `Opt+Arrow Keys`
+- **Editor** — Markdown editor with outline sidebar, live preview, and vim mode. `Ctrl+E`
+- **Search** — Search across all items by text and tags.
+- **Tags** — Tag, untag, and browse items by tag. Tag visualization and management.
+- **Tag Actions** — Define custom actions triggered by tags, enabling automated workflows.
+- **Web Search** — Search the web with engine discovery — Google, DuckDuckGo, Kagi, Bing, Wikipedia, and more.
+- **Windows** — Full-screen window switcher overlay showing all open windows as cards. `Ctrl+Shift+W`
+- **Pagestream** — Chat-like vertical navigation interface for browsing history. `Ctrl+P`
+- **Entities** — Automatic extraction of people, places, organizations, and events from visited pages.
+- **Scripts** — Periodically execute scripts against web pages in the background to extract data, with change notifications.
+- **Files** — Open local files, CSV conversion, markdown formatting, save operations.
+- **Feeds** — RSS/Atom feed reader.
+- **Lex** — Lexicon Studio: AT Protocol identity and data browser/editor.
+- **Sheets** — Widget sheets with freeform card layouts hosting webviews.
+- **Timers** — Countdown timers, alarms, stopwatches, and interval timers.
+- **Sync** — Cross-device synchronization of items, tags, and groups.
+- **HUD** — Always-on-top heads-up display showing current state and mode. `Ctrl+H`
 
-- Peeks - Keyboard-activated modal chromeless web pages for quickly glancing at or interacting with pages
-- Slides - Keyboard- or gesture-activated modal chromeless web pages which slide in from any screen edges
-- Scripts - Scripts periodically executed against a web page in the background which extract data for you to route to other pages or applications, or to aggregate, store and process later
-
-In progress, or thinking about:
-
-- Commands - a graphical command entry palette (GCLI) for opening pages or executing commands against them
-- Groups - a way to categorize, recall and interact with groups of pages
-- "native" web apps - using Peek as a way to "install" web pages on the local device, as separate applications instead of just separate processes
-- "Peeklets" HUD - select parts of pages to add to collection which are rendered as an overlay, toggled by shortcut
-
-### Usage
-
-- Settings
-  * In app, `Cmd/Ctrl+r,` or launch app to open settings, or click tray icon
-  * Configure Peeks/Slides/Scripts in settings
-- Peeks
-  * `Opt+0-9` to open Peeks
-- Slides
-  * `Opt+←→↑↓` to open Slides
-
-### Peeks
-
-Peeks are keyboard activated modal chromeless web pages mapped to `Opt+0-9` and closed on blur, the `Escape` key or `cmd/ctrl+w`.
-
-### Slides
-
-Slides are gesture activated modal chromeless web pages which slide in from left/right/bottom/top, and closed on blur, the `Escape` key or `cmd/ctrl+w`.
-
-### Scripts
-
-Scripts periodically load a web page in the background and extract data matching a CSS selector, stores it, and notify the user when the resulting data changes.
-
-Ok, so not really "scripts" yet. But safe and effective enough for now.
+Coming:
+- "native" web apps — using Peek as a way to "install" web pages on the local device as separate applications
+- "Peeklets" HUD — select parts of pages to add to a collection rendered as an overlay
 
 ## Design
 
