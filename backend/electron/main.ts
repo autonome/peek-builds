@@ -74,7 +74,7 @@ let extensionHostWindow: BrowserWindow | null = null;
 
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
-const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'lex', 'lists', 'peeks', 'search', 'slides', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers'];
+const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'lex', 'lists', 'peeks', 'search', 'slides', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
 const EAGER_EXTENSION_IDS = new Set(['cmd', 'hud', 'entities']);
