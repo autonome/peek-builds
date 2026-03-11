@@ -331,34 +331,121 @@ peek-grid.cards[view-mode="masonry"] peek-card {
   background: var(--base01);
 }
 
-/* Group detail header — shown when viewing a group's contents */
+/* Group detail header — shown at the very top when viewing a group's contents */
 .group-detail-header {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 0 10px 0;
-  margin-bottom: 4px;
+  padding: 14px 16px 10px 16px;
   border-bottom: 1px solid var(--base02);
 }
 
-.group-header-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
 .group-header-name {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   color: var(--base05);
   cursor: default;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+.group-header-spacer {
   flex: 1;
+}
+
+/* View mode buttons in group detail header */
+.group-header-view-modes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.group-header-view-modes .ghvm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--base04);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.group-header-view-modes .ghvm-btn:hover {
+  background: var(--base02);
+  color: var(--base05);
+}
+
+.group-header-view-modes .ghvm-btn.active {
+  background: var(--base0D);
+  color: var(--base00);
+  border-color: var(--base0D);
+}
+
+/* Inline sort controls in search row (detail view) */
+.inline-sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.inline-sort-controls .inline-sort-select {
+  height: 28px;
+  padding: 0 22px 0 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--base05);
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 5px;
+  cursor: pointer;
+  appearance: none;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.inline-sort-controls .inline-sort-select:focus {
+  border-color: var(--base0D);
+}
+
+.inline-sort-controls .inline-sort-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.inline-sort-controls .inline-sort-arrow {
+  position: absolute;
+  right: 6px;
+  pointer-events: none;
+  color: var(--base04);
+}
+
+.inline-sort-controls .inline-sort-dir-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--base02);
+  border-radius: 5px;
+  background: var(--base01);
+  color: var(--base05);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.inline-sort-controls .inline-sort-dir-btn:hover {
+  background: var(--base02);
 }
 
 .group-header-name[title] {

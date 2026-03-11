@@ -606,6 +606,74 @@ const filterAddresses = (addresses) => {
 };
 
 /**
+ * Create inline sort controls (dropdown + direction toggle) and append to a container.
+ * Removes any existing inline sort controls first.
+ */
+const addInlineSortControls = (container) => {
+  if (!container) return;
+
+  // Remove existing inline sort controls
+  const existing = container.querySelector('.inline-sort-controls');
+  if (existing) existing.remove();
+
+  const controls = document.createElement('div');
+  controls.className = 'inline-sort-controls';
+
+  // Sort dropdown wrapper
+  const sortWrapper = document.createElement('div');
+  sortWrapper.className = 'inline-sort-wrapper';
+
+  const select = document.createElement('select');
+  select.className = 'inline-sort-select';
+  SORT_OPTIONS_ADDRESSES.forEach(opt => {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    if (opt.value === viewPrefs.sortBy) option.selected = true;
+    select.appendChild(option);
+  });
+  select.addEventListener('change', () => {
+    viewPrefs.sortBy = select.value;
+    saveViewPrefs();
+    renderCurrentView();
+  });
+  sortWrapper.appendChild(select);
+
+  // Dropdown arrow
+  const arrow = document.createElement('svg');
+  arrow.className = 'inline-sort-arrow';
+  arrow.setAttribute('width', '10');
+  arrow.setAttribute('height', '10');
+  arrow.setAttribute('viewBox', '0 0 10 10');
+  arrow.setAttribute('fill', 'none');
+  arrow.innerHTML = '<path d="M2.5 3.75L5 6.25L7.5 3.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+  sortWrapper.appendChild(arrow);
+
+  controls.appendChild(sortWrapper);
+
+  // Direction toggle button
+  const dirBtn = document.createElement('button');
+  dirBtn.className = 'inline-sort-dir-btn';
+  dirBtn.title = viewPrefs.sortDirection === 'asc' ? 'Ascending' : 'Descending';
+  const updateDirIcon = () => {
+    dirBtn.title = viewPrefs.sortDirection === 'asc' ? 'Ascending' : 'Descending';
+    dirBtn.innerHTML = viewPrefs.sortDirection === 'asc'
+      ? '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 11V3M7 3L4 6M7 3L10 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 3V11M7 11L4 8M7 11L10 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  };
+  updateDirIcon();
+  dirBtn.addEventListener('click', () => {
+    viewPrefs.sortDirection = viewPrefs.sortDirection === 'asc' ? 'desc' : 'asc';
+    saveViewPrefs();
+    updateDirIcon();
+    renderCurrentView();
+  });
+  controls.appendChild(dirBtn);
+
+  container.appendChild(controls);
+};
+
+/**
  * Show the groups (tags) view
  */
 const showGroups = async () => {
@@ -635,6 +703,18 @@ const showGroups = async () => {
   searchInput.value = '';
   searchInput.placeholder = 'Search groups...';
 
+  // Show create group button again
+  const createBtn = document.querySelector('.create-group-btn');
+  if (createBtn) createBtn.style.display = '';
+
+  // Show peek-grid-toolbar again
+  const toolbar = document.querySelector('peek-grid-toolbar.grid-toolbar');
+  if (toolbar) toolbar.style.display = '';
+
+  // Remove inline sort controls from search row
+  const inlineSort = document.querySelector('.inline-sort-controls');
+  if (inlineSort) inlineSort.remove();
+
   renderGroups();
 };
 
@@ -648,6 +728,9 @@ const renderGroups = () => {
   const container = document.querySelector('.cards');
   container.innerHTML = '';
   updateToolbarSortOptions();
+
+  // Hide the group detail header when showing the groups list
+  renderGroupHeader();
 
   // Separate promoted groups from regular tags
   const promotedGroups = state.tags.filter(tag => isGroupTag(tag));
@@ -768,6 +851,20 @@ const showAddresses = async (tag) => {
   searchInput.value = '';
   searchInput.placeholder = `Search in ${tag.name}...`;
 
+  // Hide create group button and form in detail view
+  const createBtn = document.querySelector('.create-group-btn');
+  const createForm = document.querySelector('.create-group-form');
+  if (createBtn) createBtn.style.display = 'none';
+  if (createForm) createForm.style.display = 'none';
+
+  // Hide peek-grid-toolbar in detail view
+  const toolbar = document.querySelector('peek-grid-toolbar.grid-toolbar');
+  if (toolbar) toolbar.style.display = 'none';
+
+  // Add inline sort controls to search row
+  const searchRow = document.querySelector('.search-row');
+  addInlineSortControls(searchRow);
+
   renderAddresses();
 };
 
@@ -776,21 +873,20 @@ const showAddresses = async (tag) => {
  * Double-click the name to rename.
  */
 const renderGroupHeader = () => {
-  const container = document.querySelector('.cards');
+  const header = document.querySelector('body > .group-detail-header');
+  if (!header) return;
+
   const tag = state.currentTag;
-  if (!tag) return;
+  if (!tag) {
+    // Hide header when not viewing a specific group
+    header.style.display = 'none';
+    header.innerHTML = '';
+    return;
+  }
 
-  // Remove existing header if present
-  const existing = container.querySelector('.group-detail-header');
-  if (existing) existing.remove();
-
-  const header = document.createElement('div');
-  header.className = 'group-detail-header';
-
-  const colorDot = document.createElement('div');
-  colorDot.className = 'group-header-dot';
-  colorDot.style.backgroundColor = tag.color || '#999';
-  header.appendChild(colorDot);
+  // Show and populate header
+  header.style.display = '';
+  header.innerHTML = '';
 
   const nameEl = document.createElement('span');
   nameEl.className = 'group-header-name';
@@ -816,7 +912,64 @@ const renderGroupHeader = () => {
     header.appendChild(renameBtn);
   }
 
-  container.insertBefore(header, container.firstChild);
+  // Spacer to push view mode buttons to the right
+  const spacer = document.createElement('div');
+  spacer.className = 'group-header-spacer';
+  header.appendChild(spacer);
+
+  // View mode buttons
+  const viewModes = document.createElement('div');
+  viewModes.className = 'group-header-view-modes';
+
+  const modes = [
+    { mode: 'columns', title: 'Grid view', svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>' },
+    { mode: 'list', title: 'List view', svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="1" y1="3" x2="13" y2="3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="1" y1="11" x2="13" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' },
+    { mode: 'masonry', title: 'Masonry view', svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="1" width="5" height="4" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="10" width="5" height="3" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="7" width="5" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>' },
+    { mode: 'freeform', title: 'Freeform view', svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="4" height="3" rx="0.5" stroke="currentColor" stroke-width="1.5"/><rect x="7" y="2" width="6" height="4" rx="0.5" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="6" width="5" height="4" rx="0.5" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="8" width="4" height="5" rx="0.5" stroke="currentColor" stroke-width="1.5"/></svg>' }
+  ];
+
+  modes.forEach(({ mode, title, svg }) => {
+    const btn = document.createElement('button');
+    btn.className = 'ghvm-btn' + (viewPrefs.viewMode === mode ? ' active' : '');
+    btn.title = title;
+    btn.innerHTML = svg;
+    btn.addEventListener('click', () => {
+      viewPrefs.viewMode = mode;
+      saveViewPrefs();
+      // Update peek-grid view-mode attribute
+      const grid = document.querySelector('peek-grid.cards');
+      if (grid) grid.setAttribute('view-mode', mode);
+      // Re-render header to update active state and freeform edit toggle
+      renderGroupHeader();
+      renderCurrentView();
+    });
+    viewModes.appendChild(btn);
+  });
+
+  // Freeform edit toggle (only visible when freeform mode is active)
+  if (viewPrefs.viewMode === 'freeform') {
+    const editBtn = document.createElement('button');
+    const grid = document.querySelector('peek-grid.cards');
+    const isEditing = grid && grid.getAttribute('freeform-editing') === 'true';
+    editBtn.className = 'ghvm-btn' + (isEditing ? ' active' : '');
+    editBtn.title = isEditing ? 'Exit edit mode' : 'Edit layout';
+    editBtn.style.marginLeft = '4px';
+    editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10.5 1.5L12.5 3.5L4.5 11.5L1.5 12.5L2.5 9.5L10.5 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    editBtn.addEventListener('click', () => {
+      const g = document.querySelector('peek-grid.cards');
+      const toolbar = document.querySelector('.grid-toolbar');
+      const newVal = !(g && g.getAttribute('freeform-editing') === 'true');
+      if (g) g.setAttribute('freeform-editing', String(newVal));
+      if (toolbar) {
+        toolbar.freeformEditing = newVal;
+        toolbar.dispatchEvent(new CustomEvent('freeform-editing-change', { detail: { editing: newVal }, bubbles: true }));
+      }
+      renderGroupHeader();
+    });
+    viewModes.appendChild(editBtn);
+  }
+
+  header.appendChild(viewModes);
 };
 
 /**
@@ -900,7 +1053,10 @@ const renderAddresses = () => {
     const message = state.searchQuery
       ? 'No pages match your search.'
       : 'No pages in this group yet.';
-    container.innerHTML = `<div class="empty-state">${message}</div>`;
+    const emptyEl = document.createElement('div');
+    emptyEl.className = 'empty-state';
+    emptyEl.textContent = message;
+    container.appendChild(emptyEl);
     return;
   }
 
