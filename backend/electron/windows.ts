@@ -27,6 +27,8 @@ import {
   getIzuiCoordinator,
 } from './izui-state.js';
 
+import { publish, scopes } from './pubsub.js';
+
 /**
  * Get the appropriate background color based on system theme
  * This helps prevent the "white flash" when opening windows in dark mode
@@ -121,6 +123,21 @@ export function escPolicy(sessionState: string, role: string): 'close' | 'close-
 }
 
 /**
+ * ESC unhandled policy: second-phase policy consulted ONLY after the renderer
+ * returns { handled: false } AND escPolicy() returns 'nothing'.
+ *
+ * Determines what to do when ESC has nowhere left to navigate.
+ * Pure function — no side effects.
+ */
+export function escUnhandledPolicy(sessionState: string, role: string): 'open-switcher' | 'nothing' {
+  // Only workspace windows in active or idle sessions open the switcher.
+  // Transient sessions should NOT trigger switcher — user expects ESC to
+  // return to previous app, not open more UI.
+  if (role === 'workspace' && (sessionState === 'active' || sessionState === 'idle')) return 'open-switcher';
+  return 'nothing';
+}
+
+/**
  * Core ESC handling logic for a BrowserWindow.
  * Called when ESC keyDown is detected on the window's own webContents
  * or on a webview guest webContents within the window.
@@ -156,8 +173,15 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
 
   if (action === 'close' || action === 'close-and-restore') {
     closeOrHideWindow(bw.id);
+  } else {
+    // escPolicy returned 'nothing' — renderer is at root and window won't close.
+    // Consult second-phase policy for unhandled ESC.
+    const unhandledAction = escUnhandledPolicy(sessionState, role);
+    DEBUG && console.log(`[esc] escUnhandledPolicy(${sessionState}, ${role}) -> ${unhandledAction}`);
+    if (unhandledAction === 'open-switcher') {
+      publish('peek://system/', scopes.GLOBAL, 'cmd:execute:windows', {});
+    }
   }
-  // 'nothing' -> return silently (active workspace/content at root)
 }
 
 /**

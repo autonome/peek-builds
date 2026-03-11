@@ -390,6 +390,25 @@ function escPolicy(sessionState, role) {
   return 'nothing';
 }
 
+/**
+ * ESC unhandled policy: second-phase policy consulted ONLY after the renderer
+ * returns { handled: false } AND escPolicy() returns 'nothing'.
+ *
+ * Determines what to do when ESC has nowhere left to navigate.
+ * Pure function — no side effects.
+ *
+ * @param {string} sessionState - Current IZUI state ('idle'|'transient'|'active'|'overlay')
+ * @param {string} role - Window role ('quick-view'|'palette'|'utility'|'overlay'|'child-content'|'workspace'|'content')
+ * @returns {'open-switcher'|'nothing'}
+ */
+function escUnhandledPolicy(sessionState, role) {
+  // Only workspace windows in active or idle sessions open the switcher.
+  // Transient sessions should NOT trigger switcher — user expects ESC to
+  // return to previous app, not open more UI.
+  if (role === 'workspace' && (sessionState === 'active' || sessionState === 'idle')) return 'open-switcher';
+  return 'nothing';
+}
+
 // ============================================================================
 // Singleton & Exports
 // ============================================================================
@@ -408,4 +427,5 @@ export {
   IzuiStateCoordinator,
   getIzuiCoordinator,
   escPolicy,
+  escUnhandledPolicy,
 };

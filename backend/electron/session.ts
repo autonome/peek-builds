@@ -588,14 +588,12 @@ export async function restoreSessionSnapshot(
       // These are internal bookkeeping or context-dependent values that should be
       // re-derived from the URL and current environment during restore:
       // - x/y/width/height: stale positions from original creation (bounds are authoritative)
-      // - role: saved role can trigger hasNonContentRole in window-open, preventing
-      //   canvas mode for web pages that had role 'workspace' (Bug: useCanvas=false)
-      // - escapeMode: affects role detection (escapeMode:'navigate' -> role:'workspace')
-      //   which also disables canvas mode for web pages
       // - address: internal bookkeeping param, overwritten by window-open anyway
       // - transient/parentWindowId: session state, not applicable to restored windows
+      // Note: role and escapeMode are preserved — they're semantic properties that
+      // describe how the window should behave (e.g., ESC handling for extension windows).
       const cleanParams: Record<string, unknown> = {};
-      const stripKeys = new Set(['x', 'y', 'width', 'height', 'role', 'escapeMode', 'address', 'transient', 'parentWindowId']);
+      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId']);
       for (const [key, value] of Object.entries(descriptor.params)) {
         if (!stripKeys.has(key)) {
           cleanParams[key] = value;

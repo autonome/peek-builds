@@ -55,9 +55,10 @@ function createMockWindowProvider(windows: MockWindow[]): WindowProvider {
 // Import will be done after build
 let izuiState: typeof import('./izui-state.js');
 
-// Import escPolicy from the shared module (pure function, no Electron deps)
+// Import escPolicy and escUnhandledPolicy from the shared module (pure functions, no Electron deps)
 // At runtime (from dist/backend/electron/) the path is ../../../app/lib/izui-state.js
 let escPolicy: (sessionState: string, role: string) => 'close' | 'close-and-restore' | 'nothing';
+let escUnhandledPolicy: (sessionState: string, role: string) => 'open-switcher' | 'nothing';
 
 describe('IZUI State Coordinator Tests', () => {
   let mockWindows: MockWindow[];
@@ -69,6 +70,7 @@ describe('IZUI State Coordinator Tests', () => {
     // @ts-expect-error — shared JS module in app/lib, no .d.ts in tsconfig rootDir
     const shared = await import('../../../app/lib/izui-state.js');
     escPolicy = shared.escPolicy;
+    escUnhandledPolicy = shared.escUnhandledPolicy;
   });
 
   beforeEach(() => {
@@ -795,6 +797,49 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(escPolicy(coordinator.getState(), 'content'), 'close');
       assert.strictEqual(escPolicy(coordinator.getState(), 'workspace'), 'nothing',
         'workspace windows must never close on ESC, even in transient sessions');
+    });
+  });
+
+  describe('escUnhandledPolicy', () => {
+    it('should open switcher for workspace in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'workspace'), 'open-switcher');
+    });
+
+    it('should open switcher for workspace in idle session', () => {
+      assert.strictEqual(escUnhandledPolicy('idle', 'workspace'), 'open-switcher');
+    });
+
+    it('should NOT open switcher for workspace in transient session', () => {
+      assert.strictEqual(escUnhandledPolicy('transient', 'workspace'), 'nothing',
+        'transient sessions should not trigger switcher — user expects ESC to return to previous app');
+    });
+
+    it('should NOT open switcher for workspace in overlay session', () => {
+      assert.strictEqual(escUnhandledPolicy('overlay', 'workspace'), 'nothing');
+    });
+
+    it('should NOT open switcher for content in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'content'), 'nothing');
+    });
+
+    it('should NOT open switcher for child-content in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'child-content'), 'nothing');
+    });
+
+    it('should NOT open switcher for overlay role in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'overlay'), 'nothing');
+    });
+
+    it('should NOT open switcher for palette in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'palette'), 'nothing');
+    });
+
+    it('should NOT open switcher for utility in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'utility'), 'nothing');
+    });
+
+    it('should NOT open switcher for quick-view in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'quick-view'), 'nothing');
     });
   });
 });

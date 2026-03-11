@@ -1538,7 +1538,7 @@ describe('Session Integration Tests', () => {
      */
     function stripRestoreParams(params: Record<string, unknown>): Record<string, unknown> {
       const cleanParams: Record<string, unknown> = {};
-      const stripKeys = new Set(['x', 'y', 'width', 'height', 'role', 'escapeMode', 'address', 'transient', 'parentWindowId']);
+      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId']);
       for (const [key, value] of Object.entries(params)) {
         if (!stripKeys.has(key)) {
           cleanParams[key] = value;
@@ -1563,17 +1563,17 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(clean.transparent, true, 'transparent should be preserved');
     });
 
-    it('strips role to prevent hasNonContentRole disabling canvas mode', () => {
-      // BUG: Web page saved with role:'workspace' gets useCanvas=false on restore
-      // because hasNonContentRole = true for 'workspace'.
+    it('preserves role and escapeMode across session restore', () => {
+      // role and escapeMode are semantic properties that affect window behavior
+      // (e.g., ESC handling for extension windows like Groups).
       const params = {
         role: 'workspace',
         escapeMode: 'navigate',
         key: 'https://example.com',
       };
       const clean = stripRestoreParams(params);
-      assert.strictEqual(clean.role, undefined, 'role should be stripped');
-      assert.strictEqual(clean.escapeMode, undefined, 'escapeMode should be stripped');
+      assert.strictEqual(clean.role, 'workspace', 'role should be preserved');
+      assert.strictEqual(clean.escapeMode, 'navigate', 'escapeMode should be preserved');
       assert.strictEqual(clean.key, 'https://example.com', 'key should be preserved');
     });
 
@@ -1602,8 +1602,9 @@ describe('Session Integration Tests', () => {
         trackingSourceId: 'open',
         focusable: true,
         debug: false,
+        role: 'content',
         // These should be stripped:
-        x: 100, y: 200, role: 'content', address: 'url', transient: false,
+        x: 100, y: 200, address: 'url', transient: false,
       };
       const clean = stripRestoreParams(params);
       assert.strictEqual(clean.key, 'my-window');
@@ -1613,10 +1614,10 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(clean.trackingSourceId, 'open');
       assert.strictEqual(clean.focusable, true);
       assert.strictEqual(clean.debug, false);
+      assert.strictEqual(clean.role, 'content', 'role should be preserved');
       // Verify stripped keys are gone
       assert.strictEqual(clean.x, undefined);
       assert.strictEqual(clean.y, undefined);
-      assert.strictEqual(clean.role, undefined);
       assert.strictEqual(clean.address, undefined);
       assert.strictEqual(clean.transient, undefined);
     });
