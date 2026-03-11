@@ -15,7 +15,7 @@
   ],
   "shortcuts": [
     {
-      "keys": "CommandOrControl+P",
+      "keys": "CommandOrControl+Shift+P",
       "command": "pagestream"
     }
   ]

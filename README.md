@@ -14,11 +14,11 @@ Peek is what you want it to be.
 
 <img width="969" alt="peek desktop screenshot" src="peek-desktop-screenshot.png">
 
-## Important notes
+## WARNING!
 
 ___PEEK IS NOT A BROWSER___
 
-Peek is not a browser, and will never be a browser in the way you are probably familiar with: There are no tabs, and no windows in the tabbed-browser-like sense of them. Peek likely does not have many other of many details we are used to in web browsers, but do not notice until they are missing. Peek may be most useful to you if you view it as an entirely different type of application than a traditional web browser.
+Peek is not a browser, and will never be a browser in the way you are probably familiar with. There are no tabs, and no windows in the tabbed-browser-like sense of them. Peek likely does not have many other of many details we are used to in web browsers, but do not notice until they are missing. Peek may be most useful to you if you view it as an entirely different type of application than a traditional web browser.
 
 ___PEEK IS A CONCEPT PREVIEW___
 
@@ -30,31 +30,33 @@ Built-in capabilities that form the foundation of Peek.
 
 - **IZUI Navigation** — Inverted Zooming User Interface. ESC-key-based navigation model that provides consistent "zoom out" behavior across all interfaces. Enter from anywhere, ESC to go back — predictable at every level.
 - **Window Management** — Heterogeneous windowing: chromeless modals, overlays, slides, workspaces and content windows, each with role-specific behavior.
-- **Extension System** — All features are extensions with manifest-declared commands, shortcuts, and settings. Extensions can be eager, lazy-loaded, or fully declarative.
-- **PubSub Messaging** — Cross-window event system for communication between extensions and windows.
+- **Feature System** — Features are not extensions of a monolithic core — they *are* the functionality, built on a minimal foundation. Each feature declares its own commands, shortcuts, and settings. Features can be eager, lazy-loaded, or fully declarative.
+- **PubSub Messaging** — Cross-window event system for communication between features and windows.
 - **Data Persistence** — SQLite datastore with schema management, history tracking, and cross-device sync support.
 - **peek:// Protocol** — Custom protocol for internal navigation and cross-origin access.
-- **Settings** — Per-extension configuration with live reload. `Cmd/Ctrl+,` or tray icon.
+- **Settings** — Per-feature configuration with live reload. `Cmd/Ctrl+,` or tray icon.
 
 ## Features
 
-- **Commands** — Graphical command palette (GCLI) for opening pages, executing commands, chaining outputs, and parameter entry. `Ctrl+Cmd+P`
-- **Groups** — Categorize, recall and interact with groups of pages. Tag-based with smart and curated grouping. `Ctrl+G`
-- **Peeks** — Keyboard-activated modal chromeless web pages for quickly glancing at or interacting with pages. `Opt+0-9`
-- **Slides** — Keyboard-activated modal chromeless web pages which slide in from any screen edge. `Opt+Arrow Keys`
-- **Editor** — Markdown editor with outline sidebar, live preview, and vim mode. `Ctrl+E`
+Peek uses the language of "features" over "extensions". "Extend" implies a larger core that you cannot change. Peek inverts that to small core, with as much changeable as possible. Peek features are modular - they are not *extending* core functionality, they *are* the functionality, built on a small-as-possible core.
+
+- **Commands** — Global-hotkey-activated graphical command bar (GCLI) for opening pages and features, executing commands, chaining commands. `Opt/Alt+space` (global) and Cmd/Ctrl+k (local)
+- **Groups** — Categorize, recall and interact with groups of pages. Groups are tags that've been "promoted" intentionally to a group. Groups are also an app-global "mode" (which isn't entirely implemented yet...) `Cmd/Ctrl+G`
+- **Peeks** — Global-hotkey-activated modal chromeless web pages for quickly glancing at or interacting with pages. `Opt+0-9`
+- **Slides** — Global-hotkey-activated modal chromeless web pages which slide in from any screen edge. `Opt+Arrow Keys`
+- **Editor** — Markdown editor with outline sidebar, live preview, vim mode and an *excellent* folding approach. `Cmd/Ctrl+E`
 - **Search** — Search across all items by text and tags.
 - **Tags** — Tag, untag, and browse items by tag. Tag visualization and management.
 - **Tag Actions** — Define custom actions triggered by tags, enabling automated workflows.
 - **Web Search** — Search the web with engine discovery — Google, DuckDuckGo, Kagi, Bing, Wikipedia, and more.
-- **Windows** — Full-screen window switcher overlay showing all open windows as cards. `Ctrl+Shift+W`
-- **Pagestream** — Chat-like vertical navigation interface for browsing history. `Ctrl+P`
+- **Windows** — Full-screen window switcher overlay showing all open windows as cards. `Cmd/Ctrl+Shift+W`
+- **Pagestream** — Chat-like vertical navigation interface for browsing history and opening and viewing pages. `Cmd/Ctrl+Shift+P`
 - **Entities** — Automatic extraction of people, places, organizations, and events from visited pages.
 - **Scripts** — Periodically execute scripts against web pages in the background to extract data, with change notifications.
 - **Files** — Open local files, CSV conversion, markdown formatting, save operations.
 - **Feeds** — RSS/Atom feed reader.
-- **Lex** — Lexicon Studio: AT Protocol identity and data browser/editor.
-- **Sheets** — Widget sheets with freeform card layouts hosting webviews.
+- **Lexicon Studio** — Lexicon Studio: AT Protocol identity and data browser/editor.
+- **Widget Sheets** — Widget sheets with freeform card layouts hosting webviews.
 - **Timers** — Countdown timers, alarms, stopwatches, and interval timers.
 - **Sync** — Cross-device synchronization of items, tags, and groups.
 - **HUD** — Always-on-top heads-up display showing current state and mode. `Ctrl+H`
@@ -63,7 +65,92 @@ Coming:
 - "native" web apps — using Peek as a way to "install" web pages on the local device as separate applications
 - "Peeklets" HUD — select parts of pages to add to a collection rendered as an overlay
 
+## Keyboard Shortcuts
+
+### Global (work from any application)
+
+| Shortcut | Action |
+|----------|--------|
+| `Opt+Space` | Open command bar |
+| `Opt+0-9` | Open Peeks (configurable, not all registered by default — configure in settings) |
+| `Opt+Arrow Keys` | Open Slides (configurable, not all registered by default — configure in settings) |
+
+### Application
+
+| Shortcut | Action |
+|----------|--------|
+| `ESC` | IZUI navigation — zoom out, go back, close dialogs. At root, opens Windows switcher. Also closes windows depending on role and session state. |
+| `Cmd/Ctrl+K` | Open command bar (within app) |
+| `Cmd/Ctrl+L` | Command bar URL mode |
+| `Cmd/Ctrl+G` | Groups |
+| `Cmd/Ctrl+E` | Editor |
+| `Cmd/Ctrl+H` | HUD |
+| `Cmd/Ctrl+Shift+P` | Pagestream |
+| `Cmd/Ctrl+Shift+W` | Windows switcher |
+| `Cmd/Ctrl+Shift+F` | Lists search |
+| `Cmd/Ctrl+Shift+T` | Undo close window (works for all window types) |
+| `Cmd/Ctrl+W` | Close window |
+| `Cmd/Ctrl+,` | Settings |
+| `Cmd/Ctrl+Q` | Quit |
+
+### Web Page Navigation
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd/Ctrl+L` | Focus URL bar |
+| `Cmd/Ctrl+R` | Reload page |
+| `Cmd+[` / `Cmd+Left` | Go back |
+| `Cmd+]` / `Cmd+Right` | Go forward |
+
 ## Design
+
+Some thoughts driving the design of Peek
+
+Core
+- Feels like home: trust, comfort, control
+- Continuous instances of magical mind-reading
+- Sleep at night because no idea or anything you saw is ever lost
+- Create, save, classify at the speed of thought
+
+What makes a home / kitchen / workshop
+- Everything is right where you need it, b/c you control what is where
+- When you know what is where, you can make things with less frustration
+- You generally know what’s happening - who’s around/coming/going, etc, not too much surpri
+
+What makes magical mind-readingness
+- Frecency everywhere all of the time
+- User actions are training data for sorting
+- The thing you were thinking of is already at the top of the list
+
+What makes awareness
+- Actions tracked at the core
+- Metrics generated, rollups displayed, synthesis emergent
+- Task context with you at the center (vs asking a companion robot - disempowering!)
+
+Synthesis
+- Frecency + adaptive matching gives experience/feeling of magical mind-readingness
+- Ability to customize/create/generate interfaces gives the comfort of home
+
+The rules
+- Files > arcane/opaque boxes/formats
+- Metadata can be weird non-file, as long as consistent
+- External systems require consent to touch my stuff
+
+Key capabilities from action/application history chain + addressibility
+- Record/replay
+- State feedback loops
+- Observability
+
+Interface spectrum
+- Consistent predicable interfaces are easy, off-the-shelf
+- Weird/generative possible via power trio: backgrounding, wm apis, web surface
+
+Difference from browsers
+- Web user agents should be bounded by the user, not browser vendor business models
+- Windows and tabs should have died a long time ago, a mixed metaphor constraining the ability of the web to grow/thrive/change and meet user needs
+- Security user interface must be a clear articulation of risks and trade-offs, and users should own the decisions
+
+### Task alignment
 
 Many user tasks on the web are either transient, chained or persistent, data oriented, or some mix of those. Neither the document-oriented nor application-centric web meets those needs. Traditional browser makers can't meet those needs well, for many reasons.
 
@@ -74,12 +161,6 @@ Characteristics of how we use the web, that are not addressed in contemporary we
 - persistent
 - data-centric
 - archival / evidential
-
-Some thoughts driving the design of Peek:
-
-- Web user agents should be bounded by the user, not browser vendor business models
-- Windows and tabs should have died a long time ago, a mixed metaphor constraining the ability of the web to grow/thrive/change and meet user needs
-- Security user interface must be a clear articulation of risks and trade-offs, and users should own the decisions
 
 ### Escape IZUI
 
@@ -117,41 +198,46 @@ For example:
 - I'd like to have a decentralized compute option for running your scripts outside of your clients and syncing the data
 - Want cloud storage for all config and data, esp infinite history, so can do fun things with it
 
-### Feature extensibility
+### Feature architecture
 
-An extensibility model for achieving "personal web workbench" requires a few things:
-- UI extensibility requires OS-level window features beyond what the web allows today (also a baby step towards a minimal OS user interface)
+Peek inverts the traditional browser model. Instead of a large monolithic core with an extension API bolted on, Peek has a minimal core with features that *are* the functionality. Features are not extending something — they are the thing.
+
+A modular feature system for achieving "personal web workbench" requires a few things:
+- UI modularity requires OS-level window capabilities beyond what the web allows today (also a baby step towards a minimal OS user interface)
 - Data harvest/transform/process/publish requires a method of moving data between features (web apps) *locally*, cf Web Actions/Intents/Applets, MCP, pubsub, MQTT etc
-- Portable ways of accessing network, storage and compute, which address 
+- Portable ways of accessing network, storage and compute
 
-The current implementation has only a few sketches of that world implemented, and has gone through a few iterations:
-- first proof of concept was all Electron - so, privileged JS
+The current implementation has gone through a few iterations:
+- first proof of concept was all Electron — privileged JS
 - second experiment moved each feature to a separate web app running in own window scope, with access to smallest possible custom API, with one main web app loading and orchestrating the others, using pubsub for cross-app communication
 - third and current implementation bundles all features into one web app, with access to smallest possible custom API for platform-level capabilities
 
-The web app is loaded into custom scheme of `peek`, which provides access to a few special apis noted in the next section, allows cross-origin network access and other things.
+Features are loaded into the custom `peek` scheme, which provides access to a few special APIs noted in the next section, allows cross-origin network access and other things.
 
-This is not ideal, as the extensibility vector is contributions to core, which too tightly bounds experimentation and innovation.
+The API surface area is small and portable — features built on it could run in other environments with minimal adaptation.
 
-However it's pretty portable given the small custom API surface area.
+### Feature API
 
-It would be nice, but not required, to have some alignment with the WebExtension spec - blur your eyes and they're in a similar direction.
+Features are web apps running in the `peek://` scheme. The question driving the API design: what's the minimum capability set a web app needs to build these features?
 
-### Peek API
+The API is exposed as `window.app` in the feature's execution context:
 
-Initially the prototype was all Electron. But that's not interesting, and doesn't
-really tell us anything about constraints of the web itself.
+- **Windows** — open, close, modify, and track windows with role-based behavior
+- **Shortcuts** — register global and local keyboard shortcuts
+- **PubSub** — publish and subscribe to messages across features and windows, with scoping (self, global, window)
+- **Commands** — register commands for the command bar, with parameter modes and chaining
+- **Datastore** — SQLite-backed persistent storage with schema management
+- **Escape** — register ESC key handlers for IZUI navigation
+- **IZUI** — query and interact with the navigation state machine
+- **Files** — open/save dialogs, read/write by path
+- **Settings** — per-feature preferences with schema validation
+- **Themes** — access current theme, dark mode state
+- **Sync** — cross-device synchronization
+- **Profiles** — user identity and profile management
+- **Net** — network requests (fetch with cross-origin access)
+- **Session** — session state and restore
 
-So instead I asked this question: What's the minimum capability set that a web app would
-need to build the features I need?
-
-The answer, so far, is giving `peek` apps the following APIs:
-
-- window open/close
-- global hotkey registration
-- pubsub messaging
-
-Custom window api might be able to away entirely, by passing window.open features, working on that.
+The API surface is intentionally small and portable — features built on it could run in other environments with minimal adaptation. See [docs/api.md](docs/api.md) for the full reference.
 
 ### Desktop App
 
@@ -167,219 +253,18 @@ TODO
 
 ## Contribution
 
-- in proto stage
-- all dragons, no promises
-
-## Development
-
-```
-yarn install
-yarn debug
-```
-
-### Mobile
-
-- Quick access to Script output and manual runs, as widgets (or output from cloud runners?)
-- Peeks still totes useful here - on mobile is more like "quick dial" features
-
-### Cloud
-
-- Going full crypto payments for distributed compute on this one.
-
-## Papercut / use-case log
-
-Core high level actions
-- open a web page on top/bottom/left/right
-- keep web pages persistent in the background
-- quickly open a web page modally, and close it
-
-Misc specific
-- open bandcamp in a window, move over to 2nd display, accidently close it while moving around between other windows
-- recent books or recipes from newsletters i subscribe to (but probably didn't read)
-- extract a table from a page periodically, send it somewhere as csv or whatever (chained actions)
-- collect microformats, metadata, events
-- web page w/ some locations as an input to a map (creates overlay) "map this page"
-- be able to see where a book/etc recommendation came from
-- save a tweet, with URL / image / relevant text, but not whole page webrecorder style
-- "watch local event listings, rate against my music listening patterns and send me shows i might be interested in going to"
-
-Content scripts
-- extract+log shazams
-- extract+log spotify playlist
-
-Calculators (variant of script + cmd?)
-- page -> table
-- page -> summary
-- page -> microsummaries
-- page -> dates
-- page -> events
-
-Workflow deconstructing a "why" task flavour of bookmarking
-- save https://www.criterionchannel.com/hong-kong-in-new-york
-- extract the movies
-- get reference metadata for each (?!)
-- add to "to watch list", with pointer back to source url
-
-## Groups
-
-- panorama/tabcandy-ish
-- all browser history
-- smart groups vs curated groups
-- autoclustering on topic/date
-- escape from a new page enters default group?
-
-Groups + Cmds
-- top/bottom inputs for filtering/grouping/etc
-- implemented is a cmd input?
-- cmds for opening/searching/finding/viewing/filtering/piping
-- cmds for moving pages into groups
-- groups -> {x} (eg export/pipe) could depend on the chaining/piping bit (see below)
-
-Architecture
-- internally is tags?
-- static vs dynamic groups tho?
-
-Publishing
-- publishing groups as internal/public feeds?
-- to pinboard?
-
-## History view/search
-
-A lot of groups work depends on history being in place, and being accessable and annotate-able.
-
-ideally use chromium history
-
-storage+access
-- check out Agregore history viewing approach
-- check out state of electron+webext
-- other way of accessing underlying chromium history?
-
-features
-- awesomebar algo scoring
-- adaptive matching
-
-## Chaining / piping
-
-investigate: vague thought re chaining:
-- dynamic interstitial representations
-- mime type detection?
-- eg image previews
-- or a table of data
-- previews of cmds?
-
-interfaces
-- horizontal vs vertical chains
-- back/forward navigation?
-- each step is a cmd+preview?
-- dynamic cmd+previews?
-
-import/export/undo/redo
-- record/replay?
-- save a chain as a compound action (cmd)?
-
-architecture
-- look at web actions/intents/applets
-- xml pipeline language
+- In proto stage
+- All dragons, no promises
 
 ## Mobile
 
-- some of the features don't make sense as-is on mobile
-- but maybe quick access on mobile to slides/peeks would be nice
-- and seeing output of content scripts, or ability to re-run locally on demand
-- needs some sync facility (inevitable anyway)
+There's a LOT already done here and I haven't even begun to describe it yet.
 
-## Use-cases
+## Server/Cloud
 
-Peeks
-- translate
-- calendar
-- ai chat
-- currency conversion
-- everytimezone
-- tldraw
+Server component is a very passive sync+store service right now.
 
-Slides
-- music: Soundcloud, Hypem
-- stock prices
-- notepad
-- todo list
-
-Scripts
-- weather change, eg upcoming weather
-- crypto prices
-
-Cmd - web
-- open url
-- web search
-- image search
-- conversions?
-- ddg !actions
-
-Cmd - system
-- search browser history
-- set peeks/slides
-- open settings
-- restart app
-- llm prompts
-
-Future
-- address something to switch between
-- pipe from/to?
-
-Publishing high level
-- author web content
-- pull in bits from the web
-- share preview for feedback
-- publish (or at least get output)
-
-Publishing examples
-- writing an event recap
-
-Publishing: event recap post
-- make a new markdown doc
-- sections titled for each video title
-- each video's embed code in each section
-- navigate around the document for review and updates
-- need to easily preview rendered content
-- share preview link
-- publish (somewhere?)
-
-Music
-- commands
-- views
-- last.fm of my own, to POSSE out
-
-## Unfiled
-
-markdown hot reload previewer w/ toc
-- markdown support, with sidebar nav
-- reader mode
-- hot reload for file:// (other?)
-- add side-by-side view
-- once md and side-by-side, add side-by-side so the md is the nav, content is the preview
-- what's the cmd chain for this?
-
-content types + chaining
-- cmd: view as… table, feed, markdown, data points, named entities
-- chain: static archive, publish, save, share (os), mailto
-- cmd params, eg {url}, which can themselves autocomplete (eg history)
-
-multiprotocol
-- at
-- ipfs/ipns
-- pragmatic addressing+rendering for data (r/d/masl + mime handlers)
-
-broader patterns (chatting w/ luke)
-- why do we have to copy/paste?
-- devtools and ide are divorced
-
-chainframe/framechain
-- (web intents/applets/actions) + (webxdc/miniapps/tiles/farcasterframes)
-
-Small examples of agency
-
-- users can move, resize, change things to their requirements
-  - eg, browsers restrict min-height of a window, but i should be able make as short as i like
+Runs on Railway, I use it daily with few problems (that I know of).
 
 ## History
 
@@ -408,11 +293,9 @@ The only way to create the ideal user experience for a web user agent that *Does
 
 ---
 
-## Automated Summary
+## Automated Summary (somewhat outdated, but some correct stuff too)
 
-Quick reference for developers.
-
-### Quick Start
+### Developer Quick Start
 
 ```bash
 # Requirements: Node.js 24+
@@ -423,6 +306,7 @@ yarn install
 yarn debug        # Development mode with devtools
 yarn start        # Normal mode
 ```
+Look at package.json for a long list of commands for each of the back-ends and testing.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for full development guide.
 
@@ -433,7 +317,7 @@ Peek supports multiple backends sharing the same storage/api approach:
 ```
 peek/
 ├── app/                    # Renderer (backend-agnostic)
-├── features/               # Built-in extensions
+├── features/               # Built-in features
 ├── backend/
 │   ├── electron/           # Desktop (primary)
 │   ├── tauri/              # Desktop (Rust alternative)
@@ -448,8 +332,8 @@ peek/
 |-----|-------------|
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Development setup, commands, architecture |
 | [docs/api.md](docs/api.md) | Peek API reference (`window.app`) |
-| [docs/extensions.md](docs/extensions.md) | Extension development |
-| [docs/cmd.md](docs/cmd.md) | Command palette extension |
+| [docs/features.md](docs/features.md) | Feature development |
+| [docs/cmd.md](docs/cmd.md) | Command palette feature |
 | [docs/themes.md](docs/themes.md) | Theme system |
 | [docs/datastore.md](docs/datastore.md) | Data storage and schema |
 | [docs/sync.md](docs/sync.md) | Cross-device sync |
@@ -474,7 +358,7 @@ peek/
 | **Mobile (JS)** | Script-style | 9 | `yarn test:mobile` |
 | **Mobile (Rust)** | `cargo test` | 19 | In `backend/tauri-mobile/` |
 | **Tauri Desktop (Rust)** | `cargo test` | 16 | `yarn test:tauri:rust` |
-| **Lex Extension** | Node `--test` | 38 | `node --test features/lex/tests/` |
+| **Lex** | Node `--test` | 38 | `node --test features/lex/tests/` |
 
 **Electron Unit (TS)** — Backend logic: entities extraction, session management, IZUI state, cmd palette logic, cmd chaining, OAuth bridge, display watcher, noun registry, shortcuts, datastore, completers, tag affordances, page loading.
 
@@ -492,11 +376,11 @@ peek/
 
 **Server** — Sync server: API endpoints, backup, migration.
 
-**Schema Fidelity** — Validates schema consistency across desktop, mobile, server, and extension datastores.
+**Schema Fidelity** — Validates schema consistency across desktop, mobile, server, and browser extension datastores.
 
 **Sync Integration** — Cross-device sync: integration tests, E2E tests, three-way merge, version compatibility.
 
-**Lex Extension** — Lexicon extension: UI logic and background processing.
+**Lex** — Lexicon feature: UI logic and background processing.
 
 Background test commands: `yarn test:electron:bg` runs Playwright headless in background (logs to `/tmp/test-electron.log`).
 

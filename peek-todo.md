@@ -1,58 +1,5 @@
 # Peek TODO
 
-## How we work
-
-- We track pending items in this file
-- In-progress work and current focus goes in WIP.md
-- Completed items go in CHANGELOG.md, grouped by week
-- This file is not for notes or description - link to documents in ./notes for that
-- Checkbox states: `- [ ]` pending, `- [~]` in-progress (move to WIP.md), `- [x]` done (move to CHANGELOG.md)
-
-## Design principles / capabilities / etc
-
-core
-- feels like home: trust, comfort, control
-- continuous instances of magical mind-reading
-- sleep at night because no idea or anything you saw is ever lost
-- create, save, classify at the speed of thought
-
-what makes a home / kitchen / workshop
-- everything is right where you need it, b/c you control what is where
-- when you know what is where, you can make things with less frustration
-- you generally know what’s happening - who’s around/coming/going, etc, not too much surprise (but some!)
-
-what makes magical mind-readingness
-- frecency everywhere all of the time
-- user actions are training data for sorting
-- the thing you were thinking of is already at the top of the list
-
-what makes awareness
-- actions tracked at the core
-- metrics generated, rollups displayed, synthesis emergent
-- task context with you at the center (vs asking a companion robot - disempowering!)
-
-synthesis
-- frecency + adaptive matching gives experience/feeling of magical mind-readingness
-- ability to customize/create/generate interfaces gives the comfort of home
-
-the rules
-- files > arcane/opaque boxes/formats
-- metadata can be weird non-file, as long as consistent
-- external systems require consent to touch my stuff (eg http caching rules)
-
-key capabilities from action/application history chain + addressibility
-
-- record/replay
-- state feedback loops
-- observability
-
-interface spectrum
-- consistent predicable interfaces are easy, off-the-shelf
-- weird/generative possible via power trio: backgrounding, wm apis, web surface
-
-cf
-- bulthaup - german kitchen maker w/ designs based on carpentry workshops
-
 ## Unfiled
 
 context
@@ -78,125 +25,6 @@ peeks on links
 - may require connector/parameter context for each peek address load and connector invocation in a chained command
 
 - peeks/slides as addresses + metadata? or urls? eg open({json of peek url + context}) => localhost in left slide, or peek://slide?where=top&url=http://localhost? both? opens up the idea of packaging these declaratively, and no-code createable
-
-## UI Componentry
-
-Right now we're replicating/forking html and js across extensions.
-
-problems
-- messy, error prone, poor DRY practice
-- also means we can't generatively and rapidly build out UIs without whole new piles of html/js/css to manage
-
-What it is
-- flexible / reusable system at the ./app layer
-- extensions use for creating/generating interfaces
-- can override/overlay/inject styling
-- easy to make system-consistent ux and themed visual design
-- loosely coupled system with deterministic management
-- like a set of prebuilt controls
-- designed for single-component, or sets
-- binds to data source, is reactive to it (events, event-sources, streams, our feed system)
-
-what it isn't
-- designed for complex document hierarchies
-- js components React-style
-
-usage
-- callers instanciate a control
-- provide schema/data into a control which has a default template
-- template can be replaced by caller
-
-examples/use-cases
-- groups, tag ui and windows viewer are all card grids
-- chaining is command components + card popups with lists, editors, previews, etc
-- after atproto support, this could be used to bind lexicons + data for generated viewing/CRUD interfaces.
-- see the Window templates section of this file
-- see the Pagestream section of this file
-- see the Chaining section of this file
-- see the Notes/Editor section of this file
-- see the Web page experience section of this file
-- see the Unfiled section of this file
-- see the Commands section of this file
-
-implementation
-- use https://open-ui.org/ as much as possible, should cover a lot, eg, buttons, card/grid, cmd, carousels
-- see ~/sync/Sites/base for experiments w/ hud etc
-
-reactive schema+card+data system
-- [ ] cards + json schema + data
-- [ ] no hierarchy, just single component to start, renders to markup
-- [ ] instantiatable with data
-- [ ] receive updates to refresh
-
-integration
-- [ ] determine how extensions will import from core
-- [ ] determine how consumers will apply styles
-- [ ] explore node reuse/recycle approaches
-
-ui
-- [ ] button
-- [ ] button set (eg for tag boards/sets)
-- [ ] card
-- [ ] list
-- [ ] grid
-- [ ] vertical carousel of cards (like a chat view w/ interactable focus card)
-- [ ] horizontal carousel of cards (eg for command chaining, day ribbons)
-- [ ] image viewer
-- [ ] command input
-- [ ] command suggestion
-- [ ] command preview pane
-- [ ] search/filters on enumerable items (list, grid)
-- [ ] editor
-- [ ] column/columns
-
-initial porting
-- [ ] groups -> card/cards
-- [ ] tags -> card/cards
-- [ ] tag sets -> button set
-- [ ] cmd -> command input/suggestions
-- [ ] cmd chaining -> horizontal carousel, list
-
-popup carousel system
-- [ ] horizontal and vertical carousel components
-- [ ] see ~/sync/Sites/base/hud.html/css/js for basic ui system
-- [ ] active item focused in popup
-- [ ] arrow controls and vim directionals
-- [ ] port cmd chaining to horizontal carousel popups
-- [ ] port cmd previews to vertical carousel popups
-
-button sets
-- [ ] set of buttons
-- [ ] up/depressed states
-- [ ] x endcap option
-
-tags
-- [ ] all built on buttons and button sets
-- [ ] tag input field
-- [ ] combo of selected tags, input w/ filtering search, available tags
-
-## Web page experience (reviewme: partially done)
-
-Page loading core
-- [ ] how to load pages - raw browserwindow (what we do now), webview in a default transparent page that hosts overlay??
-- [ ] overlay infrastructure for showing metadata, security info
-- [ ] interaction with cmd actions (page mode again?)
-
-Basic nav etc
-- [ ] hotkey to select url
-- [ ] back/forward
-- [ ] reload
-- [ ] undo last close
-- [ ] if url selected in cmd is open in a window already, switch to it (for now)
-
-Page info/metadata/action widgets (depends on window templates maybe?)
-- [ ] defaults, eg sec ui
-- [ ] metadata (og, whatnot)
-- [ ] media (imgs, rss, etc)
-- [ ] actions (new extension cmd type?)
-- [ ] scripts (tbd)
-
-Titlebar
-- [x] show titlebar on hover at top edge of window for all pages
 
 ## Feeds, time-series data
 
@@ -700,4 +528,199 @@ experiment: helia
 
 desktop
 - [ ] Tray work
+
+## Papercut / use-case log
+
+Core high level actions
+- open a web page on top/bottom/left/right
+- keep web pages persistent in the background
+- quickly open a web page modally, and close it
+
+Misc specific
+- open bandcamp in a window, move over to 2nd display, accidently close it while moving around between other windows
+- recent books or recipes from newsletters i subscribe to (but probably didn't read)
+- extract a table from a page periodically, send it somewhere as csv or whatever (chained actions)
+- collect microformats, metadata, events
+- web page w/ some locations as an input to a map (creates overlay) "map this page"
+- be able to see where a book/etc recommendation came from
+- save a tweet, with URL / image / relevant text, but not whole page webrecorder style
+- "watch local event listings, rate against my music listening patterns and send me shows i might be interested in going to"
+
+Content scripts
+- extract+log shazams
+- extract+log spotify playlist
+
+Calculators (variant of script + cmd?)
+- page -> table
+- page -> summary
+- page -> microsummaries
+- page -> dates
+- page -> events
+
+Workflow deconstructing a "why" task flavour of bookmarking
+- save https://www.criterionchannel.com/hong-kong-in-new-york
+- extract the movies
+- get reference metadata for each (?!)
+- add to "to watch list", with pointer back to source url
+
+## Groups
+
+- panorama/tabcandy-ish
+- all browser history
+- smart groups vs curated groups
+- autoclustering on topic/date
+- escape from a new page enters default group?
+
+Groups + Cmds
+- top/bottom inputs for filtering/grouping/etc
+- implemented is a cmd input?
+- cmds for opening/searching/finding/viewing/filtering/piping
+- cmds for moving pages into groups
+- groups -> {x} (eg export/pipe) could depend on the chaining/piping bit (see below)
+
+Architecture
+- internally is tags?
+- static vs dynamic groups tho?
+
+Publishing
+- publishing groups as internal/public feeds?
+- to pinboard?
+
+## History view/search
+
+A lot of groups work depends on history being in place, and being accessable and annotate-able.
+
+ideally use chromium history
+
+storage+access
+- check out Agregore history viewing approach
+- check out state of electron+webext
+- other way of accessing underlying chromium history?
+
+features
+- awesomebar algo scoring
+- adaptive matching
+
+## Chaining / piping
+
+investigate: vague thought re chaining:
+- dynamic interstitial representations
+- mime type detection?
+- eg image previews
+- or a table of data
+- previews of cmds?
+
+interfaces
+- horizontal vs vertical chains
+- back/forward navigation?
+- each step is a cmd+preview?
+- dynamic cmd+previews?
+
+import/export/undo/redo
+- record/replay?
+- save a chain as a compound action (cmd)?
+
+architecture
+- look at web actions/intents/applets
+- xml pipeline language
+
+## Mobile
+
+- some of the features don't make sense as-is on mobile
+- but maybe quick access on mobile to slides/peeks would be nice
+- and seeing output of content scripts, or ability to re-run locally on demand
+- needs some sync facility (inevitable anyway)
+
+## Use-cases
+
+Peeks
+- translate
+- calendar
+- ai chat
+- currency conversion
+- everytimezone
+- tldraw
+
+Slides
+- music: Soundcloud, Hypem
+- stock prices
+- notepad
+- todo list
+
+Scripts
+- weather change, eg upcoming weather
+- crypto prices
+
+Cmd - web
+- open url
+- web search
+- image search
+- conversions?
+- ddg !actions
+
+Cmd - system
+- search browser history
+- set peeks/slides
+- open settings
+- restart app
+- llm prompts
+
+Future
+- address something to switch between
+- pipe from/to?
+
+Publishing high level
+- author web content
+- pull in bits from the web
+- share preview for feedback
+- publish (or at least get output)
+
+Publishing examples
+- writing an event recap
+
+Publishing: event recap post
+- make a new markdown doc
+- sections titled for each video title
+- each video's embed code in each section
+- navigate around the document for review and updates
+- need to easily preview rendered content
+- share preview link
+- publish (somewhere?)
+
+Music
+- commands
+- views
+- last.fm of my own, to POSSE out
+
+## Unfiled
+
+markdown hot reload previewer w/ toc
+- markdown support, with sidebar nav
+- reader mode
+- hot reload for file:// (other?)
+- add side-by-side view
+- once md and side-by-side, add side-by-side so the md is the nav, content is the preview
+- what's the cmd chain for this?
+
+content types + chaining
+- cmd: view as… table, feed, markdown, data points, named entities
+- chain: static archive, publish, save, share (os), mailto
+- cmd params, eg {url}, which can themselves autocomplete (eg history)
+
+multiprotocol
+- at
+- ipfs/ipns
+- pragmatic addressing+rendering for data (r/d/masl + mime handlers)
+
+broader patterns (chatting w/ luke)
+- why do we have to copy/paste?
+- devtools and ide are divorced
+
+chainframe/framechain
+- (web intents/applets/actions) + (webxdc/miniapps/tiles/farcasterframes)
+
+Small examples of agency
+
+- users can move, resize, change things to their requirements
+  - eg, browsers restrict min-height of a window, but i should be able make as short as i like
 

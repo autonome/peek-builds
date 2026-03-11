@@ -13,6 +13,28 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-03-11
+
+Desktop - IZUI Navigation
+- [x] ESC at root opens Windows switcher — new `escUnhandledPolicy` second-phase policy for workspace windows in active/idle sessions
+- [x] Preserve role/escapeMode across session restore — fix canvas mode check to not depend on role
+
+Desktop - Editor
+- [x] Add img tag rendering in preview — sanitized HTML img tags with attribute allowlist and protocol security
+- [x] Support relative image paths and file:// protocol — resolve images relative to edited file via `peek://local-file/` protocol
+
+Desktop - Groups
+- [x] Restructure group detail view header — group name, edit icon, view mode buttons, and inline sort controls in compact layout
+- [x] Remove colored dot from group header
+
+Desktop - Shortcuts
+- [x] Change Pagestream shortcut from Cmd/Ctrl+P to Cmd/Ctrl+Shift+P (avoids conflict with Print)
+
+Desktop - Docs
+- [x] Update README — rewrite intro, add desktop screenshot, Core/Features/Keyboard Shortcuts/Feature API sections
+- [x] Rename extension terminology to features throughout docs and README
+- [x] Rename docs/extensions.md → features.md, extension-modes.md → feature-modes.md, extension-settings-api.md → feature-settings-api.md
+
 ## 2026-03-09
 
 Desktop - Extensions
