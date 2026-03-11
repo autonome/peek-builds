@@ -1112,6 +1112,19 @@ export class EditorLayout {
     }
   }
 
+  /**
+   * Set the base path for resolving relative image paths in the preview.
+   * Should be the directory containing the file being edited.
+   * @param {string|null} basePath - Directory path (e.g., '/Users/me/docs')
+   */
+  setBasePath(basePath) {
+    if (this.previewSidebar) {
+      this.previewSidebar.setBasePath(basePath);
+      // Re-render preview with the new base path
+      this.updateSidebars();
+    }
+  }
+
   destroy() {
     this.isDestroyed = true;
     this.stopWatching();

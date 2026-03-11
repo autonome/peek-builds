@@ -56,8 +56,82 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;');
 }
 
-function renderMarkdown(text) {
+function resolveImgSrc(src, basePath) {
+  if (/^(https:\/\/|data:image\/)/i.test(src)) return src;
+  if (/^file:\/\//i.test(src)) return src;
+  if (/^javascript:/i.test(src.replace(/\s/g, ''))) return null;
+  if (/^http:\/\//i.test(src)) return null;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(src)) return null;
+  if (basePath) {
+    const base = basePath.replace(/\/+$/, '');
+    let resolved;
+    if (src.startsWith('/')) {
+      resolved = src;
+    } else {
+      resolved = base + '/' + src;
+    }
+    const parts = resolved.split('/');
+    const normalized = [];
+    for (const part of parts) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') {
+        normalized.pop();
+      } else {
+        normalized.push(part);
+      }
+    }
+    const normalizedPath = '/' + normalized.join('/');
+    return 'peek://local-file' + normalizedPath;
+  }
+  return null;
+}
+
+function restoreImgTags(html, basePath) {
+  return html.replace(
+    /&lt;img\s+((?:(?!&gt;).)+?)\/?\s*&gt;/gi,
+    (match, attrs) => {
+      const unescaped = attrs
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>');
+      const allowed = ['src', 'alt', 'width', 'height', 'title', 'loading', 'style'];
+      const result = [];
+      const attrRegex = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g;
+      let m;
+      while ((m = attrRegex.exec(unescaped)) !== null) {
+        const name = m[1].toLowerCase();
+        const value = m[2] ?? m[3] ?? m[4];
+        if (!allowed.includes(name)) continue;
+        if (name === 'src') {
+          const resolved = resolveImgSrc(value, basePath);
+          if (!resolved) continue;
+          const safeValue = resolved.replace(/"/g, '&quot;');
+          result.push(`${name}="${safeValue}"`);
+          continue;
+        }
+        const safeValue = value.replace(/"/g, '&quot;');
+        result.push(`${name}="${safeValue}"`);
+      }
+      if (!result.find(a => a.startsWith('src='))) return match;
+      if (!result.find(a => a.startsWith('style='))) {
+        result.push('style="max-width:100%"');
+      }
+      return `<img ${result.join(' ')}>`;
+    }
+  );
+}
+
+function resolveMarkdownImgSrc(src, basePath) {
+  const resolved = resolveImgSrc(src, basePath);
+  return resolved || '';
+}
+
+function renderMarkdown(text, options) {
+  const basePath = options?.basePath;
   let html = escapeHtml(text);
+
+  // Restore safe HTML img tags
+  html = restoreImgTags(html, basePath);
 
   // Code blocks (``` ... ```)
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
@@ -83,11 +157,15 @@ function renderMarkdown(text) {
   html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
   html = html.replace(/_(.+?)_/g, '<em>$1</em>');
 
+  // Images — resolve src against basePath
+  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) => {
+    const resolved = resolveMarkdownImgSrc(src, basePath);
+    if (!resolved) return `![${alt}](${src})`; // leave as text if blocked
+    return `<img src="${resolved}" alt="${alt}" style="max-width:100%">`;
+  });
+
   // Links
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-
-  // Images
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%">');
 
   // Horizontal rule
   html = html.replace(/^(---|\*\*\*|___)$/gm, '<hr>');
@@ -109,7 +187,7 @@ function renderMarkdown(text) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const isBlock = /^<(h[1-6]|pre|ul|ol|li|blockquote|hr)/.test(line);
+    const isBlock = /^<(h[1-6]|pre|ul|ol|li|blockquote|hr|img)/.test(line);
     const isEmpty = line.trim() === '';
 
     if (isBlock) {
@@ -308,14 +386,11 @@ describe('renderMarkdown', () => {
     assert.ok(html.includes('<a href="https://example.com" target="_blank">Click me</a>'));
   });
 
-  it('renders images (known limitation: link regex matches first)', () => {
-    // Note: In the current renderMarkdown implementation, the link regex runs
-    // before the image regex, so ![alt](url) is partially consumed by the link
-    // pattern. This test documents the current behavior.
-    const html = renderMarkdown('![Alt text](image.png)');
-    // The link regex captures [Alt text](image.png) first, leaving "!" prefix
-    assert.ok(html.includes('Alt text'));
-    assert.ok(html.includes('image.png'));
+  it('renders markdown images', () => {
+    // Image regex runs before link regex so ![alt](url) is handled correctly
+    const html = renderMarkdown('![Alt text](https://example.com/image.png)');
+    assert.ok(html.includes('<img src="https://example.com/image.png"'));
+    assert.ok(html.includes('alt="Alt text"'));
   });
 
   it('renders horizontal rules', () => {
@@ -386,6 +461,193 @@ describe('renderMarkdown', () => {
     const html = renderMarkdown(md);
     assert.ok(html.includes('<pre><code'));
     assert.ok(html.includes('plain code'));
+  });
+
+  // HTML img tag tests
+  it('renders HTML img tags with https src', () => {
+    const html = renderMarkdown('<img src="https://example.com/photo.png" alt="photo">');
+    assert.ok(html.includes('<img src="https://example.com/photo.png" alt="photo"'));
+    assert.ok(!html.includes('&lt;img'));
+  });
+
+  it('renders HTML img tags with data:image src', () => {
+    const html = renderMarkdown('<img src="data:image/png;base64,abc123" alt="inline">');
+    assert.ok(html.includes('<img src="data:image/png;base64,abc123"'));
+  });
+
+  it('blocks HTML img tags with javascript: src', () => {
+    const html = renderMarkdown('<img src="javascript:alert(1)">');
+    assert.ok(!html.includes('<img src='));
+    assert.ok(html.includes('&lt;img'));
+  });
+
+  it('blocks HTML img tags with http:// (non-https) src', () => {
+    const html = renderMarkdown('<img src="http://example.com/photo.png">');
+    assert.ok(!html.includes('<img src='));
+    assert.ok(html.includes('&lt;img'));
+  });
+
+  it('strips disallowed attributes like onerror from img tags', () => {
+    const html = renderMarkdown('<img src="https://example.com/x.png" onerror="alert(1)">');
+    assert.ok(html.includes('<img src="https://example.com/x.png"'));
+    assert.ok(!html.includes('onerror'));
+  });
+
+  it('renders self-closing HTML img tags', () => {
+    const html = renderMarkdown('<img src="https://example.com/x.png" />');
+    assert.ok(html.includes('<img src="https://example.com/x.png"'));
+  });
+
+  it('preserves width and height attributes on img tags', () => {
+    const html = renderMarkdown('<img src="https://example.com/x.png" width="200" height="100">');
+    assert.ok(html.includes('width="200"'));
+    assert.ok(html.includes('height="100"'));
+  });
+
+  it('adds max-width style to img tags without explicit style', () => {
+    const html = renderMarkdown('<img src="https://example.com/x.png">');
+    assert.ok(html.includes('style="max-width:100%"'));
+  });
+
+  it('preserves explicit style on img tags', () => {
+    const html = renderMarkdown('<img src="https://example.com/x.png" style="border:1px solid red">');
+    assert.ok(html.includes('style="border:1px solid red"'));
+    // Should NOT add default max-width since style was provided
+    assert.ok(!html.includes('max-width:100%'));
+  });
+
+  // file:// protocol tests
+  it('renders HTML img tags with file:// src', () => {
+    const html = renderMarkdown('<img src="file:///Users/me/photo.png" alt="local">');
+    assert.ok(html.includes('<img src="file:///Users/me/photo.png"'));
+    assert.ok(!html.includes('&lt;img'));
+  });
+
+  it('blocks HTML img tags with ftp:// src', () => {
+    const html = renderMarkdown('<img src="ftp://example.com/photo.png">');
+    assert.ok(!html.includes('<img src='));
+    assert.ok(html.includes('&lt;img'));
+  });
+
+  it('blocks HTML img tags with vbscript: src', () => {
+    const html = renderMarkdown('<img src="vbscript:alert(1)">');
+    assert.ok(!html.includes('<img src='));
+  });
+
+  // Relative path resolution tests
+  it('resolves relative image paths with basePath', () => {
+    const html = renderMarkdown('<img src="./screenshot.png">', { basePath: '/Users/me/docs' });
+    assert.ok(html.includes('<img src="peek://local-file/Users/me/docs/screenshot.png"'));
+  });
+
+  it('resolves parent-relative image paths with basePath', () => {
+    const html = renderMarkdown('<img src="../images/photo.jpg">', { basePath: '/Users/me/docs' });
+    assert.ok(html.includes('<img src="peek://local-file/Users/me/images/photo.jpg"'));
+  });
+
+  it('resolves bare filename image paths with basePath', () => {
+    const html = renderMarkdown('<img src="image.png">', { basePath: '/Users/me/docs' });
+    assert.ok(html.includes('<img src="peek://local-file/Users/me/docs/image.png"'));
+  });
+
+  it('resolves absolute filesystem paths with basePath', () => {
+    const html = renderMarkdown('<img src="/tmp/image.png">', { basePath: '/Users/me/docs' });
+    assert.ok(html.includes('<img src="peek://local-file/tmp/image.png"'));
+  });
+
+  it('blocks relative image paths without basePath', () => {
+    const html = renderMarkdown('<img src="./screenshot.png">');
+    assert.ok(!html.includes('<img src='));
+    assert.ok(html.includes('&lt;img'));
+  });
+
+  it('still allows https with basePath set', () => {
+    const html = renderMarkdown('<img src="https://example.com/photo.png">', { basePath: '/Users/me/docs' });
+    assert.ok(html.includes('<img src="https://example.com/photo.png"'));
+  });
+
+  it('still blocks javascript: with basePath set', () => {
+    const html = renderMarkdown('<img src="javascript:alert(1)">', { basePath: '/Users/me/docs' });
+    assert.ok(!html.includes('<img src='));
+  });
+
+  // Markdown image syntax with basePath
+  it('resolves relative markdown image paths with basePath', () => {
+    const html = renderMarkdown('![Alt text](./image.png)', { basePath: '/Users/me/docs' });
+    assert.ok(html.includes('src="peek://local-file/Users/me/docs/image.png"'));
+    assert.ok(html.includes('alt="Alt text"'));
+  });
+
+  it('resolves parent-relative markdown image paths with basePath', () => {
+    const html = renderMarkdown('![Photo](../images/photo.jpg)', { basePath: '/Users/me/docs' });
+    assert.ok(html.includes('src="peek://local-file/Users/me/images/photo.jpg"'));
+  });
+});
+
+// ===========================================================================
+// resolveImgSrc tests
+// ===========================================================================
+
+describe('resolveImgSrc', () => {
+  it('passes through https:// URLs', () => {
+    assert.equal(resolveImgSrc('https://example.com/img.png'), 'https://example.com/img.png');
+  });
+
+  it('passes through data:image/ URLs', () => {
+    const src = 'data:image/png;base64,abc123';
+    assert.equal(resolveImgSrc(src), src);
+  });
+
+  it('passes through file:// URLs', () => {
+    assert.equal(resolveImgSrc('file:///Users/me/photo.png'), 'file:///Users/me/photo.png');
+  });
+
+  it('blocks javascript: protocol', () => {
+    assert.equal(resolveImgSrc('javascript:alert(1)'), null);
+  });
+
+  it('blocks http:// protocol', () => {
+    assert.equal(resolveImgSrc('http://example.com/img.png'), null);
+  });
+
+  it('blocks ftp:// protocol', () => {
+    assert.equal(resolveImgSrc('ftp://example.com/img.png'), null);
+  });
+
+  it('blocks vbscript: protocol', () => {
+    assert.equal(resolveImgSrc('vbscript:code'), null);
+  });
+
+  it('blocks blob: protocol', () => {
+    assert.equal(resolveImgSrc('blob:http://example.com/uuid'), null);
+  });
+
+  it('resolves relative path with basePath', () => {
+    assert.equal(resolveImgSrc('image.png', '/Users/me/docs'), 'peek://local-file/Users/me/docs/image.png');
+  });
+
+  it('resolves ./ relative path', () => {
+    assert.equal(resolveImgSrc('./image.png', '/Users/me/docs'), 'peek://local-file/Users/me/docs/image.png');
+  });
+
+  it('resolves ../ relative path', () => {
+    assert.equal(resolveImgSrc('../image.png', '/Users/me/docs'), 'peek://local-file/Users/me/image.png');
+  });
+
+  it('resolves deeply nested relative path', () => {
+    assert.equal(resolveImgSrc('sub/dir/image.png', '/Users/me/docs'), 'peek://local-file/Users/me/docs/sub/dir/image.png');
+  });
+
+  it('resolves absolute path with basePath', () => {
+    assert.equal(resolveImgSrc('/tmp/image.png', '/Users/me/docs'), 'peek://local-file/tmp/image.png');
+  });
+
+  it('returns null for relative path without basePath', () => {
+    assert.equal(resolveImgSrc('image.png'), null);
+  });
+
+  it('handles basePath with trailing slash', () => {
+    assert.equal(resolveImgSrc('image.png', '/Users/me/docs/'), 'peek://local-file/Users/me/docs/image.png');
   });
 });
 

@@ -7,6 +7,7 @@
  * - peek://extensions/{path} - Shared extension infrastructure
  * - peek://theme/{path} - Current theme files (vars.css, manifest.json)
  * - peek://theme/{themeId}/{path} - Specific theme files
+ * - peek://local-file/{path} - Local filesystem files (images, documents, media, etc.)
  */
 
 import { protocol, net } from 'electron';
@@ -43,6 +44,46 @@ const BARE_IMPORT_MAP: Record<string, string> = {
   'lit-element': 'node_modules/lit-element/lit-element.js',
   'lit-element/': 'node_modules/lit-element/'
 };
+
+// Allowed file extensions for peek://local-file/ protocol.
+// Maps extension -> MIME type. Only these types are served; everything else is blocked.
+const ALLOWED_LOCAL_FILE_EXTS = new Map<string, string>([
+  // Images
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'],
+  ['.svg', 'image/svg+xml'],
+  ['.webp', 'image/webp'],
+  ['.bmp', 'image/bmp'],
+  ['.ico', 'image/x-icon'],
+  ['.avif', 'image/avif'],
+  // Documents
+  ['.pdf', 'application/pdf'],
+  // Fonts
+  ['.woff', 'font/woff'],
+  ['.woff2', 'font/woff2'],
+  ['.ttf', 'font/ttf'],
+  ['.otf', 'font/otf'],
+  // Styles
+  ['.css', 'text/css'],
+  // Media
+  ['.mp4', 'video/mp4'],
+  ['.webm', 'video/webm'],
+  ['.mp3', 'audio/mpeg'],
+  ['.ogg', 'audio/ogg'],
+  ['.wav', 'audio/wav'],
+]);
+
+// Explicitly blocked executable/script extensions (for clear error messages)
+const BLOCKED_EXTS = new Set([
+  '.js', '.mjs', '.cjs', '.ts', '.mts', '.cts',
+  '.html', '.htm', '.xhtml',
+  '.sh', '.bash', '.zsh', '.fish',
+  '.exe', '.bat', '.cmd', '.com', '.msi',
+  '.py', '.rb', '.pl', '.php',
+  '.jar', '.class',
+]);
 
 /**
  * Fetch a local file, logging a warning if it doesn't exist.
@@ -379,6 +420,62 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       }
 
       return fetchFile(absolutePath, req.url);
+    }
+
+    // Handle local file access: peek://local-file/{absolute-path}
+    // Used by editor preview and other features to serve local files.
+    // Only serves files with explicitly allowed MIME types for security.
+    if (host === 'local-file') {
+      // Decode percent-encoded path segments
+      const decodedPathname = decodeURIComponent(pathname);
+      const absolutePath = '/' + decodedPathname;
+
+      // Security: reject paths containing null bytes
+      if (absolutePath.includes('\0')) {
+        console.error(`[protocol] local-file: blocked null byte in path`);
+        return new Response('Forbidden: invalid path', { status: 403 });
+      }
+
+      // Security: only allow known-safe file extensions
+      const ext = path.extname(absolutePath).toLowerCase();
+      if (!ALLOWED_LOCAL_FILE_EXTS.has(ext)) {
+        const isBlocked = BLOCKED_EXTS.has(ext);
+        DEBUG && console.log(`[protocol] local-file: blocked ${isBlocked ? 'executable/script' : 'unknown'} extension: ${ext}`);
+        return new Response('Forbidden: file type not allowed', { status: 403 });
+      }
+
+      // Security: resolve symlinks to get the real path
+      let realPath: string;
+      try {
+        realPath = fs.realpathSync(absolutePath);
+      } catch {
+        DEBUG && console.log(`[protocol] local-file: file not found: ${absolutePath}`);
+        return new Response('Not Found', { status: 404 });
+      }
+
+      // Re-check extension after symlink resolution
+      const realExt = path.extname(realPath).toLowerCase();
+      if (!ALLOWED_LOCAL_FILE_EXTS.has(realExt)) {
+        DEBUG && console.log(`[protocol] local-file: blocked extension after symlink resolution: ${realExt}`);
+        return new Response('Forbidden: file type not allowed', { status: 403 });
+      }
+
+      DEBUG && console.log(`[protocol] local-file: serving ${realPath}`);
+
+      // Serve with proper MIME type from our allowlist
+      const mimeType = ALLOWED_LOCAL_FILE_EXTS.get(realExt) || 'application/octet-stream';
+      const fileURL = pathToFileURL(realPath).toString();
+      const response = await net.fetch(fileURL);
+      const body = await response.arrayBuffer();
+      return new Response(body, {
+        status: response.status,
+        headers: {
+          'Content-Type': mimeType,
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      });
     }
 
     // Handle per-extension hosts: peek://{ext-id}/{path}

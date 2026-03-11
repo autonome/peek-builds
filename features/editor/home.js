@@ -196,6 +196,7 @@ const init = async () => {
         currentFilePath = result.data.path;
         hasExplicitSource = true;
         debug && console.log('[editor] Loaded file from path:', currentFilePath);
+        // basePath will be set after editorLayout is created
       }
     } catch (err) {
       debug && console.log('[editor] Failed to load file:', err);
@@ -246,6 +247,8 @@ const init = async () => {
   }
   if (currentFilePath) {
     updateWindowTitle();
+    // Set base path for resolving relative image paths in preview
+    editorLayout.setBasePath(extractDirname(currentFilePath));
   }
 
   // Set up Cmd+O (open file) and Cmd+S (save file) keyboard shortcuts
@@ -469,6 +472,16 @@ const extractFilename = (filePath) => {
 };
 
 /**
+ * Extract directory path from a full file path.
+ */
+const extractDirname = (filePath) => {
+  if (!filePath) return '';
+  const parts = filePath.split('/');
+  parts.pop();
+  return parts.join('/') || '/';
+};
+
+/**
  * Update the window title and filename display to show the current filename.
  */
 const updateWindowTitle = () => {
@@ -513,6 +526,8 @@ const openFile = async () => {
     if (editorLayout) {
       editorLayout.setContent(content);
       editorLayout.setSaveStatusVisible(true);
+      // Set base path for resolving relative image paths in preview
+      editorLayout.setBasePath(extractDirname(filePath));
     }
 
     saveStatus = 'saved';
