@@ -12,7 +12,7 @@ Peek is a workbench for the web.
 Peek is a window manager for the web.
 Peek is what you want it to be.
 
-<img width="969" alt="peek desktop screenshot" src="peek-desktop-screenshot.png">
+<img width="969" alt="peek desktop screenshot" src="peek-desktop-screenshot.jpg">
 
 ## WARNING!
 
