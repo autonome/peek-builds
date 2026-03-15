@@ -5,6 +5,7 @@
  * - resolveGroupBorderColor: vivid color selection for screen border
  * - shouldAutoTagForGroup: group mode detection (no lastFocusedVisible fallback)
  * - shouldInheritGroupMode: window lineage-based group mode inheritance
+ * - colorPersistence: vivid colors assigned at group creation/promotion time
  *
  * These are logic-only tests — no DOM, no Electron, no IPC runtime.
  */
@@ -384,5 +385,92 @@ describe('group screen border visibility (debounced hide)', () => {
       { id: 3, mode: 'default', destroyed: false },
     ];
     assert.strictEqual(computeBorderAction(windows), 'show');
+  });
+});
+
+describe('color persistence (vivid color assigned at group creation/promotion)', () => {
+  // Vivid colors are now assigned eagerly in the datastore-set-row IPC handler
+  // when a tag is promoted to a group (isGroup: true in metadata).
+  // The screen border no longer lazily persists resolved colors.
+
+  interface ColorPersistResult {
+    shouldPersist: boolean;
+    resolvedColor: string;
+  }
+
+  function shouldPersistColor(
+    rawColor: string | undefined,
+    groupId: string | undefined,
+  ): ColorPersistResult {
+    const resolvedColor = resolveGroupBorderColor(rawColor, groupId);
+    return {
+      shouldPersist: resolvedColor !== rawColor && !!groupId,
+      resolvedColor,
+    };
+  }
+
+  it('persists when raw color is undefined (default grey group)', () => {
+    const result = shouldPersistColor(undefined, 'group-1');
+    assert.strictEqual(result.shouldPersist, true);
+    assert.ok(VIVID_GROUP_COLORS.includes(result.resolvedColor));
+  });
+
+  it('persists when raw color is #999 (default tag color)', () => {
+    const result = shouldPersistColor('#999', 'group-1');
+    assert.strictEqual(result.shouldPersist, true);
+    assert.ok(VIVID_GROUP_COLORS.includes(result.resolvedColor));
+  });
+
+  it('persists when raw color is #999999 (default tag color long form)', () => {
+    const result = shouldPersistColor('#999999', 'group-1');
+    assert.strictEqual(result.shouldPersist, true);
+    assert.ok(VIVID_GROUP_COLORS.includes(result.resolvedColor));
+  });
+
+  it('persists when raw color is desaturated (low chroma)', () => {
+    const result = shouldPersistColor('#cccccc', 'group-1');
+    assert.strictEqual(result.shouldPersist, true);
+    assert.ok(VIVID_GROUP_COLORS.includes(result.resolvedColor));
+  });
+
+  it('does NOT persist when raw color is already vivid', () => {
+    const result = shouldPersistColor('#ff3b30', 'group-1');
+    assert.strictEqual(result.shouldPersist, false);
+    assert.strictEqual(result.resolvedColor, '#ff3b30');
+  });
+
+  it('does NOT persist when raw color is a different vivid color', () => {
+    const result = shouldPersistColor('#007aff', 'group-1');
+    assert.strictEqual(result.shouldPersist, false);
+    assert.strictEqual(result.resolvedColor, '#007aff');
+  });
+
+  it('does NOT persist when groupId is undefined', () => {
+    const result = shouldPersistColor('#999', undefined);
+    assert.strictEqual(result.shouldPersist, false);
+  });
+
+  it('persisted color is deterministic for same groupId', () => {
+    const result1 = shouldPersistColor('#999', 'my-project');
+    const result2 = shouldPersistColor('#999', 'my-project');
+    assert.strictEqual(result1.resolvedColor, result2.resolvedColor);
+  });
+
+  it('after persistence, subsequent call with resolved color does NOT re-persist', () => {
+    // Simulate: first call resolves and persists
+    const first = shouldPersistColor('#999', 'group-1');
+    assert.strictEqual(first.shouldPersist, true);
+
+    // Second call with the now-persisted vivid color
+    const second = shouldPersistColor(first.resolvedColor, 'group-1');
+    assert.strictEqual(second.shouldPersist, false);
+    assert.strictEqual(second.resolvedColor, first.resolvedColor);
+  });
+
+  it('user-chosen vivid color is not overwritten', () => {
+    // User picks a custom vivid color via the color picker
+    const result = shouldPersistColor('#e91e63', 'group-1');
+    assert.strictEqual(result.shouldPersist, false);
+    assert.strictEqual(result.resolvedColor, '#e91e63');
   });
 });

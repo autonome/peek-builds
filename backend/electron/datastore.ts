@@ -2669,6 +2669,15 @@ export function renameTag(id: string, newName: string): Tag | null {
   return getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
 }
 
+export function updateTagColor(id: string, color: string): Tag | null {
+  const timestamp = now();
+  const result = getDb().prepare(
+    'UPDATE tags SET color = ?, updatedAt = ? WHERE id = ?'
+  ).run(color, timestamp, id);
+  if (result.changes === 0) return null;
+  return getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
+}
+
 export function deleteTag(id: string): boolean {
   const db = getDb();
   db.prepare('DELETE FROM item_tags WHERE tagId = ?').run(id);
@@ -3006,6 +3015,49 @@ export function updateItemTitle(url: string, title: string): boolean {
   if (!existing.title || existing.title === 'Loading...') {
     d.prepare('UPDATE items SET title = ?, updatedAt = ? WHERE id = ?')
       .run(title, Date.now(), existing.id);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Update the favicon of a URL item if it's currently empty.
+ * Used by page-favicon-updated handlers and entity enrichment.
+ */
+export function updateItemFavicon(url: string, faviconUrl: string): boolean {
+  const normalizedUri = normalizeUrl(url);
+  const d = getDb();
+
+  // Phase 1: Try exact normalized URL match
+  let existing = d.prepare(
+    'SELECT id, favicon FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
+  ).get('url', normalizedUri) as { id: string; favicon: string | null } | undefined;
+
+  // Phase 2: If no match, try with raw URL
+  if (!existing && url !== normalizedUri) {
+    existing = d.prepare(
+      'SELECT id, favicon FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
+    ).get('url', url) as { id: string; favicon: string | null } | undefined;
+  }
+
+  // Phase 3: Domain-based lookup for the most recent item missing a favicon
+  if (!existing) {
+    try {
+      const parsed = new URL(url);
+      const domain = parsed.hostname;
+      existing = d.prepare(
+        `SELECT id, favicon FROM items WHERE type = ? AND domain = ? AND deletedAt = 0
+         AND (favicon = '' OR favicon IS NULL)
+         ORDER BY updatedAt DESC LIMIT 1`
+      ).get('url', domain) as { id: string; favicon: string | null } | undefined;
+    } catch { /* invalid URL, skip phase 3 */ }
+  }
+
+  if (!existing) return false;
+
+  if (!existing.favicon) {
+    d.prepare('UPDATE items SET favicon = ?, updatedAt = ? WHERE id = ?')
+      .run(faviconUrl, Date.now(), existing.id);
     return true;
   }
   return false;

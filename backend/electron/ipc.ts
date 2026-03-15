@@ -16,6 +16,7 @@ import {
   queryContent,
   getOrCreateTag,
   renameTag,
+  updateTagColor,
   deleteTag,
   getTagsByFrecency,
   getTable,
@@ -29,6 +30,7 @@ import {
   getItem,
   updateItem,
   updateItemTitle,
+  updateItemFavicon,
   deleteItem,
   hardDeleteItem,
   queryItems,
@@ -718,7 +720,35 @@ export function registerDatastoreHandlers(): void {
       if (!isValidTable(tableName)) {
         return { success: false, error: `Invalid table: ${tableName}` };
       }
+
+      // When promoting a tag to a group, ensure it gets a vivid color
+      let assignedVividColor = false;
+      if (tableName === 'tags' && rowData) {
+        let tagMeta: Record<string, unknown> | null = null;
+        try {
+          tagMeta = rowData.metadata
+            ? (typeof rowData.metadata === 'string' ? JSON.parse(rowData.metadata) : rowData.metadata)
+            : null;
+        } catch { /* ignore parse errors */ }
+
+        if (tagMeta?.isGroup && (!rowData.color || rowData.color === '#999' || rowData.color === '#999999')) {
+          const vividColor = resolveGroupBorderColor(rowData.color, rowId);
+          rowData.color = vividColor;
+          assignedVividColor = true;
+          DEBUG && console.log('[ipc] Auto-assigned vivid color to group:', rowId, vividColor);
+        }
+      }
+
       const result = setRow(tableName, rowId, rowData);
+
+      // Publish color-changed event so UI dots update immediately
+      if (assignedVividColor) {
+        publish('system', PubSubScopes.GLOBAL, 'tag:color-changed', {
+          tagId: rowId,
+          color: rowData.color
+        });
+      }
+
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -847,6 +877,23 @@ export function registerDatastoreHandlers(): void {
           newName: data.newName
         });
         if (DEBUG) console.log('[ipc] tag:renamed', data.tagId, data.newName);
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-update-tag-color', async (ev, data) => {
+    try {
+      const result = updateTagColor(data.tagId, data.color);
+      if (result) {
+        publish('system', PubSubScopes.GLOBAL, 'tag:color-changed', {
+          tagId: data.tagId,
+          color: data.color
+        });
+        DEBUG && console.log('[ipc] tag:color-changed', data.tagId, data.color);
       }
       return { success: true, data: result };
     } catch (error) {
@@ -1000,6 +1047,16 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-update-item-title', async (ev, data) => {
     try {
       const result = updateItemTitle(data.url, data.title);
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('datastore-update-item-favicon', async (ev, data) => {
+    try {
+      const result = updateItemFavicon(data.url, data.faviconUrl);
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2813,6 +2870,22 @@ export function registerWindowHandlers(): void {
             }
           });
 
+          // Capture favicon when webview guest page provides one
+          guestWebContents.on('page-favicon-updated', (_event: Electron.Event, favicons: string[]) => {
+            const guestUrl = guestWebContents.getURL();
+            if (guestUrl && guestUrl.startsWith('http') && favicons.length > 0) {
+              // Prefer PNG/SVG over ICO, pick last (usually highest resolution)
+              const best = favicons.find(f => f.endsWith('.svg')) ||
+                           favicons.find(f => f.endsWith('.png')) ||
+                           favicons[favicons.length - 1];
+              try {
+                updateItemFavicon(guestUrl, best);
+              } catch (e) {
+                DEBUG && console.log('Failed to update favicon from guest page-favicon-updated:', e);
+              }
+            }
+          });
+
           guestWebContents.setWindowOpenHandler(({ url: popupUrl }) => {
             if (popupUrl.startsWith('http://') || popupUrl.startsWith('https://')) {
               console.log(`[webview-popup] Intercepted popup from window ${win.id}: ${popupUrl}`);
@@ -3077,6 +3150,21 @@ export function registerWindowHandlers(): void {
               title,
               windowId: win.id,
             });
+          }
+        });
+
+        // Capture favicon for non-canvas web pages
+        win.webContents.on('page-favicon-updated', (_event: Electron.Event, favicons: string[]) => {
+          const pageUrl = win.webContents.getURL() || url;
+          if (pageUrl && pageUrl.startsWith('http') && favicons.length > 0) {
+            const best = favicons.find(f => f.endsWith('.svg')) ||
+                         favicons.find(f => f.endsWith('.png')) ||
+                         favicons[favicons.length - 1];
+            try {
+              updateItemFavicon(pageUrl, best);
+            } catch (e) {
+              DEBUG && console.log('Failed to update favicon from page-favicon-updated:', e);
+            }
           }
         });
       }

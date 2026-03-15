@@ -306,29 +306,20 @@ peek-grid.cards[view-mode="masonry"] peek-card {
   font-size: 13px;
 }
 
-/* All Tags toggle section */
+/* Tags section separator */
 .all-tags-toggle {
   grid-column: 1 / -1;
-  padding: 8px 0;
+  padding: 12px 0 4px;
   border-top: 1px solid var(--base02);
-  margin-top: 8px;
+  margin-top: 12px;
 }
 
-.all-tags-btn {
-  background: none;
-  border: 1px solid var(--base02);
-  border-radius: 5px;
-  color: var(--base04);
+.all-tags-label {
+  color: var(--base03);
   font-size: 11px;
-  cursor: pointer;
-  padding: 4px 10px;
-  transition: all 0.15s;
-}
-
-.all-tags-btn:hover {
-  color: var(--base05);
-  border-color: var(--base03);
-  background: var(--base01);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 /* Group detail header — shown at the very top when viewing a group's contents */
@@ -494,6 +485,30 @@ peek-grid.cards[view-mode="masonry"] peek-card {
 .group-rename-input:focus {
   border-color: var(--base0D);
   box-shadow: 0 0 0 1px var(--base0D);
+}
+
+/* Group header color dot — clickable color picker trigger */
+.group-header-color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid var(--base02);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.group-header-color-dot:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 2px var(--base02);
+}
+
+.group-header-color-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Unpromoted tag cards — slightly dimmed */

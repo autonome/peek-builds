@@ -10,7 +10,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateModeForNavigation, getContextEntry } from './datastore.js';
+import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateItemFavicon, updateModeForNavigation, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initTray } from './tray.js';
@@ -1883,6 +1883,21 @@ export function createBackgroundWindow(): BrowserWindow {
                   updateItemTitle(newWin.webContents.getURL() || details.url, title);
                 } catch (e) {
                   DEBUG && console.log('Failed to update title from page-title-updated:', e);
+                }
+              }
+            });
+
+            // Capture favicon for background child windows
+            newWin.webContents.on('page-favicon-updated', (_event: Electron.Event, favicons: string[]) => {
+              const pageUrl = newWin.webContents.getURL() || details.url;
+              if (pageUrl && favicons.length > 0) {
+                const best = favicons.find(f => f.endsWith('.svg')) ||
+                             favicons.find(f => f.endsWith('.png')) ||
+                             favicons[favicons.length - 1];
+                try {
+                  updateItemFavicon(pageUrl, best);
+                } catch (e) {
+                  DEBUG && console.log('Failed to update favicon from page-favicon-updated:', e);
                 }
               }
             });

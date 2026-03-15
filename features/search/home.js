@@ -285,8 +285,8 @@ const createResultCard = (item) => {
       api.window.open(url, {
         role: 'content',
         key: url,
-        width: 800,
-        height: 600
+        width: 1024,
+        height: 768
       });
     },
     onDelete: async (item) => {
@@ -326,8 +326,8 @@ const createResultCard = (item) => {
         await api.window.open(itemUrl, {
           role: 'content',
           key: itemUrl,
-          width: 800,
-          height: 600
+          width: 1024,
+          height: 768
         });
       } else if (itemType === 'text') {
         api.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);

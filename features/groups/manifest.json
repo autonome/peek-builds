@@ -19,7 +19,7 @@
       "action": {
         "type": "window",
         "url": "peek://ext/groups/home.html",
-        "options": { "role": "workspace", "width": 800, "height": 600 }
+        "options": { "role": "workspace", "width": 1024, "height": 768 }
       }
     },
     {

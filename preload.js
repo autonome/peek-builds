@@ -543,6 +543,9 @@ api.datastore = {
   renameTag: (tagId, newName) => {
     return ipcRenderer.invoke('datastore-rename-tag', { tagId, newName });
   },
+  updateTagColor: (tagId, color) => {
+    return ipcRenderer.invoke('datastore-update-tag-color', { tagId, color });
+  },
   deleteTag: (tagId) => {
     return ipcRenderer.invoke('datastore-delete-tag', { tagId });
   },

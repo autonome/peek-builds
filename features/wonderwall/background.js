@@ -13,8 +13,8 @@ function openWonderwall() {
     api.window.open('peek://ext/wonderwall/home.html', {
       role: 'workspace',
       key: 'wonderwall-home',
-      width: 800,
-      height: 600,
+      width: 1024,
+      height: 768,
       title: 'Wonderwall'
     });
   }

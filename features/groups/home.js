@@ -85,7 +85,6 @@ let state = {
   untaggedCount: 0,
   selectedIndex: 0,
   searchQuery: '',
-  showAllTags: false,
   lastViewedTagId: null
 };
 
@@ -451,6 +450,12 @@ const init = async () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
+  // Subscribe to color changes (e.g. border color resolution persisted back)
+  api.subscribe('tag:color-changed', (msg) => {
+    debug && console.log('[groups] tag:color-changed event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
   // Set up create group UI
   setupCreateGroup();
 
@@ -749,7 +754,7 @@ const renderGroups = () => {
   // Apply sorting
   filteredGroups = sortGroups(filteredGroups);
 
-  if (filteredGroups.length === 0 && !state.showAllTags) {
+  if (filteredGroups.length === 0) {
     const message = state.searchQuery
       ? 'No groups match your search.'
       : 'No groups yet. Create a group or promote tags below.';
@@ -761,32 +766,24 @@ const renderGroups = () => {
     });
   }
 
-  // "All Tags" toggle section — show unpromoted tags so users can promote them
+  // Tags section — always show unpromoted tags below a separator
   const hasUnpromotedTags = unpromotedTags.length > 0;
   if (hasUnpromotedTags) {
-    const toggleContainer = document.createElement('div');
-    toggleContainer.className = 'all-tags-toggle';
+    const separator = document.createElement('div');
+    separator.className = 'all-tags-toggle';
 
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'all-tags-btn';
-    toggleBtn.textContent = state.showAllTags
-      ? `Hide tags (${unpromotedTags.length})`
-      : `Show all tags (${unpromotedTags.length})`;
-    toggleBtn.addEventListener('click', () => {
-      state.showAllTags = !state.showAllTags;
-      renderGroups();
+    const label = document.createElement('span');
+    label.className = 'all-tags-label';
+    label.textContent = `Tags (${unpromotedTags.length})`;
+    separator.appendChild(label);
+    container.appendChild(separator);
+
+    let filteredTags = filterGroups(unpromotedTags);
+    filteredTags = sortGroups(filteredTags);
+    filteredTags.forEach(tag => {
+      const card = createGroupCard(tag, { showPromote: true });
+      container.appendChild(card);
     });
-    toggleContainer.appendChild(toggleBtn);
-    container.appendChild(toggleContainer);
-
-    if (state.showAllTags) {
-      let filteredTags = filterGroups(unpromotedTags);
-      filteredTags = sortGroups(filteredTags);
-      filteredTags.forEach(tag => {
-        const card = createGroupCard(tag, { showPromote: true });
-        container.appendChild(card);
-      });
-    }
   }
 
   // Select the last-viewed group if returning from addresses view, otherwise reset to 0
@@ -898,7 +895,7 @@ const renderGroupHeader = () => {
   }
   header.appendChild(nameEl);
 
-  // Rename button (not for special groups)
+  // Rename button + color dot (not for special groups)
   if (!tag.isSpecial) {
     const renameBtn = document.createElement('button');
     renameBtn.className = 'group-rename-btn';
@@ -910,6 +907,35 @@ const renderGroupHeader = () => {
       '</svg>';
     renameBtn.addEventListener('click', () => startRenameGroup(header, tag));
     header.appendChild(renameBtn);
+
+    // Color dot with hidden color picker
+    const colorDot = document.createElement('div');
+    colorDot.className = 'group-header-color-dot';
+    colorDot.style.backgroundColor = tag.color || '#999';
+    colorDot.title = 'Change group color';
+
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.className = 'group-header-color-input';
+    colorInput.value = tag.color || '#999999';
+    colorInput.addEventListener('input', (e) => {
+      colorDot.style.backgroundColor = e.target.value;
+    });
+    colorInput.addEventListener('change', async (e) => {
+      const newColor = e.target.value;
+      tag.color = newColor;
+      await api.datastore.updateTagColor(tag.id, newColor);
+      // Update group mode context if this is the active group
+      if (api.context) {
+        await api.context.setMode('group', {
+          metadata: { groupId: tag.id, groupName: tag.name, color: newColor }
+        });
+      }
+    });
+
+    colorDot.addEventListener('click', () => colorInput.click());
+    colorDot.appendChild(colorInput);
+    header.appendChild(colorDot);
   }
 
   // Spacer to push view mode buttons to the right
@@ -1159,8 +1185,8 @@ const createAddressCard = (address) => {
       api.window.open(url, {
         role: 'content',
         key: url,
-        width: 800,
-        height: 600
+        width: 1024,
+        height: 768
       });
     },
     onDelete: async (item) => {
@@ -1192,8 +1218,8 @@ const createAddressCard = (address) => {
       const openOptions = {
         role: 'content',
         key: addressUrl,
-        width: 800,
-        height: 600
+        width: 1024,
+        height: 768
       };
       if (state.currentTag && state.currentTag.id !== '__untagged__') {
         openOptions.groupMode = {
