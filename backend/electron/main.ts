@@ -1639,14 +1639,20 @@ export function findWindowByKey(source: string, key: string): { id: number; wind
 }
 
 /**
- * Find an existing window that has the given URL loaded (by address param).
- * Only searches for http/https URLs. Returns the first match.
+ * Find an existing page-host window that has the given URL loaded (by address param).
+ * Only searches for http/https URLs. Only matches page-host windows (canvas pages
+ * with role 'content' or 'child-content'), NOT peeks, slides, modals, or other
+ * non-page-host window types.
  */
 export function findWindowByUrl(url: string): { id: number; window: BrowserWindow; data: unknown } | null {
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
 
   for (const [id, win] of windowRegistry) {
     if (win.params && win.params.address === url) {
+      // Only match page-host windows (canvas pages), not peeks, slides, modals, etc.
+      const role = win.params.role;
+      if (role !== 'content' && role !== 'child-content') continue;
+
       const browserWindow = BrowserWindow.fromId(id);
       if (browserWindow && !browserWindow.isDestroyed()) {
         return { id, window: browserWindow, data: win };

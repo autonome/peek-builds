@@ -329,25 +329,215 @@ function autoTagIfGroupMode(ev: Electron.IpcMainInvokeEvent, itemId: string): bo
     const callingWin = BrowserWindow.fromWebContents(ev.sender);
     const callerWinId = callingWin && !callingWin.isDestroyed() ? callingWin.id : null;
     const callerMode = callerWinId ? getContextEntry('mode', callerWinId) : null;
-    const lastVisibleMode = lastFocusedVisibleWindowId ? getContextEntry('mode', lastFocusedVisibleWindowId) : null;
 
+    // Only tag if the calling window itself is in group mode.
+    // Do NOT fall back to lastFocusedVisibleWindowId — that causes group leakage
+    // where items from external apps, cmd palette, etc. get tagged with whatever
+    // group happened to be active on the last focused window.
     if (callerMode && callerMode.value === 'group' && callerMode.metadata?.groupId) {
       const groupId = callerMode.metadata.groupId as string;
       tagItemAndPublish(itemId, groupId);
       console.log('[ipc] Auto-tagged item', itemId, 'with group', groupId, '(from caller)');
       return true;
     }
-    // Fallback: check last focused visible window (handles cmd palette, modal callers)
-    if (lastVisibleMode && lastVisibleMode.value === 'group' && lastVisibleMode.metadata?.groupId) {
-      const groupId = lastVisibleMode.metadata.groupId as string;
-      tagItemAndPublish(itemId, groupId);
-      console.log('[ipc] Auto-tagged item', itemId, 'with group', groupId, '(from last visible)');
-      return true;
-    }
   } catch (e) {
     console.log('[ipc] autoTagIfGroupMode error:', e);
   }
   return false;
+}
+
+// Group mode screen border — transparent overlay window showing a solid colored
+// border around the entire screen when any window is in group mode.
+let groupScreenBorderWin: BrowserWindow | null = null;
+let groupScreenBorderColor: string | null = null;
+
+// Strong, vivid colors derived from iOS theme palette for group screen border.
+// Used when the group's own color is too pale or missing.
+const VIVID_GROUP_COLORS = [
+  '#ff3b30', // red
+  '#ff9500', // orange
+  '#34c759', // green
+  '#007aff', // blue
+  '#af52de', // purple
+  '#5ac8fa', // cyan
+  '#ff2d55', // pink
+  '#ff9f0a', // amber
+];
+
+/**
+ * Pick a vivid border color: use the group's color if it has enough saturation,
+ * otherwise deterministically pick a vivid color from the palette based on the
+ * group ID hash.
+ */
+function resolveGroupBorderColor(color: string | undefined, groupId: string | undefined): string {
+  if (color && color !== '#999' && color !== '#999999') {
+    // Check if the color has enough saturation/chroma to be visually distinctive.
+    // Parse hex and check if it's not too grey.
+    const hex = color.replace('#', '');
+    if (hex.length >= 6) {
+      const r = parseInt(hex.substring(0, 2), 16);
+      const g = parseInt(hex.substring(2, 4), 16);
+      const b = parseInt(hex.substring(4, 6), 16);
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const chroma = max - min;
+      // If chroma > 40 the color is vivid enough to use directly
+      if (chroma > 40) return color;
+    }
+  }
+  // Deterministic pick from vivid palette based on groupId
+  if (groupId) {
+    let hash = 0;
+    for (let i = 0; i < groupId.length; i++) {
+      hash = ((hash << 5) - hash + groupId.charCodeAt(i)) | 0;
+    }
+    return VIVID_GROUP_COLORS[Math.abs(hash) % VIVID_GROUP_COLORS.length];
+  }
+  return '#007aff';
+}
+
+function showGroupScreenBorder(color: string, name: string): void {
+  // Sanitize color for CSS injection
+  const safeColor = /^[#a-zA-Z0-9(),%\s.]+$/.test(color) ? color : '#007aff';
+  // Sanitize name for HTML injection
+  const safeName = name.replace(/[<>"&'\\]/g, '');
+
+  if (groupScreenBorderWin && !groupScreenBorderWin.isDestroyed()) {
+    // Update color and name if changed
+    if (groupScreenBorderColor !== safeColor) {
+      groupScreenBorderColor = safeColor;
+      groupScreenBorderWin.webContents.executeJavaScript(
+        `document.documentElement.style.setProperty('--group-color', '${safeColor}')`
+      );
+    }
+    groupScreenBorderWin.webContents.executeJavaScript(
+      `document.getElementById('group-label').textContent = ${JSON.stringify(safeName)}`
+    );
+    if (!groupScreenBorderWin.isVisible()) {
+      groupScreenBorderWin.showInactive();
+    }
+    return;
+  }
+
+  groupScreenBorderColor = safeColor;
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { x, y, width, height } = primaryDisplay.bounds;
+
+  groupScreenBorderWin = new BrowserWindow({
+    x, y, width, height,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    focusable: false,
+    skipTaskbar: true,
+    roundedCorners: false,
+    resizable: false,
+    movable: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    }
+  });
+
+  groupScreenBorderWin.setIgnoreMouseEvents(true);
+  groupScreenBorderWin.setVisibleOnAllWorkspaces(true);
+  groupScreenBorderWin.setAlwaysOnTop(true, 'screen-saver');
+
+  const html = `<!DOCTYPE html>
+<html style="--group-color: ${safeColor}">
+<head><style>
+  * { margin: 0; padding: 0; }
+  html, body { width: 100vw; height: 100vh; background: transparent; overflow: hidden; }
+  html::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border: 4px solid var(--group-color);
+    border-radius: 10px;
+    pointer-events: none;
+  }
+  #group-label {
+    position: fixed;
+    bottom: 8px;
+    right: 12px;
+    color: var(--group-color);
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+</style></head>
+<body>
+  <div id="group-label">${safeName}</div>
+</body>
+</html>`;
+
+  groupScreenBorderWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  groupScreenBorderWin.showInactive();
+
+  groupScreenBorderWin.on('closed', () => {
+    groupScreenBorderWin = null;
+    groupScreenBorderColor = null;
+  });
+
+  DEBUG && console.log('[group-screen-border] Created overlay with color:', safeColor, 'name:', safeName);
+}
+
+function hideGroupScreenBorder(): void {
+  if (groupScreenBorderWin && !groupScreenBorderWin.isDestroyed()) {
+    groupScreenBorderWin.hide();
+    DEBUG && console.log('[group-screen-border] Hidden');
+  }
+}
+
+// Debounce timer for hiding the screen border — prevents flicker during
+// navigation transitions where group mode is briefly absent (old window's
+// context cleared before new window's context is set).
+let groupBorderHideTimer: ReturnType<typeof setTimeout> | null = null;
+const GROUP_BORDER_HIDE_DELAY_MS = 600;
+
+/**
+ * Check if any live window is currently in group mode and show/hide the screen border accordingly.
+ * Showing is immediate; hiding is debounced to avoid flicker during window transitions.
+ */
+function updateGroupScreenBorder(): void {
+  const groupWindowIds = getWindowsWithContextValue('mode', 'group');
+  const liveGroupWindows = groupWindowIds.filter(id => {
+    const win = BrowserWindow.fromId(id);
+    return win && !win.isDestroyed();
+  });
+  if (liveGroupWindows.length > 0) {
+    // Cancel any pending hide — group mode is still active
+    if (groupBorderHideTimer) {
+      clearTimeout(groupBorderHideTimer);
+      groupBorderHideTimer = null;
+    }
+    const entry = getContextEntry('mode', liveGroupWindows[0]);
+    const rawColor = entry?.metadata?.color as string | undefined;
+    const groupId = entry?.metadata?.groupId as string | undefined;
+    const color = resolveGroupBorderColor(rawColor, groupId);
+    const groupName = (entry?.metadata?.groupName as string) || 'group';
+    showGroupScreenBorder(color, groupName);
+  } else {
+    // Debounce the hide — a new group window may be about to open
+    if (!groupBorderHideTimer) {
+      groupBorderHideTimer = setTimeout(() => {
+        groupBorderHideTimer = null;
+        // Re-check: if group windows appeared during the delay, don't hide
+        const recheck = getWindowsWithContextValue('mode', 'group');
+        const stillLive = recheck.some(id => {
+          const win = BrowserWindow.fromId(id);
+          return win && !win.isDestroyed();
+        });
+        if (!stillLive) {
+          hideGroupScreenBorder();
+        }
+      }, GROUP_BORDER_HIDE_DELAY_MS);
+    }
+  }
 }
 
 /**
@@ -2534,7 +2724,7 @@ export function registerWindowHandlers(): void {
         }
 
         if (openerGroupMode) {
-          // Inherit group mode from opener
+          // Inherit group mode from opener (window lineage)
           addContextEntry('mode', 'group', {
             windowId: win.id,
             source: msg.source,
@@ -2545,32 +2735,11 @@ export function registerWindowHandlers(): void {
             }
           });
           DEBUG && console.log('Inherited group mode from opener:', openerGroupMode.metadata?.groupName);
-        } else if (lastFocusedVisibleWindowId) {
-          // Fallback: check lastFocusedVisibleWindowId for group mode
-          // This handles the case where a non-group window (e.g. cmd palette)
-          // opens a URL while the user was previously focused on a group window
-          const lastVisibleContext = getContextEntry('mode', lastFocusedVisibleWindowId);
-          if (lastVisibleContext && lastVisibleContext.value === 'group' && lastVisibleContext.metadata) {
-            addContextEntry('mode', 'group', {
-              windowId: win.id,
-              source: msg.source,
-              metadata: {
-                ...lastVisibleContext.metadata,
-                url: modeUrl,
-                inheritedFrom: lastFocusedVisibleWindowId
-              }
-            });
-            console.log('[openWindow] Inherited group mode from lastFocusedVisibleWindow:', lastFocusedVisibleWindowId, lastVisibleContext.metadata?.groupName);
-          } else {
-            const detectedMode = detectModeFromUrl(modeUrl);
-            addContextEntry('mode', detectedMode, {
-              windowId: win.id,
-              source: msg.source,
-              metadata: { url: modeUrl }
-            });
-          }
         } else {
-          // Set mode based on URL detection (original behavior)
+          // No group mode inheritance — only explicit groupMode option or direct
+          // opener lineage propagates group mode. Do NOT fall back to
+          // lastFocusedVisibleWindowId, as that causes group leakage to unrelated
+          // windows (external app opens, peeks, slides, etc.)
           const detectedMode = detectModeFromUrl(modeUrl);
           addContextEntry('mode', detectedMode, {
             windowId: win.id,
@@ -2840,6 +3009,9 @@ export function registerWindowHandlers(): void {
       console.log(`[page-host:${win.id}] Loading: ${loadUrl.substring(0, 120)}`);
       await win.loadURL(loadUrl);
       console.log(`[page-host:${win.id}] loadURL resolved`);
+
+      // Update group screen border if this window entered group mode
+      updateGroupScreenBorder();
 
       // Background detection for non-canvas web pages (slides, modals, quick-views).
       // Canvas pages get this via the webview dom-ready handler in page.js.
@@ -4735,6 +4907,11 @@ export function registerProfileHandlers(): void {
  * New code should use the context API (api.context) instead.
  */
 export function registerModesHandlers(): void {
+  // Update group screen border when windows close (last group window closing should hide it)
+  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'window:closed', () => {
+    updateGroupScreenBorder();
+  });
+
   // Mode definitions
   const MODES = [
     { id: 'default', name: 'Default', description: 'Standard browsing mode' },
@@ -4892,6 +5069,11 @@ export function registerContextHandlers(): void {
         windowId,
         source
       });
+
+      // Update group screen border when mode changes
+      if (data.key === 'mode') {
+        updateGroupScreenBorder();
+      }
 
       // Publish context change event for watchers
       if (publish && PubSubScopes && getSystemAddress) {
