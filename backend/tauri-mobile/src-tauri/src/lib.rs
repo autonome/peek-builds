@@ -1515,9 +1515,21 @@ async fn save_url(url: String, tags: Vec<String>, metadata: Option<serde_json::V
     println!("[Rust] save_url called with url: {}, tags: {:?}", url, tags);
 
     let store = get_store()?;
-    store.save_url(&url, &tags, metadata)?;
+    let result = store.save_url(&url, &tags, metadata)?;
 
     println!("[Rust] Page saved successfully");
+
+    // Handle offline tag — fetch content if the offline tag was included
+    let config = load_profile_config();
+    if tags.contains(&config.offline_tag) {
+        let item_id = result.item_id.clone();
+        let fetch_url = url.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = fetch_and_store_offline_content(&item_id, &fetch_url).await {
+                println!("[Rust] Failed to fetch offline content: {}", e);
+            }
+        });
+    }
 
     // Trigger auto-sync if enabled (fire and forget)
     tauri::async_runtime::spawn(async move {
@@ -2836,9 +2848,27 @@ async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
     let mut pulled = 0;
     let mut conflicts = 0;
 
+    let offline_tag = config.offline_tag.clone();
+
     for server_item in &server_response.items {
         match store.merge_server_item(server_item)? {
-            "pulled" => pulled += 1,
+            "pulled" => {
+                pulled += 1;
+                // Fetch offline content for pulled items that have the offline tag
+                if server_item.tags.contains(&offline_tag) {
+                    if let Some(ref url) = server_item.content {
+                        if !url.is_empty() && server_item.item_type == "url" {
+                            let item_id = server_item.id.clone();
+                            let fetch_url = url.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = fetch_and_store_offline_content(&item_id, &fetch_url).await {
+                                    println!("[Rust] Failed to fetch offline content for synced item: {}", e);
+                                }
+                            });
+                        }
+                    }
+                }
+            }
             "conflict" => conflicts += 1,
             _ => {}
         }

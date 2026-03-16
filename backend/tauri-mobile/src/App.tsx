@@ -768,7 +768,7 @@ function App() {
   } | null>(null);
   const [webviewAnimated, setWebviewAnimated] = useState(false); // drives height transition
   const [webviewLoaded, setWebviewLoaded] = useState(false);
-  const [webviewError, setWebviewError] = useState(false);
+  const [webviewError, setWebviewError] = useState<string | false>(false);
 
   // Camera capture state
   const [capturedImage, setCapturedImage] = useState<string | null>(null); // base64 data URL
@@ -2637,7 +2637,7 @@ function App() {
       setWebviewLoaded(true);
     } catch (error) {
       console.error("[App] Failed to create inline webview:", error);
-      setWebviewError(true);
+      setWebviewError(String(error));
     }
   };
 
@@ -2655,6 +2655,7 @@ function App() {
         {webviewError ? (
           <div className="webview-error">
             <p>This site can't be displayed inline.</p>
+            <p style={{fontSize: '11px', opacity: 0.6, wordBreak: 'break-all'}}>{webviewError}</p>
             <button onClick={(e) => { e.stopPropagation(); openUrl(_url); }}>Open in Safari</button>
           </div>
         ) : null}
@@ -3076,14 +3077,18 @@ function App() {
             }
             console.log("[App] Opening offline reader at topOffset:", topOffset, "for item:", itemId);
             // Fetch article content + metadata from Rust, build HTML in frontend for HMR
-            const content = await invoke<{
-              html: string;
-              title: string;
-              byline: string;
-              dir: string;
-              domain: string;
-              url: string;
-            }>("get_reader_content", { itemId });
+            let content: { html: string; title: string; byline: string; dir: string; domain: string; url: string };
+            try {
+              content = await invoke("get_reader_content", { itemId });
+            } catch (fetchErr) {
+              // Content not cached yet (e.g. synced from desktop without fetching) — fetch on demand
+              console.log("[App] No cached content, fetching on demand for:", itemId, fetchErr);
+              // Find the item's URL from our local state
+              const item = savedUrls.find((u: SavedUrl) => u.id === itemId);
+              if (!item?.url) throw new Error("No URL for this item");
+              await invoke("fetch_offline_content", { itemId, url: item.url });
+              content = await invoke("get_reader_content", { itemId });
+            }
             const dirAttr = content.dir ? ` dir="${content.dir}"` : "";
             const baseTag = content.url ? `<base href="${content.url.replace(/"/g, '&quot;')}">` : "";
             const domainLink = content.url
@@ -3118,7 +3123,7 @@ ${content.html}
             setWebviewLoaded(true);
           } catch (error) {
             console.error("[App] Failed to open offline reader:", error);
-            setWebviewError(true);
+            setWebviewError(String(error));
           }
         }, WEBVIEW_ANIM_MS);
       });
