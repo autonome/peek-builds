@@ -200,6 +200,7 @@ export {
   getDarkModeSetting,
   applyDarkModeSetting,
   reopenLastClosedWindow,
+  cleanupGroupScreenBorder,
 } from './ipc.js';
 
 // Window helpers

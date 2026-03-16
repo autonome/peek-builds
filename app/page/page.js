@@ -1226,6 +1226,12 @@ document.addEventListener('keydown', (e) => {
   // Don't intercept if typing in navbar
   if (document.activeElement === navbar || navbar.contains(document.activeElement)) return;
 
+  // Don't intercept if typing in any input, textarea, or contenteditable element
+  // (e.g., tags input in the widget container)
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+  if (active && widgetContainer && widgetContainer.contains(active)) return;
+
   const NAV_MAP = {
     'j': 'down', 'ArrowDown': 'down',
     'k': 'up', 'ArrowUp': 'up',

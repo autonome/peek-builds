@@ -115,7 +115,7 @@ Core
 What makes a home / kitchen / workshop
 - Everything is right where you need it, b/c you control what is where
 - When you know what is where, you can make things with less frustration
-- You generally know what’s happening - who’s around/coming/going, etc, not too much surpri
+- You generally know what’s happening - who’s around/coming/going, etc, not too much surprise
 
 What makes magical mind-readingness
 - Frecency everywhere all of the time

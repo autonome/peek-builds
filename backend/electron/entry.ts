@@ -54,6 +54,7 @@ import {
   registerAllHandlers,
   restoreSavedTheme,
   reopenLastClosedWindow,
+  cleanupGroupScreenBorder,
   // Database
   getDb,
   // Config
@@ -321,6 +322,7 @@ app.on('before-quit', () => {
   _beforeQuitCleanupDone = true;
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
   try { stopAutosaveTimer(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutosaveTimer error:', e); }
+  try { cleanupGroupScreenBorder(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupGroupScreenBorder error:', e); }
   try { cleanupDisplayWatcher(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDisplayWatcher error:', e); }
   try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }
   try { cleanupDevExtensions(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevExtensions error:', e); }

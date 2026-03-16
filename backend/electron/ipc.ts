@@ -495,6 +495,23 @@ function hideGroupScreenBorder(): void {
   }
 }
 
+/**
+ * Destroy the group screen border overlay and clear any pending timers.
+ * Called during app shutdown to ensure Electron can quit cleanly.
+ */
+export function cleanupGroupScreenBorder(): void {
+  if (groupBorderHideTimer) {
+    clearTimeout(groupBorderHideTimer);
+    groupBorderHideTimer = null;
+  }
+  if (groupScreenBorderWin && !groupScreenBorderWin.isDestroyed()) {
+    groupScreenBorderWin.destroy();
+    DEBUG && console.log('[group-screen-border] Destroyed during shutdown');
+  }
+  groupScreenBorderWin = null;
+  groupScreenBorderColor = null;
+}
+
 // Debounce timer for hiding the screen border — prevents flicker during
 // navigation transitions where group mode is briefly absent (old window's
 // context cleared before new window's context is set).
