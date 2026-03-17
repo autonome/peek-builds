@@ -13,6 +13,29 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-03-17
+
+Desktop - Groups
+- [x] Scope group mode to window lineage — prevent group tag leakage to items from external apps, cmd palette, peeks, slides
+- [x] Add group screen border indicator — colored overlay with group name label, tracks focused window's mode
+- [x] Focus-based border visibility — border shows only when focused window is a group member, not globally
+- [x] Modal window exemption — cmd palette doesn't hide border during group work
+- [x] Assign vivid colors to groups at creation/promotion — deterministic palette selection for desaturated defaults
+- [x] Add color picker to group detail header — clickable color dot next to rename icon
+- [x] Always show tags section in groups view — remove toggle, display groups and tags as separate sections with divider
+- [x] Increase default window size from 800x600 to 1024x768 across groups, tags, search, wonderwall
+
+Desktop - Page View
+- [x] Fix j/k/g/G keys blocked in tags input and notes panel — pagestream nav handler now checks for focused input elements
+- [x] Fix findWindowByUrl to only match page-host windows — skip peeks, slides, modals for URL dedup
+
+Desktop - Shutdown
+- [x] Fix shutdown hang from group screen border overlay — destroy overlay window and clear timers in before-quit handler
+
+Desktop - Testing
+- [x] Add 45 group-mode unit tests — color resolution, leakage prevention, lineage scoping, focus-based border, modal exemption
+- [x] Add 70 pagestream key navigation guard tests
+
 ## 2026-03-11
 
 Desktop - IZUI Navigation
