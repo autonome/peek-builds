@@ -2429,10 +2429,10 @@ export type MajorModeId = 'page' | 'group' | 'default';
 export function detectModeFromUrl(url: string): MajorModeId {
   if (!url) return 'default';
 
-  // Groups extension
-  if (url.includes('/groups/') || url.includes('groups.html')) {
-    return 'group';
-  }
+  // Groups extension UI manages its own mode explicitly via setMode():
+  // 'group' when viewing a specific group's addresses, 'default' on the
+  // groups list. Auto-detecting from URL caused the screen border to
+  // appear just from opening the groups browser.
 
   // Web pages
   if (url.startsWith('http://') || url.startsWith('https://')) {

@@ -5,7 +5,6 @@
  * - resolveGroupBorderColor: vivid color selection for screen border
  * - shouldAutoTagForGroup: group mode detection (no lastFocusedVisible fallback)
  * - shouldInheritGroupMode: window lineage-based group mode inheritance
- * - colorPersistence: vivid colors assigned at group creation/promotion time
  *
  * These are logic-only tests — no DOM, no Electron, no IPC runtime.
  */
@@ -324,153 +323,323 @@ describe('shouldInheritGroupMode (window lineage scoping)', () => {
   });
 });
 
-describe('group screen border visibility (debounced hide)', () => {
-  // Tests the logic of the debounced hide behavior.
-  // The screen border should remain visible during navigation transitions
-  // where group mode is briefly absent.
+describe('group screen border visibility (focus-based)', () => {
+  // Tests the focus-based border visibility logic.
+  // The border is a per-focused-window indicator:
+  //   visible IFF the focused visible window has context.mode = 'group'
+  // See features/groups/group-screen-border-spec.md
 
-  interface WindowState {
-    id: number;
-    mode: string;
-    destroyed: boolean;
+  /**
+   * Pure decision function extracted from updateGroupScreenBorder() in ipc.ts.
+   * Determines whether the group screen border should be shown based on
+   * the currently focused window's state.
+   */
+  function shouldShowGroupBorder(context: {
+    focusedWindowId: number | null;
+    focusedWindowDestroyed: boolean;
+    focusedWindowMode: string | null;
+    focusedWindowMetadata: Record<string, unknown> | null;
+    isModal?: boolean;
+  }): { show: boolean; unchanged?: boolean; color?: string; name?: string } {
+    // No focused window → hide
+    if (!context.focusedWindowId) {
+      return { show: false };
+    }
+    // Focused window destroyed → hide
+    if (context.focusedWindowDestroyed) {
+      return { show: false };
+    }
+    // Modal/transient windows (cmd palette, etc.) are "transparent" to border state —
+    // focusing a modal does not change the border, preventing constant flicker during group work
+    if (context.isModal) {
+      return { show: false, unchanged: true };
+    }
+    // Focused window in group mode with valid groupId → show
+    if (
+      context.focusedWindowMode === 'group' &&
+      context.focusedWindowMetadata?.groupId
+    ) {
+      const rawColor = context.focusedWindowMetadata.color as string | undefined;
+      const groupId = context.focusedWindowMetadata.groupId as string | undefined;
+      const color = resolveGroupBorderColor(rawColor, groupId);
+      const name = (context.focusedWindowMetadata.groupName as string) || 'group';
+      return { show: true, color, name };
+    }
+    // Otherwise → hide
+    return { show: false };
   }
 
-  function computeBorderAction(
-    windows: WindowState[],
-  ): 'show' | 'debounce-hide' {
-    const liveGroupWindows = windows.filter(w => !w.destroyed && w.mode === 'group');
-    return liveGroupWindows.length > 0 ? 'show' : 'debounce-hide';
-  }
-
-  it('shows border when any window is in group mode', () => {
-    const windows: WindowState[] = [
-      { id: 1, mode: 'group', destroyed: false },
-      { id: 2, mode: 'default', destroyed: false },
-    ];
-    assert.strictEqual(computeBorderAction(windows), 'show');
+  it('shows border when focused window is in group mode with valid groupId', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Research', color: '#ff3b30' },
+    });
+    assert.strictEqual(result.show, true);
+    assert.strictEqual(result.color, '#ff3b30');
+    assert.strictEqual(result.name, 'Research');
   });
 
-  it('debounce-hides when no windows are in group mode', () => {
-    const windows: WindowState[] = [
-      { id: 1, mode: 'default', destroyed: false },
-      { id: 2, mode: 'page', destroyed: false },
-    ];
-    assert.strictEqual(computeBorderAction(windows), 'debounce-hide');
+  it('hides border when focused window is in default mode', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'default',
+      focusedWindowMetadata: {},
+    });
+    assert.strictEqual(result.show, false);
   });
 
-  it('ignores destroyed windows when checking group mode', () => {
-    const windows: WindowState[] = [
-      { id: 1, mode: 'group', destroyed: true },
-      { id: 2, mode: 'default', destroyed: false },
-    ];
-    assert.strictEqual(computeBorderAction(windows), 'debounce-hide');
+  it('hides border when focused window is in page mode', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'page',
+      focusedWindowMetadata: { url: 'https://example.com' },
+    });
+    assert.strictEqual(result.show, false);
   });
 
-  it('debounce-hides when no windows exist', () => {
-    assert.strictEqual(computeBorderAction([]), 'debounce-hide');
+  it('hides border when no focused window exists', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: null,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: null,
+      focusedWindowMetadata: null,
+    });
+    assert.strictEqual(result.show, false);
   });
 
-  it('shows when multiple group windows exist', () => {
-    const windows: WindowState[] = [
-      { id: 1, mode: 'group', destroyed: false },
-      { id: 2, mode: 'group', destroyed: false },
-    ];
-    assert.strictEqual(computeBorderAction(windows), 'show');
+  it('hides border when focused window is destroyed', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: true,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123' },
+    });
+    assert.strictEqual(result.show, false);
   });
 
-  it('shows as long as one live group window remains', () => {
-    const windows: WindowState[] = [
-      { id: 1, mode: 'group', destroyed: true },
-      { id: 2, mode: 'group', destroyed: false },
-      { id: 3, mode: 'default', destroyed: false },
-    ];
-    assert.strictEqual(computeBorderAction(windows), 'show');
-  });
-});
-
-describe('color persistence (vivid color assigned at group creation/promotion)', () => {
-  // Vivid colors are now assigned eagerly in the datastore-set-row IPC handler
-  // when a tag is promoted to a group (isGroup: true in metadata).
-  // The screen border no longer lazily persists resolved colors.
-
-  interface ColorPersistResult {
-    shouldPersist: boolean;
-    resolvedColor: string;
-  }
-
-  function shouldPersistColor(
-    rawColor: string | undefined,
-    groupId: string | undefined,
-  ): ColorPersistResult {
-    const resolvedColor = resolveGroupBorderColor(rawColor, groupId);
-    return {
-      shouldPersist: resolvedColor !== rawColor && !!groupId,
-      resolvedColor,
-    };
-  }
-
-  it('persists when raw color is undefined (default grey group)', () => {
-    const result = shouldPersistColor(undefined, 'group-1');
-    assert.strictEqual(result.shouldPersist, true);
-    assert.ok(VIVID_GROUP_COLORS.includes(result.resolvedColor));
+  it('hides border when focused window is group mode but no groupId in metadata', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: {},
+    });
+    assert.strictEqual(result.show, false);
   });
 
-  it('persists when raw color is #999 (default tag color)', () => {
-    const result = shouldPersistColor('#999', 'group-1');
-    assert.strictEqual(result.shouldPersist, true);
-    assert.ok(VIVID_GROUP_COLORS.includes(result.resolvedColor));
+  it('hides border when focused window is group mode with null metadata', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: null,
+    });
+    assert.strictEqual(result.show, false);
   });
 
-  it('persists when raw color is #999999 (default tag color long form)', () => {
-    const result = shouldPersistColor('#999999', 'group-1');
-    assert.strictEqual(result.shouldPersist, true);
-    assert.ok(VIVID_GROUP_COLORS.includes(result.resolvedColor));
+  it('uses group name from metadata', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-abc', groupName: 'Work', color: '#007aff' },
+    });
+    assert.strictEqual(result.show, true);
+    assert.strictEqual(result.name, 'Work');
   });
 
-  it('persists when raw color is desaturated (low chroma)', () => {
-    const result = shouldPersistColor('#cccccc', 'group-1');
-    assert.strictEqual(result.shouldPersist, true);
-    assert.ok(VIVID_GROUP_COLORS.includes(result.resolvedColor));
+  it('defaults group name to "group" when not in metadata', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-abc' },
+    });
+    assert.strictEqual(result.show, true);
+    assert.strictEqual(result.name, 'group');
   });
 
-  it('does NOT persist when raw color is already vivid', () => {
-    const result = shouldPersistColor('#ff3b30', 'group-1');
-    assert.strictEqual(result.shouldPersist, false);
-    assert.strictEqual(result.resolvedColor, '#ff3b30');
+  it('resolves vivid color when group color is too pale', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-abc', groupName: 'Grey Group', color: '#999999' },
+    });
+    assert.strictEqual(result.show, true);
+    assert.ok(VIVID_GROUP_COLORS.includes(result.color!), `Expected vivid color, got ${result.color}`);
   });
 
-  it('does NOT persist when raw color is a different vivid color', () => {
-    const result = shouldPersistColor('#007aff', 'group-1');
-    assert.strictEqual(result.shouldPersist, false);
-    assert.strictEqual(result.resolvedColor, '#007aff');
+  // Scenario tests simulating focus transitions
+  it('focus changes from group window to non-group window → hide', () => {
+    // First: group window focused → show
+    const r1 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Research' },
+    });
+    assert.strictEqual(r1.show, true);
+
+    // Then: non-group window focused → hide
+    const r2 = shouldShowGroupBorder({
+      focusedWindowId: 2,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'default',
+      focusedWindowMetadata: {},
+    });
+    assert.strictEqual(r2.show, false);
   });
 
-  it('does NOT persist when groupId is undefined', () => {
-    const result = shouldPersistColor('#999', undefined);
-    assert.strictEqual(result.shouldPersist, false);
+  it('focus changes from non-group window to group window → show', () => {
+    // First: non-group window focused → hide
+    const r1 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'page',
+      focusedWindowMetadata: { url: 'https://example.com' },
+    });
+    assert.strictEqual(r1.show, false);
+
+    // Then: group window focused → show
+    const r2 = shouldShowGroupBorder({
+      focusedWindowId: 2,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-456', groupName: 'Work', color: '#34c759' },
+    });
+    assert.strictEqual(r2.show, true);
+    assert.strictEqual(r2.color, '#34c759');
   });
 
-  it('persisted color is deterministic for same groupId', () => {
-    const result1 = shouldPersistColor('#999', 'my-project');
-    const result2 = shouldPersistColor('#999', 'my-project');
-    assert.strictEqual(result1.resolvedColor, result2.resolvedColor);
+  it('mode changes on focused window from group → default → hide', () => {
+    // Initially in group mode
+    const r1 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Research' },
+    });
+    assert.strictEqual(r1.show, true);
+
+    // Mode changed to default (e.g., navigated back to groups list)
+    const r2 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'default',
+      focusedWindowMetadata: {},
+    });
+    assert.strictEqual(r2.show, false);
   });
 
-  it('after persistence, subsequent call with resolved color does NOT re-persist', () => {
-    // Simulate: first call resolves and persists
-    const first = shouldPersistColor('#999', 'group-1');
-    assert.strictEqual(first.shouldPersist, true);
+  it('mode changes on focused window from default → group → show', () => {
+    // Initially in default mode
+    const r1 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'default',
+      focusedWindowMetadata: {},
+    });
+    assert.strictEqual(r1.show, false);
 
-    // Second call with the now-persisted vivid color
-    const second = shouldPersistColor(first.resolvedColor, 'group-1');
-    assert.strictEqual(second.shouldPersist, false);
-    assert.strictEqual(second.resolvedColor, first.resolvedColor);
+    // Mode changed to group (e.g., opened a group address)
+    const r2 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-789', groupName: 'Project', color: '#af52de' },
+    });
+    assert.strictEqual(r2.show, true);
+    assert.strictEqual(r2.name, 'Project');
   });
 
-  it('user-chosen vivid color is not overwritten', () => {
-    // User picks a custom vivid color via the color picker
-    const result = shouldPersistColor('#e91e63', 'group-1');
-    assert.strictEqual(result.shouldPersist, false);
-    assert.strictEqual(result.resolvedColor, '#e91e63');
+  // Modal window exemption — cmd palette and other modals are "transparent" to border state
+  it('modal window (cmd palette) does not change border state', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 99,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'default',
+      focusedWindowMetadata: {},
+      isModal: true,
+    });
+    assert.strictEqual(result.unchanged, true);
+  });
+
+  it('modal window in group mode still treated as transparent', () => {
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 99,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123' },
+      isModal: true,
+    });
+    assert.strictEqual(result.unchanged, true);
+  });
+
+  it('border stays visible through group → modal → group focus sequence', () => {
+    // Group window focused → show
+    const r1 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Work', color: '#ff3b30' },
+    });
+    assert.strictEqual(r1.show, true);
+
+    // Cmd palette opens → unchanged (border stays visible)
+    const r2 = shouldShowGroupBorder({
+      focusedWindowId: 99,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'default',
+      focusedWindowMetadata: {},
+      isModal: true,
+    });
+    assert.strictEqual(r2.unchanged, true);
+
+    // Cmd palette closes, group window regains focus → show
+    const r3 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Work', color: '#ff3b30' },
+    });
+    assert.strictEqual(r3.show, true);
+  });
+
+  it('switching between two different groups updates color and name', () => {
+    const r1 = shouldShowGroupBorder({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-a', groupName: 'Alpha', color: '#ff3b30' },
+    });
+    assert.strictEqual(r1.show, true);
+    assert.strictEqual(r1.color, '#ff3b30');
+    assert.strictEqual(r1.name, 'Alpha');
+
+    const r2 = shouldShowGroupBorder({
+      focusedWindowId: 2,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-b', groupName: 'Beta', color: '#007aff' },
+    });
+    assert.strictEqual(r2.show, true);
+    assert.strictEqual(r2.color, '#007aff');
+    assert.strictEqual(r2.name, 'Beta');
+  });
+
+  it('non-group windows do NOT cause border to show even if other group windows exist', () => {
+    // The decision is purely about the FOCUSED window, not about what other windows exist
+    const result = shouldShowGroupBorder({
+      focusedWindowId: 3,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'default',
+      focusedWindowMetadata: {},
+    });
+    assert.strictEqual(result.show, false);
   });
 });

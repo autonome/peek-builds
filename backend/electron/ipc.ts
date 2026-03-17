@@ -352,6 +352,10 @@ function autoTagIfGroupMode(ev: Electron.IpcMainInvokeEvent, itemId: string): bo
 // border around the entire screen when any window is in group mode.
 let groupScreenBorderWin: BrowserWindow | null = null;
 let groupScreenBorderColor: string | null = null;
+// Shutdown flag — prevents updateGroupScreenBorder from recreating the overlay
+// after cleanupGroupScreenBorder destroys it during quit (window:closed events
+// fire during shutdown and would otherwise trigger recreation).
+let groupScreenBorderShuttingDown = false;
 
 // Strong, vivid colors derived from iOS theme palette for group screen border.
 // Used when the group's own color is too pale or missing.
@@ -500,6 +504,7 @@ function hideGroupScreenBorder(): void {
  * Called during app shutdown to ensure Electron can quit cleanly.
  */
 export function cleanupGroupScreenBorder(): void {
+  groupScreenBorderShuttingDown = true;
   if (groupBorderHideTimer) {
     clearTimeout(groupBorderHideTimer);
     groupBorderHideTimer = null;
@@ -513,49 +518,63 @@ export function cleanupGroupScreenBorder(): void {
 }
 
 // Debounce timer for hiding the screen border — prevents flicker during
-// navigation transitions where group mode is briefly absent (old window's
-// context cleared before new window's context is set).
+// navigation transitions where group mode is briefly absent.
 let groupBorderHideTimer: ReturnType<typeof setTimeout> | null = null;
 const GROUP_BORDER_HIDE_DELAY_MS = 600;
 
 /**
- * Check if any live window is currently in group mode and show/hide the screen border accordingly.
- * Showing is immediate; hiding is debounced to avoid flicker during window transitions.
+ * Debounce the hide — a new group window may be about to gain focus.
+ * Prevents flicker during window transitions.
  */
-function updateGroupScreenBorder(): void {
-  const groupWindowIds = getWindowsWithContextValue('mode', 'group');
-  const liveGroupWindows = groupWindowIds.filter(id => {
-    const win = BrowserWindow.fromId(id);
-    return win && !win.isDestroyed();
-  });
-  if (liveGroupWindows.length > 0) {
-    // Cancel any pending hide — group mode is still active
+function scheduleHideGroupScreenBorder(): void {
+  if (!groupBorderHideTimer) {
+    groupBorderHideTimer = setTimeout(() => {
+      groupBorderHideTimer = null;
+      hideGroupScreenBorder();
+    }, GROUP_BORDER_HIDE_DELAY_MS);
+  }
+}
+
+/**
+ * Check if the currently focused visible window is in group mode and show/hide the screen border.
+ * The border is a per-focused-window indicator, NOT a global "any window has group mode" indicator.
+ * Showing is immediate; hiding is debounced to avoid flicker during window transitions.
+ *
+ * Special case: modal windows (cmd palette, etc.) are "transparent" to the border — focusing
+ * a modal does not hide the border, since it would flicker constantly during normal group work.
+ */
+export function updateGroupScreenBorder(): void {
+  if (groupScreenBorderShuttingDown) return;
+
+  if (!lastFocusedVisibleWindowId) {
+    scheduleHideGroupScreenBorder();
+    return;
+  }
+  const win = BrowserWindow.fromId(lastFocusedVisibleWindowId);
+  if (!win || win.isDestroyed()) {
+    scheduleHideGroupScreenBorder();
+    return;
+  }
+
+  // Skip modal/transient windows (cmd palette, etc.) — they're "transparent" to border state.
+  // When a modal is focused, keep the border in its current state (don't show or hide).
+  const winInfo = getWindowInfo(lastFocusedVisibleWindowId);
+  if (winInfo?.params?.modal) return;
+
+  const entry = getContextEntry('mode', lastFocusedVisibleWindowId);
+  if (entry && entry.value === 'group' && entry.metadata?.groupId) {
+    // Cancel any pending hide — focused window is in group mode
     if (groupBorderHideTimer) {
       clearTimeout(groupBorderHideTimer);
       groupBorderHideTimer = null;
     }
-    const entry = getContextEntry('mode', liveGroupWindows[0]);
-    const rawColor = entry?.metadata?.color as string | undefined;
-    const groupId = entry?.metadata?.groupId as string | undefined;
+    const rawColor = entry.metadata.color as string | undefined;
+    const groupId = entry.metadata.groupId as string | undefined;
     const color = resolveGroupBorderColor(rawColor, groupId);
-    const groupName = (entry?.metadata?.groupName as string) || 'group';
+    const groupName = (entry.metadata.groupName as string) || 'group';
     showGroupScreenBorder(color, groupName);
   } else {
-    // Debounce the hide — a new group window may be about to open
-    if (!groupBorderHideTimer) {
-      groupBorderHideTimer = setTimeout(() => {
-        groupBorderHideTimer = null;
-        // Re-check: if group windows appeared during the delay, don't hide
-        const recheck = getWindowsWithContextValue('mode', 'group');
-        const stillLive = recheck.some(id => {
-          const win = BrowserWindow.fromId(id);
-          return win && !win.isDestroyed();
-        });
-        if (!stillLive) {
-          hideGroupScreenBorder();
-        }
-      }, GROUP_BORDER_HIDE_DELAY_MS);
-    }
+    scheduleHideGroupScreenBorder();
   }
 }
 
@@ -5012,9 +5031,24 @@ export function registerProfileHandlers(): void {
  * New code should use the context API (api.context) instead.
  */
 export function registerModesHandlers(): void {
-  // Update group screen border when windows close (last group window closing should hide it)
+  // Update group screen border when focus changes — border tracks the focused window's mode
+  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'window:focused', () => {
+    updateGroupScreenBorder();
+  });
+
+  // Update group screen border when windows close (focused window may have closed)
   subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'window:closed', () => {
     updateGroupScreenBorder();
+  });
+
+  // Hide group screen border when app loses focus (no window is active)
+  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'app:focus-changed', (msg: unknown) => {
+    const data = msg as { focused: boolean };
+    if (!data.focused) {
+      scheduleHideGroupScreenBorder();
+    } else {
+      updateGroupScreenBorder();
+    }
   });
 
   // Mode definitions
