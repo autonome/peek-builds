@@ -60,7 +60,9 @@
   --theme-surface-border: 1px solid rgba(0, 0, 0, 0.10);
   --theme-surface-ring: 0 0 0 1px rgba(0, 0, 0, 0.06);
 
-  /* Typography: inherited from peek base layer — colors-only theme */
+  /* Typography */
+  --theme-font-sans: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  --theme-font-mono: "Hiragino Kaku Gothic ProN", "Noto Sans Mono", "SF Mono", SFMono-Regular, Menlo, Monaco, monospace;
 }
 
 /* ===================================================================

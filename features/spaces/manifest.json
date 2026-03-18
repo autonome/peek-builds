@@ -1,0 +1,39 @@
+{
+  "id": "spaces",
+  "shortname": "spaces",
+  "name": "Spaces",
+  "description": "Workspace mode with auto-tagging, screen border, and session management",
+  "version": "1.0.0",
+  "background": "background.html",
+  "builtin": true,
+  "commands": [
+    {
+      "name": "open space",
+      "description": "Open a space (restore saved state or show home)",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "close space",
+      "description": "Save window state and close all space windows",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "switch space",
+      "description": "Close current space and open another",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "open spaces",
+      "description": "Browse all spaces",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/spaces/home.html",
+        "options": {
+          "width": 800,
+          "height": 600,
+          "role": "workspace"
+        }
+      }
+    }
+  ]
+}

@@ -5,7 +5,7 @@
  * Each widget is a webview pointing to an individual widget page
  * (e.g., peek://ext/hud/widgets/mode.html).
  *
- * The layout config is loaded from extension_settings (created by background.js).
+ * The layout config is loaded from feature_settings (created by background.js).
  */
 
 const api = window.app;
@@ -16,7 +16,7 @@ const HUD_SHEET_KEY = 'hud_sheet';
 let sheetConfig = null;
 
 /**
- * Load HUD sheet config from extension_settings
+ * Load HUD sheet config from feature_settings
  */
 const loadSheetConfig = async () => {
   const result = await api.settings.getKey(HUD_SHEET_KEY);

@@ -21,7 +21,7 @@ const getSheetIdFromUrl = () => {
 };
 
 /**
- * Load sheet config from extension_settings
+ * Load sheet config from feature_settings
  */
 const loadSheetConfig = async () => {
   const key = `sheet:${sheetId}`;
@@ -33,7 +33,7 @@ const loadSheetConfig = async () => {
 };
 
 /**
- * Save sheet config to extension_settings
+ * Save sheet config to feature_settings
  */
 const saveSheetConfig = async () => {
   if (!sheetConfig) return;

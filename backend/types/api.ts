@@ -42,7 +42,7 @@ export type CommandScope = 'global' | 'window' | 'page';
  * Only one major mode can be active per window at a time.
  * Inspired by Emacs major modes.
  */
-export type MajorModeId = 'page' | 'group' | 'default';
+export type MajorModeId = 'page' | 'space' | 'default';
 
 /**
  * Mode metadata for display and behavior

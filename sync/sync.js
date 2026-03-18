@@ -5,7 +5,7 @@
  * Runtime-agnostic — uses fetch() (available in Node 18+, all browsers, Tauri WebView).
  *
  * Config is provided via callbacks so each runtime can store it however it wants
- * (chrome.storage.local, SQLite extension_settings, env vars, etc.).
+ * (chrome.storage.local, SQLite feature_settings, env vars, etc.).
  */
 
 import { DATASTORE_VERSION, PROTOCOL_VERSION } from './version.js';

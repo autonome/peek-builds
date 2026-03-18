@@ -361,9 +361,9 @@ fn test_extension_operations() {
     println!("✓ Extension removed");
 }
 
-/// Test extension_settings operations (used for extension prefs/items)
+/// Test feature_settings operations (used for extension prefs/items)
 #[test]
-fn test_extension_settings() {
+fn test_feature_settings() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.sqlite");
     let conn = datastore::init_database(&db_path).unwrap();
@@ -377,14 +377,14 @@ fn test_extension_settings() {
     ]);
 
     conn.execute(
-        "INSERT INTO extension_settings (extensionId, key, value, updatedAt) VALUES (?, ?, ?, ?)",
+        "INSERT INTO feature_settings (featureId, key, value, updatedAt) VALUES (?, ?, ?, ?)",
         rusqlite::params!["peeks", "items", peeks_items.to_string(), now],
     ).expect("Failed to save extension settings");
     println!("✓ Extension settings saved");
 
     // Retrieve settings
     let value: String = conn.query_row(
-        "SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?",
+        "SELECT value FROM feature_settings WHERE featureId = ? AND key = ?",
         rusqlite::params!["peeks", "items"],
         |row| row.get(0),
     ).expect("Failed to get extension settings");
@@ -401,12 +401,12 @@ fn test_extension_settings() {
     ]);
 
     conn.execute(
-        "UPDATE extension_settings SET value = ?, updatedAt = ? WHERE extensionId = ? AND key = ?",
+        "UPDATE feature_settings SET value = ?, updatedAt = ? WHERE featureId = ? AND key = ?",
         rusqlite::params![updated_items.to_string(), now, "peeks", "items"],
     ).expect("Failed to update extension settings");
 
     let value: String = conn.query_row(
-        "SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?",
+        "SELECT value FROM feature_settings WHERE featureId = ? AND key = ?",
         rusqlite::params!["peeks", "items"],
         |row| row.get(0),
     ).unwrap();
@@ -420,13 +420,13 @@ fn test_extension_settings() {
     let slides_prefs = serde_json::json!({"defaultPosition": "right", "defaultSize": 350});
 
     conn.execute(
-        "INSERT INTO extension_settings (extensionId, key, value, updatedAt) VALUES (?, ?, ?, ?)",
+        "INSERT INTO feature_settings (featureId, key, value, updatedAt) VALUES (?, ?, ?, ?)",
         rusqlite::params!["slides", "prefs", slides_prefs.to_string(), now],
     ).unwrap();
 
     // Query all settings for an extension
     let mut stmt = conn.prepare(
-        "SELECT key, value FROM extension_settings WHERE extensionId = ?"
+        "SELECT key, value FROM feature_settings WHERE featureId = ?"
     ).unwrap();
 
     let settings: Vec<(String, String)> = stmt.query_map(
@@ -462,7 +462,7 @@ fn test_data_persistence() {
         // Add extension settings
         let now = datastore::now();
         conn.execute(
-            "INSERT INTO extension_settings (extensionId, key, value, updatedAt) VALUES (?, ?, ?, ?)",
+            "INSERT INTO feature_settings (featureId, key, value, updatedAt) VALUES (?, ?, ?, ?)",
             rusqlite::params!["test", "data", "\"persisted\"", now],
         ).unwrap();
 
@@ -491,7 +491,7 @@ fn test_data_persistence() {
 
         // Verify extension settings persisted
         let value: String = conn.query_row(
-            "SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?",
+            "SELECT value FROM feature_settings WHERE featureId = ? AND key = ?",
             rusqlite::params!["test", "data"],
             |row| row.get(0),
         ).unwrap();
@@ -657,9 +657,9 @@ fn test_item_type_migration() {
                 lastUsed INTEGER DEFAULT 0,
                 frecencyScore INTEGER DEFAULT 0
             );
-            CREATE TABLE IF NOT EXISTS extension_settings (
+            CREATE TABLE IF NOT EXISTS feature_settings (
                 id TEXT PRIMARY KEY,
-                extensionId TEXT NOT NULL,
+                featureId TEXT NOT NULL,
                 key TEXT NOT NULL,
                 value TEXT,
                 updatedAt INTEGER
@@ -736,10 +736,10 @@ fn test_datastore_version_check() {
 
     // Check that version was written
     let version: String = conn.query_row(
-        "SELECT value FROM extension_settings WHERE extensionId = 'system' AND key = 'datastoreVersion'",
+        "SELECT value FROM feature_settings WHERE featureId = 'system' AND key = 'datastoreVersion'",
         [],
         |row| row.get(0),
-    ).expect("Version should be written to extension_settings");
+    ).expect("Version should be written to feature_settings");
 
     assert_eq!(version, datastore::DATASTORE_VERSION.to_string());
     println!("✓ Datastore version written: {}", version);

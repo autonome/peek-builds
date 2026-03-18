@@ -2271,7 +2271,7 @@ const renderExtensionsSettings = async () => {
 };
 
 // Render feature settings (Peeks, Slides, etc.)
-// Reads/writes from datastore extension_settings table
+// Reads/writes from datastore feature_settings table
 const renderFeatureSettings = async (feature) => {
   const { id, labels, schemas, storageKeys, defaults } = feature;
 
@@ -2843,7 +2843,7 @@ const renderDatastoreSettings = async () => {
   const tableGroups = [
     { label: 'Core Data', tables: ['items', 'tags', 'content', 'blobs'] },
     { label: 'Relationships', tables: ['item_tags', 'item_visits', 'item_events', 'item_groups', 'item_group_members'] },
-    { label: 'Extensions', tables: ['extensions', 'extension_settings', 'scripts_data', 'feeds'] },
+    { label: 'Extensions', tables: ['extensions', 'feature_settings', 'scripts_data', 'feeds'] },
     { label: 'System', tables: ['settings', 'migrations', 'themes'] },
   ];
 
@@ -2860,7 +2860,7 @@ const renderDatastoreSettings = async () => {
     scripts_data: 'Script extension data',
     feeds: 'Feed subscription data',
     extensions: 'Installed extension metadata',
-    extension_settings: 'Per-extension settings and preferences',
+    feature_settings: 'Per-feature settings and preferences',
     settings: 'Global application settings',
     migrations: 'Schema migration history',
     themes: 'Installed color themes',
@@ -3103,20 +3103,20 @@ const renderDiagnosticsSettings = async () => {
     outputArea.textContent = text;
   }));
 
-  // Dump extension_settings
-  btnRow.appendChild(makeBtn('Dump extension_settings', async () => {
+  // Dump feature_settings
+  btnRow.appendChild(makeBtn('Dump feature_settings', async () => {
     try {
-      const result = await api.datastore.getTable('extension_settings');
+      const result = await api.datastore.getTable('feature_settings');
       if (result.success) {
         const data = result.data || {};
         const entries = Object.entries(data);
-        let text = `extension_settings: ${entries.length} rows\n\n`;
+        let text = `feature_settings: ${entries.length} rows\n\n`;
         entries.forEach(([rowId, row]) => {
           let displayValue = row.value;
           try {
             displayValue = JSON.stringify(JSON.parse(row.value), null, 2);
           } catch {}
-          text += `${rowId} (${row.extensionId}:${row.key}):\n  ${displayValue}\n\n`;
+          text += `${rowId} (${row.featureId}:${row.key}):\n  ${displayValue}\n\n`;
         });
         outputArea.textContent = text;
       } else {

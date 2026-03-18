@@ -22,7 +22,7 @@ describe('bookmarks', () => {
 
     // Clear stores between tests
     const db = (await import('../datastore.js')).getRawDb();
-    const storeNames = ['items', 'tags', 'item_tags', 'extension_settings'];
+    const storeNames = ['items', 'tags', 'item_tags', 'feature_settings'];
     for (const name of storeNames) {
       const tx = db.transaction(name, 'readwrite');
       tx.objectStore(name).clear();

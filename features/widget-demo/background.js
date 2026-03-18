@@ -59,7 +59,7 @@ const buildDefaultSheetConfig = () => {
 };
 
 /**
- * Ensure the demo sheet config exists in extension_settings.
+ * Ensure the demo sheet config exists in feature_settings.
  * Creates a default config if none exists.
  */
 const ensureSheetConfig = async () => {

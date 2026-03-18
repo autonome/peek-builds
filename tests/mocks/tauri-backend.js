@@ -304,7 +304,7 @@
         case 'tags':
           store.tags.forEach((v, k) => data[k] = v);
           break;
-        case 'extension_settings':
+        case 'feature_settings':
           store.extensionSettings.forEach((v, k) => data[k] = v);
           break;
         default:
@@ -316,7 +316,7 @@
 
     setRow: async (tableName, rowId, rowData) => {
       switch (tableName) {
-        case 'extension_settings':
+        case 'feature_settings':
           store.extensionSettings.set(rowId, rowData);
           break;
         case 'addresses':

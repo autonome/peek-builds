@@ -40,7 +40,7 @@ import {
 // ==================== Settings Storage ====================
 
 // Note: Sync configuration is now stored per-profile in profiles.db
-// Legacy extension_settings storage is deprecated
+// Legacy feature_settings storage is deprecated
 
 /**
  * Get sync configuration for the active profile
@@ -80,20 +80,20 @@ export function getSyncConfig(): SyncConfig {
 
 /**
  * Get server URL from settings or environment
- * Priority: 1. User-configured (extension_settings), 2. Env var, 3. Default
+ * Priority: 1. User-configured (feature_settings), 2. Env var, 3. Default
  */
 function getServerUrl(): string {
   const db = getDb();
 
   try {
-    // Try to get from extension_settings
+    // Try to get from feature_settings
     const row = db.prepare(`
-      SELECT value FROM extension_settings
-      WHERE extensionId = 'sync' AND key = 'serverUrl'
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'serverUrl'
     `).get() as { value: string } | undefined;
 
     if (row && row.value) {
-      // Values in extension_settings are JSON-stringified
+      // Values in feature_settings are JSON-stringified
       try {
         return JSON.parse(row.value);
       } catch {
@@ -115,25 +115,25 @@ function getServerUrl(): string {
 function setServerUrl(url: string): void {
   const db = getDb();
 
-  // Values in extension_settings must be JSON-stringified
+  // Values in feature_settings must be JSON-stringified
   const jsonValue = JSON.stringify(url);
 
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'sync', 'serverUrl', ?, ?)
   `).run(`sync-serverUrl`, jsonValue, Date.now());
 }
 
 /**
- * Get autoSync setting from extension_settings
+ * Get autoSync setting from feature_settings
  */
 function getAutoSync(): boolean {
   const db = getDb();
 
   try {
     const row = db.prepare(`
-      SELECT value FROM extension_settings
-      WHERE extensionId = 'sync' AND key = 'autoSync'
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'autoSync'
     `).get() as { value: string } | undefined;
 
     if (row && row.value) {
@@ -159,7 +159,7 @@ function setAutoSync(enabled: boolean): void {
   const jsonValue = JSON.stringify(enabled);
 
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'sync', 'autoSync', ?, ?)
   `).run(`sync-autoSync`, jsonValue, Date.now());
 }
@@ -173,7 +173,7 @@ export function setSyncConfig(config: Partial<SyncConfig>): void {
   try {
     const activeProfile = getActiveProfile();
 
-    // Update serverUrl if provided (stored globally in extension_settings)
+    // Update serverUrl if provided (stored globally in feature_settings)
     if (config.serverUrl !== undefined && config.serverUrl !== '') {
       setServerUrl(config.serverUrl);
       DEBUG && console.log(`[sync] Updated server URL: ${config.serverUrl}`);
@@ -642,16 +642,16 @@ function resetSyncStateIfServerChanged(serverUrl: string): boolean {
   let storedProfileId = '';
   try {
     const urlRow = db.prepare(`
-      SELECT value FROM extension_settings
-      WHERE extensionId = 'sync' AND key = 'lastSyncServerUrl'
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'lastSyncServerUrl'
     `).get() as { value: string } | undefined;
     if (urlRow?.value) storedUrl = JSON.parse(urlRow.value);
   } catch { /* first sync */ }
 
   try {
     const pidRow = db.prepare(`
-      SELECT value FROM extension_settings
-      WHERE extensionId = 'sync' AND key = 'lastSyncProfileId'
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'lastSyncProfileId'
     `).get() as { value: string } | undefined;
     if (pidRow?.value) storedProfileId = JSON.parse(pidRow.value);
   } catch { /* first sync */ }
@@ -687,12 +687,12 @@ function saveSyncServerConfig(serverUrl: string): void {
   const currentProfileId = profileConfig?.serverProfileId || '';
 
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'sync', 'lastSyncServerUrl', ?, ?)
   `).run('sync-lastSyncServerUrl', JSON.stringify(serverUrl), Date.now());
 
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'sync', 'lastSyncProfileId', ?, ?)
   `).run('sync-lastSyncProfileId', JSON.stringify(currentProfileId), Date.now());
 }

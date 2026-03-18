@@ -97,15 +97,15 @@ const setGroupMode = async (windowId, groupId, groupName, color = null) => {
   }
 
   try {
-    await api.context.setMode('group', {
+    await api.context.setMode('space', {
       windowId,
       metadata: {
-        groupId,
-        groupName,
+        spaceId: groupId,
+        spaceName: groupName,
         color
       }
     });
-    debug && console.log(`[ext:groups] Set group mode for window ${windowId}: ${groupName}`);
+    debug && console.log(`[ext:groups] Set space mode for window ${windowId}: ${groupName}`);
   } catch (err) {
     console.error('[ext:groups] Failed to set group mode:', err);
   }
@@ -123,7 +123,7 @@ const exitGroupMode = async (groupId) => {
 
   try {
     // Get all windows in this group
-    const result = await api.context.getWindowsInGroup(groupId);
+    const result = await api.context.getWindowsInSpace(groupId);
     if (!result.success || !result.data) return;
 
     const windowIds = result.data;
@@ -151,10 +151,10 @@ const resolveCurrentGroup = async () => {
     const targetWindowId = await api.window.getFocusedVisibleWindowId();
     if (targetWindowId) {
       const modeResult = await api.context.get('mode', targetWindowId);
-      if (modeResult.success && modeResult.data?.value === 'group' && modeResult.data.metadata?.groupId) {
+      if (modeResult.success && modeResult.data?.value === 'space' && modeResult.data.metadata?.spaceId) {
         return {
-          groupId: modeResult.data.metadata.groupId,
-          groupName: modeResult.data.metadata.groupName || ''
+          groupId: modeResult.data.metadata.spaceId,
+          groupName: modeResult.data.metadata.spaceName || ''
         };
       }
     }
@@ -188,15 +188,15 @@ const closeGroup = async (groupId = null, groupName = null) => {
 
   // Save workspace layouts before hiding
   try {
-    if (api.session?.saveGroupWorkspaces) {
-      await api.session.saveGroupWorkspaces();
+    if (api.session?.saveSpaceWorkspaces) {
+      await api.session.saveSpaceWorkspaces();
     }
   } catch (err) {
     debug && console.log('[ext:groups] Failed to save workspace before close:', err);
   }
 
   // Get all windows in this group
-  const result = await api.context.getWindowsInGroup(groupId);
+  const result = await api.context.getWindowsInSpace(groupId);
   if (!result.success || !result.data || result.data.length === 0) {
     return { success: false, error: 'No windows found in group' };
   }
@@ -316,7 +316,7 @@ const switchGroup = async (targetGroupName) => {
 
 /**
  * Get pinned item IDs for a group.
- * Stored in extension_settings as 'pins:<groupId>'.
+ * Stored in feature_settings as 'pins:<groupId>'.
  */
 const getPinnedItems = async (groupId) => {
   try {
@@ -521,8 +521,8 @@ const saveToGroup = async (groupName) => {
 
   // Persist current window layouts for this group
   try {
-    if (api.session?.saveGroupWorkspaces) {
-      await api.session.saveGroupWorkspaces();
+    if (api.session?.saveSpaceWorkspaces) {
+      await api.session.saveSpaceWorkspaces();
       debug && console.log('[ext:groups] Group workspace layouts saved');
     }
   } catch (err) {
@@ -596,7 +596,7 @@ const openGroup = async (groupName) => {
   let savedBoundsMap = null;
   let sortedUrlItems = urlItems;
   try {
-    const wsResult = await api.settings.getExtKey('group-workspaces', 'workspace:' + tag.id);
+    const wsResult = await api.settings.getExtKey('spaces', 'workspace:' + tag.id);
     if (wsResult.success && wsResult.data) {
       const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;
       if (snapshot.version === 1 && Array.isArray(snapshot.windows)) {
@@ -639,10 +639,10 @@ const openGroup = async (groupName) => {
       role: 'content',
       trackingSource: 'cmd',
       trackingSourceId: `group:${groupName}`,
-      // Pass group context for mode inheritance
-      groupMode: {
-        groupId: tag.id,
-        groupName: tag.name,
+      // Pass space context for mode inheritance
+      spaceMode: {
+        spaceId: tag.id,
+        spaceName: tag.name,
         color: tag.color
       },
       ...boundsOpts
@@ -742,70 +742,8 @@ const initCommands = () => {
 
   console.log('[ext:groups] Noun registered: groups');
 
-  // ===== Standalone commands (close, switch, pin, unpin) =====
-  // These use direct pubsub registration since the noun system
-  // only supports query/browse/open/create capabilities.
-
-  // "close group" — hide all windows in the current group
-  api.subscribe('cmd:execute:close group', async (msg) => {
-    const result = await closeGroup();
-    if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
-    }
-  }, api.scopes.GLOBAL);
-  api.publish('cmd:register', {
-    name: 'close group',
-    description: 'Hide all windows in the current group (restore later)',
-    source: 'groups',
-    scope: 'global',
-    accepts: [],
-    produces: [],
-    params: []
-  }, api.scopes.GLOBAL);
-
-  // "switch group <name>" — close current group, open target
-  api.subscribe('cmd:execute:switch group', async (msg) => {
-    const result = await switchGroup(msg.search?.trim());
-    if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
-    }
-  }, api.scopes.GLOBAL);
-  api.publish('cmd:register', {
-    name: 'switch group',
-    description: 'Close current group and open another',
-    source: 'groups',
-    scope: 'global',
-    accepts: [],
-    produces: [],
-    params: [{ name: 'name', type: 'tag', required: true, description: 'Target group name' }]
-  }, api.scopes.GLOBAL);
-
-  // "restore group <name>" — show suspended group windows
-  api.subscribe('cmd:execute:restore group', async (msg) => {
-    const name = msg.search?.trim();
-    if (!name) {
-      if (msg.expectResult && msg.resultTopic) {
-        api.publish(msg.resultTopic, { success: false, error: 'Usage: restore group <name>' }, api.scopes.GLOBAL);
-      }
-      return;
-    }
-    // Resolve group
-    const tagsResult = await api.datastore.getTagsByFrecency();
-    const tag = tagsResult.success ? tagsResult.data.find(t => t.name.toLowerCase() === name.toLowerCase()) : null;
-    const result = tag ? await restoreGroup(tag.id, tag.name) : { success: false, error: 'Group not found' };
-    if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
-    }
-  }, api.scopes.GLOBAL);
-  api.publish('cmd:register', {
-    name: 'restore group',
-    description: 'Restore a previously closed (suspended) group',
-    source: 'groups',
-    scope: 'global',
-    accepts: [],
-    produces: [],
-    params: [{ name: 'name', type: 'tag', required: true, description: 'Group name to restore' }]
-  }, api.scopes.GLOBAL);
+  // ===== Standalone commands (pin, unpin) =====
+  // Workspace commands (close, switch, restore) moved to spaces feature.
 
   // "pin <url>" — mark a URL as pinned in the current group
   api.subscribe('cmd:execute:pin', async (msg) => {
@@ -841,13 +779,13 @@ const initCommands = () => {
     params: [{ name: 'url', type: 'string', required: true, description: 'URL to unpin' }]
   }, api.scopes.GLOBAL);
 
-  console.log('[ext:groups] Standalone commands registered: close group, switch group, restore group, pin, unpin');
+  console.log('[ext:groups] Standalone commands registered: pin, unpin');
 };
 
 const uninitCommands = () => {
   unregisterNoun('groups');
   // Unregister standalone commands
-  for (const name of ['close group', 'switch group', 'restore group', 'pin', 'unpin']) {
+  for (const name of ['pin', 'unpin']) {
     api.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
   }
   console.log('[ext:groups] Noun and commands unregistered: groups');

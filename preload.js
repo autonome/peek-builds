@@ -1748,7 +1748,7 @@ api.extensions = {
    * @returns {Promise<{success: boolean, data?: {extId, name, schema}, error?: string}>}
    */
   getSettingsSchema: (extId) => {
-    return ipcRenderer.invoke('extension-settings-schema', { extId });
+    return ipcRenderer.invoke('feature-settings-schema', { extId });
   }
 };
 
@@ -1765,7 +1765,7 @@ api.settings = {
     if (!extId) {
       return Promise.resolve({ success: false, error: 'Not an extension context' });
     }
-    return ipcRenderer.invoke('extension-settings-get', { extId });
+    return ipcRenderer.invoke('feature-settings-get', { extId });
   },
 
   /**
@@ -1779,7 +1779,7 @@ api.settings = {
     if (!extId) {
       return Promise.resolve({ success: false, error: 'Not an extension context' });
     }
-    return ipcRenderer.invoke('extension-settings-set', { extId, settings });
+    return ipcRenderer.invoke('feature-settings-set', { extId, settings });
   },
 
   /**
@@ -1792,7 +1792,7 @@ api.settings = {
     if (!extId) {
       return Promise.resolve({ success: false, error: 'Not an extension context' });
     }
-    return ipcRenderer.invoke('extension-settings-get-key', { extId, key });
+    return ipcRenderer.invoke('feature-settings-get-key', { extId, key });
   },
 
   /**
@@ -1806,7 +1806,7 @@ api.settings = {
     if (!extId) {
       return Promise.resolve({ success: false, error: 'Not an extension context' });
     }
-    return ipcRenderer.invoke('extension-settings-set-key', { extId, key, value });
+    return ipcRenderer.invoke('feature-settings-set-key', { extId, key, value });
   },
 
   /**
@@ -1820,7 +1820,7 @@ api.settings = {
     if (!extId || !key) {
       return Promise.resolve({ success: false, error: 'extId and key are required' });
     }
-    return ipcRenderer.invoke('extension-settings-get-key', { extId, key });
+    return ipcRenderer.invoke('feature-settings-get-key', { extId, key });
   }
 };
 

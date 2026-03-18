@@ -1,0 +1,886 @@
+/**
+ * Spaces Home - Shows space tags (space: prefixed) and their items
+ *
+ * Spaces are implemented using tags with a "space:" prefix:
+ * - Each "space" is a tag named "space:Name"
+ * - Items in a space are items tagged with that tag
+ * - Creating a new space creates a new "space:" prefixed tag
+ * - Viewing a space shows all items with that tag
+ * - Opening items from a space sets space mode context
+ */
+
+import {
+  updateSelection as _updateSelection, activateSelected as _activateSelected,
+  createKeydownHandler,
+  setupToolbar as _setupToolbar,
+  createViewPrefs
+} from 'peek://app/lib/grid-nav.js';
+import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+
+const api = window.app;
+const debug = api.debug;
+
+const SPACE_PREFIX = 'space:';
+
+/**
+ * Simple debounce helper
+ */
+const debounce = (fn, ms) => {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+};
+
+/**
+ * Check if a URL is a navigable web URL (http/https only)
+ */
+const isWebUrl = (url) => {
+  if (!url) return false;
+  return url.startsWith('http://') || url.startsWith('https://');
+};
+
+/**
+ * Get the display name of a space tag (strip "space:" prefix)
+ */
+const getSpaceDisplayName = (tag) => {
+  if (tag.name && tag.name.startsWith(SPACE_PREFIX)) {
+    return tag.name.substring(SPACE_PREFIX.length);
+  }
+  return tag.name;
+};
+
+// View states
+const VIEW_SPACES = 'spaces';
+const VIEW_ITEMS = 'items';
+
+// View preferences (persisted)
+const { prefs: viewPrefs, load: loadViewPrefs, save: saveViewPrefs } = createViewPrefs('spacesViewPrefs', {
+  viewMode: 'columns',
+  sortBy: 'name',
+  sortDirection: 'asc'
+});
+
+const SORT_OPTIONS_SPACES = [
+  { value: 'name', label: 'Name' },
+  { value: 'count', label: 'Count' },
+  { value: 'recent', label: 'Recent' }
+];
+
+const SORT_OPTIONS_ITEMS = [
+  { value: 'name', label: 'Name' },
+  { value: 'count', label: 'Visits' },
+  { value: 'recent', label: 'Recent' }
+];
+
+let state = {
+  view: VIEW_SPACES,
+  spaces: [],
+  currentSpace: null,
+  items: [],
+  selectedIndex: 0,
+  searchQuery: '',
+  lastViewedSpaceId: null
+};
+
+// Expose state for debugging
+window._spacesState = state;
+
+/**
+ * Sort spaces by current view preferences
+ */
+const sortSpaces = (spaces) => {
+  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
+  return spaces.sort((a, b) => {
+    switch (viewPrefs.sortBy) {
+      case 'name':
+        return dir * getSpaceDisplayName(a).localeCompare(getSpaceDisplayName(b));
+      case 'count': {
+        const ca = a.itemCount || 0;
+        const cb = b.itemCount || 0;
+        return dir * (ca - cb);
+      }
+      case 'recent': {
+        const ra = a.updatedAt || a.createdAt || 0;
+        const rb = b.updatedAt || b.createdAt || 0;
+        return dir * (ra - rb);
+      }
+      default:
+        return 0;
+    }
+  });
+};
+
+/**
+ * Sort items by current view preferences
+ */
+const sortItems = (items) => {
+  const dir = viewPrefs.sortDirection === 'asc' ? 1 : -1;
+  return items.sort((a, b) => {
+    switch (viewPrefs.sortBy) {
+      case 'name': {
+        const na = (a.title || a.uri || a.content || '').toLowerCase();
+        const nb = (b.title || b.uri || b.content || '').toLowerCase();
+        return dir * na.localeCompare(nb);
+      }
+      case 'count': {
+        const ca = a.visitCount || 0;
+        const cb = b.visitCount || 0;
+        return dir * (ca - cb);
+      }
+      case 'recent': {
+        const ra = a.updatedAt || a.createdAt || 0;
+        const rb = b.updatedAt || b.createdAt || 0;
+        return dir * (ra - rb);
+      }
+      default:
+        return 0;
+    }
+  });
+};
+
+/**
+ * Internal ESC handler
+ */
+const handleEscape = () => {
+  const searchInput = document.querySelector('peek-input.search-input');
+  if (state.searchQuery) {
+    state.searchQuery = '';
+    searchInput.value = '';
+    renderCurrentView();
+    return { handled: true };
+  }
+
+  if (state.view === VIEW_ITEMS) {
+    setTimeout(() => {
+      showSpaces().catch(err => {
+        console.error('[spaces] Error navigating back:', err);
+      });
+    }, 0);
+    return { handled: true };
+  }
+  return { handled: false };
+};
+
+/**
+ * Wrappers around shared grid-nav functions
+ */
+const updateSelection = () => _updateSelection(state);
+const activateSelected = () => _activateSelected(state);
+
+const handleKeydown = createKeydownHandler(state, {
+  shouldIgnore: (e) => {
+    const newSpaceInput = document.querySelector('peek-input.new-space-input');
+    const isNewSpaceFocused = document.activeElement === newSpaceInput ||
+      (newSpaceInput && newSpaceInput.shadowRoot?.activeElement);
+    if (isNewSpaceFocused) return true;
+
+    const searchInput = document.querySelector('peek-input.search-input');
+    const isSearchFocused = document.activeElement === searchInput ||
+      (searchInput && searchInput.shadowRoot?.activeElement);
+
+    if ((e.key === '/' || (e.key === 'f' && (e.metaKey || e.ctrlKey))) && !isSearchFocused) {
+      e.preventDefault();
+      searchInput.focus();
+      return true;
+    }
+    return false;
+  },
+  isInputFocused: () => {
+    const searchInput = document.querySelector('peek-input.search-input');
+    return document.activeElement === searchInput ||
+      !!(searchInput && searchInput.shadowRoot?.activeElement);
+  }
+});
+
+const setupToolbar = () => {
+  _setupToolbar({
+    viewPrefs,
+    sortOptions: SORT_OPTIONS_SPACES,
+    onSave: saveViewPrefs,
+    onRender: renderCurrentView
+  });
+};
+
+const updateToolbarSortOptions = () => {
+  const toolbar = document.querySelector('.grid-toolbar');
+  if (!toolbar) return;
+  toolbar.sortOptions = state.view === VIEW_SPACES ? SORT_OPTIONS_SPACES : SORT_OPTIONS_ITEMS;
+};
+
+/**
+ * Load all space tags (filtered to space: prefix)
+ */
+const loadSpaces = async () => {
+  const result = await api.datastore.getTagsByFrecency();
+  if (result.success) {
+    // Filter to only space: prefixed tags
+    const spaceTags = result.data.filter(tag => tag.name && tag.name.startsWith(SPACE_PREFIX));
+
+    // Count items per space
+    for (const tag of spaceTags) {
+      const itemsResult = await api.datastore.getItemsByTag(tag.id);
+      if (itemsResult.success) {
+        tag.itemCount = itemsResult.data.filter(item =>
+          item.type === 'url' && isWebUrl(item.content)
+        ).length;
+      } else {
+        tag.itemCount = 0;
+      }
+    }
+    state.spaces = spaceTags;
+    debug && console.log('[spaces] Loaded spaces:', state.spaces.length);
+  } else {
+    console.error('[spaces] Failed to load spaces:', result.error);
+    state.spaces = [];
+  }
+};
+
+/**
+ * Normalize URL for dedup
+ */
+const normalizeUrlForCompare = (url) => {
+  try {
+    const u = new URL(url);
+    let normalized = u.protocol + '//' + u.hostname.toLowerCase();
+    if (u.port && u.port !== '80' && u.port !== '443') normalized += ':' + u.port;
+    let path = u.pathname;
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    normalized += path + u.search + u.hash;
+    return normalized;
+  } catch {
+    return url;
+  }
+};
+
+const deduplicateByUrl = (items) => {
+  const seen = new Map();
+  for (const item of items) {
+    const normalized = normalizeUrlForCompare(item.content);
+    const existing = seen.get(normalized);
+    if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+      seen.set(normalized, item);
+    }
+  }
+  return Array.from(seen.values());
+};
+
+/**
+ * Load items for a specific space tag
+ */
+const loadItemsForSpace = async (tagId) => {
+  const result = await api.datastore.getItemsByTag(tagId);
+  if (result.success) {
+    const urlItems = result.data.filter(item =>
+      item.type === 'url' && isWebUrl(item.content)
+    );
+    state.items = deduplicateByUrl(urlItems);
+    debug && console.log('[spaces] Loaded items for space:', state.items.length);
+  } else {
+    console.error('[spaces] Failed to load items:', result.error);
+    state.items = [];
+  }
+};
+
+const filterSpaces = (spaces) => {
+  if (!state.searchQuery) return spaces;
+  const q = state.searchQuery.toLowerCase();
+  return spaces.filter(tag => getSpaceDisplayName(tag).toLowerCase().includes(q));
+};
+
+const filterItems = (items) => {
+  if (!state.searchQuery) return items;
+  const q = state.searchQuery.toLowerCase();
+  return items.filter(item => {
+    const url = item.uri || item.content || '';
+    return (item.title || '').toLowerCase().includes(q) ||
+      url.toLowerCase().includes(q);
+  });
+};
+
+/**
+ * Create inline sort controls
+ */
+const addInlineSortControls = (container) => {
+  if (!container) return;
+  const existing = container.querySelector('.inline-sort-controls');
+  if (existing) existing.remove();
+
+  const controls = document.createElement('div');
+  controls.className = 'inline-sort-controls';
+
+  const sortWrapper = document.createElement('div');
+  sortWrapper.className = 'inline-sort-wrapper';
+
+  const select = document.createElement('select');
+  select.className = 'inline-sort-select';
+  SORT_OPTIONS_ITEMS.forEach(opt => {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    if (opt.value === viewPrefs.sortBy) option.selected = true;
+    select.appendChild(option);
+  });
+  select.addEventListener('change', () => {
+    viewPrefs.sortBy = select.value;
+    saveViewPrefs();
+    renderCurrentView();
+  });
+  sortWrapper.appendChild(select);
+
+  const arrow = document.createElement('svg');
+  arrow.className = 'inline-sort-arrow';
+  arrow.setAttribute('width', '10');
+  arrow.setAttribute('height', '10');
+  arrow.setAttribute('viewBox', '0 0 10 10');
+  arrow.setAttribute('fill', 'none');
+  arrow.innerHTML = '<path d="M2.5 3.75L5 6.25L7.5 3.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+  sortWrapper.appendChild(arrow);
+
+  controls.appendChild(sortWrapper);
+
+  const dirBtn = document.createElement('button');
+  dirBtn.className = 'inline-sort-dir-btn';
+  dirBtn.title = viewPrefs.sortDirection === 'asc' ? 'Ascending' : 'Descending';
+  const updateDirIcon = () => {
+    dirBtn.title = viewPrefs.sortDirection === 'asc' ? 'Ascending' : 'Descending';
+    dirBtn.innerHTML = viewPrefs.sortDirection === 'asc'
+      ? '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 11V3M7 3L4 6M7 3L10 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 3V11M7 11L4 8M7 11L10 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  };
+  updateDirIcon();
+  dirBtn.addEventListener('click', () => {
+    viewPrefs.sortDirection = viewPrefs.sortDirection === 'asc' ? 'desc' : 'asc';
+    saveViewPrefs();
+    updateDirIcon();
+    renderCurrentView();
+  });
+  controls.appendChild(dirBtn);
+
+  container.appendChild(controls);
+};
+
+/**
+ * Set up create space UI
+ */
+const setupCreateSpace = () => {
+  const createBtn = document.querySelector('.create-space-btn');
+  const form = document.querySelector('.create-space-form');
+  const newSpaceInput = document.querySelector('.new-space-input');
+  const cancelBtn = document.querySelector('.create-space-cancel');
+  const submitBtn = document.querySelector('.create-space-submit');
+
+  if (!createBtn || !form) return;
+
+  const showForm = () => {
+    form.style.display = '';
+    newSpaceInput.value = '';
+    setTimeout(() => newSpaceInput.focus(), 50);
+  };
+
+  const hideForm = () => {
+    form.style.display = 'none';
+    newSpaceInput.value = '';
+  };
+
+  const submitSpace = async () => {
+    const name = (newSpaceInput.value || '').trim();
+    if (!name) return;
+
+    // Prepend space: prefix if not already present
+    const tagName = name.startsWith(SPACE_PREFIX) ? name : SPACE_PREFIX + name;
+
+    try {
+      const result = await api.datastore.getOrCreateTag(tagName);
+      if (result.success) {
+        debug && console.log('[spaces] Created new space:', tagName, result.data);
+        hideForm();
+        await loadSpaces();
+        renderSpaces();
+      } else {
+        console.error('[spaces] Failed to create space:', result.error);
+      }
+    } catch (err) {
+      console.error('[spaces] Error creating space:', err);
+    }
+  };
+
+  createBtn.addEventListener('click', showForm);
+  cancelBtn.addEventListener('click', hideForm);
+  submitBtn.addEventListener('click', submitSpace);
+  newSpaceInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitSpace();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      hideForm();
+    }
+  });
+};
+
+const renderCurrentView = () => {
+  if (state.view === VIEW_SPACES) {
+    renderSpaces();
+  } else {
+    renderItems();
+  }
+};
+
+/**
+ * Show the spaces list view
+ */
+const showSpaces = async () => {
+  if (state.currentSpace) {
+    state.lastViewedSpaceId = state.currentSpace.id;
+  }
+  state.view = VIEW_SPACES;
+  state.currentSpace = null;
+  state.searchQuery = '';
+
+  await loadSpaces();
+
+  const searchInput = document.querySelector('peek-input.search-input');
+  searchInput.value = '';
+  searchInput.placeholder = 'Search spaces...';
+
+  const createBtn = document.querySelector('.create-space-btn');
+  if (createBtn) createBtn.style.display = '';
+
+  const toolbar = document.querySelector('peek-grid-toolbar.grid-toolbar');
+  if (toolbar) toolbar.style.display = '';
+
+  const inlineSort = document.querySelector('.inline-sort-controls');
+  if (inlineSort) inlineSort.remove();
+
+  renderSpaces();
+};
+
+window.showSpaces = showSpaces;
+
+/**
+ * Render space cards
+ */
+const renderSpaces = () => {
+  const container = document.querySelector('.cards');
+  container.innerHTML = '';
+  updateToolbarSortOptions();
+
+  renderSpaceHeader();
+
+  let filteredSpaces = filterSpaces([...state.spaces]);
+  filteredSpaces = sortSpaces(filteredSpaces);
+
+  if (filteredSpaces.length === 0) {
+    const message = state.searchQuery
+      ? 'No spaces match your search.'
+      : 'No spaces yet. Create one with the + button above.';
+    container.innerHTML = `<div class="empty-state">${message}</div>`;
+  } else {
+    filteredSpaces.forEach(space => {
+      const card = createSpaceCard(space);
+      container.appendChild(card);
+    });
+  }
+
+  if (state.lastViewedSpaceId) {
+    const cards = Array.from(container.querySelectorAll('peek-card'));
+    const targetIndex = cards.findIndex(card => card.dataset.tagId === String(state.lastViewedSpaceId));
+    state.selectedIndex = targetIndex >= 0 ? targetIndex : 0;
+    state.lastViewedSpaceId = null;
+  } else {
+    state.selectedIndex = 0;
+  }
+  updateSelection();
+};
+
+/**
+ * Show items in a space
+ */
+const showItems = async (space) => {
+  state.view = VIEW_ITEMS;
+  state.currentSpace = space;
+  state.searchQuery = '';
+
+  await loadItemsForSpace(space.id);
+
+  const searchInput = document.querySelector('peek-input.search-input');
+  searchInput.value = '';
+  searchInput.placeholder = `Search in ${getSpaceDisplayName(space)}...`;
+
+  const createBtn = document.querySelector('.create-space-btn');
+  const createForm = document.querySelector('.create-space-form');
+  if (createBtn) createBtn.style.display = 'none';
+  if (createForm) createForm.style.display = 'none';
+
+  const toolbar = document.querySelector('peek-grid-toolbar.grid-toolbar');
+  if (toolbar) toolbar.style.display = 'none';
+
+  const searchRow = document.querySelector('.search-row');
+  addInlineSortControls(searchRow);
+
+  renderItems();
+};
+
+/**
+ * Render the space detail header
+ */
+const renderSpaceHeader = () => {
+  const header = document.querySelector('body > .space-detail-header');
+  if (!header) return;
+
+  const space = state.currentSpace;
+  if (!space) {
+    header.style.display = 'none';
+    header.innerHTML = '';
+    return;
+  }
+
+  header.style.display = '';
+  header.innerHTML = '';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'space-header-name';
+  nameEl.textContent = getSpaceDisplayName(space);
+  nameEl.title = 'Double-click to rename';
+  nameEl.addEventListener('dblclick', () => startRenameSpace(header, space));
+  header.appendChild(nameEl);
+
+  // Rename button + color dot
+  const renameBtn = document.createElement('button');
+  renameBtn.className = 'space-rename-btn';
+  renameBtn.title = 'Rename space';
+  renameBtn.innerHTML =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>' +
+    '<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>' +
+    '</svg>';
+  renameBtn.addEventListener('click', () => startRenameSpace(header, space));
+  header.appendChild(renameBtn);
+
+  const colorDot = document.createElement('div');
+  colorDot.className = 'space-header-color-dot';
+  colorDot.style.backgroundColor = space.color || '#999';
+  colorDot.title = 'Change space color';
+
+  const colorInput = document.createElement('input');
+  colorInput.type = 'color';
+  colorInput.className = 'space-header-color-input';
+  colorInput.value = space.color || '#999999';
+  colorInput.addEventListener('input', (e) => {
+    colorDot.style.backgroundColor = e.target.value;
+  });
+  colorInput.addEventListener('change', async (e) => {
+    const newColor = e.target.value;
+    space.color = newColor;
+    await api.datastore.updateTagColor(space.id, newColor);
+  });
+
+  colorDot.addEventListener('click', () => colorInput.click());
+  colorDot.appendChild(colorInput);
+  header.appendChild(colorDot);
+
+  // Spacer
+  const spacer = document.createElement('div');
+  spacer.className = 'space-header-spacer';
+  header.appendChild(spacer);
+
+  // View mode buttons
+  const viewModes = document.createElement('div');
+  viewModes.className = 'space-header-view-modes';
+
+  const modes = [
+    { mode: 'columns', title: 'Grid view', svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>' },
+    { mode: 'list', title: 'List view', svg: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="1" y1="3" x2="13" y2="3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="1" y1="11" x2="13" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' },
+  ];
+
+  modes.forEach(({ mode, title, svg }) => {
+    const btn = document.createElement('button');
+    btn.className = 'shvm-btn' + (viewPrefs.viewMode === mode ? ' active' : '');
+    btn.title = title;
+    btn.innerHTML = svg;
+    btn.addEventListener('click', () => {
+      viewPrefs.viewMode = mode;
+      saveViewPrefs();
+      const grid = document.querySelector('peek-grid.cards');
+      if (grid) grid.setAttribute('view-mode', mode);
+      renderSpaceHeader();
+      renderCurrentView();
+    });
+    viewModes.appendChild(btn);
+  });
+
+  header.appendChild(viewModes);
+};
+
+/**
+ * Start inline rename of a space
+ */
+const startRenameSpace = (headerEl, space) => {
+  const nameEl = headerEl.querySelector('.space-header-name');
+  const renameBtn = headerEl.querySelector('.space-rename-btn');
+  if (!nameEl) return;
+
+  const input = document.createElement('input');
+  input.className = 'space-rename-input';
+  input.type = 'text';
+  input.value = getSpaceDisplayName(space);
+
+  const finishRename = async (commit) => {
+    const newDisplayName = input.value.trim();
+    if (commit && newDisplayName && newDisplayName !== getSpaceDisplayName(space)) {
+      const newTagName = SPACE_PREFIX + newDisplayName;
+      try {
+        const result = await api.datastore.renameTag(space.id, newTagName);
+        if (result.success) {
+          space.name = newTagName;
+          const searchInput = document.querySelector('peek-input.search-input');
+          searchInput.placeholder = `Search in ${newDisplayName}...`;
+          debug && console.log('[spaces] Renamed space to:', newTagName);
+        } else {
+          console.error('[spaces] Failed to rename space:', result.error);
+        }
+      } catch (err) {
+        console.error('[spaces] Error renaming space:', err);
+      }
+    }
+    nameEl.textContent = getSpaceDisplayName(space);
+    nameEl.style.display = '';
+    input.remove();
+    if (renameBtn) renameBtn.style.display = '';
+  };
+
+  nameEl.style.display = 'none';
+  if (renameBtn) renameBtn.style.display = 'none';
+  headerEl.insertBefore(input, nameEl.nextSibling);
+  input.focus();
+  input.select();
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      finishRename(true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      finishRename(false);
+    }
+  });
+  input.addEventListener('blur', () => finishRename(true));
+};
+
+/**
+ * Render item cards
+ */
+const renderItems = () => {
+  const container = document.querySelector('.cards');
+  container.innerHTML = '';
+  updateToolbarSortOptions();
+
+  renderSpaceHeader();
+
+  let filteredItems = filterItems(state.items);
+
+  if (filteredItems.length === 0) {
+    const message = state.searchQuery
+      ? 'No pages match your search.'
+      : 'No pages in this space yet.';
+    const emptyEl = document.createElement('div');
+    emptyEl.className = 'empty-state';
+    emptyEl.textContent = message;
+    container.appendChild(emptyEl);
+    return;
+  }
+
+  filteredItems = sortItems(filteredItems);
+
+  filteredItems.forEach(item => {
+    const card = createItemCard(item);
+    container.appendChild(card);
+  });
+
+  state.selectedIndex = 0;
+  updateSelection();
+};
+
+/**
+ * Create a card for a space
+ */
+const createSpaceCard = (space) => {
+  const card = document.createElement('peek-card');
+  card.className = 'space-card';
+  card.interactive = true;
+  card.dataset.tagId = space.id;
+
+  const header = document.createElement('div');
+  header.slot = 'header';
+  header.style.display = 'flex';
+  header.style.alignItems = 'center';
+  header.style.gap = '8px';
+
+  const colorDot = document.createElement('div');
+  colorDot.className = 'color-dot';
+  colorDot.style.backgroundColor = space.color || '#999';
+
+  const title = document.createElement('h2');
+  title.className = 'card-title';
+  title.textContent = getSpaceDisplayName(space);
+  title.style.margin = '0';
+  title.style.flex = '1';
+  title.style.minWidth = '0';
+
+  header.appendChild(colorDot);
+  header.appendChild(title);
+  card.appendChild(header);
+
+  const footer = document.createElement('div');
+  footer.slot = 'footer';
+  footer.className = 'card-meta';
+  const count = space.itemCount || 0;
+  footer.textContent = `${count} ${count === 1 ? 'page' : 'pages'}`;
+  card.appendChild(footer);
+
+  card.addEventListener('card-click', () => showItems(space));
+
+  return card;
+};
+
+/**
+ * Create a card for an item in a space
+ */
+const createItemCard = (item) => {
+  const itemUrl = item.uri || item.content;
+
+  const card = createSearchResultCard(item, {
+    className: 'address-card',
+    visitCount: item.visitCount,
+    showOpenButton: isWebUrl(itemUrl),
+    onOpen: (url) => {
+      // Open with space mode context
+      api.window.open(url, {
+        role: 'content',
+        key: url,
+        width: 1024,
+        height: 768,
+        spaceMode: state.currentSpace ? {
+          spaceId: state.currentSpace.id,
+          spaceName: getSpaceDisplayName(state.currentSpace),
+          color: state.currentSpace.color || '#999'
+        } : undefined
+      });
+    },
+    onDelete: async (deleteItem) => {
+      if (!confirm(`Delete "${deleteItem.title || deleteItem.content || 'this item'}"?`)) return;
+      try {
+        await api.datastore.deleteItem(deleteItem.id);
+        api.publish('item:deleted', { id: deleteItem.id }, api.scopes.GLOBAL);
+        if (state.currentSpace) { await loadItemsForSpace(state.currentSpace.id); renderItems(); }
+      } catch (err) {
+        console.error('[spaces] Failed to delete item:', err);
+      }
+    },
+    onClick: async () => {
+      debug && console.log('[spaces] Opening item:', itemUrl);
+      // Open with space mode context so the window enters space mode
+      const openOptions = {
+        role: 'content',
+        key: itemUrl,
+        width: 1024,
+        height: 768,
+        spaceMode: state.currentSpace ? {
+          spaceId: state.currentSpace.id,
+          spaceName: getSpaceDisplayName(state.currentSpace),
+          color: state.currentSpace.color || '#999'
+        } : undefined
+      };
+      const result = await api.window.open(itemUrl, openOptions);
+      debug && console.log('[spaces] Window opened:', result);
+    }
+  });
+
+  card.dataset.itemId = item.id;
+
+  // Add remove-from-space button
+  if (state.currentSpace) {
+    const header = card.querySelector('[slot="header"]');
+    if (header) {
+      let btnGroup = header.querySelector('.card-btn-group');
+      if (!btnGroup) {
+        btnGroup = document.createElement('span');
+        btnGroup.className = 'card-btn-group';
+        header.appendChild(btnGroup);
+      }
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'card-remove-space-btn';
+      removeBtn.title = `Remove from ${getSpaceDisplayName(state.currentSpace)}`;
+      removeBtn.innerHTML =
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<line x1="18" y1="6" x2="6" y2="18"></line>' +
+        '<line x1="6" y1="6" x2="18" y2="18"></line>' +
+        '</svg>';
+      removeBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await api.datastore.untagItem(item.id, state.currentSpace.id);
+          api.publish('tag:item-removed', { itemId: item.id, tagId: state.currentSpace.id }, api.scopes.GLOBAL);
+          if (state.currentSpace) { await loadItemsForSpace(state.currentSpace.id); renderItems(); }
+        } catch (err) {
+          console.error('[spaces] Failed to remove item from space:', err);
+        }
+      });
+      const deleteBtn = btnGroup.querySelector('.card-delete-btn');
+      if (deleteBtn) {
+        btnGroup.insertBefore(removeBtn, deleteBtn);
+      } else {
+        btnGroup.appendChild(removeBtn);
+      }
+    }
+  }
+
+  return card;
+};
+
+const init = async () => {
+  debug && console.log('[spaces] init');
+
+  api.escape.onEscape(handleEscape);
+
+  loadViewPrefs();
+  setupToolbar();
+
+  await loadSpaces();
+
+  const searchInput = document.querySelector('peek-input.search-input');
+  searchInput.addEventListener('input', (e) => {
+    state.searchQuery = e.target.value;
+    renderCurrentView();
+  });
+
+  document.addEventListener('keydown', handleKeydown);
+
+  const debouncedRefresh = debounce(async () => {
+    debug && console.log('[spaces] debounced refresh triggered');
+    await loadSpaces();
+    if (state.view === VIEW_SPACES) {
+      renderSpaces();
+    } else if (state.view === VIEW_ITEMS && state.currentSpace) {
+      await loadItemsForSpace(state.currentSpace.id);
+      renderItems();
+    }
+  }, 150);
+
+  api.subscribe('tag:item-added', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.subscribe('tag:item-removed', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.subscribe('tag:created', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.subscribe('item:created', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.subscribe('item:deleted', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.subscribe('sync:pull-completed', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.subscribe('tag:renamed', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.subscribe('tag:color-changed', () => debouncedRefresh(), api.scopes.GLOBAL);
+
+  setupCreateSpace();
+
+  showSpaces();
+};
+
+document.addEventListener('DOMContentLoaded', init);

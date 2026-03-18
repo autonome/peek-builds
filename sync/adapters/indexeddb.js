@@ -84,9 +84,9 @@ export function createIndexedDBAdapter() {
 
             database.createObjectStore('settings', { keyPath: 'key' });
 
-            // extension_settings for profile-specific settings
-            const extSettings = database.createObjectStore('extension_settings', { keyPath: 'id' });
-            extSettings.createIndex('extensionId', 'extensionId', { unique: false });
+            // feature_settings for profile-specific settings
+            const extSettings = database.createObjectStore('feature_settings', { keyPath: 'id' });
+            extSettings.createIndex('featureId', 'featureId', { unique: false });
           }
 
           if (oldVersion >= 1 && oldVersion < 2) {
@@ -115,10 +115,10 @@ export function createIndexedDBAdapter() {
           }
 
           if (oldVersion >= 1 && oldVersion < 3) {
-            // v2 → v3: add extension_settings store
-            if (!database.objectStoreNames.contains('extension_settings')) {
-              const extSettings = database.createObjectStore('extension_settings', { keyPath: 'id' });
-              extSettings.createIndex('extensionId', 'extensionId', { unique: false });
+            // v2 → v3: add feature_settings store
+            if (!database.objectStoreNames.contains('feature_settings')) {
+              const extSettings = database.createObjectStore('feature_settings', { keyPath: 'id' });
+              extSettings.createIndex('featureId', 'featureId', { unique: false });
             }
           }
         };

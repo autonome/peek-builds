@@ -225,7 +225,7 @@ describe('Shortcuts Module Tests', () => {
     afterEach(() => {
       // Cleanup shortcuts
       shortcuts.unregisterLocalShortcut('Ctrl+M', 'test-mode-page', { majorMode: 'page' });
-      shortcuts.unregisterLocalShortcut('Ctrl+M', 'test-mode-group', { majorMode: 'group' });
+      shortcuts.unregisterLocalShortcut('Ctrl+M', 'test-mode-group', { majorMode: 'space' });
       shortcuts.unregisterLocalShortcut('Ctrl+M', 'test-mode-default');
       datastore.cleanupWindowContext(10001);
     });
@@ -253,7 +253,7 @@ describe('Shortcuts Module Tests', () => {
     it('should not trigger mode-conditional shortcut when mode does not match', () => {
       shortcuts.registerLocalShortcut('Ctrl+M', 'test-mode-group', () => {
         groupCallCount++;
-      }, { majorMode: 'group' });
+      }, { majorMode: 'space' });
 
       const input: InputEvent = {
         type: 'keyDown',
@@ -264,7 +264,7 @@ describe('Shortcuts Module Tests', () => {
         code: 'KeyM'
       };
 
-      // Window 10001 is in 'page' mode, not 'group'
+      // Window 10001 is in 'page' mode, not 'space'
       const handled = shortcuts.handleLocalShortcut(input, 10001);
       assert.strictEqual(handled, false);
       assert.strictEqual(groupCallCount, 0);
@@ -278,7 +278,7 @@ describe('Shortcuts Module Tests', () => {
 
       shortcuts.registerLocalShortcut('Ctrl+M', 'test-mode-group', () => {
         groupCallCount++;
-      }, { majorMode: 'group' });
+      }, { majorMode: 'space' });
 
       const input: InputEvent = {
         type: 'keyDown',
@@ -296,8 +296,8 @@ describe('Shortcuts Module Tests', () => {
       assert.strictEqual(pageCallCount, 1);
       assert.strictEqual(groupCallCount, 0);
 
-      // Switch to group mode - should trigger group handler
-      datastore.addContextEntry('mode', 'group', { windowId: 10001 });
+      // Switch to space mode - should trigger space handler
+      datastore.addContextEntry('mode', 'space', { windowId: 10001 });
       handled = shortcuts.handleLocalShortcut(input, 10001);
       assert.strictEqual(handled, true);
       assert.strictEqual(pageCallCount, 1); // No change
@@ -305,10 +305,10 @@ describe('Shortcuts Module Tests', () => {
     });
 
     it('should fall back to non-conditional shortcut when no mode match', () => {
-      // Register mode-conditional for 'group'
+      // Register mode-conditional for 'space'
       shortcuts.registerLocalShortcut('Ctrl+M', 'test-mode-group', () => {
         groupCallCount++;
-      }, { majorMode: 'group' });
+      }, { majorMode: 'space' });
 
       // Register non-conditional fallback
       shortcuts.registerLocalShortcut('Ctrl+M', 'test-mode-default', () => {

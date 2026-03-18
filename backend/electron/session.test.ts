@@ -2,7 +2,7 @@
  * Integration tests for session save/restore
  *
  * These tests use a REAL better-sqlite3 database with the same schema
- * as the production extension_settings table. They test the actual SQL
+ * as the production feature_settings table. They test the actual SQL
  * operations, data structures, and logic flows from session.ts.
  *
  * Why these tests exist:
@@ -143,15 +143,15 @@ function sanitizeParams(params: Record<string, unknown>): Record<string, unknown
 function createTestDb(): InstanceType<typeof Database> {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE IF NOT EXISTS extension_settings (
+    CREATE TABLE IF NOT EXISTS feature_settings (
       id TEXT PRIMARY KEY,
-      extensionId TEXT NOT NULL,
+      featureId TEXT NOT NULL,
       key TEXT NOT NULL,
       value TEXT,
       updatedAt INTEGER
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_settings_unique
-      ON extension_settings(extensionId, key);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_feature_settings_unique
+      ON feature_settings(featureId, key);
   `);
   return db;
 }
@@ -162,7 +162,7 @@ function createTestDb(): InstanceType<typeof Database> {
  */
 function saveSnapshot(db: InstanceType<typeof Database>, snapshot: SessionSnapshot, reason: string): void {
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'session', 'snapshot', ?, ?)
   `).run('session-snapshot', JSON.stringify(snapshot), Date.now());
 
@@ -170,7 +170,7 @@ function saveSnapshot(db: InstanceType<typeof Database>, snapshot: SessionSnapsh
   let existingMetadata: Partial<SessionMetadata> = {};
   try {
     const metaRow = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
     ).get() as { value: string } | undefined;
     if (metaRow?.value) {
       existingMetadata = JSON.parse(metaRow.value);
@@ -189,7 +189,7 @@ function saveSnapshot(db: InstanceType<typeof Database>, snapshot: SessionSnapsh
     restoreCount: existingMetadata.restoreCount,
   };
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'session', 'metadata', ?, ?)
   `).run('session-metadata', JSON.stringify(metadata), Date.now());
 }
@@ -200,7 +200,7 @@ function saveSnapshot(db: InstanceType<typeof Database>, snapshot: SessionSnapsh
 function readCrashState(db: InstanceType<typeof Database>): { cleanShutdown: boolean; crashCount: number } {
   try {
     const metaRow = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
     ).get() as { value: string } | undefined;
     if (metaRow?.value) {
       const metadata = JSON.parse(metaRow.value);
@@ -220,7 +220,7 @@ function readCrashState(db: InstanceType<typeof Database>): { cleanShutdown: boo
  */
 function markDirty(db: InstanceType<typeof Database>): void {
   const metaRow = db.prepare(
-    `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+    `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
   ).get() as { value: string } | undefined;
 
   let metadata: Partial<SessionMetadata> = {};
@@ -237,7 +237,7 @@ function markDirty(db: InstanceType<typeof Database>): void {
   metadata.cleanShutdown = false;
 
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'session', 'metadata', ?, ?)
   `).run('session-metadata', JSON.stringify(metadata), Date.now());
 }
@@ -247,7 +247,7 @@ function markDirty(db: InstanceType<typeof Database>): void {
  */
 function readSnapshot(db: InstanceType<typeof Database>): SessionSnapshot | null {
   const row = db.prepare(
-    `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'snapshot'`
+    `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
   ).get() as { value: string } | undefined;
   if (!row?.value) return null;
   return JSON.parse(row.value);
@@ -258,7 +258,7 @@ function readSnapshot(db: InstanceType<typeof Database>): SessionSnapshot | null
  */
 function getSnapshotInfo(db: InstanceType<typeof Database>): { windowCount: number; savedAt: number; reason: string } | null {
   const row = db.prepare(
-    `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'snapshot'`
+    `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
   ).get() as { value: string } | undefined;
   if (!row?.value) return null;
 
@@ -815,7 +815,7 @@ describe('Session Integration Tests', () => {
 
       // Verify by reading raw metadata from DB
       const row = db.prepare(
-        `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
       ).get() as { value: string };
       const metadata = JSON.parse(row.value);
       assert.strictEqual(metadata.cleanShutdown, true,
@@ -829,7 +829,7 @@ describe('Session Integration Tests', () => {
       markDirty(db);
 
       const row = db.prepare(
-        `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
       ).get() as { value: string };
       const metadata = JSON.parse(row.value);
       assert.strictEqual(metadata.cleanShutdown, false);
@@ -851,7 +851,7 @@ describe('Session Integration Tests', () => {
       saveSnapshot(db, snapshot, 'before-quit');
 
       const row = db.prepare(
-        `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
       ).get() as { value: string };
       const metadata = JSON.parse(row.value);
       assert.strictEqual(metadata.crashCount, 2, 'Save should preserve crashCount from existing metadata');
@@ -861,7 +861,7 @@ describe('Session Integration Tests', () => {
     it('save preserves restoreCount from existing metadata', () => {
       // Manually set some restore history
       db.prepare(`
-        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
         VALUES (?, 'session', 'metadata', ?, ?)
       `).run('session-metadata', JSON.stringify({
         cleanShutdown: true,
@@ -879,7 +879,7 @@ describe('Session Integration Tests', () => {
       saveSnapshot(db, snapshot, 'before-quit');
 
       const row = db.prepare(
-        `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
       ).get() as { value: string };
       const metadata = JSON.parse(row.value);
       assert.strictEqual(metadata.restoreCount, 5, 'Save should preserve restoreCount');
@@ -1000,7 +1000,7 @@ describe('Session Integration Tests', () => {
 
       // Write snapshot directly (bypassing saveSnapshot to include invalid entries)
       db.prepare(`
-        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
         VALUES (?, 'session', 'snapshot', ?, ?)
       `).run('session-snapshot', JSON.stringify(snapshot), Date.now());
 
@@ -1021,7 +1021,7 @@ describe('Session Integration Tests', () => {
       };
 
       db.prepare(`
-        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
         VALUES (?, 'session', 'snapshot', ?, ?)
       `).run('session-snapshot', JSON.stringify(snapshot), Date.now());
 
@@ -1037,7 +1037,7 @@ describe('Session Integration Tests', () => {
       };
 
       db.prepare(`
-        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
         VALUES (?, 'session', 'snapshot', ?, ?)
       `).run('session-snapshot', JSON.stringify(snapshot), Date.now());
 
@@ -1194,7 +1194,7 @@ describe('Session Integration Tests', () => {
       };
 
       db.prepare(`
-        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
         VALUES (?, 'session', 'snapshot', ?, ?)
       `).run('session-snapshot', JSON.stringify(snapshot), Date.now());
 
@@ -1318,7 +1318,7 @@ describe('Session Integration Tests', () => {
 
       // Only one snapshot row should exist (INSERT OR REPLACE)
       const count = db.prepare(
-        `SELECT COUNT(*) as count FROM extension_settings WHERE extensionId = 'session' AND key = 'snapshot'`
+        `SELECT COUNT(*) as count FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
       ).get() as { count: number };
       assert.strictEqual(count.count, 1, 'Should have exactly one snapshot row');
     });

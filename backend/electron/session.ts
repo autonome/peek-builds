@@ -6,7 +6,7 @@
  * Phase 3: Periodic autosave timer + manual save/restore commands.
  * Phase 4: Crash recovery dialog, snapshot validation, error handling.
  *
- * Captures all visible user windows and writes to extension_settings
+ * Captures all visible user windows and writes to feature_settings
  * using synchronous better-sqlite3 APIs (safe for before-quit handler).
  * On startup, reads the snapshot and recreates windows.
  *
@@ -248,9 +248,9 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   DEBUG && console.log(`[session] Captured ${windowDescriptors.length} window(s)`);
 
   try {
-    // Write snapshot to extension_settings table
+    // Write snapshot to feature_settings table
     db.prepare(`
-      INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, 'session', 'snapshot', ?, ?)
     `).run('session-snapshot', JSON.stringify(snapshot), Date.now());
 
@@ -258,7 +258,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     let existingMetadata: Partial<SessionMetadata> = {};
     try {
       const metaRow = db.prepare(
-        `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
       ).get() as { value: string } | undefined;
       if (metaRow?.value) {
         existingMetadata = JSON.parse(metaRow.value);
@@ -280,7 +280,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       restoreCount: existingMetadata.restoreCount,
     };
     db.prepare(`
-      INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, 'session', 'metadata', ?, ?)
     `).run('session-metadata', JSON.stringify(metadata), Date.now());
 
@@ -310,7 +310,7 @@ export function markSessionDirty(): void {
 
   try {
     const metaRow = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
     ).get() as { value: string } | undefined;
 
     let metadata: Partial<SessionMetadata> = {};
@@ -328,7 +328,7 @@ export function markSessionDirty(): void {
     metadata.cleanShutdown = false;
 
     db.prepare(`
-      INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, 'session', 'metadata', ?, ?)
     `).run('session-metadata', JSON.stringify(metadata), Date.now());
 
@@ -405,7 +405,7 @@ function isPointOnScreen(x: number, y: number): boolean {
 /**
  * Restore session snapshot on startup.
  *
- * Reads the saved snapshot from extension_settings, validates it,
+ * Reads the saved snapshot from feature_settings, validates it,
  * and recreates windows using the background window's IPC bridge.
  *
  * Returns counts of restored/failed/total windows.
@@ -419,7 +419,7 @@ export function readSessionCrashState(): { cleanShutdown: boolean; crashCount: n
   try {
     const db = getDb();
     const metaRow = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
     ).get() as { value: string } | undefined;
 
     if (metaRow?.value) {
@@ -475,7 +475,7 @@ export async function restoreSessionSnapshot(
     } else {
       // Fallback: read current metadata (manual restore path)
       const metaRow = db.prepare(
-        `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
       ).get() as { value: string } | undefined;
       if (metaRow?.value) {
         const metadata: Partial<SessionMetadata> = JSON.parse(metaRow.value);
@@ -503,7 +503,7 @@ export async function restoreSessionSnapshot(
   let snapshot: SessionSnapshot;
   try {
     const row = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'snapshot'`
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
     ).get() as { value: string } | undefined;
 
     if (!row?.value) {
@@ -696,7 +696,7 @@ export async function restoreSessionSnapshot(
   // Update session metadata with restore info and reset crashCount
   try {
     const metaRow = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'metadata'`
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
     ).get() as { value: string } | undefined;
 
     let metadata: Partial<SessionMetadata> = {};
@@ -710,7 +710,7 @@ export async function restoreSessionSnapshot(
     metadata.crashCount = 0;
 
     db.prepare(`
-      INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, 'session', 'metadata', ?, ?)
     `).run('session-metadata', JSON.stringify(metadata), Date.now());
   } catch {
@@ -779,7 +779,7 @@ export function updateAutosaveInterval(intervalMinutes: number): void {
 }
 
 /**
- * Save per-group workspace snapshots to extension_settings.
+ * Save per-group workspace snapshots to feature_settings.
  *
  * Groups windows by their group mode context and writes a layout snapshot
  * for each group. Used by openGroup() to restore window positions.
@@ -843,7 +843,7 @@ export function saveGroupWorkspaces(): void {
 
   // Write each group's workspace snapshot
   const upsert = db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'group-workspaces', ?, ?, ?)
   `);
 
@@ -870,7 +870,7 @@ export function getSessionSnapshotInfo(): { windowCount: number; savedAt: number
   try {
     const db = getDb();
     const row = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'snapshot'`
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
     ).get() as { value: string } | undefined;
 
     if (!row?.value) return null;

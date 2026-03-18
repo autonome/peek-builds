@@ -145,13 +145,16 @@ export interface Extension {
   metadata: string;
 }
 
-export interface ExtensionSetting {
+export interface FeatureSetting {
   id: string;
-  extensionId: string;
+  featureId: string;
   key: string;
   value: string;
   updatedAt: number;
 }
+
+/** @deprecated Use FeatureSetting instead */
+export type ExtensionSetting = FeatureSetting;
 
 export interface DatastoreStats {
   totalAddresses: number;
@@ -276,7 +279,7 @@ export type TableName =
   | 'scripts_data'
   | 'feeds'
   | 'extensions'
-  | 'extension_settings'
+  | 'feature_settings'
   | 'migrations'
   | 'themes'
   | 'items'
@@ -294,7 +297,7 @@ export const tableNames: TableName[] = [
   'scripts_data',
   'feeds',
   'extensions',
-  'extension_settings',
+  'feature_settings',
   'migrations',
   'themes',
   'items',

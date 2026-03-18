@@ -326,265 +326,6 @@ function tagItemAndPublish(itemId: string, tagId: string): void {
   }
 }
 
-function autoTagIfGroupMode(ev: Electron.IpcMainInvokeEvent, itemId: string): boolean {
-  try {
-    const callingWin = BrowserWindow.fromWebContents(ev.sender);
-    const callerWinId = callingWin && !callingWin.isDestroyed() ? callingWin.id : null;
-    const callerMode = callerWinId ? getContextEntry('mode', callerWinId) : null;
-
-    // Only tag if the calling window itself is in group mode.
-    // Do NOT fall back to lastFocusedVisibleWindowId — that causes group leakage
-    // where items from external apps, cmd palette, etc. get tagged with whatever
-    // group happened to be active on the last focused window.
-    if (callerMode && callerMode.value === 'group' && callerMode.metadata?.groupId) {
-      const groupId = callerMode.metadata.groupId as string;
-      tagItemAndPublish(itemId, groupId);
-      console.log('[ipc] Auto-tagged item', itemId, 'with group', groupId, '(from caller)');
-      return true;
-    }
-  } catch (e) {
-    console.log('[ipc] autoTagIfGroupMode error:', e);
-  }
-  return false;
-}
-
-// Group mode screen border — transparent overlay window showing a solid colored
-// border around the entire screen when any window is in group mode.
-let groupScreenBorderWin: BrowserWindow | null = null;
-let groupScreenBorderColor: string | null = null;
-// Shutdown flag — prevents updateGroupScreenBorder from recreating the overlay
-// after cleanupGroupScreenBorder destroys it during quit (window:closed events
-// fire during shutdown and would otherwise trigger recreation).
-let groupScreenBorderShuttingDown = false;
-
-// Strong, vivid colors derived from iOS theme palette for group screen border.
-// Used when the group's own color is too pale or missing.
-const VIVID_GROUP_COLORS = [
-  '#ff3b30', // red
-  '#ff9500', // orange
-  '#34c759', // green
-  '#007aff', // blue
-  '#af52de', // purple
-  '#5ac8fa', // cyan
-  '#ff2d55', // pink
-  '#ff9f0a', // amber
-];
-
-/**
- * Pick a vivid border color: use the group's color if it has enough saturation,
- * otherwise deterministically pick a vivid color from the palette based on the
- * group ID hash.
- */
-function resolveGroupBorderColor(color: string | undefined, groupId: string | undefined): string {
-  if (color && color !== '#999' && color !== '#999999') {
-    // Check if the color has enough saturation/chroma to be visually distinctive.
-    // Parse hex and check if it's not too grey.
-    const hex = color.replace('#', '');
-    if (hex.length >= 6) {
-      const r = parseInt(hex.substring(0, 2), 16);
-      const g = parseInt(hex.substring(2, 4), 16);
-      const b = parseInt(hex.substring(4, 6), 16);
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const chroma = max - min;
-      // If chroma > 40 the color is vivid enough to use directly
-      if (chroma > 40) return color;
-    }
-  }
-  // Deterministic pick from vivid palette based on groupId
-  if (groupId) {
-    let hash = 0;
-    for (let i = 0; i < groupId.length; i++) {
-      hash = ((hash << 5) - hash + groupId.charCodeAt(i)) | 0;
-    }
-    return VIVID_GROUP_COLORS[Math.abs(hash) % VIVID_GROUP_COLORS.length];
-  }
-  return '#007aff';
-}
-
-function showGroupScreenBorder(color: string, name: string): void {
-  // Sanitize color for CSS injection
-  const safeColor = /^[#a-zA-Z0-9(),%\s.]+$/.test(color) ? color : '#007aff';
-  // Sanitize name for HTML injection
-  const safeName = name.replace(/[<>"&'\\]/g, '');
-
-  if (groupScreenBorderWin && !groupScreenBorderWin.isDestroyed()) {
-    // Update color and name if changed
-    if (groupScreenBorderColor !== safeColor) {
-      groupScreenBorderColor = safeColor;
-      groupScreenBorderWin.webContents.executeJavaScript(
-        `document.documentElement.style.setProperty('--group-color', '${safeColor}')`
-      );
-    }
-    groupScreenBorderWin.webContents.executeJavaScript(
-      `document.getElementById('group-label').textContent = ${JSON.stringify(safeName)}`
-    );
-    if (!groupScreenBorderWin.isVisible()) {
-      groupScreenBorderWin.showInactive();
-    }
-    return;
-  }
-
-  groupScreenBorderColor = safeColor;
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { x, y, width, height } = primaryDisplay.bounds;
-
-  groupScreenBorderWin = new BrowserWindow({
-    x, y, width, height,
-    frame: false,
-    transparent: true,
-    hasShadow: false,
-    alwaysOnTop: true,
-    focusable: false,
-    skipTaskbar: true,
-    roundedCorners: false,
-    resizable: false,
-    movable: false,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-    }
-  });
-
-  groupScreenBorderWin.setIgnoreMouseEvents(true);
-  groupScreenBorderWin.setVisibleOnAllWorkspaces(true);
-  groupScreenBorderWin.setAlwaysOnTop(true, 'screen-saver');
-
-  const html = `<!DOCTYPE html>
-<html style="--group-color: ${safeColor}">
-<head><style>
-  * { margin: 0; padding: 0; }
-  html, body { width: 100vw; height: 100vh; background: transparent; overflow: hidden; }
-  html::after {
-    content: '';
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    border: 4px solid var(--group-color);
-    border-radius: 10px;
-    pointer-events: none;
-  }
-  #group-label {
-    position: fixed;
-    bottom: 8px;
-    right: 12px;
-    color: var(--group-color);
-    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    pointer-events: none;
-  }
-</style></head>
-<body>
-  <div id="group-label">${safeName}</div>
-</body>
-</html>`;
-
-  groupScreenBorderWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-  groupScreenBorderWin.showInactive();
-
-  groupScreenBorderWin.on('closed', () => {
-    groupScreenBorderWin = null;
-    groupScreenBorderColor = null;
-  });
-
-  DEBUG && console.log('[group-screen-border] Created overlay with color:', safeColor, 'name:', safeName);
-}
-
-function hideGroupScreenBorder(): void {
-  if (groupScreenBorderWin && !groupScreenBorderWin.isDestroyed()) {
-    groupScreenBorderWin.hide();
-    DEBUG && console.log('[group-screen-border] Hidden');
-  }
-}
-
-/**
- * Destroy the group screen border overlay and clear any pending timers.
- * Called during app shutdown to ensure Electron can quit cleanly.
- */
-export function cleanupGroupScreenBorder(): void {
-  groupScreenBorderShuttingDown = true;
-  if (groupBorderHideTimer) {
-    clearTimeout(groupBorderHideTimer);
-    groupBorderHideTimer = null;
-  }
-  if (groupScreenBorderWin && !groupScreenBorderWin.isDestroyed()) {
-    groupScreenBorderWin.destroy();
-    DEBUG && console.log('[group-screen-border] Destroyed during shutdown');
-  }
-  groupScreenBorderWin = null;
-  groupScreenBorderColor = null;
-}
-
-// Debounce timer for hiding the screen border — prevents flicker during
-// navigation transitions where group mode is briefly absent.
-let groupBorderHideTimer: ReturnType<typeof setTimeout> | null = null;
-const GROUP_BORDER_HIDE_DELAY_MS = 600;
-
-/**
- * Debounce the hide — a new group window may be about to gain focus.
- * Prevents flicker during window transitions.
- */
-function scheduleHideGroupScreenBorder(): void {
-  if (!groupBorderHideTimer) {
-    groupBorderHideTimer = setTimeout(() => {
-      groupBorderHideTimer = null;
-      hideGroupScreenBorder();
-    }, GROUP_BORDER_HIDE_DELAY_MS);
-  }
-}
-
-/**
- * Check if the currently focused visible window is in group mode and show/hide the screen border.
- * The border is a per-focused-window indicator, NOT a global "any window has group mode" indicator.
- * Showing is immediate; hiding is debounced to avoid flicker during window transitions.
- *
- * Special case: modal windows (cmd palette, etc.) are "transparent" to the border — focusing
- * a modal does not hide the border, since it would flicker constantly during normal group work.
- */
-export function updateGroupScreenBorder(): void {
-  if (groupScreenBorderShuttingDown) return;
-
-  // Don't show the border when Peek is not the active/foreground app.
-  // Without this guard, background events (sync, context changes, window management)
-  // can re-show the border overlay even though the user switched to another app.
-  if (!getIzuiCoordinator().isAppFocused()) {
-    scheduleHideGroupScreenBorder();
-    return;
-  }
-
-  if (!lastFocusedVisibleWindowId) {
-    scheduleHideGroupScreenBorder();
-    return;
-  }
-  const win = BrowserWindow.fromId(lastFocusedVisibleWindowId);
-  if (!win || win.isDestroyed()) {
-    scheduleHideGroupScreenBorder();
-    return;
-  }
-
-  // Skip modal/transient windows (cmd palette, etc.) — they're "transparent" to border state.
-  // When a modal is focused, keep the border in its current state (don't show or hide).
-  const winInfo = getWindowInfo(lastFocusedVisibleWindowId);
-  if (winInfo?.params?.modal) return;
-
-  const entry = getContextEntry('mode', lastFocusedVisibleWindowId);
-  if (entry && entry.value === 'group' && entry.metadata?.groupId) {
-    // Cancel any pending hide — focused window is in group mode
-    if (groupBorderHideTimer) {
-      clearTimeout(groupBorderHideTimer);
-      groupBorderHideTimer = null;
-    }
-    const rawColor = entry.metadata.color as string | undefined;
-    const groupId = entry.metadata.groupId as string | undefined;
-    const color = resolveGroupBorderColor(rawColor, groupId);
-    const groupName = (entry.metadata.groupName as string) || 'group';
-    showGroupScreenBorder(color, groupName);
-  } else {
-    scheduleHideGroupScreenBorder();
-  }
-}
 
 /**
  * Register datastore IPC handlers
@@ -613,14 +354,13 @@ export function registerDatastoreHandlers(): void {
       }
 
       // Emit item:created event for consistency
+      const callingWinId1 = BrowserWindow.fromWebContents(ev.sender)?.id ?? null;
       publish('system', PubSubScopes.GLOBAL, 'item:created', {
         itemId: result.id,
         itemType: 'url',
-        content: normalizedUri
+        content: normalizedUri,
+        windowId: callingWinId1
       });
-
-      // Auto-tag with group if calling window is in group mode
-      autoTagIfGroupMode(ev, result.id);
 
       return { success: true, data: result, id: result.id };
     } catch (error) {
@@ -765,33 +505,7 @@ export function registerDatastoreHandlers(): void {
         return { success: false, error: `Invalid table: ${tableName}` };
       }
 
-      // When promoting a tag to a group, ensure it gets a vivid color
-      let assignedVividColor = false;
-      if (tableName === 'tags' && rowData) {
-        let tagMeta: Record<string, unknown> | null = null;
-        try {
-          tagMeta = rowData.metadata
-            ? (typeof rowData.metadata === 'string' ? JSON.parse(rowData.metadata) : rowData.metadata)
-            : null;
-        } catch { /* ignore parse errors */ }
-
-        if (tagMeta?.isGroup && (!rowData.color || rowData.color === '#999' || rowData.color === '#999999')) {
-          const vividColor = resolveGroupBorderColor(rowData.color, rowId);
-          rowData.color = vividColor;
-          assignedVividColor = true;
-          DEBUG && console.log('[ipc] Auto-assigned vivid color to group:', rowId, vividColor);
-        }
-      }
-
       const result = setRow(tableName, rowId, rowData);
-
-      // Publish color-changed event so UI dots update immediately
-      if (assignedVividColor) {
-        publish('system', PubSubScopes.GLOBAL, 'tag:color-changed', {
-          tagId: rowId,
-          color: rowData.color
-        });
-      }
 
       return { success: true, data: result };
     } catch (error) {
@@ -1005,15 +719,14 @@ export function registerDatastoreHandlers(): void {
       const result = addItem(data.type, data.options);
 
       // Emit item:created event
+      const callingWinId2 = BrowserWindow.fromWebContents(ev.sender)?.id ?? null;
       publish('system', PubSubScopes.GLOBAL, 'item:created', {
         itemId: result.id,
         itemType: data.type,
-        content: data.options?.content
+        content: data.options?.content,
+        windowId: callingWinId2
       });
       if (DEBUG) console.log('[ipc] item:created', result.id, data.type);
-
-      // Auto-tag with group if calling window is in group mode
-      autoTagIfGroupMode(ev, result.id);
 
       return { success: true, data: result };
     } catch (error) {
@@ -1247,9 +960,6 @@ export function registerDatastoreHandlers(): void {
   ipcMain.handle('datastore-track-navigation', async (ev, data) => {
     try {
       const result = trackNavigation(data.uri, data.options);
-
-      // Auto-tag with group if calling window is in group mode
-      autoTagIfGroupMode(ev, result.itemId);
 
       return { success: true, data: result };
     } catch (error) {
@@ -1534,7 +1244,7 @@ export function registerExtensionHandlers(): void {
 
       // Remove from database
       db.prepare('DELETE FROM extensions WHERE id = ?').run(extId);
-      db.prepare('DELETE FROM extension_settings WHERE extensionId = ?').run(extId);
+      db.prepare('DELETE FROM feature_settings WHERE featureId = ?').run(extId);
 
       return { success: true, data: { id: extId } };
     } catch (error) {
@@ -1723,14 +1433,14 @@ export function registerExtensionHandlers(): void {
     }
   });
 
-  // Extension settings handlers
+  // Feature settings handlers (renamed from extension-settings)
   // Note: preload sends { extId } but we accept both extId and id for compatibility
-  ipcMain.handle('extension-settings-get', async (ev, data) => {
+  ipcMain.handle('feature-settings-get', async (ev, data) => {
     try {
       const db = getDb();
       const extId = data.extId || data.id;
       const settings = db.prepare(
-        'SELECT * FROM extension_settings WHERE extensionId = ?'
+        'SELECT * FROM feature_settings WHERE featureId = ?'
       ).all(extId) as Array<{ key: string; value: string }>;
 
       const result: Record<string, unknown> = {};
@@ -1748,7 +1458,7 @@ export function registerExtensionHandlers(): void {
     }
   });
 
-  ipcMain.handle('extension-settings-set', async (ev, data) => {
+  ipcMain.handle('feature-settings-set', async (ev, data) => {
     try {
       const db = getDb();
       const extId = data.extId || data.id;
@@ -1757,7 +1467,7 @@ export function registerExtensionHandlers(): void {
       for (const [key, value] of Object.entries(settings)) {
         const jsonValue = JSON.stringify(value);
         db.prepare(`
-          INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+          INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
           VALUES (?, ?, ?, ?, ?)
         `).run(`${extId}_${key}`, extId, key, jsonValue, Date.now());
       }
@@ -1769,12 +1479,12 @@ export function registerExtensionHandlers(): void {
     }
   });
 
-  ipcMain.handle('extension-settings-get-key', async (ev, data) => {
+  ipcMain.handle('feature-settings-get-key', async (ev, data) => {
     try {
       const db = getDb();
       const extId = data.extId || data.id;
       const setting = db.prepare(
-        'SELECT * FROM extension_settings WHERE extensionId = ? AND key = ?'
+        'SELECT * FROM feature_settings WHERE featureId = ? AND key = ?'
       ).get(extId, data.key) as { value: string } | undefined;
 
       if (!setting) {
@@ -1792,13 +1502,13 @@ export function registerExtensionHandlers(): void {
     }
   });
 
-  ipcMain.handle('extension-settings-set-key', async (ev, data) => {
+  ipcMain.handle('feature-settings-set-key', async (ev, data) => {
     try {
       const db = getDb();
       const extId = data.extId || data.id;
       const jsonValue = JSON.stringify(data.value);
       db.prepare(`
-        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
         VALUES (?, ?, ?, ?, ?)
       `).run(`${extId}_${data.key}`, extId, data.key, jsonValue, Date.now());
 
@@ -1830,7 +1540,7 @@ export function registerExtensionHandlers(): void {
     }
   });
 
-  ipcMain.handle('extension-settings-schema', async (ev, data) => {
+  ipcMain.handle('feature-settings-schema', async (ev, data) => {
     try {
       const extPath = getExtensionPath(data.id);
       if (!extPath) {
@@ -1872,7 +1582,7 @@ function getThemeSetting(key: string): string | null {
   try {
     const db = getDb();
     const row = db.prepare(
-      'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+      'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
     ).get(THEME_SETTINGS_KEY, key) as { value: string } | undefined;
     if (!row?.value) return null;
     // Parse JSON-encoded value, fall back to raw value for backwards compatibility
@@ -1894,7 +1604,7 @@ function setThemeSetting(key: string, value: string): void {
   const db = getDb();
   const timestamp = Date.now();
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, ?, ?, ?, ?)
   `).run(`${THEME_SETTINGS_KEY}_${key}`, THEME_SETTINGS_KEY, key, JSON.stringify(value), timestamp);
 }
@@ -2420,8 +2130,8 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     options.height = entry.bounds.height;
   }
 
-  if (entry.groupMode) {
-    options.groupMode = entry.groupMode;
+  if (entry.spaceMode) {
+    options.spaceMode = entry.spaceMode;
   }
 
   // Publish event for the background window to pick up and open
@@ -2809,44 +2519,44 @@ export function registerWindowHandlers(): void {
         }
       }
 
-      // Check for group mode inheritance from options
-      // If opener passed groupMode, inherit it instead of URL-based detection
-      if (options.groupMode) {
-        const { groupId, groupName, color } = options.groupMode;
-        // Set group mode via context API
-        addContextEntry('mode', 'group', {
+      // Check for space mode inheritance from options
+      // If opener passed spaceMode, inherit it instead of URL-based detection
+      if (options.spaceMode) {
+        const { spaceId, spaceName, color } = options.spaceMode;
+        // Set space mode via context API
+        addContextEntry('mode', 'space', {
           windowId: win.id,
           source: msg.source,
-          metadata: { groupId, groupName, color, url: modeUrl }
+          metadata: { spaceId, spaceName, color, url: modeUrl }
         });
-        DEBUG && console.log('Inherited group mode for window:', win.id, 'group:', groupName);
+        DEBUG && console.log('Inherited space mode for window:', win.id, 'space:', spaceName);
       } else {
-        // Check if opener is in group mode - inherit if so
-        let openerGroupMode = null;
+        // Check if opener is in space mode - inherit if so
+        let openerSpaceMode = null;
         const callingWin = BrowserWindow.fromWebContents(ev.sender);
         if (callingWin && !callingWin.isDestroyed()) {
           const openerContext = getContextEntry('mode', callingWin.id);
-          if (openerContext && openerContext.value === 'group' && openerContext.metadata) {
-            openerGroupMode = openerContext;
+          if (openerContext && openerContext.value === 'space' && openerContext.metadata) {
+            openerSpaceMode = openerContext;
           }
         }
 
-        if (openerGroupMode) {
-          // Inherit group mode from opener (window lineage)
-          addContextEntry('mode', 'group', {
+        if (openerSpaceMode) {
+          // Inherit space mode from opener (window lineage)
+          addContextEntry('mode', 'space', {
             windowId: win.id,
             source: msg.source,
             metadata: {
-              ...openerGroupMode.metadata,
+              ...openerSpaceMode.metadata,
               url: modeUrl,
-              inheritedFrom: openerGroupMode.windowId
+              inheritedFrom: openerSpaceMode.windowId
             }
           });
-          DEBUG && console.log('Inherited group mode from opener:', openerGroupMode.metadata?.groupName);
+          DEBUG && console.log('Inherited space mode from opener:', openerSpaceMode.metadata?.spaceName);
         } else {
-          // No group mode inheritance — only explicit groupMode option or direct
-          // opener lineage propagates group mode. Do NOT fall back to
-          // lastFocusedVisibleWindowId, as that causes group leakage to unrelated
+          // No space mode inheritance — only explicit spaceMode option or direct
+          // opener lineage propagates space mode. Do NOT fall back to
+          // lastFocusedVisibleWindowId, as that causes space leakage to unrelated
           // windows (external app opens, peeks, slides, etc.)
           const detectedMode = detectModeFromUrl(modeUrl);
           addContextEntry('mode', detectedMode, {
@@ -2958,31 +2668,23 @@ export function registerWindowHandlers(): void {
                       publish('system', PubSubScopes.GLOBAL, 'item:created', {
                         itemId: popupTrack.itemId,
                         itemType: 'url',
-                        content: popupUrl
+                        content: popupUrl,
+                        windowId: win.id
                       });
                     }
                   } catch (e) {
                     DEBUG && console.log('Failed to track webview popup:', e);
                   }
 
-                  // Inherit group mode from parent window if applicable
-                  let groupMode: { groupId: string; groupName: string; color: string } | undefined = undefined;
+                  // Inherit space mode from parent window if applicable
+                  let spaceMode: { spaceId: string; spaceName: string; color: string } | undefined = undefined;
                   const parentContext = getContextEntry('mode', win.id);
-                  if (parentContext && parentContext.value === 'group' && parentContext.metadata) {
-                    groupMode = {
-                      groupId: parentContext.metadata.groupId as string,
-                      groupName: parentContext.metadata.groupName as string,
+                  if (parentContext && parentContext.value === 'space' && parentContext.metadata) {
+                    spaceMode = {
+                      spaceId: parentContext.metadata.spaceId as string,
+                      spaceName: parentContext.metadata.spaceName as string,
                       color: parentContext.metadata.color as string,
                     };
-                    // Auto-tag popup item with the group tag
-                    if (popupItemId) {
-                      try {
-                        tagItemAndPublish(popupItemId, groupMode.groupId);
-                        DEBUG && console.log('[webview-popup] Auto-tagged popup item', popupItemId, 'with group', groupMode.groupId);
-                      } catch (e) {
-                        DEBUG && console.log('[webview-popup] Failed to auto-tag popup:', e);
-                      }
-                    }
                   }
 
                   // Get the source address from the parent window's registration
@@ -3050,19 +2752,19 @@ export function registerWindowHandlers(): void {
                     parentWindowId: win.id,
                     role: 'child-content',
                   };
-                  if (groupMode) {
-                    popupParams.groupMode = groupMode;
+                  if (spaceMode) {
+                    popupParams.spaceMode = spaceMode;
                   }
                   registerWindow(popupWin.id, source, popupParams);
                   trackWindow(popupWin);
                   coordinator.pushWindow(popupWin.id);
 
                   // Set mode context (inherit group mode or detect from URL)
-                  if (groupMode) {
-                    addContextEntry('mode', 'group', {
+                  if (spaceMode) {
+                    addContextEntry('mode', 'space', {
                       windowId: popupWin.id,
                       source,
-                      metadata: { ...groupMode, url: popupUrl, inheritedFrom: win.id },
+                      metadata: { ...spaceMode, url: popupUrl, inheritedFrom: win.id },
                     });
                   } else {
                     const detectedMode = detectModeFromUrl(popupUrl);
@@ -3133,9 +2835,6 @@ export function registerWindowHandlers(): void {
       console.log(`[page-host:${win.id}] Loading: ${loadUrl.substring(0, 120)}`);
       await win.loadURL(loadUrl);
       console.log(`[page-host:${win.id}] loadURL resolved`);
-
-      // Update group screen border if this window entered group mode
-      updateGroupScreenBorder();
 
       // Background detection for non-canvas web pages (slides, modals, quick-views).
       // Canvas pages get this via the webview dom-ready handler in page.js.
@@ -3233,15 +2932,9 @@ export function registerWindowHandlers(): void {
             publish('system', PubSubScopes.GLOBAL, 'item:created', {
               itemId: trackResult.itemId,
               itemType: 'url',
-              content: url
+              content: url,
+              windowId: win.id
             });
-          }
-          // Auto-tag with group if this window is in group mode
-          const loadModeEntry = getContextEntry('mode', win.id);
-          console.log('[openWindow] trackWindowLoad auto-tag check:', { winId: win.id, mode: loadModeEntry?.value, groupId: loadModeEntry?.metadata?.groupId, itemId: trackResult.itemId });
-          if (loadModeEntry && loadModeEntry.value === 'group' && loadModeEntry.metadata?.groupId) {
-            tagItemAndPublish(trackResult.itemId, loadModeEntry.metadata.groupId as string);
-            console.log('[openWindow] Auto-tagged item', trackResult.itemId, 'with group', loadModeEntry.metadata.groupId);
           }
         } catch (e) {
           DEBUG && console.log('Failed to track window load:', e);
@@ -3267,14 +2960,9 @@ export function registerWindowHandlers(): void {
             publish('system', PubSubScopes.GLOBAL, 'item:created', {
               itemId: navTrack.itemId,
               itemType: 'url',
-              content: navUrl
+              content: navUrl,
+              windowId: win.id
             });
-          }
-          // Auto-tag with group if this window is in group mode
-          const navModeEntry = getContextEntry('mode', win.id);
-          if (navModeEntry && navModeEntry.value === 'group' && navModeEntry.metadata?.groupId) {
-            tagItemAndPublish(navTrack.itemId, navModeEntry.metadata.groupId as string);
-            DEBUG && console.log('[did-navigate] Auto-tagged item', navTrack.itemId, 'with group', navModeEntry.metadata.groupId);
           }
         } catch (e) {
           DEBUG && console.log('Failed to track did-navigate:', e);
@@ -3404,6 +3092,28 @@ export function registerWindowHandlers(): void {
     if (!win || win.isDestroyed()) return { success: false };
     win.setIgnoreMouseEvents(msg.ignore, msg.forward ? { forward: true } : undefined);
     return { success: true };
+  });
+
+  // Set visible on all workspaces (macOS Spaces)
+  ipcMain.handle('window-set-visible-on-all-workspaces', (ev, msg) => {
+    const win = msg?.id ? BrowserWindow.fromId(msg.id) : BrowserWindow.fromWebContents(ev.sender);
+    if (!win || win.isDestroyed()) return { success: false };
+    win.setVisibleOnAllWorkspaces(msg.visible, msg.options || {});
+    return { success: true };
+  });
+
+  // Get primary display info
+  ipcMain.handle('screen-get-primary-display', () => {
+    const display = screen.getPrimaryDisplay();
+    return {
+      success: true,
+      data: {
+        bounds: display.bounds,
+        workArea: display.workArea,
+        scaleFactor: display.scaleFactor,
+        size: display.size,
+      }
+    };
   });
 
   // Return full bounds (position + size) for any window
@@ -5046,76 +4756,11 @@ export function registerProfileHandlers(): void {
  * New code should use the context API (api.context) instead.
  */
 export function registerModesHandlers(): void {
-  // Update group screen border when focus changes — border tracks the focused window's mode
-  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'window:focused', () => {
-    updateGroupScreenBorder();
-  });
-
-  // Update group screen border when windows close (focused window may have closed)
-  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'window:closed', () => {
-    updateGroupScreenBorder();
-  });
-
-  // Hide group screen border when app loses focus (no window is active)
-  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'app:focus-changed', (msg: unknown) => {
-    const data = msg as { focused: boolean };
-    if (!data.focused) {
-      scheduleHideGroupScreenBorder();
-    } else {
-      updateGroupScreenBorder();
-    }
-  });
-
-  // Reset group mode when the group tag is removed from a page
-  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'tag:item-removed', (msg: unknown) => {
-    const data = msg as { tagId: string; itemId: string };
-    if (!data.tagId || !data.itemId) return;
-
-    // Find all windows in group mode for this specific tag
-    const groupWindowIds = getWindowsMatchingContext('mode', (entry) => {
-      return entry.value === 'group' && entry.metadata?.groupId === data.tagId;
-    });
-    if (groupWindowIds.length === 0) return;
-
-    // Get the item to find its URL
-    const item = getItem(data.itemId);
-    if (!item) return;
-    const itemUrl = item.type === 'url' && item.content ? normalizeUrl(item.content) : null;
-    if (!itemUrl) return;
-
-    // Check each group window — if its URL matches the removed item, reset to page mode
-    for (const windowId of groupWindowIds) {
-      const entry = getContextEntry('mode', windowId);
-      const windowUrl = entry?.metadata?.url as string | undefined;
-      if (windowUrl && normalizeUrl(windowUrl) === itemUrl) {
-        const result = addContextEntry('mode', 'page', {
-          windowId,
-          source: 'tag-removed',
-          metadata: { url: windowUrl }
-        });
-        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'context:changed', {
-          key: 'mode',
-          value: 'page',
-          metadata: { url: windowUrl },
-          windowId,
-          source: 'tag-removed',
-          entryId: result.id
-        });
-        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'modes:changed', {
-          windowId,
-          major: 'page',
-        });
-        DEBUG && console.log('[modes] Reset window', windowId, 'from group to page after tag removal');
-      }
-    }
-    updateGroupScreenBorder();
-  });
-
   // Mode definitions
   const MODES = [
     { id: 'default', name: 'Default', description: 'Standard browsing mode' },
     { id: 'page', name: 'Page', description: 'Viewing a web page' },
-    { id: 'group', name: 'Group', description: 'Managing tab groups' },
+    { id: 'space', name: 'Space', description: 'Working in a space' },
   ];
 
   // Get mode state for a window (uses context API)
@@ -5269,11 +4914,6 @@ export function registerContextHandlers(): void {
         source
       });
 
-      // Update group screen border when mode changes
-      if (data.key === 'mode') {
-        updateGroupScreenBorder();
-      }
-
       // Publish context change event for watchers
       if (publish && PubSubScopes && getSystemAddress) {
         publish(getSystemAddress(), PubSubScopes.GLOBAL, 'context:changed', {
@@ -5339,11 +4979,11 @@ export function registerContextHandlers(): void {
     }
   });
 
-  // Get windows in a specific group (convenience method for mode='group' with groupId)
-  ipcMain.handle('context-windows-in-group', async (ev, data: { groupId: string }) => {
+  // Get windows in a specific space (convenience method for mode='space' with spaceId)
+  ipcMain.handle('context-windows-in-space', async (ev, data: { spaceId: string }) => {
     try {
       const windowIds = getWindowsMatchingContext('mode', (entry) => {
-        return entry.value === 'group' && entry.metadata?.groupId === data.groupId;
+        return entry.value === 'space' && entry.metadata?.spaceId === data.spaceId;
       });
       return { success: true, data: windowIds };
     } catch (error) {
@@ -5365,7 +5005,7 @@ function persistAdBlockerPref(enabled: boolean): void {
     const CORE_EXT_ID = 'core';
     const PREFS_KEY = 'prefs';
     const row = db.prepare(
-      'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+      'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
     ).get(CORE_EXT_ID, PREFS_KEY) as { value: string } | undefined;
     let prefs: Record<string, unknown> = {};
     if (row?.value) {
@@ -5374,7 +5014,7 @@ function persistAdBlockerPref(enabled: boolean): void {
     prefs.adBlockerEnabled = enabled;
     const timestamp = Date.now();
     db.prepare(`
-      INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, ?, ?, ?, ?)
     `).run(`${CORE_EXT_ID}_${PREFS_KEY}`, CORE_EXT_ID, PREFS_KEY, JSON.stringify(prefs), timestamp);
   } catch (error) {
@@ -5526,7 +5166,7 @@ export function registerWebExtensionHandlers(): void {
       const CORE_EXT_ID = 'core';
       const KEY = 'adblocker_allowlist';
       const row = db.prepare(
-        'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
       ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
       const allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
       return { success: true, data: allowlist };
@@ -5543,7 +5183,7 @@ export function registerWebExtensionHandlers(): void {
       const CORE_EXT_ID = 'core';
       const KEY = 'adblocker_allowlist';
       const row = db.prepare(
-        'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
       ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
       const allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
       return { success: true, data: allowlist.includes(data.hostname) };
@@ -5560,7 +5200,7 @@ export function registerWebExtensionHandlers(): void {
       const CORE_EXT_ID = 'core';
       const KEY = 'adblocker_allowlist';
       const row = db.prepare(
-        'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
       ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
       let allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
       if (!allowlist.includes(data.hostname)) {
@@ -5568,7 +5208,7 @@ export function registerWebExtensionHandlers(): void {
       }
       const timestamp = Date.now();
       db.prepare(`
-        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
         VALUES (?, ?, ?, ?, ?)
       `).run(`${CORE_EXT_ID}_${KEY}`, CORE_EXT_ID, KEY, JSON.stringify(allowlist), timestamp);
       return { success: true };
@@ -5585,13 +5225,13 @@ export function registerWebExtensionHandlers(): void {
       const CORE_EXT_ID = 'core';
       const KEY = 'adblocker_allowlist';
       const row = db.prepare(
-        'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
       ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
       let allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
       allowlist = allowlist.filter(h => h !== data.hostname);
       const timestamp = Date.now();
       db.prepare(`
-        INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
         VALUES (?, ?, ?, ?, ?)
       `).run(`${CORE_EXT_ID}_${KEY}`, CORE_EXT_ID, KEY, JSON.stringify(allowlist), timestamp);
       return { success: true };
@@ -5686,7 +5326,7 @@ function registerSessionHandlers(): void {
   });
 
   // Save group workspace layouts on demand (called from groups extension)
-  ipcMain.handle('save-group-workspaces', async () => {
+  ipcMain.handle('save-space-workspaces', async () => {
     try {
       const { saveGroupWorkspaces } = await import('./session.js');
       saveGroupWorkspaces();

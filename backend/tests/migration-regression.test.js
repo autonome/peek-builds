@@ -61,7 +61,7 @@ function migrateTinyBaseDataFixed(db) {
   }
 
   const tablesToMigrate = [
-    'addresses', 'visits', 'tags', 'address_tags', 'extension_settings',
+    'addresses', 'visits', 'tags', 'address_tags', 'feature_settings',
     'extensions', 'content', 'blobs', 'scripts_data', 'feeds',
   ];
 

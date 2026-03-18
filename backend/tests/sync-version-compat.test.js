@@ -376,10 +376,10 @@ async function test8_bothNoHeaders() {
 // replicate the version check/write logic inline.
 //
 // The code under test (in datastore.ts) does:
-//   1. Read datastore_version from extension_settings
+//   1. Read datastore_version from feature_settings
 //   2. If stored > code: disable sync (downgrade detected)
 //   3. If stored < code: update stored version (upgrade)
-//   4. Write current version to extension_settings
+//   4. Write current version to feature_settings
 
 const CODE_DATASTORE_VERSION = 1; // Matches backend/version.ts
 
@@ -387,17 +387,17 @@ function createTestDesktopDb(dbPath) {
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
 
-  // Create the extension_settings table (same as desktop schema)
+  // Create the feature_settings table (same as desktop schema)
   db.exec(`
-    CREATE TABLE IF NOT EXISTS extension_settings (
+    CREATE TABLE IF NOT EXISTS feature_settings (
       id TEXT PRIMARY KEY,
-      extensionId TEXT NOT NULL,
+      featureId TEXT NOT NULL,
       key TEXT NOT NULL,
       value TEXT,
       updatedAt INTEGER
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_settings_unique
-      ON extension_settings(extensionId, key);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_feature_settings_unique
+      ON feature_settings(featureId, key);
   `);
 
   return db;
@@ -409,8 +409,8 @@ function createTestDesktopDb(dbPath) {
  */
 function checkAndWriteDatastoreVersion(db, codeVersion = CODE_DATASTORE_VERSION) {
   const row = db.prepare(`
-    SELECT value FROM extension_settings
-    WHERE extensionId = 'system' AND key = 'datastore_version'
+    SELECT value FROM feature_settings
+    WHERE featureId = 'system' AND key = 'datastore_version'
   `).get();
 
   if (row) {
@@ -429,14 +429,14 @@ function checkAndWriteDatastoreVersion(db, codeVersion = CODE_DATASTORE_VERSION)
 
   // Write current version
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'system', 'datastore_version', ?, ?)
   `).run('system-datastore_version', JSON.stringify(codeVersion), Date.now());
 
   return { syncDisabled: false };
 }
 
-// Test 9: Version is written to extension_settings after init
+// Test 9: Version is written to feature_settings after init
 async function test9_initWritesVersion() {
   const tempDir = await mkdtemp(join(tmpdir(), 'peek-version-db-'));
   const dbPath = join(tempDir, 'test.db');
@@ -446,11 +446,11 @@ async function test9_initWritesVersion() {
 
   // Verify version was written
   const row = db.prepare(`
-    SELECT value FROM extension_settings
-    WHERE extensionId = 'system' AND key = 'datastore_version'
+    SELECT value FROM feature_settings
+    WHERE featureId = 'system' AND key = 'datastore_version'
   `).get();
 
-  assert(row, 'datastore_version should be stored in extension_settings');
+  assert(row, 'datastore_version should be stored in feature_settings');
 
   let storedVersion;
   try {
@@ -492,7 +492,7 @@ async function test11_downgradeDetected() {
 
   // Simulate a newer version having written version 99
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'system', 'datastore_version', ?, ?)
   `).run('system-datastore_version', JSON.stringify(99), Date.now());
 
@@ -502,8 +502,8 @@ async function test11_downgradeDetected() {
 
   // Verify the stored version was NOT overwritten
   const row = db.prepare(`
-    SELECT value FROM extension_settings
-    WHERE extensionId = 'system' AND key = 'datastore_version'
+    SELECT value FROM feature_settings
+    WHERE featureId = 'system' AND key = 'datastore_version'
   `).get();
   let storedVersion;
   try {
@@ -526,7 +526,7 @@ async function test12_upgradeDetected() {
 
   // Simulate an older version having written version 0
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'system', 'datastore_version', ?, ?)
   `).run('system-datastore_version', JSON.stringify(0), Date.now());
 
@@ -536,8 +536,8 @@ async function test12_upgradeDetected() {
 
   // Verify version was updated
   const row = db.prepare(`
-    SELECT value FROM extension_settings
-    WHERE extensionId = 'system' AND key = 'datastore_version'
+    SELECT value FROM feature_settings
+    WHERE featureId = 'system' AND key = 'datastore_version'
   `).get();
   let storedVersion;
   try {

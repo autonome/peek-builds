@@ -72,7 +72,7 @@ const saveSettings = async (settings) => {
  */
 const loadCommandCache = async () => {
   try {
-    const result = await api.datastore.getRow('extension_settings', `cmd:command_cache`);
+    const result = await api.datastore.getRow('feature_settings', `cmd:command_cache`);
     if (result.success && result.data && result.data.value) {
       const cache = JSON.parse(result.data.value);
       log('ext:cmd', 'Loaded command cache:', cache.commands?.length, 'commands');
@@ -117,8 +117,8 @@ const saveCommandCache = async (appVersion, extensionVersions) => {
       cachedAt: Date.now()
     };
 
-    await api.datastore.setRow('extension_settings', 'cmd:command_cache', {
-      extensionId: 'cmd',
+    await api.datastore.setRow('feature_settings', 'cmd:command_cache', {
+      featureId: 'cmd',
       key: 'command_cache',
       value: JSON.stringify(cache),
       updatedAt: Date.now()

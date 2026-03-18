@@ -15,7 +15,7 @@ const debug = api.debug;
 const sheetPageUrl = 'peek://sheets/sheet.html';
 
 /**
- * Get all sheet configs from extension_settings
+ * Get all sheet configs from feature_settings
  */
 const listSheets = async () => {
   const result = await api.settings.get();

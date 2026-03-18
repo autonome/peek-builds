@@ -2,7 +2,7 @@
  * Migration: Extension Settings localStorage -> Datastore
  *
  * One-time migration to move extension settings from localStorage
- * to the datastore extension_settings table for cross-origin access.
+ * to the datastore feature_settings table for cross-origin access.
  *
  * Run this from core background context (peek://app/background.html)
  */
@@ -62,14 +62,14 @@ const migrateExtension = async (oldId, newId) => {
     const settings = JSON.parse(storedData);
     console.log(`[migration] Found settings for ${oldId}:`, Object.keys(settings));
 
-    // Write each key to extension_settings table via IPC
+    // Write each key to feature_settings table via IPC
     // Note: We can't use api.settings here because we're in core context, not extension context
     // So we use a direct datastore call
 
     for (const [key, value] of Object.entries(settings)) {
       const rowId = `${newId}:${key}`;
-      const result = await api.datastore.setRow('extension_settings', rowId, {
-        extensionId: newId,
+      const result = await api.datastore.setRow('feature_settings', rowId, {
+        featureId: newId,
         key,
         value: JSON.stringify(value),
         updatedAt: Date.now()

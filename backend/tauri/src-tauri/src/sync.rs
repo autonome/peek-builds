@@ -10,7 +10,7 @@
 //!
 //! Sync configuration is per-profile:
 //! - apiKey + serverProfileSlug stored in profiles.db (per-profile)
-//! - serverUrl + autoSync stored in extension_settings (global)
+//! - serverUrl + autoSync stored in feature_settings (global)
 //!
 //! Note: rusqlite::Connection is not Send/Sync, so all async functions that need
 //! DB access accept Arc<Mutex<Connection>> and lock/unlock around await points.
@@ -120,8 +120,8 @@ struct ProfileContext {
 // ==================== Settings Storage ====================
 
 // Note: Sync configuration is now stored per-profile in profiles.db
-// Legacy extension_settings storage is deprecated for apiKey/lastSyncTime
-// Only serverUrl and autoSync remain global in extension_settings
+// Legacy feature_settings storage is deprecated for apiKey/lastSyncTime
+// Only serverUrl and autoSync remain global in feature_settings
 
 const DEFAULT_SERVER_URL: &str = "https://peek-node.up.railway.app";
 
@@ -155,13 +155,13 @@ pub fn get_sync_config(
 }
 
 /// Save sync configuration
-/// Saves serverUrl (global in extension_settings), apiKey (per-profile in profiles.db)
+/// Saves serverUrl (global in feature_settings), apiKey (per-profile in profiles.db)
 pub fn set_sync_config(
     datastore_conn: &Connection,
     profiles_conn: &Connection,
     config: &SyncConfig,
 ) -> rusqlite::Result<()> {
-    // Update serverUrl if provided (stored globally in extension_settings)
+    // Update serverUrl if provided (stored globally in feature_settings)
     if !config.server_url.is_empty() {
         set_server_url(datastore_conn, &config.server_url)?;
     }
@@ -233,17 +233,17 @@ fn set_auto_sync(conn: &Connection, enabled: bool) -> rusqlite::Result<()> {
     )
 }
 
-/// Get a setting value from extension_settings
+/// Get a setting value from feature_settings
 fn get_setting(conn: &Connection, extension_id: &str, key: &str) -> Option<String> {
     conn.query_row(
-        "SELECT value FROM extension_settings WHERE extensionId = ?1 AND key = ?2",
+        "SELECT value FROM feature_settings WHERE featureId = ?1 AND key = ?2",
         params![extension_id, key],
         |row| row.get(0),
     )
     .ok()
 }
 
-/// Set a setting value in extension_settings
+/// Set a setting value in feature_settings
 fn set_setting(
     conn: &Connection,
     extension_id: &str,
@@ -253,7 +253,7 @@ fn set_setting(
     let id = format!("{}-{}", extension_id, key);
     let timestamp = datastore::now();
     conn.execute(
-        "INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![id, extension_id, key, value, timestamp],
     )?;
     Ok(())

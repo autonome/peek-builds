@@ -13,7 +13,7 @@ let deviceId: string | null = null;
 
 /**
  * Get or generate device ID
- * Stored in extension_settings table for persistence
+ * Stored in feature_settings table for persistence
  */
 export function getDeviceId(): string {
   if (deviceId) {
@@ -25,8 +25,8 @@ export function getDeviceId(): string {
   try {
     // Try to get existing device ID
     const row = db.prepare(`
-      SELECT value FROM extension_settings
-      WHERE extensionId = 'system' AND key = 'deviceId'
+      SELECT value FROM feature_settings
+      WHERE featureId = 'system' AND key = 'deviceId'
     `).get() as { value: string } | undefined;
 
     if (row && row.value) {
@@ -50,7 +50,7 @@ export function getDeviceId(): string {
   try {
     const jsonValue = JSON.stringify(deviceId);
     db.prepare(`
-      INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, 'system', 'deviceId', ?, ?)
     `).run('system-deviceId', jsonValue, Date.now());
   } catch (error) {

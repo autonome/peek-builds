@@ -145,7 +145,7 @@ pub fn discover_themes(themes_dir: &Path) -> Vec<DiscoveredTheme> {
 /// Get theme setting from database
 pub fn get_theme_setting(db: &Connection, key: &str) -> Option<String> {
     let result: Result<String, _> = db.query_row(
-        "SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?",
+        "SELECT value FROM feature_settings WHERE featureId = ? AND key = ?",
         [THEME_SETTINGS_KEY, key],
         |row| row.get(0),
     );
@@ -169,7 +169,7 @@ pub fn set_theme_setting(db: &Connection, key: &str, value: &str) -> Result<(), 
     let timestamp = chrono::Utc::now().timestamp_millis();
 
     db.execute(
-        "INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt) VALUES (?, ?, ?, ?, ?)",
         rusqlite::params![id, THEME_SETTINGS_KEY, key, json_value, timestamp],
     )?;
 

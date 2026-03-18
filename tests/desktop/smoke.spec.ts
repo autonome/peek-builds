@@ -1185,8 +1185,8 @@ test.describe('Data Persistence @desktop', () => {
     // Save peeks items
     const savePeeksResult = await bgWindow.evaluate(async (items) => {
       const api = (window as any).app;
-      return await api.datastore.setRow('extension_settings', 'peeks:items', {
-        extensionId: 'peeks',
+      return await api.datastore.setRow('feature_settings', 'peeks:items', {
+        featureId: 'peeks',
         key: 'items',
         value: JSON.stringify(items),
         updatedAt: Date.now()
@@ -1197,8 +1197,8 @@ test.describe('Data Persistence @desktop', () => {
     // Save slides items
     const saveSlidesResult = await bgWindow.evaluate(async (items) => {
       const api = (window as any).app;
-      return await api.datastore.setRow('extension_settings', 'slides:items', {
-        extensionId: 'slides',
+      return await api.datastore.setRow('feature_settings', 'slides:items', {
+        featureId: 'slides',
         key: 'items',
         value: JSON.stringify(items),
         updatedAt: Date.now()
@@ -1209,8 +1209,8 @@ test.describe('Data Persistence @desktop', () => {
     // Save prefs
     const savePeeksPrefs = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
-      return await api.datastore.setRow('extension_settings', 'peeks:prefs', {
-        extensionId: 'peeks',
+      return await api.datastore.setRow('feature_settings', 'peeks:prefs', {
+        featureId: 'peeks',
         key: 'prefs',
         value: JSON.stringify({ shortcutKeyPrefix: 'Option+' }),
         updatedAt: Date.now()
@@ -1220,8 +1220,8 @@ test.describe('Data Persistence @desktop', () => {
 
     const saveSlidesPrefs = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
-      return await api.datastore.setRow('extension_settings', 'slides:prefs', {
-        extensionId: 'slides',
+      return await api.datastore.setRow('feature_settings', 'slides:prefs', {
+        featureId: 'slides',
         key: 'prefs',
         value: JSON.stringify({ defaultPosition: 'right', defaultSize: 350 }),
         updatedAt: Date.now()
@@ -1284,7 +1284,7 @@ test.describe('Data Persistence @desktop', () => {
     // --- Verify Peeks and Slides ---
     const persistedSettings = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
-      return await api.datastore.getTable('extension_settings');
+      return await api.datastore.getTable('feature_settings');
     });
     expect(persistedSettings.success).toBe(true);
 
@@ -1293,7 +1293,7 @@ test.describe('Data Persistence @desktop', () => {
     // Peeks items
     const peeksItems = settingsData['peeks:items'];
     expect(peeksItems).toBeTruthy();
-    expect(peeksItems.extensionId).toBe('peeks');
+    expect(peeksItems.featureId).toBe('peeks');
     const parsedPeeks = JSON.parse(peeksItems.value);
     expect(parsedPeeks.length).toBe(3);
     expect(parsedPeeks[0].title).toBe('Test Peek 1');
@@ -4462,7 +4462,7 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
     // Note: extension-settings-set stores with id format ${extId}_${key}
     const persistResult = await settingsBgWindow.evaluate(async (expectedShortcut) => {
       const api = (window as any).app;
-      const stored = await api.datastore.getRow('extension_settings', 'cmd_prefs');
+      const stored = await api.datastore.getRow('feature_settings', 'cmd_prefs');
 
       if (!stored.success || !stored.data?.value) {
         return { success: false, error: 'No stored settings found', stored };
@@ -4501,8 +4501,8 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
     // Store custom settings (using format ${extId}_${key} to match extension-settings-set handler)
     const saveResult = await setupWindow.evaluate(async (shortcut) => {
       const api = (window as any).app;
-      return await api.datastore.setRow('extension_settings', 'cmd_prefs', {
-        extensionId: 'cmd',
+      return await api.datastore.setRow('feature_settings', 'cmd_prefs', {
+        featureId: 'cmd',
         key: 'prefs',
         value: JSON.stringify({ shortcutKey: shortcut }),
         updatedAt: Date.now()
@@ -4796,16 +4796,16 @@ test.describe('Backup @desktop', () => {
         const api = (window as any).app;
 
         // Get current prefs
-        const prefsResult = await api.datastore.getTable('extension_settings');
+        const prefsResult = await api.datastore.getTable('feature_settings');
         const corePrefsRow = Object.values(prefsResult.data || {}).find(
-          (r: any) => r.extensionId === 'core' && r.key === 'prefs'
+          (r: any) => r.featureId === 'core' && r.key === 'prefs'
         ) as any;
         const originalPrefs = corePrefsRow ? JSON.parse(corePrefsRow.value) : {};
 
         // Set backupDir in core prefs
         const newPrefs = { ...originalPrefs, backupDir };
-        await api.datastore.setRow('extension_settings', 'core:prefs', {
-          extensionId: 'core',
+        await api.datastore.setRow('feature_settings', 'core:prefs', {
+          featureId: 'core',
           key: 'prefs',
           value: JSON.stringify(newPrefs),
           updatedAt: Date.now()
@@ -4843,8 +4843,8 @@ test.describe('Backup @desktop', () => {
       // Restore original prefs
       await bgWindow.evaluate(async (originalPrefs: Record<string, unknown>) => {
         const api = (window as any).app;
-        await api.datastore.setRow('extension_settings', 'core:prefs', {
-          extensionId: 'core',
+        await api.datastore.setRow('feature_settings', 'core:prefs', {
+          featureId: 'core',
           key: 'prefs',
           value: JSON.stringify(originalPrefs),
           updatedAt: Date.now()
@@ -5455,7 +5455,7 @@ test.describe('Scripts Extension @desktop', () => {
       const scriptId = `script_test_${Date.now()}`;
 
       // Get current settings from datastore
-      const settingsTable = await api.datastore.getTable('extension_settings');
+      const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
       const scripts = scriptsRow ? JSON.parse(scriptsRow.value) : [];
 
@@ -5477,8 +5477,8 @@ test.describe('Scripts Extension @desktop', () => {
       scripts.push(newScript);
 
       // Save back to datastore
-      await api.datastore.setRow('extension_settings', 'scripts:scripts', {
-        extensionId: 'scripts',
+      await api.datastore.setRow('feature_settings', 'scripts:scripts', {
+        featureId: 'scripts',
         key: 'scripts',
         value: JSON.stringify(scripts),
         updatedAt: Date.now()
@@ -5492,7 +5492,7 @@ test.describe('Scripts Extension @desktop', () => {
     // Verify script was saved
     const savedScript = await sharedBgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
-      const settingsTable = await api.datastore.getTable('extension_settings');
+      const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
       const scripts = scriptsRow ? JSON.parse(scriptsRow.value) : [];
       return scripts.find((s: any) => s.id === scriptId);
@@ -5507,7 +5507,7 @@ test.describe('Scripts Extension @desktop', () => {
       const { scriptExecutor } = await import('peek://ext/scripts/script-executor.js');
 
       // Get the script from datastore
-      const settingsTable = await api.datastore.getTable('extension_settings');
+      const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
       const scripts = scriptsRow ? JSON.parse(scriptsRow.value) : [];
       const script = scripts.find((s: any) => s.id === scriptId);
@@ -5532,12 +5532,12 @@ test.describe('Scripts Extension @desktop', () => {
     // Clean up - delete script
     await sharedBgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
-      const settingsTable = await api.datastore.getTable('extension_settings');
+      const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
       const scripts = scriptsRow ? JSON.parse(scriptsRow.value) : [];
       const filtered = scripts.filter((s: any) => s.id !== scriptId);
-      await api.datastore.setRow('extension_settings', 'scripts:scripts', {
-        extensionId: 'scripts',
+      await api.datastore.setRow('feature_settings', 'scripts:scripts', {
+        featureId: 'scripts',
         key: 'scripts',
         value: JSON.stringify(filtered),
         updatedAt: Date.now()
@@ -5573,7 +5573,7 @@ test.describe('Scripts Extension @desktop', () => {
       const scriptId = `script_timeout_test_${Date.now()}`;
 
       // Get current settings from datastore
-      const settingsTable = await api.datastore.getTable('extension_settings');
+      const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
       const scripts = scriptsRow ? JSON.parse(scriptsRow.value) : [];
 
@@ -5592,8 +5592,8 @@ test.describe('Scripts Extension @desktop', () => {
       };
 
       scripts.push(newScript);
-      await api.datastore.setRow('extension_settings', 'scripts:scripts', {
-        extensionId: 'scripts',
+      await api.datastore.setRow('feature_settings', 'scripts:scripts', {
+        featureId: 'scripts',
         key: 'scripts',
         value: JSON.stringify(scripts),
         updatedAt: Date.now()
@@ -5608,7 +5608,7 @@ test.describe('Scripts Extension @desktop', () => {
       const { scriptExecutor } = await import('peek://ext/scripts/script-executor.js');
 
       // Get the script from datastore
-      const settingsTable = await api.datastore.getTable('extension_settings');
+      const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
       const scripts = scriptsRow ? JSON.parse(scriptsRow.value) : [];
       const script = scripts.find((s: any) => s.id === scriptId);
@@ -5635,12 +5635,12 @@ test.describe('Scripts Extension @desktop', () => {
     // Clean up
     await sharedBgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
-      const settingsTable = await api.datastore.getTable('extension_settings');
+      const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
       const scripts = scriptsRow ? JSON.parse(scriptsRow.value) : [];
       const filtered = scripts.filter((s: any) => s.id !== scriptId);
-      await api.datastore.setRow('extension_settings', 'scripts:scripts', {
-        extensionId: 'scripts',
+      await api.datastore.setRow('feature_settings', 'scripts:scripts', {
+        featureId: 'scripts',
         key: 'scripts',
         value: JSON.stringify(filtered),
         updatedAt: Date.now()

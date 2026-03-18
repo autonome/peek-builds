@@ -5,7 +5,7 @@
  * Each widget is a webview pointing to an individual widget page
  * (e.g., peek://ext/widget-demo/widgets/clock.html).
  *
- * Layout config is loaded from extension_settings (created by background.js).
+ * Layout config is loaded from feature_settings (created by background.js).
  */
 
 const api = window.app;
@@ -51,7 +51,7 @@ let sheetConfig = null;
 let editing = false;
 
 /**
- * Load demo sheet config from extension_settings.
+ * Load demo sheet config from feature_settings.
  * Creates default config if none exists (lazy init, no background page needed).
  */
 const loadSheetConfig = async () => {
@@ -68,7 +68,7 @@ const loadSheetConfig = async () => {
 };
 
 /**
- * Save sheet config to extension_settings
+ * Save sheet config to feature_settings
  */
 const saveSheetConfig = async () => {
   if (!sheetConfig) return;

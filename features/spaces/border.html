@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Space Border</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      background: transparent;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .border {
+      position: fixed;
+      inset: 0;
+      border: 3px solid var(--color, #007aff);
+      border-radius: 8px;
+      pointer-events: none;
+    }
+    .label {
+      position: fixed;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--color, #007aff);
+      color: #fff;
+      font: 500 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+      padding: 3px 10px;
+      border-radius: 8px;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="border" id="border"></div>
+  <div class="label" id="label"></div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const color = params.get('color') || '#007aff';
+    const name = params.get('name') || 'Space';
+
+    document.documentElement.style.setProperty('--color', color);
+    document.getElementById('label').textContent = name;
+
+    // Listen for updates from background.js
+    if (window.app) {
+      window.app.subscribe('spaces:border-update', (msg) => {
+        if (msg.color) {
+          document.documentElement.style.setProperty('--color', msg.color);
+          document.getElementById('border').style.borderColor = msg.color;
+        }
+        if (msg.name) {
+          document.getElementById('label').textContent = msg.name;
+        }
+      }, window.app.scopes.GLOBAL);
+    }
+  </script>
+</body>
+</html>

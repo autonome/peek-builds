@@ -74,7 +74,7 @@ let extensionHostWindow: BrowserWindow | null = null;
 
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
-const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'lex', 'lists', 'peeks', 'search', 'slides', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
+const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
 const EAGER_EXTENSION_IDS = new Set(['cmd', 'hud', 'entities']);
@@ -103,7 +103,7 @@ interface ClosedWindowEntry {
   url: string;           // Original URL (not the peek:// rewritten one)
   source: string;
   bounds: { x: number; y: number; width: number; height: number } | null;
-  groupMode: { groupId: string; groupName: string; color?: string } | null;
+  spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
   timestamp: number;
 }
 
@@ -301,14 +301,14 @@ export async function initialize(): Promise<void> {
           const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
 
           if (isWebUrl && isContentRole && !isKeepLive && !isModal) {
-            // Check for group mode context
-            let groupMode: ClosedWindowEntry['groupMode'] = null;
+            // Check for space mode context
+            let spaceMode: ClosedWindowEntry['spaceMode'] = null;
             try {
               const modeEntry = getContextEntry('mode', windowId);
-              if (modeEntry && modeEntry.value === 'group' && modeEntry.metadata) {
-                groupMode = {
-                  groupId: modeEntry.metadata.groupId as string,
-                  groupName: modeEntry.metadata.groupName as string,
+              if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
+                spaceMode = {
+                  spaceId: modeEntry.metadata.spaceId as string,
+                  spaceName: modeEntry.metadata.spaceName as string,
                   color: modeEntry.metadata.color as string | undefined,
                 };
               }
@@ -335,7 +335,7 @@ export async function initialize(): Promise<void> {
               url: address,
               source: windowData.source,
               bounds: saveBounds,
-              groupMode,
+              spaceMode,
               timestamp: Date.now(),
             });
           }

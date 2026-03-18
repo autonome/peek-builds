@@ -55,15 +55,15 @@ const openStore = (prefix, defaults, clear = false) => {
 
 /**
  * Create an async store backed by datastore instead of localStorage.
- * Uses the extension_settings table with extensionId as namespace.
+ * Uses the feature_settings table with featureId as namespace.
  *
- * @param {string} namespace - The extensionId (e.g., 'core', 'cmd', 'scripts')
+ * @param {string} namespace - The featureId (e.g., 'core', 'cmd', 'scripts')
  * @param {object} defaults - Default values for each key
  * @returns {Promise<object>} Store with async get/set methods
  */
 const createDatastoreStore = async (namespace, defaults = {}) => {
   const api = window.app;
-  const table = 'extension_settings';
+  const table = 'feature_settings';
 
   // Load all settings for this namespace once
   let cache = {};
@@ -71,7 +71,7 @@ const createDatastoreStore = async (namespace, defaults = {}) => {
     const result = await api.datastore.getTable(table);
     if (result.success && result.data) {
       Object.values(result.data).forEach(row => {
-        if (row.extensionId === namespace && row.value) {
+        if (row.featureId === namespace && row.value) {
           try {
             cache[row.key] = JSON.parse(row.value);
           } catch (e) {
@@ -101,7 +101,7 @@ const createDatastoreStore = async (namespace, defaults = {}) => {
       const rowId = `${namespace}:${key}`;
       try {
         await api.datastore.setRow(table, rowId, {
-          extensionId: namespace,
+          featureId: namespace,
           key,
           value: JSON.stringify(value),
           updatedAt: Date.now()

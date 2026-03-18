@@ -61,7 +61,7 @@ const buildDefaultSheetConfig = () => {
 };
 
 /**
- * Ensure the HUD sheet config exists in extension_settings.
+ * Ensure the HUD sheet config exists in feature_settings.
  * Creates a default config if none exists.
  */
 const CURRENT_CONFIG_VERSION = 2;

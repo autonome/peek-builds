@@ -1,0 +1,494 @@
+/* Import theme variables */
+@import url('peek://theme/variables.css');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--theme-font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+body {
+  background: var(--base00);
+  color: var(--base05);
+  min-height: 100vh;
+}
+
+/* Search */
+.search-container {
+  padding: 12px 16px 0 16px;
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-row peek-input.search-input {
+  flex: 1;
+}
+
+/* Create space button */
+.create-space-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--base0D);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--base00);
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.create-space-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* Create space form */
+.create-space-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.create-space-form peek-input.new-space-input {
+  width: 100%;
+  --peek-input-bg: var(--base01);
+  --peek-input-border: var(--base02);
+  --peek-input-height: 32px;
+}
+
+.create-space-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Component customization for peek-input */
+peek-input.search-input {
+  display: block;
+  width: 100%;
+  --peek-input-bg: var(--base01);
+  --peek-input-border: var(--base02);
+  --peek-input-height: 32px;
+}
+
+peek-input.search-input::part(input) {
+  color: var(--base05);
+  font-size: 13px;
+}
+
+/* Grid toolbar */
+peek-grid-toolbar.grid-toolbar {
+  padding: 0 16px;
+  --theme-bg-secondary: var(--base01);
+  --theme-border: var(--base02);
+  --theme-text: var(--base05);
+  --theme-text-muted: var(--base04);
+  --theme-bg-tertiary: var(--base02);
+  --theme-accent: var(--base0D);
+}
+
+/* Cards container - peek-grid handles layout */
+.cards {
+  padding: 12px 16px;
+}
+
+/* Component customization for peek-card - shared across all cards */
+peek-card {
+  --peek-card-bg: var(--base01);
+  --peek-card-hover-bg: var(--base02);
+  --peek-card-border: transparent;
+  --peek-card-radius: 6px;
+  --peek-card-padding: 8px;
+  --peek-card-gap: 4px;
+}
+
+peek-card[selected] {
+  --peek-card-bg: var(--base02);
+}
+
+peek-card[selected]:hover {
+  --peek-card-bg: var(--base03);
+}
+
+/* Space card slotted content */
+.space-card .color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Address card slotted content */
+.address-card .card-favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: var(--base02);
+  object-fit: contain;
+  margin-top: 1px;
+}
+
+/* Card button group */
+.card-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Card open button */
+.card-open-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.card-open-btn:hover {
+  color: var(--base05);
+}
+
+/* Card delete button */
+.card-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.card-delete-btn:hover {
+  background: var(--base08);
+  color: var(--base00);
+}
+
+/* Card remove-from-space button */
+.card-remove-space-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.card-remove-space-btn:hover {
+  background: var(--base08);
+  color: var(--base00);
+}
+
+/* Card tags */
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.card-tag {
+  padding: 1px 6px;
+  background: var(--base02);
+  border-radius: 8px;
+  font-size: 10px;
+  color: var(--base04);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.card-tag:hover {
+  background: var(--base03);
+  color: var(--base05);
+}
+
+/* Tag remove button */
+.card-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 3px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--base03);
+  transition: color 0.15s;
+}
+
+.card-tag-remove:hover {
+  color: var(--base08);
+}
+
+/* Shared slotted content styles */
+.card-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--base05);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.card-url {
+  font-size: 11px;
+  color: var(--base04);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.card-url-row {
+  margin-top: -2px;
+}
+
+.card-meta {
+  font-size: 11px;
+  color: var(--base03);
+}
+
+/* List view mode */
+peek-grid.cards[view-mode="list"] peek-card {
+  max-width: none;
+}
+
+/* Masonry view */
+peek-grid.cards[view-mode="masonry"] peek-card {
+  max-width: none;
+}
+
+/* Empty state */
+.empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--base03);
+  font-size: 13px;
+}
+
+/* Space detail header */
+.space-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 10px 16px;
+  border-bottom: 1px solid var(--base02);
+}
+
+.space-header-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--base05);
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.space-header-spacer {
+  flex: 1;
+}
+
+/* View mode buttons in space detail header */
+.space-header-view-modes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.space-header-view-modes .shvm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--base04);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.space-header-view-modes .shvm-btn:hover {
+  background: var(--base02);
+  color: var(--base05);
+}
+
+.space-header-view-modes .shvm-btn.active {
+  background: var(--base0D);
+  color: var(--base00);
+  border-color: var(--base0D);
+}
+
+/* Inline sort controls */
+.inline-sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.inline-sort-controls .inline-sort-select {
+  height: 28px;
+  padding: 0 22px 0 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--base05);
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 5px;
+  cursor: pointer;
+  appearance: none;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.inline-sort-controls .inline-sort-select:focus {
+  border-color: var(--base0D);
+}
+
+.inline-sort-controls .inline-sort-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.inline-sort-controls .inline-sort-arrow {
+  position: absolute;
+  right: 6px;
+  pointer-events: none;
+  color: var(--base04);
+}
+
+.inline-sort-controls .inline-sort-dir-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--base02);
+  border-radius: 5px;
+  background: var(--base01);
+  color: var(--base05);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.inline-sort-controls .inline-sort-dir-btn:hover {
+  background: var(--base02);
+}
+
+.space-header-name[title] {
+  cursor: pointer;
+}
+
+.space-header-name[title]:hover {
+  color: var(--base0D);
+}
+
+.space-rename-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--base04);
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.space-rename-btn:hover {
+  color: var(--base05);
+  background: var(--base02);
+}
+
+.space-rename-input {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--base05);
+  background: var(--base01);
+  border: 1px solid var(--base0D);
+  border-radius: 4px;
+  padding: 2px 8px;
+  outline: none;
+  flex: 1;
+  min-width: 0;
+  font-family: var(--theme-font-sans);
+}
+
+.space-rename-input:focus {
+  border-color: var(--base0D);
+  box-shadow: 0 0 0 1px var(--base0D);
+}
+
+/* Space header color dot */
+.space-header-color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid var(--base02);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.space-header-color-dot:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 2px var(--base02);
+}
+
+.space-header-color-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}

@@ -139,9 +139,9 @@ pub fn is_extension_enabled(
     ext_id: &str,
     is_builtin: bool,
 ) -> bool {
-    // Query extension_settings for enabled state
+    // Query feature_settings for enabled state
     let result: Result<Option<String>, _> = db.query_row(
-        "SELECT value FROM extension_settings WHERE extensionId = ? AND key = 'enabled'",
+        "SELECT value FROM feature_settings WHERE featureId = ? AND key = 'enabled'",
         rusqlite::params![ext_id],
         |row| row.get(0),
     );

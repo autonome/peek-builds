@@ -21,7 +21,7 @@
 
   <div class="section">
     <button onclick="dumpLocalStorage()">Dump localStorage</button>
-    <button onclick="dumpDatastore()">Dump extension_settings from datastore</button>
+    <button onclick="dumpDatastore()">Dump feature_settings from datastore</button>
     <button onclick="dumpBoth()">Dump Both</button>
     <button onclick="copyResults()">Copy Results</button>
   </div>
@@ -98,7 +98,7 @@
     window.dumpDatastore = async function() {
       clearOutput();
       try {
-        const result = await api.datastore.getTable('extension_settings');
+        const result = await api.datastore.getTable('feature_settings');
         if (result.success) {
           const data = result.data || {};
           const entries = Object.entries(data);
@@ -114,15 +114,15 @@
                 displayValue = JSON.stringify(parsed, null, 2);
               }
             } catch {}
-            html += `<span class="key">${rowId}</span> (${row.extensionId}:${row.key}):\n  <span class="value">${displayValue}</span>\n\n`;
+            html += `<span class="key">${rowId}</span> (${row.featureId}:${row.key}):\n  <span class="value">${displayValue}</span>\n\n`;
           });
 
-          log('extension_settings Table', html);
+          log('feature_settings Table', html);
         } else {
-          log('extension_settings Table', `Error: ${result.error}`);
+          log('feature_settings Table', `Error: ${result.error}`);
         }
       } catch (err) {
-        log('extension_settings Table', `Error: ${err.message}`);
+        log('feature_settings Table', `Error: ${err.message}`);
       }
     };
 

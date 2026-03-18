@@ -54,7 +54,7 @@ function getBackupDirFromCoreSettings(): string {
   const db = getDb();
   try {
     const row = db.prepare(
-      'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+      'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
     ).get(CORE_SETTINGS_KEY, 'prefs') as { value: string } | undefined;
 
     if (!row?.value) return '';
@@ -78,7 +78,7 @@ export function getBackupConfig(): BackupConfig {
 
   const getKey = (key: string): string | null => {
     const row = db.prepare(
-      'SELECT value FROM extension_settings WHERE extensionId = ? AND key = ?'
+      'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
     ).get(BACKUP_SETTINGS_KEY, key) as { value: string } | undefined;
     if (!row?.value) return null;
     try {
@@ -107,7 +107,7 @@ export function setBackupConfig(config: Partial<BackupConfig>): void {
   const setKey = (key: string, value: string | number | boolean): void => {
     const jsonValue = JSON.stringify(value);
     db.prepare(`
-      INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
       VALUES (?, ?, ?, ?, ?)
     `).run(`${BACKUP_SETTINGS_KEY}_${key}`, BACKUP_SETTINGS_KEY, key, jsonValue, timestamp);
   };
@@ -155,7 +155,7 @@ function getTableCounts(): Record<string, number> {
   const db = getDb();
   const tables = [
     'addresses', 'visits', 'content', 'tags', 'address_tags',
-    'blobs', 'scripts_data', 'feeds', 'extensions', 'extension_settings',
+    'blobs', 'scripts_data', 'feeds', 'extensions', 'feature_settings',
     'migrations', 'items', 'item_tags'
   ];
 

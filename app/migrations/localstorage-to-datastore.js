@@ -2,7 +2,7 @@
  * Migration: Core/Feature localStorage -> Datastore
  *
  * One-time migration to move core settings and feature configurations
- * from localStorage to the datastore extension_settings table.
+ * from localStorage to the datastore feature_settings table.
  * This enables syncing across backends (Electron, Tauri).
  *
  * Run this from core background context (peek://app/background.html)
@@ -70,8 +70,8 @@ const migrateKey = async (oldId, namespace, key) => {
     console.log(`[migration] Found ${storageKey}, migrating to ${namespace}:${key}`);
 
     const rowId = `${namespace}:${key}`;
-    const result = await api.datastore.setRow('extension_settings', rowId, {
-      extensionId: namespace,
+    const result = await api.datastore.setRow('feature_settings', rowId, {
+      featureId: namespace,
       key,
       value: JSON.stringify(value),
       updatedAt: Date.now()

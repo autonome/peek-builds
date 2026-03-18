@@ -186,15 +186,15 @@ const CREATE_TABLE_STATEMENTS: &str = r#"
   CREATE INDEX IF NOT EXISTS idx_extensions_status ON extensions(status);
   CREATE INDEX IF NOT EXISTS idx_extensions_builtin ON extensions(builtin);
 
-  CREATE TABLE IF NOT EXISTS extension_settings (
+  CREATE TABLE IF NOT EXISTS feature_settings (
     id TEXT PRIMARY KEY,
-    extensionId TEXT NOT NULL,
+    featureId TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT,
     updatedAt INTEGER
   );
-  CREATE INDEX IF NOT EXISTS idx_extension_settings_extensionId ON extension_settings(extensionId);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_settings_unique ON extension_settings(extensionId, key);
+  CREATE INDEX IF NOT EXISTS idx_feature_settings_featureId ON feature_settings(featureId);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_feature_settings_unique ON feature_settings(featureId, key);
 
   CREATE TABLE IF NOT EXISTS migrations (
     id TEXT PRIMARY KEY,
@@ -647,12 +647,12 @@ fn migrate_item_types(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Check and write datastore version to extension_settings.
+/// Check and write datastore version to feature_settings.
 /// If mismatch detected, sets sync_disabled flag.
 fn check_and_write_datastore_version(conn: &Connection) -> Result<()> {
     let existing: Option<String> = conn
         .query_row(
-            "SELECT value FROM extension_settings WHERE extensionId = 'system' AND key = 'datastoreVersion'",
+            "SELECT value FROM feature_settings WHERE featureId = 'system' AND key = 'datastoreVersion'",
             [],
             |row| row.get(0),
         )
@@ -674,7 +674,7 @@ fn check_and_write_datastore_version(conn: &Connection) -> Result<()> {
     // Write current version
     let timestamp = now();
     conn.execute(
-        "INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt) VALUES ('system-datastoreVersion', 'system', 'datastoreVersion', ?1, ?2)",
+        "INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt) VALUES ('system-datastoreVersion', 'system', 'datastoreVersion', ?1, ?2)",
         params![DATASTORE_VERSION.to_string(), timestamp],
     )?;
 
@@ -1221,7 +1221,7 @@ pub fn get_table(
         "scripts_data",
         "feeds",
         "extensions",
-        "extension_settings",
+        "feature_settings",
         "migrations",
         "items",
         "item_tags",
@@ -1285,7 +1285,7 @@ pub fn get_row(
         "scripts_data",
         "feeds",
         "extensions",
-        "extension_settings",
+        "feature_settings",
         "migrations",
         "items",
         "item_tags",
@@ -1351,7 +1351,7 @@ pub fn set_row(
         "scripts_data",
         "feeds",
         "extensions",
-        "extension_settings",
+        "feature_settings",
         "migrations",
         "items",
         "item_tags",

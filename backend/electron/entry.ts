@@ -54,7 +54,6 @@ import {
   registerAllHandlers,
   restoreSavedTheme,
   reopenLastClosedWindow,
-  cleanupGroupScreenBorder,
   // Database
   getDb,
   // Config
@@ -358,7 +357,6 @@ app.on('before-quit', () => {
   _beforeQuitCleanupDone = true;
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
   try { stopAutosaveTimer(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutosaveTimer error:', e); }
-  try { cleanupGroupScreenBorder(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupGroupScreenBorder error:', e); }
   try { cleanupDisplayWatcher(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDisplayWatcher error:', e); }
   try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }
   try { cleanupDevExtensions(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevExtensions error:', e); }
@@ -519,7 +517,7 @@ const onReady = async () => {
   try {
     const db = getDb();
     const snapshotRow = db.prepare(
-      `SELECT value FROM extension_settings WHERE extensionId = 'session' AND key = 'snapshot'`
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
     ).get() as { value: string } | undefined;
     if (snapshotRow?.value) {
       const snapshot = JSON.parse(snapshotRow.value);
@@ -797,7 +795,7 @@ if (fs.existsSync(dbPath)) {
   try {
     const earlyDb = new Database(dbPath, { readonly: true, fileMustExist: true });
     const row = earlyDb.prepare(
-      "SELECT value FROM extension_settings WHERE extensionId = 'core' AND key = 'darkMode'"
+      "SELECT value FROM feature_settings WHERE featureId = 'core' AND key = 'darkMode'"
     ).get() as { value: string } | undefined;
     if (row?.value) {
       // Value is JSON-encoded (stored via setThemeSetting which JSON.stringify's)

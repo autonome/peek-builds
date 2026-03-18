@@ -174,15 +174,15 @@ const createTableStatements = `
   CREATE INDEX IF NOT EXISTS idx_extensions_status ON extensions(status);
   CREATE INDEX IF NOT EXISTS idx_extensions_builtin ON extensions(builtin);
 
-  CREATE TABLE IF NOT EXISTS extension_settings (
+  CREATE TABLE IF NOT EXISTS feature_settings (
     id TEXT PRIMARY KEY,
-    extensionId TEXT NOT NULL,
+    featureId TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT,
     updatedAt INTEGER
   );
-  CREATE INDEX IF NOT EXISTS idx_extension_settings_extensionId ON extension_settings(extensionId);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_extension_settings_unique ON extension_settings(extensionId, key);
+  CREATE INDEX IF NOT EXISTS idx_feature_settings_featureId ON feature_settings(featureId);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_feature_settings_unique ON feature_settings(featureId, key);
 
   CREATE TABLE IF NOT EXISTS migrations (
     id TEXT PRIMARY KEY,
@@ -375,6 +375,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateInvalidPersonEntities();
   migrateInvalidPlaceEntities();
   migrateTagNavigationHistory();
+  migrateExtensionSettingsToFeatureSettings();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
@@ -518,7 +519,7 @@ function migrateTinyBaseData(): void {
     }
 
     const tablesToMigrate = [
-      'addresses', 'visits', 'tags', 'address_tags', 'extension_settings',
+      'addresses', 'visits', 'tags', 'address_tags', 'feature_settings',
       'extensions', 'content', 'blobs', 'scripts_data', 'feeds',
     ];
 
@@ -2164,6 +2165,34 @@ function dropLegacyAddressTables(): void {
   }
 }
 
+// ==================== Rename extension_settings -> feature_settings ====================
+
+function migrateExtensionSettingsToFeatureSettings(): void {
+  if (!db) return;
+
+  // Check if old table exists
+  const oldTableExists = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='extension_settings'`
+  ).get();
+
+  if (!oldTableExists) return;
+
+  DEBUG && console.log('main', 'Migrating extension_settings -> feature_settings');
+
+  try {
+    // Copy data from old table to new table (created by CREATE TABLE IF NOT EXISTS above)
+    db.exec(`
+      INSERT OR IGNORE INTO feature_settings (id, featureId, key, value, updatedAt)
+      SELECT id, extensionId, key, value, updatedAt FROM extension_settings;
+    `);
+    // Drop old table and its indexes
+    db.exec(`DROP TABLE IF EXISTS extension_settings`);
+    DEBUG && console.log('main', 'extension_settings -> feature_settings migration complete');
+  } catch (error) {
+    console.error('Failed to migrate extension_settings:', error);
+  }
+}
+
 // ==================== Context History Operations ====================
 
 export interface ContextEntry {
@@ -2421,7 +2450,7 @@ export function getWindowsMatchingContext(
 
 // ==================== Mode Helpers (Context-based replacements for modes.ts) ====================
 
-export type MajorModeId = 'page' | 'group' | 'default';
+export type MajorModeId = 'page' | 'space' | 'default';
 
 /**
  * Detect the appropriate major mode based on URL
@@ -2450,8 +2479,8 @@ export function updateModeForNavigation(windowId: number, url: string): void {
   const currentEntry = getContextEntry('mode', windowId);
 
   // Don't override group mode with page mode (group mode persists)
-  if (currentEntry?.value === 'group' && detectedMode === 'page') {
-    DEBUG && console.log('main', `Preserving group mode for window ${windowId} during navigation`);
+  if (currentEntry?.value === 'space' && detectedMode === 'page') {
+    DEBUG && console.log('main', `Preserving space mode for window ${windowId} during navigation`);
     return;
   }
 
@@ -2500,8 +2529,8 @@ function checkAndWriteDatastoreVersion(): void {
   if (!db) return;
 
   const row = db.prepare(`
-    SELECT value FROM extension_settings
-    WHERE extensionId = 'system' AND key = 'datastore_version'
+    SELECT value FROM feature_settings
+    WHERE featureId = 'system' AND key = 'datastore_version'
   `).get() as { value: string } | undefined;
 
   if (row) {
@@ -2530,7 +2559,7 @@ function checkAndWriteDatastoreVersion(): void {
 
   // Write current version
   db.prepare(`
-    INSERT OR REPLACE INTO extension_settings (id, extensionId, key, value, updatedAt)
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'system', 'datastore_version', ?, ?)
   `).run('system-datastore_version', JSON.stringify(DATASTORE_VERSION), Date.now());
 
