@@ -1335,14 +1335,15 @@ webview.addEventListener('did-navigate-in-page', (e) => {
 });
 
 webview.addEventListener('did-fail-load', (e) => {
+  if (!e.isMainFrame) return;
+
   if (e.errorCode === -3) {
-    // Error -3 (ABORTED) normally fires during legitimate re-navigation and is safe to ignore.
-    // However, if no page has ever loaded (e.g. URL triggered a download instead),
-    // the window is stuck in loading state forever — clear it.
-    if (!hasEverLoaded) {
-      console.log('[page] Load aborted before any page loaded (likely download), clearing loading state');
-      loadingLifecycle.stopLoading();
-    }
+    // Error -3 (ABORTED) fires during legitimate re-navigation (e.g. clicking a link
+    // while a page is loading) AND for cancelled navigations (downloads, window.stop(),
+    // intercepted popups, etc.). Always clear loading state — if a new navigation is
+    // starting, did-start-navigation will immediately re-enter startLoading().
+    console.log('[page] Load aborted (error -3), clearing loading state');
+    loadingLifecycle.stopLoading();
     return;
   }
   console.error('[page] Load failed:', e.errorCode, e.errorDescription);
