@@ -3732,4 +3732,33 @@ body.dark .note-reader-content li.checkbox-checked {
   color: #777;
 }
 
-/* Editor reader mode toggle — eye icon is now inside undo-redo-buttons row */
+/* Editor header row — action buttons below drag handle */
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+}
+
+.editor-header .card-action-btn {
+  padding: 6px;
+}
+
+.editor-header .card-action-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.editor-header .editor-header-delete:active {
+  background: rgba(255, 59, 48, 0.1);
+  color: #ff3b30;
+}
+
+body.dark .editor-header {
+  border-bottom-color: rgba(128, 128, 128, 0.25);
+}
+
+/* Editor header buttons use .card-action-btn styling from editor-header */

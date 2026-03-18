@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -412,12 +412,14 @@ interface EditorLayoutProps {
   tags?: TagsSectionProps;
   buttons: EditorButtonsProps;
   className?: string;
+  headerActions?: React.ReactNode;
 }
 
 const EditorLayout: React.FC<EditorLayoutProps> = ({
-  onDismiss, keyboardHeight, children, tags, buttons, className
+  onDismiss, keyboardHeight, children, tags, buttons, className, headerActions
 }) => (
   <EditorOverlay onDismiss={onDismiss} keyboardHeight={keyboardHeight} className={className || "text-editor-overlay"}>
+    {headerActions && <div className="editor-header">{headerActions}</div>}
     {children}
     {tags && <TagsSection {...tags} />}
     <EditorButtons {...buttons} />
@@ -436,10 +438,16 @@ interface ResizableInputProps {
   autoCapitalize?: string;
   autoCorrect?: string;
   showUndoRedo?: boolean;
-  extraButtons?: React.ReactNode;
 }
 
-const ResizableInput: React.FC<ResizableInputProps> = ({
+interface ResizableInputHandle {
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+const ResizableInput = forwardRef<ResizableInputHandle, ResizableInputProps>(({
   value,
   onChange,
   placeholder = "Enter text...",
@@ -451,8 +459,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
   autoCapitalize: autoCapitalizeProp = "sentences",
   autoCorrect: autoCorrectProp = "on",
   showUndoRedo = true,
-  extraButtons
-}) => {
+}, ref) => {
   const [height, setHeight] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -512,6 +519,13 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
       forceRender(n => n + 1);
     }
   };
+
+  useImperativeHandle(ref, () => ({
+    undo: handleUndo,
+    redo: handleRedo,
+    get canUndo() { return historyIndexRef.current > 0; },
+    get canRedo() { return historyIndexRef.current < historyRef.current.length - 1; },
+  }));
 
   // Use actual keyboard height when available; when keyboard is hidden, no keyboard offset
   const FIXED_KEYBOARD_HEIGHT = keyboardHeight > 0 ? keyboardHeight : 0;
@@ -608,8 +622,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
 
   return (
     <>
-    {(showUndoRedo || extraButtons) && <div className="undo-redo-buttons">
-      {showUndoRedo && <>
+    {showUndoRedo && <div className="undo-redo-buttons">
       <button type="button" onClick={handleUndo} disabled={historyIndexRef.current <= 0} title="Undo">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="1 4 1 10 7 10"></polyline>
@@ -622,8 +635,6 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
           <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"></path>
         </svg>
       </button>
-      </>}
-      {extraButtons}
     </div>}
     <div
       className="resizable-input-wrapper"
@@ -665,7 +676,7 @@ const ResizableInput: React.FC<ResizableInputProps> = ({
     </div>
     </>
   );
-};
+});
 
 // ============================================================================
 // Custom Hooks
@@ -739,6 +750,7 @@ function App() {
   const [editingTextTagInput, setEditingTextTagInput] = useState("");
   const [textReaderMode, setTextReaderMode] = useState<string | null>(null); // item ID being viewed in reader mode
   const [editorReaderMode, setEditorReaderMode] = useState(false);
+  const textEditorRef = useRef<ResizableInputHandle>(null);
 
   // Tagset editing state
   const [editingTagsetId, setEditingTagsetId] = useState<string | null>(null);
@@ -2234,6 +2246,8 @@ function App() {
       const item = savedUrls.find(u => u.id === editingUrlId);
       if (!item) return null;
 
+      const urlHasOffline = offlineTag && item.tags.includes(offlineTag);
+
       return (
         <EditorLayout
           onDismiss={requestCancelEditing}
@@ -2251,6 +2265,35 @@ function App() {
             onCancel: requestCancelEditing,
             onDelete: () => requestDelete(editingUrlId, "page"),
           }}
+          headerActions={<>
+            <button className="card-action-btn" onClick={(e) => openInBrowser(item.url, item.id, e)} title="Open in Safari">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </button>
+            <button className="card-action-btn" onClick={(e) => openInWebview(item.url, item.id, e)} title="Open in app">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="3" y1="9" x2="21" y2="9"></line>
+              </svg>
+            </button>
+            {urlHasOffline && (
+              <button className="card-action-btn" onClick={(e) => openOfflineReader(item.id, e)} title="Read offline">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            )}
+            <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingUrlId, "page")} title="Delete">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </>}
         >
           <div className="editor-url-content-wrapper">
             <div className="input-with-clear editor-url-wrapper">
@@ -2276,6 +2319,9 @@ function App() {
 
     // Text/Note editing
     if (editingTextId) {
+      const textUrlMatch = editingTextContent.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
+      const textItem = savedTexts.find(t => t.id === editingTextId);
+
       return (
         <EditorLayout
           onDismiss={requestCancelEditingText}
@@ -2294,22 +2340,59 @@ function App() {
             onDelete: () => requestDelete(editingTextId, "text"),
             saveLabel: "Done",
           }}
-        >
-          {editorReaderMode ? (
-            <>
-            <div className="undo-redo-buttons">
-              <button
-                type="button"
-                className={`card-action-btn reader-active`}
-                onClick={() => setEditorReaderMode(false)}
-                title="Edit"
-              >
+          headerActions={<>
+            <button
+              className={`card-action-btn ${editorReaderMode ? 'reader-active' : ''}`}
+              onClick={() => setEditorReaderMode(!editorReaderMode)}
+              title={editorReaderMode ? "Edit" : "Preview"}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+            {textUrlMatch && (
+              <button className="card-action-btn" onClick={(e) => openInBrowser(textUrlMatch[0], editingTextId, e)} title="Open in Safari">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                  <polyline points="15 3 21 3 21 9"></polyline>
+                  <line x1="10" y1="14" x2="21" y2="3"></line>
                 </svg>
               </button>
-            </div>
+            )}
+            {textUrlMatch && textItem && (
+              <button className="card-action-btn" onClick={(e) => openInWebview(textUrlMatch[0], editingTextId, e)} title="Open in app">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="3" y1="9" x2="21" y2="9"></line>
+                </svg>
+              </button>
+            )}
+            {!editorReaderMode && (
+              <>
+                <button className="card-action-btn" type="button" onClick={() => textEditorRef.current?.undo()} disabled={!textEditorRef.current?.canUndo} title="Undo">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="1 4 1 10 7 10"></polyline>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                  </svg>
+                </button>
+                <button className="card-action-btn" type="button" onClick={() => textEditorRef.current?.redo()} disabled={!textEditorRef.current?.canRedo} title="Redo">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"></path>
+                  </svg>
+                </button>
+              </>
+            )}
+            <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingTextId, "text")} title="Delete">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </>}
+        >
+          {editorReaderMode ? (
             <div className="note-reader-content" dangerouslySetInnerHTML={{ __html: (() => {
                 const preprocessed = preProcessCheckboxes(editingTextContent);
                 const rendered = preprocessed.split(/\n\n+/).map(block => {
@@ -2318,9 +2401,9 @@ function App() {
                 }).join('');
                 return postProcessCheckboxes(rendered || `<p>${editingTextContent}</p>`);
               })() }} />
-            </>
           ) : (
             <ResizableInput
+              ref={textEditorRef}
               value={editingTextContent}
               onChange={setEditingTextContent}
               placeholder="Note text..."
@@ -2328,19 +2411,7 @@ function App() {
               autoFocus
               showClearButton={false}
               onAutoSave={scheduleAutoSave}
-              extraButtons={
-                <button
-                  type="button"
-                  className="card-action-btn"
-                  onClick={() => setEditorReaderMode(true)}
-                  title="Preview"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </svg>
-                </button>
-              }
+              showUndoRedo={false}
             />
           )}
         </EditorLayout>
@@ -2366,6 +2437,14 @@ function App() {
             onCancel: requestCancelEditingTagset,
             onDelete: () => requestDelete(editingTagsetId, "tagset"),
           }}
+          headerActions={<>
+            <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingTagsetId, "tagset")} title="Delete">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </>}
         />
       );
     }
@@ -2393,6 +2472,14 @@ function App() {
             onCancel: requestCancelEditingImage,
             onDelete: () => requestDelete(editingImageId, "image"),
           }}
+          headerActions={<>
+            <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingImageId, "image")} title="Delete">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </>}
         >
           <div className="editor-image-preview">
             {item.thumbnail ? (
@@ -2650,16 +2737,20 @@ function App() {
   };
 
   const renderWebviewInline = (_url: string) => {
+    const isOffline = _url.startsWith('offline://') || (expandedWebview && !_url.startsWith('http'));
+    const hasError = typeof webviewError === 'string' && webviewError.length > 0;
     return (
       <div className={`webview-inline ${webviewAnimated ? 'webview-expanded' : ''}`}>
-        {webviewError ? (
+        {hasError ? (
           <div className="webview-error">
-            <p>This site can't be displayed inline.</p>
+            <p>{isOffline ? "Could not load offline content." : "This site can't be displayed inline."}</p>
             <p style={{fontSize: '11px', opacity: 0.6, wordBreak: 'break-all'}}>{webviewError}</p>
-            <button onClick={(e) => { e.stopPropagation(); openUrl(_url); }}>Open in Safari</button>
+            {_url && _url.startsWith('http') && (
+              <button onClick={(e) => { e.stopPropagation(); openUrl(_url); }}>Open in Safari</button>
+            )}
           </div>
         ) : null}
-        {!webviewLoaded && !webviewError && <div className="webview-loading">Loading...</div>}
+        {!webviewLoaded && !hasError && <div className="webview-loading">{isOffline ? "Loading offline content..." : "Loading..."}</div>}
       </div>
     );
   };
@@ -3049,7 +3140,10 @@ function App() {
     setWebviewLoaded(false);
     setWebviewError(false);
     setWebviewAnimated(false);
-    setExpandedWebview({ url: 'offline://' + itemId, itemId });
+    // Store the real URL so error display can offer "Open in Safari" with the actual link
+    const item = savedUrls.find((u: SavedUrl) => u.id === itemId);
+    const realUrl = item?.url || '';
+    setExpandedWebview({ url: realUrl || ('offline://' + itemId), itemId });
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         const card = document.getElementById(`card-${itemId}`);
@@ -3082,11 +3176,13 @@ function App() {
               content = await invoke("get_reader_content", { itemId });
             } catch (fetchErr) {
               // Content not cached yet (e.g. synced from desktop without fetching) — fetch on demand
-              console.log("[App] No cached content, fetching on demand for:", itemId, fetchErr);
-              // Find the item's URL from our local state
-              const item = savedUrls.find((u: SavedUrl) => u.id === itemId);
-              if (!item?.url) throw new Error("No URL for this item");
-              await invoke("fetch_offline_content", { itemId, url: item.url });
+              console.log("[App] No cached content for item:", itemId, "error:", fetchErr, "— attempting on-demand fetch");
+              if (!realUrl) {
+                throw new Error("No URL available for this item — cannot fetch offline content");
+              }
+              console.log("[App] Fetching offline content on demand from:", realUrl);
+              await invoke("fetch_offline_content", { itemId, url: realUrl });
+              console.log("[App] On-demand fetch complete, retrying get_reader_content");
               content = await invoke("get_reader_content", { itemId });
             }
             const dirAttr = content.dir ? ` dir="${content.dir}"` : "";
@@ -3121,9 +3217,10 @@ ${content.html}
 </html>`;
             await invoke("show_inline_html", { html: fullHtml, topOffset, baseUrl: content.url });
             setWebviewLoaded(true);
-          } catch (error) {
-            console.error("[App] Failed to open offline reader:", error);
-            setWebviewError(String(error));
+          } catch (error: any) {
+            const errMsg = error instanceof Error ? error.message : (typeof error === 'string' ? error : String(error));
+            console.error("[App] Failed to open offline reader:", errMsg, error);
+            setWebviewError(errMsg || "Unknown error loading offline content");
           }
         }, WEBVIEW_ANIM_MS);
       });
