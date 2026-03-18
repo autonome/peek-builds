@@ -71,9 +71,12 @@ let state = {
   currentView: VIEW_LIST,   // 'list' | 'detail'
   activeFilter: 'all',      // 'all' | 'page' | 'text' | 'tagset' | 'image'
   activeTags: [],            // Array of tag objects for filtering (AND logic)
+  activeEntities: [],        // Array of entity objects for filtering (AND logic)
   items: [],                 // All addresses
   tags: [],                  // All tags sorted by frecency
   itemTags: new Map(),       // Map of addressId -> [tags]
+  itemEntities: new Map(),   // Map of item URL -> [entity objects]
+  allEntities: [],           // All entities with observations on displayed items
   selectedIndex: 0,
   searchQuery: '',
   editingItem: null,         // Item being viewed in detail
@@ -179,6 +182,9 @@ const loadData = async () => {
     state.tags = [];
   }
 
+  // Load entity data for URL items
+  await loadEntityData();
+
   // Update filter counts
   updateFilterCounts();
 };
@@ -193,6 +199,85 @@ const loadTags = async () => {
     debug && console.log('[tags] Reloaded tags:', state.tags.length);
   } else {
     console.error('[tags] Failed to reload tags:', tagsResult.error);
+  }
+};
+
+/**
+ * Load entity data: all entities and their observations, then build a
+ * mapping of item URL -> entities so we can offer entity filtering.
+ */
+const loadEntityData = async () => {
+  state.itemEntities = new Map();
+  state.allEntities = [];
+
+  try {
+    // Load all entity items
+    const entitiesResult = await api.datastore.queryItems({ type: 'entity' });
+    if (!entitiesResult.success || !entitiesResult.data) return;
+
+    const entities = entitiesResult.data.filter(e => e.deletedAt === 0);
+    if (entities.length === 0) return;
+
+    // Parse metadata for each entity
+    const entityMap = new Map(); // entityId -> { ...item, _meta }
+    for (const e of entities) {
+      let meta = {};
+      try { meta = JSON.parse(e.metadata || '{}'); } catch {}
+      // Skip thumbs-down entities
+      if (meta.feedback?.score === -1) continue;
+      entityMap.set(e.id, { ...e, _meta: meta });
+    }
+
+    // Load observations (item_events) for all entities to build URL -> entity mapping
+    const urlEntityMap = new Map(); // url -> Set of entityId
+    const eventsResult = await api.datastore.queryItemEvents({ limit: 500, order: 'desc' });
+    if (eventsResult.success && eventsResult.data) {
+      for (const evt of eventsResult.data) {
+        if (entityMap.has(evt.itemId) && evt.content) {
+          if (!urlEntityMap.has(evt.content)) {
+            urlEntityMap.set(evt.content, new Set());
+          }
+          urlEntityMap.get(evt.content).add(evt.itemId);
+        }
+      }
+    }
+
+    // Build item -> entities mapping based on item URLs
+    const seenEntityIds = new Set();
+    for (const item of state.items) {
+      const itemUrl = item.content || item.uri || '';
+      if (!itemUrl) continue;
+
+      const entityIds = urlEntityMap.get(itemUrl);
+      if (!entityIds || entityIds.size === 0) continue;
+
+      const itemEntityList = [];
+      for (const eid of entityIds) {
+        const entity = entityMap.get(eid);
+        if (entity) {
+          itemEntityList.push(entity);
+          seenEntityIds.add(eid);
+        }
+      }
+      if (itemEntityList.length > 0) {
+        state.itemEntities.set(item.id, itemEntityList);
+      }
+    }
+
+    // Collect all unique entities that appear on displayed items
+    state.allEntities = Array.from(seenEntityIds)
+      .map(id => entityMap.get(id))
+      .filter(Boolean)
+      .sort((a, b) => {
+        // Sort by entity type, then by name
+        const typeCompare = (a._meta.entityType || '').localeCompare(b._meta.entityType || '');
+        if (typeCompare !== 0) return typeCompare;
+        return (a.content || '').localeCompare(b.content || '');
+      });
+
+    debug && console.log('[tags] Loaded entity data:', state.allEntities.length, 'entities across', state.itemEntities.size, 'items');
+  } catch (err) {
+    console.error('[tags] Failed to load entity data:', err);
   }
 };
 
@@ -249,6 +334,14 @@ const handleEscape = () => {
   if (state.searchQuery) {
     state.searchQuery = '';
     searchInput.value = '';
+    render();
+    return { handled: true };
+  }
+
+  // If entity filter is active, clear it
+  if (state.activeEntities.length > 0) {
+    state.activeEntities = [];
+    state.selectedIndex = 0;
     render();
     return { handled: true };
   }
@@ -451,6 +544,12 @@ const setupEventListeners = () => {
   // so we need this to refresh when new data arrives via sync
   api.subscribe('sync:pull-completed', (msg) => {
     debug && console.log('[tags] sync:pull-completed event received:', msg);
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  // Subscribe to entity extraction events to update entity filter bar
+  api.subscribe('entities:extracted', (msg) => {
+    debug && console.log('[tags] entities:extracted event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
@@ -739,6 +838,7 @@ const render = () => {
   renderFilterButtons();
   renderTagSidebar();
   renderSelectedTagsBar();
+  renderEntityFilterBar();
   renderCards();
   renderActiveTagIndicator();
   updateSearchPlaceholder();
@@ -867,6 +967,151 @@ const renderSelectedTagsBar = () => {
   }
 
   renderTagManagePanel();
+};
+
+// Entity type display labels
+const ENTITY_TYPE_LABELS = {
+  person: 'People',
+  organization: 'Organizations',
+  place: 'Places',
+  event: 'Events',
+  email: 'Emails',
+  phone: 'Phones',
+  product: 'Products',
+  creative_work: 'Works',
+  price: 'Prices',
+};
+
+/**
+ * Render the entity filter bar.
+ * Shows available entities from currently displayed items, grouped by type.
+ * Clicking an entity chip toggles it as a filter (AND logic for multiple).
+ */
+const renderEntityFilterBar = () => {
+  const bar = document.querySelector('.entity-filter-bar');
+  if (!bar) return;
+
+  // Collect entities from the currently visible items (after tag/type/search filter, before entity filter)
+  const visibleItems = getFilteredItems();
+  const visibleEntityIds = new Set();
+  for (const item of visibleItems) {
+    const ents = state.itemEntities.get(item.id) || [];
+    for (const e of ents) {
+      visibleEntityIds.add(e.id);
+    }
+  }
+
+  // Get visible entities, keeping selected ones even if no longer in visible set
+  const selectedIds = new Set(state.activeEntities.map(e => e.id));
+  const visibleEntities = state.allEntities.filter(
+    e => visibleEntityIds.has(e.id) || selectedIds.has(e.id)
+  );
+
+  if (visibleEntities.length === 0) {
+    bar.classList.remove('visible');
+    bar.innerHTML = '';
+    return;
+  }
+
+  bar.innerHTML = '';
+  bar.classList.add('visible');
+
+  // Group by entity type
+  const grouped = new Map();
+  for (const entity of visibleEntities) {
+    const type = entity._meta.entityType || 'other';
+    if (!grouped.has(type)) grouped.set(type, []);
+    grouped.get(type).push(entity);
+  }
+
+  // Active entity chips first (if any)
+  if (state.activeEntities.length > 0) {
+    const activeSection = document.createElement('div');
+    activeSection.className = 'entity-filter-active';
+
+    state.activeEntities.forEach(entity => {
+      const chip = createEntityChip(entity, true);
+      activeSection.appendChild(chip);
+    });
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'entity-filter-clear';
+    clearBtn.textContent = 'Clear';
+    clearBtn.title = 'Clear entity filters';
+    clearBtn.addEventListener('click', () => {
+      state.activeEntities = [];
+      state.selectedIndex = 0;
+      render();
+    });
+    activeSection.appendChild(clearBtn);
+
+    bar.appendChild(activeSection);
+  }
+
+  // Entity chips grouped by type
+  for (const [type, entities] of grouped) {
+    // Skip entities that are already in the active section
+    const remaining = entities.filter(e => !selectedIds.has(e.id));
+    if (remaining.length === 0) continue;
+
+    const group = document.createElement('div');
+    group.className = 'entity-filter-group';
+
+    const label = document.createElement('span');
+    label.className = 'entity-filter-label';
+    label.textContent = ENTITY_TYPE_LABELS[type] || type;
+    group.appendChild(label);
+
+    remaining.forEach(entity => {
+      const chip = createEntityChip(entity, false);
+      group.appendChild(chip);
+    });
+
+    bar.appendChild(group);
+  }
+};
+
+/**
+ * Create an entity chip element for the filter bar.
+ */
+const createEntityChip = (entity, isActive) => {
+  const chip = document.createElement('span');
+  chip.className = 'entity-chip' + (isActive ? ' active' : '');
+  chip.dataset.entityId = entity.id;
+  chip.title = `${entity._meta.entityType || 'entity'}: ${entity.content}`;
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'entity-chip-name';
+  nameSpan.textContent = entity.content;
+  chip.appendChild(nameSpan);
+
+  if (isActive) {
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'entity-chip-remove';
+    removeBtn.innerHTML = '&times;';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.activeEntities = state.activeEntities.filter(ae => ae.id !== entity.id);
+      state.selectedIndex = 0;
+      render();
+    });
+    chip.appendChild(removeBtn);
+  }
+
+  chip.addEventListener('click', () => {
+    if (isActive) return; // handled by remove button
+    // Toggle entity filter
+    const existingIdx = state.activeEntities.findIndex(ae => ae.id === entity.id);
+    if (existingIdx >= 0) {
+      state.activeEntities = state.activeEntities.filter(ae => ae.id !== entity.id);
+    } else {
+      state.activeEntities = [...state.activeEntities, entity];
+    }
+    state.selectedIndex = 0;
+    render();
+  });
+
+  return chip;
 };
 
 /**
@@ -1062,12 +1307,23 @@ const renderTagSidebar = () => {
 const renderCards = () => {
   let items = getFilteredItems();
 
+  // Apply entity filter (AND logic - item must have ALL selected entities)
+  if (state.activeEntities.length > 0) {
+    items = items.filter(item => {
+      const itemEnts = state.itemEntities.get(item.id) || [];
+      const itemEntIds = new Set(itemEnts.map(e => e.id));
+      return state.activeEntities.every(ae => itemEntIds.has(ae.id));
+    });
+  }
+
   if (items.length === 0) {
     const message = state.searchQuery
       ? 'No items match your search.'
-      : state.activeTags.length > 0
-        ? `No items with all selected tags.`
-        : 'No tagged items yet. Tag items to see them here.';
+      : state.activeEntities.length > 0
+        ? 'No items match all selected entities.'
+        : state.activeTags.length > 0
+          ? `No items with all selected tags.`
+          : 'No tagged items yet. Tag items to see them here.';
     cardsContainer.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
