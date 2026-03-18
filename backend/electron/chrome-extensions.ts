@@ -131,7 +131,7 @@ export interface ChromeExtensionSetting {
 }
 
 // Extensions that are disabled by default (must be explicitly enabled by user)
-const DISABLED_BY_DEFAULT = new Set(['proton-pass']);
+const DISABLED_BY_DEFAULT = new Set<string>();
 
 // Module state
 let polyfillHandle: { cleanup: () => void; getPreloadScript: () => string } | null = null;
