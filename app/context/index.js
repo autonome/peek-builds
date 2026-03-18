@@ -133,9 +133,9 @@ export function getMode(windowId = null) {
 
 /**
  * Set the mode for a window
- * @param {string} mode - Mode value ('default', 'page', 'group', etc.)
+ * @param {string} mode - Mode value ('default', 'page', 'space', etc.)
  * @param {Object} options - Options
- * @param {Object} [options.metadata={}] - Mode metadata (e.g., groupId, groupName)
+ * @param {Object} [options.metadata={}] - Mode metadata (e.g., spaceId, spaceName)
  * @param {number|null} [options.windowId=null] - Window ID
  * @returns {Promise<{success: boolean, entry?: Object, error?: string}>}
  */
@@ -169,13 +169,13 @@ export function getWindowsInMode(mode) {
 }
 
 /**
- * Get all windows in a specific group
- * @param {string} groupId - Group ID to match
+ * Get all windows in a specific space
+ * @param {string} spaceId - Space ID to match
  * @returns {number[]} Array of window IDs
  */
-export function getWindowsInGroup(groupId) {
+export function getWindowsInSpace(spaceId) {
   return store.getWindowsMatching('mode', (entry) => {
-    return entry.value === 'group' && entry.metadata?.groupId === groupId;
+    return entry.value === 'space' && entry.metadata?.spaceId === spaceId;
   });
 }
 
@@ -200,5 +200,5 @@ export default {
   setMode,
   watchMode,
   getWindowsInMode,
-  getWindowsInGroup
+  getWindowsInSpace
 };

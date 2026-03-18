@@ -1827,11 +1827,11 @@ api.settings = {
 // Session API — allows extensions to trigger session-level operations
 api.session = {
   /**
-   * Save group workspace layouts (window positions per group)
+   * Save space workspace layouts (window positions per space)
    * @returns {Promise<{success: boolean, error?: string}>}
    */
-  saveGroupWorkspaces: () => {
-    return ipcRenderer.invoke('save-group-workspaces');
+  saveSpaceWorkspaces: () => {
+    return ipcRenderer.invoke('save-space-workspaces');
   }
 };
 
@@ -2112,12 +2112,12 @@ api.context = {
   },
 
   /**
-   * Get all windows in a specific group
-   * @param {string} groupId - Group ID
+   * Get all windows in a specific space
+   * @param {string} spaceId - Space ID
    * @returns {Promise<{success: boolean, data?: number[], error?: string}>}
    */
-  getWindowsInGroup: (groupId) => {
-    return ipcRenderer.invoke('context-windows-in-group', { groupId });
+  getWindowsInSpace: (spaceId) => {
+    return ipcRenderer.invoke('context-windows-in-space', { spaceId });
   },
 
   // ===== Mode-specific convenience methods =====

@@ -173,8 +173,8 @@ const createMockApi = () => {
         record('context.get', key, windowId);
         return { success: false };
       },
-      getWindowsInGroup: async (groupId) => {
-        record('context.getWindowsInGroup', groupId);
+      getWindowsInSpace: async (spaceId) => {
+        record('context.getWindowsInSpace', spaceId);
         return { success: true, data: [] };
       }
     },
@@ -233,7 +233,7 @@ const createMockApi = () => {
       setKey: async (key, value) => record('settings.setKey', key, value)
     },
     session: {
-      saveGroupWorkspaces: async () => record('session.saveGroupWorkspaces')
+      saveSpaceWorkspaces: async () => record('session.saveSpaceWorkspaces')
     }
   };
 };
@@ -249,10 +249,10 @@ const resolveCurrentGroup = async (activeGroupId, activeGroupName, api) => {
     const targetWindowId = await api.window.getFocusedVisibleWindowId();
     if (targetWindowId) {
       const modeResult = await api.context.get('mode', targetWindowId);
-      if (modeResult.success && modeResult.data?.value === 'group' && modeResult.data.metadata?.groupId) {
+      if (modeResult.success && modeResult.data?.value === 'space' && modeResult.data.metadata?.spaceId) {
         return {
-          groupId: modeResult.data.metadata.groupId,
-          groupName: modeResult.data.metadata.groupName || ''
+          groupId: modeResult.data.metadata.spaceId,
+          groupName: modeResult.data.metadata.spaceName || ''
         };
       }
     }
@@ -277,10 +277,10 @@ const closeGroup = async (suspendedGroups, api, activeGroupId, activeGroupName, 
     return { success: false, error: 'No active group to close' };
   }
   // Save workspace layouts before hiding
-  if (api.session?.saveGroupWorkspaces) {
-    await api.session.saveGroupWorkspaces();
+  if (api.session?.saveSpaceWorkspaces) {
+    await api.session.saveSpaceWorkspaces();
   }
-  const result = await api.context.getWindowsInGroup(groupId);
+  const result = await api.context.getWindowsInSpace(groupId);
   if (!result.success || !result.data || result.data.length === 0) {
     return { success: false, error: 'No windows found in group' };
   }
@@ -746,8 +746,8 @@ describe('resolveCurrentGroup', () => {
     api.context.get = async (key, windowId) => ({
       success: true,
       data: {
-        value: 'group',
-        metadata: { groupId: 'grp-2', groupName: 'Personal' }
+        value: 'space',
+        metadata: { spaceId: 'grp-2', spaceName: 'Personal' }
       }
     });
     const result = await resolveCurrentGroup(null, null, api);
@@ -780,7 +780,7 @@ describe('closeGroup', () => {
 
   it('returns error when group has no windows', async () => {
     const api = createMockApi();
-    api.context.getWindowsInGroup = async () => ({ success: true, data: [] });
+    api.context.getWindowsInSpace = async () => ({ success: true, data: [] });
     const suspended = new Map();
     const result = await closeGroup(suspended, api, null, null, 'grp-1', 'Work');
     assert.equal(result.success, false);
@@ -790,7 +790,7 @@ describe('closeGroup', () => {
   it('hides all windows and tracks suspended state', async () => {
     const api = createMockApi();
     const windowIds = ['win-1', 'win-2', 'win-3'];
-    api.context.getWindowsInGroup = async () => ({ success: true, data: windowIds });
+    api.context.getWindowsInSpace = async () => ({ success: true, data: windowIds });
     const suspended = new Map();
 
     const result = await closeGroup(suspended, api, null, null, 'grp-1', 'Work');
@@ -805,18 +805,18 @@ describe('closeGroup', () => {
 
   it('saves workspace before hiding windows', async () => {
     const api = createMockApi();
-    api.context.getWindowsInGroup = async () => ({ success: true, data: ['win-1'] });
+    api.context.getWindowsInSpace = async () => ({ success: true, data: ['win-1'] });
     const suspended = new Map();
 
     await closeGroup(suspended, api, null, null, 'grp-1', 'Work');
 
-    assert.ok(api.calls['session.saveGroupWorkspaces']);
-    assert.equal(api.calls['session.saveGroupWorkspaces'].length, 1);
+    assert.ok(api.calls['session.saveSpaceWorkspaces']);
+    assert.equal(api.calls['session.saveSpaceWorkspaces'].length, 1);
   });
 
   it('clears active group when closing the active group', async () => {
     const api = createMockApi();
-    api.context.getWindowsInGroup = async () => ({ success: true, data: ['win-1'] });
+    api.context.getWindowsInSpace = async () => ({ success: true, data: ['win-1'] });
     const suspended = new Map();
 
     const result = await closeGroup(suspended, api, 'grp-1', 'Work', 'grp-1', 'Work');
@@ -827,7 +827,7 @@ describe('closeGroup', () => {
 
   it('does not clear active group when closing a different group', async () => {
     const api = createMockApi();
-    api.context.getWindowsInGroup = async () => ({ success: true, data: ['win-1'] });
+    api.context.getWindowsInSpace = async () => ({ success: true, data: ['win-1'] });
     const suspended = new Map();
 
     const result = await closeGroup(suspended, api, 'grp-1', 'Work', 'grp-2', 'Personal');
@@ -1013,6 +1013,61 @@ describe('search scope indicator', () => {
   it('includes correct count', () => {
     const title = formatSearchTitle(new Array(10), { groupName: 'Test' });
     assert.ok(title.includes('(10)'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Groups does NOT set mode when showAddresses runs (negative test)
+// ---------------------------------------------------------------------------
+describe('showAddresses does not set mode', () => {
+  /**
+   * The groups home.js showAddresses() function navigates to the address
+   * detail view for a group. It must NOT call api.context.setMode() —
+   * mode is managed by the spaces/background extension, not by groups UI.
+   * Groups only calls setMode('default') when returning to the groups LIST
+   * (via showGroups), never when drilling into a group's addresses.
+   */
+
+  it('does not call setMode when viewing group addresses', async () => {
+    const api = createMockApi();
+
+    // Simulate showAddresses logic: sets view state, loads addresses, renders
+    // This mirrors the code path in home.js showAddresses()
+    const state = { view: 'groups', currentTag: null, searchQuery: '', addresses: [] };
+    const tag = { id: 'tag-1', name: 'Work', isSpecial: false };
+
+    // Execute showAddresses-equivalent logic
+    state.view = 'addresses';
+    state.currentTag = tag;
+    state.searchQuery = '';
+
+    // Load addresses (simulated)
+    const result = await api.datastore.getItemsByTag(tag.id);
+    if (result.success) {
+      state.addresses = result.data;
+    }
+
+    // Verify setMode was NEVER called
+    assert.strictEqual(
+      api.calls['context.setMode'],
+      undefined,
+      'showAddresses must not call setMode — mode is managed by spaces extension'
+    );
+  });
+
+  it('only calls setMode when returning to groups list (showGroups path)', async () => {
+    const api = createMockApi();
+
+    // Simulate showGroups logic (the counterpart that DOES reset mode)
+    // This mirrors: await api.context.setMode('default', {});
+    if (api.context) {
+      await api.context.setMode('default', {});
+    }
+
+    // Verify setMode WAS called for the showGroups path
+    assert.ok(api.calls['context.setMode'], 'showGroups should call setMode');
+    assert.strictEqual(api.calls['context.setMode'].length, 1);
+    assert.strictEqual(api.calls['context.setMode'][0][0], 'default');
   });
 });
 

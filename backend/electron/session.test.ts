@@ -1623,3 +1623,104 @@ describe('Session Integration Tests', () => {
     });
   });
 });
+
+// ============================================================================
+// feature_settings migration (from datastore.ts migrateExtensionSettingsToFeatureSettings)
+// ============================================================================
+
+describe('feature_settings migration (extension_settings -> feature_settings)', () => {
+  /**
+   * Simulates the migration logic from datastore.ts:
+   * - If old table extension_settings exists, copy data to feature_settings, drop old table
+   * - If old table doesn't exist, no-op
+   */
+
+  it('copies data from extension_settings to feature_settings and drops old table', () => {
+    const migrationDb = new Database(':memory:');
+
+    // Create the old table with data
+    migrationDb.exec(`
+      CREATE TABLE extension_settings (
+        id TEXT PRIMARY KEY,
+        extensionId TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        updatedAt INTEGER DEFAULT 0
+      );
+      INSERT INTO extension_settings (id, extensionId, key, value, updatedAt)
+        VALUES ('es-1', 'groups', 'sortBy', '"name"', 1000);
+      INSERT INTO extension_settings (id, extensionId, key, value, updatedAt)
+        VALUES ('es-2', 'editor', 'theme', '"dark"', 2000);
+    `);
+
+    // Create the new table (as CREATE TABLE IF NOT EXISTS does in production)
+    migrationDb.exec(`
+      CREATE TABLE IF NOT EXISTS feature_settings (
+        id TEXT PRIMARY KEY,
+        featureId TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        updatedAt INTEGER DEFAULT 0
+      );
+    `);
+
+    // Run migration logic (mirrors migrateExtensionSettingsToFeatureSettings)
+    const oldTableExists = migrationDb.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='extension_settings'`
+    ).get();
+
+    if (oldTableExists) {
+      migrationDb.exec(`
+        INSERT OR IGNORE INTO feature_settings (id, featureId, key, value, updatedAt)
+        SELECT id, extensionId, key, value, updatedAt FROM extension_settings;
+      `);
+      migrationDb.exec(`DROP TABLE IF EXISTS extension_settings`);
+    }
+
+    // Verify data was copied
+    const rows = migrationDb.prepare('SELECT * FROM feature_settings ORDER BY id').all() as Array<Record<string, unknown>>;
+    assert.strictEqual(rows.length, 2);
+    assert.strictEqual(rows[0].id, 'es-1');
+    assert.strictEqual(rows[0].featureId, 'groups');
+    assert.strictEqual(rows[0].key, 'sortBy');
+    assert.strictEqual(rows[1].id, 'es-2');
+    assert.strictEqual(rows[1].featureId, 'editor');
+
+    // Verify old table was dropped
+    const oldTable = migrationDb.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='extension_settings'`
+    ).get();
+    assert.strictEqual(oldTable, undefined);
+
+    migrationDb.close();
+  });
+
+  it('is a no-op when extension_settings does not exist', () => {
+    const migrationDb = new Database(':memory:');
+
+    // Only the new table exists
+    migrationDb.exec(`
+      CREATE TABLE IF NOT EXISTS feature_settings (
+        id TEXT PRIMARY KEY,
+        featureId TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        updatedAt INTEGER DEFAULT 0
+      );
+    `);
+
+    // Run migration check
+    const oldTableExists = migrationDb.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='extension_settings'`
+    ).get();
+
+    // Should be falsy — migration does nothing
+    assert.strictEqual(oldTableExists, undefined);
+
+    // feature_settings should be empty (no data to migrate)
+    const rows = migrationDb.prepare('SELECT * FROM feature_settings').all();
+    assert.strictEqual(rows.length, 0);
+
+    migrationDb.close();
+  });
+});

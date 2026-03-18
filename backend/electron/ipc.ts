@@ -5325,11 +5325,11 @@ function registerSessionHandlers(): void {
     }
   });
 
-  // Save group workspace layouts on demand (called from groups extension)
+  // Save space workspace layouts on demand (called from groups extension)
   ipcMain.handle('save-space-workspaces', async () => {
     try {
-      const { saveGroupWorkspaces } = await import('./session.js');
-      saveGroupWorkspaces();
+      const { saveSpaceWorkspaces } = await import('./session.js');
+      saveSpaceWorkspaces();
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

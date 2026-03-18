@@ -1279,11 +1279,11 @@ api.escape.onEscape(() => {
     webview.goBack();
     return { handled: true };
   }
-  // In group mode, ESC at root should close this page and return to the group view.
+  // In space mode, ESC at root should close this page and return to the group view.
   // The backend escPolicy returns 'nothing' for content windows in active sessions,
   // so we must close the window directly from the renderer.
-  if (currentMode === 'group') {
-    DEBUG && console.log('[page] ESC: group mode at root, closing window');
+  if (currentMode === 'space') {
+    DEBUG && console.log('[page] ESC: space mode at root, closing window');
     window.close();
     return { handled: true };
   }
@@ -1467,53 +1467,53 @@ api.commands.register({
   execute: () => webview.reload()
 });
 
-// --- Group mode widget ---
-// Shows as a widget in the top-right widget container when in group mode.
+// --- Space mode widget ---
+// Shows as a widget in the top-right widget container when in space mode.
 // Uses the standard widget system (addWidget/removeWidget/updateWidget).
 
-const GROUP_MODE_WIDGET_ID = '__group-mode__';
+const SPACE_MODE_WIDGET_ID = '__space-mode__';
 let currentMode = 'page';
 let currentModeMetadata = {};
 
-function buildGroupModeContent(metadata) {
+function buildSpaceModeContent(metadata) {
   const container = document.createElement('div');
-  container.className = 'group-mode-widget-body';
+  container.className = 'space-mode-widget-body';
 
   const dot = document.createElement('span');
-  dot.className = 'group-mode-dot';
+  dot.className = 'space-mode-dot';
   dot.style.background = metadata.color || '#9966cc';
   container.appendChild(dot);
 
   const name = document.createElement('span');
-  name.className = 'group-mode-name';
-  name.textContent = metadata.groupName || 'Group';
+  name.className = 'space-mode-name';
+  name.textContent = metadata.spaceName || 'Space';
   container.appendChild(name);
 
   return container;
 }
 
-function updateGroupModeWidget() {
-  if (currentMode === 'group' && currentModeMetadata.groupName) {
-    // Show or update the group mode widget
-    if (widgets.has(GROUP_MODE_WIDGET_ID)) {
-      updateWidget(GROUP_MODE_WIDGET_ID, {
-        title: 'Group',
-        content: buildGroupModeContent(currentModeMetadata),
+function updateSpaceModeWidget() {
+  if (currentMode === 'space' && currentModeMetadata.spaceName) {
+    // Show or update the space mode widget
+    if (widgets.has(SPACE_MODE_WIDGET_ID)) {
+      updateWidget(SPACE_MODE_WIDGET_ID, {
+        title: 'Space',
+        content: buildSpaceModeContent(currentModeMetadata),
       });
     } else {
-      addWidget(GROUP_MODE_WIDGET_ID, {
-        title: 'Group',
-        content: buildGroupModeContent(currentModeMetadata),
+      addWidget(SPACE_MODE_WIDGET_ID, {
+        title: 'Space',
+        content: buildSpaceModeContent(currentModeMetadata),
         closable: false,
         collapsible: false,
       });
     }
-    DEBUG && console.log('[page] Group mode widget shown:', currentModeMetadata);
+    DEBUG && console.log('[page] Space mode widget shown:', currentModeMetadata);
   } else {
-    // Remove the group mode widget when not in group mode
-    if (widgets.has(GROUP_MODE_WIDGET_ID)) {
-      removeWidget(GROUP_MODE_WIDGET_ID);
-      DEBUG && console.log('[page] Group mode widget removed');
+    // Remove the space mode widget when not in space mode
+    if (widgets.has(SPACE_MODE_WIDGET_ID)) {
+      removeWidget(SPACE_MODE_WIDGET_ID);
+      DEBUG && console.log('[page] Space mode widget removed');
     }
   }
 }
@@ -1521,10 +1521,10 @@ function updateGroupModeWidget() {
 async function initModeContext() {
   try {
     const existingMode = await api.context.get('mode');
-    if (existingMode.success && existingMode.data && existingMode.data.value === 'group') {
-      currentMode = 'group';
+    if (existingMode.success && existingMode.data && existingMode.data.value === 'space') {
+      currentMode = 'space';
       currentModeMetadata = existingMode.data.metadata || {};
-      DEBUG && console.log('[page] Inherited group mode, preserving:', currentModeMetadata);
+      DEBUG && console.log('[page] Inherited space mode, preserving:', currentModeMetadata);
     } else {
       const result = await api.context.setMode('page', {
         metadata: {
@@ -1544,14 +1544,14 @@ async function initModeContext() {
     if (modeResult.success && modeResult.data) {
       currentMode = modeResult.data.value || 'page';
       currentModeMetadata = modeResult.data.metadata || {};
-      updateGroupModeWidget();
+      updateSpaceModeWidget();
     }
 
     api.context.watchMode((mode, entry) => {
       if (mode) {
         currentMode = mode;
         currentModeMetadata = entry?.metadata || {};
-        updateGroupModeWidget();
+        updateSpaceModeWidget();
       }
     });
 

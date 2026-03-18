@@ -104,7 +104,7 @@ let chainPopupWindowId = null;
 let commandContext = null;
 
 // Major modes for cycling
-const MAJOR_MODES = ['default', 'page', 'group', 'settings'];
+const MAJOR_MODES = ['default', 'page', 'space', 'settings'];
 
 // Current mode for UI display
 let currentMode = 'default';
@@ -164,8 +164,8 @@ function updateModeIndicator() {
   const label = indicator.querySelector('.mode-label');
   indicator.setAttribute('data-mode', currentMode);
 
-  if (currentMode === 'group' && currentModeMetadata.groupName) {
-    label.textContent = currentModeMetadata.groupName;
+  if (currentMode === 'space' && currentModeMetadata.spaceName) {
+    label.textContent = currentModeMetadata.spaceName;
   } else {
     label.textContent = currentMode;
   }

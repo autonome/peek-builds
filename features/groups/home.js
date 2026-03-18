@@ -376,19 +376,7 @@ const init = async () => {
   // Keyboard navigation
   document.addEventListener('keydown', handleKeydown);
 
-  // Re-assert group mode when window regains focus (e.g., after child page closes)
-  window.addEventListener('focus', async () => {
-    if (state.view === VIEW_ADDRESSES && state.currentTag && api.context) {
-      await api.context.setMode('group', {
-        metadata: {
-          groupId: state.currentTag.id,
-          groupName: state.currentTag.name,
-          color: state.currentTag.color
-        }
-      });
-      debug && console.log('[groups] Re-asserted group mode on focus:', state.currentTag.name);
-    }
-  });
+  // NOTE: groups should NOT set mode context (spaces migration).
 
   // Debounced refresh for reactive updates (collapses rapid events like batch imports)
   const debouncedRefresh = debounce(async () => {
@@ -806,21 +794,6 @@ const showAddresses = async (tag) => {
   state.currentTag = tag;
   state.searchQuery = '';
 
-  // Set mode context to 'group' so cmd bar shows correct mode
-  if (api.context) {
-    try {
-      await api.context.setMode('group', {
-        metadata: {
-          groupId: tag.id,
-          groupName: tag.name,
-          color: tag.color
-        }
-      });
-      debug && console.log('[groups] Set group mode:', tag.name);
-    } catch (err) {
-      console.error('[groups] Failed to set group mode:', err);
-    }
-  }
 
   // Load URL items - handle special untagged group (only http/https URLs)
   if (tag.isSpecial && tag.id === '__untagged__') {
@@ -925,12 +898,7 @@ const renderGroupHeader = () => {
       const newColor = e.target.value;
       tag.color = newColor;
       await api.datastore.updateTagColor(tag.id, newColor);
-      // Update group mode context if this is the active group
-      if (api.context) {
-        await api.context.setMode('group', {
-          metadata: { groupId: tag.id, groupName: tag.name, color: newColor }
-        });
-      }
+      // NOTE: groups should NOT set mode context (spaces migration).
     });
 
     colorDot.addEventListener('click', () => colorInput.click());
@@ -1022,12 +990,7 @@ const startRenameGroup = (headerEl, tag) => {
           // Update search placeholder
           const searchInput = document.querySelector('peek-input.search-input');
           searchInput.placeholder = `Search in ${newName}...`;
-          // Update mode context
-          if (api.context) {
-            await api.context.setMode('group', {
-              metadata: { groupId: tag.id, groupName: newName, color: tag.color }
-            });
-          }
+          // NOTE: groups should NOT set mode context (spaces migration).
           debug && console.log('[groups] Renamed group to:', newName);
         } else {
           console.error('[groups] Failed to rename group:', result.error);

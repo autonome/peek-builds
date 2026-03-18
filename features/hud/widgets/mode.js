@@ -18,23 +18,23 @@ const updateDisplay = () => {
   if (!modeValue) return;
 
   // Remove old mode classes
-  modeValue.classList.remove('mode-default', 'mode-page', 'mode-group', 'mode-settings');
+  modeValue.classList.remove('mode-default', 'mode-page', 'mode-space', 'mode-settings');
 
   // Format mode display
   let displayText = currentMode;
-  if (currentMode === 'group' && currentModeMetadata.groupName) {
-    displayText = `group: ${currentModeMetadata.groupName}`;
+  if (currentMode === 'space' && currentModeMetadata.spaceName) {
+    displayText = `space: ${currentModeMetadata.spaceName}`;
   }
 
   modeValue.textContent = displayText;
   modeValue.classList.add(`mode-${currentMode}`);
 
   // Update group visual treatment
-  if (currentMode === 'group' && currentModeMetadata.groupName) {
+  if (currentMode === 'space' && currentModeMetadata.spaceName) {
     const color = currentModeMetadata.color || '#999';
     groupAccent.style.background = color;
     groupAccent.style.display = '';
-    groupName.textContent = currentModeMetadata.groupName;
+    groupName.textContent = currentModeMetadata.spaceName;
     groupBanner.style.display = '';
     if (widget) widget.style.setProperty('--group-color', color + '40');
   } else {
