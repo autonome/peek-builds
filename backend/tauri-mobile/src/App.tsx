@@ -478,7 +478,14 @@ const EditorLayout: React.FC<EditorLayoutProps> = ({
 
   return (
     <EditorOverlay onDismiss={onDismiss} keyboardHeight={keyboardHeight} className={className || "text-editor-overlay"}>
-      {headerActions && <div className="editor-header">{headerActions}</div>}
+      <div className="editor-header">
+        <button className="card-action-btn editor-header-back" onClick={onDismiss} title="Back">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+        {headerActions}
+      </div>
       <div className="editor-segment-content">
         {children}
       </div>
@@ -2431,6 +2438,7 @@ function App() {
             saveLabel: "Done",
           }}
           headerActions={<>
+            {(editorReaderMode || /^#{1,6} |(\*\*|__).+(\*\*|__)|`[^`]+`|^\s*[-*+] |^\s*\d+\. |^\s*> |!\[|\[.+\]\(.+\)|^---$|^\*\*\*$/m.test(editingTextContent)) && (
             <button
               className={`card-action-btn ${editorReaderMode ? 'reader-active' : ''}`}
               onClick={() => setEditorReaderMode(!editorReaderMode)}
@@ -2441,6 +2449,7 @@ function App() {
                 <circle cx="12" cy="12" r="3"></circle>
               </svg>
             </button>
+            )}
             {textUrlMatch && (
               <button className="card-action-btn" onClick={(e) => openInBrowser(textUrlMatch[0], editingTextId, e)} title="Open in Safari">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2939,6 +2948,7 @@ function App() {
           </div>
           <div className="card-title">{summary}</div>
           <div className="card-actions">
+            {(textReaderMode === item.id || /^#{1,6} |(\*\*|__).+(\*\*|__)|`[^`]+`|^\s*[-*+] |^\s*\d+\. |^\s*> |!\[|\[.+\]\(.+\)|^---$|^\*\*\*$/m.test(item.content)) && (
             <button
               className={`card-action-btn ${textReaderMode === item.id ? 'reader-active' : ''}`}
               onClick={(e) => {
@@ -2952,6 +2962,7 @@ function App() {
                 <circle cx="12" cy="12" r="3"></circle>
               </svg>
             </button>
+            )}
             {urlMatch && (
               <button
                 className="card-action-btn"

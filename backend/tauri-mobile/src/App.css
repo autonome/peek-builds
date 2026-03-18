@@ -3763,10 +3763,13 @@ body.dark .note-reader-content li.checkbox-checked {
 .editor-header {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
   padding: 4px 12px;
   flex-shrink: 0;
+}
+
+.editor-header-back {
+  margin-right: auto;
 }
 
 .editor-header .card-action-btn {
