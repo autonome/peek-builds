@@ -2500,6 +2500,13 @@ export function registerWindowHandlers(): void {
           existingByUrl.window.show();
           existingByUrl.window.focus();
         }
+        // Reload the page so content is fresh (the webview may have navigated
+        // away or the content may be stale from session restore).
+        try {
+          publish('system', PubSubScopes.GLOBAL, 'page:reload', { windowId: existingByUrl.id });
+        } catch (e) {
+          DEBUG && console.log('Failed to send reload to reused window:', e);
+        }
         return { success: true, id: existingByUrl.id, reused: true };
       }
     }
@@ -5049,6 +5056,51 @@ export function registerModesHandlers(): void {
     } else {
       updateGroupScreenBorder();
     }
+  });
+
+  // Reset group mode when the group tag is removed from a page
+  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'tag:item-removed', (msg: unknown) => {
+    const data = msg as { tagId: string; itemId: string };
+    if (!data.tagId || !data.itemId) return;
+
+    // Find all windows in group mode for this specific tag
+    const groupWindowIds = getWindowsMatchingContext('mode', (entry) => {
+      return entry.value === 'group' && entry.metadata?.groupId === data.tagId;
+    });
+    if (groupWindowIds.length === 0) return;
+
+    // Get the item to find its URL
+    const item = getItem(data.itemId);
+    if (!item) return;
+    const itemUrl = item.type === 'url' && item.content ? normalizeUrl(item.content) : null;
+    if (!itemUrl) return;
+
+    // Check each group window — if its URL matches the removed item, reset to page mode
+    for (const windowId of groupWindowIds) {
+      const entry = getContextEntry('mode', windowId);
+      const windowUrl = entry?.metadata?.url as string | undefined;
+      if (windowUrl && normalizeUrl(windowUrl) === itemUrl) {
+        const result = addContextEntry('mode', 'page', {
+          windowId,
+          source: 'tag-removed',
+          metadata: { url: windowUrl }
+        });
+        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'context:changed', {
+          key: 'mode',
+          value: 'page',
+          metadata: { url: windowUrl },
+          windowId,
+          source: 'tag-removed',
+          entryId: result.id
+        });
+        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'modes:changed', {
+          windowId,
+          major: 'page',
+        });
+        DEBUG && console.log('[modes] Reset window', windowId, 'from group to page after tag removal');
+      }
+    }
+    updateGroupScreenBorder();
   });
 
   // Mode definitions

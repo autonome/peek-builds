@@ -2279,14 +2279,33 @@ let currentItemId = null;
 let currentPageTags = [];
 let allTagsCache = []; // For autocomplete suggestions
 
+// Normalize URL for comparison — mirrors backend normalizeUrl() in datastore.ts
+function normalizeUrlForCompare(u) {
+  try {
+    const parsed = new URL(u);
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+    if ((parsed.protocol === 'http:' && parsed.port === '80') || (parsed.protocol === 'https:' && parsed.port === '443')) {
+      parsed.port = '';
+    }
+    if (parsed.search) {
+      const params = new URLSearchParams(parsed.search);
+      const sortedParams = new URLSearchParams([...params.entries()].sort());
+      parsed.search = sortedParams.toString();
+    }
+    return parsed.toString();
+  } catch { return u; }
+}
+
 async function resolveItemId(url) {
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
   try {
-    // queryItems with exact URL search to find the item
     const result = await api.datastore.queryItems({ type: 'url', search: url });
     if (result.success && result.data && result.data.length > 0) {
-      // Find exact match by content
-      const exact = result.data.find(item => item.content === url);
+      // Find exact match by normalized content (backend stores normalized URLs)
+      const normalUrl = normalizeUrlForCompare(url);
+      const exact = result.data.find(item => normalizeUrlForCompare(item.content) === normalUrl);
       if (exact) return exact.id;
       // Fallback: first result
       return result.data[0].id;

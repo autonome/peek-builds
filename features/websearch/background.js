@@ -200,7 +200,6 @@ const executeSearch = async (engine, query) => {
 
   api.window.open(url, {
     role: 'content',
-    key: url,
     width: 1024,
     height: 768,
     trackingSource: 'websearch',

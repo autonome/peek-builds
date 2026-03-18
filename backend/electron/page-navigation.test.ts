@@ -222,6 +222,155 @@ describe('shouldHandleNavKey — widget container guard', () => {
   });
 });
 
+// ============================================================================
+// normalizeUrlForCompare (extracted from app/page/page.js resolveItemId)
+// ============================================================================
+
+function normalizeUrlForCompare(u: string): string {
+  try {
+    const parsed = new URL(u);
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+    if ((parsed.protocol === 'http:' && parsed.port === '80') || (parsed.protocol === 'https:' && parsed.port === '443')) {
+      parsed.port = '';
+    }
+    if (parsed.search) {
+      const params = new URLSearchParams(parsed.search);
+      const sortedParams = new URLSearchParams([...params.entries()].sort());
+      parsed.search = sortedParams.toString();
+    }
+    return parsed.toString();
+  } catch { return u; }
+}
+
+describe('normalizeUrlForCompare — trailing slash handling', () => {
+  it('removes trailing slash from paths', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('https://example.com/path/'),
+      'https://example.com/path'
+    );
+  });
+
+  it('preserves root slash', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('https://example.com/'),
+      'https://example.com/'
+    );
+  });
+
+  it('does not add trailing slash to bare domain', () => {
+    // URL constructor normalizes bare domain to have trailing slash
+    const result = normalizeUrlForCompare('https://example.com');
+    assert.strictEqual(result, 'https://example.com/');
+  });
+});
+
+describe('normalizeUrlForCompare — port normalization', () => {
+  it('removes default port 443 for HTTPS', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('https://example.com:443/path'),
+      'https://example.com/path'
+    );
+  });
+
+  it('removes default port 80 for HTTP', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('http://example.com:80/path'),
+      'http://example.com/path'
+    );
+  });
+
+  it('preserves non-default port', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('https://example.com:8080/path'),
+      'https://example.com:8080/path'
+    );
+  });
+
+  it('preserves port 80 on HTTPS (non-default)', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('https://example.com:80/path'),
+      'https://example.com:80/path'
+    );
+  });
+
+  it('preserves port 443 on HTTP (non-default)', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('http://example.com:443/path'),
+      'http://example.com:443/path'
+    );
+  });
+});
+
+describe('normalizeUrlForCompare — query param sorting', () => {
+  it('sorts query params alphabetically', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('https://example.com/path?z=1&a=2&m=3'),
+      'https://example.com/path?a=2&m=3&z=1'
+    );
+  });
+
+  it('leaves already-sorted params unchanged', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('https://example.com/path?a=1&b=2&c=3'),
+      'https://example.com/path?a=1&b=2&c=3'
+    );
+  });
+
+  it('handles single query param', () => {
+    assert.strictEqual(
+      normalizeUrlForCompare('https://example.com/path?key=val'),
+      'https://example.com/path?key=val'
+    );
+  });
+});
+
+describe('normalizeUrlForCompare — already normalized and invalid', () => {
+  it('already normalized URL is unchanged', () => {
+    const url = 'https://example.com/path?a=1&b=2';
+    assert.strictEqual(normalizeUrlForCompare(url), url);
+  });
+
+  it('invalid URL returns original string', () => {
+    assert.strictEqual(normalizeUrlForCompare('not-a-url'), 'not-a-url');
+    assert.strictEqual(normalizeUrlForCompare(''), '');
+    assert.strictEqual(normalizeUrlForCompare('://broken'), '://broken');
+  });
+});
+
+describe('normalizeUrlForCompare — URL matching scenarios for resolveItemId', () => {
+  it('trailing slash mismatch resolves to same normalized URL', () => {
+    const a = normalizeUrlForCompare('https://example.com/docs/');
+    const b = normalizeUrlForCompare('https://example.com/docs');
+    assert.strictEqual(a, b);
+  });
+
+  it('query param order mismatch resolves to same normalized URL', () => {
+    const a = normalizeUrlForCompare('https://example.com/page?b=2&a=1');
+    const b = normalizeUrlForCompare('https://example.com/page?a=1&b=2');
+    assert.strictEqual(a, b);
+  });
+
+  it('different URLs do NOT match after normalization', () => {
+    const a = normalizeUrlForCompare('https://example.com/path-a');
+    const b = normalizeUrlForCompare('https://example.com/path-b');
+    assert.notStrictEqual(a, b);
+  });
+
+  it('different domains do NOT match', () => {
+    const a = normalizeUrlForCompare('https://example.com/path');
+    const b = normalizeUrlForCompare('https://other.com/path');
+    assert.notStrictEqual(a, b);
+  });
+
+  it('combined normalization: trailing slash + param sort + default port', () => {
+    const a = normalizeUrlForCompare('https://example.com:443/docs/?z=1&a=2');
+    const b = normalizeUrlForCompare('https://example.com/docs?a=2&z=1');
+    assert.strictEqual(a, b);
+  });
+});
+
 describe('shouldHandleNavKey — all nav keys pass through in input contexts', () => {
   const navKeys = ['j', 'k', 'g', 'G', 'ArrowDown', 'ArrowUp', 'Home', 'End'];
 

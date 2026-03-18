@@ -1194,6 +1194,7 @@ const createAddressCard = (address) => {
       try {
         await api.datastore.deleteItem(item.id);
         api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+        if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
       } catch (err) {
         console.error('[groups] Failed to delete item:', err);
       }
@@ -1202,6 +1203,7 @@ const createAddressCard = (address) => {
       try {
         await api.datastore.untagItem(item.id, tag.id);
         api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+        if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
       } catch (err) {
         console.error('[groups] Failed to remove tag:', err);
       }
@@ -1259,6 +1261,7 @@ const createAddressCard = (address) => {
         try {
           await api.datastore.untagItem(address.id, state.currentTag.id);
           api.publish('tag:item-removed', { itemId: address.id, tagId: state.currentTag.id }, api.scopes.GLOBAL);
+          if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
         } catch (err) {
           console.error('[groups] Failed to remove item from group:', err);
         }

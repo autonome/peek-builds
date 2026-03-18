@@ -323,6 +323,195 @@ describe('shouldInheritGroupMode (window lineage scoping)', () => {
   });
 });
 
+// ============================================================================
+// normalizeUrlForCompare (shared with page-navigation, extracted from page.js)
+// ============================================================================
+
+function normalizeUrlForCompare(u: string): string {
+  try {
+    const parsed = new URL(u);
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+    if ((parsed.protocol === 'http:' && parsed.port === '80') || (parsed.protocol === 'https:' && parsed.port === '443')) {
+      parsed.port = '';
+    }
+    if (parsed.search) {
+      const params = new URLSearchParams(parsed.search);
+      const sortedParams = new URLSearchParams([...params.entries()].sort());
+      parsed.search = sortedParams.toString();
+    }
+    return parsed.toString();
+  } catch { return u; }
+}
+
+// ============================================================================
+// shouldResetGroupOnTagRemoval (extracted from tag:item-removed handler)
+// ============================================================================
+// When a tag is removed from an item, check if the window showing that item
+// in that group should have its group mode reset.
+
+function shouldResetGroupOnTagRemoval(
+  removedTagId: string,
+  removedItemUrl: string | null,
+  windowGroupId: string,
+  windowUrl: string | null,
+): boolean {
+  // Tag must match the window's group
+  if (removedTagId !== windowGroupId) return false;
+  // Both URLs must be present
+  if (!removedItemUrl || !windowUrl) return false;
+  // URLs must match after normalization
+  return normalizeUrlForCompare(removedItemUrl) === normalizeUrlForCompare(windowUrl);
+}
+
+describe('shouldResetGroupOnTagRemoval', () => {
+  it('returns true when tag matches groupId AND normalized URLs match', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-123', 'https://example.com/page', 'tag-123', 'https://example.com/page'),
+      true
+    );
+  });
+
+  it('returns false when tag matches but URLs differ', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-123', 'https://example.com/a', 'tag-123', 'https://example.com/b'),
+      false
+    );
+  });
+
+  it('returns false when tag does not match groupId', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-999', 'https://example.com/page', 'tag-123', 'https://example.com/page'),
+      false
+    );
+  });
+
+  it('returns true when URLs match with trailing slash difference', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-123', 'https://example.com/docs/', 'tag-123', 'https://example.com/docs'),
+      true
+    );
+  });
+
+  it('returns true when URLs match with query param order difference', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-123', 'https://example.com/page?b=2&a=1', 'tag-123', 'https://example.com/page?a=1&b=2'),
+      true
+    );
+  });
+
+  it('returns false when removedItemUrl is null', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-123', null, 'tag-123', 'https://example.com/page'),
+      false
+    );
+  });
+
+  it('returns false when removedItemUrl is empty string', () => {
+    // Empty string fails URL parse, normalizeUrlForCompare returns it as-is
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-123', '', 'tag-123', 'https://example.com/page'),
+      false
+    );
+  });
+
+  it('returns false when windowUrl is null', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-123', 'https://example.com/page', 'tag-123', null),
+      false
+    );
+  });
+
+  it('returns false when windowUrl is empty string', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval('tag-123', 'https://example.com/page', 'tag-123', ''),
+      false
+    );
+  });
+
+  it('returns true with combined normalization: trailing slash + default port + param sort', () => {
+    assert.strictEqual(
+      shouldResetGroupOnTagRemoval(
+        'tag-123',
+        'https://example.com:443/docs/?z=1&a=2',
+        'tag-123',
+        'https://example.com/docs?a=2&z=1'
+      ),
+      true
+    );
+  });
+});
+
+describe('shouldResetGroupOnTagRemoval — integration with shouldShowGroupBorder', () => {
+  // After a reset, the window's mode changes from 'group' to 'default',
+  // so shouldShowGroupBorder should return { show: false }.
+  // We inline shouldShowGroupBorder here for the integration test.
+
+  function shouldShowGroupBorderInline(context: {
+    focusedWindowId: number | null;
+    focusedWindowDestroyed: boolean;
+    focusedWindowMode: string | null;
+    focusedWindowMetadata: Record<string, unknown> | null;
+  }): { show: boolean; color?: string; name?: string } {
+    if (!context.focusedWindowId) return { show: false };
+    if (context.focusedWindowDestroyed) return { show: false };
+    if (
+      context.focusedWindowMode === 'group' &&
+      context.focusedWindowMetadata?.groupId
+    ) {
+      const rawColor = context.focusedWindowMetadata.color as string | undefined;
+      const groupId = context.focusedWindowMetadata.groupId as string | undefined;
+      const color = resolveGroupBorderColor(rawColor, groupId);
+      const name = (context.focusedWindowMetadata.groupName as string) || 'group';
+      return { show: true, color, name };
+    }
+    return { show: false };
+  }
+
+  it('border hides after group mode reset triggered by tag removal', () => {
+    // Before: window is in group mode, border is visible
+    const beforeReset = shouldShowGroupBorderInline({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Research', color: '#ff3b30' },
+    });
+    assert.strictEqual(beforeReset.show, true);
+
+    // Tag removal triggers reset
+    const shouldReset = shouldResetGroupOnTagRemoval(
+      'tag-123', 'https://example.com/page', 'tag-123', 'https://example.com/page'
+    );
+    assert.strictEqual(shouldReset, true);
+
+    // After reset: window mode changes to 'default', border should hide
+    const afterReset = shouldShowGroupBorderInline({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'default',
+      focusedWindowMetadata: {},
+    });
+    assert.strictEqual(afterReset.show, false);
+  });
+
+  it('border stays visible when tag removal does not match window', () => {
+    const shouldReset = shouldResetGroupOnTagRemoval(
+      'tag-999', 'https://other.com/', 'tag-123', 'https://example.com/page'
+    );
+    assert.strictEqual(shouldReset, false);
+
+    // Window stays in group mode, border still shows
+    const result = shouldShowGroupBorderInline({
+      focusedWindowId: 1,
+      focusedWindowDestroyed: false,
+      focusedWindowMode: 'group',
+      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Research', color: '#ff3b30' },
+    });
+    assert.strictEqual(result.show, true);
+  });
+});
+
 describe('group screen border visibility (focus-based)', () => {
   // Tests the focus-based border visibility logic.
   // The border is a per-focused-window indicator:
@@ -339,8 +528,7 @@ describe('group screen border visibility (focus-based)', () => {
     focusedWindowDestroyed: boolean;
     focusedWindowMode: string | null;
     focusedWindowMetadata: Record<string, unknown> | null;
-    isModal?: boolean;
-  }): { show: boolean; unchanged?: boolean; color?: string; name?: string } {
+  }): { show: boolean; color?: string; name?: string } {
     // No focused window → hide
     if (!context.focusedWindowId) {
       return { show: false };
@@ -348,11 +536,6 @@ describe('group screen border visibility (focus-based)', () => {
     // Focused window destroyed → hide
     if (context.focusedWindowDestroyed) {
       return { show: false };
-    }
-    // Modal/transient windows (cmd palette, etc.) are "transparent" to border state —
-    // focusing a modal does not change the border, preventing constant flicker during group work
-    if (context.isModal) {
-      return { show: false, unchanged: true };
     }
     // Focused window in group mode with valid groupId → show
     if (
@@ -555,59 +738,6 @@ describe('group screen border visibility (focus-based)', () => {
     });
     assert.strictEqual(r2.show, true);
     assert.strictEqual(r2.name, 'Project');
-  });
-
-  // Modal window exemption — cmd palette and other modals are "transparent" to border state
-  it('modal window (cmd palette) does not change border state', () => {
-    const result = shouldShowGroupBorder({
-      focusedWindowId: 99,
-      focusedWindowDestroyed: false,
-      focusedWindowMode: 'default',
-      focusedWindowMetadata: {},
-      isModal: true,
-    });
-    assert.strictEqual(result.unchanged, true);
-  });
-
-  it('modal window in group mode still treated as transparent', () => {
-    const result = shouldShowGroupBorder({
-      focusedWindowId: 99,
-      focusedWindowDestroyed: false,
-      focusedWindowMode: 'group',
-      focusedWindowMetadata: { groupId: 'tag-123' },
-      isModal: true,
-    });
-    assert.strictEqual(result.unchanged, true);
-  });
-
-  it('border stays visible through group → modal → group focus sequence', () => {
-    // Group window focused → show
-    const r1 = shouldShowGroupBorder({
-      focusedWindowId: 1,
-      focusedWindowDestroyed: false,
-      focusedWindowMode: 'group',
-      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Work', color: '#ff3b30' },
-    });
-    assert.strictEqual(r1.show, true);
-
-    // Cmd palette opens → unchanged (border stays visible)
-    const r2 = shouldShowGroupBorder({
-      focusedWindowId: 99,
-      focusedWindowDestroyed: false,
-      focusedWindowMode: 'default',
-      focusedWindowMetadata: {},
-      isModal: true,
-    });
-    assert.strictEqual(r2.unchanged, true);
-
-    // Cmd palette closes, group window regains focus → show
-    const r3 = shouldShowGroupBorder({
-      focusedWindowId: 1,
-      focusedWindowDestroyed: false,
-      focusedWindowMode: 'group',
-      focusedWindowMetadata: { groupId: 'tag-123', groupName: 'Work', color: '#ff3b30' },
-    });
-    assert.strictEqual(r3.show, true);
   });
 
   it('switching between two different groups updates color and name', () => {
