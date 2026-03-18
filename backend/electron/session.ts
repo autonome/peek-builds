@@ -593,7 +593,7 @@ export async function restoreSessionSnapshot(
       // Note: role and escapeMode are preserved — they're semantic properties that
       // describe how the window should behave (e.g., ESC handling for extension windows).
       const cleanParams: Record<string, unknown> = {};
-      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId']);
+      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId', 'skipTracking']);
       for (const [key, value] of Object.entries(descriptor.params)) {
         if (!stripKeys.has(key)) {
           cleanParams[key] = value;
@@ -604,6 +604,8 @@ export async function restoreSessionSnapshot(
       const options: Record<string, unknown> = {
         ...cleanParams,
         ...boundsOptions,
+        // Skip visit tracking — restoring a session is not a new navigation
+        skipTracking: true,
       };
 
       // Ensure the window key is set for deduplication

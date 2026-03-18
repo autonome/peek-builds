@@ -568,6 +568,9 @@ const createVisitCard = (visit, item, index) => {
         removeBtn.title = `Remove ${tag.name}`;
         removeBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
+          e.preventDefault();
+          // Optimistic removal: hide chip immediately for instant visual feedback
+          chip.remove();
           try {
             await api.datastore.untagItem(item.id, tag.id);
             api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);

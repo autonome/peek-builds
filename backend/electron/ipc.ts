@@ -546,6 +546,14 @@ function scheduleHideGroupScreenBorder(): void {
 export function updateGroupScreenBorder(): void {
   if (groupScreenBorderShuttingDown) return;
 
+  // Don't show the border when Peek is not the active/foreground app.
+  // Without this guard, background events (sync, context changes, window management)
+  // can re-show the border overlay even though the user switched to another app.
+  if (!getIzuiCoordinator().isAppFocused()) {
+    scheduleHideGroupScreenBorder();
+    return;
+  }
+
   if (!lastFocusedVisibleWindowId) {
     scheduleHideGroupScreenBorder();
     return;
@@ -3212,8 +3220,8 @@ export function registerWindowHandlers(): void {
         });
       }
 
-      // Track this load in history (skip internal peek:// URLs)
-      if (!url.startsWith('peek://')) {
+      // Track this load in history (skip internal peek:// URLs and session restores)
+      if (!url.startsWith('peek://') && !options.skipTracking) {
         try {
           const trackResult = trackWindowLoad(url, {
             source: options.trackingSource || options.feature || 'window',

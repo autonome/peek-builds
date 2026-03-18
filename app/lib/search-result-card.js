@@ -177,6 +177,9 @@ export const createSearchResultCard = (item, opts = {}) => {
         removeBtn.title = `Remove ${tag.name}`;
         removeBtn.addEventListener('click', (e) => {
           e.stopPropagation();
+          e.preventDefault();
+          // Optimistic removal: hide chip immediately for instant visual feedback
+          chip.remove();
           opts.onTagRemove(item, tag);
         });
         chip.appendChild(removeBtn);
