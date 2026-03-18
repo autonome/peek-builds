@@ -1,19 +1,15 @@
-# Proton Pass Extension: Electron Compatibility Report
+# Proton Pass Extension: Electron Integration
 
-**Date**: 2026-02-19
+**Date**: 2026-03-18 (updated from 2026-02-19)
 **Proton Pass version**: 1.34.2 (from Chrome Web Store)
 **Electron version**: 40.0.0 (Chromium 144)
 **Manifest version**: MV3
 
 ---
 
-## Status: Partially Working — Critical API Gaps
+## Status: Working — Enabled by Default
 
-The Proton Pass extension has been downloaded, extracted, and placed in
-`resources/chrome-extensions/proton-pass/`. Electron will load the extension
-(it discovers it, registers it, and can show the popup), but **several Chrome
-APIs required by Proton Pass are not implemented in Electron**, causing
-runtime failures in core functionality.
+Proton Pass is installed at `chrome-extensions/proton-pass/` and enabled by default. All previously identified API blockers have been resolved via polyfills. Passkey/WebAuthn support is enabled via main-world script injection.
 
 ---
 
@@ -24,7 +20,7 @@ runtime failures in core functionality.
 | Size | ~20 MB (includes WASM crypto modules) |
 | License | GPLv3 |
 | Manifest | V3 (service worker background) |
-| Content scripts | orchestrator.js (all frames), webauthn.js (MAIN world) |
+| Content scripts | orchestrator.js (all frames, ISOLATED world), webauthn.js (MAIN world) |
 | Popup | popup.html |
 | Settings | settings.html (options_ui) |
 | Offscreen doc | offscreen.html (clipboard operations) |
@@ -32,141 +28,62 @@ runtime failures in core functionality.
 
 ---
 
-## API Compatibility Matrix
+## How It Works
 
-### Declared Permissions
+### Extension loading
+- `backend/electron/chrome-extensions.ts` discovers extensions in `chrome-extensions/`
+- Extensions are loaded via `session.loadExtension()` into the profile session
+- The profile session is the same session used by page webviews, so content scripts inject correctly
+- Proton Pass was removed from `DISABLED_BY_DEFAULT` — it loads automatically
 
-| Permission | Electron Support | Impact |
-|------------|-----------------|--------|
-| `activeTab` | Partial | May work for basic tab access |
-| `alarms` | **NOT SUPPORTED** | **CRITICAL** — session management, retry logic, scheduled tasks |
-| `offscreen` | **NOT SUPPORTED** | **MODERATE** — clipboard read/write operations |
-| `scripting` | Supported | Content script injection works |
-| `storage` | `local` only (no `sync`, no `session`) | **HIGH** — extension uses `storage.session` for sensitive data |
-| `unlimitedStorage` | Unknown | Storage quota may be limited |
-| `webNavigation` | **NOT SUPPORTED** | **HIGH** — page navigation tracking for autofill |
-| `webRequest` | Supported | Network request observation works |
+### Content script injection
+- `orchestrator.js` injects into all frames in the ISOLATED world (Electron handles this natively)
+- This script manages form detection, autofill icon injection, and communication with the service worker
+- The autofill icons in form fields work because orchestrator.js runs in the isolated world and can manipulate the page DOM
 
-### Chrome APIs Used in Code
+### Passkey/WebAuthn support
+- `webauthn.js` needs to run in the MAIN world to override `navigator.credentials.create()` and `.get()`
+- **Electron ignores `"world": "MAIN"` in manifest content scripts** — this is a known limitation
+- **Solution**: `backend/electron/entry.ts` reads `webauthn.js` at startup, then injects it via `webContents.executeJavaScript()` on `dom-ready` for http/https webviews
+- `executeJavaScript()` runs in the main world, so the `navigator.credentials` overrides are visible to page scripts
+- Injection is conditional: only runs when `isChromeExtensionLoaded('proton-pass')` returns true
+- Timing: `dom-ready` is sufficient because WebAuthn calls happen on user interaction (button clicks), not at page load
+- Communication chain: webauthn.js (MAIN world) → orchestrator.js (ISOLATED world) via `window.postMessage` → service worker via `chrome.runtime.sendMessage`
+- Falls back to native WebAuthn if Proton Pass orchestrator isn't connected (5s timeout)
 
-| API | Usage | Electron Status |
-|-----|-------|-----------------|
-| `chrome.alarms` | 21 references — session timers, retry scheduling, worker activation | Not implemented |
-| `chrome.offscreen` | 9 references — clipboard copy/paste via offscreen document | Not implemented |
-| `chrome.webNavigation` | 7 references — page load detection for autofill injection | Not implemented |
-| `chrome.webRequest` | 14 references — request monitoring | Supported |
-| `chrome.runtime` | Messaging, extension lifecycle | Supported |
-| `chrome.storage.session` | Sensitive data (auth tokens, session keys) | **NOT SUPPORTED** — only `storage.local` works |
-| `chrome.tabs` | Tab management (via polyfill wrapper) | Partially supported |
-| `chrome.action` | Badge text, popup, icon changes | Partially supported |
-| `chrome.permissions` | Runtime permission requests | Not documented as supported |
+### Chrome API polyfills
+All previously missing APIs are now polyfilled in `backend/electron/chrome-api-polyfills/`:
 
----
+| API | Polyfill | How |
+|-----|----------|-----|
+| `chrome.alarms` | `alarms.js` | Node.js `setTimeout`/`setInterval` with persistent tracking |
+| `chrome.storage.session` | `storage-session.js` | In-memory storage, cleared on app quit |
+| `chrome.webNavigation` | `webnavigation.js` | Electron `webContents` navigation events forwarded to extension |
+| `chrome.offscreen` | `offscreen.js` | Electron `clipboard` module for copy/paste |
+| `chrome.permissions` | `permissions.js` | All permissions granted via `setPermissionCheckHandler` |
 
-## Critical Blockers
-
-### 1. `chrome.alarms` (21 usages)
-The extension relies heavily on alarms for:
-- Session resume scheduling after auth failures
-- Worker activation/reactivation
-- Periodic cleanup and sync operations
-- Authentication retry with backoff
-
-Without alarms, the extension's service worker lifecycle management breaks
-entirely. The service worker will start but cannot schedule any deferred work.
-
-### 2. `chrome.storage.session` (used for auth tokens)
-Proton Pass stores sensitive authentication data in `storage.session` (which
-is encrypted and cleared when the browser closes). Electron only supports
-`storage.local`. This means:
-- Auth tokens would need to be stored in `storage.local` (less secure)
-- Or authentication simply fails at runtime
-
-### 3. `chrome.webNavigation` (7 usages)
-Used to detect page navigations and trigger autofill form detection. Without
-this, the extension cannot detect when a user navigates to a login page and
-therefore cannot offer autofill suggestions.
-
-### 4. `chrome.offscreen` (9 usages)
-Used for clipboard operations (copy/paste passwords). Without this,
-copy-to-clipboard functionality breaks. This is a usability issue but not a
-complete blocker for login/autofill.
+Polyfills are injected via `webContents.executeJavaScript()` on `dom-ready` (line ~344 of `chrome-extensions.ts`).
 
 ---
 
-## What Will Work
+## Known Limitations
 
-1. **Extension loading** — Electron will load the unpacked extension from the directory
-2. **Content script injection** — `orchestrator.js` will inject into pages
-3. **Popup UI** — popup.html will render (Peek already has popup window support)
-4. **Settings page** — settings.html will render
-5. **Service worker** — background.js will start (Electron 40 + Chromium 144 supports MV3 service workers)
-6. **WASM crypto** — WebAssembly modules should work with `wasm-unsafe-eval` CSP
-7. **Basic messaging** — `chrome.runtime.sendMessage` / `onMessage` works
+1. **MAIN world content scripts**: Only `webauthn.js` needs this, and it's handled by the manual injection in `entry.ts`. If future Chrome extensions need MAIN world scripts, the same pattern can be applied.
 
----
+2. **Native WebAuthn**: Electron on macOS does not support the native `navigator.credentials` API. This doesn't matter for Proton Pass because it handles passkeys entirely within the extension — it doesn't need the browser's native implementation.
 
-## What Will NOT Work
+3. **User must log in**: Proton Pass requires authentication via Proton account. The popup (`popup.html`) is accessible via Peek's extension UI infrastructure.
 
-1. **Session management** — No `chrome.alarms` means no session refresh, no retry logic
-2. **Autofill detection** — No `chrome.webNavigation` means no page change detection
-3. **Clipboard** — No `chrome.offscreen` means no copy/paste passwords
-4. **Secure session storage** — No `chrome.storage.session`
-5. **Authentication flow** — Likely broken due to combination of missing alarms + session storage
+4. **WASM CSP**: The extension's CSP includes `'wasm-unsafe-eval'` for its crypto modules. This works in Electron.
 
 ---
 
-## Possible Remediation Approaches
+## Files
 
-### Option A: Polyfill Missing APIs (Moderate Effort)
-Implement shims for missing APIs in Electron's main process:
-
-1. **`chrome.alarms`** — Implement using Node.js `setTimeout`/`setInterval` with persistent tracking
-2. **`chrome.storage.session`** — Map to in-memory storage that clears on app quit
-3. **`chrome.webNavigation`** — Listen to Electron's `webContents` navigation events and forward to extension
-4. **`chrome.offscreen`** — Implement clipboard access via Electron's `clipboard` module
-
-This would require modifying `backend/electron/chrome-extensions.ts` to inject
-these polyfills into the extension's service worker context.
-
-### Option B: Use electron-chrome-extensions Library (Lower Effort)
-The [Polypane/electron-chrome-extensions](https://github.com/Polypane/electron-chrome-extensions)
-fork provides broader API coverage including many of the missing APIs. This
-would replace Electron's built-in `session.loadExtension()` with a more
-complete implementation.
-
-### Option C: Build a Custom Proton Pass Integration (High Effort, Best UX)
-Instead of loading the browser extension, build a native Electron integration
-that uses the Proton Pass API directly. This would provide:
-- Native autofill without extension content scripts
-- Direct clipboard integration
-- Proper secure storage via Electron's safeStorage API
-
----
-
-## Recommendation
-
-**Option A (polyfills)** is the most pragmatic path. The four missing APIs
-have well-defined behavior that can be shimmed:
-
-1. `chrome.alarms` → `setTimeout`/`setInterval` in main process
-2. `chrome.storage.session` → In-memory Map, cleared on quit
-3. `chrome.webNavigation` → Electron `webContents` event forwarding
-4. `chrome.offscreen` → `electron.clipboard` module
-
-This approach keeps the extension unmodified and benefits from upstream
-Proton Pass updates.
-
----
-
-## File Locations
-
-- Extension files: `resources/chrome-extensions/proton-pass/`
-- Extension manifest: `resources/chrome-extensions/proton-pass/manifest.json`
-- Extension manager: `backend/electron/chrome-extensions.ts`
-- Prior research: `notes/research-bundled-web-extensions.md`
-
-## Source
-
-- Chrome Web Store ID: `ghmbeldphafepmbegfdlkpapadhbakde`
-- GitHub source: https://github.com/ProtonMail/WebClients/tree/main/applications/pass-extension
+| File | Purpose |
+|------|---------|
+| `chrome-extensions/proton-pass/` | Unpacked extension files |
+| `backend/electron/chrome-extensions.ts` | Extension loading, polyfill injection, enabled/disabled config |
+| `backend/electron/chrome-api-polyfills/` | Chrome API polyfills (alarms, storage.session, webNavigation, offscreen, permissions) |
+| `backend/electron/entry.ts` | WebAuthn main-world injection via `executeJavaScript()` |
+| `notes/proton-pass-electron-compatibility.md` | This document |

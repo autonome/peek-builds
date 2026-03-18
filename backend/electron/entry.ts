@@ -84,6 +84,7 @@ import {
   getChromeExtensionUiEntries,
   openChromeExtensionPage,
   cleanupChromeExtensions,
+  isChromeExtensionLoaded,
 } from './chrome-extensions.js';
 import {
   initProfilesDb,
@@ -148,9 +149,26 @@ const systemAddress = getSystemAddress();
 // Initialize backend config with runtime values
 setPreloadPath(preloadPath);
 
+// Read Proton Pass webauthn.js for main-world injection into web content webviews.
+// Electron ignores "world": "MAIN" in Chrome extension manifest content_scripts,
+// so we inject the script ourselves via executeJavaScript() which runs in the main world.
+let webauthnScript: string | null = null;
+const webauthnScriptPath = path.join(ROOT_DIR, 'chrome-extensions', 'proton-pass', 'webauthn.js');
+try {
+  if (fs.existsSync(webauthnScriptPath)) {
+    webauthnScript = fs.readFileSync(webauthnScriptPath, 'utf-8');
+    DEBUG && console.log('[webauthn] Loaded Proton Pass webauthn.js for injection');
+  }
+} catch (err) {
+  console.error('[webauthn] Failed to read webauthn.js:', err);
+}
+
 // Inject preload into <webview> elements that load peek:// URLs.
 // This gives internal widget pages (e.g., HUD widgets) access to window.app API
 // while leaving external web content webviews untouched.
+//
+// Also inject Proton Pass webauthn.js into http/https webviews for passkey support.
+// The script overrides navigator.credentials.create/get in the main world.
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (_wvEvent, webPreferences, params) => {
     if (params.src && params.src.startsWith('peek://')) {
@@ -158,6 +176,24 @@ app.on('web-contents-created', (_event, contents) => {
       DEBUG && console.log(`[webview] Injecting preload for peek:// webview: ${params.src}`);
     }
   });
+
+  // Inject webauthn.js into web content webviews for Proton Pass passkey support.
+  // Uses executeJavaScript() which runs in the main world, allowing the script to
+  // override navigator.credentials.create() and navigator.credentials.get().
+  // Falls back to native WebAuthn if Proton Pass orchestrator isn't connected.
+  if (contents.getType() === 'webview') {
+    contents.on('dom-ready', () => {
+      if (!webauthnScript || !isChromeExtensionLoaded('proton-pass')) return;
+
+      const url = contents.getURL();
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        contents.executeJavaScript(webauthnScript).catch(() => {
+          // Ignore injection errors (webContents may be destroyed)
+        });
+        DEBUG && console.log(`[webauthn] Injected Proton Pass webauthn.js into: ${url}`);
+      }
+    });
+  }
 });
 
 const strings = {
