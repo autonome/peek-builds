@@ -417,21 +417,93 @@ interface EditorLayoutProps {
 
 const EditorLayout: React.FC<EditorLayoutProps> = ({
   onDismiss, keyboardHeight, children, tags, buttons, className, headerActions
-}) => (
-  <EditorOverlay onDismiss={onDismiss} keyboardHeight={keyboardHeight} className={className || "text-editor-overlay"}>
-    {headerActions && <div className="editor-header">{headerActions}</div>}
-    {children}
-    {tags && <TagsSection {...tags} />}
-    <EditorButtons {...buttons} />
-  </EditorOverlay>
-);
+}) => {
+  const sepRef = useRef<HTMLDivElement>(null);
+  const isDraggingSepRef = useRef(false);
+  const dragStartYRef = useRef(0);
+  const dragStartContentHeightRef = useRef(0);
+
+  const getCard = () => sepRef.current?.closest('.editor-card') as HTMLElement | null;
+
+  const handleSepDragStart = (clientY: number) => {
+    const card = getCard();
+    if (!card) return;
+    const contentEl = card.querySelector('.editor-segment-content') as HTMLElement | null;
+    if (!contentEl) return;
+    isDraggingSepRef.current = true;
+    dragStartYRef.current = clientY;
+    dragStartContentHeightRef.current = contentEl.offsetHeight;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ns-resize';
+    document.body.dataset.resizing = 'true';
+  };
+
+  const handleSepDragMove = (clientY: number) => {
+    if (!isDraggingSepRef.current) return;
+    const card = getCard();
+    if (!card) return;
+    const delta = clientY - dragStartYRef.current;
+    const newHeight = Math.max(60, dragStartContentHeightRef.current + delta);
+    card.style.setProperty('--segment-content-height', `${newHeight}px`);
+    card.style.setProperty('--segment-content-flex', 'none');
+  };
+
+  const handleSepDragEnd = () => {
+    isDraggingSepRef.current = false;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    delete document.body.dataset.resizing;
+  };
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => handleSepDragMove(e.clientY);
+    const onTouchMove = (e: TouchEvent) => {
+      if (isDraggingSepRef.current && e.cancelable) e.preventDefault();
+      if (e.touches.length === 1) handleSepDragMove(e.touches[0].clientY);
+    };
+    const onEnd = () => handleSepDragEnd();
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onEnd);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onEnd);
+
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onEnd);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onEnd);
+    };
+  }, []);
+
+  return (
+    <EditorOverlay onDismiss={onDismiss} keyboardHeight={keyboardHeight} className={className || "text-editor-overlay"}>
+      {headerActions && <div className="editor-header">{headerActions}</div>}
+      <div className="editor-segment-content">
+        {children}
+      </div>
+      {tags && (
+        <>
+          <div
+            ref={sepRef}
+            className="editor-segment-separator"
+            onMouseDown={(e) => { e.preventDefault(); handleSepDragStart(e.clientY); }}
+            onTouchStart={(e) => { handleSepDragStart(e.touches[0].clientY); }}
+          >
+            <div className="editor-segment-separator-handle" />
+          </div>
+          <div className="editor-segment-tags"><TagsSection {...tags} /></div>
+        </>
+      )}
+      <div className="editor-segment-buttons"><EditorButtons {...buttons} /></div>
+    </EditorOverlay>
+  );
+};
 
 interface ResizableInputProps {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  minHeightPercent?: number;
-  keyboardHeight: number;
   autoFocus?: boolean;
   showClearButton?: boolean;
   onAutoSave?: (value: string) => void;
@@ -451,8 +523,6 @@ const ResizableInput = forwardRef<ResizableInputHandle, ResizableInputProps>(({
   value,
   onChange,
   placeholder = "Enter text...",
-  minHeightPercent = 0.5,
-  keyboardHeight,
   autoFocus = false,
   showClearButton = true,
   onAutoSave,
@@ -527,32 +597,52 @@ const ResizableInput = forwardRef<ResizableInputHandle, ResizableInputProps>(({
     get canRedo() { return historyIndexRef.current < historyRef.current.length - 1; },
   }));
 
-  // Use actual keyboard height when available; when keyboard is hidden, no keyboard offset
-  const FIXED_KEYBOARD_HEIGHT = keyboardHeight > 0 ? keyboardHeight : 0;
-
-  // Calculate default height (initial size) and min height (resize floor)
-  const headerHeight = 56;
-  const buttonsHeight = 70;
-  const availableHeight = window.innerHeight - headerHeight - FIXED_KEYBOARD_HEIGHT - buttonsHeight - 32;
-  const defaultHeight = Math.max(80, availableHeight * minHeightPercent);
+  // Min height for resize floor
   const minHeight = 60;
-  const currentHeight = height ?? defaultHeight;
+
+  // Find the .editor-segment-content ancestor (if inside EditorLayout)
+  const getSegmentContent = () => {
+    if (!wrapperRef.current) return null;
+    return wrapperRef.current.closest('.editor-segment-content') as HTMLElement | null;
+  };
 
   const handleDragStart = (clientY: number) => {
-    if (!wrapperRef.current) return;
-    isDraggingRef.current = true;
-    dragStartYRef.current = clientY;
-    dragStartHeightRef.current = wrapperRef.current.offsetHeight;
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'ns-resize';
-    document.body.dataset.resizing = 'true';
+    const segment = getSegmentContent();
+    if (segment) {
+      // Inside EditorLayout: resize the segment split
+      isDraggingRef.current = true;
+      dragStartYRef.current = clientY;
+      dragStartHeightRef.current = segment.offsetHeight;
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'ns-resize';
+      document.body.dataset.resizing = 'true';
+    } else if (wrapperRef.current) {
+      // Standalone: resize the textarea wrapper
+      isDraggingRef.current = true;
+      dragStartYRef.current = clientY;
+      dragStartHeightRef.current = wrapperRef.current.offsetHeight;
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'ns-resize';
+      document.body.dataset.resizing = 'true';
+    }
   };
 
   const handleDragMove = (clientY: number) => {
     if (!isDraggingRef.current) return;
     const delta = clientY - dragStartYRef.current;
-    const newHeight = Math.max(minHeight, dragStartHeightRef.current + delta);
-    setHeight(newHeight);
+    const segment = getSegmentContent();
+    if (segment) {
+      // Resize the editor-segment-content via CSS variable on .editor-card
+      const card = segment.closest('.editor-card') as HTMLElement | null;
+      if (card) {
+        const newHeight = Math.max(minHeight, dragStartHeightRef.current + delta);
+        card.style.setProperty('--segment-content-height', `${newHeight}px`);
+        card.style.setProperty('--segment-content-flex', 'none');
+      }
+    } else {
+      const newHeight = Math.max(minHeight, dragStartHeightRef.current + delta);
+      setHeight(newHeight);
+    }
   };
 
   const handleDragEnd = () => {
@@ -639,7 +729,7 @@ const ResizableInput = forwardRef<ResizableInputHandle, ResizableInputProps>(({
     <div
       className="resizable-input-wrapper"
       ref={wrapperRef}
-      style={height != null ? { height: `${currentHeight}px`, minHeight: `${minHeight}px`, flex: 'none' } : { minHeight: `${minHeight}px` }}
+      style={height != null ? { height: `${height}px`, maxHeight: '100%', flex: 'none', minHeight: `${minHeight}px` } : { flex: '1 1 0', minHeight: `${minHeight}px` }}
     >
       <textarea
         ref={textareaRef}
@@ -2407,7 +2497,6 @@ function App() {
               value={editingTextContent}
               onChange={setEditingTextContent}
               placeholder="Note text..."
-              keyboardHeight={keyboardHeight}
               autoFocus
               showClearButton={false}
               onAutoSave={scheduleAutoSave}
@@ -2507,7 +2596,6 @@ function App() {
             value={editingImageContent}
             onChange={setEditingImageContent}
             placeholder="Image description..."
-            keyboardHeight={keyboardHeight}
             showClearButton={false}
             showUndoRedo={false}
           />
@@ -4130,30 +4218,35 @@ ${content.html}
       {/* Quick Add overlay */}
       {addInputExpanded && (
         <EditorOverlay onDismiss={() => setAddInputExpanded(false)} keyboardHeight={keyboardHeight}>
-          <ResizableInput
-            value={addInputText}
-            onChange={setAddInputText}
-            placeholder="Enter text, URL, or just select tags..."
-            keyboardHeight={keyboardHeight}
-            autoFocus
-            autoCapitalize="none"
-            autoCorrect="off"
-          />
-          <TagsSection
-            selectedTags={addInputTags}
-            availableTags={allTags}
-            tagInput={addInputNewTag}
-            onTagInputChange={setAddInputNewTag}
-            onToggleTag={toggleAddInputTag}
-            onAddTag={addInputAddNewTag}
-            placeholder="Add new tag..."
-          />
-          <EditorButtons
-            onSave={saveAddInput}
-            onCancel={() => setAddInputExpanded(false)}
-            cancelLabel="Close"
-            saveDisabled={!getAddInputType()}
-          />
+          <div className="editor-segment-content">
+            <ResizableInput
+              value={addInputText}
+              onChange={setAddInputText}
+              placeholder="Enter text, URL, or just select tags..."
+              autoFocus
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+          <div className="editor-segment-tags">
+            <TagsSection
+              selectedTags={addInputTags}
+              availableTags={allTags}
+              tagInput={addInputNewTag}
+              onTagInputChange={setAddInputNewTag}
+              onToggleTag={toggleAddInputTag}
+              onAddTag={addInputAddNewTag}
+              placeholder="Add new tag..."
+            />
+          </div>
+          <div className="editor-segment-buttons">
+            <EditorButtons
+              onSave={saveAddInput}
+              onCancel={() => setAddInputExpanded(false)}
+              cancelLabel="Close"
+              saveDisabled={!getAddInputType()}
+            />
+          </div>
         </EditorOverlay>
       )}
 

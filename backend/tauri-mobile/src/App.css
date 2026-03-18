@@ -2499,8 +2499,8 @@ body.dark .captured-image-preview {
   align-items: center;
   padding: 0.5rem;
   padding-top: var(--safe-area-top, 40px);
-  /* Ensure safe area padding at bottom when keyboard is hidden */
-  padding-bottom: max(var(--safe-area-bottom, 0px), 0.5rem);
+  /* Bottom padding handled by .editor-segment-buttons safe-area padding */
+  padding-bottom: 0;
   /* Prevent iOS from scrolling the viewport when keyboard appears */
   overflow: hidden;
   overscroll-behavior: contain;
@@ -2509,7 +2509,7 @@ body.dark .captured-image-preview {
 
 /* When keyboard is open, no bottom safe-area padding needed — keyboard covers it */
 .edit-overlay.keyboard-open {
-  padding-bottom: 4px;
+  padding-bottom: 0;
 }
 
 .edit-overlay.transition-padding {
@@ -2738,15 +2738,68 @@ body.dark .clear-btn {
   min-height: 0;
 }
 
+/* Three-segment editor layout: content, tags, buttons
+   The drag handle on ResizableInput sets --segment-content-height on the
+   .editor-card ancestor. When set, content uses that fixed height and tags
+   grow into the remaining space. When unset, content flexes to fill. */
+.editor-segment-content {
+  flex: var(--segment-content-flex, 1 1 0);
+  height: var(--segment-content-height, auto);
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-segment-separator {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 4px 0;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.editor-segment-separator-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(128, 128, 128, 0.3);
+}
+
+.editor-segment-tags {
+  flex: 0 0 auto;
+  min-height: 60px;
+  max-height: 40%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Hide ResizableInput's internal drag handle when inside EditorLayout —
+   the shared segment separator replaces it */
+.editor-segment-content .resizable-input-wrapper .drag-handle {
+  display: none;
+}
+
+/* body.dark .editor-segment-tags — no dark overrides needed */
+
+.editor-segment-buttons {
+  flex: none;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.keyboard-open .editor-segment-buttons {
+  padding-bottom: 0;
+}
+
 /* Resizable Input Component */
 .resizable-input-wrapper {
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
-  /* Cap textarea at half the card so tags + buttons stay visible */
-  max-height: 50%;
 }
 
 .resizable-input-textarea {
@@ -2817,28 +2870,9 @@ body.dark .drag-handle-bar {
   background: #555;
 }
 
-/* Tags Section - expands to fill available space, scrolls when full */
+/* Tags Section - just padding, parent segment handles flex/overflow */
 .editor-tags-section {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   padding: 0.25rem 1.15rem;
-}
-
-/* When a ResizableInput is present, constrain tags so the textarea gets space */
-.resizable-input-wrapper ~ .editor-tags-section {
-  flex: 0 0 auto;
-  max-height: 140px;
-}
-
-/* When keyboard is open, limit tags to ~3 rows and scroll overflow.
-   Each tag row is ~32px + gap, so 3 rows ≈ 108px plus input row. */
-.keyboard-open .editor-tags-section {
-  flex: 0 1 auto;
-  /* ~3 rows of tags (32px each) + tag input row (~44px) + padding */
-  max-height: 152px;
-  overflow-y: auto;
 }
 
 /* Editor Buttons - always visible at bottom */
@@ -3697,13 +3731,6 @@ body.dark .webview-error {
   color: var(--base0D, #007aff);
 }
 
-/* When reader mode is active (note-reader-content present), constrain tags section
-   so it doesn't compete for flex space with the reader content */
-.note-reader-content ~ .editor-tags-section {
-  flex: 0 0 auto;
-  max-height: 140px;
-}
-
 /* Dark mode styles for note reader content */
 body.dark .note-reader-content {
   color: #e0e0e0;
@@ -3740,7 +3767,6 @@ body.dark .note-reader-content li.checkbox-checked {
   gap: 8px;
   padding: 4px 12px;
   flex-shrink: 0;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
 }
 
 .editor-header .card-action-btn {
@@ -3757,8 +3783,6 @@ body.dark .note-reader-content li.checkbox-checked {
   color: #ff3b30;
 }
 
-body.dark .editor-header {
-  border-bottom-color: rgba(128, 128, 128, 0.25);
-}
+/* body.dark .editor-header — no dark overrides needed */
 
 /* Editor header buttons use .card-action-btn styling from editor-header */
