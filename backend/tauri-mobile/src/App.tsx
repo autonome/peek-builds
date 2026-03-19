@@ -4228,37 +4228,34 @@ ${content.html}
 
       {/* Quick Add overlay */}
       {addInputExpanded && (
-        <EditorOverlay onDismiss={() => setAddInputExpanded(false)} keyboardHeight={keyboardHeight}>
-          <div className="editor-segment-content">
-            <ResizableInput
-              value={addInputText}
-              onChange={setAddInputText}
-              placeholder="Enter text, URL, or just select tags..."
-              autoFocus
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
-          </div>
-          <div className="editor-segment-tags">
-            <TagsSection
-              selectedTags={addInputTags}
-              availableTags={allTags}
-              tagInput={addInputNewTag}
-              onTagInputChange={setAddInputNewTag}
-              onToggleTag={toggleAddInputTag}
-              onAddTag={addInputAddNewTag}
-              placeholder="Add new tag..."
-            />
-          </div>
-          <div className="editor-segment-buttons">
-            <EditorButtons
-              onSave={saveAddInput}
-              onCancel={() => setAddInputExpanded(false)}
-              cancelLabel="Close"
-              saveDisabled={!getAddInputType()}
-            />
-          </div>
-        </EditorOverlay>
+        <EditorLayout
+          onDismiss={() => setAddInputExpanded(false)}
+          keyboardHeight={keyboardHeight}
+          tags={{
+            selectedTags: addInputTags,
+            availableTags: allTags,
+            tagInput: addInputNewTag,
+            onTagInputChange: setAddInputNewTag,
+            onToggleTag: toggleAddInputTag,
+            onAddTag: addInputAddNewTag,
+            placeholder: "Add new tag...",
+          }}
+          buttons={{
+            onSave: saveAddInput,
+            onCancel: () => setAddInputExpanded(false),
+            cancelLabel: "Close",
+            saveDisabled: !getAddInputType(),
+          }}
+        >
+          <ResizableInput
+            value={addInputText}
+            onChange={setAddInputText}
+            placeholder="Enter text, URL, or just select tags..."
+            autoFocus
+            autoCapitalize="none"
+            autoCorrect="off"
+          />
+        </EditorLayout>
       )}
 
       {/* Delete confirmation modal */}
