@@ -80,10 +80,12 @@ const activateSelected = async () => {
   if (selectedWindow) {
     debug && console.log('[windows] Focusing window:', selectedWindow.id, selectedWindow.title);
 
-    // Focus the selected window
-    await api.window.focus(selectedWindow.id);
+    // Tell the overlay which window to focus after it closes and restores hidden windows
+    // (calling focus() directly doesn't work because the target window is hidden by the overlay)
+    await api.window.setOverlayFocusTarget(selectedWindow.id);
 
-    // Close windows view and restore windows
+    // Close windows view — the overlay close handler will restore hidden windows
+    // and then focus the target window
     closeWindowsView();
   }
 };
@@ -295,7 +297,7 @@ const createWindowCard = (win) => {
   // Click to focus window and close windows view
   card.addEventListener('card-click', async () => {
     debug && console.log('[windows] Clicking window:', win.id, win.title);
-    await api.window.focus(win.id);
+    await api.window.setOverlayFocusTarget(win.id);
     closeWindowsView();
   });
 
