@@ -398,15 +398,13 @@ test.describe('Page Layout Regression @desktop', () => {
 });
 
 // ============================================================================
-// New Behavior Tests (6-14): Will pass after maximize implementation
-// These test maximize functionality that doesn't exist yet.
+// Maximize Tests (6-14): Verify maximize/restore functionality
 // ============================================================================
 
 test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 6: Maximize command fills work area
-  // Will pass after maximize implementation
-  test.skip('maximize command fills work area', async () => {
+  test('maximize command fills work area', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -439,8 +437,7 @@ test.describe('Page Layout Maximize @desktop', () => {
   });
 
   // Test 7: Maximize toggle restores original size
-  // Will pass after maximize implementation
-  test.skip('maximize toggle restores original size', async () => {
+  test('maximize toggle restores original size', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -492,8 +489,7 @@ test.describe('Page Layout Maximize @desktop', () => {
   });
 
   // Test 8: Webview edge-to-edge when maximized (left=0, top=0)
-  // Will pass after maximize implementation
-  test.skip('webview fills window when maximized', async () => {
+  test('webview fills window when maximized', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -525,8 +521,7 @@ test.describe('Page Layout Maximize @desktop', () => {
   });
 
   // Test 9: Navbar floats over webview when maximized
-  // Will pass after maximize implementation
-  test.skip('navbar floats over webview when maximized', async () => {
+  test('navbar floats over webview when maximized', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -583,8 +578,7 @@ test.describe('Page Layout Maximize @desktop', () => {
   });
 
   // Test 10: Panels clamped to screen edge when maximized
-  // Will pass after maximize implementation
-  test.skip('panels clamped to screen edges when maximized', async () => {
+  test('panels clamped to screen edges when maximized', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -638,8 +632,7 @@ test.describe('Page Layout Maximize @desktop', () => {
   });
 
   // Test 11: Resize handles hidden when maximized
-  // Will pass after maximize implementation
-  test.skip('resize handles hidden when maximized', async () => {
+  test('resize handles hidden when maximized', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -676,8 +669,7 @@ test.describe('Page Layout Maximize @desktop', () => {
   });
 
   // Test 12: Drag out of maximized state restores
-  // Will pass after maximize implementation
-  test.skip('drag out of maximized state restores original size', async () => {
+  test('drag out of maximized state restores original size', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -754,8 +746,7 @@ test.describe('Page Layout Maximize @desktop', () => {
   });
 
   // Test 13: Webview border-radius removed when maximized
-  // Will pass after maximize implementation
-  test.skip('webview border-radius removed when maximized', async () => {
+  test('webview border-radius removed when maximized', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -796,8 +787,7 @@ test.describe('Page Layout Maximize @desktop', () => {
   });
 
   // Test 14: Double-click navbar maximizes
-  // Will pass after maximize implementation
-  test.skip('double-click navbar triggers maximize', async () => {
+  test('double-click navbar triggers maximize', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'

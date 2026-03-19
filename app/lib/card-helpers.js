@@ -189,6 +189,20 @@ const extractUrl = (text) => {
 };
 
 /**
+ * Return Google favicon service URL for a given page URL, or null if domain can't be extracted.
+ * @param {string} url
+ * @returns {string|null}
+ */
+const _googleFaviconFallback = (url) => {
+  if (!url) return null;
+  try {
+    const domain = new URL(url.startsWith('http') ? url : 'https://' + url).hostname;
+    if (domain) return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+  } catch { /* invalid URL */ }
+  return null;
+};
+
+/**
  * Compute display properties (title, subtitle, faviconUrl, itemUrl) for any item.
  *
  * Centralizes the icon/title logic so all views (tags, search, groups) render
@@ -212,12 +226,12 @@ export const getItemDisplayInfo = (item, opts = {}) => {
   if (isAddress) {
     title = extractTitle(item, item.uri);
     subtitle = formatUrl(item.uri);
-    faviconUrl = item.favicon || opts.favicon || TYPE_ICONS.url;
+    faviconUrl = item.favicon || opts.favicon || _googleFaviconFallback(item.uri) || TYPE_ICONS.url;
   } else {
     if (itemType === 'url') {
       title = extractTitle(item, item.content);
       subtitle = formatUrl(item.content);
-      faviconUrl = item.favicon || opts.favicon || TYPE_ICONS.url;
+      faviconUrl = item.favicon || opts.favicon || _googleFaviconFallback(item.content) || TYPE_ICONS.url;
     } else if (itemType === 'text') {
       title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
       subtitle = noteUrl || '';

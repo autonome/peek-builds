@@ -112,6 +112,11 @@ async function enrichUrlItem(url, pageMetadata) {
       await api.datastore.updateItemTitle(url, pageMetadata.title);
     }
 
+    // Persist favicon if available
+    if (pageMetadata.favicon) {
+      await api.datastore.updateItemFavicon(url, pageMetadata.favicon);
+    }
+
     // Update metadata with _og data (skip if already enriched)
     const existingMeta = item.metadata ? JSON.parse(item.metadata) : {};
     if (existingMeta._og) return;

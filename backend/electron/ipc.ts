@@ -3562,6 +3562,13 @@ export function registerWindowHandlers(): void {
     }
   });
 
+  ipcMain.handle('get-display-info', (ev) => {
+    const win = BrowserWindow.fromWebContents(ev.sender);
+    if (!win || win.isDestroyed()) return { success: false, error: 'Window not found' };
+    const display = screen.getDisplayMatching(win.getBounds());
+    return { success: true, data: { workArea: display.workArea, bounds: display.bounds, scaleFactor: display.scaleFactor } };
+  });
+
   ipcMain.handle('window-set-bounds', (ev, msg) => {
     const win = BrowserWindow.fromWebContents(ev.sender);
     if (!win || win.isDestroyed()) return { success: false, error: 'Window not found' };

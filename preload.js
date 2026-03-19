@@ -343,6 +343,9 @@ api.window = {
   setBounds: (bounds) => {
     return ipcRenderer.invoke('window-set-bounds', bounds);
   },
+  getDisplayInfo: () => {
+    return ipcRenderer.invoke('get-display-info');
+  },
   setIgnoreMouseEvents: (id, ignore, forward = false) => {
     DEBUG && console.log('window.setIgnoreMouseEvents', id, ignore, forward);
     return ipcRenderer.invoke('window-set-ignore-mouse-events', {
@@ -574,6 +577,11 @@ api.datastore = {
   // Update title for a URL item (if currently empty or "Loading...")
   updateItemTitle: (url, title) => {
     return ipcRenderer.invoke('datastore-update-item-title', { url, title });
+  },
+
+  // Update favicon for a URL item (3-phase lookup: item.content, address.uri, item.id)
+  updateItemFavicon: (url, faviconUrl) => {
+    return ipcRenderer.invoke('datastore-update-item-favicon', { url, faviconUrl });
   },
 
   // Extract page content from a live webContents by URL

@@ -1205,6 +1205,20 @@
     .link-status-bar.visible {
       opacity: 1;
     }
+
+    /* --- Maximized mode --- */
+
+    body.maximized webview {
+      border-radius: 0;
+      border: none;
+    }
+
+    body.maximized peek-navbar {
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--base00) 85%, transparent);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
   </style>
 </head>
 <body data-no-drag>

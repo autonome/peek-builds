@@ -16,6 +16,7 @@ import {
   createViewPrefs
 } from 'peek://app/lib/grid-nav.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+import { resolveVividColor } from './config.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -229,6 +230,16 @@ const loadSpaces = async () => {
         tag.itemCount = 0;
       }
     }
+    // Resolve vivid colors for spaces with default/grey color
+    for (const tag of spaceTags) {
+      const vivid = resolveVividColor(tag.color, tag.id);
+      if (vivid !== tag.color) {
+        tag.color = vivid;
+        api.datastore.updateTagColor(tag.id, vivid);
+        debug && console.log('[spaces] Persisted vivid color for space:', tag.name, vivid);
+      }
+    }
+
     state.spaces = spaceTags;
     debug && console.log('[spaces] Loaded spaces:', state.spaces.length);
   } else {

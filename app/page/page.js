@@ -113,6 +113,10 @@ let screenBounds = {
   height: initialHeight,
 };
 
+// --- Maximize state ---
+let isMaximized = false;
+let preMaximizeBounds = null; // { x, y, width, height } screen bounds before maximize
+
 // NOTE: The window always includes navbar space (NAVBAR_HEIGHT) to avoid
 // visual jumps on show/hide. Navbar visibility is CSS-only — no window resize.
 
@@ -192,6 +196,15 @@ navbar.addEventListener('reload', () => {
 let extraWidth = 0;
 
 function computeWindowBounds(sb) {
+  if (isMaximized && preMaximizeBounds) {
+    // Maximized: window fills the display work area
+    return {
+      x: Math.round(sb.x),
+      y: Math.round(sb.y),
+      width: Math.round(sb.width),
+      height: Math.round(sb.height),
+    };
+  }
   const winX = sb.x - MARGIN - extraWidth / 2;
   const winY = sb.y - TRIGGER_ZONE_HEIGHT - (NAVBAR_HEIGHT + NAVBAR_GAP);
   const winW = sb.width + MARGIN * 2 + extraWidth;
@@ -218,6 +231,10 @@ function updateUrlParams() {
 }
 
 function updatePositions() {
+  if (isMaximized) {
+    updatePositionsMaximized();
+    return;
+  }
   // Elements are positioned within the center column, which is auto-centered
   // by flexbox. When the window is wider than needed (extraWidth > 0), the
   // gutters absorb the extra space — no element repositioning needed.
@@ -259,6 +276,11 @@ function updatePositions() {
   triggerZone.style.height = navVisible ? `${TRIGGER_ZONE_HEIGHT}px` : `${navOffset + TRIGGER_ZONE_HEIGHT}px`;
 
   // Resize handles — all four corners of the webview (24x24)
+  resizeHandles.se.style.display = '';
+  resizeHandles.sw.style.display = '';
+  resizeHandles.ne.style.display = '';
+  resizeHandles.nw.style.display = '';
+
   resizeHandles.se.style.left = `${webviewLeft + webviewWidth - 24}px`;
   resizeHandles.se.style.top = `${webviewTop + webviewHeight - 24}px`;
 
@@ -339,6 +361,162 @@ function updatePositions() {
   }
 }
 
+// --- Maximized layout helpers ---
+
+function updatePositionsMaximized() {
+  const winW = screenBounds.width;
+  const winH = screenBounds.height;
+
+  // Center column fills entire window
+  centerColumn.style.width = `${winW}px`;
+
+  // Webview fills entire window — edge to edge
+  webview.style.left = '0px';
+  webview.style.top = '0px';
+  webview.style.width = `${winW}px`;
+  webview.style.height = `${winH}px`;
+
+  // Drag overlay matches webview
+  dragOverlay.style.left = '0px';
+  dragOverlay.style.top = '0px';
+  dragOverlay.style.width = `${winW}px`;
+  dragOverlay.style.height = `${winH}px`;
+
+  // Navbar floats at top with margin padding
+  const navVisible = navbar.classList.contains('visible');
+  navbar.style.left = `${MARGIN}px`;
+  navbar.style.top = `${MARGIN}px`;
+  navbar.style.width = `${winW - MARGIN * 2}px`;
+
+  // Trigger zone spans full width at top
+  triggerZone.style.left = '0px';
+  triggerZone.style.top = '0px';
+  triggerZone.style.width = `${winW}px`;
+  triggerZone.style.height = navVisible ? `${NAVBAR_HEIGHT + MARGIN + TRIGGER_ZONE_HEIGHT}px` : `${TRIGGER_ZONE_HEIGHT + MARGIN}px`;
+
+  // Resize handles hidden when maximized
+  resizeHandles.se.style.display = 'none';
+  resizeHandles.sw.style.display = 'none';
+  resizeHandles.ne.style.display = 'none';
+  resizeHandles.nw.style.display = 'none';
+  resizeHandles.navNe.style.display = 'none';
+  resizeHandles.navNw.style.display = 'none';
+
+  // Position panels clamped to screen edges
+  positionPanelsMaximized(winW, winH, navVisible);
+}
+
+function positionPanelsMaximized(winW, winH, navVisible) {
+  const panelTopOffset = (navVisible ? NAVBAR_HEIGHT + MARGIN : 0) + TRIGGER_ZONE_HEIGHT + 40;
+
+  // Left panels: clamped so left >= MARGIN
+  const leftPanelLeft = MARGIN;
+
+  if (pageInfoPanel) {
+    pageInfoPanel.style.left = `${leftPanelLeft}px`;
+    pageInfoPanel.style.top = `${panelTopOffset}px`;
+    pageInfoPanel.style.width = `${PANEL_WIDTH}px`;
+  }
+
+  if (extensionsPanel) {
+    extensionsPanel.style.left = `${leftPanelLeft}px`;
+    const pageInfoHeight = (pageInfoPanel && pageInfoPanel.classList.contains('visible')) ? pageInfoPanel.offsetHeight : 0;
+    extensionsPanel.style.top = `${panelTopOffset + (pageInfoHeight > 0 ? pageInfoHeight + 12 : 0)}px`;
+    extensionsPanel.style.width = `${PANEL_WIDTH}px`;
+  }
+
+  // Right panels: right edge <= winW - MARGIN
+  const rightPanelLeft = winW - MARGIN - PANEL_WIDTH;
+  let rightStackTop = panelTopOffset;
+
+  if (widgetContainer) {
+    widgetContainer.style.left = `${rightPanelLeft}px`;
+    widgetContainer.style.top = `${rightStackTop}px`;
+    widgetContainer.style.width = `${PANEL_WIDTH}px`;
+    const widgetH = (widgetContainer.classList.contains('visible') && widgetContainer.offsetHeight > 0) ? widgetContainer.offsetHeight : 0;
+    if (widgetH > 0) rightStackTop += widgetH + 12;
+  }
+
+  if (tagsPanel) {
+    tagsPanel.style.left = `${rightPanelLeft}px`;
+    tagsPanel.style.top = `${rightStackTop}px`;
+    tagsPanel.style.width = `${PANEL_WIDTH}px`;
+    const tagsH = (tagsPanel.classList.contains('visible')) ? tagsPanel.offsetHeight : 0;
+    if (tagsH > 0) rightStackTop += tagsH + 12;
+  }
+
+  if (notesPanel) {
+    notesPanel.style.left = `${rightPanelLeft}px`;
+    notesPanel.style.top = `${rightStackTop}px`;
+    notesPanel.style.width = `${PANEL_WIDTH}px`;
+    const notesH = (notesPanel.classList.contains('visible')) ? notesPanel.offsetHeight : 0;
+    if (notesH > 0) rightStackTop += notesH + 12;
+  }
+
+  if (entitiesPanel) {
+    entitiesPanel.style.left = `${rightPanelLeft}px`;
+    entitiesPanel.style.top = `${rightStackTop}px`;
+    entitiesPanel.style.width = `${PANEL_WIDTH}px`;
+  }
+}
+
+// --- Toggle maximize ---
+
+async function toggleMaximize() {
+  if (isMaximized) {
+    // Restore from maximize
+    isMaximized = false;
+    document.body.classList.remove('maximized');
+
+    if (preMaximizeBounds) {
+      screenBounds.x = preMaximizeBounds.x;
+      screenBounds.y = preMaximizeBounds.y;
+      screenBounds.width = preMaximizeBounds.width;
+      screenBounds.height = preMaximizeBounds.height;
+      preMaximizeBounds = null;
+    }
+
+    updatePositions();
+    centerColumn.style.opacity = '0';
+    await api.window.setBounds(computeWindowBounds(screenBounds));
+    centerColumn.style.opacity = '1';
+    updateUrlParams();
+    return;
+  }
+
+  // Maximize: fill screen work area
+  const displayResult = await api.window.getDisplayInfo();
+  if (!displayResult || !displayResult.success || !displayResult.data) {
+    console.warn('[page] Failed to get display info for maximize');
+    return;
+  }
+
+  const workArea = displayResult.data.workArea;
+
+  // Save current bounds for restore
+  preMaximizeBounds = {
+    x: screenBounds.x,
+    y: screenBounds.y,
+    width: screenBounds.width,
+    height: screenBounds.height,
+  };
+
+  isMaximized = true;
+  document.body.classList.add('maximized');
+
+  // screenBounds now represents the full work area (window = work area in maximized mode)
+  screenBounds.x = workArea.x;
+  screenBounds.y = workArea.y;
+  screenBounds.width = workArea.width;
+  screenBounds.height = workArea.height;
+
+  updatePositions();
+  centerColumn.style.opacity = '0';
+  await api.window.setBounds(computeWindowBounds(screenBounds));
+  centerColumn.style.opacity = '1';
+  updateUrlParams();
+}
+
 // --- Set window bounds via IPC ---
 
 let pendingBoundsUpdate = null;
@@ -357,6 +535,7 @@ function setWindowBounds(bounds) {
 // Expands the window symmetrically. Flexbox keeps the center column in place.
 // Returns a promise that resolves when the window bounds have been applied.
 function setWindowPadding(width) {
+  if (isMaximized) return Promise.resolve();
   width = Math.max(0, width);
   if (width === extraWidth) return Promise.resolve();
   extraWidth = width;
@@ -547,6 +726,23 @@ let holdDragStartScreenY = 0;
 })();
 
 function startDrag(screenX, screenY) {
+  // Drag-out-of-maximize: restore original size, center on cursor
+  if (isMaximized && preMaximizeBounds) {
+    const restoreW = preMaximizeBounds.width;
+    const restoreH = preMaximizeBounds.height;
+    isMaximized = false;
+    document.body.classList.remove('maximized');
+
+    // Center the restored window on the cursor
+    screenBounds.x = screenX - restoreW / 2;
+    screenBounds.y = screenY;
+    screenBounds.width = restoreW;
+    screenBounds.height = restoreH;
+    preMaximizeBounds = null;
+
+    updatePositions();
+    api.window.setBounds(computeWindowBounds(screenBounds));
+  }
   isDragging = true;
   dragStartScreenX = screenX;
   dragStartScreenY = screenY;
@@ -1465,6 +1661,26 @@ api.commands.register({
   description: 'Reload the current page',
   scope: 'window',
   execute: () => webview.reload()
+});
+
+api.commands.register({
+  name: 'Maximize',
+  description: 'Toggle maximize for the current page',
+  scope: 'window',
+  execute: () => toggleMaximize()
+});
+
+// Subscribe to page:maximize pubsub
+api.subscribe('page:maximize', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
+  toggleMaximize();
+}, api.scopes.GLOBAL);
+
+// Navbar double-click to toggle maximize
+navbar.addEventListener('dblclick', (e) => {
+  // Only on the navbar background (not on buttons/inputs inside shadow DOM)
+  e.preventDefault();
+  toggleMaximize();
 });
 
 // --- Space mode widget ---
