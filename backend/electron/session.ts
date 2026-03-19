@@ -15,7 +15,8 @@
 
 import { BrowserWindow, dialog, screen } from 'electron';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
-import { getAllWindows, getBackgroundWindow } from './main.js';
+import { getAllWindows, getBackgroundWindow, pushClosedWindow } from './main.js';
+import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredExtensionIds } from './protocol.js';
 
 import { publish, scopes as PubSubScopes, getSystemAddress } from './pubsub.js';
@@ -285,6 +286,35 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     `).run('session-metadata', JSON.stringify(metadata), Date.now());
 
     DEBUG && console.log(`[session] Session snapshot saved successfully`);
+
+    // Push all currently open content windows onto the closed window stack
+    // so they can be recovered via undo-close-window if session restore fails.
+    // Only push web URLs (http/https) — same filtering as the closed handler in main.ts.
+    if (reason === 'before-quit') {
+      for (const descriptor of windowDescriptors) {
+        const isWebUrl = descriptor.url.startsWith('http://') || descriptor.url.startsWith('https://');
+        if (!isWebUrl) continue;
+
+        // Check for space mode in context
+        let spaceMode: ClosedWindowEntry['spaceMode'] = null;
+        if (descriptor.context?.mode === 'space' && descriptor.context.modeMetadata) {
+          spaceMode = {
+            spaceId: descriptor.context.modeMetadata.spaceId as string,
+            spaceName: descriptor.context.modeMetadata.spaceName as string,
+            color: descriptor.context.modeMetadata.color as string | undefined,
+          };
+        }
+
+        pushClosedWindow({
+          url: descriptor.url,
+          source: descriptor.source,
+          bounds: descriptor.bounds,
+          spaceMode,
+          timestamp: Date.now(),
+        });
+      }
+      DEBUG && console.log(`[session] Pushed ${windowDescriptors.filter(d => d.url.startsWith('http://') || d.url.startsWith('https://')).length} open window(s) to closed window stack`);
+    }
 
     // Also save per-space workspace snapshots (for space layout restore)
     saveSpaceWorkspaces();

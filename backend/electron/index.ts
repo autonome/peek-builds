@@ -184,6 +184,8 @@ export {
   requestSingleInstance,
   quitApp,
   validateThemeCSS,
+  loadClosedWindowStack,
+  saveClosedWindowStack,
 } from './main.js';
 
 export type { AppConfig } from './main.js';

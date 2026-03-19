@@ -97,9 +97,9 @@ const windowRegistry = new Map<number, {
 }>();
 
 // Recently closed windows stack (in-memory, most recent last)
-const MAX_CLOSED_WINDOWS = 20;
+const MAX_CLOSED_WINDOWS = 50;
 
-interface ClosedWindowEntry {
+export interface ClosedWindowEntry {
   url: string;           // Original URL (not the peek:// rewritten one)
   source: string;
   bounds: { x: number; y: number; width: number; height: number } | null;
@@ -1699,7 +1699,8 @@ export function getAllWindows(): Array<[number, { source: string; params: Record
 }
 
 /**
- * Push a closed window entry onto the stack
+ * Push a closed window entry onto the stack.
+ * Persists to DB so the stack survives restarts.
  */
 export function pushClosedWindow(entry: ClosedWindowEntry): void {
   closedWindowStack.push(entry);
@@ -1707,14 +1708,17 @@ export function pushClosedWindow(entry: ClosedWindowEntry): void {
     closedWindowStack.shift();
   }
   DEBUG && console.log('[reopen] Pushed closed window:', entry.url, 'stack size:', closedWindowStack.length);
+  saveClosedWindowStack();
 }
 
 /**
- * Pop the most recently closed window from the stack
+ * Pop the most recently closed window from the stack.
+ * Persists to DB so the stack survives restarts.
  */
 export function popClosedWindow(): ClosedWindowEntry | undefined {
   const entry = closedWindowStack.pop();
   DEBUG && console.log('[reopen] Popped closed window:', entry?.url, 'stack size:', closedWindowStack.length);
+  saveClosedWindowStack();
   return entry;
 }
 
@@ -1723,6 +1727,70 @@ export function popClosedWindow(): ClosedWindowEntry | undefined {
  */
 export function getClosedWindowCount(): number {
   return closedWindowStack.length;
+}
+
+/**
+ * Get a copy of the current closed window stack.
+ * Used by session save to persist the stack.
+ */
+export function getClosedWindowStack(): ClosedWindowEntry[] {
+  return [...closedWindowStack];
+}
+
+/**
+ * Save the closed window stack to the datastore (feature_settings table).
+ * Synchronous — safe for before-quit handler.
+ */
+export function saveClosedWindowStack(): void {
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return;
+  }
+
+  try {
+    const data = JSON.stringify(closedWindowStack);
+    db.prepare(`
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+      VALUES (?, 'session', 'closed-window-stack', ?, ?)
+    `).run('session-closed-window-stack', data, Date.now());
+    DEBUG && console.log(`[reopen] Saved closed window stack (${closedWindowStack.length} entries)`);
+  } catch (error) {
+    console.error('[reopen] Failed to save closed window stack:', error);
+  }
+}
+
+/**
+ * Load the closed window stack from the datastore on startup.
+ * Replaces the in-memory stack with persisted entries.
+ */
+export function loadClosedWindowStack(): void {
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return;
+  }
+
+  try {
+    const row = db.prepare(
+      `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'closed-window-stack'`
+    ).get() as { value: string } | undefined;
+
+    if (row?.value) {
+      const entries: ClosedWindowEntry[] = JSON.parse(row.value);
+      if (Array.isArray(entries)) {
+        closedWindowStack.length = 0;
+        for (const entry of entries) {
+          closedWindowStack.push(entry);
+        }
+        DEBUG && console.log(`[reopen] Loaded closed window stack (${closedWindowStack.length} entries)`);
+      }
+    }
+  } catch (error) {
+    console.error('[reopen] Failed to load closed window stack:', error);
+  }
 }
 
 /**

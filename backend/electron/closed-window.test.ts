@@ -41,7 +41,7 @@ interface ContextEntry {
 // Pure logic functions (extracted from main.ts - identical implementations)
 // ============================================================================
 
-const MAX_CLOSED_WINDOWS = 20;
+const MAX_CLOSED_WINDOWS = 50;
 
 let closedWindowStack: ClosedWindowEntry[] = [];
 
@@ -160,16 +160,16 @@ describe('Closed window stack operations', () => {
     assert.deepStrictEqual(popClosedWindow(), entry1);
   });
 
-  it('stack caps at MAX_CLOSED_WINDOWS (20) — pushing 21st drops the oldest', () => {
-    for (let i = 0; i < 21; i++) {
+  it('stack caps at MAX_CLOSED_WINDOWS (50) — pushing 51st drops the oldest', () => {
+    for (let i = 0; i < 51; i++) {
       pushClosedWindow(makeEntry({ url: `https://example.com/page${i}` }));
     }
-    assert.strictEqual(getClosedWindowCount(), 20);
-    // The oldest (page0) should have been dropped; most recent pop is page20
+    assert.strictEqual(getClosedWindowCount(), 50);
+    // The oldest (page0) should have been dropped; most recent pop is page50
     const newest = popClosedWindow();
-    assert.strictEqual(newest?.url, 'https://example.com/page20');
-    // After popping all 19 remaining, the oldest should be page1 (page0 was evicted)
-    for (let i = 0; i < 18; i++) {
+    assert.strictEqual(newest?.url, 'https://example.com/page50');
+    // After popping all 48 remaining, the oldest should be page1 (page0 was evicted)
+    for (let i = 0; i < 48; i++) {
       popClosedWindow();
     }
     const oldest = popClosedWindow();

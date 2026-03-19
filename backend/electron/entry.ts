@@ -69,6 +69,8 @@ import {
   updateDockVisibility,
   // Extension loading
   loadExtensionManifest,
+  // Closed window stack persistence
+  loadClosedWindowStack,
 } from './index.js';
 
 import { startHotReload, stopHotReload } from './hotreload.js';
@@ -509,6 +511,10 @@ const onReady = async () => {
 
   // Now mark session as dirty for crash detection going forward
   markSessionDirty();
+
+  // Load persisted closed window stack so undo-close-window works across restarts.
+  // This includes windows from the previous session (pushed during before-quit save).
+  loadClosedWindowStack();
 
   // Check if session restore has a valid snapshot waiting.
   // This flag tells the core app to skip the startup feature (settings window)

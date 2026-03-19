@@ -1724,3 +1724,178 @@ describe('feature_settings migration (extension_settings -> feature_settings)', 
     migrationDb.close();
   });
 });
+
+// ============================================================================
+// Closed window stack persistence tests
+// ============================================================================
+
+interface ClosedWindowEntry {
+  url: string;
+  source: string;
+  bounds: { x: number; y: number; width: number; height: number } | null;
+  spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
+  timestamp: number;
+}
+
+/**
+ * Save closed window stack to DB — replicates main.ts saveClosedWindowStack.
+ */
+function saveClosedStack(db: InstanceType<typeof Database>, stack: ClosedWindowEntry[]): void {
+  const data = JSON.stringify(stack);
+  db.prepare(`
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+    VALUES (?, 'session', 'closed-window-stack', ?, ?)
+  `).run('session-closed-window-stack', data, Date.now());
+}
+
+/**
+ * Load closed window stack from DB — replicates main.ts loadClosedWindowStack.
+ */
+function loadClosedStack(db: InstanceType<typeof Database>): ClosedWindowEntry[] {
+  const row = db.prepare(
+    `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'closed-window-stack'`
+  ).get() as { value: string } | undefined;
+  if (!row?.value) return [];
+  const entries = JSON.parse(row.value);
+  return Array.isArray(entries) ? entries : [];
+}
+
+function makeClosedEntry(overrides?: Partial<ClosedWindowEntry>): ClosedWindowEntry {
+  return {
+    url: 'https://example.com',
+    source: 'test-ext',
+    bounds: { x: 100, y: 100, width: 800, height: 600 },
+    spaceMode: null,
+    timestamp: Date.now(),
+    ...overrides,
+  };
+}
+
+describe('Closed window stack persistence', () => {
+  it('saves and loads empty stack', () => {
+    const db = createTestDb();
+    saveClosedStack(db, []);
+    const loaded = loadClosedStack(db);
+    assert.strictEqual(loaded.length, 0);
+    db.close();
+  });
+
+  it('saves and loads stack with entries', () => {
+    const db = createTestDb();
+    const stack = [
+      makeClosedEntry({ url: 'https://a.com' }),
+      makeClosedEntry({ url: 'https://b.com' }),
+      makeClosedEntry({ url: 'https://c.com' }),
+    ];
+    saveClosedStack(db, stack);
+    const loaded = loadClosedStack(db);
+    assert.strictEqual(loaded.length, 3);
+    assert.strictEqual(loaded[0].url, 'https://a.com');
+    assert.strictEqual(loaded[1].url, 'https://b.com');
+    assert.strictEqual(loaded[2].url, 'https://c.com');
+    db.close();
+  });
+
+  it('preserves bounds through save/load cycle', () => {
+    const db = createTestDb();
+    const bounds = { x: 200, y: 150, width: 1024, height: 768 };
+    const stack = [makeClosedEntry({ bounds })];
+    saveClosedStack(db, stack);
+    const loaded = loadClosedStack(db);
+    assert.deepStrictEqual(loaded[0].bounds, bounds);
+    db.close();
+  });
+
+  it('preserves spaceMode through save/load cycle', () => {
+    const db = createTestDb();
+    const stack = [makeClosedEntry({
+      spaceMode: { spaceId: 'sp-123', spaceName: 'Work', color: '#ff0000' },
+    })];
+    saveClosedStack(db, stack);
+    const loaded = loadClosedStack(db);
+    assert.deepStrictEqual(loaded[0].spaceMode, {
+      spaceId: 'sp-123',
+      spaceName: 'Work',
+      color: '#ff0000',
+    });
+    db.close();
+  });
+
+  it('overwrites previous stack on save', () => {
+    const db = createTestDb();
+    saveClosedStack(db, [makeClosedEntry({ url: 'https://old.com' })]);
+    saveClosedStack(db, [makeClosedEntry({ url: 'https://new.com' })]);
+    const loaded = loadClosedStack(db);
+    assert.strictEqual(loaded.length, 1);
+    assert.strictEqual(loaded[0].url, 'https://new.com');
+    db.close();
+  });
+
+  it('returns empty array when no stack saved', () => {
+    const db = createTestDb();
+    const loaded = loadClosedStack(db);
+    assert.strictEqual(loaded.length, 0);
+    db.close();
+  });
+
+  it('session snapshot save pushes open web windows to closed stack', () => {
+    // Simulate the session save logic that pushes open windows to closed stack
+    const db = createTestDb();
+
+    // Current open windows from the session snapshot
+    const windowDescriptors = [
+      makeDescriptor({ url: 'https://github.com' }),
+      makeDescriptor({ url: 'https://example.com' }),
+      makeDescriptor({ url: 'peek://ext/groups/home.html' }), // non-web, should be skipped
+    ];
+
+    // Simulate the before-quit logic from session.ts
+    const closedStack: ClosedWindowEntry[] = [];
+    for (const descriptor of windowDescriptors) {
+      const isWebUrl = descriptor.url.startsWith('http://') || descriptor.url.startsWith('https://');
+      if (!isWebUrl) continue;
+      closedStack.push({
+        url: descriptor.url,
+        source: descriptor.source,
+        bounds: descriptor.bounds,
+        spaceMode: null,
+        timestamp: Date.now(),
+      });
+    }
+
+    saveClosedStack(db, closedStack);
+    const loaded = loadClosedStack(db);
+    assert.strictEqual(loaded.length, 2, 'Only web URLs should be pushed to closed stack');
+    assert.strictEqual(loaded[0].url, 'https://github.com');
+    assert.strictEqual(loaded[1].url, 'https://example.com');
+    db.close();
+  });
+
+  it('stack survives across simulated restarts', () => {
+    const db = createTestDb();
+
+    // Session 1: close some windows and save
+    const session1Stack = [
+      makeClosedEntry({ url: 'https://a.com', timestamp: 1000 }),
+      makeClosedEntry({ url: 'https://b.com', timestamp: 2000 }),
+    ];
+    saveClosedStack(db, session1Stack);
+
+    // Session 2: "restart" — load the stack
+    const loaded = loadClosedStack(db);
+    assert.strictEqual(loaded.length, 2);
+    assert.strictEqual(loaded[0].url, 'https://a.com');
+    assert.strictEqual(loaded[1].url, 'https://b.com');
+
+    // Session 2: pop one (undo-close-window)
+    loaded.pop();
+    saveClosedStack(db, loaded);
+
+    // Session 3: "restart" — should have 1 entry
+    const loaded2 = loadClosedStack(db);
+    assert.strictEqual(loaded2.length, 1);
+    assert.strictEqual(loaded2[0].url, 'https://a.com');
+
+    db.close();
+  });
+});
