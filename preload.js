@@ -312,6 +312,13 @@ api.window = {
       id
     });
   },
+  setOverlayFocusTarget: (targetWindowId) => {
+    DEBUG && console.log('window.setOverlayFocusTarget', targetWindowId);
+    return ipcRenderer.invoke('window-set-overlay-focus-target', {
+      source: sourceAddress,
+      targetWindowId
+    });
+  },
   blur: (id) => {
     DEBUG && console.log('window.blur', id);
     return ipcRenderer.invoke('window-blur', {

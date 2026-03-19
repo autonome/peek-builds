@@ -282,6 +282,15 @@ export async function initialize(): Promise<void> {
                 hiddenWin.show();
               }
             }
+            // Focus the specific window the user selected (if set by the overlay)
+            const focusTargetId = windowData.params.overlayFocusTarget as number | undefined;
+            if (focusTargetId) {
+              const targetWin = BrowserWindow.fromId(focusTargetId);
+              if (targetWin && !targetWin.isDestroyed()) {
+                DEBUG && console.log('[izui] Overlay focus target:', focusTargetId);
+                targetWin.focus();
+              }
+            }
           } else if (isTransient && hiddenWindowIds && hiddenWindowIds.length > 0) {
             DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring', hiddenWindowIds.length, 'windows');
           }

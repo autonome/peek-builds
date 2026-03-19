@@ -3124,6 +3124,28 @@ export function registerWindowHandlers(): void {
     return { success: true, ...bounds };
   });
 
+  // Set a focus target on the calling window (used by overlay windows to specify
+  // which window should be focused after the overlay closes and restores hidden windows)
+  ipcMain.handle('window-set-overlay-focus-target', async (ev, msg) => {
+    try {
+      const callerWin = BrowserWindow.fromWebContents(ev.sender);
+      if (!callerWin) {
+        return { success: false, error: 'Caller window not found' };
+      }
+      const winInfo = getWindowInfo(callerWin.id);
+      if (!winInfo) {
+        return { success: false, error: 'Caller window not in window manager' };
+      }
+      winInfo.params.overlayFocusTarget = msg.targetWindowId;
+      DEBUG && console.log('window-set-overlay-focus-target:', msg.targetWindowId, 'on overlay:', callerWin.id);
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to set overlay focus target:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   ipcMain.handle('window-close', async (_ev, msg) => {
     try {
       if (!msg.id) {
