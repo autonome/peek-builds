@@ -591,6 +591,29 @@ if (api) {
     if (currentView === VIEW_LIST) renderEntities();
   }, api.scopes.GLOBAL);
 
+  // Subscribe to sync and item events for reactive updates
+  const debouncedRefresh = (() => {
+    let timer;
+    return () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (currentView === VIEW_LIST) renderEntities();
+      }, 150);
+    };
+  })();
+
+  api.subscribe('sync:pull-completed', () => {
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('item:created', () => {
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
+  api.subscribe('item:deleted', () => {
+    debouncedRefresh();
+  }, api.scopes.GLOBAL);
+
   // Register escape handler for back-navigation from detail view
   if (api.escape) {
     api.escape.onEscape(() => {

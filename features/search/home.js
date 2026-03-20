@@ -423,4 +423,47 @@ const init = async () => {
   render();
 };
 
+// ── Debounce helper ─────────────────────────────────────────────────
+
+const debounce = (fn, ms) => {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+};
+
+// ── Reactive subscriptions ──────────────────────────────────────────
+
+const debouncedRefresh = debounce(async () => {
+  if (!state.query) return; // Nothing to refresh if no active search
+  await runSearch();
+  render();
+}, 150);
+
+api.subscribe('sync:pull-completed', (msg) => {
+  debug && console.log('[search] sync:pull-completed event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
+api.subscribe('item:created', (msg) => {
+  debug && console.log('[search] item:created event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
+api.subscribe('item:deleted', (msg) => {
+  debug && console.log('[search] item:deleted event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
+api.subscribe('tag:item-added', (msg) => {
+  debug && console.log('[search] tag:item-added event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
+api.subscribe('tag:item-removed', (msg) => {
+  debug && console.log('[search] tag:item-removed event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
 document.addEventListener('DOMContentLoaded', init);

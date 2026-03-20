@@ -520,5 +520,38 @@ const init = async () => {
   });
 };
 
+// ===== Reactive subscriptions =====
+
+const debouncedRefresh = debounce(async () => {
+  if (!state.query) return; // Nothing to refresh if no active search
+  const results = await performSearch(state.query);
+  renderResults(results, state.query);
+}, 150);
+
+api.subscribe('sync:pull-completed', (msg) => {
+  debug && console.log('[lists] sync:pull-completed event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
+api.subscribe('item:created', (msg) => {
+  debug && console.log('[lists] item:created event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
+api.subscribe('item:deleted', (msg) => {
+  debug && console.log('[lists] item:deleted event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
+api.subscribe('tag:item-added', (msg) => {
+  debug && console.log('[lists] tag:item-added event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
+api.subscribe('tag:item-removed', (msg) => {
+  debug && console.log('[lists] tag:item-removed event received:', msg);
+  debouncedRefresh();
+}, api.scopes.GLOBAL);
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', init);
