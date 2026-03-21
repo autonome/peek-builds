@@ -463,6 +463,22 @@ function positionPanelsMaximized(winW, winH, navVisible) {
 // --- Toggle maximize ---
 
 async function toggleMaximize() {
+  // Cancel any active drag — drag handlers running during the await would
+  // overwrite screenBounds and call setBounds with stale values.
+  if (isDragging) {
+    isDragging = false;
+    dragOverlay.classList.remove('active');
+    document.body.style.cursor = '';
+    navbar.style.cursor = 'grab';
+  }
+  cancelHoldDrag();
+  cancelWebviewHold();
+  // Cancel any pending throttled bounds update from drag/resize
+  if (pendingBoundsUpdate) {
+    cancelAnimationFrame(pendingBoundsUpdate);
+    pendingBoundsUpdate = null;
+  }
+
   if (isMaximized) {
     // Restore from maximize
     isMaximized = false;
@@ -931,7 +947,7 @@ webview.addEventListener('console-message', (e) => {
     if (isNaN(screenX) || isNaN(screenY)) return;
 
     // If actively dragging, update window position from webview mouse coords.
-    if (isDragging) {
+    if (isDragging && !isMaximized) {
       const dx = screenX - dragStartScreenX;
       const dy = screenY - dragStartScreenY;
       screenBounds.x = dragStartBoundsX + dx;
@@ -1060,7 +1076,7 @@ function initResizeHandle(handle) {
   });
 
   handle.addEventListener('pointermove', (e) => {
-    if (!isResizing || activeResizeHandle !== handle) return;
+    if (!isResizing || activeResizeHandle !== handle || isMaximized) return;
     if (e.buttons === 0) {
       cancelResize();
       return;
@@ -1136,7 +1152,7 @@ document.addEventListener('mousemove', (e) => {
     return;
   }
 
-  if (isDragging) {
+  if (isDragging && !isMaximized) {
     const dx = e.screenX - dragStartScreenX;
     const dy = e.screenY - dragStartScreenY;
     screenBounds.x = dragStartBoundsX + dx;
