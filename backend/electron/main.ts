@@ -705,6 +705,7 @@ function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
     modes: cmd.modes || [],
     accepts: cmd.accepts || [],
     produces: cmd.produces || [],
+    params: cmd.params || [],
   });
 
   DEBUG && console.log(`[ext:lazy] Registered lazy command: ${cmd.name} (extension: ${extId})`);

@@ -39,6 +39,7 @@ export interface ManifestCommand {
   modes?: string[];
   accepts?: string[];
   produces?: string[];
+  params?: Array<{ name: string; type: string; required?: boolean; description?: string; [key: string]: unknown }>;
 }
 
 // Declarative shortcut definition in manifest.json

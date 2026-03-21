@@ -453,15 +453,59 @@ const openSearchWindow = () => {
   });
 };
 
+// ===== Query Extraction =====
+
+/**
+ * Extract the search query from a command execution context.
+ *
+ * The query can arrive in different fields depending on how the command
+ * was invoked:
+ *   - Inline ("kagi foo"):  ctx.search = "foo", ctx.params = ["foo"]
+ *   - Tab param mode:       ctx.search = "foo", ctx.params = ["foo"]
+ *   - Direct pubsub:        ctx.search = "foo"
+ *
+ * We check ctx.search first, then fall back to joining ctx.params,
+ * then try extracting from ctx.typed by stripping the command name.
+ */
+const extractSearchQuery = (ctx) => {
+  // 1. Explicit search field (set by buildExecutionContext when text follows command name)
+  if (ctx.search && ctx.search.trim()) {
+    return ctx.search.trim();
+  }
+
+  // 2. Params array (same source as search, but as split tokens)
+  if (ctx.params && ctx.params.length > 0) {
+    const joined = ctx.params.join(' ').trim();
+    if (joined) return joined;
+  }
+
+  // 3. Extract from typed text by stripping the command name
+  if (ctx.typed && ctx.name) {
+    const typed = ctx.typed.trim();
+    const nameLower = ctx.name.toLowerCase();
+    const typedLower = typed.toLowerCase();
+    if (typedLower.startsWith(nameLower + ' ')) {
+      const rest = typed.slice(ctx.name.length).trim();
+      if (rest) return rest;
+    } else if (typedLower.startsWith(nameLower)) {
+      const rest = typed.slice(ctx.name.length).trim();
+      if (rest) return rest;
+    }
+  }
+
+  return '';
+};
+
 // ===== Command Definitions =====
 
 const staticCommandDefinitions = [
   {
     name: 'web search',
     description: 'Search the web with your default search engine',
+    params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
     execute: async (ctx) => {
-      const query = ctx.search || '';
-      if (query.trim()) {
+      const query = extractSearchQuery(ctx);
+      if (query) {
         const engine = getDefaultEngine();
         await executeSearch(engine, query);
       } else {
@@ -494,9 +538,10 @@ const registerEngineCommands = () => {
     const cmd = {
       name: engine.shortName,
       description: `Search ${engine.name}`,
+      params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
       execute: async (ctx) => {
-        const query = ctx.search || '';
-        if (query.trim()) {
+        const query = extractSearchQuery(ctx);
+        if (query) {
           await executeSearch(engine, query);
         } else {
           openSearchWindow();

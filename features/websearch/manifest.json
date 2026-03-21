@@ -11,7 +11,8 @@
     {
       "name": "web search",
       "description": "Search the web with your default search engine",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "query", "type": "string", "required": false, "description": "Search query" }]
     },
     {
       "name": "open web search",
@@ -21,27 +22,32 @@
     {
       "name": "kagi",
       "description": "Search Kagi",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "query", "type": "string", "required": false, "description": "Search query" }]
     },
     {
       "name": "google",
       "description": "Search Google",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "query", "type": "string", "required": false, "description": "Search query" }]
     },
     {
       "name": "ddg",
       "description": "Search DuckDuckGo",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "query", "type": "string", "required": false, "description": "Search query" }]
     },
     {
       "name": "bing",
       "description": "Search Bing",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "query", "type": "string", "required": false, "description": "Search query" }]
     },
     {
       "name": "wiki",
       "description": "Search Wikipedia",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "query", "type": "string", "required": false, "description": "Search query" }]
     }
   ]
 }
