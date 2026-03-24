@@ -131,6 +131,15 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       const cmd = cmdName && data.commands[cmdName];
       return cmd && cmd.params && cmd.params.length > 0;
     },
+    textAlreadyMatchesCommand: (payload) => {
+      // Check if the typed text already fully matches the selected command name.
+      // Used to decide whether Tab should complete the name (partial) or enter param mode (already complete).
+      const cmdName = payload?.commandName || data.matches[data.matchIndex];
+      if (!cmdName) return false;
+      const trimmed = (data.typed || '').trim().toLowerCase();
+      const lowerCmd = cmdName.toLowerCase();
+      return trimmed === lowerCmd || trimmed.startsWith(lowerCmd + ' ');
+    },
     isItemTypeParam: () => {
       const cmd = data.paramCommand && data.commands[data.paramCommand];
       const paramDef = cmd && cmd.params && cmd.params[0];
@@ -272,11 +281,14 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       ],
       [Events.TAB]: [
         {
-          guard: (p) => guard('hasMatches', p) && guard('commandHasParams', p),
+          // Command has params AND name is already fully typed → enter param mode
+          guard: (p) => guard('hasMatches', p) && guard('commandHasParams', p) && guard('textAlreadyMatchesCommand', p),
           target: States.PARAM_MODE,
           actions: ['tabCompleteCommand', 'enterParamMode', 'updateGhostText', 'updateResults'],
         },
         {
+          // Command has params but name is only partially typed → complete name first
+          // (next Tab press will enter param mode since name will then be fully typed)
           guard: 'hasMatches',
           target: States.TYPING,
           actions: ['tabCompleteCommand', 'updateGhostText', 'updateResults'],
@@ -353,7 +365,8 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       ],
       [Events.TAB]: [
         {
-          guard: (p) => guard('hasMatches', p) && guard('commandHasParams', p),
+          // Command has params AND name is already fully typed → enter param mode
+          guard: (p) => guard('hasMatches', p) && guard('commandHasParams', p) && guard('textAlreadyMatchesCommand', p),
           target: States.PARAM_MODE,
           actions: ['tabCompleteCommand', 'enterParamMode', 'updateGhostText', 'updateResults'],
         },

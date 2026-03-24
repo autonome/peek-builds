@@ -214,13 +214,42 @@ describe('TYPING transitions', () => {
     assert.equal(machine.getState(), States.RESULTS_OPEN);
   });
 
-  it('TYPING + Tab with params -> PARAM_MODE', () => {
+  it('TYPING + Tab with params and text fully matches -> PARAM_MODE', () => {
     machine.getMutableData().matches = ['edit'];
+    machine.getMutableData().typed = 'edit';
     machine.getMutableData().commands = {
       edit: { name: 'edit', params: [{ type: 'item' }] }
     };
     const result = machine.dispatch(Events.TAB, {
       commandName: 'edit',
+      hasParams: true
+    });
+    assert.equal(machine.getState(), States.PARAM_MODE);
+  });
+
+  it('TYPING + Tab with params but partial text -> TYPING (complete name first)', () => {
+    machine.getMutableData().matches = ['kagi'];
+    machine.getMutableData().typed = 'ka';
+    machine.getMutableData().commands = {
+      kagi: { name: 'kagi', params: [{ name: 'query', type: 'string' }] }
+    };
+    const result = machine.dispatch(Events.TAB, {
+      commandName: 'kagi',
+      hasParams: true
+    });
+    // Should stay in TYPING — complete the name, don't enter param mode yet
+    assert.equal(machine.getState(), States.TYPING);
+    assert.equal(result.handled, true);
+  });
+
+  it('TYPING + Tab with params and text matches with trailing space -> PARAM_MODE', () => {
+    machine.getMutableData().matches = ['kagi'];
+    machine.getMutableData().typed = 'kagi ';
+    machine.getMutableData().commands = {
+      kagi: { name: 'kagi', params: [{ name: 'query', type: 'string' }] }
+    };
+    const result = machine.dispatch(Events.TAB, {
+      commandName: 'kagi',
       hasParams: true
     });
     assert.equal(machine.getState(), States.PARAM_MODE);
