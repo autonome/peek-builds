@@ -107,6 +107,7 @@ interface SyncSettings {
   server_url: string;
   api_key: string;
   auto_sync: boolean;
+  sync_interval_minutes: number;
 }
 
 interface ProfileInfo {
@@ -974,7 +975,9 @@ function App() {
 
   // Periodic auto-sync
   const autoSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const AUTO_SYNC_INTERVAL = 60_000; // 60 seconds
+  const DEFAULT_SYNC_INTERVAL_MINUTES = 30;
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState(DEFAULT_SYNC_INTERVAL_MINUTES);
+  const syncIntervalMs = syncIntervalMinutes * 60_000;
 
   // Filter tags drag-to-resize handlers
   const handleFilterTagsDragStart = (clientY: number) => {
@@ -1112,6 +1115,7 @@ function App() {
     loadWebhookUrl();
     loadWebhookApiKey();
     loadAutoSync();
+    loadSyncInterval();
     loadLastSync();
     loadSyncStatus();
     loadProfileInfo();
@@ -1214,6 +1218,24 @@ function App() {
       setAutoSyncEnabled(enabled);
     } catch (error) {
       console.error("Failed to set auto-sync:", error);
+    }
+  };
+
+  const loadSyncInterval = async () => {
+    try {
+      const minutes = await invoke<number>("get_sync_interval");
+      if (minutes > 0) setSyncIntervalMinutes(minutes);
+    } catch (error) {
+      console.error("Failed to load sync interval:", error);
+    }
+  };
+
+  const saveSyncInterval = async (minutes: number) => {
+    try {
+      await invoke("set_sync_interval", { minutes });
+      setSyncIntervalMinutes(minutes);
+    } catch (error) {
+      console.error("Failed to save sync interval:", error);
     }
   };
 
@@ -2112,7 +2134,7 @@ function App() {
     mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Periodic auto-sync: runs every 60s, pauses when backgrounded, syncs on foreground return
+  // Periodic auto-sync: runs at configured interval, pauses when backgrounded, syncs on foreground return
   useEffect(() => {
     if (!webhookUrl) return;
 
@@ -2120,7 +2142,7 @@ function App() {
       if (autoSyncIntervalRef.current) clearInterval(autoSyncIntervalRef.current);
       autoSyncIntervalRef.current = setInterval(() => {
         if (!isSyncing) syncAll();
-      }, AUTO_SYNC_INTERVAL);
+      }, syncIntervalMs);
     };
 
     const handleVisibility = () => {
@@ -2144,7 +2166,7 @@ function App() {
       if (autoSyncIntervalRef.current) clearInterval(autoSyncIntervalRef.current);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [webhookUrl, isSyncing]);
+  }, [webhookUrl, isSyncing, syncIntervalMs]);
 
   // Reset to show all types, clear search/filters, and scroll to top
   const showAll = () => {
@@ -3448,6 +3470,21 @@ ${content.html}
               />
               <span>Auto-sync when items are added or modified</span>
             </label>
+
+            <div className="sync-interval-setting">
+              <label htmlFor="sync-interval-select">Periodic sync interval</label>
+              <select
+                id="sync-interval-select"
+                value={syncIntervalMinutes}
+                onChange={(e) => saveSyncInterval(Number(e.target.value))}
+              >
+                <option value={5}>5 minutes</option>
+                <option value={15}>15 minutes</option>
+                <option value={30}>30 minutes</option>
+                <option value={60}>1 hour</option>
+                <option value={120}>2 hours</option>
+              </select>
+            </div>
 
             {lastSync && (
               <p className="last-sync-info">

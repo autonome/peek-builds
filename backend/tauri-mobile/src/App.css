@@ -3369,6 +3369,38 @@ body.dark .auto-sync-toggle {
   cursor: pointer;
 }
 
+/* Sync interval setting */
+.sync-interval-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+body.dark .sync-interval-setting {
+  color: #ccc;
+}
+
+.sync-interval-setting select {
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #333;
+  font-size: 0.85rem;
+  min-width: 120px;
+}
+
+body.dark .sync-interval-setting select {
+  background: #2a2a2a;
+  color: #ccc;
+  border-color: #555;
+}
+
 /* Editor drag handle for swipe-to-close */
 .editor-drag-handle {
   width: 100%;

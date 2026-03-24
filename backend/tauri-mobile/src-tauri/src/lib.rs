@@ -156,6 +156,10 @@ fn is_production_build() -> bool {
 // Profile Management System
 // ============================================================================
 
+fn default_sync_interval_minutes() -> u32 {
+    30
+}
+
 /// Sync configuration (shared across all profiles)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct SyncSettings {
@@ -165,6 +169,8 @@ struct SyncSettings {
     api_key: String,
     #[serde(default)]
     auto_sync: bool,
+    #[serde(default = "default_sync_interval_minutes")]
+    sync_interval_minutes: u32,
 }
 
 /// Profile configuration stored in profiles.json
@@ -2140,6 +2146,24 @@ fn set_auto_sync(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_sync_interval() -> Result<u32, String> {
+    let config = load_profile_config();
+    let minutes = config.sync.sync_interval_minutes;
+    Ok(if minutes == 0 { 30 } else { minutes })
+}
+
+#[tauri::command]
+fn set_sync_interval(minutes: u32) -> Result<(), String> {
+    let mut config = load_profile_config();
+    config.sync.sync_interval_minutes = if minutes == 0 { 30 } else { minutes };
+    if !save_profile_config(&config) {
+        return Err("Failed to save sync interval setting".to_string());
+    }
+    println!("[Rust] Sync interval set to: {} minutes", minutes);
+    Ok(())
+}
+
+#[tauri::command]
 fn get_archive_tag() -> Result<String, String> {
     Ok(load_profile_config().archive_tag)
 }
@@ -3167,6 +3191,8 @@ pub fn run() {
             set_webhook_api_key,
             get_auto_sync,
             set_auto_sync,
+            get_sync_interval,
+            set_sync_interval,
             get_archive_tag,
             set_archive_tag,
             get_todo_tags,
