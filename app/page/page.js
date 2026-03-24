@@ -23,11 +23,22 @@ import { PageNotesPane } from './page-notes.js';
 
 console.log('[page] Script loaded');
 
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[page] Unhandled promise rejection:', e.reason);
+});
+
 const DEBUG = false;
 
 // Cache our window ID for filtering GLOBAL pubsub messages
 let myWindowId = null;
-api.window.getWindowId().then(id => { myWindowId = id; });
+api.window.getWindowId().then(id => { myWindowId = id; }).catch(err => {
+  console.error('[page] Failed to get window ID, retrying:', err);
+  setTimeout(() => {
+    api.window.getWindowId().then(id => { myWindowId = id; }).catch(err2 => {
+      console.error('[page] Failed to get window ID on retry:', err2);
+    });
+  }, 1000);
+});
 
 // --- OAuth URL detection (Level 2) ---
 // Patterns that indicate an OAuth/authentication flow in progress.
@@ -463,74 +474,78 @@ function positionPanelsMaximized(winW, winH, navVisible) {
 // --- Toggle maximize ---
 
 async function toggleMaximize() {
-  // Cancel any active drag — drag handlers running during the await would
-  // overwrite screenBounds and call setBounds with stale values.
-  if (isDragging) {
-    isDragging = false;
-    dragOverlay.classList.remove('active');
-    document.body.style.cursor = '';
-    navbar.style.cursor = 'grab';
-  }
-  cancelHoldDrag();
-  cancelWebviewHold();
-  // Cancel any pending throttled bounds update from drag/resize
-  if (pendingBoundsUpdate) {
-    cancelAnimationFrame(pendingBoundsUpdate);
-    pendingBoundsUpdate = null;
-  }
-
-  if (isMaximized) {
-    // Restore from maximize
-    isMaximized = false;
-    document.body.classList.remove('maximized');
-
-    if (preMaximizeBounds) {
-      screenBounds.x = preMaximizeBounds.x;
-      screenBounds.y = preMaximizeBounds.y;
-      screenBounds.width = preMaximizeBounds.width;
-      screenBounds.height = preMaximizeBounds.height;
-      preMaximizeBounds = null;
+  try {
+    // Cancel any active drag — drag handlers running during the await would
+    // overwrite screenBounds and call setBounds with stale values.
+    if (isDragging) {
+      isDragging = false;
+      dragOverlay.classList.remove('active');
+      document.body.style.cursor = '';
+      navbar.style.cursor = 'grab';
     }
+    cancelHoldDrag();
+    cancelWebviewHold();
+    // Cancel any pending throttled bounds update from drag/resize
+    if (pendingBoundsUpdate) {
+      cancelAnimationFrame(pendingBoundsUpdate);
+      pendingBoundsUpdate = null;
+    }
+
+    if (isMaximized) {
+      // Restore from maximize
+      isMaximized = false;
+      document.body.classList.remove('maximized');
+
+      if (preMaximizeBounds) {
+        screenBounds.x = preMaximizeBounds.x;
+        screenBounds.y = preMaximizeBounds.y;
+        screenBounds.width = preMaximizeBounds.width;
+        screenBounds.height = preMaximizeBounds.height;
+        preMaximizeBounds = null;
+      }
+
+      updatePositions();
+      centerColumn.style.opacity = '0';
+      await api.window.setBounds(computeWindowBounds(screenBounds));
+      centerColumn.style.opacity = '1';
+      updateUrlParams();
+      return;
+    }
+
+    // Maximize: fill screen work area
+    const displayResult = await api.window.getDisplayInfo();
+    if (!displayResult || !displayResult.success || !displayResult.data) {
+      console.warn('[page] Failed to get display info for maximize');
+      return;
+    }
+
+    const workArea = displayResult.data.workArea;
+
+    // Save current bounds for restore
+    preMaximizeBounds = {
+      x: screenBounds.x,
+      y: screenBounds.y,
+      width: screenBounds.width,
+      height: screenBounds.height,
+    };
+
+    isMaximized = true;
+    document.body.classList.add('maximized');
+
+    // screenBounds now represents the full work area (window = work area in maximized mode)
+    screenBounds.x = workArea.x;
+    screenBounds.y = workArea.y;
+    screenBounds.width = workArea.width;
+    screenBounds.height = workArea.height;
 
     updatePositions();
     centerColumn.style.opacity = '0';
     await api.window.setBounds(computeWindowBounds(screenBounds));
     centerColumn.style.opacity = '1';
     updateUrlParams();
-    return;
+  } catch (err) {
+    console.error('[page] toggleMaximize failed:', err);
   }
-
-  // Maximize: fill screen work area
-  const displayResult = await api.window.getDisplayInfo();
-  if (!displayResult || !displayResult.success || !displayResult.data) {
-    console.warn('[page] Failed to get display info for maximize');
-    return;
-  }
-
-  const workArea = displayResult.data.workArea;
-
-  // Save current bounds for restore
-  preMaximizeBounds = {
-    x: screenBounds.x,
-    y: screenBounds.y,
-    width: screenBounds.width,
-    height: screenBounds.height,
-  };
-
-  isMaximized = true;
-  document.body.classList.add('maximized');
-
-  // screenBounds now represents the full work area (window = work area in maximized mode)
-  screenBounds.x = workArea.x;
-  screenBounds.y = workArea.y;
-  screenBounds.width = workArea.width;
-  screenBounds.height = workArea.height;
-
-  updatePositions();
-  centerColumn.style.opacity = '0';
-  await api.window.setBounds(computeWindowBounds(screenBounds));
-  centerColumn.style.opacity = '1';
-  updateUrlParams();
 }
 
 // --- Set window bounds via IPC ---
@@ -638,7 +653,9 @@ const loadingLifecycle = {
   },
 
   _notify() {
-    for (const fn of this._listeners) fn(this._state);
+    for (const fn of this._listeners) {
+      try { fn(this._state); } catch (e) { console.error('[page] Loading listener error:', e); }
+    }
   }
 };
 
@@ -677,6 +694,16 @@ initWebview();
 loadingLifecycle.startLoading();
 
 // --- In-page navigation loading indicator ---
+// --- Webview crash handler ---
+webview.addEventListener('render-process-gone', (e) => {
+  console.error('[page] Webview renderer crashed:', e.reason);
+  loadingLifecycle.stopLoading();
+  const overlay = document.createElement('div');
+  overlay.className = 'crash-overlay';
+  overlay.innerHTML = '<div class="crash-message"><h2>Page crashed</h2><p>The page renderer stopped unexpectedly.</p><button onclick="location.reload()">Reload</button></div>';
+  document.body.appendChild(overlay);
+});
+
 // When the user clicks a link inside the webview, show the same loading glow.
 // Filter out trivial navigations (hash changes, same-page anchors).
 
@@ -1021,11 +1048,13 @@ webview.addEventListener('dom-ready', injectMouseBridge);
 // Some navigations skip dom-ready; some sites run scripts that reset global state.
 // Cancel any pending injection from a previous navigation to avoid listener buildup.
 webview.addEventListener('did-navigate', () => {
-  if (mouseBridgeTimer) clearTimeout(mouseBridgeTimer);
-  mouseBridgeTimer = setTimeout(() => {
-    mouseBridgeTimer = null;
-    injectMouseBridge();
-  }, 50);
+  try {
+    if (mouseBridgeTimer) clearTimeout(mouseBridgeTimer);
+    mouseBridgeTimer = setTimeout(() => {
+      mouseBridgeTimer = null;
+      injectMouseBridge();
+    }, 50);
+  } catch (err) { console.error('[page] did-navigate mouse bridge error:', err); }
 });
 
 webview.addEventListener('did-finish-load', () => {
@@ -1235,8 +1264,11 @@ async function show(opts) {
   if (widgetContainer) widgetContainer.classList.add('visible');
   // Re-run positions now that panels are visible (offsetHeight is accurate)
   updatePositions();
-  await setWindowPadding(PANEL_OVERHANG * 2);
-  centerColumn.style.opacity = '1';
+  try {
+    await setWindowPadding(PANEL_OVERHANG * 2);
+  } finally {
+    centerColumn.style.opacity = '1';
+  }
 }
 
 async function hide() {
@@ -1253,23 +1285,26 @@ async function hide() {
   // glitch where stale pixels are visible. By making content invisible first,
   // the stale frame is transparent (invisible to the user).
   centerColumn.style.opacity = '0';
-  await setWindowPadding(0);
-  // If show() was called while we were awaiting, abort — don't clobber the new state
-  if (navbarGeneration !== gen) return;
-  navbar.classList.remove('visible');
-  // Hide page info, entities, and extensions panels alongside navbar
-  if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
-  if (tagsPanel) tagsPanel.classList.remove('visible');
-  if (entitiesPanel) entitiesPanel.classList.remove('visible');
-  if (extensionsPanel) extensionsPanel.classList.remove('visible');
-  if (notesPanel) notesPanel.classList.remove('visible');
-  if (widgetContainer) widgetContainer.classList.remove('visible');
-  updatePositions();
-  // Restore visibility now that the window has been resized
-  centerColumn.style.opacity = '1';
-  navbar.inputElement?.blur();
-  showSource = null;
-  DEBUG && console.log('[page] Navbar hidden');
+  try {
+    await setWindowPadding(0);
+  } finally {
+    // If show() was called while we were awaiting, abort — don't clobber the new state
+    if (navbarGeneration !== gen) return;
+    navbar.classList.remove('visible');
+    // Hide page info, entities, and extensions panels alongside navbar
+    if (pageInfoPanel) pageInfoPanel.classList.remove('visible');
+    if (tagsPanel) tagsPanel.classList.remove('visible');
+    if (entitiesPanel) entitiesPanel.classList.remove('visible');
+    if (extensionsPanel) extensionsPanel.classList.remove('visible');
+    if (notesPanel) notesPanel.classList.remove('visible');
+    if (widgetContainer) widgetContainer.classList.remove('visible');
+    updatePositions();
+    // Restore visibility now that the window has been resized
+    centerColumn.style.opacity = '1';
+    navbar.inputElement?.blur();
+    showSource = null;
+    DEBUG && console.log('[page] Navbar hidden');
+  }
 }
 
 // Dismiss on click outside the navbar (also check panels)
@@ -1516,26 +1551,26 @@ webview.addEventListener('page-title-updated', (e) => {
 });
 
 webview.addEventListener('did-navigate', async (e) => {
-  DEBUG && console.log('[page] did-navigate:', e.url);
-  navbar.setUrl(e.url);
-  updateState();
-
-  // Update OAuth state (Level 2)
-  const wasOAuth = isOnOAuthPage;
-  isOnOAuthPage = isOAuthUrl(e.url);
-  if (isOnOAuthPage && !wasOAuth) {
-    DEBUG && console.log('[page] OAuth flow detected:', e.url);
-  } else if (!isOnOAuthPage && wasOAuth) {
-    DEBUG && console.log('[page] OAuth flow ended');
-  }
-
   try {
+    DEBUG && console.log('[page] did-navigate:', e.url);
+    navbar.setUrl(e.url);
+    updateState();
+
+    // Update OAuth state (Level 2)
+    const wasOAuth = isOnOAuthPage;
+    isOnOAuthPage = isOAuthUrl(e.url);
+    if (isOnOAuthPage && !wasOAuth) {
+      DEBUG && console.log('[page] OAuth flow detected:', e.url);
+    } else if (!isOnOAuthPage && wasOAuth) {
+      DEBUG && console.log('[page] OAuth flow ended');
+    }
+
     await api.datastore.trackNavigation(e.url, {
       source: 'page',
       windowType: 'main'
     });
   } catch (err) {
-    console.error('[page] Failed to record visit:', err);
+    console.error('[page] did-navigate navbar/tracking error:', err);
   }
 });
 
@@ -1963,8 +1998,10 @@ pageWidgetHost.init();
 
 // Publish page:navigated on in-page navigation
 webview.addEventListener('did-navigate', (e) => {
-  const title = document.title || '';
-  pageWidgetHost.publishNavigated(e.url, title);
+  try {
+    const title = document.title || '';
+    pageWidgetHost.publishNavigated(e.url, title);
+  } catch (err) { console.error('[page] did-navigate widget host error:', err); }
 });
 
 // Publish page:will-close when window is closing
@@ -2085,11 +2122,13 @@ if (OPENER_SHIM_JS) {
   }
   webview.addEventListener('dom-ready', injectOpenerShim);
   webview.addEventListener('did-navigate', () => {
-    if (openerShimTimer) clearTimeout(openerShimTimer);
-    openerShimTimer = setTimeout(() => {
-      openerShimTimer = null;
-      injectOpenerShim();
-    }, 50);
+    try {
+      if (openerShimTimer) clearTimeout(openerShimTimer);
+      openerShimTimer = setTimeout(() => {
+        openerShimTimer = null;
+        injectOpenerShim();
+      }, 50);
+    } catch (err) { console.error('[page] did-navigate opener shim error:', err); }
   });
   DEBUG && console.log('[page] Opener shim will be injected (openerUrl:', openerUrl, ')');
 }
@@ -2242,8 +2281,10 @@ webview.addEventListener('did-finish-load', () => {
 
 // Re-extract on in-page navigation
 webview.addEventListener('did-navigate', () => {
-  lastPageInfoUrl = null; // Reset to allow re-extraction
-  setTimeout(extractPageInfo, 500);
+  try {
+    lastPageInfoUrl = null; // Reset to allow re-extraction
+    setTimeout(extractPageInfo, 500);
+  } catch (err) { console.error('[page] did-navigate page info error:', err); }
 });
 
 // --- Entities Panel: show detected entities ---
@@ -2381,20 +2422,22 @@ if (entitiesRescanBtn) {
 
 // On navigation, clear entities and request for current URL
 webview.addEventListener('did-navigate', (e) => {
-  currentPageEntities = [];
-  if (entitiesBody) {
-    entitiesBody.innerHTML = '<div class="entity-loading">Scanning for entities...</div>';
-  }
+  try {
+    currentPageEntities = [];
+    if (entitiesBody) {
+      entitiesBody.innerHTML = '<div class="entity-loading">Scanning for entities...</div>';
+    }
 
-  // Request entities for this URL from the entities extension
-  if (e.url && e.url.startsWith('http')) {
-    api.publish('entities:get-for-url', { url: e.url }, api.scopes.GLOBAL);
-  }
+    // Request entities for this URL from the entities extension
+    if (e.url && e.url.startsWith('http')) {
+      api.publish('entities:get-for-url', { url: e.url }, api.scopes.GLOBAL);
+    }
 
-  // Load notes for the new URL
-  if (e.url) {
-    pageNotesPane.loadForUrl(e.url);
-  }
+    // Load notes for the new URL
+    if (e.url) {
+      pageNotesPane.loadForUrl(e.url);
+    }
+  } catch (err) { console.error('[page] did-navigate entities/notes error:', err); }
 });
 
 // Also do a simple in-page entity extraction as a fallback
@@ -2757,21 +2800,25 @@ api.subscribe('tag:created', () => {
 
 // Capture itemId from trackNavigation on did-navigate
 webview.addEventListener('did-navigate', async (e) => {
-  currentItemId = null;
-  currentPageTags = [];
-  renderTags();
+  try {
+    currentItemId = null;
+    currentPageTags = [];
+    renderTags();
 
-  if (!e.url || (!e.url.startsWith('http://') && !e.url.startsWith('https://'))) return;
+    if (!e.url || (!e.url.startsWith('http://') && !e.url.startsWith('https://'))) return;
 
-  // Small delay to ensure trackNavigation has created the item
-  setTimeout(async () => {
-    currentItemId = await resolveItemId(e.url);
-    if (currentItemId) {
-      await loadTagsForCurrentPage();
-    }
-    // Update tags panel position after page-info has rendered
-    updatePositions();
-  }, 600);
+    // Small delay to ensure trackNavigation has created the item
+    setTimeout(async () => {
+      try {
+        currentItemId = await resolveItemId(e.url);
+        if (currentItemId) {
+          await loadTagsForCurrentPage();
+        }
+        // Update tags panel position after page-info has rendered
+        updatePositions();
+      } catch (err) { console.error('[page] Tag loading after navigate error:', err); }
+    }, 600);
+  } catch (err) { console.error('[page] did-navigate tags error:', err); }
 });
 
 // Also load tags on initial page load
@@ -3312,26 +3359,32 @@ function renderAdblockerEntry() {
     input.checked = !currentSiteAdblockAllowed;
     input.addEventListener('change', async () => {
       const shouldBlock = input.checked;
-      if (shouldBlock) {
-        // Remove from allowlist
-        await api.adblocker.disallowSite(currentSiteHostname);
-        currentSiteAdblockAllowed = false;
-      } else {
-        // Add to allowlist
-        await api.adblocker.allowSite(currentSiteHostname);
-        currentSiteAdblockAllowed = true;
-      }
-      // Refresh the adblocker entry to update status text and toggle title
-      const existing = document.getElementById('ext-adblocker-item');
-      if (existing) {
-        const nextSibling = existing.nextSibling;
-        existing.remove();
-        renderAdblockerEntry();
-        // The new entry was appended; move it back to the original position
-        const newItem = document.getElementById('ext-adblocker-item');
-        if (newItem && nextSibling) {
-          extensionsBody.insertBefore(newItem, nextSibling);
+      try {
+        if (shouldBlock) {
+          // Remove from allowlist
+          await api.adblocker.disallowSite(currentSiteHostname);
+          currentSiteAdblockAllowed = false;
+        } else {
+          // Add to allowlist
+          await api.adblocker.allowSite(currentSiteHostname);
+          currentSiteAdblockAllowed = true;
         }
+        // Refresh the adblocker entry to update status text and toggle title
+        const existing = document.getElementById('ext-adblocker-item');
+        if (existing) {
+          const nextSibling = existing.nextSibling;
+          existing.remove();
+          renderAdblockerEntry();
+          // The new entry was appended; move it back to the original position
+          const newItem = document.getElementById('ext-adblocker-item');
+          if (newItem && nextSibling) {
+            extensionsBody.insertBefore(newItem, nextSibling);
+          }
+        }
+      } catch (err) {
+        console.error('[page] Adblocker toggle failed:', err);
+        // Revert checkbox to previous state
+        input.checked = !shouldBlock;
       }
     });
 
@@ -3358,8 +3411,10 @@ webview.addEventListener('did-finish-load', () => {
 
 // Reload on navigation (hostname may change)
 webview.addEventListener('did-navigate', () => {
-  extensionsLoaded = false;
-  setTimeout(loadExtensionsPanel, 700);
+  try {
+    extensionsLoaded = false;
+    setTimeout(loadExtensionsPanel, 700);
+  } catch (err) { console.error('[page] did-navigate extensions error:', err); }
 });
 
 // --- Notes Panel: load notes for current page URL ---

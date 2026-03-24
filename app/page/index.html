@@ -1206,6 +1206,55 @@
       opacity: 1;
     }
 
+    /* --- Crash overlay --- */
+
+    .crash-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    .crash-message {
+      text-align: center;
+      color: var(--theme-text, #e0e0e0);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+    }
+
+    .crash-message h2 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .crash-message p {
+      font-size: 13px;
+      color: var(--theme-text-secondary, #aaa);
+      margin-bottom: 16px;
+    }
+
+    .crash-message button {
+      background: var(--theme-accent, #007aff);
+      color: #fff;
+      border: none;
+      padding: 8px 20px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .crash-message button:hover {
+      opacity: 0.9;
+    }
+
     /* --- Maximized mode --- */
 
     body.maximized webview {
