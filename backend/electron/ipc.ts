@@ -2590,6 +2590,137 @@ export function registerWindowHandlers(): void {
       // and set up a setWindowOpenHandler that routes popups through Peek's window system
       // instead of letting Electron create raw default BrowserWindows.
       //
+      // Shared helper: open a popup URL in a proper Peek page host canvas window.
+      // Used by both canvas webview popups and non-canvas page popups.
+      async function openPopupInPageHost(popupUrl: string, openerWinId: number, openerSource: string, openerUrl?: string): Promise<void> {
+        // Track the popup URL in history
+        let popupItemId: string | undefined;
+        try {
+          const popupTrack = trackWindowLoad(popupUrl, {
+            source: 'window-open',
+            sourceId: openerUrl || popupUrl,
+            windowType: 'main',
+          });
+          popupItemId = popupTrack.itemId;
+          if (popupTrack.created) {
+            publish('system', PubSubScopes.GLOBAL, 'item:created', {
+              itemId: popupTrack.itemId,
+              itemType: 'url',
+              content: popupUrl,
+              windowId: openerWinId
+            });
+          }
+        } catch (e) {
+          DEBUG && console.log('Failed to track webview popup:', e);
+        }
+
+        // Inherit space mode from parent window if applicable
+        let spaceMode: { spaceId: string; spaceName: string; color: string } | undefined = undefined;
+        const parentContext = getContextEntry('mode', openerWinId);
+        if (parentContext && parentContext.value === 'space' && parentContext.metadata) {
+          spaceMode = {
+            spaceId: parentContext.metadata.spaceId as string,
+            spaceName: parentContext.metadata.spaceName as string,
+            color: parentContext.metadata.color as string,
+          };
+        }
+
+        // Build page container URL (includes openerUrl for the bridge shim)
+        const openerWin = BrowserWindow.fromId(openerWinId);
+        const parentBounds = openerWin ? openerWin.getBounds() : { x: 100, y: 100, width: 1024, height: 768 };
+        const pageParams = new URLSearchParams({
+          url: popupUrl,
+          x: String(parentBounds.x + 30),
+          y: String(parentBounds.y + 30),
+          width: String(1024),
+          height: String(768),
+          ...(openerUrl ? { openerUrl } : {}),
+        });
+        const loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
+
+        // Determine IZUI session state for transient detection
+        const coordinator = getIzuiCoordinator();
+        const isTransient = coordinator.isTransient();
+        coordinator.evaluateOnShow();
+
+        // Use profile-specific session for isolation
+        const profileSession = getProfileSession();
+
+        // Create the new BrowserWindow (page container) with fullscreen canvas
+        const popupWin = new BrowserWindow({
+          frame: false,
+          width: 1024,
+          height: 768,
+          x: parentBounds.x + 30,
+          y: parentBounds.y + 30,
+          show: isHeadless() ? false : true,
+          transparent: true,
+          webPreferences: {
+            preload: getPreloadPath(),
+            session: profileSession,
+            webviewTag: true,
+          },
+        });
+
+        // Set up fullscreen transparent canvas for the popup
+        if (!isHeadless()) {
+          const popupDisplay = screen.getDisplayNearestPoint({ x: parentBounds.x + 30, y: parentBounds.y + 30 });
+          const { width: psw, height: psh } = popupDisplay.workAreaSize;
+          const { x: pdx, y: pdy } = popupDisplay.workArea;
+          popupWin.setSize(psw, psh);
+          popupWin.setPosition(pdx, pdy);
+          popupWin.setBackgroundColor('#00000000');
+        }
+
+        // Register in window manager with proper IZUI role
+        const popupParams: Record<string, unknown> = {
+          address: popupUrl,
+          transient: isTransient,
+          parentWindowId: openerWinId,
+          role: 'child-content',
+        };
+        if (spaceMode) {
+          popupParams.spaceMode = spaceMode;
+        }
+        registerWindow(popupWin.id, openerSource, popupParams);
+        trackWindow(popupWin);
+        coordinator.pushWindow(popupWin.id);
+
+        // Set mode context (inherit group mode or detect from URL)
+        if (spaceMode) {
+          addContextEntry('mode', 'space', {
+            windowId: popupWin.id,
+            source: openerSource,
+            metadata: { ...spaceMode, url: popupUrl, inheritedFrom: openerWinId },
+          });
+        } else {
+          const detectedMode = detectModeFromUrl(popupUrl);
+          addContextEntry('mode', detectedMode, {
+            windowId: popupWin.id,
+            source: openerSource,
+            metadata: { url: popupUrl },
+          });
+        }
+
+        // Store popup-to-opener mapping for the postMessage bridge
+        popupToOpener.set(popupWin.id, openerWinId);
+        popupWin.on('closed', () => {
+          popupToOpener.delete(popupWin.id);
+          DEBUG && console.log(`[webview-popup] Cleaned up opener mapping for popup ${popupWin.id}`);
+        });
+
+        // Load the page container URL
+        await popupWin.loadURL(loadUrl);
+
+        // Add ESC handler (also sets up did-attach-webview for the new window)
+        addEscHandler(popupWin);
+
+        // Update dock visibility
+        updateDockVisibility();
+
+        console.log(`[webview-popup] Created Peek window ${popupWin.id} for popup: ${popupUrl}`);
+      }
+
       // Also adds Cmd+L interception on guest webContents for the floating navbar.
       // (Keystrokes inside the webview never reach the host's before-input-event.)
       // Only canvas pages have a <webview> guest — set up popup/Cmd+L handlers
@@ -2659,147 +2790,20 @@ export function registerWindowHandlers(): void {
             if (popupUrl.startsWith('http://') || popupUrl.startsWith('https://')) {
               console.log(`[webview-popup] Intercepted popup from window ${win.id}: ${popupUrl}`);
 
+              // Get the source and opener URL for the shared handler
+              const parentInfo = getWindowInfo(win.id);
+              const source = parentInfo ? parentInfo.source : 'system';
+              let openerUrl = url; // fallback to the registered URL
+              try {
+                openerUrl = guestWebContents.getURL() || url;
+              } catch (e) {
+                DEBUG && console.log('[webview-popup] Failed to get opener URL:', e);
+              }
+
               // Open asynchronously — create a proper Peek page container window.
-              // This runs outside the synchronous handler return.
               (async () => {
                 try {
-                  // Track the popup URL in history
-                  let popupItemId: string | undefined;
-                  try {
-                    const popupTrack = trackWindowLoad(popupUrl, {
-                      source: 'window-open',
-                      sourceId: url,
-                      windowType: 'main',
-                    });
-                    popupItemId = popupTrack.itemId;
-                    if (popupTrack.created) {
-                      publish('system', PubSubScopes.GLOBAL, 'item:created', {
-                        itemId: popupTrack.itemId,
-                        itemType: 'url',
-                        content: popupUrl,
-                        windowId: win.id
-                      });
-                    }
-                  } catch (e) {
-                    DEBUG && console.log('Failed to track webview popup:', e);
-                  }
-
-                  // Inherit space mode from parent window if applicable
-                  let spaceMode: { spaceId: string; spaceName: string; color: string } | undefined = undefined;
-                  const parentContext = getContextEntry('mode', win.id);
-                  if (parentContext && parentContext.value === 'space' && parentContext.metadata) {
-                    spaceMode = {
-                      spaceId: parentContext.metadata.spaceId as string,
-                      spaceName: parentContext.metadata.spaceName as string,
-                      color: parentContext.metadata.color as string,
-                    };
-                  }
-
-                  // Get the source address from the parent window's registration
-                  const parentInfo = getWindowInfo(win.id);
-                  const source = parentInfo ? parentInfo.source : 'system';
-
-                  // Get the opener's current URL for the window.opener shim
-                  let openerUrl = url; // fallback to the registered URL
-                  try {
-                    openerUrl = guestWebContents.getURL() || url;
-                  } catch (e) {
-                    DEBUG && console.log('[webview-popup] Failed to get opener URL:', e);
-                  }
-
-                  // Build page container URL (includes openerUrl for the bridge shim)
-                  const parentBounds = win.getBounds();
-                  const pageParams = new URLSearchParams({
-                    url: popupUrl,
-                    x: String(parentBounds.x + 30),
-                    y: String(parentBounds.y + 30),
-                    width: String(1024),
-                    height: String(768),
-                    openerUrl,
-                  });
-                  const loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
-
-                  // Determine IZUI session state for transient detection
-                  const coordinator = getIzuiCoordinator();
-                  const isTransient = coordinator.isTransient();
-                  coordinator.evaluateOnShow();
-
-                  // Use profile-specific session for isolation
-                  const profileSession = getProfileSession();
-
-                  // Create the new BrowserWindow (page container) with fullscreen canvas
-                  const popupWin = new BrowserWindow({
-                    frame: false,
-                    width: 1024,
-                    height: 768,
-                    x: parentBounds.x + 30,
-                    y: parentBounds.y + 30,
-                    show: isHeadless() ? false : true,
-                    transparent: true,
-                    webPreferences: {
-                      preload: getPreloadPath(),
-                      session: profileSession,
-                      webviewTag: true,
-                    },
-                  });
-
-                  // Set up fullscreen transparent canvas for the popup
-                  if (!isHeadless()) {
-                    const popupDisplay = screen.getDisplayNearestPoint({ x: parentBounds.x + 30, y: parentBounds.y + 30 });
-                    const { width: psw, height: psh } = popupDisplay.workAreaSize;
-                    const { x: pdx, y: pdy } = popupDisplay.workArea;
-                    popupWin.setSize(psw, psh);
-                    popupWin.setPosition(pdx, pdy);
-                    popupWin.setBackgroundColor('#00000000');
-                  }
-
-                  // Register in window manager with proper IZUI role
-                  const popupParams: Record<string, unknown> = {
-                    address: popupUrl,
-                    transient: isTransient,
-                    parentWindowId: win.id,
-                    role: 'child-content',
-                  };
-                  if (spaceMode) {
-                    popupParams.spaceMode = spaceMode;
-                  }
-                  registerWindow(popupWin.id, source, popupParams);
-                  trackWindow(popupWin);
-                  coordinator.pushWindow(popupWin.id);
-
-                  // Set mode context (inherit group mode or detect from URL)
-                  if (spaceMode) {
-                    addContextEntry('mode', 'space', {
-                      windowId: popupWin.id,
-                      source,
-                      metadata: { ...spaceMode, url: popupUrl, inheritedFrom: win.id },
-                    });
-                  } else {
-                    const detectedMode = detectModeFromUrl(popupUrl);
-                    addContextEntry('mode', detectedMode, {
-                      windowId: popupWin.id,
-                      source,
-                      metadata: { url: popupUrl },
-                    });
-                  }
-
-                  // Store popup-to-opener mapping for the postMessage bridge
-                  popupToOpener.set(popupWin.id, win.id);
-                  popupWin.on('closed', () => {
-                    popupToOpener.delete(popupWin.id);
-                    DEBUG && console.log(`[webview-popup] Cleaned up opener mapping for popup ${popupWin.id}`);
-                  });
-
-                  // Load the page container URL
-                  await popupWin.loadURL(loadUrl);
-
-                  // Add ESC handler (also sets up did-attach-webview for the new window)
-                  addEscHandler(popupWin);
-
-                  // Update dock visibility
-                  updateDockVisibility();
-
-                  console.log(`[webview-popup] Created Peek window ${popupWin.id} for popup: ${popupUrl}`);
+                  await openPopupInPageHost(popupUrl, win.id, source, openerUrl);
                 } catch (e) {
                   console.error('[webview-popup] Failed to create popup window:', e);
                 }
@@ -2887,6 +2891,33 @@ export function registerWindowHandlers(): void {
           } catch (err) {
             console.error('[non-canvas-bg] Failed to check/set background:', err);
           }
+        });
+      }
+
+      // Popup handler for non-canvas web pages (modals, overlays, slides, quick-views).
+      // Canvas pages get this via the webview guest's setWindowOpenHandler above.
+      // Non-canvas pages load directly in the BrowserWindow, so we intercept popups here.
+      if (isWebPage && !useCanvas) {
+        win.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+          if (popupUrl.startsWith('http://') || popupUrl.startsWith('https://')) {
+            console.log(`[non-canvas-popup] Intercepted popup from window ${win.id}: ${popupUrl}`);
+
+            const parentInfo = getWindowInfo(win.id);
+            const source = parentInfo ? parentInfo.source : 'system';
+
+            (async () => {
+              try {
+                await openPopupInPageHost(popupUrl, win.id, source, url);
+              } catch (e) {
+                DEBUG && console.log('[non-canvas-popup] Failed to open popup in page host:', e);
+              }
+            })();
+
+            return { action: 'deny' };
+          }
+
+          // Allow non-http(s) URLs (about:blank, data:, etc.) to open normally
+          return { action: 'allow' };
         });
       }
 
