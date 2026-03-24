@@ -710,13 +710,93 @@ async function renderField(name, schema, isRequired, lexicon, depth) {
     wrapper.appendChild(hint);
   }
 
+  // Constraint hint — show limits inline
+  const constraintParts = [];
+  if (schema.maxGraphemes) constraintParts.push(`max ${schema.maxGraphemes} graphemes`);
+  else if (schema.maxLength && schema.type === 'string') constraintParts.push(`max ${schema.maxLength} chars`);
+  if (schema.minLength && schema.type === 'string') constraintParts.push(`min ${schema.minLength} chars`);
+  if (schema.minimum !== undefined) constraintParts.push(`min ${schema.minimum}`);
+  if (schema.maximum !== undefined) constraintParts.push(`max ${schema.maximum}`);
+  if (schema.type === 'array' && schema.maxLength) constraintParts.push(`max ${schema.maxLength} items`);
+  if (constraintParts.length > 0) {
+    const constraintHint = document.createElement('div');
+    constraintHint.className = 'field-constraint';
+    constraintHint.textContent = constraintParts.join(' | ');
+    wrapper.appendChild(constraintHint);
+  }
+
   // Render the appropriate input based on schema type
   const input = await renderInput(name, schema, lexicon, depth);
   if (input) {
     wrapper.appendChild(input);
   }
 
+  // Add inline validation for constraint feedback
+  if (schema.type === 'string' || schema.type === 'integer' || schema.type === 'number') {
+    const hasConstraints = schema.maxLength || schema.minLength || schema.maxGraphemes ||
+      schema.minGraphemes || schema.minimum !== undefined || schema.maximum !== undefined;
+    if (hasConstraints) {
+      const errorEl = document.createElement('div');
+      errorEl.className = 'field-error';
+      errorEl.style.display = 'none';
+      wrapper.appendChild(errorEl);
+
+      // Find the actual input element within the rendered input
+      const inputEl = wrapper.querySelector('input, textarea');
+      if (inputEl) {
+        inputEl.addEventListener('blur', () => {
+          const val = inputEl.value;
+          const error = validateFieldValue(val, schema);
+          if (error) {
+            errorEl.textContent = error;
+            errorEl.style.display = '';
+            wrapper.classList.add('has-error');
+          } else {
+            errorEl.style.display = 'none';
+            wrapper.classList.remove('has-error');
+          }
+        });
+      }
+    }
+  }
+
   return wrapper;
+}
+
+/**
+ * Validate a single field value against its schema constraints.
+ * Returns an error message string or null if valid.
+ */
+function validateFieldValue(val, schema) {
+  if (!val && val !== 0) return null; // empty is handled by required check
+
+  if (schema.type === 'string' && typeof val === 'string') {
+    const byteLen = new TextEncoder().encode(val).length;
+    if (schema.maxLength !== undefined && byteLen > schema.maxLength) {
+      return `Too long (${byteLen}/${schema.maxLength} bytes)`;
+    }
+    if (schema.minLength !== undefined && byteLen < schema.minLength) {
+      return `Too short (${byteLen}/${schema.minLength} bytes)`;
+    }
+    if (schema.maxGraphemes !== undefined) {
+      const gc = countGraphemes(val);
+      if (gc > schema.maxGraphemes) return `Too long (${gc}/${schema.maxGraphemes} graphemes)`;
+    }
+    if (schema.minGraphemes !== undefined) {
+      const gc = countGraphemes(val);
+      if (gc < schema.minGraphemes) return `Too short (${gc}/${schema.minGraphemes} graphemes)`;
+    }
+  }
+
+  if ((schema.type === 'integer' || schema.type === 'number') && val !== '') {
+    const num = Number(val);
+    if (isNaN(num)) return 'Must be a number';
+    if (schema.minimum !== undefined && num < schema.minimum) return `Must be at least ${schema.minimum}`;
+    if (schema.maximum !== undefined && num > schema.maximum) return `Must be at most ${schema.maximum}`;
+    if (schema.type === 'integer' && !Number.isInteger(num)) return 'Must be a whole number';
+  }
+
+  return null;
 }
 
 /**
@@ -995,23 +1075,111 @@ function renderBooleanInput(name, schema) {
 function renderBlobInput(name, schema) {
   const container = document.createElement('div');
   container.className = 'blob-upload';
+  container.dataset.blobField = name;
+
+  const dropZone = document.createElement('div');
+  dropZone.className = 'blob-drop-zone';
 
   const input = document.createElement('input');
   input.type = 'file';
   input.name = name;
-  input.className = 'form-file';
+  input.className = 'form-file blob-file-input';
   if (schema.accept) {
     input.accept = schema.accept.join(',');
   }
 
+  const dropLabel = document.createElement('div');
+  dropLabel.className = 'blob-drop-label';
+  const acceptText = schema.accept ? schema.accept.join(', ') : 'any file';
+  dropLabel.textContent = `Choose file or drag and drop (${acceptText})`;
+
+  dropZone.appendChild(input);
+  dropZone.appendChild(dropLabel);
+  container.appendChild(dropZone);
+
+  // Info line (max size)
   const info = document.createElement('div');
   info.className = 'blob-info';
   if (schema.maxSize) {
     info.textContent = `Max size: ${formatBytes(schema.maxSize)}`;
+    container.appendChild(info);
   }
 
-  container.appendChild(input);
-  if (schema.maxSize) container.appendChild(info);
+  // Preview area
+  const preview = document.createElement('div');
+  preview.className = 'blob-preview';
+  preview.style.display = 'none';
+  container.appendChild(preview);
+
+  // Status text (for upload progress)
+  const status = document.createElement('div');
+  status.className = 'blob-status';
+  status.style.display = 'none';
+  container.appendChild(status);
+
+  // Drag and drop handlers
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length > 0) {
+      input.files = e.dataTransfer.files;
+      input.dispatchEvent(new Event('change'));
+    }
+  });
+
+  // File selection handler
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) {
+      preview.style.display = 'none';
+      preview.innerHTML = '';
+      status.style.display = 'none';
+      return;
+    }
+
+    // Validate max size
+    if (schema.maxSize && file.size > schema.maxSize) {
+      status.textContent = `File too large (${formatBytes(file.size)}). Max: ${formatBytes(schema.maxSize)}.`;
+      status.className = 'blob-status blob-status-error';
+      status.style.display = '';
+      input.value = '';
+      return;
+    }
+
+    status.style.display = 'none';
+
+    // Show preview for images
+    if (file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.className = 'blob-preview-image';
+      img.src = URL.createObjectURL(file);
+      img.onload = () => URL.revokeObjectURL(img.src);
+      preview.innerHTML = '';
+      preview.appendChild(img);
+
+      const fileName = document.createElement('div');
+      fileName.className = 'blob-preview-filename';
+      fileName.textContent = `${file.name} (${formatBytes(file.size)})`;
+      preview.appendChild(fileName);
+      preview.style.display = '';
+    } else {
+      // Non-image file: show name and size
+      preview.innerHTML = '';
+      const fileName = document.createElement('div');
+      fileName.className = 'blob-preview-filename';
+      fileName.textContent = `${file.name} (${formatBytes(file.size)}, ${file.type || 'unknown type'})`;
+      preview.appendChild(fileName);
+      preview.style.display = '';
+    }
+  });
+
   return container;
 }
 
@@ -1135,16 +1303,39 @@ function renderLanguageDropdown(name) {
 
 async function renderRefInput(name, schema, lexicon, depth) {
   const refStr = schema.ref;
-  const resolved = await resolveRef(refStr, lexicon);
+
+  // Determine which lexicon context to use for resolution of nested refs
+  let resolvedLexicon = lexicon;
+  let resolved = await resolveRef(refStr, lexicon);
+
+  // If it's an external ref, try to get the full lexicon for the ref's namespace
+  // so that nested local refs within it can also be resolved
+  if (resolved && !refStr.startsWith('#')) {
+    const [nsid] = refStr.includes('#') ? refStr.split('#') : [refStr];
+    const externalLexicon = await resolveLexicon(nsid);
+    if (externalLexicon) {
+      resolvedLexicon = externalLexicon;
+    }
+  }
 
   if (!resolved) {
-    // Couldn't resolve — show text input with hint
-    const input = document.createElement('input');
-    input.type = 'text';
+    // Couldn't resolve — show labeled fallback with ref info
+    const container = document.createElement('div');
+    container.className = 'ref-unresolved';
+
+    const hint = document.createElement('div');
+    hint.className = 'field-hint';
+    hint.textContent = `Reference: ${refStr} (could not resolve schema)`;
+    container.appendChild(hint);
+
+    const input = document.createElement('textarea');
     input.name = name;
-    input.className = 'form-input';
-    input.placeholder = `Reference: ${refStr} (could not resolve)`;
-    return input;
+    input.className = 'form-textarea json-fallback';
+    input.rows = 3;
+    input.placeholder = `Enter JSON for ${refStr}...`;
+    container.appendChild(input);
+
+    return container;
   }
 
   // If resolved is a string type (like knownValues enum), render it directly
@@ -1152,13 +1343,31 @@ async function renderRefInput(name, schema, lexicon, depth) {
     return renderStringInput(name, resolved);
   }
 
-  // If resolved is an object, render its properties inline
+  // If resolved is an object, render its properties inline with a section header
   if (resolved.type === 'object' && resolved.properties) {
-    return await renderObjectInput(name, resolved, lexicon, depth + 1);
+    const container = document.createElement('div');
+    container.className = 'ref-resolved';
+
+    // Show the ref source for external refs
+    if (!refStr.startsWith('#')) {
+      const refHint = document.createElement('div');
+      refHint.className = 'ref-source-hint';
+      refHint.textContent = refStr;
+      container.appendChild(refHint);
+    }
+
+    const objectEl = await renderObjectInput(name, resolved, resolvedLexicon, depth + 1);
+    container.appendChild(objectEl);
+    return container;
+  }
+
+  // If resolved is a record type, use its record schema
+  if (resolved.type === 'record' && resolved.record) {
+    return await renderObjectInput(name, resolved.record, resolvedLexicon, depth + 1);
   }
 
   // For other types, render inline
-  return await renderInput(name, resolved, lexicon, depth + 1);
+  return await renderInput(name, resolved, resolvedLexicon, depth + 1);
 }
 
 async function renderUnionInput(name, schema, lexicon, depth) {
@@ -1169,6 +1378,16 @@ async function renderUnionInput(name, schema, lexicon, depth) {
   if (refs.length === 0) {
     return renderJsonFallback(name);
   }
+
+  // Pre-resolve all refs to get descriptions and determine if they're resolvable
+  const resolvedRefs = new Map();
+  const refResolutions = await Promise.allSettled(
+    refs.map(async (ref) => {
+      const resolved = await resolveRef(ref, lexicon);
+      if (resolved) resolvedRefs.set(ref, resolved);
+      return { ref, resolved };
+    })
+  );
 
   // Type selector
   const selector = document.createElement('select');
@@ -1183,41 +1402,91 @@ async function renderUnionInput(name, schema, lexicon, depth) {
   for (const ref of refs) {
     const opt = document.createElement('option');
     opt.value = ref;
-    // Display a readable name
+    // Display a readable name with description if available
     const displayRef = ref.includes('#') ? ref.split('#').pop() : ref.split('.').pop();
-    opt.textContent = displayRef;
+    const resolved = resolvedRefs.get(ref);
+    const desc = resolved?.description ? ` — ${resolved.description}` : '';
+    const unresolved = !resolved ? ' (unresolved)' : '';
+    opt.textContent = `${displayRef}${desc}${unresolved}`;
     selector.appendChild(opt);
   }
 
   container.appendChild(selector);
 
-  // Container for the nested form fields
+  // Container for the nested form fields — holds all variant sub-forms
   const subFormContainer = document.createElement('div');
   subFormContainer.className = 'union-subform';
   container.appendChild(subFormContainer);
 
+  // Cache rendered sub-forms for each variant to avoid re-rendering on switch
+  const subFormCache = new Map();
+
   // When user selects a type, render its fields
   selector.addEventListener('change', async () => {
-    subFormContainer.innerHTML = '';
+    // Hide all existing sub-forms
+    for (const child of subFormContainer.children) {
+      child.style.display = 'none';
+    }
+
     const selectedRef = selector.value;
     if (!selectedRef) return;
 
-    const resolved = await resolveRef(selectedRef, lexicon);
-    if (!resolved) {
-      subFormContainer.innerHTML = '<div class="field-hint">Could not resolve this type. Use raw JSON.</div>';
+    // Check cache first
+    if (subFormCache.has(selectedRef)) {
+      subFormCache.get(selectedRef).style.display = '';
       return;
     }
 
-    if (resolved.type === 'object' && resolved.properties) {
-      const objectEl = await renderObjectInput(name, resolved, lexicon, depth + 1);
-      // Mark with $type
-      objectEl.dataset.unionType = selectedRef;
-      subFormContainer.appendChild(objectEl);
-    } else {
-      const inputEl = await renderInput(name, resolved, lexicon, depth + 1);
-      subFormContainer.appendChild(inputEl);
+    const resolved = resolvedRefs.get(selectedRef);
+    if (!resolved) {
+      // Try resolving again (might have been cached since initial load)
+      const freshResolved = await resolveRef(selectedRef, lexicon);
+      if (!freshResolved) {
+        const hint = document.createElement('div');
+        hint.className = 'union-unresolved';
+        hint.innerHTML = `<div class="field-hint">Could not resolve <code>${selectedRef}</code>. Use raw JSON.</div>`;
+        const fallback = renderJsonFallback(`${name}__union_raw`);
+        hint.appendChild(fallback);
+        subFormContainer.appendChild(hint);
+        subFormCache.set(selectedRef, hint);
+        return;
+      }
+      resolvedRefs.set(selectedRef, freshResolved);
     }
+
+    const def = resolvedRefs.get(selectedRef);
+
+    const variantWrapper = document.createElement('div');
+    variantWrapper.className = 'union-variant';
+    variantWrapper.dataset.unionType = selectedRef;
+
+    // Show the full NSID ref for context
+    const refLabel = document.createElement('div');
+    refLabel.className = 'union-variant-ref';
+    refLabel.textContent = selectedRef;
+    variantWrapper.appendChild(refLabel);
+
+    if (def.type === 'object' && def.properties) {
+      const objectEl = await renderObjectInput(name, def, lexicon, depth + 1);
+      objectEl.dataset.unionType = selectedRef;
+      variantWrapper.appendChild(objectEl);
+    } else if (def.type === 'string' || def.type === 'integer' || def.type === 'boolean') {
+      const inputEl = await renderInput(name, def, lexicon, depth + 1);
+      variantWrapper.appendChild(inputEl);
+    } else {
+      const inputEl = await renderInput(name, def, lexicon, depth + 1);
+      variantWrapper.appendChild(inputEl);
+    }
+
+    subFormContainer.appendChild(variantWrapper);
+    subFormCache.set(selectedRef, variantWrapper);
   });
+
+  // If there's only one ref option, auto-select it
+  if (refs.length === 1) {
+    selector.value = refs[0];
+    selector.dispatchEvent(new Event('change'));
+  }
 
   return container;
 }
@@ -1227,6 +1496,17 @@ async function renderArrayInput(name, schema, lexicon, depth) {
   container.className = 'array-field';
   container.dataset.arrayField = name;
 
+  const itemSchema = schema.items;
+  const isComplexItem = itemSchema && (
+    itemSchema.type === 'object' ||
+    itemSchema.type === 'union' ||
+    itemSchema.type === 'ref'
+  );
+
+  if (isComplexItem) {
+    container.classList.add('array-field-complex');
+  }
+
   const itemsContainer = document.createElement('div');
   itemsContainer.className = 'array-items';
   container.appendChild(itemsContainer);
@@ -1234,7 +1514,11 @@ async function renderArrayInput(name, schema, lexicon, depth) {
   const addBtn = document.createElement('button');
   addBtn.type = 'button';
   addBtn.className = 'btn-add-item';
-  addBtn.textContent = '+ Add item';
+
+  // Better label based on item type
+  const itemTypeLabel = itemSchema?.type === 'union' ? 'variant' :
+    itemSchema?.type === 'object' ? 'entry' : 'item';
+  addBtn.textContent = `+ Add ${itemTypeLabel}`;
 
   let itemCount = 0;
   const maxLength = schema.maxLength;
@@ -1244,18 +1528,17 @@ async function renderArrayInput(name, schema, lexicon, depth) {
 
     const itemWrapper = document.createElement('div');
     itemWrapper.className = 'array-item';
+    if (isComplexItem) itemWrapper.classList.add('array-item-complex');
+    itemWrapper.dataset.arrayIndex = itemCount;
 
-    const itemSchema = schema.items;
-    if (itemSchema) {
-      const itemInput = await renderInput(`${name}[${itemCount}]`, itemSchema, lexicon, depth + 1);
-      if (itemInput) itemWrapper.appendChild(itemInput);
-    } else {
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.name = `${name}[${itemCount}]`;
-      input.className = 'form-input';
-      itemWrapper.appendChild(input);
-    }
+    // Item header with index and remove button
+    const itemHeader = document.createElement('div');
+    itemHeader.className = 'array-item-header';
+
+    const indexLabel = document.createElement('span');
+    indexLabel.className = 'array-item-index';
+    indexLabel.textContent = `#${itemCount + 1}`;
+    itemHeader.appendChild(indexLabel);
 
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
@@ -1265,8 +1548,50 @@ async function renderArrayInput(name, schema, lexicon, depth) {
       itemWrapper.remove();
       itemCount--;
       updateCounter();
+      // Re-number remaining items
+      const remaining = itemsContainer.querySelectorAll('.array-item');
+      remaining.forEach((item, i) => {
+        item.dataset.arrayIndex = i;
+        const idx = item.querySelector('.array-item-index');
+        if (idx) idx.textContent = `#${i + 1}`;
+      });
     });
-    itemWrapper.appendChild(removeBtn);
+    itemHeader.appendChild(removeBtn);
+
+    if (isComplexItem) {
+      itemWrapper.appendChild(itemHeader);
+    }
+
+    // Render the item input
+    const itemContent = document.createElement('div');
+    itemContent.className = 'array-item-content';
+
+    if (itemSchema) {
+      const itemInput = await renderInput(`${name}[${itemCount}]`, itemSchema, lexicon, depth + 1);
+      if (itemInput) itemContent.appendChild(itemInput);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.name = `${name}[${itemCount}]`;
+      input.className = 'form-input';
+      itemContent.appendChild(input);
+    }
+
+    itemWrapper.appendChild(itemContent);
+
+    // For simple items, put remove button inline
+    if (!isComplexItem) {
+      const removeBtn2 = document.createElement('button');
+      removeBtn2.type = 'button';
+      removeBtn2.className = 'btn-remove-item';
+      removeBtn2.textContent = 'Remove';
+      removeBtn2.addEventListener('click', () => {
+        itemWrapper.remove();
+        itemCount--;
+        updateCounter();
+      });
+      itemWrapper.appendChild(removeBtn2);
+    }
 
     itemsContainer.appendChild(itemWrapper);
     itemCount++;
@@ -1281,7 +1606,7 @@ async function renderArrayInput(name, schema, lexicon, depth) {
       counterEl.textContent = `${itemCount} / ${maxLength} items`;
       addBtn.disabled = itemCount >= maxLength;
     } else {
-      counterEl.textContent = itemCount > 0 ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : '';
+      counterEl.textContent = itemCount > 0 ? `${itemCount} ${itemTypeLabel}${itemCount !== 1 ? 's' : ''}` : '';
     }
   }
 
@@ -1294,14 +1619,58 @@ async function renderObjectInput(name, schema, lexicon, depth) {
   const container = document.createElement('div');
   container.className = 'object-field';
   container.dataset.objectField = name;
+  if (depth > 1) container.classList.add('object-field-deep');
 
   const { properties, required = [] } = schema;
   if (!properties) return renderJsonFallback(name);
 
-  for (const [propName, propSchema] of Object.entries(properties)) {
-    const isRequired = required.includes(propName);
-    const fieldEl = await renderField(propName, propSchema, isRequired, lexicon, depth + 1);
-    container.appendChild(fieldEl);
+  const propCount = Object.keys(properties).length;
+
+  // For deeply nested objects with multiple properties, make collapsible
+  if (depth >= 2 && propCount > 2) {
+    container.classList.add('collapsible');
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'object-collapse-toggle';
+    toggle.setAttribute('aria-expanded', 'true');
+    toggle.innerHTML = `<span class="collapse-icon">&#9660;</span> ${propCount} fields`;
+
+    const content = document.createElement('div');
+    content.className = 'object-collapse-content';
+
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', String(!expanded));
+      content.classList.toggle('collapsed', expanded);
+      toggle.querySelector('.collapse-icon').innerHTML = expanded ? '&#9654;' : '&#9660;';
+    });
+
+    container.appendChild(toggle);
+
+    // Sort fields: required first, then alphabetical
+    const sortedNames = Object.keys(properties).sort((a, b) => {
+      const aReq = required.includes(a);
+      const bReq = required.includes(b);
+      if (aReq && !bReq) return -1;
+      if (!aReq && bReq) return 1;
+      return a.localeCompare(b);
+    });
+
+    for (const propName of sortedNames) {
+      const propSchema = properties[propName];
+      const isRequired = required.includes(propName);
+      const fieldEl = await renderField(propName, propSchema, isRequired, lexicon, depth + 1);
+      content.appendChild(fieldEl);
+    }
+
+    container.appendChild(content);
+  } else {
+    for (const [propName, propSchema] of Object.entries(properties)) {
+      const isRequired = required.includes(propName);
+      const fieldEl = await renderField(propName, propSchema, isRequired, lexicon, depth + 1);
+      container.appendChild(fieldEl);
+    }
   }
 
   return container;
@@ -1363,7 +1732,116 @@ export async function collectFormData(form, schema, lexicon, nsid, options = {})
     }
   }
 
+  // Upload any blob fields (must happen just before createRecord to avoid expiry)
+  if (options.uploadBlobFn) {
+    await uploadBlobFields(record, properties, options.uploadBlobFn, lexicon);
+  }
+
+  // Client-side validation
+  const errors = validateRecord(record, schema);
+  if (errors.length > 0) {
+    throw new Error(`Validation errors:\n${errors.join('\n')}`);
+  }
+
   return record;
+}
+
+/**
+ * Recursively find and upload blob fields in a record, replacing __file markers
+ * with actual blob references from the PDS.
+ */
+async function uploadBlobFields(obj, properties, uploadBlobFn, lexicon) {
+  if (!obj || typeof obj !== 'object') return;
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (value && typeof value === 'object' && value.__file) {
+      // This is a blob field — upload it
+      const file = value.__file;
+      try {
+        const result = await uploadBlobFn(file);
+        obj[key] = result.blob;
+      } catch (err) {
+        throw new Error(`Failed to upload blob for "${key}": ${err.message}`);
+      }
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      // Recurse into nested objects
+      const propSchema = properties?.[key];
+      const nestedProps = propSchema?.type === 'object' ? propSchema.properties : null;
+      await uploadBlobFields(value, nestedProps || {}, uploadBlobFn, lexicon);
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item === 'object') {
+          await uploadBlobFields(item, {}, uploadBlobFn, lexicon);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Validate a record against its schema constraints.
+ * Returns an array of error strings (empty = valid).
+ */
+function validateRecord(record, schema) {
+  const errors = [];
+  if (!schema || !schema.properties) return errors;
+
+  const { properties, required = [] } = schema;
+
+  // Check required fields
+  for (const name of required) {
+    const val = record[name];
+    if (val === undefined || val === null || val === '') {
+      errors.push(`"${formatFieldName(name)}" is required`);
+    }
+  }
+
+  // Check field constraints
+  for (const [name, fieldSchema] of Object.entries(properties)) {
+    const val = record[name];
+    if (val === undefined || val === null) continue;
+
+    if (fieldSchema.type === 'string' && typeof val === 'string') {
+      if (fieldSchema.maxLength !== undefined && new TextEncoder().encode(val).length > fieldSchema.maxLength) {
+        errors.push(`"${formatFieldName(name)}" exceeds max length of ${fieldSchema.maxLength} bytes`);
+      }
+      if (fieldSchema.minLength !== undefined && new TextEncoder().encode(val).length < fieldSchema.minLength) {
+        errors.push(`"${formatFieldName(name)}" is shorter than min length of ${fieldSchema.minLength} bytes`);
+      }
+      if (fieldSchema.maxGraphemes !== undefined) {
+        const graphemes = countGraphemes(val);
+        if (graphemes > fieldSchema.maxGraphemes) {
+          errors.push(`"${formatFieldName(name)}" exceeds max of ${fieldSchema.maxGraphemes} graphemes (has ${graphemes})`);
+        }
+      }
+      if (fieldSchema.minGraphemes !== undefined) {
+        const graphemes = countGraphemes(val);
+        if (graphemes < fieldSchema.minGraphemes) {
+          errors.push(`"${formatFieldName(name)}" is shorter than min of ${fieldSchema.minGraphemes} graphemes`);
+        }
+      }
+    }
+
+    if ((fieldSchema.type === 'integer' || fieldSchema.type === 'number') && typeof val === 'number') {
+      if (fieldSchema.minimum !== undefined && val < fieldSchema.minimum) {
+        errors.push(`"${formatFieldName(name)}" must be at least ${fieldSchema.minimum}`);
+      }
+      if (fieldSchema.maximum !== undefined && val > fieldSchema.maximum) {
+        errors.push(`"${formatFieldName(name)}" must be at most ${fieldSchema.maximum}`);
+      }
+    }
+
+    if (fieldSchema.type === 'array' && Array.isArray(val)) {
+      if (fieldSchema.maxLength !== undefined && val.length > fieldSchema.maxLength) {
+        errors.push(`"${formatFieldName(name)}" has too many items (max ${fieldSchema.maxLength})`);
+      }
+      if (fieldSchema.minLength !== undefined && val.length < fieldSchema.minLength) {
+        errors.push(`"${formatFieldName(name)}" needs at least ${fieldSchema.minLength} items`);
+      }
+    }
+  }
+
+  return errors;
 }
 
 async function collectFieldValue(form, name, schema, lexicon) {
@@ -1468,14 +1946,55 @@ async function collectUnionValue(form, name, schema, lexicon) {
   if (!selector || !selector.value) return undefined;
 
   const selectedRef = selector.value;
-  const subform = form.querySelector(`[data-union-field="${name}"]`)
-    ?.closest('.union-field')
-    ?.querySelector('.union-subform [data-object-field]');
 
-  if (subform) {
+  // Find the active variant container (the one that's visible)
+  const unionField = selector.closest('.union-field');
+  if (!unionField) return undefined;
+
+  const subformContainer = unionField.querySelector('.union-subform');
+  if (!subformContainer) return undefined;
+
+  // Find the visible variant
+  const activeVariant = subformContainer.querySelector(`.union-variant[data-union-type="${selectedRef}"]`)
+    || subformContainer.querySelector(`[data-union-type="${selectedRef}"]`);
+
+  if (activeVariant) {
+    // Find the object-field within the variant
+    const objectField = activeVariant.querySelector('[data-object-field]')
+      || (activeVariant.dataset.objectField ? activeVariant : null);
+
+    if (objectField) {
+      const resolved = await resolveRef(selectedRef, lexicon);
+      if (resolved?.type === 'object') {
+        // Use the variant container as the form context for collecting values
+        const searchContext = activeVariant;
+        const obj = await collectObjectValue(searchContext, name, resolved, lexicon);
+        if (obj) {
+          obj.$type = selectedRef;
+          return obj;
+        }
+      }
+    }
+
+    // Check for raw JSON fallback in unresolved unions
+    const rawTextarea = activeVariant.querySelector(`[name="${name}__union_raw"]`);
+    if (rawTextarea && rawTextarea.value.trim()) {
+      try {
+        const parsed = JSON.parse(rawTextarea.value);
+        parsed.$type = selectedRef;
+        return parsed;
+      } catch {
+        throw new Error(`Invalid JSON for union field "${name}"`);
+      }
+    }
+  }
+
+  // Legacy fallback: look for any object-field in the subform
+  const legacySubform = subformContainer.querySelector('[data-object-field]');
+  if (legacySubform) {
     const resolved = await resolveRef(selectedRef, lexicon);
     if (resolved?.type === 'object') {
-      const obj = await collectObjectValue(subform.closest('.union-subform'), name, resolved, lexicon);
+      const obj = await collectObjectValue(subformContainer, name, resolved, lexicon);
       if (obj) {
         obj.$type = selectedRef;
         return obj;
@@ -1486,27 +2005,75 @@ async function collectUnionValue(form, name, schema, lexicon) {
   return undefined;
 }
 
-function collectArrayValue(form, name, schema, lexicon) {
+async function collectArrayValue(form, name, schema, lexicon) {
   const container = form.querySelector(`[data-array-field="${name}"]`);
   if (!container) return undefined;
 
-  const items = container.querySelectorAll('.array-item');
+  const items = container.querySelectorAll(':scope > .array-items > .array-item');
   if (items.length === 0) return undefined;
 
+  const itemSchema = schema.items;
   const values = [];
-  items.forEach((item, i) => {
-    const input = item.querySelector('input, textarea, select');
+
+  for (const item of items) {
+    const content = item.querySelector('.array-item-content') || item;
+
+    // Handle union items
+    if (itemSchema?.type === 'union') {
+      const unionSelector = content.querySelector('.union-selector');
+      if (unionSelector && unionSelector.value) {
+        const unionVal = await collectUnionValue(content, name, itemSchema, lexicon);
+        if (unionVal) values.push(unionVal);
+      }
+      continue;
+    }
+
+    // Handle object items
+    if (itemSchema?.type === 'object') {
+      const objectField = content.querySelector('[data-object-field]');
+      if (objectField) {
+        const objVal = await collectObjectValue(content, objectField.dataset.objectField, itemSchema, lexicon);
+        if (objVal) values.push(objVal);
+      }
+      continue;
+    }
+
+    // Handle ref items
+    if (itemSchema?.type === 'ref') {
+      const resolved = await resolveRef(itemSchema.ref, lexicon);
+      if (resolved?.type === 'object') {
+        const objectField = content.querySelector('[data-object-field]');
+        if (objectField) {
+          const objVal = await collectObjectValue(content, objectField.dataset.objectField, resolved, lexicon);
+          if (objVal) values.push(objVal);
+          continue;
+        }
+      }
+    }
+
+    // Handle blob items
+    if (itemSchema?.type === 'blob') {
+      const fileInput = content.querySelector('input[type="file"]');
+      if (fileInput?.files?.length > 0) {
+        values.push({ __file: fileInput.files[0] });
+      }
+      continue;
+    }
+
+    // Simple types
+    const input = content.querySelector('input, textarea, select');
     if (input && input.value) {
-      // For simple types
-      if (schema.items?.type === 'integer') {
+      if (itemSchema?.type === 'integer') {
         values.push(parseInt(input.value, 10));
-      } else if (schema.items?.type === 'number') {
+      } else if (itemSchema?.type === 'number') {
         values.push(parseFloat(input.value));
+      } else if (itemSchema?.type === 'boolean') {
+        values.push(input.checked);
       } else {
         values.push(input.value);
       }
     }
-  });
+  }
 
   return values.length > 0 ? values : undefined;
 }
