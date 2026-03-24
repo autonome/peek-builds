@@ -413,16 +413,22 @@ export async function loginWithOAuth(handle) {
       authUrl = `${authEndpoint}?${params.toString()}`;
     }
 
-    // 9. Open auth window
-    api.window.open(authUrl, {
+    // 9. Open auth window (modal so it auto-closes on blur and is excluded from session save)
+    const authWin = await api.window.open(authUrl, {
       width: 600,
       height: 700,
-      role: 'modal',
+      modal: true,
       title: 'AT Protocol Authorization',
     });
 
     // 10. Wait for callback
     const callbackResult = await api.oauth.awaitCallback(port);
+
+    // Close the auth window now that the callback has been received
+    if (authWin && authWin.id) {
+      try { api.window.close({ id: authWin.id }); } catch {}
+    }
+
     if (!callbackResult.success) throw new Error(callbackResult.error || 'OAuth callback failed');
     const params = callbackResult.params;
 
