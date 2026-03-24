@@ -54,6 +54,7 @@ import {
   registerAllHandlers,
   restoreSavedTheme,
   reopenLastClosedWindow,
+  openNewPageWindow,
   // Database
   getDb,
   // Config
@@ -782,6 +783,12 @@ const onReady = async () => {
   // Register reopen-last-closed-window shortcut (Cmd+Shift+T / Ctrl+Shift+T)
   registerLocalShortcut('CommandOrControl+Shift+T', 'system', () => {
     reopenLastClosedWindow();
+  });
+
+  // Register new-window shortcut (Cmd+N / Ctrl+N)
+  // Opens a new page host window with navbar focused for immediate URL entry
+  registerLocalShortcut('CommandOrControl+N', 'system', () => {
+    openNewPageWindow();
   });
 
   // Mark app as ready and process any URLs that arrived during startup

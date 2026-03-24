@@ -2150,6 +2150,42 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
 }
 
 /**
+ * Open a new empty page host window.
+ * Called from the Cmd+N / Ctrl+N keyboard shortcut.
+ * Inherits space mode from the last focused visible window (if any).
+ * Shows the navbar with URL bar focused so the user can immediately type a URL.
+ */
+export function openNewPageWindow(): void {
+  const options: Record<string, unknown> = {
+    trackingSource: 'new-window',
+    trackingSourceId: 'shortcut',
+  };
+
+  // Inherit space mode from the last focused visible window
+  if (lastFocusedVisibleWindowId != null) {
+    try {
+      const modeEntry = getContextEntry('mode', lastFocusedVisibleWindowId);
+      if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
+        options.spaceMode = {
+          spaceId: modeEntry.metadata.spaceId as string,
+          spaceName: modeEntry.metadata.spaceName as string,
+          color: modeEntry.metadata.color as string | undefined,
+        };
+        DEBUG && console.log('[new-window] Inheriting space mode:', modeEntry.metadata.spaceName);
+      }
+    } catch (e) {
+      DEBUG && console.log('[new-window] Failed to read space mode:', e);
+    }
+  }
+
+  // Publish event for the background window to open the URL
+  publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:new-page-request', {
+    url: 'about:blank',
+    options,
+  });
+}
+
+/**
  * Register window management IPC handlers
  */
 const pendingWindowKeys = new Set<string>();
@@ -2248,7 +2284,7 @@ export function registerWindowHandlers(): void {
     }
 
     // Check if this is a web page that will use the transparent canvas
-    const isWebPage = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file:///');
+    const isWebPage = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file:///') || url === 'about:blank';
 
     // Determine if this web page should use the fullscreen transparent canvas model.
     // Canvas pages get a fullscreen transparent BrowserWindow where all UI elements

@@ -640,6 +640,29 @@ const init = async () => {
     }
   });
 
+  // Handle new-page-window requests from main process (Cmd+N shortcut)
+  api.subscribe('window:new-page-request', async (msg) => {
+    log('core', 'window:new-page-request', msg);
+    const { url, options } = msg;
+
+    try {
+      const win = await windowManager.createWindow(url, {
+        ...options,
+        trackingSource: options?.trackingSource || 'new-window',
+        trackingSourceId: options?.trackingSourceId || 'shortcut',
+      });
+      // Show navbar with URL bar focused so user can immediately type a URL
+      if (win && win.id) {
+        // Small delay to ensure the page host has loaded and subscribed
+        setTimeout(() => {
+          api.publish('page:show-navbar', { windowId: win.id, focusUrl: true }, api.scopes.GLOBAL);
+        }, 200);
+      }
+    } catch (error) {
+      log.error('core', 'Error opening new page window:', error);
+    }
+  });
+
   // Handle reopen-last-closed-window requests from main process
   api.subscribe('window:reopen-request', async (msg) => {
     log('core', 'window:reopen-request', msg);
