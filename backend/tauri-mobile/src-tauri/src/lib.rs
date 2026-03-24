@@ -623,6 +623,7 @@ fn migrate_sync_settings_from_db(container_path: &Option<PathBuf>, old_current_s
                         server_url,
                         api_key,
                         auto_sync: auto_sync == "1" || auto_sync == "true",
+                        sync_interval_minutes: 30,
                     };
                 }
             }
@@ -776,6 +777,7 @@ fn migrate_slug_databases_to_uuid(config: &ProfileConfig) {
                                 server_url,
                                 api_key,
                                 auto_sync: auto_sync == "1" || auto_sync == "true",
+                                sync_interval_minutes: 30,
                             };
                             needs_sync_migration = false;
                         }
@@ -833,6 +835,7 @@ fn migrate_slug_databases_to_uuid(config: &ProfileConfig) {
                             server_url,
                             api_key,
                             auto_sync: auto_sync == "1" || auto_sync == "true",
+                            sync_interval_minutes: 30,
                         };
                         needs_sync_migration = false;
                     }
