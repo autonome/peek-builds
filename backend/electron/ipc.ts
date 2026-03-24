@@ -2134,6 +2134,12 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     options.spaceMode = entry.spaceMode;
   }
 
+  // Restore the original window role so peek:// windows reopen correctly
+  // (without this, peek:// URLs default to 'utility' role which breaks undo-close)
+  if (entry.role) {
+    options.role = entry.role;
+  }
+
   // Publish event for the background window to pick up and open
   publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:reopen-request', {
     url: entry.url,
@@ -2951,6 +2957,15 @@ export function registerWindowHandlers(): void {
         if (navUrl === url) return;
         // Skip internal peek:// URLs
         if (navUrl.startsWith('peek://')) return;
+        // Skip ephemeral loopback callback URLs (e.g. OAuth callbacks to 127.0.0.1)
+        try {
+          const navParsed = new URL(navUrl);
+          if ((navParsed.hostname === '127.0.0.1' || navParsed.hostname === 'localhost') &&
+              navParsed.pathname.includes('/callback')) {
+            return;
+          }
+        } catch {}
+
         try {
           const navTrack = trackWindowLoad(navUrl, {
             source: 'navigation',

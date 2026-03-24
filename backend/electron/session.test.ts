@@ -113,6 +113,20 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
   if (!descriptor.url || typeof descriptor.url !== 'string' || descriptor.url.trim() === '') {
     return false;
   }
+
+  // Filter out ephemeral loopback/localhost callback URLs (e.g. OAuth callbacks
+  // to http://127.0.0.1:{port}/callback). These are short-lived servers that won't
+  // exist on restart, so restoring them would show a connection-refused error.
+  try {
+    const parsed = new URL(descriptor.url);
+    if ((parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') &&
+        parsed.pathname.includes('/callback')) {
+      return false;
+    }
+  } catch {
+    // URL parsing failed, continue with other checks
+  }
+
   return true;
 }
 
@@ -430,6 +444,22 @@ describe('Session Integration Tests', () => {
 
     it('accepts file:// URLs', () => {
       assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'file:///tmp/test.html' })), true);
+    });
+
+    it('rejects loopback OAuth callback URLs (127.0.0.1)', () => {
+      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://127.0.0.1:52081/callback?state=abc&code=xyz' })), false);
+    });
+
+    it('rejects loopback OAuth callback URLs (localhost)', () => {
+      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://localhost:52081/callback?state=abc&code=xyz' })), false);
+    });
+
+    it('accepts localhost URLs without callback path', () => {
+      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://localhost:3000' })), true);
+    });
+
+    it('accepts localhost URLs with non-callback paths', () => {
+      assert.strictEqual(isValidDescriptor(makeDescriptor({ url: 'http://localhost:3000/dashboard' })), true);
     });
   });
 
@@ -1734,6 +1764,7 @@ interface ClosedWindowEntry {
   source: string;
   bounds: { x: number; y: number; width: number; height: number } | null;
   spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
+  role?: string;
   timestamp: number;
 }
 

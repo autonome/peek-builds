@@ -104,6 +104,7 @@ export interface ClosedWindowEntry {
   source: string;
   bounds: { x: number; y: number; width: number; height: number } | null;
   spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
+  role?: string;         // Window role (workspace, content, etc.) — needed to restore peek:// windows correctly
   timestamp: number;
 }
 
@@ -319,9 +320,12 @@ export async function initialize(): Promise<void> {
             const isKeepLive = windowData.params.keepLive === true;
             const isModal = windowData.params.modal === true;
             const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
+            const isPeekUrl = address && (address.startsWith('peek://ext/') || address.startsWith('peek://app/'));
+            const isBackgroundPage = address && (address.includes('background.html') || address.includes('extension-host.html'));
+            const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
             const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
 
-            if (isWebUrl && isContentRole && !isKeepLive && !isModal) {
+            if (isReopenable && isContentRole && !isKeepLive && !isModal) {
               // Check for space mode context
               let spaceMode: ClosedWindowEntry['spaceMode'] = null;
               try {
@@ -357,6 +361,7 @@ export async function initialize(): Promise<void> {
                 source: windowData.source,
                 bounds: saveBounds,
                 spaceMode,
+                role: role || undefined,
                 timestamp: Date.now(),
               });
             }

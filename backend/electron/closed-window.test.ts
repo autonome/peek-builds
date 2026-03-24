@@ -22,6 +22,7 @@ interface ClosedWindowEntry {
   source: string;
   bounds: { x: number; y: number; width: number; height: number } | null;
   spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
+  role?: string;
   timestamp: number;
 }
 
@@ -77,9 +78,12 @@ function createClosedWindowEntry(
   const isKeepLive = params.keepLive === true;
   const isModal = params.modal === true;
   const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
+  const isPeekUrl = address && (address.startsWith('peek://ext/') || address.startsWith('peek://app/'));
+  const isBackgroundPage = address && (address.includes('background.html') || address.includes('extension-host.html'));
+  const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
   const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
 
-  if (!isWebUrl || !isContentRole || isKeepLive || isModal) {
+  if (!isReopenable || !isContentRole || isKeepLive || isModal) {
     return null;
   }
 
@@ -112,6 +116,7 @@ function createClosedWindowEntry(
     source,
     bounds: saveBounds,
     spaceMode,
+    role: params.role || undefined,
     timestamp: Date.now(),
   };
 }
@@ -273,9 +278,51 @@ describe('Entry creation logic', () => {
     assert.notStrictEqual(entry, null);
   });
 
-  it('does NOT save non-web URLs (peek://)', () => {
+  it('saves peek://ext/ URLs (feature windows)', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'peek://ext/groups/home.html' },
+      null,
+      null,
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.url, 'peek://ext/groups/home.html');
+  });
+
+  it('saves peek://app/ URLs (app pages)', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'peek://app/settings/settings.html' },
+      null,
+      null,
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.url, 'peek://app/settings/settings.html');
+  });
+
+  it('saves peek://app/page URLs', () => {
     const entry = createClosedWindowEntry(
       { address: 'peek://app/page/index.html' },
+      null,
+      null,
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+  });
+
+  it('does NOT save peek://app/background.html', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'peek://app/background.html' },
+      null,
+      null,
+      'test-ext',
+    );
+    assert.strictEqual(entry, null);
+  });
+
+  it('does NOT save peek://app/extension-host.html', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'peek://app/extension-host.html' },
       null,
       null,
       'test-ext',
@@ -420,5 +467,18 @@ describe('Entry creation logic', () => {
       'test-ext',
     );
     assert.strictEqual(entry!.bounds, null);
+  });
+
+  it('peek:// URLs do NOT get canvas bounds adjustment', () => {
+    const bounds = { x: 100, y: 200, width: 800, height: 600 };
+    const entry = createClosedWindowEntry(
+      { address: 'peek://ext/groups/home.html' },
+      null,
+      bounds,
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    // peek:// URLs use raw window bounds (no canvas wrapper)
+    assert.deepStrictEqual(entry!.bounds, bounds);
   });
 });

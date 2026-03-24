@@ -289,13 +289,17 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
 
     // Push all currently open content windows onto the closed window stack
     // so they can be recovered via undo-close-window if session restore fails.
-    // Only push web URLs (http/https) — same filtering as the closed handler in main.ts.
+    // Push web URLs (http/https) and peek:// URLs (ext/app pages, not background).
+    // Same filtering as the closed handler in main.ts.
     // Also suppress the per-window 'closed' event push to prevent double entries.
     if (reason === 'before-quit') {
       suppressClosedWindowPush();
       for (const descriptor of windowDescriptors) {
         const isWebUrl = descriptor.url.startsWith('http://') || descriptor.url.startsWith('https://');
-        if (!isWebUrl) continue;
+        const isPeekUrl = descriptor.url.startsWith('peek://ext/') || descriptor.url.startsWith('peek://app/');
+        const isBackgroundPage = descriptor.url.includes('background.html') || descriptor.url.includes('extension-host.html');
+        const isReopenable = isWebUrl || (isPeekUrl && !isBackgroundPage);
+        if (!isReopenable) continue;
 
         // Check for space mode in context
         let spaceMode: ClosedWindowEntry['spaceMode'] = null;
@@ -312,10 +316,16 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
           source: descriptor.source,
           bounds: descriptor.bounds,
           spaceMode,
+          role: (descriptor.params.role as string) || undefined,
           timestamp: Date.now(),
         });
       }
-      DEBUG && console.log(`[session] Pushed ${windowDescriptors.filter(d => d.url.startsWith('http://') || d.url.startsWith('https://')).length} open window(s) to closed window stack`);
+      DEBUG && console.log(`[session] Pushed ${windowDescriptors.filter(d => {
+        const isWeb = d.url.startsWith('http://') || d.url.startsWith('https://');
+        const isPeek = d.url.startsWith('peek://ext/') || d.url.startsWith('peek://app/');
+        const isBg = d.url.includes('background.html') || d.url.includes('extension-host.html');
+        return isWeb || (isPeek && !isBg);
+      }).length} open window(s) to closed window stack`);
     }
 
     // Also save per-space workspace snapshots (for space layout restore)
@@ -378,6 +388,20 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
   // Must have a URL
   if (!descriptor.url || typeof descriptor.url !== 'string' || descriptor.url.trim() === '') {
     return false;
+  }
+
+  // Filter out ephemeral loopback/localhost callback URLs (e.g. OAuth callbacks
+  // to http://127.0.0.1:{port}/callback). These are short-lived servers that won't
+  // exist on restart, so restoring them would show a connection-refused error.
+  try {
+    const parsed = new URL(descriptor.url);
+    if ((parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') &&
+        parsed.pathname.includes('/callback')) {
+      DEBUG && console.log(`[session] Filtering ephemeral callback URL: ${descriptor.url}`);
+      return false;
+    }
+  } catch {
+    // URL parsing failed, continue with other checks
   }
 
   // Validate extension URLs reference a known extension
