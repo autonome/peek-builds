@@ -690,6 +690,13 @@ loadingLifecycle.onChange((state) => {
 // Used to distinguish download-abort errors (-3) from legitimate re-navigation.
 let hasEverLoaded = false;
 
+// Track the latest main-frame navigation URL so we can distinguish redirect-aborts
+// from real aborts. When a 302 redirect occurs, Chromium fires did-start-navigation
+// for the redirect target BEFORE did-fail-load (error -3) for the original URL.
+// Without this, the error -3 handler would call stopLoading() while the redirect
+// target is still loading, causing the loading indicator to disappear prematurely.
+let latestNavigationUrl = null;
+
 initWebview();
 loadingLifecycle.startLoading();
 
@@ -728,6 +735,7 @@ webview.addEventListener('did-start-navigation', (e) => {
     // URL parsing failed, proceed with showing indicator
   }
   DEBUG && console.log('[page] Navigation started (in-webview):', e.url);
+  latestNavigationUrl = e.url;
   loadingLifecycle.startLoading();
 });
 
@@ -1587,8 +1595,19 @@ webview.addEventListener('did-fail-load', (e) => {
   if (e.errorCode === -3) {
     // Error -3 (ABORTED) fires during legitimate re-navigation (e.g. clicking a link
     // while a page is loading) AND for cancelled navigations (downloads, window.stop(),
-    // intercepted popups, etc.). Always clear loading state — if a new navigation is
-    // starting, did-start-navigation will immediately re-enter startLoading().
+    // intercepted popups, etc.).
+    //
+    // For redirect chains (e.g. go.bsky.app/redirect → target URL), Chromium fires
+    // did-start-navigation for the redirect target BEFORE did-fail-load for the original.
+    // If we blindly stopLoading() here, we kill the loading state while the redirect
+    // target is still loading — the spinner disappears and navbar hides prematurely.
+    //
+    // Fix: only clear loading if the aborted URL is still the latest navigation.
+    // If a newer navigation has started (redirect target), let it keep loading.
+    if (latestNavigationUrl && e.url !== latestNavigationUrl) {
+      console.log('[page] Load aborted (error -3) for', e.url, '— redirect in progress to', latestNavigationUrl, ', keeping loading state');
+      return;
+    }
     console.log('[page] Load aborted (error -3), clearing loading state');
     loadingLifecycle.stopLoading();
     return;
