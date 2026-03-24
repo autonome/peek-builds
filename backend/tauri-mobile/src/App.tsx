@@ -972,12 +972,9 @@ function App() {
   // Keyboard height for iOS keyboard avoidance
   const keyboardHeight = useKeyboardHeight();
 
-  // Pull-to-refresh state
-  const pullStartY = useRef<number | null>(null);
-  const pullThresholdCrossedAt = useRef<number | null>(null);
-  const [pullState, setPullState] = useState<'idle' | 'pulling' | 'ready'>('idle');
-  const PULL_THRESHOLD = 80;
-  const PULL_HOLD_TIME = 300; // ms to hold past threshold before ready
+  // Periodic auto-sync
+  const autoSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const AUTO_SYNC_INTERVAL = 60_000; // 60 seconds
 
   // Filter tags drag-to-resize handlers
   const handleFilterTagsDragStart = (clientY: number) => {
@@ -2115,86 +2112,39 @@ function App() {
     mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Pull-to-refresh touch handlers
-  const handleTouchStart = (e: React.TouchEvent) => {
-    // Ignore if editing, add input expanded, already syncing, or resizing
-    const anyEditing = editingUrlId || editingTextId || editingTagsetId || editingImageId;
-    if (anyEditing || addInputExpanded || isSyncing) return;
-    if (isResizingRef.current || document.body.dataset.resizing) return;
+  // Periodic auto-sync: runs every 60s, pauses when backgrounded, syncs on foreground return
+  useEffect(() => {
+    if (!webhookUrl) return;
 
-    const main = mainRef.current;
-    if (!main) return;
+    const startInterval = () => {
+      if (autoSyncIntervalRef.current) clearInterval(autoSyncIntervalRef.current);
+      autoSyncIntervalRef.current = setInterval(() => {
+        if (!isSyncing) syncAll();
+      }, AUTO_SYNC_INTERVAL);
+    };
 
-    // Only track if at scroll top
-    if (main.scrollTop <= 0) {
-      pullStartY.current = e.touches[0].clientY;
-      pullThresholdCrossedAt.current = null;
-      setPullState('idle');
-    }
-  };
-
-  const handleTouchMove = (e: TouchEvent) => {
-    if (pullStartY.current === null) return;
-
-    // Cancel pull if resizing detected
-    if (isResizingRef.current || document.body.dataset.resizing) {
-      pullStartY.current = null;
-      pullThresholdCrossedAt.current = null;
-      setPullState('idle');
-      return;
-    }
-
-    const pullDistance = e.touches[0].clientY - pullStartY.current;
-
-    // If pulling down past threshold, prevent default scroll and track hold time
-    if (pullDistance > PULL_THRESHOLD) {
-      e.preventDefault();
-
-      // Track when we first crossed the threshold
-      if (pullThresholdCrossedAt.current === null) {
-        pullThresholdCrossedAt.current = Date.now();
-        setPullState('pulling');
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        // Returning to foreground — sync immediately and restart interval
+        if (!isSyncing) syncAll();
+        startInterval();
       } else {
-        // Check if held long enough
-        const heldFor = Date.now() - pullThresholdCrossedAt.current;
-        if (heldFor >= PULL_HOLD_TIME) {
-          setPullState('ready');
+        // Backgrounded — stop interval
+        if (autoSyncIntervalRef.current) {
+          clearInterval(autoSyncIntervalRef.current);
+          autoSyncIntervalRef.current = null;
         }
       }
-    } else {
-      // Moved back above threshold, reset
-      pullThresholdCrossedAt.current = null;
-      setPullState('idle');
-    }
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (pullStartY.current === null) return;
-
-    const pullDistance = e.changedTouches[0].clientY - pullStartY.current;
-    const wasReady = pullState === 'ready';
-
-    // Reset state
-    pullStartY.current = null;
-    pullThresholdCrossedAt.current = null;
-    setPullState('idle');
-
-    // Only trigger sync if was in 'ready' state (held long enough)
-    if (pullDistance > PULL_THRESHOLD && wasReady) {
-      syncAll();
-    }
-  };
-
-  // Attach touchmove with passive: false to allow preventDefault
-  useEffect(() => {
-    const main = mainRef.current;
-    if (!main) return;
-
-    main.addEventListener("touchmove", handleTouchMove, { passive: false });
-    return () => {
-      main.removeEventListener("touchmove", handleTouchMove);
     };
-  }, [editingUrlId, editingTextId, editingTagsetId, editingImageId, addInputExpanded, isSyncing]);
+
+    startInterval();
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      if (autoSyncIntervalRef.current) clearInterval(autoSyncIntervalRef.current);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [webhookUrl, isSyncing]);
 
   // Reset to show all types, clear search/filters, and scroll to top
   const showAll = () => {
@@ -4119,16 +4069,7 @@ ${content.html}
       <main
         className="saved-view"
         ref={mainRef}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
       >
-        {/* Pull-to-refresh indicator */}
-        {pullState !== 'idle' && (
-          <div className={`pull-indicator ${pullState}`}>
-            {pullState === 'pulling' ? 'Hold to refresh...' : 'Release to refresh!'}
-          </div>
-        )}
-
         {/* Input row: search + add side by side */}
         <div className="input-row">
           <div className="input-row-card">
@@ -4222,6 +4163,9 @@ ${content.html}
           )}
         </div>
       </main>
+
+      {/* Auto-sync status indicator */}
+      <div className={`auto-sync-indicator ${isSyncing ? 'syncing' : ''}`} />
 
       {/* Edit modal overlay */}
       {renderEditModal()}
