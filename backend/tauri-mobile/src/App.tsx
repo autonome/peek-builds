@@ -292,6 +292,12 @@ const TagsSection: React.FC<TagsSectionProps> = ({
   onAddTag,
   placeholder = "Add tag..."
 }) => {
+  const tagInputRef = useRef<HTMLInputElement>(null);
+
+  const refocusInput = () => {
+    requestAnimationFrame(() => tagInputRef.current?.focus());
+  };
+
   // Filter available tags based on input and exclude already selected
   const unusedTags = availableTags.filter((tag) =>
     !selectedTags.has(tag.name) &&
@@ -309,7 +315,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
             {Array.from(selectedTags).map((tag) => (
               <span key={tag} className="editing-tag">
                 {tag}
-                <button onClick={() => onToggleTag(tag)}>&times;</button>
+                <button onClick={() => { onToggleTag(tag); refocusInput(); }}>&times;</button>
               </span>
             ))}
           </div>
@@ -320,6 +326,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
         <div className="new-tag-input">
           <div className="input-with-clear">
             <input
+              ref={tagInputRef}
               type="text"
               value={tagInput}
               onChange={(e) => onTagInputChange(e.target.value)}
@@ -327,6 +334,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
                 if (e.key === "Enter") {
                   e.preventDefault();
                   onAddTag();
+                  refocusInput();
                 }
               }}
               onFocus={() => {
@@ -341,7 +349,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
             />
             <ClearButton show={tagInput.length > 0} onClear={() => onTagInputChange('')} />
           </div>
-          <button onClick={onAddTag} disabled={!tagInput.trim()}>
+          <button onClick={() => { onAddTag(); refocusInput(); }} disabled={!tagInput.trim()}>
             Add
           </button>
         </div>
@@ -354,7 +362,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
               <span
                 key={tag.name}
                 className="tag-chip"
-                onClick={() => { onToggleTag(tag.name); onTagInputChange(''); }}
+                onClick={() => { onToggleTag(tag.name); onTagInputChange(''); refocusInput(); }}
               >
                 {tag.name}
               </span>
@@ -884,6 +892,7 @@ function App() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null); // base64 data URL
   const [capturedImageTags, setCapturedImageTags] = useState<Set<string>>(new Set());
   const [capturedImageTagInput, setCapturedImageTagInput] = useState("");
+  const capturedImageTagInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const keyboardPrimerRef = useRef<HTMLInputElement>(null);
 
@@ -3929,7 +3938,7 @@ ${content.html}
                   {Array.from(capturedImageTags).sort().map((tag) => (
                     <span key={tag} className="editing-tag">
                       {tag}
-                      <button onClick={() => toggleCapturedImageTag(tag)}>&times;</button>
+                      <button onClick={() => { toggleCapturedImageTag(tag); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus()); }}>&times;</button>
                     </span>
                   ))}
                 </div>
@@ -3939,6 +3948,7 @@ ${content.html}
             <div className="edit-section">
               <div className="new-tag-input">
                 <input
+                  ref={capturedImageTagInputRef}
                   type="text"
                   value={capturedImageTagInput}
                   onChange={(e) => setCapturedImageTagInput(e.target.value)}
@@ -3946,6 +3956,7 @@ ${content.html}
                     if (e.key === "Enter") {
                       e.preventDefault();
                       addCapturedImageTag();
+                      requestAnimationFrame(() => capturedImageTagInputRef.current?.focus());
                     }
                   }}
                   placeholder="Add tag..."
@@ -3954,7 +3965,7 @@ ${content.html}
                   autoComplete="off"
                   spellCheck={false}
                 />
-                <button onClick={addCapturedImageTag} disabled={!capturedImageTagInput.trim()}>
+                <button onClick={() => { addCapturedImageTag(); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus()); }} disabled={!capturedImageTagInput.trim()}>
                   Add
                 </button>
               </div>
@@ -3973,7 +3984,7 @@ ${content.html}
                     <span
                       key={tag.name}
                       className="tag-chip"
-                      onClick={() => toggleCapturedImageTag(tag.name)}
+                      onClick={() => { toggleCapturedImageTag(tag.name); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus()); }}
                     >
                       {tag.name}
                     </span>
