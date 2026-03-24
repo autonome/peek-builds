@@ -697,6 +697,13 @@ let hasEverLoaded = false;
 // target is still loading, causing the loading indicator to disappear prematurely.
 let latestNavigationUrl = null;
 
+// Track URLs that failed to load (e.g. DNS failure, connection refused).
+// Prevents meta-refresh loops: if page A has <meta http-equiv="refresh" content="0; URL=B">
+// and B fails (e.g. dead domain), the webview may re-display A's content, causing the
+// meta-refresh to fire again in a loop. Each iteration calls startLoading()/stopLoading()
+// rapidly, causing show()/hide() async races and resetting the 30s safety timeout.
+let lastFailedNavUrl = null;
+
 initWebview();
 loadingLifecycle.startLoading();
 
@@ -734,6 +741,15 @@ webview.addEventListener('did-start-navigation', (e) => {
   } catch (_) {
     // URL parsing failed, proceed with showing indicator
   }
+  // If this URL just failed (e.g. DNS error), skip re-triggering loading state.
+  // This prevents meta-refresh loops: page A loads with <meta refresh> → B,
+  // B fails → webview shows A again → meta refresh fires again → infinite loop.
+  if (lastFailedNavUrl && e.url === lastFailedNavUrl) {
+    console.log('[page] Skipping loading for previously failed URL:', e.url);
+    return;
+  }
+  // Clear the failed URL tracker on any new (different) navigation
+  lastFailedNavUrl = null;
   DEBUG && console.log('[page] Navigation started (in-webview):', e.url);
   latestNavigationUrl = e.url;
   loadingLifecycle.startLoading();
@@ -1239,7 +1255,7 @@ let navbarGeneration = 0;
 
 async function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
-  navbarGeneration++;
+  const gen = ++navbarGeneration;
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;
@@ -1275,6 +1291,10 @@ async function show(opts) {
   try {
     await setWindowPadding(PANEL_OVERHANG * 2);
   } finally {
+    // If hide() was called while we were awaiting, bail — don't restore opacity
+    // here; hide() or the next show() will handle it. This prevents a stale
+    // show() from setting opacity='1' after hide() already set it to '0'.
+    if (navbarGeneration !== gen) return;
     centerColumn.style.opacity = '1';
   }
 }
@@ -1612,8 +1632,15 @@ webview.addEventListener('did-fail-load', (e) => {
     loadingLifecycle.stopLoading();
     return;
   }
-  console.error('[page] Load failed:', e.errorCode, e.errorDescription);
+  console.error('[page] Load failed:', e.errorCode, e.errorDescription, e.url);
+  // Track this URL as failed to prevent meta-refresh loops.
+  // If the previous page had <meta http-equiv="refresh"> pointing to this URL,
+  // the webview may re-display the previous page and re-fire the refresh.
+  lastFailedNavUrl = e.url;
   loadingLifecycle.stopLoading();
+  // Stop the webview to kill any pending meta-refresh from the previous page's content.
+  // Without this, a meta-refresh loop can oscillate startLoading/stopLoading indefinitely.
+  try { webview.stop(); } catch (_) {}
 });
 
 // On dom-ready: detect page background color.
