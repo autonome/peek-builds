@@ -19,6 +19,7 @@ import {
   createRawJsonEditor,
   parseRawJson,
   nsidToFriendlyName,
+  isBlueskyPost,
 } from '../../lexicon-ui.js';
 
 export class FormTemplate {
@@ -163,6 +164,14 @@ export class FormTemplate {
   }
 
   /**
+   * Set the upload blob function. Called by home.js with the session-bound uploader.
+   * @param {function} fn - async (file) => { blob: ... }
+   */
+  setUploadBlobFn(fn) {
+    this._uploadBlobFn = fn;
+  }
+
+  /**
    * Collect form data for create-record panel.
    * @param {Object} refs
    * @param {Object} stateRef
@@ -176,16 +185,22 @@ export class FormTemplate {
     if (!form) {
       throw new Error('No form found. Switch to Raw JSON mode.');
     }
-    return await collectFormData(form, stateRef.createSchema, stateRef.createLexicon, stateRef.createNsid);
+    return await collectFormData(form, stateRef.createSchema, stateRef.createLexicon, stateRef.createNsid, {
+      uploadBlobFn: this._uploadBlobFn,
+    });
   }
 
   /**
    * Validate required fields for form mode.
+   * Bluesky post validation is handled in collectBlueskyPostData.
    * @param {Object} stateRef
    * @param {Object} record
    * @throws {Error} if required fields missing
    */
   validateRequired(stateRef, record) {
+    // Bluesky post does its own validation during collection
+    if (isBlueskyPost(stateRef.createNsid)) return;
+
     if (stateRef.createSchema && stateRef.createMode === 'form') {
       const required = stateRef.createSchema.required || [];
       const missing = required.filter(f => {
@@ -371,16 +386,22 @@ export class FormTemplate {
     }
     const form = refs.cpFormContainer.querySelector('.lexicon-form');
     if (!form) throw new Error('No form found. Switch to Raw JSON mode.');
-    return await collectFormData(form, stateRef.cpSchema, stateRef.cpLexicon, stateRef.cpNsid);
+    return await collectFormData(form, stateRef.cpSchema, stateRef.cpLexicon, stateRef.cpNsid, {
+      uploadBlobFn: this._uploadBlobFn,
+    });
   }
 
   /**
    * Validate required fields for create panel form mode.
+   * Bluesky post validation is handled in collectBlueskyPostData.
    * @param {Object} stateRef
    * @param {Object} record
    * @throws {Error}
    */
   validateCreatePanelRequired(stateRef, record) {
+    // Bluesky post does its own validation during collection
+    if (isBlueskyPost(stateRef.cpNsid)) return;
+
     if (stateRef.cpSchema && stateRef.cpMode === 'form') {
       const required = stateRef.cpSchema.required || [];
       const missing = required.filter(f => {

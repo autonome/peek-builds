@@ -223,6 +223,31 @@ export function getRecordSchema(lexicon) {
 }
 
 // ============================================================================
+// Bluesky Post Detection
+// ============================================================================
+
+const BLUESKY_POST_NSID = 'app.bsky.feed.post';
+const BLUESKY_POST_MAX_GRAPHEMES = 300;
+const BLUESKY_POST_MAX_IMAGES = 4;
+
+/**
+ * Check if an NSID is a Bluesky post.
+ */
+export function isBlueskyPost(nsid) {
+  return nsid === BLUESKY_POST_NSID;
+}
+
+/**
+ * Count graphemes using Intl.Segmenter (accurate) with fallback to .length.
+ */
+function countGraphemes(text) {
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    return [...new Intl.Segmenter().segment(text)].length;
+  }
+  return text.length;
+}
+
+// ============================================================================
 // Dynamic Form Generator
 // ============================================================================
 
@@ -237,6 +262,11 @@ export function getRecordSchema(lexicon) {
  * @returns {Promise<HTMLElement>} The generated form element
  */
 export async function generateForm(nsid, schema, lexicon, options = {}) {
+  // Special handling for Bluesky posts
+  if (isBlueskyPost(nsid)) {
+    return generateBlueskyPostForm(nsid, schema, lexicon, options);
+  }
+
   const form = document.createElement('form');
   form.className = 'lexicon-form';
   form.dataset.nsid = nsid;
@@ -280,6 +310,375 @@ export async function generateForm(nsid, schema, lexicon, options = {}) {
   }
 
   return form;
+}
+
+// ============================================================================
+// Bluesky Post Composer
+// ============================================================================
+
+/**
+ * Generate a specialized Bluesky post composer form.
+ * Replaces the generic form with a purpose-built post UI:
+ * - Text area with grapheme counter (300 limit)
+ * - Live preview with highlighted mentions/links/hashtags
+ * - Image upload (up to 4) with alt text and aspect ratio
+ * - Language selector
+ */
+function generateBlueskyPostForm(nsid, schema, lexicon, options = {}) {
+  const form = document.createElement('form');
+  form.className = 'lexicon-form bsky-post-form';
+  form.dataset.nsid = nsid;
+
+  // --- Post text area ---
+  const textSection = document.createElement('div');
+  textSection.className = 'bsky-text-section';
+
+  const textLabel = document.createElement('label');
+  textLabel.className = 'field-label';
+  textLabel.textContent = 'Post';
+  const star = document.createElement('span');
+  star.className = 'required-mark';
+  star.textContent = ' *';
+  textLabel.appendChild(star);
+  textSection.appendChild(textLabel);
+
+  const textarea = document.createElement('textarea');
+  textarea.name = 'text';
+  textarea.className = 'form-textarea bsky-text-input';
+  textarea.rows = 5;
+  textarea.placeholder = "What's on your mind?";
+  textarea.maxLength = 3000; // UTF-8 byte limit, not grapheme limit
+  textSection.appendChild(textarea);
+
+  // Grapheme counter
+  const counterRow = document.createElement('div');
+  counterRow.className = 'bsky-counter-row';
+
+  const counter = document.createElement('div');
+  counter.className = 'bsky-grapheme-counter';
+  counter.textContent = `0 / ${BLUESKY_POST_MAX_GRAPHEMES}`;
+  counterRow.appendChild(counter);
+  textSection.appendChild(counterRow);
+
+  // Post preview
+  const preview = document.createElement('div');
+  preview.className = 'bsky-post-preview';
+  preview.style.display = 'none';
+  textSection.appendChild(preview);
+
+  // Wire up text input events
+  textarea.addEventListener('input', () => {
+    const text = textarea.value;
+    const graphemes = countGraphemes(text);
+    const remaining = BLUESKY_POST_MAX_GRAPHEMES - graphemes;
+    counter.textContent = `${graphemes} / ${BLUESKY_POST_MAX_GRAPHEMES}`;
+    counter.classList.toggle('over-limit', remaining < 0);
+    counter.classList.toggle('near-limit', remaining >= 0 && remaining <= 20);
+
+    // Update preview
+    updatePostPreview(preview, text);
+  });
+
+  form.appendChild(textSection);
+
+  // --- Image upload section ---
+  const imageSection = document.createElement('div');
+  imageSection.className = 'bsky-image-section';
+  imageSection.dataset.fieldName = '__bsky_images';
+
+  const imageLabel = document.createElement('label');
+  imageLabel.className = 'field-label';
+  imageLabel.textContent = 'Images';
+  imageSection.appendChild(imageLabel);
+
+  const imageHint = document.createElement('div');
+  imageHint.className = 'field-hint';
+  imageHint.textContent = `Up to ${BLUESKY_POST_MAX_IMAGES} images. Add alt text for accessibility.`;
+  imageSection.appendChild(imageHint);
+
+  const imageGrid = document.createElement('div');
+  imageGrid.className = 'bsky-image-grid';
+  imageSection.appendChild(imageGrid);
+
+  const addImageBtn = document.createElement('button');
+  addImageBtn.type = 'button';
+  addImageBtn.className = 'bsky-add-image-btn';
+  addImageBtn.textContent = '+ Add image';
+  imageSection.appendChild(addImageBtn);
+
+  // Hidden file input for image selection
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/jpeg,image/png,image/webp,image/gif';
+  fileInput.multiple = true;
+  fileInput.style.display = 'none';
+  imageSection.appendChild(fileInput);
+
+  const imageCounter = document.createElement('div');
+  imageCounter.className = 'bsky-image-counter';
+  imageSection.appendChild(imageCounter);
+
+  // Image management state stored on the form element
+  form._bskyImages = []; // { file, altText, objectUrl, width, height }
+
+  function updateImageUI() {
+    const images = form._bskyImages;
+    imageGrid.innerHTML = '';
+
+    images.forEach((img, idx) => {
+      const card = document.createElement('div');
+      card.className = 'bsky-image-card';
+
+      const thumb = document.createElement('img');
+      thumb.className = 'bsky-image-thumb';
+      thumb.src = img.objectUrl;
+      thumb.alt = img.altText || '';
+      card.appendChild(thumb);
+
+      const controls = document.createElement('div');
+      controls.className = 'bsky-image-controls';
+
+      const altInput = document.createElement('input');
+      altInput.type = 'text';
+      altInput.className = 'form-input bsky-alt-input';
+      altInput.placeholder = 'Alt text...';
+      altInput.value = img.altText || '';
+      altInput.addEventListener('input', () => {
+        img.altText = altInput.value;
+      });
+      controls.appendChild(altInput);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'bsky-image-remove';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        URL.revokeObjectURL(img.objectUrl);
+        form._bskyImages.splice(idx, 1);
+        updateImageUI();
+      });
+      controls.appendChild(removeBtn);
+
+      card.appendChild(controls);
+      imageGrid.appendChild(card);
+    });
+
+    const count = images.length;
+    addImageBtn.style.display = count >= BLUESKY_POST_MAX_IMAGES ? 'none' : '';
+    imageCounter.textContent = count > 0 ? `${count} / ${BLUESKY_POST_MAX_IMAGES} images` : '';
+  }
+
+  addImageBtn.addEventListener('click', () => {
+    fileInput.value = '';
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', () => {
+    const files = Array.from(fileInput.files || []);
+    const remaining = BLUESKY_POST_MAX_IMAGES - form._bskyImages.length;
+    const toAdd = files.slice(0, remaining);
+
+    for (const file of toAdd) {
+      const objectUrl = URL.createObjectURL(file);
+      const entry = { file, altText: '', objectUrl, width: 0, height: 0 };
+
+      // Load image to get dimensions for aspect ratio
+      const img = new Image();
+      img.onload = () => {
+        entry.width = img.naturalWidth;
+        entry.height = img.naturalHeight;
+      };
+      img.src = objectUrl;
+
+      form._bskyImages.push(entry);
+    }
+    updateImageUI();
+  });
+
+  form.appendChild(imageSection);
+
+  // --- Language selector ---
+  const langSection = document.createElement('div');
+  langSection.className = 'form-field';
+  langSection.dataset.fieldName = 'langs';
+
+  const langLabel = document.createElement('label');
+  langLabel.className = 'field-label';
+  langLabel.textContent = 'Language';
+  langSection.appendChild(langLabel);
+
+  const langDropdown = renderLanguageDropdown('langs');
+  langSection.appendChild(langDropdown);
+  form.appendChild(langSection);
+
+  // --- Hidden createdAt ---
+  const hiddenCreatedAt = document.createElement('input');
+  hiddenCreatedAt.type = 'hidden';
+  hiddenCreatedAt.name = 'createdAt';
+  hiddenCreatedAt.value = new Date().toISOString();
+  form.appendChild(hiddenCreatedAt);
+
+  return form;
+}
+
+/**
+ * Update the post preview with highlighted mentions, links, and hashtags.
+ */
+function updatePostPreview(previewEl, text) {
+  if (!text.trim()) {
+    previewEl.style.display = 'none';
+    previewEl.innerHTML = '';
+    return;
+  }
+
+  previewEl.style.display = '';
+
+  // Find all facet-like spans and highlight them
+  const parts = [];
+  let lastIndex = 0;
+
+  // Collect all matches with their positions
+  const matches = [];
+
+  // URLs
+  const urlRegex = /https?:\/\/[^\s)>\]]+/g;
+  let m;
+  while ((m = urlRegex.exec(text)) !== null) {
+    matches.push({ start: m.index, end: m.index + m[0].length, type: 'link', text: m[0] });
+  }
+
+  // Mentions
+  const mentionRegex = /(?<![a-zA-Z0-9])@([a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+  while ((m = mentionRegex.exec(text)) !== null) {
+    matches.push({ start: m.index, end: m.index + m[0].length, type: 'mention', text: m[0] });
+  }
+
+  // Hashtags
+  const tagRegex = /(?<![a-zA-Z0-9])#([^\s#\p{P}]+)/gu;
+  while ((m = tagRegex.exec(text)) !== null) {
+    if (/^[0-9a-fA-F]{3,8}$/.test(m[1])) continue;
+    matches.push({ start: m.index, end: m.index + m[0].length, type: 'tag', text: m[0] });
+  }
+
+  // Sort by position and remove overlaps
+  matches.sort((a, b) => a.start - b.start);
+  const filtered = [];
+  let lastEnd = 0;
+  for (const match of matches) {
+    if (match.start >= lastEnd) {
+      filtered.push(match);
+      lastEnd = match.end;
+    }
+  }
+
+  // Build highlighted HTML
+  let html = '';
+  let pos = 0;
+  for (const match of filtered) {
+    if (match.start > pos) {
+      html += escapePreviewText(text.slice(pos, match.start));
+    }
+    html += `<span class="bsky-preview-${match.type}">${escapePreviewText(match.text)}</span>`;
+    pos = match.end;
+  }
+  if (pos < text.length) {
+    html += escapePreviewText(text.slice(pos));
+  }
+
+  previewEl.innerHTML = html;
+}
+
+function escapePreviewText(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
+
+// ============================================================================
+// Bluesky Post Data Collection
+// ============================================================================
+
+/**
+ * Collect data from a Bluesky post composer form.
+ * Handles text, facets, images, and language.
+ *
+ * @param {HTMLFormElement} form - The bsky-post-form
+ * @param {string} nsid
+ * @param {Object} [uploadBlobFn] - async function(file) => blob ref. Injected by caller.
+ * @returns {Promise<Object>} The record object
+ */
+export async function collectBlueskyPostData(form, nsid, uploadBlobFn) {
+  const record = { $type: nsid };
+
+  // Text
+  const textarea = form.querySelector('[name="text"]');
+  const text = textarea?.value || '';
+  if (!text.trim()) {
+    throw new Error('Post text is required');
+  }
+
+  // Validate grapheme count
+  const graphemes = countGraphemes(text);
+  if (graphemes > BLUESKY_POST_MAX_GRAPHEMES) {
+    throw new Error(`Post exceeds ${BLUESKY_POST_MAX_GRAPHEMES} grapheme limit (${graphemes} graphemes)`);
+  }
+
+  record.text = text;
+
+  // Detect facets
+  const facets = await detectFacets(text);
+  if (facets.length > 0) {
+    record.facets = facets;
+  }
+
+  // createdAt
+  const createdAtInput = form.querySelector('[name="createdAt"]');
+  record.createdAt = createdAtInput?.value || new Date().toISOString();
+  if (!record.createdAt.endsWith('Z') && !record.createdAt.includes('+')) {
+    record.createdAt = new Date(record.createdAt).toISOString();
+  }
+
+  // Language
+  const langSelect = form.querySelector('select[name="langs"]');
+  if (langSelect) {
+    let langVal = langSelect.value;
+    if (langVal === '__other__') {
+      const otherInput = form.querySelector('[name="langs__other"]');
+      langVal = otherInput?.value || '';
+    }
+    if (langVal) {
+      record.langs = [langVal];
+    }
+  }
+
+  // Images — upload blobs and build embed
+  const images = form._bskyImages || [];
+  if (images.length > 0 && uploadBlobFn) {
+    const imageEmbeds = [];
+    for (const img of images) {
+      const blobResult = await uploadBlobFn(img.file);
+      const imageEmbed = {
+        image: blobResult.blob,
+        alt: img.altText || '',
+      };
+      // Add aspect ratio if dimensions are known
+      if (img.width > 0 && img.height > 0) {
+        imageEmbed.aspectRatio = {
+          width: img.width,
+          height: img.height,
+        };
+      }
+      imageEmbeds.push(imageEmbed);
+    }
+    record.embed = {
+      $type: 'app.bsky.embed.images',
+      images: imageEmbeds,
+    };
+  }
+
+  return record;
 }
 
 /**
@@ -930,7 +1329,12 @@ function renderJsonFallback(name) {
  * @param {string} nsid - The lexicon NSID (used for $type)
  * @returns {Promise<Object>} The record object
  */
-export async function collectFormData(form, schema, lexicon, nsid) {
+export async function collectFormData(form, schema, lexicon, nsid, options = {}) {
+  // Bluesky post uses specialized collector
+  if (isBlueskyPost(nsid) && form.classList.contains('bsky-post-form')) {
+    return collectBlueskyPostData(form, nsid, options.uploadBlobFn);
+  }
+
   const record = { $type: nsid };
   const { properties = {}, required = [] } = schema;
 

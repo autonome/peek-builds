@@ -1555,3 +1555,153 @@ body {
   display: flex;
   gap: 8px;
 }
+
+/* ==================== Bluesky Post Composer ==================== */
+
+.bsky-post-form {
+  gap: 20px;
+}
+
+.bsky-text-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bsky-text-input {
+  min-height: 100px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bsky-counter-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.bsky-grapheme-counter {
+  font-size: 12px;
+  color: var(--base04);
+  font-variant-numeric: tabular-nums;
+  transition: color 0.15s;
+}
+
+.bsky-grapheme-counter.near-limit {
+  color: var(--base09);
+}
+
+.bsky-grapheme-counter.over-limit {
+  color: var(--base08);
+  font-weight: 600;
+}
+
+/* Post preview */
+.bsky-post-preview {
+  padding: 12px;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--base05);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bsky-preview-mention {
+  color: var(--base0D);
+  font-weight: 500;
+}
+
+.bsky-preview-link {
+  color: var(--base0D);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.bsky-preview-tag {
+  color: var(--base0D);
+}
+
+/* Image upload */
+.bsky-image-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bsky-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.bsky-image-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 8px;
+}
+
+.bsky-image-thumb {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--base00);
+}
+
+.bsky-image-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bsky-alt-input {
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.bsky-image-remove {
+  background: none;
+  border: 1px solid var(--base02);
+  color: var(--base08);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--theme-font-sans);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  align-self: flex-start;
+}
+
+.bsky-image-remove:hover {
+  background: color-mix(in srgb, var(--base08) 15%, transparent);
+}
+
+.bsky-add-image-btn {
+  background: none;
+  border: 1px dashed var(--base03);
+  color: var(--base04);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-family: var(--theme-font-sans);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  width: fit-content;
+}
+
+.bsky-add-image-btn:hover {
+  color: var(--base0D);
+  border-color: var(--base0D);
+}
+
+.bsky-image-counter {
+  font-size: 11px;
+  color: var(--base04);
+}

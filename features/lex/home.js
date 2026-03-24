@@ -145,7 +145,23 @@ async function clearSession() {
 function onSessionRefresh(refreshedSession) {
   currentSession = refreshedSession;
   lexiconTemplate.setSession(currentSession);
+  updateFormTemplateUploader();
   saveSession();
+}
+
+/**
+ * Update the form template's blob upload function with the current session.
+ * This allows the Bluesky post composer to upload images.
+ */
+function updateFormTemplateUploader() {
+  if (currentSession) {
+    formTemplate.setUploadBlobFn(async (file) => {
+      const arrayBuffer = await file.arrayBuffer();
+      return uploadBlob(currentSession, arrayBuffer, file.type, onSessionRefresh);
+    });
+  } else {
+    formTemplate.setUploadBlobFn(null);
+  }
 }
 
 // ============================================================================
@@ -654,6 +670,7 @@ async function init() {
     state.pdsUrl = currentSession.pdsUrl;
     state.profile = currentProfile;
     lexiconTemplate.setSession(currentSession);
+    updateFormTemplateUploader();
     showAccountView();
 
     // Refresh profile in background
@@ -975,6 +992,7 @@ async function doLogin() {
 
     // Update template session
     lexiconTemplate.setSession(currentSession);
+    updateFormTemplateUploader();
 
     // Session restored — commands check currentSession at execute time
 
