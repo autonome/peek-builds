@@ -493,6 +493,27 @@ const extractSearchQuery = (ctx) => {
     }
   }
 
+  // 4. Fallback: extract from value field (Enter payload passes value=input.value)
+  if (ctx.value && ctx.name) {
+    const val = ctx.value.trim();
+    const nameLower = ctx.name.toLowerCase();
+    const valLower = val.toLowerCase();
+    if (valLower.startsWith(nameLower + ' ')) {
+      const rest = val.slice(ctx.name.length).trim();
+      if (rest) return rest;
+    }
+  }
+
+  // 5. Last resort: if typed contains a space, take everything after the first space
+  // (handles case where name field might be missing)
+  if (ctx.typed) {
+    const spaceIdx = ctx.typed.indexOf(' ');
+    if (spaceIdx > 0) {
+      const rest = ctx.typed.slice(spaceIdx + 1).trim();
+      if (rest) return rest;
+    }
+  }
+
   return '';
 };
 
@@ -504,11 +525,15 @@ const staticCommandDefinitions = [
     description: 'Search the web with your default search engine',
     params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
     execute: async (ctx) => {
+      debug && console.log('[ext:websearch] web search execute:',
+        'ctx keys:', ctx ? Object.keys(ctx) : 'null',
+        'search:', ctx?.search, 'params:', ctx?.params, 'typed:', ctx?.typed);
       const query = extractSearchQuery(ctx);
       if (query) {
         const engine = getDefaultEngine();
         await executeSearch(engine, query);
       } else {
+        console.warn('[ext:websearch] No query extracted for web search - opening search window. ctx:', JSON.stringify(ctx));
         openSearchWindow();
       }
       return { success: true };
@@ -540,10 +565,15 @@ const registerEngineCommands = () => {
       description: `Search ${engine.name}`,
       params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
       execute: async (ctx) => {
+        debug && console.log('[ext:websearch] Engine command execute:', engine.shortName,
+          'ctx keys:', ctx ? Object.keys(ctx) : 'null',
+          'search:', ctx?.search, 'params:', ctx?.params, 'typed:', ctx?.typed, 'name:', ctx?.name);
         const query = extractSearchQuery(ctx);
+        debug && console.log('[ext:websearch] Extracted query:', JSON.stringify(query), 'from ctx for', engine.shortName);
         if (query) {
           await executeSearch(engine, query);
         } else {
+          console.warn('[ext:websearch] No query extracted for', engine.shortName, '- opening search window. ctx:', JSON.stringify(ctx));
           openSearchWindow();
         }
         return { success: true };

@@ -538,7 +538,11 @@ function buildExecutionContext(name, typed) {
   const params = rest.length > 0 ? rest.split(/\s+/) : [];
   const search = rest.length > 0 ? rest : null;
 
-  const context = { typed, name, params, search };
+  // Also include the raw input value for defensive extraction by handlers
+  const inputEl = document.getElementById('command-input');
+  const inputValue = inputEl ? inputEl.value : typed;
+
+  const context = { typed, name, params, search, value: inputValue };
 
   if ((machine.getState() === States.CHAIN_MODE || machine.getState() === States.EXECUTING) && state.chainContext) {
     context.input = state.chainContext.data;

@@ -478,14 +478,23 @@ const init = async () => {
 
   // 1b. Load cached commands if versions match
   // This pre-populates the registry so panel can open immediately
+  // Note: full version validation (isCacheValid) runs at ext:all-loaded when all
+  // extension versions are available. Here we do a quick app-version check to
+  // reject clearly stale caches without blocking startup.
   const cache = await loadCommandCache();
-  if (cache && cache.commands) {
+  const appInfo = await api.app.getInfo();
+  const currentAppVersion = appInfo.success ? appInfo.data.version : '0.0.0';
+  const cacheAppVersionMatch = cache && cache.appVersion === currentAppVersion;
+  if (cache && cache.commands && cacheAppVersionMatch) {
     // Pre-populate from cache (will be updated by fresh registrations)
     for (const cmd of cache.commands) {
       const entry = {
         name: cmd.name,
         description: cmd.description || '',
         source: cmd.source,
+        scope: cmd.scope || 'global',
+        modes: cmd.modes || [],
+        hasCanExecute: cmd.hasCanExecute || false,
         accepts: cmd.accepts || [],
         produces: cmd.produces || [],
         params: cmd.params || []
@@ -509,6 +518,8 @@ const init = async () => {
     }
 
     log('ext:cmd', 'Pre-populated registry from cache:', commandRegistry.size, 'commands');
+  } else if (cache) {
+    log('ext:cmd', 'Cache invalid, discarding stale commands');
   }
 
   // 2. Load settings from datastore
