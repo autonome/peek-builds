@@ -2210,7 +2210,9 @@ export function registerWindowHandlers(): void {
 
     // Check if any existing window already has this URL loaded (for http/https URLs).
     // This catches duplicate windows even when no key was provided.
-    if (url.startsWith('http://') || url.startsWith('https://')) {
+    // Skip this check for reopen-last-closed (trackingSource: 'reopen') — the user
+    // explicitly wants a new window for the URL they previously closed.
+    if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen') {
       const existingByUrl = findWindowByUrl(url);
       if (existingByUrl) {
         DEBUG && console.log('Reusing existing window with same URL:', url);

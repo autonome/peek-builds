@@ -109,6 +109,15 @@ export interface ClosedWindowEntry {
 
 const closedWindowStack: ClosedWindowEntry[] = [];
 
+// Flag to suppress closed-window-stack pushes during quit.
+// session.ts already pushes all open windows during before-quit,
+// so the per-window 'closed' event handler must skip its push to avoid duplicates.
+let _suppressClosedWindowPush = false;
+
+export function suppressClosedWindowPush(): void {
+  _suppressClosedWindowPush = true;
+}
+
 /**
  * Initialize the application configuration
  * Must be called before app.ready
@@ -302,51 +311,55 @@ export async function initialize(): Promise<void> {
 
           // Save to closed window stack for reopen-last-closed
           // Only save user-facing content windows with web URLs (not background, modals, palettes, etc.)
-          const address = windowData.params.address as string | undefined;
-          const role = windowData.params.role as string | undefined;
-          const isKeepLive = windowData.params.keepLive === true;
-          const isModal = windowData.params.modal === true;
-          const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
-          const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
+          // Skip during quit — session.ts already pushes all open windows during before-quit,
+          // so pushing here too would create duplicates that shadow session-restored windows.
+          if (!_suppressClosedWindowPush) {
+            const address = windowData.params.address as string | undefined;
+            const role = windowData.params.role as string | undefined;
+            const isKeepLive = windowData.params.keepLive === true;
+            const isModal = windowData.params.modal === true;
+            const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
+            const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
 
-          if (isWebUrl && isContentRole && !isKeepLive && !isModal) {
-            // Check for space mode context
-            let spaceMode: ClosedWindowEntry['spaceMode'] = null;
-            try {
-              const modeEntry = getContextEntry('mode', windowId);
-              if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
-                spaceMode = {
-                  spaceId: modeEntry.metadata.spaceId as string,
-                  spaceName: modeEntry.metadata.spaceName as string,
-                  color: modeEntry.metadata.color as string | undefined,
+            if (isWebUrl && isContentRole && !isKeepLive && !isModal) {
+              // Check for space mode context
+              let spaceMode: ClosedWindowEntry['spaceMode'] = null;
+              try {
+                const modeEntry = getContextEntry('mode', windowId);
+                if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
+                  spaceMode = {
+                    spaceId: modeEntry.metadata.spaceId as string,
+                    spaceName: modeEntry.metadata.spaceName as string,
+                    color: modeEntry.metadata.color as string | undefined,
+                  };
+                }
+              } catch {
+                // Context may be cleaned up already during shutdown
+              }
+
+              // For canvas pages, convert window bounds back to webview bounds
+              // (window-open will re-add canvas margins when reopening)
+              let saveBounds = lastBounds;
+              if (lastBounds && isWebUrl) {
+                const CANVAS_MARGIN = 8;
+                const CANVAS_TRIGGER_ZONE = 8;
+                const CANVAS_NAVBAR_HEIGHT = 36;
+                saveBounds = {
+                  x: lastBounds.x + CANVAS_MARGIN,
+                  y: lastBounds.y + CANVAS_TRIGGER_ZONE + CANVAS_NAVBAR_HEIGHT,
+                  width: lastBounds.width - CANVAS_MARGIN * 2,
+                  height: lastBounds.height - CANVAS_TRIGGER_ZONE - CANVAS_MARGIN - CANVAS_NAVBAR_HEIGHT,
                 };
               }
-            } catch {
-              // Context may be cleaned up already during shutdown
-            }
 
-            // For canvas pages, convert window bounds back to webview bounds
-            // (window-open will re-add canvas margins when reopening)
-            let saveBounds = lastBounds;
-            if (lastBounds && isWebUrl) {
-              const CANVAS_MARGIN = 8;
-              const CANVAS_TRIGGER_ZONE = 8;
-              const CANVAS_NAVBAR_HEIGHT = 36;
-              saveBounds = {
-                x: lastBounds.x + CANVAS_MARGIN,
-                y: lastBounds.y + CANVAS_TRIGGER_ZONE + CANVAS_NAVBAR_HEIGHT,
-                width: lastBounds.width - CANVAS_MARGIN * 2,
-                height: lastBounds.height - CANVAS_TRIGGER_ZONE - CANVAS_MARGIN - CANVAS_NAVBAR_HEIGHT,
-              };
+              pushClosedWindow({
+                url: address,
+                source: windowData.source,
+                bounds: saveBounds,
+                spaceMode,
+                timestamp: Date.now(),
+              });
             }
-
-            pushClosedWindow({
-              url: address,
-              source: windowData.source,
-              bounds: saveBounds,
-              spaceMode,
-              timestamp: Date.now(),
-            });
           }
         }
 

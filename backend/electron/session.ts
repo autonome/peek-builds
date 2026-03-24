@@ -15,7 +15,7 @@
 
 import { BrowserWindow, dialog, screen } from 'electron';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
-import { getAllWindows, getBackgroundWindow, pushClosedWindow } from './main.js';
+import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredExtensionIds } from './protocol.js';
 
@@ -290,7 +290,9 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     // Push all currently open content windows onto the closed window stack
     // so they can be recovered via undo-close-window if session restore fails.
     // Only push web URLs (http/https) — same filtering as the closed handler in main.ts.
+    // Also suppress the per-window 'closed' event push to prevent double entries.
     if (reason === 'before-quit') {
+      suppressClosedWindowPush();
       for (const descriptor of windowDescriptors) {
         const isWebUrl = descriptor.url.startsWith('http://') || descriptor.url.startsWith('https://');
         if (!isWebUrl) continue;
