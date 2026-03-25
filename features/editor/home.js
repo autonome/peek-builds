@@ -678,6 +678,18 @@ const createDeferredNoteItem = async (content) => {
         api.context.setMode('editor', { metadata: { itemId: currentItemId } });
       }
 
+      // Update URL with itemId so session restore can reopen this document.
+      // Without this, session save captures the bare URL (no itemId) and
+      // restore opens a blank editor instead of the saved document.
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('itemId', currentItemId);
+        history.replaceState(null, '', url.toString());
+        debug && console.log('[editor] Updated URL with itemId for session restore:', currentItemId);
+      } catch (urlErr) {
+        debug && console.log('[editor] Failed to update URL with itemId:', urlErr);
+      }
+
       // Show save status now that we have an item
       if (editorLayout) {
         editorLayout.setSaveStatusVisible(true);
