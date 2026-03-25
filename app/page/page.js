@@ -3415,11 +3415,14 @@ async function loadExtensionsPanel() {
       currentSiteAdblockAllowed = false;
     }
 
-    // Build UI entry lookup for quick popup access
+    // Build UI entry lookup for quick popup/options access
     const popupMap = new Map(); // extensionId -> popup entry
+    const optionsMap = new Map(); // extensionId -> options entry
     for (const entry of uiEntries) {
       if (entry.type === 'popup') {
         popupMap.set(entry.extensionId, entry);
+      } else if (entry.type === 'options') {
+        optionsMap.set(entry.extensionId, entry);
       }
     }
 
@@ -3457,20 +3460,35 @@ async function loadExtensionsPanel() {
 
         item.appendChild(info);
 
-        // Popup button (if extension has a popup)
+        // Action buttons (popup and/or options)
         const popupEntry = popupMap.get(ext.id);
-        if (popupEntry) {
+        const optionsEntry = optionsMap.get(ext.id);
+        if (popupEntry || optionsEntry) {
           const actions = document.createElement('div');
           actions.className = 'ext-actions';
 
-          const popupBtn = document.createElement('button');
-          popupBtn.className = 'ext-action-btn';
-          popupBtn.textContent = 'Open';
-          popupBtn.title = `Open ${ext.name} popup`;
-          popupBtn.addEventListener('click', () => {
-            api.chromeExtensions.openPage(ext.id, 'popup');
-          });
-          actions.appendChild(popupBtn);
+          if (popupEntry) {
+            const popupBtn = document.createElement('button');
+            popupBtn.className = 'ext-action-btn';
+            popupBtn.textContent = 'Open';
+            popupBtn.title = `Open ${ext.name} popup`;
+            popupBtn.addEventListener('click', () => {
+              api.chromeExtensions.openPage(ext.id, 'popup');
+            });
+            actions.appendChild(popupBtn);
+          }
+
+          if (optionsEntry) {
+            const settingsBtn = document.createElement('button');
+            settingsBtn.className = 'ext-action-btn';
+            settingsBtn.textContent = 'Settings';
+            settingsBtn.title = `Open ${ext.name} settings`;
+            settingsBtn.addEventListener('click', () => {
+              api.chromeExtensions.openPage(ext.id, 'options');
+            });
+            actions.appendChild(settingsBtn);
+          }
+
           item.appendChild(actions);
         }
 
