@@ -311,7 +311,12 @@ const TagsSection: React.FC<TagsSectionProps> = ({
   const tagInputRef = useRef<HTMLInputElement>(null);
 
   const refocusInput = () => {
-    requestAnimationFrame(() => tagInputRef.current?.focus());
+    requestAnimationFrame(() => tagInputRef.current?.focus({ preventScroll: true }));
+  };
+
+  // Prevent tag buttons/chips from stealing focus (avoids iOS keyboard bounce)
+  const preventFocusLoss = (e: React.TouchEvent | React.MouseEvent) => {
+    e.preventDefault();
   };
 
   // Filter available tags based on input and exclude already selected
@@ -331,7 +336,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
             {Array.from(selectedTags).map((tag) => (
               <span key={tag} className="editing-tag">
                 {tag}
-                <button onClick={() => { onToggleTag(tag); refocusInput(); }}>&times;</button>
+                <button onTouchStart={preventFocusLoss} onMouseDown={preventFocusLoss} onClick={() => { onToggleTag(tag); refocusInput(); }}>&times;</button>
               </span>
             ))}
           </div>
@@ -365,7 +370,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
             />
             <ClearButton show={tagInput.length > 0} onClear={() => onTagInputChange('')} />
           </div>
-          <button onClick={() => { onAddTag(); refocusInput(); }} disabled={!tagInput.trim()}>
+          <button onTouchStart={preventFocusLoss} onMouseDown={preventFocusLoss} onClick={() => { onAddTag(); refocusInput(); }} disabled={!tagInput.trim()}>
             Add
           </button>
         </div>
@@ -378,6 +383,8 @@ const TagsSection: React.FC<TagsSectionProps> = ({
               <span
                 key={tag.name}
                 className="tag-chip"
+                onTouchStart={preventFocusLoss}
+                onMouseDown={preventFocusLoss}
                 onClick={() => { onToggleTag(tag.name); onTagInputChange(''); refocusInput(); }}
               >
                 {tag.name}
@@ -4105,7 +4112,7 @@ ${content.html}
                   {Array.from(capturedImageTags).sort().map((tag) => (
                     <span key={tag} className="editing-tag">
                       {tag}
-                      <button onClick={() => { toggleCapturedImageTag(tag); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus()); }}>&times;</button>
+                      <button onTouchStart={(e) => e.preventDefault()} onMouseDown={(e) => e.preventDefault()} onClick={() => { toggleCapturedImageTag(tag); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus({ preventScroll: true })); }}>&times;</button>
                     </span>
                   ))}
                 </div>
@@ -4123,7 +4130,7 @@ ${content.html}
                     if (e.key === "Enter") {
                       e.preventDefault();
                       addCapturedImageTag();
-                      requestAnimationFrame(() => capturedImageTagInputRef.current?.focus());
+                      requestAnimationFrame(() => capturedImageTagInputRef.current?.focus({ preventScroll: true }));
                     }
                   }}
                   placeholder="Add tag..."
@@ -4132,7 +4139,7 @@ ${content.html}
                   autoComplete="off"
                   spellCheck={false}
                 />
-                <button onClick={() => { addCapturedImageTag(); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus()); }} disabled={!capturedImageTagInput.trim()}>
+                <button onTouchStart={(e) => e.preventDefault()} onMouseDown={(e) => e.preventDefault()} onClick={() => { addCapturedImageTag(); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus({ preventScroll: true })); }} disabled={!capturedImageTagInput.trim()}>
                   Add
                 </button>
               </div>
@@ -4151,7 +4158,9 @@ ${content.html}
                     <span
                       key={tag.name}
                       className="tag-chip"
-                      onClick={() => { toggleCapturedImageTag(tag.name); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus()); }}
+                      onTouchStart={(e) => e.preventDefault()}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => { toggleCapturedImageTag(tag.name); requestAnimationFrame(() => capturedImageTagInputRef.current?.focus({ preventScroll: true })); }}
                     >
                       {tag.name}
                     </span>
