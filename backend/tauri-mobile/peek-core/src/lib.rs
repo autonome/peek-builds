@@ -300,6 +300,18 @@ impl PeekStore {
         offline::remove_offline_content_index(&conn, item_id)
     }
 
+    /// Check if offline content exists for a single item.
+    pub fn has_offline_content(&self, item_id: &str) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        offline::has_offline_content(&conn, item_id)
+    }
+
+    /// Batch check which item IDs have offline content. Returns IDs that have content.
+    pub fn check_offline_content_batch(&self, item_ids: &[String]) -> Result<Vec<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        offline::check_offline_content_batch(&conn, item_ids)
+    }
+
     /// Get the URL for an item (used by reader content and offline features).
     pub fn get_item_url(&self, item_id: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;

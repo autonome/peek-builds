@@ -2250,6 +2250,20 @@ fn delete_offline_content(item_id: String) -> Result<(), String> {
     remove_offline_content(&item_id)
 }
 
+/// Check if offline content exists for a single item
+#[tauri::command]
+fn has_offline_content(item_id: String) -> Result<bool, String> {
+    let store = get_store()?;
+    store.has_offline_content(&item_id)
+}
+
+/// Batch check which item IDs have offline content downloaded
+#[tauri::command]
+fn check_offline_content_batch(item_ids: Vec<String>) -> Result<Vec<String>, String> {
+    let store = get_store()?;
+    store.check_offline_content_batch(&item_ids)
+}
+
 /// Retrieve stored offline content HTML for display
 #[tauri::command]
 fn get_offline_content(item_id: String) -> Result<Option<String>, String> {
@@ -3208,6 +3222,8 @@ pub fn run() {
             fetch_offline_content,
             delete_offline_content,
             get_offline_content,
+            has_offline_content,
+            check_offline_content_batch,
             sync_to_webhook,
             get_last_sync,
             auto_sync_if_needed,

@@ -459,6 +459,38 @@ a.card-title {
   color: #007aff;
 }
 
+/* Offline content icon: solid/ready state — content downloaded and ready to read */
+.card-action-btn.offline-ready {
+  color: #007aff;
+}
+
+/* Offline content icon: hollow/pending state — tag present but content not yet downloaded */
+.card-action-btn.offline-pending {
+  color: #ccc;
+  opacity: 0.6;
+}
+
+body.dark .card-action-btn.offline-pending {
+  color: #555;
+  opacity: 0.5;
+}
+
+/* Offline content icon: currently fetching */
+.card-action-btn.offline-fetching {
+  color: #ccc;
+  opacity: 0.6;
+  animation: offline-pulse 1.2s ease-in-out infinite;
+}
+
+body.dark .card-action-btn.offline-fetching {
+  color: #555;
+}
+
+@keyframes offline-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
 .card-actions {
   display: flex;
   gap: 0.15rem;

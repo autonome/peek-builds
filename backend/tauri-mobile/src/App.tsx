@@ -978,6 +978,10 @@ function App() {
   const [offlineTag, setOfflineTag] = useState("offline");
   const [offlineTagInput, setOfflineTagInput] = useState("offline");
   const [offlineStorageSize, setOfflineStorageSize] = useState(0);
+  // Track which item IDs have offline content downloaded (for two-state icon)
+  const [offlineContentIds, setOfflineContentIds] = useState<Set<string>>(new Set());
+  // Track items currently being fetched for offline content
+  const [offlineFetchingIds, setOfflineFetchingIds] = useState<Set<string>>(new Set());
 
   // Keyboard height for iOS keyboard avoidance
   const keyboardHeight = useKeyboardHeight();
@@ -1547,6 +1551,22 @@ function App() {
     try {
       const urls = await invoke<SavedUrl[]>("get_saved_urls");
       setSavedUrls(urls);
+      // After loading URLs, check which ones have offline content downloaded
+      if (offlineTag) {
+        const offlineItemIds = urls
+          .filter(u => u.tags.includes(offlineTag))
+          .map(u => u.id);
+        if (offlineItemIds.length > 0) {
+          try {
+            const idsWithContent = await invoke<string[]>("check_offline_content_batch", { itemIds: offlineItemIds });
+            setOfflineContentIds(new Set(idsWithContent));
+          } catch (err) {
+            console.error("Failed to check offline content status:", err);
+          }
+        } else {
+          setOfflineContentIds(new Set());
+        }
+      }
     } catch (error) {
       console.error("Failed to load saved URLs:", error);
     }
@@ -2399,12 +2419,37 @@ function App() {
               </svg>
             </button>
             {urlHasOffline && (
-              <button className="card-action-btn" onClick={(e) => openOfflineReader(item.id, e)} title="Read offline">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
-                </svg>
-              </button>
+              offlineContentIds.has(item.id) ? (
+                <button className="card-action-btn offline-ready" onClick={(e) => openOfflineReader(item.id, e)} title="Read offline">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3" fill="currentColor"></circle>
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  className={`card-action-btn offline-pending${offlineFetchingIds.has(item.id) ? ' offline-fetching' : ''}`}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (offlineFetchingIds.has(item.id)) return;
+                    setOfflineFetchingIds(prev => new Set(prev).add(item.id));
+                    try {
+                      await invoke("fetch_offline_content", { itemId: item.id, url: item.url });
+                      setOfflineContentIds(prev => new Set(prev).add(item.id));
+                    } catch (err) {
+                      console.error("[App] Failed to fetch offline content for", item.id, err);
+                    } finally {
+                      setOfflineFetchingIds(prev => { const next = new Set(prev); next.delete(item.id); return next; });
+                    }
+                  }}
+                  title="Download for offline reading"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              )
             )}
             <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingUrlId, "page")} title="Delete">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2919,16 +2964,42 @@ function App() {
               </svg>
             </button>
             {offlineTag && item.tags.includes(offlineTag) && !isExpanded && (
-              <button
-                className="card-action-btn"
-                onClick={(e) => { console.log("[App] EYE ICON TAPPED for", item.id); openOfflineReader(item.id, e); }}
-                title="Read offline"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
-                </svg>
-              </button>
+              offlineContentIds.has(item.id) ? (
+                <button
+                  className="card-action-btn offline-ready"
+                  onClick={(e) => { console.log("[App] EYE ICON TAPPED for", item.id); openOfflineReader(item.id, e); }}
+                  title="Read offline"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3" fill="currentColor"></circle>
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  className={`card-action-btn offline-pending${offlineFetchingIds.has(item.id) ? ' offline-fetching' : ''}`}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (offlineFetchingIds.has(item.id)) return;
+                    console.log("[App] Offline download tapped for", item.id);
+                    setOfflineFetchingIds(prev => new Set(prev).add(item.id));
+                    try {
+                      await invoke("fetch_offline_content", { itemId: item.id, url: item.url });
+                      setOfflineContentIds(prev => new Set(prev).add(item.id));
+                    } catch (err) {
+                      console.error("[App] Failed to fetch offline content for", item.id, err);
+                    } finally {
+                      setOfflineFetchingIds(prev => { const next = new Set(prev); next.delete(item.id); return next; });
+                    }
+                  }}
+                  title="Download for offline reading"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              )
             )}
             <DeleteButton itemId={item.id} itemType="page" />
           </div>

@@ -38,6 +38,42 @@ pub fn remove_offline_content_index(conn: &Connection, item_id: &str) -> Result<
     Ok(())
 }
 
+/// Check if offline content exists for a single item.
+pub fn has_offline_content(conn: &Connection, item_id: &str) -> Result<bool, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM offline_content WHERE item_id = ?",
+            params![item_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    Ok(count > 0)
+}
+
+/// Batch check which item IDs have offline content. Returns the set of IDs that do.
+pub fn check_offline_content_batch(conn: &Connection, item_ids: &[String]) -> Result<Vec<String>, String> {
+    if item_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders: Vec<&str> = item_ids.iter().map(|_| "?").collect();
+    let sql = format!(
+        "SELECT item_id FROM offline_content WHERE item_id IN ({})",
+        placeholders.join(",")
+    );
+    let mut stmt = conn.prepare(&sql)
+        .map_err(|e| format!("Failed to prepare offline content batch query: {}", e))?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = item_ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+    let rows = stmt.query_map(params.as_slice(), |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Failed to query offline content batch: {}", e))?;
+    let mut result = Vec::new();
+    for row in rows {
+        if let Ok(id) = row {
+            result.push(id);
+        }
+    }
+    Ok(result)
+}
+
 /// Get the URL for an item (used by reader content and offline features).
 pub fn get_item_url(conn: &Connection, item_id: &str) -> Result<Option<String>, String> {
     let url: Option<String> = conn
