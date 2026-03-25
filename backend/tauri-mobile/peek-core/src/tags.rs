@@ -131,9 +131,16 @@ pub fn update_item_tags(conn: &Connection, item_id: &str, new_tags: &[String]) -
 }
 
 /// Get all tags ordered by frecency score (descending).
+/// Only returns tags that are currently applied to at least one item.
 pub fn get_tags_by_frecency(conn: &Connection) -> Result<Vec<TagStats>, String> {
     let mut stmt = conn
-        .prepare("SELECT name, frequency, lastUsed, frecencyScore FROM tags ORDER BY frecencyScore DESC")
+        .prepare(
+            "SELECT t.name, t.frequency, t.lastUsed, t.frecencyScore
+             FROM tags t
+             INNER JOIN item_tags it ON t.id = it.tag_id
+             GROUP BY t.name
+             ORDER BY t.frecencyScore DESC"
+        )
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
     let tags: Vec<TagStats> = stmt
@@ -160,9 +167,14 @@ pub fn get_tags_by_frecency_for_url(conn: &Connection, url: &str) -> Result<Vec<
         None => return get_tags_by_frecency(conn),
     };
 
-    // Get all tags with their IDs
+    // Get all tags with their IDs (only those currently applied to at least one item)
     let mut stmt = conn
-        .prepare("SELECT id, name, frequency, lastUsed, frecencyScore FROM tags")
+        .prepare(
+            "SELECT t.id, t.name, t.frequency, t.lastUsed, t.frecencyScore
+             FROM tags t
+             INNER JOIN item_tags it ON t.id = it.tag_id
+             GROUP BY t.id"
+        )
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
     let tags_with_ids: Vec<(String, TagStats)> = stmt
@@ -307,16 +319,37 @@ mod tests {
     #[test]
     fn test_get_tags_by_frecency() {
         let conn = setup_db();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Create two items
+        conn.execute(
+            "INSERT INTO items (id, type, url, created_at, updated_at) VALUES ('item1', 'url', 'https://test.com', ?1, ?1)",
+            params![&now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO items (id, type, url, created_at, updated_at) VALUES ('item2', 'url', 'https://test2.com', ?1, ?1)",
+            params![&now],
+        ).unwrap();
+
         get_or_create_tag(&conn, "alpha").unwrap();
         get_or_create_tag(&conn, "beta").unwrap();
         // Call beta again to boost its frecency
         get_or_create_tag(&conn, "beta").unwrap();
+
+        // Only tags linked to items should appear
+        add_tags_to_item(&conn, "item1", &["alpha".to_string()]).unwrap();
+        add_tags_to_item(&conn, "item2", &["beta".to_string()]).unwrap();
 
         let tags = get_tags_by_frecency(&conn).unwrap();
         assert_eq!(tags.len(), 2);
         // beta should be first (higher frecency)
         assert_eq!(tags[0].name, "beta");
         assert_eq!(tags[1].name, "alpha");
+
+        // An unlinked tag should NOT appear
+        get_or_create_tag(&conn, "orphan").unwrap();
+        let tags = get_tags_by_frecency(&conn).unwrap();
+        assert_eq!(tags.len(), 2);
     }
 
     #[test]
@@ -333,12 +366,21 @@ mod tests {
         // Add domain-specific tag
         add_tags_to_item(&conn, "item1", &["domain-tag".to_string()]).unwrap();
 
-        // Add a generic tag (not domain-specific)
-        get_or_create_tag(&conn, "generic").unwrap();
+        // Add a generic tag linked to a different-domain item
+        conn.execute(
+            "INSERT INTO items (id, type, url, created_at, updated_at) VALUES ('item2', 'url', 'https://other.com/page', ?1, ?1)",
+            params![&now],
+        ).unwrap();
+        add_tags_to_item(&conn, "item2", &["generic".to_string()]).unwrap();
 
         let tags = get_tags_by_frecency_for_url(&conn, "https://example.com/page2").unwrap();
         assert_eq!(tags.len(), 2);
         // domain-tag should be boosted (2x) and appear first
         assert_eq!(tags[0].name, "domain-tag");
+
+        // An unlinked tag should NOT appear
+        get_or_create_tag(&conn, "orphan").unwrap();
+        let tags = get_tags_by_frecency_for_url(&conn, "https://example.com/page2").unwrap();
+        assert_eq!(tags.len(), 2);
     }
 }
