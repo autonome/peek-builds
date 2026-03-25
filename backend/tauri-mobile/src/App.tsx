@@ -2429,6 +2429,7 @@ function App() {
           buttons={{
             onSave: saveChanges,
             onCancel: requestCancelEditing,
+            onDelete: () => requestDelete(editingUrlId, "page"),
           }}
           headerActions={<>
             <button className="card-action-btn" onClick={(e) => openInBrowser(item.url, item.id, e)} title="Open in Safari">
@@ -2479,8 +2480,8 @@ function App() {
             )}
             <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingUrlId, "page")} title="Delete">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
               </svg>
             </button>
           </>}
@@ -2527,6 +2528,7 @@ function App() {
           buttons={{
             onSave: saveTextChanges,
             onCancel: requestCancelEditingText,
+            onDelete: () => requestDelete(editingTextId, "text"),
             saveLabel: "Done",
           }}
           headerActions={<>
@@ -2577,8 +2579,8 @@ function App() {
             )}
             <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingTextId, "text")} title="Delete">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
               </svg>
             </button>
           </>}
@@ -2625,12 +2627,13 @@ function App() {
           buttons={{
             onSave: saveTagsetChanges,
             onCancel: requestCancelEditingTagset,
+            onDelete: () => requestDelete(editingTagsetId, "tagset"),
           }}
           headerActions={<>
             <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingTagsetId, "tagset")} title="Delete">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
               </svg>
             </button>
           </>}
@@ -2659,12 +2662,13 @@ function App() {
           buttons={{
             onSave: saveImageChanges,
             onCancel: requestCancelEditingImage,
+            onDelete: () => requestDelete(editingImageId, "image"),
           }}
           headerActions={<>
             <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingImageId, "image")} title="Delete">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
               </svg>
             </button>
           </>}
