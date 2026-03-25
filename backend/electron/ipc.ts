@@ -2240,6 +2240,11 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
+          // Ensure dock is visible and app is activated before showing the window.
+          // Without this, re-showing a hidden panel-type window after app.hide()
+          // can fail silently on macOS (the window show() call doesn't bring the
+          // app to the foreground when in accessory activation policy).
+          updateDockVisibility();
           existingWindow.window.show();
           existingWindow.window.focus();
         }

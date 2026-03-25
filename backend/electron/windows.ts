@@ -441,9 +441,11 @@ export function closeOrHideWindow(id: number): void {
       // Hide app to return focus to previous app (only if no other visible windows)
       maybeHideApp(id);
     }
-    // Check if window should be hidden rather than closed
-    // Either keepLive or modal parameter can trigger hiding behavior
-    else if (params.keepLive === true || params.modal === true) {
+    // Check if window should be hidden rather than closed.
+    // Only keepLive windows are preserved in the background — modal windows
+    // without keepLive (peeks, quick-views) should be closed so they can be
+    // cleanly recreated on next invocation.
+    else if (params.keepLive === true) {
       win.hide();
       // Hide app to return focus to previous app (only if no other visible windows)
       maybeHideApp(id);

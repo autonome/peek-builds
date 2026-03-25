@@ -1677,9 +1677,14 @@ export function findWindowByKey(source: string, key: string): { id: number; wind
   for (const [id, win] of windowRegistry) {
     if (win.source === source && win.params && win.params.key === key) {
       const browserWindow = BrowserWindow.fromId(id);
-      if (browserWindow) {
+      if (browserWindow && !browserWindow.isDestroyed()) {
         return { id, window: browserWindow, data: win };
       }
+      // Clean up stale registry entry for destroyed/missing window.
+      // This happens when Cmd+W or OS close destroys a window but the
+      // registry entry wasn't removed (e.g., panel windows on macOS).
+      DEBUG && console.log('findWindowByKey: cleaning up stale entry for key:', key, 'windowId:', id);
+      windowRegistry.delete(id);
     }
   }
   return null;
