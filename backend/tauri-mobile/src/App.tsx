@@ -982,6 +982,47 @@ function App() {
   // Keyboard height for iOS keyboard avoidance
   const keyboardHeight = useKeyboardHeight();
 
+  // Edge swipe gesture: swipe from left edge to navigate back to the list view
+  const edgeSwipeBackRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const EDGE_ZONE = 20;      // px from left edge to start swipe
+    const MIN_SWIPE_DIST = 80; // px horizontal distance required
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let isEdgeSwipe = false;
+
+    const onTouchStart = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (touch.clientX <= EDGE_ZONE) {
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        isEdgeSwipe = true;
+      } else {
+        isEdgeSwipe = false;
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!isEdgeSwipe) return;
+      isEdgeSwipe = false;
+      const touch = e.changedTouches[0];
+      const dx = touch.clientX - touchStartX;
+      const dy = Math.abs(touch.clientY - touchStartY);
+      // Must be a predominantly horizontal swipe
+      if (dx >= MIN_SWIPE_DIST && dx > dy) {
+        edgeSwipeBackRef.current?.();
+      }
+    };
+
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchend', onTouchEnd);
+    };
+  }, []);
+
   // Periodic auto-sync
   const autoSyncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const DEFAULT_SYNC_INTERVAL_MINUTES = 30;
@@ -3401,6 +3442,35 @@ ${content.html}
     loadSavedUrls();
     loadAllTags();
   };
+
+  // Keep edge-swipe back handler in sync with current view state.
+  // Priority: dismiss the topmost overlay first, then full-screen views.
+  useEffect(() => {
+    if (fullscreenImageData) {
+      edgeSwipeBackRef.current = () => setFullscreenImageData(null);
+    } else if (expandedWebview) {
+      edgeSwipeBackRef.current = () => closeWebview();
+    } else if (editingUrlId) {
+      edgeSwipeBackRef.current = () => requestCancelEditing();
+    } else if (editingTextId) {
+      edgeSwipeBackRef.current = () => requestCancelEditingText();
+    } else if (editingTagsetId) {
+      edgeSwipeBackRef.current = () => requestCancelEditingTagset();
+    } else if (editingImageId) {
+      edgeSwipeBackRef.current = () => requestCancelEditingImage();
+    } else if (addInputExpanded) {
+      edgeSwipeBackRef.current = () => setAddInputExpanded(false);
+    } else if (textReaderMode) {
+      edgeSwipeBackRef.current = () => setTextReaderMode(null);
+    } else if (capturedImage) {
+      edgeSwipeBackRef.current = () => cancelCapturedImage();
+    } else if (showSettings) {
+      edgeSwipeBackRef.current = () => closeSettings();
+    } else {
+      // On the main list view — no back action
+      edgeSwipeBackRef.current = null;
+    }
+  });
 
   if (showSettings) {
     return (
