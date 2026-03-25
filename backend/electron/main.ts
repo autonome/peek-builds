@@ -214,6 +214,22 @@ export async function initialize(): Promise<void> {
     (app as any).on('did-resign-active', () => {
       getIzuiCoordinator().setAppFocused(false);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
+
+      // Close overlay window (e.g. windows switcher) when app loses OS focus.
+      // The overlay is a transient full-screen picker that should dismiss when the user
+      // Cmd+Tabs away. Closing it triggers the existing 'closed' handler which restores
+      // hidden windows and cleans up IZUI state.
+      for (const [id, data] of windowRegistry) {
+        if (data.params.role === 'overlay') {
+          const overlayWin = BrowserWindow.fromId(id);
+          if (overlayWin && !overlayWin.isDestroyed()) {
+            DEBUG && console.log('[izui] App lost focus while overlay open, closing overlay window:', id);
+            overlayWin.close();
+          }
+          break;
+        }
+      }
+
       // Hide non-focusable alwaysOnTop overlay windows (e.g. HUD) when app loses focus.
       // Skip focusable alwaysOnTop windows (e.g. cmd panel) — they have their own
       // blur handler for hide/show and would blink (show-hide-show) if hidden here.
