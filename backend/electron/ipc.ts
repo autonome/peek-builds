@@ -2774,6 +2774,15 @@ export function registerWindowHandlers(): void {
             } else if (input.key === 'r') {
               publish('peek://system/', PubSubScopes.GLOBAL, 'page:reload', { windowId: win.id });
               event.preventDefault();
+            } else if (input.key === 'f') {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find', { windowId: win.id });
+              event.preventDefault();
+            } else if (input.key === 'g' && input.shift) {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-prev', { windowId: win.id });
+              event.preventDefault();
+            } else if (input.key === 'g') {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-next', { windowId: win.id });
+              event.preventDefault();
             } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
               publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-back', { windowId: win.id });
               event.preventDefault();
@@ -2868,6 +2877,15 @@ export function registerWindowHandlers(): void {
             event.preventDefault();
           } else if (input.key === 'r') {
             publish('peek://system/', PubSubScopes.GLOBAL, 'page:reload', { windowId: win.id });
+            event.preventDefault();
+          } else if (input.key === 'f') {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find', { windowId: win.id });
+            event.preventDefault();
+          } else if (input.key === 'g' && input.shift) {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-prev', { windowId: win.id });
+            event.preventDefault();
+          } else if (input.key === 'g') {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-next', { windowId: win.id });
             event.preventDefault();
           } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
             publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-back', { windowId: win.id });

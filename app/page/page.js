@@ -167,6 +167,13 @@ if (notesPanelAnchor) {
   notesPanelAnchor.replaceWith(notesPanel);
 }
 
+const findBar = document.getElementById('find-bar');
+const findInput = document.getElementById('find-input');
+const findCount = document.getElementById('find-count');
+const findPrevBtn = document.getElementById('find-prev');
+const findNextBtn = document.getElementById('find-next');
+const findCloseBtn = document.getElementById('find-close');
+
 console.log('[page] DOM elements initialized');
 
 // Disable component-level keyboard shortcuts — page.js handles them via pubsub
@@ -1518,6 +1525,13 @@ document.addEventListener('keydown', (e) => {
   if (action) {
     e.preventDefault();
     api.publish('pagestream:nav', { action }, api.scopes.GLOBAL);
+    return;
+  }
+
+  // '/' opens find bar (vim-style search, only when not in an input)
+  if (e.key === '/' && !findBarVisible) {
+    e.preventDefault();
+    showFindBar();
   }
 });
 
@@ -1527,9 +1541,128 @@ document.addEventListener('keydown', (e) => {
 navbar.addEventListener('navigate', () => { hide(); });
 navbar.addEventListener('dismiss', () => { hide(); });
 
+// --- Find-in-page ---
+
+let findBarVisible = false;
+let currentFindText = '';
+
+function showFindBar() {
+  findBar.style.display = '';
+  findInput.focus();
+  findInput.select();
+  findBarVisible = true;
+}
+
+function hideFindBar() {
+  findBar.style.display = 'none';
+  findBarVisible = false;
+  currentFindText = '';
+  findCount.textContent = '';
+  findInput.value = '';
+  try {
+    webview.stopFindInPage('clearSelection');
+  } catch (e) {
+    // webview may not be ready
+  }
+}
+
+function findInPage(text, options = {}) {
+  if (!text) {
+    try {
+      webview.stopFindInPage('clearSelection');
+    } catch (e) { /* ignore */ }
+    findCount.textContent = '';
+    currentFindText = '';
+    return;
+  }
+  currentFindText = text;
+  try {
+    webview.findInPage(text, options);
+  } catch (e) {
+    DEBUG && console.log('[page] findInPage error:', e);
+  }
+}
+
+function findNext() {
+  if (currentFindText) {
+    webview.findInPage(currentFindText, { forward: true, findNext: true });
+  }
+}
+
+function findPrev() {
+  if (currentFindText) {
+    webview.findInPage(currentFindText, { forward: false, findNext: true });
+  }
+}
+
+// Update match count display
+webview.addEventListener('found-in-page', (e) => {
+  if (e.result && findBarVisible) {
+    const { activeMatchOrdinal, matches } = e.result;
+    if (matches > 0) {
+      findCount.textContent = `${activeMatchOrdinal} of ${matches}`;
+    } else {
+      findCount.textContent = 'No matches';
+    }
+  }
+});
+
+// Find bar input events
+findInput.addEventListener('input', () => {
+  findInPage(findInput.value);
+});
+
+findInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.shiftKey) {
+    e.preventDefault();
+    findPrev();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    findNext();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    hideFindBar();
+  }
+});
+
+// Find bar button events
+findNextBtn.addEventListener('click', () => findNext());
+findPrevBtn.addEventListener('click', () => findPrev());
+findCloseBtn.addEventListener('click', () => hideFindBar());
+
+// Pubsub triggers from keyboard shortcuts (Cmd+F, Cmd+G, Cmd+Shift+G)
+api.subscribe('page:find', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
+  showFindBar();
+}, api.scopes.GLOBAL);
+
+api.subscribe('page:find-next', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
+  if (findBarVisible) {
+    findNext();
+  } else {
+    showFindBar();
+  }
+}, api.scopes.GLOBAL);
+
+api.subscribe('page:find-prev', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
+  if (findBarVisible) {
+    findPrev();
+  } else {
+    showFindBar();
+  }
+}, api.scopes.GLOBAL);
+
 // --- Escape handling ---
 
 api.escape.onEscape(() => {
+  // If find bar is visible, close it first
+  if (findBarVisible) {
+    DEBUG && console.log('[page] ESC: closing find bar');
+    hideFindBar();
+    return { handled: true };
+  }
   // If a notes textarea is focused, blur it (saves and closes)
   if (pageNotesPane.hasActiveTextarea()) {
     DEBUG && console.log('[page] ESC: blurring notes textarea');
