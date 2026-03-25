@@ -3395,17 +3395,26 @@ body.dark .auto-sync-toggle {
   color: #ccc;
 }
 
+.auto-sync-toggle.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .auto-sync-toggle input[type="checkbox"] {
   width: 20px;
   height: 20px;
   cursor: pointer;
 }
 
+.auto-sync-toggle input[type="checkbox"]:disabled {
+  cursor: default;
+}
+
 /* Sync interval setting */
 .sync-interval-setting {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
   padding: 0.5rem 0;
   margin: 0.25rem 0 0.5rem;
@@ -3417,20 +3426,31 @@ body.dark .sync-interval-setting {
   color: #ccc;
 }
 
-.sync-interval-setting select {
+.sync-interval-setting input[type="number"] {
   padding: 0.4rem 0.6rem;
   border-radius: 8px;
   border: 1px solid #ccc;
   background: #fff;
   color: #333;
   font-size: 0.85rem;
-  min-width: 120px;
+  width: 70px;
 }
 
-body.dark .sync-interval-setting select {
+.sync-interval-setting input[type="number"]:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+body.dark .sync-interval-setting input[type="number"] {
   background: #2a2a2a;
   color: #ccc;
   border-color: #555;
+}
+
+.sync-interval-hint {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  opacity: 0.6;
 }
 
 /* Editor drag handle for swipe-to-close */

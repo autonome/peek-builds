@@ -1278,7 +1278,7 @@ function App() {
   const loadSyncInterval = async () => {
     try {
       const minutes = await invoke<number>("get_sync_interval");
-      if (minutes > 0) setSyncIntervalMinutes(minutes);
+      if (minutes >= 0) setSyncIntervalMinutes(minutes);
     } catch (error) {
       console.error("Failed to load sync interval:", error);
     }
@@ -1470,8 +1470,6 @@ function App() {
       const msg = `Synced: ${result.pulled} pulled, ${result.pushed} pushed${result.conflicts > 0 ? `, ${result.conflicts} conflicts` : ''}`;
       showToast(msg);
       setSyncMessage(msg);
-      await loadLastSync();
-      await loadSyncStatus();
       // Reload data to show new items from server
       loadSavedUrls();
       loadSavedTexts();
@@ -1487,6 +1485,8 @@ function App() {
       setTimeout(() => setSyncMessage(null), 5000);
     } finally {
       setIsSyncing(false);
+      // Always refresh sync status (pending count, last sync time) after sync attempt
+      await loadSyncStatus();
     }
   };
 
@@ -2205,8 +2205,9 @@ function App() {
   };
 
   // Periodic auto-sync: runs at configured interval, pauses when backgrounded, syncs on foreground return
+  // When syncIntervalMinutes is 0, periodic sync is disabled entirely.
   useEffect(() => {
-    if (!webhookUrl) return;
+    if (!webhookUrl || syncIntervalMinutes === 0) return;
 
     const startInterval = () => {
       if (autoSyncIntervalRef.current) clearInterval(autoSyncIntervalRef.current);
@@ -2236,7 +2237,7 @@ function App() {
       if (autoSyncIntervalRef.current) clearInterval(autoSyncIntervalRef.current);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [webhookUrl, isSyncing, syncIntervalMs]);
+  }, [webhookUrl, isSyncing, syncIntervalMs, syncIntervalMinutes]);
 
   // Reset to show all types, clear search/filters, and scroll to top
   const showAll = () => {
@@ -3612,28 +3613,27 @@ ${content.html}
               Save Settings
             </button>
 
-            <label className="auto-sync-toggle">
+            <label className={`auto-sync-toggle${!webhookUrl ? ' disabled' : ''}`}>
               <input
                 type="checkbox"
                 checked={autoSyncEnabled}
                 onChange={(e) => toggleAutoSync(e.target.checked)}
+                disabled={!webhookUrl}
               />
               <span>Auto-sync when items are added or modified</span>
             </label>
 
             <div className="sync-interval-setting">
-              <label htmlFor="sync-interval-select">Periodic sync interval</label>
-              <select
-                id="sync-interval-select"
+              <label htmlFor="sync-interval-input">Sync interval (minutes)</label>
+              <input
+                id="sync-interval-input"
+                type="number"
+                min={0}
                 value={syncIntervalMinutes}
-                onChange={(e) => saveSyncInterval(Number(e.target.value))}
-              >
-                <option value={5}>5 minutes</option>
-                <option value={15}>15 minutes</option>
-                <option value={30}>30 minutes</option>
-                <option value={60}>1 hour</option>
-                <option value={120}>2 hours</option>
-              </select>
+                onChange={(e) => saveSyncInterval(Math.max(0, Number(e.target.value) || 0))}
+                disabled={!webhookUrl}
+              />
+              <span className="sync-interval-hint">0 = never auto-sync periodically</span>
             </div>
 
             {lastSync && (
