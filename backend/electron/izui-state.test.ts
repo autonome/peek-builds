@@ -818,12 +818,19 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(escUnhandledPolicy('overlay', 'workspace'), 'nothing');
     });
 
-    it('should NOT open switcher for content in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'content'), 'nothing');
+    it('should open switcher for content in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'content'), 'open-switcher',
+        'content windows in active sessions should open switcher when ESC is unhandled');
     });
 
-    it('should NOT open switcher for child-content in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'child-content'), 'nothing');
+    it('should open switcher for child-content in active session', () => {
+      assert.strictEqual(escUnhandledPolicy('active', 'child-content'), 'open-switcher',
+        'child-content windows in active sessions should open switcher when ESC is unhandled');
+    });
+
+    it('should NOT open switcher for content in transient session', () => {
+      assert.strictEqual(escUnhandledPolicy('transient', 'content'), 'nothing',
+        'transient sessions should not trigger switcher — user expects ESC to return to previous app');
     });
 
     it('should NOT open switcher for overlay role in active session', () => {
@@ -840,6 +847,145 @@ describe('IZUI State Coordinator Tests', () => {
 
     it('should NOT open switcher for quick-view in active session', () => {
       assert.strictEqual(escUnhandledPolicy('active', 'quick-view'), 'nothing');
+    });
+  });
+
+  describe('Pre-overlay focus tracking', () => {
+    it('should preserve pre-overlay focus and restore on ESC (no explicit selection)', () => {
+      // Open windows A (id=1) and B (id=2), focus B
+      const winA = createMockWindow(1);
+      const winB = createMockWindow(2);
+      mockWindows.push(winA, winB);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.pushWindow(2);
+      coordinator.setFocusedWindow(2); // B is focused
+
+      // Enter overlay — should save pre-overlay focus
+      coordinator.enterOverlay(100, [1, 2]);
+      const session = coordinator.getSession()!;
+      assert.strictEqual(session.preOverlayFocusTarget, 2,
+        'preOverlayFocusTarget should be saved when entering overlay');
+    });
+
+    it('should clear preOverlayFocusTarget after exitOverlay', () => {
+      const winA = createMockWindow(1);
+      const winB = createMockWindow(2);
+      mockWindows.push(winA, winB);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.pushWindow(2);
+      coordinator.setFocusedWindow(2);
+
+      coordinator.enterOverlay(100, [1, 2]);
+      coordinator.exitOverlay();
+
+      const session = coordinator.getSession()!;
+      assert.strictEqual(session.preOverlayFocusTarget, null,
+        'preOverlayFocusTarget should be cleared after exiting overlay');
+    });
+
+    it('should save null preOverlayFocusTarget when no window is focused', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      // No setFocusedWindow call
+
+      coordinator.enterOverlay(100, [1]);
+      const session = coordinator.getSession()!;
+      assert.strictEqual(session.preOverlayFocusTarget, null,
+        'preOverlayFocusTarget should be null when no window was focused');
+    });
+
+    it('should expose preOverlayFocusTarget via getPreOverlayFocusTarget()', () => {
+      const winB = createMockWindow(2);
+      mockWindows.push(winB);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(2);
+      coordinator.setFocusedWindow(2);
+
+      // Before overlay: should be null
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
+
+      coordinator.enterOverlay(100, [2]);
+
+      // During overlay: should be 2
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 2);
+
+      coordinator.exitOverlay();
+
+      // After overlay exit: should be null
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
+    });
+  });
+
+  describe('Full ESC flow integration', () => {
+    it('content window: ESC unhandled by page -> escPolicy nothing -> escUnhandledPolicy open-switcher', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      // Active session with content window
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+
+      const sessionState = coordinator.getState();
+      const role = 'content';
+
+      // Step 1: escPolicy for content in active session returns 'nothing'
+      const action = escPolicy(sessionState, role);
+      assert.strictEqual(action, 'nothing', 'escPolicy should return nothing for content in active session');
+
+      // Step 2: escUnhandledPolicy for content in active session returns 'open-switcher'
+      const unhandledAction = escUnhandledPolicy(sessionState, role);
+      assert.strictEqual(unhandledAction, 'open-switcher',
+        'escUnhandledPolicy should return open-switcher for content in active session');
+    });
+
+    it('workspace window: same flow leads to open-switcher', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+
+      const action = escPolicy(coordinator.getState(), 'workspace');
+      assert.strictEqual(action, 'nothing');
+
+      const unhandledAction = escUnhandledPolicy(coordinator.getState(), 'workspace');
+      assert.strictEqual(unhandledAction, 'open-switcher');
+    });
+
+    it('overlay ESC without selection uses preOverlayFocusTarget', () => {
+      const winA = createMockWindow(1);
+      const winB = createMockWindow(2);
+      winA._visible = false;
+      winB._visible = false;
+      mockWindows.push(winA, winB);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.pushWindow(2);
+      coordinator.setFocusedWindow(2); // B was focused
+
+      // Enter overlay, windows hidden
+      coordinator.enterOverlay(100, [1, 2]);
+
+      // Verify preOverlayFocusTarget is set
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 2);
+
+      // Exit overlay (ESC without selection)
+      coordinator.exitOverlay();
+
+      // Windows restored
+      assert.ok(winA._visible, 'Window A should be restored');
+      assert.ok(winB._visible, 'Window B should be restored');
+
+      // preOverlayFocusTarget was 2 (B) — caller (main.ts) uses this to focus B
+      // After exitOverlay, preOverlayFocusTarget is cleared
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
     });
   });
 });

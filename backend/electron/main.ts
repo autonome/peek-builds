@@ -292,12 +292,15 @@ export async function initialize(): Promise<void> {
                 hiddenWin.show();
               }
             }
-            // Focus the specific window the user selected (if set by the overlay)
+            // Focus the specific window the user selected (if set by the overlay),
+            // or fall back to the window that was focused before the overlay opened.
             const focusTargetId = windowData.params.overlayFocusTarget as number | undefined;
-            if (focusTargetId) {
-              const targetWin = BrowserWindow.fromId(focusTargetId);
+            const preOverlayTarget = getIzuiCoordinator().getPreOverlayFocusTarget();
+            const restoreFocusId = focusTargetId || preOverlayTarget;
+            if (restoreFocusId) {
+              const targetWin = BrowserWindow.fromId(restoreFocusId);
               if (targetWin && !targetWin.isDestroyed()) {
-                DEBUG && console.log('[izui] Overlay focus target:', focusTargetId);
+                DEBUG && console.log('[izui] Overlay focus target:', restoreFocusId, focusTargetId ? '(explicit selection)' : '(pre-overlay fallback)');
                 targetWin.focus();
               }
             }

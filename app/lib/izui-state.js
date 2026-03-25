@@ -153,6 +153,7 @@ class IzuiStateCoordinator {
       overlayWindowId: null,
       hiddenWindowIds: [],
       focusedWindowId: null,
+      preOverlayFocusTarget: null,
     };
 
     this._state = entryMode;
@@ -217,7 +218,8 @@ class IzuiStateCoordinator {
     this._state = 'overlay';
     this._session.overlayWindowId = windowId;
     this._session.hiddenWindowIds = hiddenIds;
-    DEBUG && console.log('[izui] Entered overlay mode, windowId:', windowId, 'hidden:', hiddenIds.length);
+    this._session.preOverlayFocusTarget = this._session.focusedWindowId;
+    DEBUG && console.log('[izui] Entered overlay mode, windowId:', windowId, 'hidden:', hiddenIds.length, 'preOverlayFocus:', this._session.preOverlayFocusTarget);
   }
 
   /**
@@ -244,6 +246,7 @@ class IzuiStateCoordinator {
     this._state = this._session.entryMode;
     this._session.overlayWindowId = null;
     this._session.hiddenWindowIds = [];
+    this._session.preOverlayFocusTarget = null;
   }
 
   /**
@@ -360,6 +363,15 @@ class IzuiStateCoordinator {
   getFocusedWindowId() {
     return this._session?.focusedWindowId ?? null;
   }
+
+  /**
+   * Get the pre-overlay focus target (the window that was focused before overlay opened).
+   * Used by the overlay close handler to restore focus when no explicit selection was made.
+   * @returns {number|null}
+   */
+  getPreOverlayFocusTarget() {
+    return this._session?.preOverlayFocusTarget ?? null;
+  }
 }
 
 // ============================================================================
@@ -402,10 +414,16 @@ function escPolicy(sessionState, role) {
  * @returns {'open-switcher'|'nothing'}
  */
 function escUnhandledPolicy(sessionState, role) {
-  // Only workspace windows in active or idle sessions open the switcher.
   // Transient sessions should NOT trigger switcher — user expects ESC to
   // return to previous app, not open more UI.
-  if (role === 'workspace' && (sessionState === 'active' || sessionState === 'idle')) return 'open-switcher';
+  // Overlay sessions handle their own ESC (close-and-restore).
+  if (sessionState === 'transient' || sessionState === 'overlay') return 'nothing';
+  // In active or idle sessions, workspace, content, and child-content windows
+  // open the switcher when ESC has nowhere left to navigate.
+  // Note: content/child-content only reach here when the renderer's onEscape
+  // returned { handled: false } AND escPolicy returned 'nothing', so page-level
+  // ESC handling (spaces navigation, panel closing, etc.) takes priority.
+  if (['workspace', 'content', 'child-content'].includes(role)) return 'open-switcher';
   return 'nothing';
 }
 

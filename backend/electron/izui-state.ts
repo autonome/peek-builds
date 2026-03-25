@@ -61,6 +61,7 @@ export interface IzuiSession {
   overlayWindowId: number | null;
   hiddenWindowIds: number[];
   focusedWindowId: number | null;
+  preOverlayFocusTarget: number | null;
 }
 
 /**
@@ -148,6 +149,7 @@ class IzuiStateCoordinator {
       overlayWindowId: null,
       hiddenWindowIds: [],
       focusedWindowId: null,
+      preOverlayFocusTarget: null,
     };
 
     this.state = entryMode;
@@ -223,7 +225,8 @@ class IzuiStateCoordinator {
     this.state = 'overlay';
     this.session.overlayWindowId = windowId;
     this.session.hiddenWindowIds = hiddenIds;
-    DEBUG && console.log('[izui] Entered overlay mode, windowId:', windowId, 'hidden:', hiddenIds.length);
+    this.session.preOverlayFocusTarget = this.session.focusedWindowId;
+    DEBUG && console.log('[izui] Entered overlay mode, windowId:', windowId, 'hidden:', hiddenIds.length, 'preOverlayFocus:', this.session.preOverlayFocusTarget);
   }
 
   /**
@@ -250,6 +253,7 @@ class IzuiStateCoordinator {
     this.state = this.session.entryMode;
     this.session.overlayWindowId = null;
     this.session.hiddenWindowIds = [];
+    this.session.preOverlayFocusTarget = null;
   }
 
   /**
@@ -367,6 +371,14 @@ class IzuiStateCoordinator {
    */
   getFocusedWindowId(): number | null {
     return this.session?.focusedWindowId ?? null;
+  }
+
+  /**
+   * Get the pre-overlay focus target (the window that was focused before overlay opened).
+   * Used by the overlay close handler to restore focus when no explicit selection was made.
+   */
+  getPreOverlayFocusTarget(): number | null {
+    return this.session?.preOverlayFocusTarget ?? null;
   }
 }
 
