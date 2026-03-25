@@ -988,4 +988,227 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
     });
   });
+
+  describe('IZUI Coordinator as single source of truth for focus/overlay', () => {
+    it('1. Focus tracking updates coordinator: setFocusedWindow(5) → getFocusedWindowId() returns 5', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+
+      coordinator.setFocusedWindow(5);
+
+      assert.strictEqual(coordinator.getFocusedWindowId(), 5);
+    });
+
+    it('2. Overlay tracks pre-overlay focus: setFocusedWindow(5) → enterOverlay → getPreOverlayFocusTarget() returns 5', () => {
+      const winA = createMockWindow(5);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.setFocusedWindow(5);
+
+      coordinator.enterOverlay(100, [5]);
+
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
+    });
+
+    it('3. ESC on switcher restores correct window: after overlay with preOverlayFocusTarget=5, exitOverlay → focus should go to 5', () => {
+      const winA = createMockWindow(5);
+      winA._visible = false;
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.setFocusedWindow(5);
+
+      coordinator.enterOverlay(100, [5]);
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
+
+      // Read the target BEFORE exitOverlay (the caller in main.ts does this)
+      const restoreTarget = coordinator.getSession()!.overlayFocusTarget || coordinator.getPreOverlayFocusTarget();
+
+      coordinator.exitOverlay();
+
+      // The target was 5, and exitOverlay restored the hidden window
+      assert.strictEqual(restoreTarget, 5);
+      assert.ok(winA._visible, 'Window 5 should be restored/shown');
+      // State returns to active
+      assert.strictEqual(coordinator.getState(), 'active');
+    });
+
+    it('4. User selection overrides pre-overlay: setOverlayFocusTarget(3) → restoration uses 3 not preOverlayFocusTarget', () => {
+      const winA = createMockWindow(5);
+      const winB = createMockWindow(3);
+      winA._visible = false;
+      winB._visible = false;
+      mockWindows.push(winA, winB);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.pushWindow(3);
+      coordinator.setFocusedWindow(5);
+
+      coordinator.enterOverlay(100, [5, 3]);
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
+
+      // User explicitly selects window 3 in the switcher
+      coordinator.setOverlayFocusTarget(3);
+      assert.strictEqual(coordinator.getSession()!.overlayFocusTarget, 3);
+
+      // Caller reads overlayFocusTarget first, falls back to preOverlayFocusTarget
+      const restoreTarget = coordinator.getSession()!.overlayFocusTarget || coordinator.getPreOverlayFocusTarget();
+      assert.strictEqual(restoreTarget, 3, 'Should use explicit selection (3), not pre-overlay (5)');
+    });
+
+    it('5. ESC works after switcher closes: after exitOverlay, state is active, focusedWindowId updated', () => {
+      const winA = createMockWindow(5);
+      winA._visible = false;
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.pushWindow(100);
+      coordinator.setFocusedWindow(5);
+
+      coordinator.enterOverlay(100, [5]);
+      coordinator.exitOverlay();
+
+      assert.strictEqual(coordinator.getState(), 'active');
+      assert.strictEqual(coordinator.isOverlay(), false);
+      // Caller can then set focus to restored window
+      coordinator.setFocusedWindow(5);
+      assert.strictEqual(coordinator.getFocusedWindowId(), 5);
+    });
+
+    it('6. Overlay does not corrupt focus tracking: overlay window ID never set as focusedWindowId', () => {
+      const winA = createMockWindow(5);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.setFocusedWindow(5);
+
+      // Enter overlay with window 100
+      coordinator.enterOverlay(100, [5]);
+
+      // The overlay window should NOT be set as the focused window
+      // (In runtime, the focus handler checks role !== 'overlay' before calling setFocusedWindow)
+      // Verify that focusedWindowId is still 5, not 100
+      assert.strictEqual(coordinator.getFocusedWindowId(), 5);
+      // And preOverlayFocusTarget captured correctly
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
+    });
+
+    it('7. Session not prematurely ended: popWindow for overlay does not end session when content windows exist', () => {
+      const winA = createMockWindow(5);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);   // content window
+      coordinator.pushWindow(100); // overlay window
+
+      // Overlay closes — popWindow should not end session since window 5 still exists
+      coordinator.popWindow(100);
+
+      assert.ok(coordinator.getSession(), 'Session should still exist');
+      assert.deepStrictEqual(coordinator.getSession()!.windowStack, [5]);
+    });
+
+    it('8. Transient overlay does not restore: transient + overlay close = no window restore', () => {
+      const winA = createMockWindow(5);
+      winA._visible = false;
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('transient');
+      coordinator.pushWindow(5);
+      coordinator.setFocusedWindow(5);
+      coordinator.enterOverlay(100, [5]);
+
+      // In transient mode, the caller (main.ts) checks isTransient and does NOT call exitOverlay
+      // to restore windows. Verify that session is still transient at entry.
+      assert.strictEqual(coordinator.isTransient(), true);
+      assert.strictEqual(coordinator.getState(), 'overlay');
+
+      // The transient check means: DO NOT restore hidden windows.
+      // The caller skips exitOverlay and instead just pops the overlay window.
+      // Simulate that: don't call exitOverlay, just pop
+      coordinator.popWindow(100);
+
+      // Window 5 should NOT have been shown (no exitOverlay called)
+      assert.strictEqual(winA._visible, false, 'Transient overlay should not restore hidden windows');
+    });
+
+    it('9. overlayFocusTarget cleared on exit: after exitOverlay, overlayFocusTarget is null', () => {
+      const winA = createMockWindow(5);
+      winA._visible = false;
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.pushWindow(100);
+      coordinator.setFocusedWindow(5);
+
+      coordinator.enterOverlay(100, [5]);
+      coordinator.setOverlayFocusTarget(3);
+      assert.strictEqual(coordinator.getSession()!.overlayFocusTarget, 3);
+
+      coordinator.exitOverlay();
+
+      assert.strictEqual(coordinator.getSession()!.overlayFocusTarget, null,
+        'overlayFocusTarget should be cleared after exitOverlay');
+    });
+
+    it('10. Multiple ESC cycles work: enter overlay → exit → enter overlay → exit → state consistent', () => {
+      const winA = createMockWindow(5);
+      const winB = createMockWindow(6);
+      mockWindows.push(winA, winB);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.pushWindow(6);
+      coordinator.pushWindow(100); // overlay window stays in stack across cycles
+      coordinator.setFocusedWindow(5);
+
+      // Cycle 1: enter overlay → exit
+      coordinator.enterOverlay(100, [5, 6]);
+      assert.strictEqual(coordinator.getState(), 'overlay');
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
+
+      winA._visible = false;
+      winB._visible = false;
+      coordinator.exitOverlay();
+      assert.strictEqual(coordinator.getState(), 'active');
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
+      assert.ok(winA._visible);
+      assert.ok(winB._visible);
+
+      // Cycle 2: enter overlay again → exit
+      coordinator.setFocusedWindow(6); // Now 6 is focused
+      coordinator.enterOverlay(100, [5, 6]);
+      assert.strictEqual(coordinator.getState(), 'overlay');
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 6);
+
+      winA._visible = false;
+      winB._visible = false;
+      coordinator.exitOverlay();
+      assert.strictEqual(coordinator.getState(), 'active');
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
+      assert.ok(winA._visible);
+      assert.ok(winB._visible);
+
+      // Session still intact
+      assert.ok(coordinator.getSession());
+      assert.deepStrictEqual(coordinator.getSession()!.windowStack, [5, 6, 100]);
+    });
+  });
 });

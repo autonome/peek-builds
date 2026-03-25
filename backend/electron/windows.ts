@@ -438,8 +438,6 @@ export function closeOrHideWindow(id: number): void {
       DEBUG && console.log(`CLOSING settings window ${id}`);
       closeChildWindows(params.address as string);
       win.close();
-      // Hide app to return focus to previous app (only if no other visible windows)
-      maybeHideApp(id);
     }
     // Check if window should be hidden rather than closed.
     // Only keepLive windows are preserved in the background — modal windows
@@ -447,14 +445,18 @@ export function closeOrHideWindow(id: number): void {
     // cleanly recreated on next invocation.
     else if (params.keepLive === true) {
       win.hide();
-      // Hide app to return focus to previous app (only if no other visible windows)
-      maybeHideApp(id);
     } else {
       // close any open windows this window opened
       closeChildWindows(params.address as string);
       DEBUG && console.log(`CLOSING window ${id} (${params.address})`);
       win.close();
-      // Hide app to return focus to previous app (only if no other visible windows)
+    }
+
+    // Hide app to return focus to previous app (only if no other visible windows).
+    // Skip for overlay windows — they manage their own restoration flow via the
+    // IZUI coordinator and should not trigger app hiding.
+    const isOverlay = params.role === 'overlay';
+    if (!isOverlay) {
       maybeHideApp(id);
     }
 

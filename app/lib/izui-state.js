@@ -74,6 +74,7 @@ class IzuiStateCoordinator {
    * @property {number|null} overlayWindowId
    * @property {number[]} hiddenWindowIds
    * @property {number|null} focusedWindowId
+   * @property {number|null} overlayFocusTarget
    */
 
   /**
@@ -154,6 +155,7 @@ class IzuiStateCoordinator {
       hiddenWindowIds: [],
       focusedWindowId: null,
       preOverlayFocusTarget: null,
+      overlayFocusTarget: null,
     };
 
     this._state = entryMode;
@@ -247,6 +249,7 @@ class IzuiStateCoordinator {
     this._session.overlayWindowId = null;
     this._session.hiddenWindowIds = [];
     this._session.preOverlayFocusTarget = null;
+    this._session.overlayFocusTarget = null;
   }
 
   /**
@@ -371,6 +374,18 @@ class IzuiStateCoordinator {
    */
   getPreOverlayFocusTarget() {
     return this._session?.preOverlayFocusTarget ?? null;
+  }
+
+  /**
+   * Set the overlay focus target (explicit user selection in the switcher).
+   * Takes priority over preOverlayFocusTarget when restoring focus after overlay close.
+   * @param {number} windowId
+   */
+  setOverlayFocusTarget(windowId) {
+    if (this._session) {
+      this._session.overlayFocusTarget = windowId;
+      DEBUG && console.log('[izui] Set overlay focus target:', windowId);
+    }
   }
 }
 

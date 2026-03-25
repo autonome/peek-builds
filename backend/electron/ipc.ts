@@ -255,6 +255,12 @@ function trackVisibleWindowFocus(win: BrowserWindow): void {
   if (!win.isFocusable()) {
     return;
   }
+  // Exclude overlay windows (e.g., windows switcher) — they should not
+  // be tracked as the last focused visible window
+  const winInfo = getWindowInfo(win.id);
+  if (winInfo?.params?.role === 'overlay') {
+    return;
+  }
   // Track extension windows (peek://{id}/...) and web pages
   lastFocusedVisibleWindowId = win.id;
   DEBUG && console.log('Updated lastFocusedVisibleWindowId:', lastFocusedVisibleWindowId, url);
@@ -3088,6 +3094,11 @@ export function registerWindowHandlers(): void {
         if (!winInfo?.params?.modal) {
           trackVisibleWindowFocus(win);
         }
+        // Update IZUI coordinator focus tracking (skip modal and overlay windows)
+        if (!winInfo?.params?.modal && winInfo?.params?.role !== 'overlay') {
+          const coordinator = getIzuiCoordinator();
+          coordinator.setFocusedWindow(win.id);
+        }
         // Notify HUD and other listeners that a window gained focus
         publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:focused', {
           id: win.id
@@ -3164,6 +3175,9 @@ export function registerWindowHandlers(): void {
         if (winInfo) {
           winInfo.params.overlayHiddenWindows = hiddenWindowIds;
         }
+        // Notify IZUI coordinator of overlay entry
+        const coordinator = getIzuiCoordinator();
+        coordinator.enterOverlay(win.id, hiddenWindowIds);
       }
 
       // Show dock when window opens
@@ -3244,6 +3258,12 @@ export function registerWindowHandlers(): void {
         return { success: false, error: 'Caller window not in window manager' };
       }
       winInfo.params.overlayFocusTarget = msg.targetWindowId;
+      // Also update the coordinator session (single source of truth)
+      const coordinator = getIzuiCoordinator();
+      const session = coordinator.getSession();
+      if (session) {
+        session.overlayFocusTarget = msg.targetWindowId;
+      }
       DEBUG && console.log('window-set-overlay-focus-target:', msg.targetWindowId, 'on overlay:', callerWin.id);
       return { success: true };
     } catch (error) {

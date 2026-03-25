@@ -282,7 +282,6 @@ export async function initialize(): Promise<void> {
         // Clean up IZUI coordinator state
         const coordinator = getIzuiCoordinator();
         coordinator.clearFocusedWindow(windowId);
-        coordinator.popWindow(windowId);
 
         // Focus parent window if this was a child
         if (windowData && windowData.params.parentWindowId) {
@@ -295,33 +294,60 @@ export async function initialize(): Promise<void> {
         }
 
         if (windowData) {
-          // If this was an overlay window, restore the windows that were hidden
-          // BUT: In transient mode, don't restore - just close and return to previous app
-          // Use the window's own transient param (not coordinator - session may be ended by popWindow)
-          const hiddenWindowIds = windowData.params.overlayHiddenWindows as number[] | undefined;
-          const isTransient = windowData.params.transient === true;
-          if (hiddenWindowIds && hiddenWindowIds.length > 0 && !isTransient) {
-            DEBUG && console.log('[izui] Overlay closed (active mode), restoring', hiddenWindowIds.length, 'windows');
-            for (const hiddenId of hiddenWindowIds) {
-              const hiddenWin = BrowserWindow.fromId(hiddenId);
-              if (hiddenWin && !hiddenWin.isDestroyed()) {
-                hiddenWin.show();
+          // Overlay restoration: use coordinator as single source of truth
+          const isOverlayWindow = coordinator.isOverlay() && coordinator.getSession()?.overlayWindowId === windowId;
+          if (isOverlayWindow) {
+            const session = coordinator.getSession()!;
+            const isTransient = coordinator.isTransient();
+
+            if (!isTransient) {
+              // Get focus target BEFORE exitOverlay clears it
+              const focusTargetId = session.overlayFocusTarget || coordinator.getPreOverlayFocusTarget();
+
+              // exitOverlay restores hidden windows and resets overlay state
+              coordinator.exitOverlay();
+
+              // Focus the target window after restoration
+              if (focusTargetId) {
+                const targetWin = BrowserWindow.fromId(focusTargetId);
+                if (targetWin && !targetWin.isDestroyed()) {
+                  DEBUG && console.log('[izui] Overlay focus target:', focusTargetId, session.overlayFocusTarget ? '(explicit selection)' : '(pre-overlay fallback)');
+                  targetWin.focus();
+                }
               }
+            } else {
+              DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring windows');
             }
-            // Focus the specific window the user selected (if set by the overlay),
-            // or fall back to the window that was focused before the overlay opened.
-            const focusTargetId = windowData.params.overlayFocusTarget as number | undefined;
-            const preOverlayTarget = getIzuiCoordinator().getPreOverlayFocusTarget();
-            const restoreFocusId = focusTargetId || preOverlayTarget;
-            if (restoreFocusId) {
-              const targetWin = BrowserWindow.fromId(restoreFocusId);
-              if (targetWin && !targetWin.isDestroyed()) {
-                DEBUG && console.log('[izui] Overlay focus target:', restoreFocusId, focusTargetId ? '(explicit selection)' : '(pre-overlay fallback)');
-                targetWin.focus();
+
+            // Pop AFTER exitOverlay — order matters to avoid premature session end
+            coordinator.popWindow(windowId);
+          } else {
+            // Fallback: ad-hoc overlay restoration for non-coordinator path (backward compat)
+            const hiddenWindowIds = windowData.params.overlayHiddenWindows as number[] | undefined;
+            const isTransient = windowData.params.transient === true;
+            if (hiddenWindowIds && hiddenWindowIds.length > 0 && !isTransient) {
+              DEBUG && console.log('[izui] Overlay closed (fallback path), restoring', hiddenWindowIds.length, 'windows');
+              for (const hiddenId of hiddenWindowIds) {
+                const hiddenWin = BrowserWindow.fromId(hiddenId);
+                if (hiddenWin && !hiddenWin.isDestroyed()) {
+                  hiddenWin.show();
+                }
               }
+              const focusTargetId = windowData.params.overlayFocusTarget as number | undefined;
+              const preOverlayTarget = coordinator.getPreOverlayFocusTarget();
+              const restoreFocusId = focusTargetId || preOverlayTarget;
+              if (restoreFocusId) {
+                const targetWin = BrowserWindow.fromId(restoreFocusId);
+                if (targetWin && !targetWin.isDestroyed()) {
+                  targetWin.focus();
+                }
+              }
+            } else if (isTransient && hiddenWindowIds && hiddenWindowIds.length > 0) {
+              DEBUG && console.log('[izui] Overlay closed in transient mode (fallback) - not restoring windows');
             }
-          } else if (isTransient && hiddenWindowIds && hiddenWindowIds.length > 0) {
-            DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring', hiddenWindowIds.length, 'windows');
+
+            // Pop window for non-overlay path
+            coordinator.popWindow(windowId);
           }
 
           publish(windowData.source, scopes.GLOBAL, 'window:closed', {
