@@ -13,6 +13,53 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-03-24
+
+Desktop - Page Host
+- [x] Error hardening: webview crash handler with reload overlay, show/hide opacity safety, myWindowId retry, global unhandledrejection handler
+- [x] Fix stuck loading on redirect URLs (bsky.app/redirect) — meta-refresh loop breaker, latestNavigationUrl tracking
+- [x] Fix OAuth callback URLs breaking page host — modal auth window, filter localhost callbacks from session restore
+- [x] Unified popup handler — JS-opened links from modals/overlays now open in proper page host with navbar/widgets
+
+Desktop - Cmd Panel
+- [x] Fix Tab completion entering param mode too early on partial command match
+- [x] Fix kagi search tab completion — stale command cache validation, robust query extraction fallbacks
+- [x] Fix search engine param forwarding from manifest through lazy command registration
+- [x] Cmd+N opens new page host window with about:blank, inherits active space mode, navbar focused
+
+Desktop - Lex (AT Protocol)
+- [x] Bluesky post composer: rich text facet detection (mentions/links/hashtags with byte offsets), 300-grapheme counter, image embed upload (up to 4), live preview
+- [x] Phase 4 advanced types: union type sub-forms, external ref resolution, blob drag-and-drop upload, collapsible nested objects, client-side field validation with inline errors
+
+Desktop - Undo Close Window
+- [x] Fix reopen — skip URL dedup for reopen requests, prevent double-push on quit
+- [x] Persistent across restarts — stack saved to DB, all open windows pushed on quit for crash recovery
+- [x] Works for all window types — peek:// windows (groups, spaces, tags) saved and reopened with correct role
+
+Desktop - Spaces
+- [x] Spaces feature: machine tags (space: prefix), auto-tagging, screen border, session management
+- [x] extension_settings → feature_settings rename across ~40 files with SQL migration
+- [x] Backend cleanup: strip ~250 lines of space-specific logic from ipc.ts, move to feature layer
+- [x] Groups simplified: tags == groups, remove promote/demote, pure data browser
+
+Desktop - Other
+- [x] Fix maximize race condition with drag/resize handlers
+- [x] Add reactivity to search, lists, and entities views (sync:pull-completed, item:created/deleted)
+- [x] Fix windows switcher always focusing same window — overlay focus target mechanism
+- [x] Persistent undo-close-window stack (50 entries, survives restart)
+- [x] Proton Pass WebAuthn/passkey support via main-world injection
+- [x] Favicon gaps: preload API, Google favicon fallback, entity enrichment persistence
+- [x] Page maximize feature restored (was lost in prior overwrites)
+- [x] Entity filter bar in tags view
+- [x] Shichijuni theme missing font variables
+- [x] 7 Claude Code skills: /ship, /fix, /test, /release, /explore, /review, /ios-build
+
+Desktop - Testing
+- [x] Space mode tests: machine tags, auto-tagging, mode preservation, border visibility
+- [x] Page host tests: loading abort, navigation guards, favicon fallback, maximize layout
+- [x] Closed window tests: stack persistence, space mode capture, all window types
+- [x] Cmd state machine: Tab partial match guard
+
 ## 2026-03-17
 
 Desktop - Groups

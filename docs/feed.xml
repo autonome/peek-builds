@@ -4,9 +4,85 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 17 Mar 2026 21:56:25 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 25 Mar 2026 14:42:00 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-03-24</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-24</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-03-24</guid>
+      <pubDate>Tue, 24 Mar 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Page Host
+- Error hardening: webview crash handler with reload overlay, show/hide opacity safety, myWindowId retry, global unhandledrejection handler
+- Fix stuck loading on redirect URLs (bsky.app/redirect) — meta-refresh loop breaker, latestNavigationUrl tracking
+- Fix OAuth callback URLs breaking page host — modal auth window, filter localhost callbacks from session restore
+- Unified popup handler — JS-opened links from modals/overlays now open in proper page host with navbar/widgets
+
+Desktop - Cmd Panel
+- Fix Tab completion entering param mode too early on partial command match
+- Fix kagi search tab completion — stale command cache validation, robust query extraction fallbacks
+- Fix search engine param forwarding from manifest through lazy command registration
+- Cmd+N opens new page host window with about:blank, inherits active space mode, navbar focused
+
+Desktop - Lex (AT Protocol)
+- Bluesky post composer: rich text facet detection (mentions/links/hashtags with byte offsets), 300-grapheme counter, image embed upload (up to 4), live preview
+- Phase 4 advanced types: union type sub-forms, external ref resolution, blob drag-and-drop upload, collapsible nested objects, client-side field validation with inline errors
+
+Desktop - Undo Close Window
+- Fix reopen — skip URL dedup for reopen requests, prevent double-push on quit
+- Persistent across restarts — stack saved to DB, all open windows pushed on quit for crash recovery
+- Works for all window types — peek:// windows (groups, spaces, tags) saved and reopened with correct role
+
+Desktop - Spaces
+- Spaces feature: machine tags (space: prefix), auto-tagging, screen border, session management
+- extension_settings → feature_settings rename across ~40 files with SQL migration
+- Backend cleanup: strip ~250 lines of space-specific logic from ipc.ts, move to feature layer
+- Groups simplified: tags == groups, remove promote/demote, pure data browser
+
+Desktop - Other
+- Fix maximize race condition with drag/resize handlers
+- Add reactivity to search, lists, and entities views (sync:pull-completed, item:created/deleted)
+- Fix windows switcher always focusing same window — overlay focus target mechanism
+- Persistent undo-close-window stack (50 entries, survives restart)
+- Proton Pass WebAuthn/passkey support via main-world injection
+- Favicon gaps: preload API, Google favicon fallback, entity enrichment persistence
+- Page maximize feature restored (was lost in prior overwrites)
+- Entity filter bar in tags view
+- Shichijuni theme missing font variables
+- 7 Claude Code skills: /ship, /fix, /test, /release, /explore, /review, /ios-build
+
+Desktop - Testing
+- Space mode tests: machine tags, auto-tagging, mode preservation, border visibility
+- Page host tests: loading abort, navigation guards, favicon fallback, maximize layout
+- Closed window tests: stack persistence, space mode capture, all window types
+- Cmd state machine: Tab partial match guard</description>
+    </item>
+    <item>
+      <title>2026-03-17</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-17</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-03-17</guid>
+      <pubDate>Tue, 17 Mar 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Groups
+- Scope group mode to window lineage — prevent group tag leakage to items from external apps, cmd palette, peeks, slides
+- Add group screen border indicator — colored overlay with group name label, tracks focused window&apos;s mode
+- Focus-based border visibility — border shows only when focused window is a group member, not globally
+- Modal window exemption — cmd palette doesn&apos;t hide border during group work
+- Assign vivid colors to groups at creation/promotion — deterministic palette selection for desaturated defaults
+- Add color picker to group detail header — clickable color dot next to rename icon
+- Always show tags section in groups view — remove toggle, display groups and tags as separate sections with divider
+- Increase default window size from 800x600 to 1024x768 across groups, tags, search, wonderwall
+
+Desktop - Page View
+- Fix j/k/g/G keys blocked in tags input and notes panel — pagestream nav handler now checks for focused input elements
+- Fix findWindowByUrl to only match page-host windows — skip peeks, slides, modals for URL dedup
+
+Desktop - Shutdown
+- Fix shutdown hang from group screen border overlay — destroy overlay window and clear timers in before-quit handler
+
+Desktop - Testing
+- Add 45 group-mode unit tests — color resolution, leakage prevention, lineage scoping, focus-based border, modal exemption
+- Add 70 pagestream key navigation guard tests</description>
+    </item>
     <item>
       <title>2026-03-11</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-11</link>
