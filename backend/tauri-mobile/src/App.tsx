@@ -165,10 +165,16 @@ const ClearButton: React.FC<ClearButtonProps> = ({ onClear, show, className = ''
 };
 
 interface EditorOverlayProps {
-  children: React.ReactNode;
+  children: React.ReactNode | ((swipeHandlers: SwipeHandlers) => React.ReactNode);
   onDismiss: () => void;
   keyboardHeight: number;
   className?: string;
+}
+
+interface SwipeHandlers {
+  onTouchStart: (e: React.TouchEvent) => void;
+  onTouchMove: (e: React.TouchEvent) => void;
+  onTouchEnd: () => void;
 }
 
 const SWIPE_THRESHOLD = 80;
@@ -247,6 +253,14 @@ const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyb
     }
   };
 
+  const swipeHandlers: SwipeHandlers = {
+    onTouchStart: handleTouchStart,
+    onTouchMove: handleTouchMove,
+    onTouchEnd: handleTouchEnd,
+  };
+
+  const isRenderProp = typeof children === 'function';
+
   return (
     <div
       className={`edit-overlay ${className}${keyboardOpen ? ' keyboard-open' : ''}`}
@@ -258,16 +272,18 @@ const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyb
         className="expandable-card expanded editor-card"
         style={{ transform: swipeOffset > 0 ? `translateY(${swipeOffset}px)` : undefined }}
       >
-        {/* Dedicated drag handle - only this area triggers swipe */}
-        <div
-          className="editor-drag-handle"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-        >
-          <div className="drag-handle-bar" />
-        </div>
-        {children}
+        {/* When children is a render prop, the caller handles the drag handle */}
+        {!isRenderProp && (
+          <div
+            className="editor-drag-handle"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            <div className="drag-handle-bar" />
+          </div>
+        )}
+        {isRenderProp ? (children as (sh: SwipeHandlers) => React.ReactNode)(swipeHandlers) : children}
       </div>
     </div>
   );
@@ -487,31 +503,41 @@ const EditorLayout: React.FC<EditorLayoutProps> = ({
 
   return (
     <EditorOverlay onDismiss={onDismiss} keyboardHeight={keyboardHeight} className={className || "text-editor-overlay"}>
-      <div className="editor-header">
-        <button className="card-action-btn editor-header-back" onClick={onDismiss} title="Back">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
-        </button>
-        {headerActions}
-      </div>
-      <div className="editor-segment-content">
-        {children}
-      </div>
-      {tags && (
+      {(swipeHandlers: SwipeHandlers) => (
         <>
           <div
-            ref={sepRef}
-            className="editor-segment-separator"
-            onMouseDown={(e) => { e.preventDefault(); handleSepDragStart(e.clientY); }}
-            onTouchStart={(e) => { handleSepDragStart(e.touches[0].clientY); }}
+            className="editor-header"
+            onTouchStart={swipeHandlers.onTouchStart}
+            onTouchMove={swipeHandlers.onTouchMove}
+            onTouchEnd={swipeHandlers.onTouchEnd}
           >
-            <div className="editor-segment-separator-handle" />
+            <button className="card-action-btn editor-header-back" onClick={onDismiss} title="Back">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+            <div className="drag-handle-bar" />
+            {headerActions}
           </div>
-          <div className="editor-segment-tags"><TagsSection {...tags} /></div>
+          <div className="editor-segment-content">
+            {children}
+          </div>
+          {tags && (
+            <>
+              <div
+                ref={sepRef}
+                className="editor-segment-separator"
+                onMouseDown={(e) => { e.preventDefault(); handleSepDragStart(e.clientY); }}
+                onTouchStart={(e) => { handleSepDragStart(e.touches[0].clientY); }}
+              >
+                <div className="editor-segment-separator-handle" />
+              </div>
+              <div className="editor-segment-tags"><TagsSection {...tags} /></div>
+            </>
+          )}
+          <div className="editor-segment-buttons"><EditorButtons {...buttons} /></div>
         </>
       )}
-      <div className="editor-segment-buttons"><EditorButtons {...buttons} /></div>
     </EditorOverlay>
   );
 };
@@ -2403,7 +2429,6 @@ function App() {
           buttons={{
             onSave: saveChanges,
             onCancel: requestCancelEditing,
-            onDelete: () => requestDelete(editingUrlId, "page"),
           }}
           headerActions={<>
             <button className="card-action-btn" onClick={(e) => openInBrowser(item.url, item.id, e)} title="Open in Safari">
@@ -2502,7 +2527,6 @@ function App() {
           buttons={{
             onSave: saveTextChanges,
             onCancel: requestCancelEditingText,
-            onDelete: () => requestDelete(editingTextId, "text"),
             saveLabel: "Done",
           }}
           headerActions={<>
@@ -2601,7 +2625,6 @@ function App() {
           buttons={{
             onSave: saveTagsetChanges,
             onCancel: requestCancelEditingTagset,
-            onDelete: () => requestDelete(editingTagsetId, "tagset"),
           }}
           headerActions={<>
             <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingTagsetId, "tagset")} title="Delete">
@@ -2636,7 +2659,6 @@ function App() {
           buttons={{
             onSave: saveImageChanges,
             onCancel: requestCancelEditingImage,
-            onDelete: () => requestDelete(editingImageId, "image"),
           }}
           headerActions={<>
             <button className="card-action-btn editor-header-delete" onClick={() => requestDelete(editingImageId, "image")} title="Delete">

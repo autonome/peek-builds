@@ -3840,13 +3840,30 @@ body.dark .note-reader-content li.checkbox-checked {
   color: #777;
 }
 
-/* Editor header row — action buttons below drag handle */
+/* Editor header row — unified drag handle + back button + action buttons */
 .editor-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px;
+  padding: 12px 12px 4px;
   flex-shrink: 0;
+  position: relative;
+  touch-action: none;
+}
+
+.editor-header > .drag-handle-bar {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 5px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 2.5px;
+}
+
+body.dark .editor-header > .drag-handle-bar {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .editor-header-back {
