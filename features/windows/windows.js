@@ -392,6 +392,19 @@ const init = async () => {
   // Load windows
   await loadWindows();
 
+  // Query the pre-overlay focus target so we can highlight the window
+  // that was focused before the overlay opened (instead of defaulting to index 0)
+  const preOverlayFocusTarget = await api.izui.getPreOverlayFocusTarget();
+  if (preOverlayFocusTarget != null) {
+    // Match the same filter+sort order as renderWindows() so index is correct
+    const sortedWindows = sortWindows(filterWindows(state.windows));
+    const targetIndex = sortedWindows.findIndex(w => w.id === preOverlayFocusTarget);
+    if (targetIndex !== -1) {
+      state.selectedIndex = targetIndex;
+      debug && console.log('[windows] Pre-overlay focus target:', preOverlayFocusTarget, 'index:', targetIndex);
+    }
+  }
+
   // Set up search input
   const searchInput = document.querySelector('peek-input.search-input');
   searchInput.addEventListener('input', () => {

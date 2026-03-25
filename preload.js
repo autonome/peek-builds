@@ -437,6 +437,15 @@ api.izui = {
   },
 
   /**
+   * Get the pre-overlay focus target (the window that was focused before overlay opened).
+   * Used by the windows switcher to highlight the correct window on init.
+   * @returns {Promise<number|null>} Window ID or null
+   */
+  getPreOverlayFocusTarget: () => {
+    return ipcRenderer.invoke('izui-get-pre-overlay-focus-target');
+  },
+
+  /**
    * Request this window to close/hide via the IZUI model.
    * Goes through closeOrHideWindow for proper keepLive/modal/child handling.
    * Used by navigate mode windows where renderer owns the lifecycle.

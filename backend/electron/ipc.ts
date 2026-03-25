@@ -3958,6 +3958,13 @@ export function registerMiscHandlers(onQuit: () => void): void {
     return coordinator.getState();
   });
 
+  // Get the pre-overlay focus target (the window that was focused before overlay opened)
+  // Used by the windows switcher to highlight the correct window on init
+  ipcMain.handle('izui-get-pre-overlay-focus-target', () => {
+    const coordinator = getIzuiCoordinator();
+    return coordinator.getPreOverlayFocusTarget();
+  });
+
   // IZUI: renderer requests its own window to close/hide (navigate mode)
   // Goes through closeOrHideWindow for proper keepLive/modal/child handling
   ipcMain.handle('izui-close-self', (ev) => {
