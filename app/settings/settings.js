@@ -973,44 +973,6 @@ const renderPrivacySettings = async () => {
         leftSide.appendChild(cardTitle);
         header.appendChild(leftSide);
 
-        // Right side: entry point buttons
-        const actions = document.createElement('div');
-        actions.style.cssText = 'display: flex; gap: 6px; align-items: center; flex-wrap: wrap;';
-
-        // Show buttons for all openable entry points of this extension
-        if (ext.enabled) {
-          const extEntries = uiEntries.filter(e => e.extensionId === ext.id && e.openable);
-          const entryTypeLabels = {
-            popup: 'Popup', options: 'Options', background: 'Background',
-            newtab: 'New Tab', history: 'History', bookmarks: 'Bookmarks',
-            devtools: 'DevTools', sidepanel: 'Side Panel',
-          };
-          for (const entry of extEntries) {
-            const btn = document.createElement('button');
-            btn.textContent = entryTypeLabels[entry.type] || entry.type;
-            btn.title = entry.title;
-            btn.style.cssText = `
-              padding: 4px 8px;
-              font-size: 11px;
-              background: var(--bg-tertiary);
-              border: 1px solid var(--border-primary);
-              border-radius: 4px;
-              color: var(--text-secondary);
-              cursor: pointer;
-            `;
-            btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
-            btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--bg-tertiary)'; });
-            btn.addEventListener('click', async () => {
-              try {
-                await api.chromeExtensions.openPage(ext.id, entry.type);
-              } catch (err) {
-                console.error(`[settings] Failed to open extension ${entry.type}:`, err);
-              }
-            });
-            actions.appendChild(btn);
-          }
-        }
-        header.appendChild(actions);
         card.appendChild(header);
 
         // Body: description + attribution
@@ -1044,24 +1006,42 @@ const renderPrivacySettings = async () => {
         }
 
 
-        // Entry points list (informational)
+        // Action buttons at the bottom of the card
         if (ext.enabled) {
-          const allEntries = uiEntries.filter(e => e.extensionId === ext.id);
-          if (allEntries.length > 0) {
-            const epDiv = document.createElement('div');
-            epDiv.className = 'help-text';
-            epDiv.style.cssText = 'margin-top: 8px; font-size: 11px; color: var(--text-tertiary);';
-            const typeLabels = {
+          const extEntries = uiEntries.filter(e => e.extensionId === ext.id && e.openable);
+          if (extEntries.length > 0) {
+            const actions = document.createElement('div');
+            actions.style.cssText = 'display: flex; gap: 6px; margin-top: 8px;';
+            const entryTypeLabels = {
               popup: 'Popup', options: 'Options', background: 'Background',
               newtab: 'New Tab', history: 'History', bookmarks: 'Bookmarks',
               devtools: 'DevTools', sidepanel: 'Side Panel',
             };
-            const labels = allEntries.map(e => {
-              const label = typeLabels[e.type] || e.type;
-              return e.openable ? label : `${label} (info)`;
-            });
-            epDiv.textContent = 'Entry points: ' + labels.join(', ');
-            body.appendChild(epDiv);
+            for (const entry of extEntries) {
+              const btn = document.createElement('button');
+              btn.textContent = entryTypeLabels[entry.type] || entry.type;
+              btn.title = entry.title;
+              btn.style.cssText = `
+                padding: 4px 8px;
+                font-size: 11px;
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border-primary);
+                border-radius: 4px;
+                color: var(--text-secondary);
+                cursor: pointer;
+              `;
+              btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--bg-hover)'; });
+              btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--bg-tertiary)'; });
+              btn.addEventListener('click', async () => {
+                try {
+                  await api.chromeExtensions.openPage(ext.id, entry.type);
+                } catch (err) {
+                  console.error(`[settings] Failed to open extension ${entry.type}:`, err);
+                }
+              });
+              actions.appendChild(btn);
+            }
+            body.appendChild(actions);
           }
         }
         card.appendChild(body);
