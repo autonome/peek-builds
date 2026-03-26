@@ -217,17 +217,30 @@ export async function initialize(): Promise<void> {
 
       // Close overlay window (e.g. windows switcher) when app loses OS focus.
       // The overlay is a transient full-screen picker that should dismiss when the user
-      // Cmd+Tabs away. Closing it triggers the existing 'closed' handler which restores
-      // hidden windows and cleans up IZUI state.
-      for (const [id, data] of windowRegistry) {
-        if (data.params.role === 'overlay') {
-          const overlayWin = BrowserWindow.fromId(id);
-          if (overlayWin && !overlayWin.isDestroyed()) {
-            DEBUG && console.log('[izui] App lost focus while overlay open, closing overlay window:', id);
-            overlayWin.close();
+      // Cmd+Tabs away.
+      //
+      // COOLDOWN GUARD: After an overlay closes, window restoration can trigger a brief
+      // did-resign-active → did-become-active cycle (macOS focus dance). Skip overlay
+      // close if we just exited an overlay — prevents closing a newly opened overlay.
+      const coordinator = getIzuiCoordinator();
+      if (!coordinator.isWithinOverlayExitCooldown()) {
+        for (const [id, data] of windowRegistry) {
+          if (data.params.role === 'overlay') {
+            const overlayWin = BrowserWindow.fromId(id);
+            if (overlayWin && !overlayWin.isDestroyed()) {
+              DEBUG && console.log('[izui] App lost focus while overlay open, closing overlay window:', id);
+              // Use app-blur exit path: restores hidden windows but does NOT focus any,
+              // so we don't steal focus from the app the user is switching to.
+              coordinator.exitOverlayForAppBlur();
+              // Mark this window so the 'closed' handler knows not to do overlay restoration
+              (overlayWin as any).__closedDueToAppBlur = true;
+              overlayWin.close();
+            }
+            break;
           }
-          break;
         }
+      } else {
+        DEBUG && console.log('[izui] Skipping overlay close in did-resign-active (within cooldown)');
       }
 
       // Hide non-focusable alwaysOnTop overlay windows (e.g. HUD) when app loses focus.
@@ -294,6 +307,12 @@ export async function initialize(): Promise<void> {
         }
 
         if (windowData) {
+          // Check if this overlay was already handled by the app-blur path.
+          // When the user Cmd+Tabs away, did-resign-active calls exitOverlayForAppBlur()
+          // (which restores windows without focusing) before closing the overlay window.
+          // In that case, skip all overlay restoration logic here.
+          const closedDueToAppBlur = (window as any).__closedDueToAppBlur === true;
+
           // Overlay restoration: use coordinator as single source of truth
           const isOverlayWindow = coordinator.isOverlay() && coordinator.getSession()?.overlayWindowId === windowId;
           if (isOverlayWindow) {
@@ -320,6 +339,11 @@ export async function initialize(): Promise<void> {
             }
 
             // Pop AFTER exitOverlay — order matters to avoid premature session end
+            coordinator.popWindow(windowId);
+          } else if (closedDueToAppBlur) {
+            // App-blur path already handled restoration via exitOverlayForAppBlur().
+            // Just pop the window from the stack — no focus, no restoration needed.
+            DEBUG && console.log('[izui] Overlay closed due to app blur — skipping restoration (already handled)');
             coordinator.popWindow(windowId);
           } else {
             // Fallback: ad-hoc overlay restoration for non-coordinator path (backward compat)

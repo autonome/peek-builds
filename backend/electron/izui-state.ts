@@ -86,6 +86,11 @@ class IzuiStateCoordinator {
   // In headless mode, stays true (no real focus events fire).
   private appFocused: boolean = true;
 
+  // Cooldown: timestamp of last overlay exit. Used to prevent the macOS focus dance
+  // (did-resign-active → did-become-active cycle during window restoration) from
+  // immediately closing a newly opened overlay.
+  private lastOverlayExitTime: number = 0;
+
   /**
    * Set custom window provider (for testing)
    */
@@ -131,6 +136,7 @@ class IzuiStateCoordinator {
     this.state = 'idle';
     this.session = null;
     this.appFocused = true;
+    this.lastOverlayExitTime = 0;
   }
 
   /**
@@ -232,7 +238,8 @@ class IzuiStateCoordinator {
   }
 
   /**
-   * Exit overlay mode and restore hidden windows
+   * Exit overlay mode and restore hidden windows.
+   * Used for user-initiated close (ESC or selection).
    */
   exitOverlay(): void {
     if (!this.session || this.state !== 'overlay') {
@@ -257,6 +264,58 @@ class IzuiStateCoordinator {
     this.session.hiddenWindowIds = [];
     this.session.preOverlayFocusTarget = null;
     this.session.overlayFocusTarget = null;
+    this.lastOverlayExitTime = Date.now();
+  }
+
+  /**
+   * Exit overlay mode due to app losing OS focus (Cmd+Tab away).
+   * Restores hidden windows with showInactive() so they don't steal focus,
+   * and does NOT focus any window — the user is switching to another app.
+   */
+  exitOverlayForAppBlur(): void {
+    if (!this.session || this.state !== 'overlay') {
+      DEBUG && console.log('[izui] Not in overlay mode (app blur path)');
+      return;
+    }
+
+    const hiddenIds = this.session.hiddenWindowIds;
+    DEBUG && console.log('[izui] Exiting overlay (app blur), restoring', hiddenIds.length, 'windows without focus');
+
+    // Restore hidden windows WITHOUT focusing — use showInactive() to avoid stealing focus
+    for (const id of hiddenIds) {
+      const win = this.windowProvider.fromId(id);
+      if (win && !win.isDestroyed()) {
+        win.show();
+      }
+    }
+
+    // Return to previous state based on entry mode
+    this.state = this.session.entryMode;
+    this.session.overlayWindowId = null;
+    this.session.hiddenWindowIds = [];
+    this.session.preOverlayFocusTarget = null;
+    this.session.overlayFocusTarget = null;
+    this.lastOverlayExitTime = Date.now();
+  }
+
+  /**
+   * Check if we're within the overlay exit cooldown period.
+   * After an overlay closes, window restoration can trigger a brief
+   * did-resign-active → did-become-active cycle (macOS focus dance).
+   * This cooldown prevents that stale did-resign-active from closing
+   * a newly opened overlay.
+   * @param cooldownMs Cooldown duration in milliseconds (default 300)
+   */
+  isWithinOverlayExitCooldown(cooldownMs: number = 300): boolean {
+    if (this.lastOverlayExitTime === 0) return false;
+    return (Date.now() - this.lastOverlayExitTime) < cooldownMs;
+  }
+
+  /**
+   * Get the last overlay exit timestamp (for testing)
+   */
+  getLastOverlayExitTime(): number {
+    return this.lastOverlayExitTime;
   }
 
   /**

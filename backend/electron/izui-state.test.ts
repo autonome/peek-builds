@@ -1211,4 +1211,192 @@ describe('IZUI State Coordinator Tests', () => {
       assert.deepStrictEqual(coordinator.getSession()!.windowStack, [5, 6, 100]);
     });
   });
+
+  describe('exitOverlayForAppBlur', () => {
+    it('should restore hidden windows without setting focus target', () => {
+      const winA = createMockWindow(1);
+      const winB = createMockWindow(2);
+      winA._visible = false;
+      winB._visible = false;
+      mockWindows.push(winA, winB);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.pushWindow(2);
+      coordinator.setFocusedWindow(2);
+
+      coordinator.enterOverlay(100, [1, 2]);
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 2);
+
+      // App blur exit — restores windows but clears focus targets
+      coordinator.exitOverlayForAppBlur();
+
+      // Windows should be restored (shown)
+      assert.ok(winA._visible, 'Window A should be restored after app blur');
+      assert.ok(winB._visible, 'Window B should be restored after app blur');
+
+      // State should return to previous (active)
+      assert.strictEqual(coordinator.getState(), 'active');
+      assert.strictEqual(coordinator.isOverlay(), false);
+
+      // Focus targets should be cleared — no window should be focused
+      const session = coordinator.getSession()!;
+      assert.strictEqual(session.preOverlayFocusTarget, null,
+        'preOverlayFocusTarget should be cleared (no focus on app blur)');
+      assert.strictEqual(session.overlayFocusTarget, null,
+        'overlayFocusTarget should be cleared (no focus on app blur)');
+    });
+
+    it('should not restore windows when not in overlay mode', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+
+      // Not in overlay mode — should be a no-op
+      coordinator.exitOverlayForAppBlur();
+
+      assert.strictEqual(coordinator.getState(), 'active');
+    });
+
+    it('should set lastOverlayExitTime for cooldown', () => {
+      const winA = createMockWindow(1);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.enterOverlay(100, [1]);
+
+      const beforeTime = Date.now();
+      coordinator.exitOverlayForAppBlur();
+      const afterTime = Date.now();
+
+      const exitTime = coordinator.getLastOverlayExitTime();
+      assert.ok(exitTime >= beforeTime && exitTime <= afterTime,
+        'lastOverlayExitTime should be set to current time');
+    });
+  });
+
+  describe('Overlay exit cooldown', () => {
+    it('should not be in cooldown initially', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), false);
+    });
+
+    it('should be in cooldown immediately after exitOverlay', () => {
+      const winA = createMockWindow(1);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.enterOverlay(100, [1]);
+
+      coordinator.exitOverlay();
+
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), true,
+        'Should be in cooldown right after overlay exit');
+    });
+
+    it('should be in cooldown immediately after exitOverlayForAppBlur', () => {
+      const winA = createMockWindow(1);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.enterOverlay(100, [1]);
+
+      coordinator.exitOverlayForAppBlur();
+
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), true,
+        'Should be in cooldown right after app blur overlay exit');
+    });
+
+    it('should accept custom cooldown duration', () => {
+      const winA = createMockWindow(1);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.enterOverlay(100, [1]);
+
+      coordinator.exitOverlay();
+
+      // With a very short cooldown, should still be in cooldown (just exited)
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(1000), true);
+      // With a 0ms cooldown, should NOT be in cooldown
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(0), false);
+    });
+
+    it('should be cleared after _resetAll', () => {
+      const winA = createMockWindow(1);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.enterOverlay(100, [1]);
+      coordinator.exitOverlay();
+
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), true);
+
+      coordinator._resetAll();
+      coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
+
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), false,
+        'Cooldown should be cleared after _resetAll');
+    });
+  });
+
+  describe('State is clean after both overlay close paths', () => {
+    it('should have identical state after exitOverlay vs exitOverlayForAppBlur', () => {
+      // Path 1: normal exitOverlay
+      const win1 = createMockWindow(1);
+      mockWindows.length = 0;
+      mockWindows.push(win1);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.pushWindow(100);
+      coordinator.setFocusedWindow(1);
+      coordinator.enterOverlay(100, [1]);
+      coordinator.exitOverlay();
+
+      const stateAfterNormal = coordinator.getState();
+      const sessionAfterNormal = coordinator.getSession();
+      const overlayAfterNormal = coordinator.isOverlay();
+
+      // Reset for path 2
+      coordinator._resetAll();
+      coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
+      win1._visible = false;
+
+      // Path 2: app blur exitOverlay
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.pushWindow(100);
+      coordinator.setFocusedWindow(1);
+      coordinator.enterOverlay(100, [1]);
+      coordinator.exitOverlayForAppBlur();
+
+      const stateAfterBlur = coordinator.getState();
+      const sessionAfterBlur = coordinator.getSession();
+      const overlayAfterBlur = coordinator.isOverlay();
+
+      // Both paths should leave identical coordinator state
+      assert.strictEqual(stateAfterNormal, stateAfterBlur,
+        'State should be the same after both exit paths');
+      assert.strictEqual(overlayAfterNormal, overlayAfterBlur,
+        'isOverlay should be the same after both exit paths');
+      assert.ok(sessionAfterNormal, 'Session should exist after normal exit');
+      assert.ok(sessionAfterBlur, 'Session should exist after app blur exit');
+      assert.strictEqual(sessionAfterNormal!.overlayWindowId, sessionAfterBlur!.overlayWindowId,
+        'overlayWindowId should be null in both');
+      assert.deepStrictEqual(sessionAfterNormal!.hiddenWindowIds, sessionAfterBlur!.hiddenWindowIds,
+        'hiddenWindowIds should be empty in both');
+    });
+  });
 });
