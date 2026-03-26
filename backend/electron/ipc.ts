@@ -5,7 +5,7 @@
  * Handlers are thin wrappers that delegate to backend functions.
  */
 
-import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell, webContents, net } from 'electron';
+import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell, webContents, net, Menu, clipboard } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createLoopbackServer } from './oauth-loopback.js';
@@ -2850,6 +2850,46 @@ export function registerWindowHandlers(): void {
             }
             return { action: 'allow' };
           });
+
+          // Context menu for links and selected text in the popup webview guest
+          guestWebContents.on('context-menu', (_event, params) => {
+            const menuItems: Electron.MenuItemConstructorOptions[] = [];
+
+            if (params.linkURL) {
+              menuItems.push({
+                label: 'Copy Link',
+                click: () => clipboard.writeText(params.linkURL),
+              });
+              menuItems.push({
+                label: 'Open Link in New Window',
+                click: () => {
+                  const parentInfo = getWindowInfo(popupWin.id);
+                  const source = parentInfo ? parentInfo.source : 'system';
+                  let currentUrl = popupUrl;
+                  try {
+                    currentUrl = guestWebContents.getURL() || popupUrl;
+                  } catch (e) {
+                    DEBUG && console.log('[context-menu] Failed to get popup guest URL:', e);
+                  }
+                  openPopupInPageHost(params.linkURL, popupWin.id, source, currentUrl).catch(e => {
+                    console.error('[context-menu] Failed to open link in new window:', e);
+                  });
+                },
+              });
+            }
+
+            if (params.selectionText) {
+              menuItems.push({
+                label: 'Copy',
+                click: () => clipboard.writeText(params.selectionText),
+              });
+            }
+
+            if (menuItems.length > 0) {
+              const menu = Menu.buildFromTemplate(menuItems);
+              menu.popup();
+            }
+          });
         });
 
         // Host-level keyboard shortcut fallback (fires when page container DOM has focus,
@@ -2996,6 +3036,46 @@ export function registerWindowHandlers(): void {
 
             // Allow non-http(s) URLs (e.g. about:blank) to open normally
             return { action: 'allow' };
+          });
+
+          // Context menu for links and selected text in the webview guest
+          guestWebContents.on('context-menu', (_event, params) => {
+            const menuItems: Electron.MenuItemConstructorOptions[] = [];
+
+            if (params.linkURL) {
+              menuItems.push({
+                label: 'Copy Link',
+                click: () => clipboard.writeText(params.linkURL),
+              });
+              menuItems.push({
+                label: 'Open Link in New Window',
+                click: () => {
+                  const parentInfo = getWindowInfo(win.id);
+                  const source = parentInfo ? parentInfo.source : 'system';
+                  let openerUrl = url;
+                  try {
+                    openerUrl = guestWebContents.getURL() || url;
+                  } catch (e) {
+                    DEBUG && console.log('[context-menu] Failed to get opener URL:', e);
+                  }
+                  openPopupInPageHost(params.linkURL, win.id, source, openerUrl).catch(e => {
+                    console.error('[context-menu] Failed to open link in new window:', e);
+                  });
+                },
+              });
+            }
+
+            if (params.selectionText) {
+              menuItems.push({
+                label: 'Copy',
+                click: () => clipboard.writeText(params.selectionText),
+              });
+            }
+
+            if (menuItems.length > 0) {
+              const menu = Menu.buildFromTemplate(menuItems);
+              menu.popup();
+            }
           });
         });
       }
