@@ -689,6 +689,11 @@ loadingLifecycle.onChange((state) => {
     // Only auto-hide if the navbar was shown by loading (not by user hover/shortcut)
     if (showSource === 'loading') {
       hide();
+      // Focus the webview so the user can interact with the page immediately
+      // (scroll, type in forms, etc.) without needing to click on it first.
+      // Only do this when navbar was auto-shown for loading — if the user
+      // explicitly opened the navbar (hover/shortcut), keep their focus there.
+      webview.focus();
     }
   }
 });
