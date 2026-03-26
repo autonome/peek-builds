@@ -3062,15 +3062,15 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
     })
 }
 
-/// Full bidirectional sync: pull then push
+/// Full bidirectional sync: push then pull
 #[tauri::command]
 /// Internal sync_all implementation (called by both command and auto-sync)
 async fn sync_all_internal() -> Result<BidirectionalSyncResult, String> {
-    // Pull first
-    let pull_result = pull_from_server().await?;
-
-    // Then push
+    // Push first (send local changes to server before pulling)
     let push_result = push_to_server().await?;
+
+    // Then pull (get merged state from server)
+    let pull_result = pull_from_server().await?;
 
     // Update last sync time
     let store = get_store()?;

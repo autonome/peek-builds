@@ -886,6 +886,7 @@ function App() {
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [editingTextContent, setEditingTextContent] = useState("");
   const [editingTextTags, setEditingTextTags] = useState<Set<string>>(new Set());
+  const editingTextTagsRef = useRef<Set<string>>(new Set());
   const [editingTextTagInput, setEditingTextTagInput] = useState("");
   const [textReaderMode, setTextReaderMode] = useState<string | null>(null); // item ID being viewed in reader mode
   const [editorReaderMode, setEditorReaderMode] = useState(false);
@@ -1986,6 +1987,11 @@ function App() {
     }
   };
 
+  // Keep ref in sync so debounced callbacks always read latest tags
+  useEffect(() => {
+    editingTextTagsRef.current = editingTextTags;
+  }, [editingTextTags]);
+
   // Auto-save timer ref
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -2003,7 +2009,7 @@ function App() {
 
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
-        await invoke("update_text", { id: editingTextId, content: content.trim(), tags: Array.from(editingTextTags) });
+        await invoke("update_text", { id: editingTextId, content: content.trim(), tags: Array.from(editingTextTagsRef.current) });
         // Update original values so we know what's saved
         setOriginalEditValues(prev => prev ? { ...prev, content: content.trim() } : null);
         await loadSavedTexts();
@@ -2011,7 +2017,7 @@ function App() {
         console.error("Auto-save failed:", error);
       }
     }, 500);
-  }, [editingTextId, originalEditValues, editingTextTags]);
+  }, [editingTextId, originalEditValues]);
 
   // Clear auto-save timer on unmount or when editing ends
   useEffect(() => {
