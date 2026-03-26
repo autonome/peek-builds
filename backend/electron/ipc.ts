@@ -2186,7 +2186,7 @@ export function openNewPageWindow(): void {
 
   // Publish event for the background window to open the URL
   publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:new-page-request', {
-    url: 'about:blank',
+    url: 'peek://app/new-tab/index.html',
     options,
   });
 }
@@ -2295,7 +2295,8 @@ export function registerWindowHandlers(): void {
     }
 
     // Check if this is a web page that will use the transparent canvas
-    const isWebPage = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file:///') || url === 'about:blank';
+    const isNewTab = url === 'peek://app/new-tab/index.html';
+    const isWebPage = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file:///') || isNewTab;
 
     // Determine if this web page should use the fullscreen transparent canvas model.
     // Canvas pages get a fullscreen transparent BrowserWindow where all UI elements

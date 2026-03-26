@@ -1065,8 +1065,9 @@
 
     .ext-item {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 8px;
+      gap: 4px 8px;
       padding: 5px 0;
       border-bottom: 1px solid color-mix(in srgb, var(--theme-border) 30%, transparent);
     }
@@ -1103,7 +1104,8 @@
     .ext-actions {
       display: flex;
       gap: 4px;
-      flex-shrink: 0;
+      width: 100%;
+      padding-top: 2px;
     }
 
     .ext-action-btn {
