@@ -91,6 +91,13 @@ class IzuiStateCoordinator {
   // immediately closing a newly opened overlay.
   private lastOverlayExitTime: number = 0;
 
+  // Cooldown: timestamp of last overlay entry. Used to prevent did-resign-active
+  // from immediately closing an overlay that was just opened. On macOS, hiding all
+  // regular windows during overlay creation can trigger did-resign-active because
+  // only a panel-type window remains (panels don't count as main windows for app
+  // activation). This cooldown lets the overlay survive that initial focus dance.
+  private lastOverlayEntryTime: number = 0;
+
   /**
    * Set custom window provider (for testing)
    */
@@ -137,6 +144,7 @@ class IzuiStateCoordinator {
     this.session = null;
     this.appFocused = true;
     this.lastOverlayExitTime = 0;
+    this.lastOverlayEntryTime = 0;
   }
 
   /**
@@ -234,6 +242,7 @@ class IzuiStateCoordinator {
     this.session.overlayWindowId = windowId;
     this.session.hiddenWindowIds = hiddenIds;
     this.session.preOverlayFocusTarget = this.session.focusedWindowId;
+    this.lastOverlayEntryTime = Date.now();
     DEBUG && console.log('[izui] Entered overlay mode, windowId:', windowId, 'hidden:', hiddenIds.length, 'preOverlayFocus:', this.session.preOverlayFocusTarget);
   }
 
@@ -309,6 +318,19 @@ class IzuiStateCoordinator {
   isWithinOverlayExitCooldown(cooldownMs: number = 300): boolean {
     if (this.lastOverlayExitTime === 0) return false;
     return (Date.now() - this.lastOverlayExitTime) < cooldownMs;
+  }
+
+  /**
+   * Check if we're within the overlay entry cooldown period.
+   * After an overlay opens, hiding regular windows can trigger did-resign-active
+   * on macOS because only a panel-type window remains (panels don't count as
+   * main windows for app activation). This cooldown prevents that stale
+   * did-resign-active from immediately closing the just-opened overlay.
+   * @param cooldownMs Cooldown duration in milliseconds (default 500)
+   */
+  isWithinOverlayEntryCooldown(cooldownMs: number = 500): boolean {
+    if (this.lastOverlayEntryTime === 0) return false;
+    return (Date.now() - this.lastOverlayEntryTime) < cooldownMs;
   }
 
   /**

@@ -212,18 +212,24 @@ export async function initialize(): Promise<void> {
       }
     });
     (app as any).on('did-resign-active', () => {
-      getIzuiCoordinator().setAppFocused(false);
+      const coordBefore = getIzuiCoordinator();
+      DEBUG && console.log('[izui] did-resign-active fired. state:', coordBefore.getState(), 'isOverlay:', coordBefore.isOverlay(), 'exitCooldown:', coordBefore.isWithinOverlayExitCooldown(), 'entryCooldown:', coordBefore.isWithinOverlayEntryCooldown());
+      coordBefore.setAppFocused(false);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
 
       // Close overlay window (e.g. windows switcher) when app loses OS focus.
       // The overlay is a transient full-screen picker that should dismiss when the user
       // Cmd+Tabs away.
       //
-      // COOLDOWN GUARD: After an overlay closes, window restoration can trigger a brief
-      // did-resign-active → did-become-active cycle (macOS focus dance). Skip overlay
-      // close if we just exited an overlay — prevents closing a newly opened overlay.
+      // COOLDOWN GUARDS:
+      // 1. EXIT cooldown: After an overlay closes, window restoration can trigger a brief
+      //    did-resign-active → did-become-active cycle (macOS focus dance). Skip overlay
+      //    close if we just exited an overlay — prevents closing a newly opened overlay.
+      // 2. ENTRY cooldown: When an overlay opens, hiding all regular windows can trigger
+      //    did-resign-active because only a panel-type window remains (macOS panels don't
+      //    count as main windows for app activation). Skip overlay close if one just opened.
       const coordinator = getIzuiCoordinator();
-      if (!coordinator.isWithinOverlayExitCooldown()) {
+      if (!coordinator.isWithinOverlayExitCooldown() && !coordinator.isWithinOverlayEntryCooldown()) {
         for (const [id, data] of windowRegistry) {
           if (data.params.role === 'overlay') {
             const overlayWin = BrowserWindow.fromId(id);
@@ -240,7 +246,7 @@ export async function initialize(): Promise<void> {
           }
         }
       } else {
-        DEBUG && console.log('[izui] Skipping overlay close in did-resign-active (within cooldown)');
+        DEBUG && console.log('[izui] Skipping overlay close in did-resign-active (within cooldown: exit=', coordinator.isWithinOverlayExitCooldown(), 'entry=', coordinator.isWithinOverlayEntryCooldown(), ')');
       }
 
       // Hide non-focusable alwaysOnTop overlay windows (e.g. HUD) when app loses focus.

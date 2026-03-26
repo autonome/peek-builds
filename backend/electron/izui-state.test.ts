@@ -1350,6 +1350,59 @@ describe('IZUI State Coordinator Tests', () => {
     });
   });
 
+  describe('Overlay entry cooldown', () => {
+    it('should not be in cooldown initially', () => {
+      const coordinator = izuiState.getIzuiCoordinator();
+      assert.strictEqual(coordinator.isWithinOverlayEntryCooldown(), false);
+    });
+
+    it('should be in cooldown immediately after enterOverlay', () => {
+      const winA = createMockWindow(1);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.enterOverlay(100, [1]);
+
+      assert.strictEqual(coordinator.isWithinOverlayEntryCooldown(), true,
+        'Should be in cooldown right after overlay entry');
+    });
+
+    it('should accept custom cooldown duration', () => {
+      const winA = createMockWindow(1);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.enterOverlay(100, [1]);
+
+      // With a very long cooldown, should be in cooldown (just entered)
+      assert.strictEqual(coordinator.isWithinOverlayEntryCooldown(1000), true);
+      // With a 0ms cooldown, should NOT be in cooldown
+      assert.strictEqual(coordinator.isWithinOverlayEntryCooldown(0), false);
+    });
+
+    it('should be cleared after _resetAll', () => {
+      const winA = createMockWindow(1);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.enterOverlay(100, [1]);
+
+      assert.strictEqual(coordinator.isWithinOverlayEntryCooldown(), true);
+
+      coordinator._resetAll();
+      coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
+
+      assert.strictEqual(coordinator.isWithinOverlayEntryCooldown(), false,
+        'Entry cooldown should be cleared after _resetAll');
+    });
+  });
+
   describe('State is clean after both overlay close paths', () => {
     it('should have identical state after exitOverlay vs exitOverlayForAppBlur', () => {
       // Path 1: normal exitOverlay
