@@ -1065,11 +1065,16 @@
 
     .ext-item {
       display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 4px 8px;
+      flex-direction: column;
+      gap: 4px;
       padding: 5px 0;
       border-bottom: 1px solid color-mix(in srgb, var(--theme-border) 30%, transparent);
+    }
+
+    .ext-item-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
     .ext-item:last-child {
@@ -1104,8 +1109,6 @@
     .ext-actions {
       display: flex;
       gap: 4px;
-      width: 100%;
-      padding-top: 2px;
     }
 
     .ext-action-btn {

@@ -3449,10 +3449,13 @@ async function loadExtensionsPanel() {
         const item = document.createElement('div');
         item.className = 'ext-item';
 
+        const header = document.createElement('div');
+        header.className = 'ext-item-header';
+
         const icon = document.createElement('span');
         icon.className = 'ext-icon';
         icon.textContent = '\uD83E\uDDE9'; // puzzle piece emoji
-        item.appendChild(icon);
+        header.appendChild(icon);
 
         const info = document.createElement('div');
         info.className = 'ext-info';
@@ -3463,7 +3466,8 @@ async function loadExtensionsPanel() {
         name.title = ext.description || ext.name;
         info.appendChild(name);
 
-        item.appendChild(info);
+        header.appendChild(info);
+        item.appendChild(header);
 
         // Action buttons (popup and/or options)
         const popupEntry = popupMap.get(ext.id);
