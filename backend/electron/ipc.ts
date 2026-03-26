@@ -2757,11 +2757,135 @@ export function registerWindowHandlers(): void {
           DEBUG && console.log(`[webview-popup] Cleaned up opener mapping for popup ${popupWin.id}`);
         });
 
+        // Register did-attach-webview BEFORE loadURL so we don't miss the event.
+        // Same pattern as the main window — the webview guest attaches during loadURL,
+        // so handlers registered after loadURL may miss the did-attach-webview event.
+        // Without this, Cmd+L and other keyboard shortcuts don't work in popup windows
+        // because keystrokes inside the webview go to the guest webContents, not the host.
+        popupWin.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+          console.log(`[webview-popup] Guest webContents attached to popup ${popupWin.id}, adding keyboard shortcuts`);
+
+          // Keyboard shortcuts inside the webview guest for page navigation
+          guestWebContents.on('before-input-event', (event, input) => {
+            const modifier = process.platform === 'darwin' ? input.meta : input.control;
+            if (input.type !== 'keyDown' || !modifier) return;
+            if (input.key === 'l') {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: popupWin.id });
+              event.preventDefault();
+            } else if (input.key === 'r') {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:reload', { windowId: popupWin.id });
+              event.preventDefault();
+            } else if (input.key === 'f') {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find', { windowId: popupWin.id });
+              event.preventDefault();
+            } else if (input.key === 'g' && input.shift) {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-prev', { windowId: popupWin.id });
+              event.preventDefault();
+            } else if (input.key === 'g') {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-next', { windowId: popupWin.id });
+              event.preventDefault();
+            } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-back', { windowId: popupWin.id });
+              event.preventDefault();
+            } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
+              publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-forward', { windowId: popupWin.id });
+              event.preventDefault();
+            }
+          });
+
+          // Update item title when webview guest page title changes
+          guestWebContents.on('page-title-updated', (_event: Electron.Event, title: string) => {
+            if (title && title !== 'Loading...') {
+              const guestUrl = guestWebContents.getURL();
+              if (guestUrl && guestUrl.startsWith('http')) {
+                try {
+                  updateItemTitle(guestUrl, title);
+                } catch (e) {
+                  DEBUG && console.log('Failed to update title from popup guest page-title-updated:', e);
+                }
+                publish('system', PubSubScopes.GLOBAL, 'page:content-ready', {
+                  url: guestUrl,
+                  title,
+                  windowId: popupWin.id,
+                });
+              }
+            }
+          });
+
+          // Capture favicon when webview guest page provides one
+          guestWebContents.on('page-favicon-updated', (_event: Electron.Event, favicons: string[]) => {
+            const guestUrl = guestWebContents.getURL();
+            if (guestUrl && guestUrl.startsWith('http') && favicons.length > 0) {
+              const best = favicons.find(f => f.endsWith('.svg')) ||
+                           favicons.find(f => f.endsWith('.png')) ||
+                           favicons[favicons.length - 1];
+              try {
+                updateItemFavicon(guestUrl, best);
+              } catch (e) {
+                DEBUG && console.log('Failed to update favicon from popup guest page-favicon-updated:', e);
+              }
+            }
+          });
+
+          // Handle window.open() from popup's webview guest
+          guestWebContents.setWindowOpenHandler(({ url: nestedPopupUrl }) => {
+            if (nestedPopupUrl.startsWith('http://') || nestedPopupUrl.startsWith('https://')) {
+              console.log(`[webview-popup] Intercepted nested popup from popup ${popupWin.id}: ${nestedPopupUrl}`);
+              const parentInfo = getWindowInfo(popupWin.id);
+              const source = parentInfo ? parentInfo.source : 'system';
+              let currentUrl = popupUrl;
+              try {
+                currentUrl = guestWebContents.getURL() || popupUrl;
+              } catch (e) {
+                DEBUG && console.log('[webview-popup] Failed to get popup guest URL:', e);
+              }
+              (async () => {
+                try {
+                  await openPopupInPageHost(nestedPopupUrl, popupWin.id, source, currentUrl);
+                } catch (e) {
+                  console.error('[webview-popup] Failed to create nested popup window:', e);
+                }
+              })();
+              return { action: 'deny' };
+            }
+            return { action: 'allow' };
+          });
+        });
+
+        // Host-level keyboard shortcut fallback (fires when page container DOM has focus,
+        // e.g., before webview loads or if user clicks outside the webview)
+        popupWin.webContents.on('before-input-event', (event, input) => {
+          const modifier = process.platform === 'darwin' ? input.meta : input.control;
+          if (input.type !== 'keyDown' || !modifier) return;
+          if (input.key === 'l') {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: popupWin.id });
+            event.preventDefault();
+          } else if (input.key === 'r') {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:reload', { windowId: popupWin.id });
+            event.preventDefault();
+          } else if (input.key === 'f') {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find', { windowId: popupWin.id });
+            event.preventDefault();
+          } else if (input.key === 'g' && input.shift) {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-prev', { windowId: popupWin.id });
+            event.preventDefault();
+          } else if (input.key === 'g') {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-next', { windowId: popupWin.id });
+            event.preventDefault();
+          } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-back', { windowId: popupWin.id });
+            event.preventDefault();
+          } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
+            publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-forward', { windowId: popupWin.id });
+            event.preventDefault();
+          }
+        });
+
+        // Add ESC handler BEFORE loadURL to avoid missing did-attach-webview
+        addEscHandler(popupWin);
+
         // Load the page container URL
         await popupWin.loadURL(loadUrl);
-
-        // Add ESC handler (also sets up did-attach-webview for the new window)
-        addEscHandler(popupWin);
 
         // Update dock visibility
         updateDockVisibility();
