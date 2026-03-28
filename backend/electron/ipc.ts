@@ -2251,6 +2251,10 @@ export function registerWindowHandlers(): void {
           // can fail silently on macOS (the window show() call doesn't bring the
           // app to the foreground when in accessory activation policy).
           updateDockVisibility();
+          // Mark show time so the modal blur handler can suppress spurious blurs
+          // caused by the activation policy change (dock.show() is async and can
+          // trigger a brief focus dance on macOS).
+          (existingWindow.window as any).__lastShowTime = Date.now();
           existingWindow.window.show();
           existingWindow.window.focus();
         }
@@ -3340,6 +3344,20 @@ export function registerWindowHandlers(): void {
                   return;
                 }
               }
+              // Skip blur events that fire shortly after the window was shown.
+              // When a keepLive modal is re-shown, app.dock.show() changes the
+              // activation policy (accessory → regular) which can cause macOS to
+              // briefly defocus the window. This spurious blur would immediately
+              // hide the just-shown modal (flash-close).
+              const showTime = (win as any).__lastShowTime;
+              if (showTime && (Date.now() - showTime) < 200) {
+                DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
+                // Re-focus the window since the blur was spurious
+                if (!win.isDestroyed()) {
+                  win.focus();
+                }
+                return;
+              }
               DEBUG && console.log('window-open: blur for modal window', url);
               closeOrHideWindow(win.id);
             });
@@ -3550,6 +3568,7 @@ export function registerWindowHandlers(): void {
         return { success: false, error: 'Window not found' };
       }
 
+      (win as any).__lastShowTime = Date.now();
       win.show();
       updateDockVisibility();
       return { success: true };

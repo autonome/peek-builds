@@ -348,6 +348,12 @@ export function getVisibleWindowCount(excludeId: number | null = null): number {
 // Track if dock is already hidden for test profiles (avoid repeated hide calls causing animation)
 let _testDockHidden = false;
 
+// Track the desired dock state to prevent race conditions.
+// app.dock.show() is async (returns Promise) while app.dock.hide() is sync.
+// Without this guard, a sequence of show() → hide() can leave the dock visible
+// when the show() Promise resolves AFTER hide() was called.
+let _dockDesiredVisible = false;
+
 /**
  * Update dock visibility based on visible windows and pref
  * Show dock if: visible windows exist OR pref is enabled
@@ -375,9 +381,18 @@ export function updateDockVisibility(excludeId: number | null = null): void {
 
   if (visibleCount > 0 || prefShowDock) {
     DEBUG && console.log('Showing dock');
-    app.dock.show();
+    _dockDesiredVisible = true;
+    app.dock.show().then(() => {
+      // After the async show() resolves, check if a hide() was requested
+      // in the meantime. If so, re-hide to avoid the dock getting stuck visible.
+      if (!_dockDesiredVisible && app.dock) {
+        DEBUG && console.log('Dock show resolved but hide was requested — re-hiding');
+        app.dock.hide();
+      }
+    });
   } else {
     DEBUG && console.log('Hiding dock');
+    _dockDesiredVisible = false;
     app.dock.hide();
   }
 }
