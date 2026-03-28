@@ -76,6 +76,8 @@ import {
 
 import { startHotReload, stopHotReload } from './hotreload.js';
 import { checkAndRunDailyBackup } from './backup.js';
+import { initThumbnailDir, cleanupThumbnails } from './thumbnails.js';
+import { getActiveThumbnailHashes } from './datastore.js';
 import {
   applyAdblockerConfig,
   cleanupAdblocker,
@@ -365,6 +367,7 @@ app.on('before-quit', () => {
   try { cleanupDevExtensions(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevExtensions error:', e); }
   try { cleanupAdblocker(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupAdblocker error:', e); }
   try { stopHotReload(); } catch (e) { DEBUG && console.error('[lifecycle] stopHotReload error:', e); }
+  try { cleanupThumbnails(getActiveThumbnailHashes); } catch (e) { DEBUG && console.error('[lifecycle] cleanupThumbnails error:', e); }
   try { shutdown(); } catch (e) { DEBUG && console.error('[lifecycle] shutdown error:', e); }
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
 });
@@ -503,6 +506,9 @@ const onReady = async () => {
 
   // Initialize display change watcher (repositions windows when monitors change)
   initDisplayWatcher();
+
+  // Initialize thumbnail directory for page screenshot thumbnails
+  initThumbnailDir();
 
   // IMPORTANT: Read crash state BEFORE markSessionDirty() overwrites it.
   // markSessionDirty sets cleanShutdown=false, so we must capture the true

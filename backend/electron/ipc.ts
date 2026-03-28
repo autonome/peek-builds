@@ -31,6 +31,7 @@ import {
   updateItem,
   updateItemTitle,
   updateItemFavicon,
+  updateItemThumbnail,
   deleteItem,
   hardDeleteItem,
   queryItems,
@@ -123,6 +124,10 @@ import {
   isTestProfile,
   DEBUG,
 } from './config.js';
+
+import {
+  captureThumbnail,
+} from './thumbnails.js';
 
 import {
   addEscHandler,
@@ -2821,6 +2826,22 @@ export function registerWindowHandlers(): void {
             }
           });
 
+          // Capture thumbnail after page finishes loading (popup webview guest)
+          guestWebContents.on('did-stop-loading', () => {
+            const guestUrl = guestWebContents.getURL();
+            if (guestUrl && (guestUrl.startsWith('http://') || guestUrl.startsWith('https://'))) {
+              setTimeout(() => {
+                captureThumbnail(guestWebContents, guestUrl).then((hash) => {
+                  if (hash) {
+                    try { updateItemThumbnail(guestUrl, hash); } catch (e) {
+                      DEBUG && console.log('Failed to update thumbnail from popup guest:', e);
+                    }
+                  }
+                });
+              }, 1500);
+            }
+          });
+
           // Handle window.open() from popup's webview guest
           guestWebContents.setWindowOpenHandler(({ url: nestedPopupUrl }) => {
             if (nestedPopupUrl.startsWith('http://') || nestedPopupUrl.startsWith('https://')) {
@@ -2995,6 +3016,22 @@ export function registerWindowHandlers(): void {
               } catch (e) {
                 DEBUG && console.log('Failed to update favicon from guest page-favicon-updated:', e);
               }
+            }
+          });
+
+          // Capture thumbnail after page finishes loading (canvas webview guest)
+          guestWebContents.on('did-stop-loading', () => {
+            const guestUrl = guestWebContents.getURL();
+            if (guestUrl && (guestUrl.startsWith('http://') || guestUrl.startsWith('https://'))) {
+              setTimeout(() => {
+                captureThumbnail(guestWebContents, guestUrl).then((hash) => {
+                  if (hash) {
+                    try { updateItemThumbnail(guestUrl, hash); } catch (e) {
+                      DEBUG && console.log('Failed to update thumbnail from canvas guest:', e);
+                    }
+                  }
+                });
+              }, 1500);
             }
           });
 
@@ -3215,6 +3252,22 @@ export function registerWindowHandlers(): void {
             } catch (e) {
               DEBUG && console.log('Failed to update favicon from page-favicon-updated:', e);
             }
+          }
+        });
+
+        // Capture thumbnail for non-canvas web pages
+        win.webContents.on('did-stop-loading', () => {
+          const pageUrl = win.webContents.getURL() || url;
+          if (pageUrl && (pageUrl.startsWith('http://') || pageUrl.startsWith('https://'))) {
+            setTimeout(() => {
+              captureThumbnail(win.webContents, pageUrl).then((hash) => {
+                if (hash) {
+                  try { updateItemThumbnail(pageUrl, hash); } catch (e) {
+                    DEBUG && console.log('Failed to update thumbnail from non-canvas page:', e);
+                  }
+                }
+              });
+            }, 1500);
           }
         });
       }

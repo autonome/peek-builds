@@ -376,6 +376,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateInvalidPlaceEntities();
   migrateTagNavigationHistory();
   migrateExtensionSettingsToFeatureSettings();
+  migrateItemThumbnailColumn();
   dropLegacyAddressTables();
 
   // Validate schema against canonical definition
@@ -2191,6 +2192,65 @@ function migrateExtensionSettingsToFeatureSettings(): void {
   } catch (error) {
     console.error('Failed to migrate extension_settings:', error);
   }
+}
+
+/**
+ * Add thumbnail column to items table for page screenshot thumbnails.
+ * Stores the SHA-256 hash of the normalized URL, used as filename in thumbnails dir.
+ */
+function migrateItemThumbnailColumn(): void {
+  if (!db) return;
+
+  const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string }[];
+  const hasThumbnail = columns.some(col => col.name === 'thumbnail');
+
+  if (!hasThumbnail) {
+    DEBUG && console.log('main', 'Adding thumbnail column to items table');
+    try {
+      db.exec(`ALTER TABLE items ADD COLUMN thumbnail TEXT DEFAULT ''`);
+    } catch (error) {
+      DEBUG && console.log('main', `Item thumbnail column migration:`, (error as Error).message);
+    }
+  }
+}
+
+/**
+ * Update the thumbnail hash of a URL item.
+ * Matches by normalized URL content, following the updateItemFavicon pattern.
+ */
+export function updateItemThumbnail(url: string, hash: string): boolean {
+  const normalizedUri = normalizeUrl(url);
+  const d = getDb();
+
+  // Phase 1: Try exact normalized URL match
+  let existing = d.prepare(
+    'SELECT id, thumbnail FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
+  ).get('url', normalizedUri) as { id: string; thumbnail: string | null } | undefined;
+
+  // Phase 2: If no match, try with raw URL
+  if (!existing && url !== normalizedUri) {
+    existing = d.prepare(
+      'SELECT id, thumbnail FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
+    ).get('url', url) as { id: string; thumbnail: string | null } | undefined;
+  }
+
+  if (!existing) return false;
+
+  d.prepare('UPDATE items SET thumbnail = ?, updatedAt = ? WHERE id = ?')
+    .run(hash, Date.now(), existing.id);
+  return true;
+}
+
+/**
+ * Get all thumbnail hashes from non-deleted items.
+ * Used by cleanup to determine which thumbnails are still referenced.
+ */
+export function getActiveThumbnailHashes(): Set<string> {
+  const d = getDb();
+  const rows = d.prepare(
+    `SELECT thumbnail FROM items WHERE thumbnail != '' AND thumbnail IS NOT NULL AND deletedAt = 0`
+  ).all() as { thumbnail: string }[];
+  return new Set(rows.map(r => r.thumbnail));
 }
 
 // ==================== Context History Operations ====================

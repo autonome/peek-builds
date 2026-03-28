@@ -7,6 +7,7 @@
  * - peek://extensions/{path} - Shared extension infrastructure
  * - peek://theme/{path} - Current theme files (vars.css, manifest.json)
  * - peek://theme/{themeId}/{path} - Specific theme files
+ * - peek://thumbnail/{hash} - Page screenshot thumbnails (JPEG)
  * - peek://local-file/{path} - Local filesystem files (images, documents, media, etc.)
  */
 
@@ -15,6 +16,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { getDb } from './datastore.js';
+import { getThumbnailPath } from './thumbnails.js';
 import { DEBUG } from './config.js';
 
 export const APP_SCHEME = 'peek';
@@ -420,6 +422,28 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       }
 
       return fetchFile(absolutePath, req.url);
+    }
+
+    // Handle thumbnail images: peek://thumbnail/{hash}
+    // Serves JPEG thumbnails from userData/thumbnails/ directory
+    if (host === 'thumbnail') {
+      const hash = pathname.replace(/\.jpg$/, ''); // strip optional .jpg
+      const thumbnailFile = getThumbnailPath(hash);
+
+      if (!fs.existsSync(thumbnailFile)) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      const fileURL = pathToFileURL(thumbnailFile).toString();
+      const response = await net.fetch(fileURL);
+      const body = await response.arrayBuffer();
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'Cache-Control': 'max-age=86400, immutable',
+        }
+      });
     }
 
     // Handle local file access: peek://local-file/{absolute-path}

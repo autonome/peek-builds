@@ -264,7 +264,9 @@ export const getItemDisplayInfo = (item, opts = {}) => {
 
   const itemUrl = isAddress ? item.uri : (itemType === 'url') ? item.content : noteUrl;
 
-  return { tags, isAddress, itemType, noteUrl, title, subtitle, faviconUrl, itemUrl };
+  const thumbnailHash = item.thumbnail || null;
+
+  return { tags, isAddress, itemType, noteUrl, title, subtitle, faviconUrl, itemUrl, thumbnailHash };
 };
 
 // ── Tag Action Affordances (re-exported for convenience) ──────────────────

@@ -51,6 +51,7 @@ const DELETE_BUTTON_SVG =
  * @param {boolean} [opts.elevated] - Whether the card is elevated (default: false)
  * @param {string}  [opts.className] - Additional CSS class for the card element
  * @param {string}  [opts.favicon] - Explicit favicon URL (passed to getItemDisplayInfo)
+ * @param {string}  [opts.thumbnailHash] - Thumbnail hash for page screenshot (overrides item.thumbnail)
  * @param {number}  [opts.visitCount] - Visit count to display in footer
  * @returns {HTMLElement} peek-card element with header, footer slots populated
  */
@@ -67,7 +68,8 @@ export const createSearchResultCard = (item, opts = {}) => {
   if (tags.length > 0) displayOpts.tags = tags;
   if (opts.favicon) displayOpts.favicon = opts.favicon;
 
-  const { title, subtitle, faviconUrl, itemUrl, itemType, isAddress } = getItemDisplayInfo(item, displayOpts);
+  const { title, subtitle, faviconUrl, itemUrl, itemType, isAddress, thumbnailHash } = getItemDisplayInfo(item, displayOpts);
+  const effectiveThumbnailHash = opts.thumbnailHash || thumbnailHash;
 
   // ── Header slot: favicon + title + button group ──────────
   const favicon = createFaviconEl(faviconUrl);
@@ -119,6 +121,20 @@ export const createSearchResultCard = (item, opts = {}) => {
     const urlSpan = createUrlSpan(formatUrl(itemUrl));
     urlRow.appendChild(urlSpan);
     card.appendChild(urlRow);
+  }
+
+  // ── Thumbnail (media slot): page screenshot background ──
+  if (effectiveThumbnailHash) {
+    const img = document.createElement('img');
+    img.slot = 'media';
+    img.src = `peek://thumbnail/${effectiveThumbnailHash}`;
+    img.loading = 'lazy';
+    img.className = 'card-thumbnail';
+    img.onerror = () => {
+      img.style.display = 'none';
+      img.onerror = null;
+    };
+    card.appendChild(img);
   }
 
   // ── Footer slot: affordances on left, tags + visit count on right ──
