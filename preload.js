@@ -385,6 +385,13 @@ api.window = {
   isTransient: () => {
     return ipcRenderer.invoke('window-is-transient');
   },
+  /**
+   * Store scroll position for undo-close-window restoration
+   * @param {{x: number, y: number}} pos - Scroll position
+   */
+  setScrollPosition: (pos) => {
+    return ipcRenderer.invoke('window-set-scroll-position', pos);
+  },
   center: (id) => {
     DEBUG && console.log('window.center', id);
     return ipcRenderer.invoke('window-center', { source: sourceAddress, id });

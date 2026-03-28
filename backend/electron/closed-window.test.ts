@@ -19,15 +19,21 @@ import * as assert from 'node:assert';
 
 interface ClosedWindowEntry {
   url: string;
+  originalUrl?: string;
   source: string;
   bounds: { x: number; y: number; width: number; height: number } | null;
   spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
   role?: string;
+  scrollX?: number;
+  scrollY?: number;
   timestamp: number;
 }
 
 interface WindowParams {
   address?: string;
+  currentUrl?: string;
+  scrollX?: number;
+  scrollY?: number;
   role?: string;
   keepLive?: boolean;
   modal?: boolean;
@@ -111,12 +117,20 @@ function createClosedWindowEntry(
     };
   }
 
+  // Use the current navigated URL if available (tracks where user actually was)
+  const currentUrl = params.currentUrl;
+  const scrollX = params.scrollX;
+  const scrollY = params.scrollY;
+
   return {
-    url: address!,
+    url: currentUrl || address!,
+    originalUrl: currentUrl ? address : undefined,
     source,
     bounds: saveBounds,
     spaceMode,
     role: params.role || undefined,
+    scrollX: scrollX || undefined,
+    scrollY: scrollY || undefined,
     timestamp: Date.now(),
   };
 }
@@ -480,5 +494,52 @@ describe('Entry creation logic', () => {
     assert.notStrictEqual(entry, null);
     // peek:// URLs use raw window bounds (no canvas wrapper)
     assert.deepStrictEqual(entry!.bounds, bounds);
+  });
+
+  it('uses currentUrl when available instead of original address', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com', currentUrl: 'https://example.com/deep/page' },
+      null,
+      { x: 100, y: 200, width: 800, height: 600 },
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.url, 'https://example.com/deep/page');
+    assert.strictEqual(entry!.originalUrl, 'https://example.com');
+  });
+
+  it('falls back to address when currentUrl is not set', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      { x: 100, y: 200, width: 800, height: 600 },
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.url, 'https://example.com');
+    assert.strictEqual(entry!.originalUrl, undefined);
+  });
+
+  it('includes scroll position when set', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com', scrollX: 0, scrollY: 1500 },
+      null,
+      { x: 100, y: 200, width: 800, height: 600 },
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.scrollY, 1500);
+  });
+
+  it('omits scroll position when not set', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      { x: 100, y: 200, width: 800, height: 600 },
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.scrollX, undefined);
+    assert.strictEqual(entry!.scrollY, undefined);
   });
 });

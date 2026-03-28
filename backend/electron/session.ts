@@ -311,12 +311,20 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
           };
         }
 
+        // Use the current navigated URL if available (tracks where user actually was)
+        const currentUrl = descriptor.params.currentUrl as string | undefined;
+        const scrollX = descriptor.params.scrollX as number | undefined;
+        const scrollY = descriptor.params.scrollY as number | undefined;
+
         pushClosedWindow({
-          url: descriptor.url,
+          url: currentUrl || descriptor.url,
+          originalUrl: currentUrl ? descriptor.url : undefined,
           source: descriptor.source,
           bounds: descriptor.bounds,
           spaceMode,
           role: (descriptor.params.role as string) || undefined,
+          scrollX: scrollX || undefined,
+          scrollY: scrollY || undefined,
           timestamp: Date.now(),
         });
       }

@@ -1761,10 +1761,13 @@ describe('feature_settings migration (extension_settings -> feature_settings)', 
 
 interface ClosedWindowEntry {
   url: string;
+  originalUrl?: string;
   source: string;
   bounds: { x: number; y: number; width: number; height: number } | null;
   spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
   role?: string;
+  scrollX?: number;
+  scrollY?: number;
   timestamp: number;
 }
 

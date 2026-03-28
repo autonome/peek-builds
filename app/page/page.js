@@ -105,6 +105,8 @@ const initialX = parseInt(params.get('x')) || 100;
 const initialY = parseInt(params.get('y')) || 100;
 const initialWidth = parseInt(params.get('width')) || 800;
 const initialHeight = parseInt(params.get('height')) || 600;
+const restoreScrollX = parseInt(params.get('scrollX')) || 0;
+const restoreScrollY = parseInt(params.get('scrollY')) || 0;
 
 if (!targetUrl) {
   console.error('[page] No URL provided');
@@ -1881,7 +1883,70 @@ webview.addEventListener('did-finish-load', async () => {
   }, api.scopes.GLOBAL);
 
   DEBUG && console.log('[page] page:loaded published:', pageUrl, opensearchUrl ? `(OpenSearch: ${opensearchUrl})` : '');
+
+  // Restore scroll position if this window was reopened via undo-close
+  if (restoreScrollX || restoreScrollY) {
+    try {
+      await webview.executeJavaScript(`window.scrollTo(${restoreScrollX}, ${restoreScrollY})`);
+      DEBUG && console.log('[page] Restored scroll position:', restoreScrollX, restoreScrollY);
+    } catch (err) {
+      DEBUG && console.log('[page] Failed to restore scroll position:', err.message);
+    }
+  }
 });
+
+// --- Scroll position tracking for undo-close-window ---
+// Debounced: polls the webview scroll position after scroll events settle
+{
+  let scrollDebounceTimer = null;
+  const SCROLL_DEBOUNCE_MS = 2000;
+
+  async function reportScrollPosition() {
+    try {
+      const pos = await webview.executeJavaScript('JSON.stringify({x: window.scrollX, y: window.scrollY})');
+      const { x, y } = JSON.parse(pos);
+      api.window.setScrollPosition({ x, y });
+    } catch (err) {
+      // Webview may not be ready or may have been destroyed
+    }
+  }
+
+  // Listen for scroll events inside the webview via a message bridge
+  // We inject a scroll listener that posts messages to the host
+  function injectScrollBridge() {
+    webview.executeJavaScript(`
+      (function() {
+        if (window.__peekScrollBridge) return;
+        window.__peekScrollBridge = true;
+        let timer = null;
+        window.addEventListener('scroll', function() {
+          clearTimeout(timer);
+          timer = setTimeout(function() {
+            window.postMessage({ type: 'peek-scroll', x: window.scrollX, y: window.scrollY }, '*');
+          }, 1000);
+        }, { passive: true });
+      })();
+    `).catch(() => {});
+  }
+
+  // The webview's ipc-message doesn't work for postMessage, so we poll after navigation
+  webview.addEventListener('did-finish-load', () => {
+    injectScrollBridge();
+  });
+  webview.addEventListener('did-navigate', () => {
+    injectScrollBridge();
+    // Report position on navigation (user may have scrolled before navigating)
+    reportScrollPosition();
+  });
+
+  // Since we can't easily receive postMessage from the webview guest,
+  // use a periodic poll approach (every 2s when the page has loaded)
+  setInterval(() => {
+    if (hasEverLoaded) {
+      reportScrollPosition();
+    }
+  }, SCROLL_DEBOUNCE_MS);
+}
 
 // --- Commands ---
 

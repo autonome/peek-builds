@@ -2150,6 +2150,10 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     options.role = entry.role;
   }
 
+  // Restore scroll position so user returns to where they were reading
+  if (entry.scrollX != null) options.scrollX = entry.scrollX;
+  if (entry.scrollY != null) options.scrollY = entry.scrollY;
+
   // Publish event for the background window to pick up and open
   publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:reopen-request', {
     url: entry.url,
@@ -2500,6 +2504,9 @@ export function registerWindowHandlers(): void {
           width: String(webviewW),
           height: String(webviewH),
         });
+        // Pass scroll position for undo-close-window restoration
+        if (options.scrollX != null) pageParams.set('scrollX', String(options.scrollX));
+        if (options.scrollY != null) pageParams.set('scrollY', String(options.scrollY));
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
 
@@ -3064,6 +3071,24 @@ export function registerWindowHandlers(): void {
 
             // Allow non-http(s) URLs (e.g. about:blank) to open normally
             return { action: 'allow' };
+          });
+
+          // Track guest navigation so undo-close restores the actual URL the user was viewing
+          guestWebContents.on('did-navigate', (_event: Electron.Event, navUrl: string) => {
+            if (navUrl && (navUrl.startsWith('http://') || navUrl.startsWith('https://'))) {
+              const winInfo = getWindowInfo(win.id);
+              if (winInfo) {
+                winInfo.params.currentUrl = navUrl;
+              }
+            }
+          });
+          guestWebContents.on('did-navigate-in-page', (_event: Electron.Event, navUrl: string, isMainFrame: boolean) => {
+            if (isMainFrame && navUrl && (navUrl.startsWith('http://') || navUrl.startsWith('https://'))) {
+              const winInfo = getWindowInfo(win.id);
+              if (winInfo) {
+                winInfo.params.currentUrl = navUrl;
+              }
+            }
           });
 
           // Context menu for links and selected text in the webview guest
@@ -4262,6 +4287,25 @@ export function registerMiscHandlers(onQuit: () => void): void {
       }
       const [x, y] = win.getPosition();
       return { success: true, x, y };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // Store scroll position from page.js for undo-close-window restoration
+  ipcMain.handle('window-set-scroll-position', (ev, msg) => {
+    try {
+      const win = BrowserWindow.fromWebContents(ev.sender);
+      if (!win) {
+        return { success: false, error: 'Window not found' };
+      }
+      const winInfo = getWindowInfo(win.id);
+      if (winInfo) {
+        winInfo.params.scrollX = msg.x ?? 0;
+        winInfo.params.scrollY = msg.y ?? 0;
+      }
+      return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

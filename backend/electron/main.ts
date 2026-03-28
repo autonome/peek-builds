@@ -100,11 +100,14 @@ const windowRegistry = new Map<number, {
 const MAX_CLOSED_WINDOWS = 50;
 
 export interface ClosedWindowEntry {
-  url: string;           // Original URL (not the peek:// rewritten one)
+  url: string;           // Current URL at time of close (where user actually was)
+  originalUrl?: string;  // Original URL the window was opened with
   source: string;
   bounds: { x: number; y: number; width: number; height: number } | null;
   spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
   role?: string;         // Window role (workspace, content, etc.) — needed to restore peek:// windows correctly
+  scrollX?: number;      // Scroll position at time of close
+  scrollY?: number;
   timestamp: number;
 }
 
@@ -431,12 +434,20 @@ export async function initialize(): Promise<void> {
                 };
               }
 
+              // Use the current navigated URL if available (tracks where user actually was)
+              const currentUrl = windowData.params.currentUrl as string | undefined;
+              const scrollX = windowData.params.scrollX as number | undefined;
+              const scrollY = windowData.params.scrollY as number | undefined;
+
               pushClosedWindow({
-                url: address,
+                url: currentUrl || address,
+                originalUrl: currentUrl ? address : undefined,
                 source: windowData.source,
                 bounds: saveBounds,
                 spaceMode,
                 role: role || undefined,
+                scrollX: scrollX || undefined,
+                scrollY: scrollY || undefined,
                 timestamp: Date.now(),
               });
             }
