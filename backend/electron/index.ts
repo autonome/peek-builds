@@ -213,7 +213,7 @@ export {
   winDevtoolsConfig,
   closeWindow,
   getVisibleWindowCount,
-  updateDockVisibility,
+  applyDockPreference,
   maybeHideApp,
   closeOrHideWindow,
   closeChildWindows,

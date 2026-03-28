@@ -67,7 +67,7 @@ import {
   // Window helpers
   closeOrHideWindow,
   setPrefsGetter,
-  updateDockVisibility,
+  applyDockPreference,
   // Extension loading
   loadExtensionManifest,
   // Closed window stack persistence
@@ -668,8 +668,8 @@ const onReady = async () => {
     // cache all prefs
     _prefs = prefsMsg.prefs;
 
-    // Update dock visibility based on pref and visible windows
-    updateDockVisibility();
+    // Apply dock preference
+    applyDockPreference();
 
     // initialize system tray
     if (prefsMsg.prefs.showTrayIcon === true) {

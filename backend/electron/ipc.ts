@@ -128,7 +128,6 @@ import {
   addEscHandler,
   winDevtoolsConfig,
   closeOrHideWindow,
-  updateDockVisibility,
   closeWindow,
   modWindow,
   getSystemThemeBackgroundColor,
@@ -2246,16 +2245,6 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
-          // Only update dock visibility for non-modal keepLive windows.
-          // Modal windows (cmd palette, quick-view) are transient and should NOT
-          // trigger dock show/hide — they have alwaysOnTop and work without dock.
-          // Calling updateDockVisibility for modals caused dock cycling which
-          // triggers activation policy changes and spurious blur events (flash-close).
-          const isModal = existingData.params.modal === true;
-          if (!isModal) {
-            updateDockVisibility();
-          }
-          (existingWindow.window as any).__lastShowTime = Date.now();
           existingWindow.window.show();
           existingWindow.window.focus();
         }
@@ -2932,9 +2921,6 @@ export function registerWindowHandlers(): void {
         // Load the page container URL
         await popupWin.loadURL(loadUrl);
 
-        // Update dock visibility
-        updateDockVisibility();
-
         console.log(`[webview-popup] Created Peek window ${popupWin.id} for popup: ${popupUrl}`);
       }
 
@@ -3346,19 +3332,6 @@ export function registerWindowHandlers(): void {
                 }
               }
               // Skip blur events that fire shortly after the window was shown.
-              // When a keepLive modal is re-shown, app.dock.show() changes the
-              // activation policy (accessory → regular) which can cause macOS to
-              // briefly defocus the window. This spurious blur would immediately
-              // hide the just-shown modal (flash-close).
-              const showTime = (win as any).__lastShowTime;
-              if (showTime && (Date.now() - showTime) < 200) {
-                DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
-                // Re-focus the window since the blur was spurious
-                if (!win.isDestroyed()) {
-                  win.focus();
-                }
-                return;
-              }
               DEBUG && console.log('window-open: blur for modal window', url);
               closeOrHideWindow(win.id);
             });
@@ -3403,9 +3376,6 @@ export function registerWindowHandlers(): void {
         const coordinator = getIzuiCoordinator();
         coordinator.enterOverlay(win.id, hiddenWindowIds);
       }
-
-      // Show dock when window opens
-      updateDockVisibility();
 
       // Notify HUD and other listeners that a window was opened
       publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:opened', {
@@ -3569,9 +3539,7 @@ export function registerWindowHandlers(): void {
         return { success: false, error: 'Window not found' };
       }
 
-      (win as any).__lastShowTime = Date.now();
       win.show();
-      updateDockVisibility();
       return { success: true };
     } catch (error) {
       console.error('Failed to show window:', error);

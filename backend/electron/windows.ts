@@ -361,54 +361,27 @@ export function getVisibleWindowCount(excludeId: number | null = null): number {
   }).length;
 }
 
-// Track if dock is already hidden for test profiles (avoid repeated hide calls causing animation)
-let _testDockHidden = false;
-
-// Track the desired dock state to prevent race conditions.
-// app.dock.show() is async (returns Promise) while app.dock.hide() is sync.
-// Without this guard, a sequence of show() → hide() can leave the dock visible
-// when the show() Promise resolves AFTER hide() was called.
-let _dockDesiredVisible = false;
-
 /**
- * Update dock visibility based on visible windows and pref
- * Show dock if: visible windows exist OR pref is enabled
- * Hide dock if: no visible windows AND pref is disabled
- * Always hide dock in test profiles to prevent test interference
+ * Apply dock visibility based on user preference.
+ * Call at startup and when the showInDockAndSwitcher preference changes.
+ * In test profiles, always hides the dock.
  */
-export function updateDockVisibility(excludeId: number | null = null): void {
+export function applyDockPreference(): void {
   if (process.platform !== 'darwin' || !app.dock) return;
 
-  // Always hide dock in test profiles to prevent interference with tests
-  // Only hide once to avoid dock animation glitches from repeated hide calls
   if (isTestProfile()) {
-    if (!_testDockHidden) {
-      app.dock.hide();
-      _testDockHidden = true;
-    }
+    app.dock.hide();
     return;
   }
 
-  const visibleCount = getVisibleWindowCount(excludeId);
   const prefs = _getPrefs();
   const prefShowDock = prefs?.showInDockAndSwitcher === true;
 
-  DEBUG && console.log('updateDockVisibility:', { visibleCount, prefShowDock, excludeId });
+  DEBUG && console.log('applyDockPreference:', { prefShowDock });
 
-  if (visibleCount > 0 || prefShowDock) {
-    DEBUG && console.log('Showing dock');
-    _dockDesiredVisible = true;
-    app.dock.show().then(() => {
-      // After the async show() resolves, check if a hide() was requested
-      // in the meantime. If so, re-hide to avoid the dock getting stuck visible.
-      if (!_dockDesiredVisible && app.dock) {
-        DEBUG && console.log('Dock show resolved but hide was requested — re-hiding');
-        app.dock.hide();
-      }
-    });
+  if (prefShowDock) {
+    app.dock.show();
   } else {
-    DEBUG && console.log('Hiding dock');
-    _dockDesiredVisible = false;
     app.dock.hide();
   }
 }
@@ -428,9 +401,6 @@ export function maybeHideApp(excludeId: number): void {
   } else {
     DEBUG && console.log('Other windows visible, not hiding app');
   }
-
-  // Also update dock visibility
-  updateDockVisibility(excludeId);
 }
 
 /**
