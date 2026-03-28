@@ -100,6 +100,12 @@ api.subscribe('cmd:url-mode', () => {
 // Chain popup state (module-level for cleanup)
 let chainPopupWindowId = null;
 
+// URL search state — async URL results mixed into normal cmd results
+let urlSearchGeneration = 0;
+let urlSearchResults = [];  // [{title, domain, content (url), favicon, ...}]
+let urlSearchTimer = null;
+const URL_SEARCH_DEBOUNCE_MS = 150;
+
 // Current command context (mode, target window, etc.)
 let commandContext = null;
 
@@ -1205,6 +1211,69 @@ function findMatchingUrlCommand(url) {
   return bestMatch;
 }
 
+// ===== Async URL Search for Normal Cmd Mode =====
+
+/**
+ * Trigger async URL search to mix visited URLs into normal cmd results.
+ * Debounced to avoid DB thrashing on every keystroke.
+ * Results are appended below command matches in updateResultsUI.
+ */
+function triggerUrlSearch(text) {
+  if (urlSearchTimer) {
+    clearTimeout(urlSearchTimer);
+    urlSearchTimer = null;
+  }
+
+  if (!text || text.length < 2) {
+    urlSearchResults = [];
+    urlSearchGeneration++;
+    return;
+  }
+
+  const generation = ++urlSearchGeneration;
+
+  urlSearchTimer = setTimeout(async () => {
+    try {
+      const query = { type: 'url', sortBy: 'frecency', limit: 5 };
+      query.search = text;
+      const result = await api.datastore.queryItems(query);
+      if (generation !== urlSearchGeneration) return; // stale
+      urlSearchResults = (result.success && result.data) ? result.data : [];
+      // Re-render results to include URL items
+      updateResultsUI();
+      updateWindowSize();
+    } catch (e) {
+      log.error('cmd:panel', 'URL search failed:', e);
+    }
+  }, URL_SEARCH_DEBOUNCE_MS);
+}
+
+/**
+ * Open a URL from the inline URL search results.
+ */
+function openUrlSearchResult(index) {
+  const item = urlSearchResults[index];
+  if (!item) return;
+
+  const url = item.content;
+  if (!url) return;
+
+  log('cmd:panel', 'Opening URL search result:', url);
+
+  api.window.open(url, {
+    role: 'content',
+    width: 1024,
+    height: 768,
+    trackingSource: 'cmd',
+    trackingSourceId: 'url-search'
+  }).catch(error => {
+    log.error('cmd:panel', 'Failed to open URL search result:', error);
+  });
+
+  updateMatchCount(url);
+  setTimeout(shutdown, 100);
+}
+
 // ===== URL Mode Functions =====
 
 /**
@@ -1560,7 +1629,8 @@ function updateResultsUI() {
   }
 
   const isChainState = machine.getState() === States.CHAIN_MODE;
-  if (state.matches.length === 0 || (!state.showResults && !isChainState)) {
+  const hasUrlResults = urlSearchResults.length > 0 && !isChainState && !urlModeActive;
+  if ((state.matches.length === 0 && !hasUrlResults) || (!state.showResults && !isChainState && !hasUrlResults)) {
     resultsContainer.classList.remove('visible');
     updateWindowSize();
     return;
@@ -1626,6 +1696,57 @@ function updateResultsUI() {
     resultsContainer.appendChild(item);
   });
 
+  // Append visited URL results below command matches
+  if (hasUrlResults) {
+    // Separator label
+    const separator = document.createElement('div');
+    separator.className = 'url-results-separator';
+    separator.textContent = 'Visited Pages';
+    resultsContainer.appendChild(separator);
+
+    urlSearchResults.forEach((urlItem, urlIndex) => {
+      const el = document.createElement('div');
+      el.className = 'command-item url-result-item';
+
+      // Favicon
+      const faviconUrl = urlItem.favicon || '';
+      if (faviconUrl) {
+        const favicon = document.createElement('img');
+        favicon.className = 'url-favicon';
+        favicon.src = faviconUrl;
+        favicon.width = 16;
+        favicon.height = 16;
+        favicon.onerror = () => { favicon.style.display = 'none'; };
+        el.appendChild(favicon);
+      }
+
+      // Title
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'cmd-name url-title';
+      let title = urlItem.title || '';
+      if (!title && urlItem.metadata) {
+        try {
+          const meta = typeof urlItem.metadata === 'string' ? JSON.parse(urlItem.metadata) : urlItem.metadata;
+          title = meta.title || '';
+        } catch (e) {}
+      }
+      titleSpan.textContent = title || urlItem.content || 'Untitled';
+      el.appendChild(titleSpan);
+
+      // Domain / URL subtitle
+      const urlSpan = document.createElement('span');
+      urlSpan.className = 'cmd-desc url-subtitle';
+      urlSpan.textContent = urlItem.domain || urlItem.content || '';
+      el.appendChild(urlSpan);
+
+      el.addEventListener('click', () => {
+        openUrlSearchResult(urlIndex);
+      });
+
+      resultsContainer.appendChild(el);
+    });
+  }
+
   updateWindowSize();
 }
 
@@ -1657,11 +1778,15 @@ function actionHandlers() {
       state.originalTyped = '';
       state.matches = [];
       state.matchIndex = 0;
+      urlSearchResults = [];
+      urlSearchGeneration++;
     },
 
     clearMatches() {
       state.matches = [];
       state.matchIndex = 0;
+      urlSearchResults = [];
+      urlSearchGeneration++;
     },
 
     computeMatches(payload) {
@@ -1675,11 +1800,15 @@ function actionHandlers() {
           state.matches = allMatches.filter(name => chainingNames.has(name));
         } else {
           state.matches = findMatchingCommands(typed);
+          // Also search visited URLs asynchronously (results appear below commands)
+          triggerUrlSearch(typed.trim());
         }
         state.matchIndex = 0;
       } else {
         state.matches = [];
         state.matchIndex = 0;
+        urlSearchResults = [];
+        urlSearchGeneration++;
       }
     },
 
@@ -2213,6 +2342,14 @@ function actionHandlers() {
 
       state.chainPopupActive = false;
       state.showResults = false;
+
+      // Clear inline URL search results
+      urlSearchResults = [];
+      urlSearchGeneration++;
+      if (urlSearchTimer) {
+        clearTimeout(urlSearchTimer);
+        urlSearchTimer = null;
+      }
 
       // Exit URL mode if active from previous invocation
       exitUrlMode();
