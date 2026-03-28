@@ -1267,6 +1267,14 @@ let navbarGeneration = 0;
 
 async function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
+  // Don't activate navbar/panels when the window doesn't have OS focus.
+  // Mouse hover and background page loads can fire even when unfocused.
+  // Keyboard shortcuts (Cmd+L) already require focus to fire, so skip the guard.
+  const guardedSources = ['hover', 'loading', 'pubsub'];
+  if (guardedSources.includes(opts?.source) && !document.hasFocus()) {
+    console.log('[page] show() suppressed — window not focused, source:', opts?.source);
+    return;
+  }
   const gen = ++navbarGeneration;
   if (hideTimer) {
     clearTimeout(hideTimer);
@@ -1399,6 +1407,8 @@ function cancelHide() {
 
 triggerZone.addEventListener('mouseenter', () => {
   console.log('[page] Trigger zone mouseenter');
+  // Don't activate navbar when window doesn't have OS focus
+  if (!document.hasFocus()) return;
   // Suppress navbar auto-show during OAuth flows (Level 2) to avoid
   // interrupting credential entry. User can still Cmd+L to force show.
   if (isOnOAuthPage) {
