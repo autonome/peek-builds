@@ -16,7 +16,7 @@
  * - Migration is safe: copy first, mark complete only on success
  */
 
-import { app, session, Session, BrowserWindow } from 'electron';
+import { app, session, Session, BrowserWindow, Notification, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { registerProtocolOnSession } from './protocol.js';
@@ -311,6 +311,15 @@ function registerDownloadHandler(ses: Session): void {
     item.on('done', (_e, state) => {
       if (state === 'completed') {
         console.log('[download] Completed:', filename);
+        const notification = new Notification({
+          title: 'Download Complete',
+          body: filename,
+          silent: true,
+        });
+        notification.on('click', () => {
+          shell.showItemInFolder(savePath);
+        });
+        notification.show();
       } else {
         console.log('[download] Failed/cancelled:', filename, state);
       }
