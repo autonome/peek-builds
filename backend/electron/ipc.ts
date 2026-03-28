@@ -2246,14 +2246,15 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
-          // Ensure dock is visible and app is activated before showing the window.
-          // Without this, re-showing a hidden panel-type window after app.hide()
-          // can fail silently on macOS (the window show() call doesn't bring the
-          // app to the foreground when in accessory activation policy).
-          updateDockVisibility();
-          // Mark show time so the modal blur handler can suppress spurious blurs
-          // caused by the activation policy change (dock.show() is async and can
-          // trigger a brief focus dance on macOS).
+          // Only update dock visibility for non-modal keepLive windows.
+          // Modal windows (cmd palette, quick-view) are transient and should NOT
+          // trigger dock show/hide — they have alwaysOnTop and work without dock.
+          // Calling updateDockVisibility for modals caused dock cycling which
+          // triggers activation policy changes and spurious blur events (flash-close).
+          const isModal = existingData.params.modal === true;
+          if (!isModal) {
+            updateDockVisibility();
+          }
           (existingWindow.window as any).__lastShowTime = Date.now();
           existingWindow.window.show();
           existingWindow.window.focus();
