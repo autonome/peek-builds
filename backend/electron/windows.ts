@@ -334,11 +334,11 @@ export function closeWindow(params: { id?: number }, callback?: (success: boolea
  * that open and close frequently. Counting them causes dock show/hide cycling
  * which triggers activation policy changes and spurious blur events.
  */
-const DOCK_EXCLUDED_ROLES = new Set(['palette', 'quick-view', 'overlay']);
+const TRANSIENT_ROLES = new Set(['palette', 'quick-view', 'overlay']);
 
 /**
  * Get count of visible persistent windows (excluding background, modals, overlays, HUD).
- * Only persistent content/workspace/utility windows affect dock visibility.
+ * Used by maybeHideApp to decide whether to hide the app when a window closes.
  */
 export function getVisibleWindowCount(excludeId: number | null = null): number {
   return BrowserWindow.getAllWindows().filter(win => {
@@ -352,7 +352,7 @@ export function getVisibleWindowCount(excludeId: number | null = null): number {
     if (entry && entry.params.address === WEB_CORE_ADDRESS) return false;
 
     // Exclude transient modals and overlays (cmd palette, quick-view, windows switcher)
-    if (entry && DOCK_EXCLUDED_ROLES.has(entry.params.role as string)) return false;
+    if (entry && TRANSIENT_ROLES.has(entry.params.role as string)) return false;
 
     // Exclude non-focusable utility windows (HUD)
     if (entry && entry.params.role === 'utility' && entry.params.focusable === false) return false;
