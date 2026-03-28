@@ -87,6 +87,25 @@ loadAdaptiveData().then(data => {
   log('cmd:panel', 'Loaded adaptive data');
 });
 
+// Cached prefs for URL search behavior
+let showUrlsInResults = defaults.prefs.showUrlsInResults;
+
+// Load prefs on startup
+api.settings.get().then(result => {
+  if (result.success && result.data?.prefs) {
+    showUrlsInResults = result.data.prefs.showUrlsInResults ?? defaults.prefs.showUrlsInResults;
+  }
+  log('cmd:panel', 'showUrlsInResults:', showUrlsInResults);
+});
+
+// Listen for settings changes (e.g., user toggles in settings UI)
+api.subscribe('settings:changed', (payload) => {
+  if (payload?.prefs?.showUrlsInResults !== undefined) {
+    showUrlsInResults = payload.prefs.showUrlsInResults;
+    log('cmd:panel', 'showUrlsInResults updated:', showUrlsInResults);
+  }
+}, api.scopes.GLOBAL);
+
 // Listen for URL mode activation (from Cmd+L shortcut in background.js)
 api.subscribe('cmd:url-mode', () => {
   log('cmd:panel', 'URL mode requested');
@@ -1234,11 +1253,13 @@ function triggerUrlSearch(text) {
 
   urlSearchTimer = setTimeout(async () => {
     try {
-      const query = { type: 'url', sortBy: 'frecency', limit: 5 };
+      const query = { type: 'url', sortBy: 'frecency', limit: 10 };
       query.search = text;
       const result = await api.datastore.queryItems(query);
       if (generation !== urlSearchGeneration) return; // stale
-      urlSearchResults = (result.success && result.data) ? result.data : [];
+      // Filter out internal peek:// URLs — only show web URLs
+      const allResults = (result.success && result.data) ? result.data : [];
+      urlSearchResults = allResults.filter(item => !item.content?.startsWith('peek://')).slice(0, 5);
       // Re-render results to include URL items
       updateResultsUI();
       updateWindowSize();
@@ -1281,12 +1302,15 @@ function openUrlSearchResult(index) {
  * Optionally filter by search text (matches title, domain, content).
  */
 async function queryUrlsByFrecency(search = '', limit = 20) {
-  const query = { type: 'url', sortBy: 'frecency', limit };
+  // Request extra items to account for filtered peek:// URLs
+  const query = { type: 'url', sortBy: 'frecency', limit: limit + 10 };
   if (search) query.search = search;
 
   const result = await api.datastore.queryItems(query);
   if (!result.success) return [];
-  return result.data || [];
+  // Filter out internal peek:// URLs — URL mode should only show web URLs
+  const items = (result.data || []).filter(item => !item.content?.startsWith('peek://'));
+  return items.slice(0, limit);
 }
 
 /**
@@ -1801,7 +1825,9 @@ function actionHandlers() {
         } else {
           state.matches = findMatchingCommands(typed);
           // Also search visited URLs asynchronously (results appear below commands)
-          triggerUrlSearch(typed.trim());
+          if (showUrlsInResults) {
+            triggerUrlSearch(typed.trim());
+          }
         }
         state.matchIndex = 0;
       } else {

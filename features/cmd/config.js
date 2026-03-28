@@ -4,6 +4,7 @@ const labels = {
   name: 'Cmd',
   prefs: {
     shortcutKey: 'Cmd shortcut',
+    showUrlsInResults: 'Show URLs in results',
   }
 };
 
@@ -20,6 +21,11 @@ const schemas = {
         "type": "string",
         "default": "Option+Space"
       },
+      "showUrlsInResults": {
+        "description": "Show visited URLs inline in command results",
+        "type": "boolean",
+        "default": false
+      },
     },
     "required": ["shortcutKey"]
   }
@@ -31,7 +37,8 @@ const storageKeys = {
 
 const defaults = {
   prefs: {
-    shortcutKey: 'Option+Space'
+    shortcutKey: 'Option+Space',
+    showUrlsInResults: false
   },
 };
 

@@ -10,6 +10,11 @@
         "description": "Global OS hotkey to open command panel",
         "type": "string",
         "default": "Option+Space"
+      },
+      "showUrlsInResults": {
+        "description": "Show visited URLs inline in command results",
+        "type": "boolean",
+        "default": false
       }
     },
     "required": ["shortcutKey"]
@@ -19,7 +24,8 @@
   },
   "defaults": {
     "prefs": {
-      "shortcutKey": "Option+Space"
+      "shortcutKey": "Option+Space",
+      "showUrlsInResults": false
     }
   }
 }
