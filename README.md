@@ -210,7 +210,8 @@ A modular feature system for achieving "personal web workbench" requires a few t
 The current implementation has gone through a few iterations:
 - first proof of concept was all Electron — privileged JS
 - second experiment moved each feature to a separate web app running in own window scope, with access to smallest possible custom API, with one main web app loading and orchestrating the others, using pubsub for cross-app communication
-- third and current implementation bundles all features into one web app, with access to smallest possible custom API for platform-level capabilities
+- third approach bundled all features into one web app, with access to smallest possible custom API for platform-level capabilities
+- fourth and current approach implements minimum viable core in a single web app which loads "features" into an opaque origin
 
 Features are loaded into the custom `peek` scheme, which provides access to a few special APIs noted in the next section, allows cross-origin network access and other things.
 
