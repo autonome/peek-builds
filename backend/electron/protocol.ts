@@ -18,6 +18,8 @@ import { pathToFileURL } from 'node:url';
 import { getDb } from './datastore.js';
 import { getThumbnailPath } from './thumbnails.js';
 import { DEBUG } from './config.js';
+import { getTileManifest } from './tile-launcher.js';
+import { buildCSPForTile, buildDefaultCSP, injectCSPHeader, isHTMLResponse } from './tile-csp.js';
 
 export const APP_SCHEME = 'peek';
 export const APP_PROTOCOL = `${APP_SCHEME}:`;
@@ -517,7 +519,20 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         return new Response('Forbidden', { status: 403 });
       }
 
-      return fetchFile(absolutePath, req.url);
+      const response = await fetchFile(absolutePath, req.url);
+
+      // CSP injection for v2 tile manifests
+      // If this extension has a loaded v2 tile manifest, inject CSP headers on HTML responses
+      if (isHTMLResponse(response)) {
+        const tileManifest = getTileManifest(host);
+        if (tileManifest) {
+          const csp = buildCSPForTile(tileManifest.capabilities);
+          DEBUG && console.log(`[protocol] Injecting CSP for tile ${host}:`, csp);
+          return injectCSPHeader(response, csp);
+        }
+      }
+
+      return response;
     }
 
     let relativePath = pathname;
