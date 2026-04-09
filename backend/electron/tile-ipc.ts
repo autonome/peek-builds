@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { validateToken, getGrantForToken, signalTileReady } from './tile-launcher.js';
-import { publish, subscribe, unsubscribe, scopes } from './pubsub.js';
+import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js';
 import { DEBUG } from './config.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 
@@ -190,7 +190,7 @@ export function registerTileIpcHandlers(): void {
       }
     }
 
-    publish(args.source, args.scope, args.topic, args.data);
+    publish(args.source, args.scope as Scope, args.topic, args.data);
   });
 
   ipcMain.on('tile:pubsub:subscribe', (_event, args: {

@@ -34,9 +34,8 @@ if (!tileId || !tileEntry || !tileToken) {
     error: 'Tile preload misconfigured: missing tile-id, tile-entry, or tile-token',
     getTileId: () => null,
   });
-  // Early exit — don't expose any capabilities
-  return;
-}
+  // Early exit — don't expose any capabilities (wrapped in IIFE since top-level return is invalid)
+} else {
 
 const sourceAddress = `peek://${tileId}/${tileEntry}`;
 
@@ -48,12 +47,12 @@ const sourceAddress = `peek://${tileId}/${tileEntry}`;
 
 let tokenValid = false;
 let grantedCapabilities: Record<string, unknown> = {};
-let validationPromise: Promise<boolean> | null = null;
+let validationPromise: Promise<boolean> | undefined;
 
 function validateToken(): Promise<boolean> {
-  if (validationPromise) return validationPromise;
+  if (validationPromise !== undefined) return validationPromise;
 
-  validationPromise = ipcRenderer.invoke('tile:validate-token', {
+  const promise = ipcRenderer.invoke('tile:validate-token', {
     tileId,
     tileEntry,
     token: tileToken,
@@ -68,7 +67,8 @@ function validateToken(): Promise<boolean> {
     return false;
   });
 
-  return validationPromise;
+  validationPromise = promise;
+  return promise;
 }
 
 // ─── API Builder ─────────────────────────────────────────────────────
@@ -392,3 +392,5 @@ function buildAPI(): Record<string, unknown> {
 
 const api = buildAPI();
 contextBridge.exposeInMainWorld('app', api);
+
+} // end else (tileId/tileEntry/tileToken present)

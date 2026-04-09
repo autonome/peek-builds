@@ -11,7 +11,6 @@
  */
 
 import { BrowserWindow } from 'electron';
-import crypto from 'node:crypto';
 import path from 'node:path';
 
 import {
@@ -22,23 +21,18 @@ import {
   resolveCapabilities,
   parseManifestFile,
 } from './tile-manifest.js';
+import {
+  generateToken,
+  validateToken,
+  revokeToken,
+  getGrantForToken,
+  revokeTokensForTile,
+  clearAllTokens,
+} from './tile-tokens.js';
 import { DEBUG } from './config.js';
 
-// ─── Token Management ────────────────────────────────────────────────
-
-/**
- * Internal token data — stored in main process, never sent to renderer
- */
-interface TokenRecord {
-  token: string;
-  tileId: string;
-  tileEntryId: string;
-  grant: CapabilityGrant;
-  createdAt: number;
-}
-
-/** Token store: token string -> record */
-const tokenStore = new Map<string, TokenRecord>();
+// Re-export token functions for consumers
+export { generateToken, validateToken, revokeToken, getGrantForToken } from './tile-tokens.js';
 
 /** Tile window registry: tileId:entryId -> BrowserWindow */
 const tileWindows = new Map<string, BrowserWindow>();
@@ -54,48 +48,6 @@ const readyCallbacks = new Map<string, Array<() => void>>();
 
 // Timeout for tile ready signal (ms)
 const TILE_READY_TIMEOUT_MS = 10000;
-
-// ─── Token Generation ────────────────────────────────────────────────
-
-/**
- * Generate an opaque capability token for a tile
- *
- * The token is a random string that maps to the grant record
- * stored in the main process. Tiles never see the grant directly.
- */
-export function generateToken(
-  tileId: string,
-  tileEntryId: string,
-  grant: CapabilityGrant
-): string {
-  const token = `tile-${crypto.randomBytes(24).toString('hex')}`;
-
-  tokenStore.set(token, {
-    token,
-    tileId,
-    tileEntryId,
-    grant,
-    createdAt: Date.now(),
-  });
-
-  DEBUG && console.log(`[tile-launcher] Generated token for ${tileId}:${tileEntryId}`);
-  return token;
-}
-
-/**
- * Validate a capability token and return the grant
- * Returns null if token is invalid
- */
-export function validateToken(token: string): TokenRecord | null {
-  return tokenStore.get(token) || null;
-}
-
-/**
- * Revoke a token (e.g., when tile is unloaded)
- */
-export function revokeToken(token: string): boolean {
-  return tokenStore.delete(token);
-}
 
 // ─── Tile Launch ─────────────────────────────────────────────────────
 
@@ -311,14 +263,6 @@ export function getLoadedTileIds(): string[] {
 }
 
 /**
- * Get grant for a token (used by IPC enforcement)
- */
-export function getGrantForToken(token: string): CapabilityGrant | null {
-  const record = tokenStore.get(token);
-  return record ? record.grant : null;
-}
-
-/**
  * Unload a tile — close its window and revoke tokens
  */
 export function unloadTile(tileId: string, entryId: string): void {
@@ -334,11 +278,7 @@ export function unloadTile(tileId: string, entryId: string): void {
   loadedManifests.delete(tileId);
 
   // Revoke all tokens for this tile
-  for (const [token, record] of tokenStore) {
-    if (record.tileId === tileId && record.tileEntryId === entryId) {
-      tokenStore.delete(token);
-    }
-  }
+  revokeTokensForTile(tileId, entryId);
 
   DEBUG && console.log(`[tile-launcher] Unloaded tile: ${key}`);
 }
@@ -356,7 +296,7 @@ export function unloadAllTiles(): void {
   readyTiles.clear();
   readyCallbacks.clear();
   loadedManifests.clear();
-  tokenStore.clear();
+  clearAllTokens();
 
   DEBUG && console.log('[tile-launcher] All tiles unloaded');
 }
