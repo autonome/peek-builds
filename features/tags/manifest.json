@@ -1,11 +1,56 @@
 {
+  "manifestVersion": 2,
   "id": "tags",
   "shortname": "tags",
   "name": "Tags",
   "description": "Tag visualization and management",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "tags-home",
+        "width": 900,
+        "height": 700,
+        "title": "Tags"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "tag:*",
+        "item:*",
+        "editor:*",
+        "sync:pull-completed",
+        "entities:extracted",
+        "ext:ready",
+        "ext:tags:shutdown",
+        "app:shutdown"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags", "item_events"]
+    },
+    "window": {
+      "create": true,
+      "query": true
+    },
+    "commands": true,
+    "shortcuts": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "tag",
@@ -35,6 +80,17 @@
         "url": "peek://ext/tags/home.html",
         "options": { "role": "workspace", "key": "tags-home", "width": 900, "height": 700, "title": "Tags" }
       }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+t",
+      "command": "open tags",
+      "global": true
+    },
+    {
+      "keys": "CommandOrControl+T",
+      "command": "open tags"
     }
   ]
 }
