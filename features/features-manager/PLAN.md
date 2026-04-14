@@ -1,6 +1,8 @@
-# Extensions Manager — Implementation Plan
+# Features Manager — Implementation Plan
 
-Peek feature for browsing, installing, managing, and publishing tile features via AT Protocol.
+Peek feature for browsing, installing, managing, and publishing non-built-in tile features via AT Protocol.
+
+The only difference between built-in features and non-built-in features is the source. Eventually all Peek features will be source-attributed via atproto, even built-ins.
 
 ## Lexicons (`space.peek.feature.*`)
 
@@ -60,24 +62,25 @@ MVP = Tiers 1 + 2 + a well-known curated list maintained by Peek team's DID.
 
 ## Feature Structure
 
-Directory: `features/extensions/` (avoids `features/features/`)
+Directory: `features/features-manager/`
 
 ```
-features/extensions/
+features/features-manager/
   manifest.json
-  background.html / background.js    — noun, session, install orchestration, history
+  background.html / background.js    — noun, session, install orchestration, history, update checks
   atproto-source.js                  — AtprotoSource implementation
   browse.html / browse.js / browse.css — search & browse UI
   manage.html / manage.js / manage.css — installed features management
   publish.html / publish.js / publish.css — publish flow
   history.js                         — install history tracking
+  updater.js                         — update check and install logic
 ```
 
 ---
 
 ## Manifest
 
-v2 tile manifest. Builtin, lazy background. 4 tiles:
+v2 tile manifest. Feature id: `features-manager`. Builtin, lazy background. 4 tiles:
 - `background` (background, lazy)
 - `browse` (window, 960x720)
 - `manage` (window, 900x650)
@@ -90,18 +93,23 @@ Capabilities needed:
 - window: create + query + manage
 - commands, shortcuts, settings
 
-Commands: `extensions` (browse), `open extensions`, `manage extensions`, `publish extension`, `install extension`
-Shortcut: `Cmd+Shift+X` → open extensions
+Commands: `features` (browse), `list features`, `open features`, `manage features`, `publish feature`, `install feature`
+Shortcut: `Cmd+Shift+X` → open features
+
+Settings:
+- `updateCheckInterval`: number (minutes), default 1440 (24 hours)
+- `defaultUpdatePolicy`: `'auto' | 'notify' | 'pinned'`, default `'auto'`
 
 ---
 
 ## Background.js Responsibilities
 
-1. Register `extensions` noun (query/browse/open/create) — auto-generates `list extensions`, `open extension`, `new extension`
+1. Register `features` noun (singular: `feature`, query/browse/open/create) — auto-generates `list features`, `open feature`, `new feature`
 2. Subscribe to `lex:session-changed` for AT Protocol OAuth session (reuse from Lex, don't duplicate login)
 3. Bridge UI ↔ registry via pubsub: `feature:install-request`, `feature:install-result`, `feature:uninstall-request`, etc.
 4. Write install/uninstall/update events to `features_history` table
-5. Periodic update checking: compare installed version vs latest release record on publisher's PDS
+5. Run update checks on configured interval (see Update Mechanism section)
+6. Handle `feature:check-updates` command for manual update checks
 
 ---
 
@@ -112,22 +120,69 @@ Shortcut: `Cmd+Shift+X` → open extensions
 - Feature cards: name, publisher avatar+handle, description, version, capabilities, install button
 - Detail view: full description, screenshots, readme, version history, license
 - "Installed" badge on already-installed features
+- "Update Available" badge when newer version exists
 
-### manage.html — Manage Installed
+### manage.html — Manage Features
 - List all features from registry, grouped/filterable by source (builtin, local, atproto, url)
-- Per-feature: name, version, source badge, status (active/disabled/pending)
-- Actions: enable/disable toggle, remove, check for update, open settings
+- Per-feature: name, version, source badge, status (active/disabled/pending), update status
+- Actions: enable/disable toggle, remove, check for update, update now, open settings
+- Per-feature update policy selector (auto / notify / pinned)
 - Capability detail view (granted vs denied)
 - Install history section (chronological log)
 - "Install from AT URI" input field
+- "Check for Updates" button (triggers manual check for all features)
+- Update status badge on features with available updates
 
-### publish.html — Publish
+### publish.html — Publish Feature
 - Requires active AT Protocol session (prompts to log in via Lex if not)
 - Step 1: Select local feature directory
 - Step 2: Preview (manifest, files, sizes, capabilities)
 - Step 3: Add metadata (description, categories, screenshots, readme)
 - Step 4: Confirm and publish (upload blobs, create record)
 - Step 5: Success with AT URI for sharing
+
+---
+
+## Update Mechanism
+
+### Manifest Versioning
+
+The v2 tile manifest already has a `version` field (semver string). This is the version used for update comparisons. When a publisher creates a new `space.peek.feature.release` record with the same `featureId` but a higher `version`, that constitutes an available update.
+
+The registry entry stores the installed version. Comparing against the latest release record on the publisher's PDS determines if an update is available.
+
+### Update Check Process
+
+1. **Interval**: configurable via `features.updateCheckInterval` setting, default every 24 hours (1440 minutes)
+2. **Background check**: runs in the features-manager background tile on the configured interval
+3. **Per-feature check**: for each installed atproto-sourced feature, query the publisher's PDS for `space.peek.feature.release` records with matching `featureId`, find the latest by semver, compare against installed version
+4. **Manual check**: `check feature updates` command and "Check for Updates" button in manage UI
+5. **Notification**: when updates are available, publish `feature:update-available` event with `{featureId, currentVersion, availableVersion}`. Optionally show in HUD or as a badge in the manage UI.
+
+### Per-Feature Update Preferences
+
+Each installed feature gets user-configurable update behavior, stored in the registry entry:
+
+- **Auto-update** (`'auto'`, default): automatically download and install new versions when detected
+- **Notify only** (`'notify'`): show that an update is available but don't install automatically
+- **Pin to version** (`'pinned'`): stay on a specific version, ignore newer versions. User can set this to the current version to freeze it.
+
+New features inherit the `defaultUpdatePolicy` from the features-manager settings.
+
+### Update Flow
+
+1. Background tile checks for updates on interval
+2. For each feature with an available update:
+   - If `updatePolicy: 'auto'`: fetch new version from publisher PDS, validate manifest and bundle, install over existing, update registry entry (version, availableVersion cleared), write `update` event to `features_history`
+   - If `updatePolicy: 'notify'`: set `availableVersion` in registry, publish `feature:update-available` event, show badge in manage UI
+   - If `updatePolicy: 'pinned'`: skip entirely
+3. **Preserve user data**: update installs replace feature files but preserve any user settings or data associated with that feature
+4. **Rollback**: before applying an update, back up the previous version's files to a versioned backup location. If the update fails validation or causes load errors, automatically revert to the previous version and log the failure.
+
+### Update Commands
+
+- `check feature updates` — manual update check for all installed atproto-sourced features
+- `update feature <name>` — update a specific feature to the latest available version (overrides notify/pinned for this one action)
 
 ---
 
@@ -158,7 +213,7 @@ Runs in main process (Node.js). No auth needed for fetching public records.
 
 ## Install History
 
-New datastore table `features_history`:
+Datastore table `features_history`:
 - `id` (autoincrement)
 - `featureId`, `event` (install|uninstall|update|approve|deny), `version`
 - `sourceType`, `sourceUri`, `publisher`
@@ -168,11 +223,18 @@ New datastore table `features_history`:
 
 ## Registry Changes
 
+### Core Registry
 - Add `disabled?: boolean` to `FeatureRegistryEntry`
 - Add `disableFeature(id)` / `enableFeature(id)` methods
 - Factor `installFromBundle(bundle, source)` out of `installFromLocalDirectory()`
 - `tile-loader.ts`: skip loading if `entry.disabled`
 - Add registry IPC handlers in `tile-ipc.ts` (tiles need runtime access to query/modify registry)
+
+### Update Fields on `FeatureRegistryEntry`
+- `updatePolicy: 'auto' | 'notify' | 'pinned'` (default: `'auto'`)
+- `pinnedVersion?: string` (only meaningful when `updatePolicy` is `'pinned'`)
+- `lastUpdateCheck?: string` (ISO datetime of last check for this feature)
+- `availableVersion?: string` (latest version seen on publisher's PDS, if newer than installed)
 
 ---
 
@@ -183,17 +245,18 @@ New datastore table `features_history`:
 3. **PDS blob limits** — large feature bundles may exceed limits. Show sizes in publish preview.
 4. **Capability approval UX** — `userApproved` flow not yet fully implemented in UI. Needed before atproto installs are safe.
 5. **NSID namespace** — `space.peek.feature.*` requires controlling `peek.space` domain for AT Protocol validation.
+6. **Update atomicity** — updates must be atomic (backup old, install new, verify, or rollback). Partial installs could leave a feature broken.
 
 ---
 
 ## Implementation Phases
 
 ### Phase 1 — Foundation (no atproto)
-1. Create `features/extensions/` with manifest.json
+1. Create `features/features-manager/` with manifest.json
 2. Implement manage.html — list installed features from registry
 3. Add registry IPC handlers to tile-ipc.ts
 4. Add `disabled` field, enable/disable methods
-5. Register noun in background.js
+5. Register `features` noun in background.js
 6. Add `features_history` table + history tracking
 
 ### Phase 2 — AtprotoSource + Install
@@ -215,8 +278,15 @@ New datastore table `features_history`:
 18. Publish confirmation + success views
 19. Write lexicon JSON files
 
-### Phase 5 — Polish + Indexing
-20. Update checking (installed version vs latest release)
-21. Curated feature directory (well-known list)
-22. Relay/indexer service (separate repo)
-23. Wire browse UI to indexer search API
+### Phase 5 — Updates
+20. Add update fields to `FeatureRegistryEntry`
+21. Implement `updater.js` — background interval check logic
+22. Wire per-feature update policy UI in manage.html
+23. Implement `check feature updates` and `update feature <name>` commands
+24. Implement rollback mechanism (backup previous version before update)
+25. Add `feature:update-available` pubsub event and HUD/badge integration
+
+### Phase 6 — Polish + Indexing
+26. Curated feature directory (well-known list)
+27. Relay/indexer service (separate repo)
+28. Wire browse UI to indexer search API
