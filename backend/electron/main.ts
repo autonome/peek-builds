@@ -21,6 +21,7 @@ import { trackWindow } from './display-watcher.js';
 import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
+import { clearLastFocusedVisibleWindowId } from './ipc.js';
 
 // Configuration
 export interface AppConfig {
@@ -304,6 +305,10 @@ export async function initialize(): Promise<void> {
         // Clean up IZUI coordinator state
         const coordinator = getIzuiCoordinator();
         coordinator.clearFocusedWindow(windowId);
+
+        // Clear stale lastFocusedVisibleWindowId so getFocusedVisibleWindowId()
+        // doesn't return a closed window's ID (causes wrong window targeting)
+        clearLastFocusedVisibleWindowId(windowId);
 
         // Focus parent window if this was a child
         if (windowData && windowData.params.parentWindowId) {

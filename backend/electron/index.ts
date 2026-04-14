@@ -203,6 +203,7 @@ export {
   applyDarkModeSetting,
   reopenLastClosedWindow,
   openNewPageWindow,
+  clearLastFocusedVisibleWindowId,
 } from './ipc.js';
 
 // Window helpers

@@ -270,6 +270,19 @@ function trackVisibleWindowFocus(win: BrowserWindow): void {
   DEBUG && console.log('Updated lastFocusedVisibleWindowId:', lastFocusedVisibleWindowId, url);
 }
 
+/**
+ * Clear lastFocusedVisibleWindowId if it matches the given window ID.
+ * Must be called when a window closes to prevent stale ID from being returned
+ * by getFocusedVisibleWindowId(), which would cause commands (e.g., tag) to
+ * target a closed window and fall back to the wrong window.
+ */
+export function clearLastFocusedVisibleWindowId(windowId: number): void {
+  if (lastFocusedVisibleWindowId === windowId) {
+    DEBUG && console.log('Cleared lastFocusedVisibleWindowId (window closed):', windowId);
+    lastFocusedVisibleWindowId = null;
+  }
+}
+
 // ============================================================================
 // Popup-to-Opener Bridge (OAuth / window.opener shim)
 // ============================================================================
