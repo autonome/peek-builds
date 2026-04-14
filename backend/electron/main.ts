@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateItemFavicon, updateModeForNavigation, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
+import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
@@ -1313,6 +1314,32 @@ async function loadExtensionsConsolidated(): Promise<number> {
  */
 export async function loadExtensions(): Promise<number> {
   const extStart = Date.now();
+
+  // ── V2 Feature Startup ──
+  // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
+  // V2 manifests are handled by the tile launcher; v1 manifests fall through to legacy loading below.
+  const featuresDir = path.join(config.rootDir, 'features');
+  const tilePreloadPath = path.join(config.rootDir, 'backend', 'electron', 'tile-preload.js');
+  const v1FeatureIds = new Set<string>();
+
+  try {
+    const featureResult: FeatureStartupResult = initializeFeatures({
+      appDataDir: config.userDataPath,
+      builtinFeaturesDir: featuresDir,
+      tilePreloadPath,
+      eagerIds: EAGER_EXTENSION_IDS,
+      onV1Feature: (id: string, _featurePath: string, _manifest: unknown) => {
+        // Collect v1 feature IDs — they'll be loaded via the legacy path below
+        v1FeatureIds.add(id);
+      },
+    });
+    DEBUG && console.log(
+      `[ext] Feature startup: ${featureResult.loadResults.filter(r => r.loaded).length} v2 loaded, ` +
+      `${v1FeatureIds.size} v1 deferred to legacy loader`
+    );
+  } catch (err) {
+    console.error('[ext] Feature startup failed, falling back to legacy-only loading:', err);
+  }
 
   // Get all registered extension IDs
   const registeredExtIds = getRegisteredExtensionIds();
