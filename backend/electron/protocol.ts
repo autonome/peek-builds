@@ -146,7 +146,7 @@ export function registerScheme(): void {
       standard: true,
       secure: true,
       supportFetchAPI: true,
-      bypassCSP: true,
+      bypassCSP: false,
       corsEnabled: false,
       allowServiceWorkers: false
     }
