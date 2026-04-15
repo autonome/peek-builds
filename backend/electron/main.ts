@@ -1321,6 +1321,7 @@ export async function loadExtensions(): Promise<number> {
   const featuresDir = path.join(config.rootDir, 'features');
   const tilePreloadPath = path.join(config.rootDir, 'backend', 'electron', 'tile-preload.js');
   const v1FeatureIds = new Set<string>();
+  const v2FeatureIds = new Set<string>();
 
   try {
     const featureResult: FeatureStartupResult = initializeFeatures({
@@ -1333,8 +1334,12 @@ export async function loadExtensions(): Promise<number> {
         v1FeatureIds.add(id);
       },
     });
+    // Track which features the v2 tile system handled — skip these in legacy loading
+    for (const r of featureResult.loadResults) {
+      if (r.loaded) v2FeatureIds.add(r.id);
+    }
     DEBUG && console.log(
-      `[ext] Feature startup: ${featureResult.loadResults.filter(r => r.loaded).length} v2 loaded, ` +
+      `[ext] Feature startup: ${v2FeatureIds.size} v2 loaded, ` +
       `${v1FeatureIds.size} v1 deferred to legacy loader`
     );
   } catch (err) {
@@ -1344,12 +1349,12 @@ export async function loadExtensions(): Promise<number> {
   // Get all registered extension IDs
   const registeredExtIds = getRegisteredExtensionIds();
 
-  // Split into consolidated (built-in) and external
+  // Split into consolidated (built-in) and external — exclude v2 features already loaded by tile system
   const consolidatedIds = registeredExtIds.filter(id =>
-    CONSOLIDATED_EXTENSION_IDS.includes(id) && isBuiltinExtensionEnabled(id)
+    CONSOLIDATED_EXTENSION_IDS.includes(id) && isBuiltinExtensionEnabled(id) && !v2FeatureIds.has(id)
   );
   const externalBuiltinIds = registeredExtIds.filter(id =>
-    !CONSOLIDATED_EXTENSION_IDS.includes(id) && isBuiltinExtensionEnabled(id)
+    !CONSOLIDATED_EXTENSION_IDS.includes(id) && isBuiltinExtensionEnabled(id) && !v2FeatureIds.has(id)
   );
 
   // Get external extensions from datastore
