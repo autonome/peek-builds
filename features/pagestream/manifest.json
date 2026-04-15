@@ -1,11 +1,51 @@
 {
+  "manifestVersion": 2,
   "id": "pagestream",
   "shortname": "pagestream",
   "name": "Pagestream",
   "description": "Vertical, chat-like navigational interface for web history",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "peek://ext/pagestream/home.html",
+        "transparent": true,
+        "title": "Pagestream"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["self", "global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:pagestream:shutdown",
+        "app:shutdown",
+        "window:closed",
+        "pagestream:settings-changed",
+        "pagestream:settings-update"
+      ]
+    },
+    "window": {
+      "create": true,
+      "query": true,
+      "manage": true
+    },
+    "commands": true,
+    "shortcuts": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "pagestream",
