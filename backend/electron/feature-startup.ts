@@ -15,6 +15,7 @@ import path from 'node:path';
 import { FeatureRegistry } from './feature-registry.js';
 import { syncBuiltinFeatures } from './feature-installer.js';
 import { loadFeaturesFromRegistry, type TileLoaderConfig, type FeatureLoadResult } from './tile-loader.js';
+import { AtprotoSource } from './atproto-source.js';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -49,12 +50,23 @@ export interface FeatureStartupResult {
 /** Module-level reference to the registry, set during initializeFeatures() */
 let _registry: FeatureRegistry | null = null;
 
+/** Module-level AtprotoSource singleton */
+let _atprotoSource: AtprotoSource | null = null;
+
 /**
  * Get the feature registry instance (available after initializeFeatures() is called).
  * Returns null if the feature system hasn't been initialized yet.
  */
 export function getFeatureRegistry(): FeatureRegistry | null {
   return _registry;
+}
+
+/**
+ * Get the AtprotoSource singleton (available after initializeFeatures() is called).
+ * Returns null if the feature system hasn't been initialized yet.
+ */
+export function getAtprotoSource(): AtprotoSource | null {
+  return _atprotoSource;
 }
 
 // ─── Startup ────────────────────────────────────────────────────────
@@ -71,8 +83,9 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
   const registry = new FeatureRegistry(config.appDataDir);
   registry.loadRegistry();
 
-  // Store singleton reference for IPC handlers
+  // Store singleton references for IPC handlers
   _registry = registry;
+  _atprotoSource = new AtprotoSource();
 
   // 2. Sync builtins
   const sync = syncBuiltinFeatures(config.builtinFeaturesDir, registry);

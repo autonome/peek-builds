@@ -24,7 +24,10 @@ import { validateToken, getGrantForToken, signalTileReady } from './tile-launche
 import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js';
 import { DEBUG } from './config.js';
 import { getFeatureRegistry } from './feature-startup.js';
+import { getAtprotoSource } from './feature-startup.js';
 import { getDb } from './datastore.js';
+import { installFromBundle } from './feature-installer.js';
+import { resolveCapabilities } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -708,6 +711,113 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { error: `Failed to query history: ${message}` };
+    }
+  });
+
+  // ── Feature Install (AT Protocol) ──
+
+  ipcMain.handle('feature-install:resolve', async (_event, args: {
+    token: string;
+    atUri: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const source = getAtprotoSource();
+    if (!source) return { error: 'AtprotoSource not initialized' };
+
+    try {
+      const metadata = await source.resolve(args.atUri);
+      return {
+        manifest: metadata.manifest,
+        source: metadata.source,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to resolve AT URI: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-install:preview-capabilities', async (_event, args: {
+    token: string;
+    manifestCapabilities: TileCapabilities;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    try {
+      const result = resolveCapabilities(args.featureId, args.manifestCapabilities, false);
+      return {
+        granted: result.capabilities,
+        denied: result.denied,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to resolve capabilities: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-install:install', async (_event, args: {
+    token: string;
+    atUri: string;
+    userApproved: boolean;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    if (!args.userApproved) {
+      return { error: 'User approval required before installation' };
+    }
+
+    const source = getAtprotoSource();
+    if (!source) return { error: 'AtprotoSource not initialized' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    try {
+      // 1. Fetch the full bundle
+      const metadata = await source.resolve(args.atUri);
+      const bundle = await source.fetch(args.atUri);
+
+      // 2. Install from bundle
+      const result = installFromBundle(
+        bundle,
+        metadata.source,
+        registry,
+        { force: true, userApproved: true }
+      );
+
+      if (!result.success) {
+        return { error: result.error };
+      }
+
+      // 3. Save registry
+      registry.saveRegistry();
+
+      // 4. Write history event
+      writeFeatureHistory(
+        result.entry!.id,
+        'install',
+        metadata.source.version,
+        'atproto',
+        args.atUri,
+        metadata.source.publisher,
+        result.entry!.grantedCapabilities as unknown as Record<string, unknown>
+      );
+
+      // 5. Publish installed event
+      publish('feature-registry', scopes.GLOBAL, 'feature:installed', {
+        id: result.entry!.id,
+        name: result.entry!.name,
+        source: metadata.source,
+      });
+
+      return { success: true, entry: result.entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Installation failed: ${message}` };
     }
   });
 
