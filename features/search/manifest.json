@@ -1,11 +1,54 @@
 {
+  "manifestVersion": 2,
   "id": "search",
   "shortname": "search",
   "name": "Search",
   "description": "Search across items by text and tags",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "search-home",
+        "width": 700,
+        "height": 768,
+        "title": "Search"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "cmd:execute:search",
+        "item:*",
+        "tag:*",
+        "editor:*",
+        "sync:pull-completed",
+        "ext:ready",
+        "ext:search:shutdown",
+        "app:shutdown"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags"]
+    },
+    "window": {
+      "create": true,
+      "query": true
+    },
+    "commands": true
+  },
   "commands": [
     {
       "name": "search",

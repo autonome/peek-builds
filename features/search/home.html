@@ -38,6 +38,23 @@
     <peek-grid-toolbar class="grid-toolbar" view-mode="list"></peek-grid-toolbar>
     <peek-grid class="cards" min-item-width="250" gap="10"></peek-grid>
 
+    <script>
+      // V2 tile runtime compat shims — bridge flat api.publish/subscribe
+      // to api.pubsub.publish/subscribe so existing code works unchanged.
+      (function() {
+        const api = window.app;
+        if (!api) return;
+        const isTileV2 = typeof api.initialize === 'function';
+        if (!isTileV2) return;
+        if (api.pubsub && !api.publish) {
+          api.publish = api.pubsub.publish;
+          api.subscribe = api.pubsub.subscribe;
+        }
+        if (api.settings && !api.settings.getExtKey) {
+          api.settings.getExtKey = (extId, key) => api.settings.get(extId + '.' + key);
+        }
+      })();
+    </script>
     <script type="module" src="home.js"></script>
   </body>
 </html>
