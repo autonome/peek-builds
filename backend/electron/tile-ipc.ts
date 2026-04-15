@@ -118,6 +118,95 @@ function scopeNumberToName(scopeNum: number): 'self' | 'global' | 'system' {
   }
 }
 
+// ─── Semver Comparison Helper ───────────────────────────────────────
+
+/**
+ * Simple semver comparison. Returns -1, 0, or 1.
+ */
+function compareSemverSimple(a: string, b: string): number {
+  const pa = (a || '0.0.0').split('.').map(Number);
+  const pb = (b || '0.0.0').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
+// ─── Capability Comparison Helper ───────────────────────────────────
+
+/**
+ * Compare two TileCapabilities for expansion detection.
+ * Used by feature-update:apply to guard auto-updates.
+ */
+function compareCapabilitiesSimple(
+  currentCaps: TileCapabilities | undefined,
+  newCaps: TileCapabilities | undefined
+): { changed: boolean; expanded: boolean; added: string[]; removed: string[] } {
+  const result = { changed: false, expanded: false, added: [] as string[], removed: [] as string[] };
+  const cur = currentCaps || {} as TileCapabilities;
+  const nxt = newCaps || {} as TileCapabilities;
+
+  // Boolean capabilities
+  const boolCaps: Array<keyof TileCapabilities> = ['commands', 'shortcuts', 'sync', 'theme', 'settings'];
+  for (const cap of boolCaps) {
+    const had = !!cur[cap];
+    const has = !!nxt[cap];
+    if (!had && has) { result.changed = true; result.expanded = true; result.added.push(cap); }
+    else if (had && !has) { result.changed = true; result.removed.push(cap); }
+  }
+
+  // Network domains
+  const curDomains = new Set(cur.network?.domains || []);
+  const nxtDomains = new Set(nxt.network?.domains || []);
+  for (const d of nxtDomains) {
+    if (!curDomains.has(d)) { result.changed = true; result.expanded = true; result.added.push(`network:${d}`); }
+  }
+  for (const d of curDomains) {
+    if (!nxtDomains.has(d)) { result.changed = true; result.removed.push(`network:${d}`); }
+  }
+
+  // Datastore tables
+  const curTables = new Set(cur.datastore?.tables || []);
+  const nxtTables = new Set(nxt.datastore?.tables || []);
+  for (const t of nxtTables) {
+    if (!curTables.has(t)) { result.changed = true; result.expanded = true; result.added.push(`datastore:${t}`); }
+  }
+  for (const t of curTables) {
+    if (!nxtTables.has(t)) { result.changed = true; result.removed.push(`datastore:${t}`); }
+  }
+
+  // PubSub scopes
+  const curScopes = new Set(cur.pubsub?.scopes || []);
+  const nxtScopes = new Set(nxt.pubsub?.scopes || []);
+  for (const s of nxtScopes) {
+    if (!curScopes.has(s)) { result.changed = true; result.expanded = true; result.added.push(`pubsub.scope:${s}`); }
+  }
+  for (const s of curScopes) {
+    if (!nxtScopes.has(s)) { result.changed = true; result.removed.push(`pubsub.scope:${s}`); }
+  }
+
+  // Window
+  if (nxt.window && !cur.window) { result.changed = true; result.expanded = true; result.added.push('window'); }
+  else if (cur.window && !nxt.window) { result.changed = true; result.removed.push('window'); }
+  else if (cur.window && nxt.window) {
+    for (const p of ['create', 'query', 'manage'] as const) {
+      const had = !!(cur.window as Record<string, boolean>)[p];
+      const has = !!(nxt.window as Record<string, boolean>)[p];
+      if (!had && has) { result.changed = true; result.expanded = true; result.added.push(`window.${p}`); }
+      else if (had && !has) { result.changed = true; result.removed.push(`window.${p}`); }
+    }
+  }
+
+  // Filesystem
+  if (nxt.filesystem && !cur.filesystem) { result.changed = true; result.expanded = true; result.added.push('filesystem'); }
+  else if (cur.filesystem && !nxt.filesystem) { result.changed = true; result.removed.push('filesystem'); }
+
+  return result;
+}
+
 // ─── Feature History Helper ─────────────────────────────────────────
 
 /**
@@ -1128,6 +1217,342 @@ export function registerTileIpcHandlers(): void {
       const message = err instanceof Error ? err.message : String(err);
       return { error: `Record creation failed: ${message}` };
     }
+  });
+
+  // ── Feature Update ──
+
+  ipcMain.handle('feature-update:check-all', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const source = getAtprotoSource();
+    if (!source) return { error: 'AtprotoSource not initialized' };
+
+    try {
+      // Get all atproto-sourced features
+      const all = registry.listFeatures();
+      const atprotoFeatures = all.filter(e => e.source.type === 'atproto' && e.source.publisher);
+
+      if (atprotoFeatures.length === 0) {
+        return { updates: [] };
+      }
+
+      // Group by publisher DID
+      const byPublisher = new Map<string, typeof atprotoFeatures>();
+      for (const feature of atprotoFeatures) {
+        const did = feature.source.publisher!;
+        if (!byPublisher.has(did)) {
+          byPublisher.set(did, []);
+        }
+        byPublisher.get(did)!.push(feature);
+      }
+
+      const updates: Array<{
+        id: string;
+        name: string;
+        currentVersion: string;
+        availableVersion: string;
+        atUri: string;
+      }> = [];
+
+      for (const [did, pubFeatures] of byPublisher) {
+        try {
+          // Resolve publisher
+          const { resolveDid: resolveDidFn } = await import('./atproto-source.js');
+          const identity = await resolveDidFn(did);
+          if (!identity) continue;
+
+          // List release records
+          const params = new URLSearchParams({
+            repo: did,
+            collection: 'space.peek.feature.release',
+            limit: '100',
+          });
+          const url = `${identity.pdsUrl}/xrpc/com.atproto.repo.listRecords?${params.toString()}`;
+          const res = await fetch(url);
+          if (!res.ok) continue;
+
+          const data = await res.json() as {
+            records: Array<{ uri: string; value: Record<string, unknown> }>;
+          };
+
+          // Build featureId -> latest version map
+          const featureMap = new Map<string, { uri: string; version: string; createdAt: string }>();
+          for (const rec of data.records || []) {
+            const val = rec.value;
+            const featureId = val.featureId as string;
+            if (!featureId) continue;
+            const existing = featureMap.get(featureId);
+            const createdAt = (val.createdAt as string) || '';
+            if (!existing || createdAt > existing.createdAt) {
+              featureMap.set(featureId, {
+                uri: rec.uri,
+                version: (val.version as string) || '0.0.0',
+                createdAt,
+              });
+            }
+          }
+
+          // Compare versions
+          for (const feature of pubFeatures) {
+            const policy = feature.updatePolicy || 'auto';
+            if (policy === 'pinned') continue;
+
+            const currentVersion = feature.source.version || '0.0.0';
+            const latest = featureMap.get(feature.id);
+            if (!latest) continue;
+
+            if (compareSemverSimple(latest.version, currentVersion) > 0) {
+              // Update availableVersion in registry
+              const entry = registry.getFeature(feature.id);
+              if (entry) {
+                entry.availableVersion = latest.version;
+                entry.lastUpdateCheck = new Date().toISOString();
+                registry.registerFeature(entry);
+              }
+
+              updates.push({
+                id: feature.id,
+                name: feature.name,
+                currentVersion,
+                availableVersion: latest.version,
+                atUri: latest.uri,
+              });
+            } else {
+              // No update — clear availableVersion, update lastUpdateCheck
+              const entry = registry.getFeature(feature.id);
+              if (entry) {
+                entry.availableVersion = undefined;
+                entry.lastUpdateCheck = new Date().toISOString();
+                registry.registerFeature(entry);
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`[tile-ipc] Update check failed for publisher ${did}:`, err);
+        }
+      }
+
+      registry.saveRegistry();
+      return { updates };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Update check failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-update:check-one', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    if (entry.source.type !== 'atproto' || !entry.source.publisher) {
+      return { error: 'Feature is not from AT Protocol' };
+    }
+
+    try {
+      const { resolveDid: resolveDidFn } = await import('./atproto-source.js');
+      const identity = await resolveDidFn(entry.source.publisher);
+      if (!identity) return { error: `Could not resolve publisher: ${entry.source.publisher}` };
+
+      const params = new URLSearchParams({
+        repo: entry.source.publisher,
+        collection: 'space.peek.feature.release',
+        limit: '100',
+      });
+      const url = `${identity.pdsUrl}/xrpc/com.atproto.repo.listRecords?${params.toString()}`;
+      const res = await fetch(url);
+      if (!res.ok) return { error: `PDS returned ${res.status}` };
+
+      const data = await res.json() as {
+        records: Array<{ uri: string; value: Record<string, unknown> }>;
+      };
+
+      // Find latest version for this featureId
+      let latestUri = '';
+      let latestVersion = '0.0.0';
+      let latestCreatedAt = '';
+
+      for (const rec of data.records || []) {
+        const val = rec.value;
+        if ((val.featureId as string) !== entry.id) continue;
+        const createdAt = (val.createdAt as string) || '';
+        if (createdAt > latestCreatedAt) {
+          latestUri = rec.uri;
+          latestVersion = (val.version as string) || '0.0.0';
+          latestCreatedAt = createdAt;
+        }
+      }
+
+      const currentVersion = entry.source.version || '0.0.0';
+      entry.lastUpdateCheck = new Date().toISOString();
+
+      if (compareSemverSimple(latestVersion, currentVersion) > 0) {
+        entry.availableVersion = latestVersion;
+        registry.registerFeature(entry);
+        registry.saveRegistry();
+        return {
+          hasUpdate: true,
+          currentVersion,
+          availableVersion: latestVersion,
+          atUri: latestUri,
+        };
+      }
+
+      entry.availableVersion = undefined;
+      registry.registerFeature(entry);
+      registry.saveRegistry();
+      return { hasUpdate: false, currentVersion };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Update check failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-update:apply', async (_event, args: {
+    token: string;
+    id: string;
+    userApproved?: boolean;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const source = getAtprotoSource();
+    if (!source) return { error: 'AtprotoSource not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    if (entry.source.type !== 'atproto' || !entry.source.uri) {
+      return { error: 'Feature is not from AT Protocol' };
+    }
+
+    try {
+      // Resolve to get latest metadata
+      const metadata = await source.resolve(entry.source.uri);
+      const newManifest = metadata.manifest;
+      const newVersion = metadata.source.version || newManifest.version;
+      const currentVersion = entry.source.version || '0.0.0';
+
+      // Validate there is actually a newer version
+      if (compareSemverSimple(newVersion || '0.0.0', currentVersion) <= 0) {
+        return { error: 'No newer version available' };
+      }
+
+      // Check for capability expansion
+      const capComparison = compareCapabilitiesSimple(
+        entry.grantedCapabilities,
+        newManifest.capabilities
+      );
+
+      if (capComparison.expanded && !args.userApproved) {
+        return {
+          error: 'Capabilities expanded — user approval required',
+          capabilitiesChanged: true,
+          added: capComparison.added,
+          removed: capComparison.removed,
+        };
+      }
+
+      // Fetch and install
+      const bundle = await source.fetch(entry.source.uri);
+      const installResult = installFromBundle(
+        bundle,
+        metadata.source,
+        registry,
+        { force: true, userApproved: args.userApproved || !capComparison.expanded }
+      );
+
+      if (!installResult.success) {
+        // Log failure
+        writeFeatureHistory(
+          args.id, 'update-failed', newVersion,
+          'atproto', entry.source.uri, entry.source.publisher
+        );
+        return { error: installResult.error };
+      }
+
+      // Clear availableVersion
+      const updatedEntry = registry.getFeature(args.id);
+      if (updatedEntry) {
+        updatedEntry.availableVersion = undefined;
+        updatedEntry.lastUpdateCheck = new Date().toISOString();
+        registry.registerFeature(updatedEntry);
+      }
+
+      registry.saveRegistry();
+
+      // Write history
+      writeFeatureHistory(
+        args.id, 'update', newVersion,
+        'atproto', entry.source.uri, entry.source.publisher,
+        installResult.entry?.grantedCapabilities as unknown as Record<string, unknown>
+      );
+
+      // Publish event
+      publish('feature-registry', scopes.GLOBAL, 'feature:updated', {
+        id: args.id,
+        name: entry.name,
+        previousVersion: currentVersion,
+        newVersion,
+      });
+
+      return { success: true, entry: installResult.entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeFeatureHistory(
+        args.id, 'update-failed', undefined,
+        'atproto', entry.source.uri, entry.source.publisher
+      );
+      return { error: `Update failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-update:set-policy', async (_event, args: {
+    token: string;
+    id: string;
+    policy: 'auto' | 'notify' | 'pinned';
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+
+    const validPolicies = ['auto', 'notify', 'pinned'];
+    if (!validPolicies.includes(args.policy)) {
+      return { error: `Invalid policy: ${args.policy}` };
+    }
+
+    entry.updatePolicy = args.policy;
+
+    if (args.policy === 'pinned') {
+      entry.pinnedVersion = entry.source.version;
+    } else {
+      entry.pinnedVersion = undefined;
+    }
+
+    registry.registerFeature(entry);
+    registry.saveRegistry();
+
+    return { success: true, policy: entry.updatePolicy, pinnedVersion: entry.pinnedVersion };
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');
