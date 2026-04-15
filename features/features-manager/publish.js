@@ -579,6 +579,17 @@ if (hasPeekAPI) {
 async function init() {
   await loadLexSession();
   await loadLocalFeatures();
+
+  // Check for featureId query param (pre-selection from dev card "Publish" button)
+  const urlParams = new URLSearchParams(window.location.search);
+  const preSelectId = urlParams.get('featureId');
+  if (preSelectId && localFeatures.length > 0) {
+    const feature = localFeatures.find(f => f.id === preSelectId);
+    if (feature) {
+      // Auto-select this feature and skip to step 2
+      await selectFeature(feature);
+    }
+  }
 }
 
 init();
