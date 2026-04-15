@@ -29,6 +29,7 @@ import { getDb } from './datastore.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
+import { invokeWindowOpen } from './ipc.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -394,7 +395,7 @@ export function registerTileIpcHandlers(): void {
 
   // ── Window Management ──
 
-  ipcMain.handle('tile:window:open', async (_event, args: {
+  ipcMain.handle('tile:window:open', async (event, args: {
     token: string;
     url: string;
     options?: Record<string, unknown>;
@@ -413,10 +414,27 @@ export function registerTileIpcHandlers(): void {
       return { error: 'Only peek:// URLs can be opened' };
     }
 
-    // Delegate to main process window creation
-    // The actual implementation would call openWindow from main.ts
-    // For now, return the intent for the main process to handle
-    return { success: true, url: args.url };
+    // Delegate to the main window-open handler (registered by registerWindowHandlers()
+    // in ipc.ts). This is the single source of truth for window creation — handles
+    // canvas rendering, mode inheritance, deduping, session registration, etc.
+    if (!invokeWindowOpen) {
+      console.error('[tile:window:open] invokeWindowOpen not initialized — registerWindowHandlers() must be called before tile IPC is used');
+      return { error: 'Window handler not initialized' };
+    }
+
+    const source = `peek://${grant.tileId}/background`;
+    DEBUG && console.log(`[tile:window:open] ${grant.tileId} opening ${args.url}`);
+    try {
+      return await invokeWindowOpen(event, {
+        source,
+        url: args.url,
+        options: args.options || {},
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[tile:window:open] failed for ${grant.tileId}:`, message);
+      return { success: false, error: message };
+    }
   });
 
   ipcMain.on('tile:window:close', (_event, args: {

@@ -2217,8 +2217,17 @@ export function openNewPageWindow(): void {
  */
 const pendingWindowKeys = new Set<string>();
 
+// Exported reference to the window-open handler so other IPC surfaces (like v2 tile
+// IPC) can delegate to it without duplicating ~1300 lines of window creation logic.
+// Populated by registerWindowHandlers() at startup.
+// Use `any` for parameters to match the original implicit-any ergonomics of the
+// IPC handler body (options is heavily dynamic).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export let invokeWindowOpen: ((ev: any, msg: any) => Promise<unknown>) | null = null;
+
 export function registerWindowHandlers(): void {
-  ipcMain.handle('window-open', async (ev, msg) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const windowOpenHandler = async (ev: any, msg: any) => {
     DEBUG && console.log('window-open', msg);
 
     const { url, options } = msg;
@@ -3505,7 +3514,9 @@ export function registerWindowHandlers(): void {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
     }
-  });
+  };
+  ipcMain.handle('window-open', windowOpenHandler);
+  invokeWindowOpen = windowOpenHandler;
 
   // Toggle click-through on transparent windows
   ipcMain.handle('window-set-ignore-mouse-events', (ev, msg) => {
