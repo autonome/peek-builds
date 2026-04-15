@@ -121,6 +121,60 @@ const extension = {
         api.publish('feature:remove-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
       }
     }, api.scopes.GLOBAL);
+
+    // Install flow — orchestrates resolve/preview/install for AT URIs
+    api.subscribe('feature:install-request', async (msg) => {
+      if (!msg.atUri) return;
+
+      try {
+        // Step 1: Resolve the AT URI to get metadata
+        const resolveResult = await api.ipc.invoke('feature-install:resolve', {
+          atUri: msg.atUri,
+        });
+
+        if (resolveResult.error) {
+          api.publish('feature:install-result', {
+            atUri: msg.atUri,
+            success: false,
+            error: resolveResult.error,
+          }, api.scopes.GLOBAL);
+          return;
+        }
+
+        // Step 2: If userApproved flag is set, proceed directly with install
+        if (msg.userApproved) {
+          const installResult = await api.ipc.invoke('feature-install:install', {
+            atUri: msg.atUri,
+            userApproved: true,
+          });
+
+          api.publish('feature:install-result', {
+            atUri: msg.atUri,
+            success: !installResult.error,
+            entry: installResult.entry,
+            error: installResult.error,
+          }, api.scopes.GLOBAL);
+          return;
+        }
+
+        // Step 3: Otherwise, publish resolved metadata for UI to show preview
+        api.publish('feature:install-result', {
+          atUri: msg.atUri,
+          success: true,
+          phase: 'resolved',
+          manifest: resolveResult.manifest,
+          source: resolveResult.source,
+        }, api.scopes.GLOBAL);
+
+      } catch (err) {
+        console.error('[features-manager] install-request error:', err);
+        api.publish('feature:install-result', {
+          atUri: msg.atUri,
+          success: false,
+          error: err.message,
+        }, api.scopes.GLOBAL);
+      }
+    }, api.scopes.GLOBAL);
   },
 
   uninit() {
