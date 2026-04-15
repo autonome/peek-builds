@@ -128,18 +128,20 @@ export async function resolveHandleToDid(handle: string): Promise<string | null>
  */
 export async function resolveDid(did: string): Promise<{ pdsUrl: string; handle: string } | null> {
   try {
-    let didDoc: {
+    interface DidDocument {
       service?: Array<{ id: string; type: string; serviceEndpoint: string }>;
       alsoKnownAs?: string[];
-    } | null = null;
+    }
+
+    let didDoc: DidDocument | null = null;
 
     if (did.startsWith('did:plc:')) {
       const res = await fetch(`https://plc.directory/${did}`);
-      if (res.ok) didDoc = await res.json() as typeof didDoc;
+      if (res.ok) didDoc = await res.json() as DidDocument;
     } else if (did.startsWith('did:web:')) {
       const host = did.replace('did:web:', '');
       const res = await fetch(`https://${host}/.well-known/did.json`);
-      if (res.ok) didDoc = await res.json() as typeof didDoc;
+      if (res.ok) didDoc = await res.json() as DidDocument;
     }
 
     if (!didDoc || !didDoc.service) return null;
