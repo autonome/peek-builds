@@ -1,9 +1,60 @@
 {
+  "manifestVersion": 2,
   "id": "example",
   "shortname": "example",
   "name": "Example Gallery",
   "description": "Example extension demonstrating Peek API feature detection, image handling, and storage",
-  "version": "1.0.0",
-  "background": "background.html",
-  "settingsSchema": "./settings-schema.json"
+  "version": "2.0.0",
+  "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "gallery",
+      "type": "window",
+      "url": "gallery.html",
+      "windowHints": {
+        "key": "example-gallery",
+        "width": 1024,
+        "height": 768,
+        "title": "Image Gallery"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["self", "global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:example:shutdown",
+        "app:shutdown",
+        "example:image-added"
+      ]
+    },
+    "datastore": {
+      "tables": ["example_images"]
+    },
+    "window": {
+      "create": true
+    },
+    "commands": true,
+    "settings": true
+  },
+  "commands": [
+    {
+      "name": "example:save-image",
+      "description": "Save an image to the gallery",
+      "accepts": ["image/png", "image/jpeg", "image/gif", "image/webp", "image/*"],
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "example:gallery",
+      "description": "Open the image gallery",
+      "action": { "type": "execute" }
+    }
+  ]
 }
