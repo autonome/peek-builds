@@ -97,15 +97,15 @@ const setGroupMode = async (windowId, groupId, groupName, color = null) => {
   }
 
   try {
-    await api.context.setMode('space', {
+    await api.context.setMode('group', {
       windowId,
       metadata: {
-        spaceId: groupId,
-        spaceName: groupName,
+        groupId,
+        groupName,
         color
       }
     });
-    debug && console.log(`[ext:groups] Set space mode for window ${windowId}: ${groupName}`);
+    debug && console.log(`[ext:groups] Set group mode for window ${windowId}: ${groupName}`);
   } catch (err) {
     console.error('[ext:groups] Failed to set group mode:', err);
   }
@@ -151,10 +151,10 @@ const resolveCurrentGroup = async () => {
     const targetWindowId = await api.window.getFocusedVisibleWindowId();
     if (targetWindowId) {
       const modeResult = await api.context.get('mode', targetWindowId);
-      if (modeResult.success && modeResult.data?.value === 'space' && modeResult.data.metadata?.spaceId) {
+      if (modeResult.success && modeResult.data?.value === 'group' && modeResult.data.metadata?.groupId) {
         return {
-          groupId: modeResult.data.metadata.spaceId,
-          groupName: modeResult.data.metadata.spaceName || ''
+          groupId: modeResult.data.metadata.groupId,
+          groupName: modeResult.data.metadata.groupName || ''
         };
       }
     }
@@ -639,10 +639,10 @@ const openGroup = async (groupName) => {
       role: 'content',
       trackingSource: 'cmd',
       trackingSourceId: `group:${groupName}`,
-      // Pass space context for mode inheritance
-      spaceMode: {
-        spaceId: tag.id,
-        spaceName: tag.name,
+      // Pass group context for mode inheritance
+      groupMode: {
+        groupId: tag.id,
+        groupName: tag.name,
         color: tag.color
       },
       ...boundsOpts

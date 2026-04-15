@@ -57,8 +57,9 @@ html, body {
   line-height: 1.5;
 }
 
-/* Group mode — elevated visual treatment */
-.mode-group {
+/* Group / space modes — elevated visual treatment */
+.mode-group,
+.mode-space {
   color: var(--theme-text, #333);
   font-weight: 500;
 }

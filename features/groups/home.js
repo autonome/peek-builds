@@ -794,6 +794,23 @@ const showAddresses = async (tag) => {
   state.currentTag = tag;
   state.searchQuery = '';
 
+  // Set group mode context for this window when viewing a real group
+  // (not the special untagged pseudo-group). Mode persists per-window and
+  // is used by HUD, child page inheritance, and other consumers.
+  if (api.context && tag && !tag.isSpecial) {
+    try {
+      await api.context.setMode('group', {
+        metadata: {
+          groupId: tag.id,
+          groupName: tag.name,
+          color: tag.color
+        }
+      });
+      debug && console.log('[groups] Set group mode for:', tag.name);
+    } catch (err) {
+      console.error('[groups] Failed to set group mode:', err);
+    }
+  }
 
   // Load URL items - handle special untagged group (only http/https URLs)
   if (tag.isSpecial && tag.id === '__untagged__') {

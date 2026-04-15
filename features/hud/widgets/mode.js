@@ -18,23 +18,34 @@ const updateDisplay = () => {
   if (!modeValue) return;
 
   // Remove old mode classes
-  modeValue.classList.remove('mode-default', 'mode-page', 'mode-space', 'mode-settings');
+  modeValue.classList.remove('mode-default', 'mode-page', 'mode-group', 'mode-space', 'mode-settings');
+
+  // Resolve container-style mode metadata (groups + spaces share visual treatment)
+  let containerName = null;
+  let containerColor = null;
+  if (currentMode === 'group' && currentModeMetadata.groupName) {
+    containerName = currentModeMetadata.groupName;
+    containerColor = currentModeMetadata.color;
+  } else if (currentMode === 'space' && currentModeMetadata.spaceName) {
+    containerName = currentModeMetadata.spaceName;
+    containerColor = currentModeMetadata.color;
+  }
 
   // Format mode display
   let displayText = currentMode;
-  if (currentMode === 'space' && currentModeMetadata.spaceName) {
-    displayText = `space: ${currentModeMetadata.spaceName}`;
+  if (containerName) {
+    displayText = `${currentMode}: ${containerName}`;
   }
 
   modeValue.textContent = displayText;
   modeValue.classList.add(`mode-${currentMode}`);
 
-  // Update group visual treatment
-  if (currentMode === 'space' && currentModeMetadata.spaceName) {
-    const color = currentModeMetadata.color || '#999';
+  // Update accent/banner visual treatment for container modes
+  if (containerName) {
+    const color = containerColor || '#999';
     groupAccent.style.background = color;
     groupAccent.style.display = '';
-    groupName.textContent = currentModeMetadata.spaceName;
+    groupName.textContent = containerName;
     groupBanner.style.display = '';
     if (widget) widget.style.setProperty('--group-color', color + '40');
   } else {
