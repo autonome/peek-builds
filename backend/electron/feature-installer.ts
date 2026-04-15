@@ -251,6 +251,80 @@ export function installFromLocalDirectory(
   return { success: true, entry, pendingApproval };
 }
 
+// ─── Bundle Installation ────────────────────────────────────────────
+
+/**
+ * Install a feature from a TileBundle (source-agnostic).
+ *
+ * Takes a pre-fetched bundle of files + source metadata, writes them
+ * to the target directory, resolves capabilities, and registers in the registry.
+ *
+ * Used by both installFromLocalDirectory() and the AtprotoSource install path.
+ */
+export function installFromBundle(
+  bundle: TileBundle,
+  source: FeatureSource,
+  registry: FeatureRegistry,
+  options?: { force?: boolean; userApproved?: boolean }
+): InstallResult {
+  const manifest = bundle.manifest;
+  const id = manifest.id;
+
+  // Check for conflicts
+  const existing = registry.getFeature(id);
+  if (existing && !options?.force) {
+    return {
+      success: false,
+      error: `Feature "${id}" is already installed (source: ${existing.source.type}). Use force to overwrite.`,
+    };
+  }
+
+  // Compute content hash from manifest
+  const manifestJson = JSON.stringify(manifest, null, 2);
+  const manifestCid = computeManifestHash(manifestJson);
+
+  // Write files to target directory
+  const targetDir = path.join(registry.getFeaturesDir(), id);
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    for (const [filePath, content] of bundle.files) {
+      const fullPath = path.join(targetDir, filePath);
+      const dir = path.dirname(fullPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(fullPath, content);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to write files: ${message}` };
+  }
+
+  // Resolve capabilities (non-builtin)
+  const isBuiltin = source.type === 'builtin';
+  const grant = resolveCapabilities(id, manifest.capabilities, isBuiltin);
+  const pendingApproval = grant.denied.length > 0 ? grant.denied : undefined;
+
+  // Register
+  const entry: FeatureRegistryEntry = {
+    id,
+    name: manifest.name,
+    manifestCid,
+    path: targetDir,
+    source,
+    grantedCapabilities: grant.capabilities,
+    userApproved: options?.userApproved ?? false,
+    installedAt: new Date().toISOString(),
+  };
+
+  registry.registerFeature(entry);
+
+  return { success: true, entry, pendingApproval };
+}
+
 // ─── Builtin Sync ───────────────────────────────────────────────────
 
 /**
