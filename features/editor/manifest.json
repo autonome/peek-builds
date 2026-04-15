@@ -1,12 +1,58 @@
 {
+  "manifestVersion": 2,
   "id": "editor",
   "shortname": "editor",
   "name": "Editor",
   "description": "Markdown editor with outline sidebar, live preview, and vim mode",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
-  "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "width": 1024,
+        "height": 1000,
+        "title": "Editor"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "editor:*",
+        "item:*",
+        "tag:*",
+        "window:*",
+        "app:focus-changed",
+        "app:shutdown",
+        "cmd:*",
+        "sync:pull-completed",
+        "ext:ready",
+        "ext:editor:shutdown"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "item_events", "tags", "item_tags"]
+    },
+    "window": {
+      "create": true,
+      "query": true,
+      "manage": true
+    },
+    "commands": true,
+    "shortcuts": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "editor",
@@ -19,5 +65,10 @@
       "keys": "CommandOrControl+E",
       "command": "editor"
     }
-  ]
+  ],
+  "settingsSchema": "./settings-schema.json",
+  "_notes": {
+    "filesystemDeferred": "File read/write capability is intentionally NOT declared. api.files.* calls (open, save, readFromPath, writeToPath) will not work under v2 until the filesystem capability model is finalized. UI/pane layout/CodeMirror/autosave-to-datastore still work.",
+    "lazyEventInterceptors": "The v1 main.ts registerLazyEventInterceptors() path hardcodes loading 'editor' via the v1 extension host iframe when 'editor:open' or 'editor:add' are published. Under v2, editor's background tile is launched via tile-launcher (separate BrowserWindow, not iframe), so the v1 interceptor path will not wake up the v2 tile. The editor command stub (registered via tile-lazy.ts) still works for direct invocation. This means programmatic publishes of editor:open / editor:add from before the tile is loaded will not trigger tile load under v2 — the tile is only loaded by its own command or by another (already-loaded) tile publishing these events. Fix: tile-lazy.ts should gain an event-interceptor registration API parallel to its command-stub API."
+  }
 }

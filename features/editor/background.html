@@ -14,9 +14,48 @@
   const api = hasPeekAPI ? window.app : null;
   const extId = extension.id;
 
-  if (hasPeekAPI) {
-    // Running as a Peek extension - full functionality
+  // Detect v2 tile runtime (has api.initialize) vs v1 legacy
+  const isTileV2 = hasPeekAPI && typeof api.initialize === 'function';
 
+  if (hasPeekAPI && isTileV2) {
+    // ── V2 Tile Runtime ──
+    // Shim flat pubsub methods so existing code (background.js, home.js)
+    // that calls api.publish / api.subscribe keeps working.
+    if (api.pubsub && !api.publish) {
+      api.publish = api.pubsub.publish;
+      api.subscribe = api.pubsub.subscribe;
+    }
+
+    // Shim settings.getExtKey if missing (v2 only has get/set)
+    if (api.settings && !api.settings.getExtKey) {
+      api.settings.getExtKey = (extId, key) => api.settings.get(`${extId}.${key}`);
+    }
+
+    // Shim settings.getKey / setKey used by home.js for prefs
+    if (api.settings && !api.settings.getKey) {
+      api.settings.getKey = (key) => api.settings.get(key);
+    }
+    if (api.settings && !api.settings.setKey) {
+      api.settings.setKey = (key, value) => api.settings.set(key, value);
+    }
+
+    // Initialize tile — validates capability token with main process
+    await api.initialize();
+
+    // Initialize extension (registers commands, subscribes to editor:*)
+    if (extension.init) {
+      await extension.init();
+    }
+
+    // Register shutdown handler
+    api.onShutdown(() => {
+      if (extension.uninit) {
+        extension.uninit();
+      }
+    });
+
+  } else if (hasPeekAPI) {
+    // ── V1 Legacy Runtime ──
     // Initialize extension BEFORE signaling ready
     // (lazy loading waits for ext:ready, so handlers must be registered first)
     if (extension.init) {
