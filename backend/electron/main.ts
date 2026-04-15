@@ -881,39 +881,48 @@ export function registerLazyExtensionCommands(): void {
 // Track pending messages for lazy event interceptors (topic -> buffered msg)
 const lazyInterceptorPending = new Map<string, unknown>();
 
-export function registerLazyEventInterceptors(): void {
-  const editorEvents = ['editor:open', 'editor:add'];
+export function registerLazyEventInterceptors(options?: { skipExtensions?: Set<string> }): void {
+  const skip = options?.skipExtensions;
 
-  for (const topic of editorEvents) {
-    const interceptorSource = `lazy-interceptor/${topic}`;
+  // Legacy v1 editor interceptors. Under v2, editor is handled by the
+  // tile-lazy event interceptor system (see registerEventInterceptor in
+  // tile-lazy.ts), so we skip registering v1 stubs for it here.
+  if (!skip || !skip.has('editor')) {
+    const editorEvents = ['editor:open', 'editor:add'];
 
-    subscribe(interceptorSource, scopes.GLOBAL, topic, async (msg: unknown) => {
-      // If editor is already loaded, nothing to do — the extension's own handler
-      // will fire from the same publish (pubsub iterates all subscribers).
-      if (lazyExtensionLoaded.has('editor')) return;
+    for (const topic of editorEvents) {
+      const interceptorSource = `lazy-interceptor/${topic}`;
 
-      // Buffer the message (latest wins for concurrent events)
-      const alreadyLoading = lazyInterceptorPending.has(topic);
-      lazyInterceptorPending.set(topic, msg);
+      subscribe(interceptorSource, scopes.GLOBAL, topic, async (msg: unknown) => {
+        // If editor is already loaded, nothing to do — the extension's own handler
+        // will fire from the same publish (pubsub iterates all subscribers).
+        if (lazyExtensionLoaded.has('editor')) return;
 
-      if (alreadyLoading) {
-        DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired again during load, buffering`);
-        return;
-      }
+        // Buffer the message (latest wins for concurrent events)
+        const alreadyLoading = lazyInterceptorPending.has(topic);
+        lazyInterceptorPending.set(topic, msg);
 
-      DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired but editor not loaded, loading...`);
-      await loadLazyExtension('editor');
+        if (alreadyLoading) {
+          DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired again during load, buffering`);
+          return;
+        }
 
-      // Unsubscribe and replay buffered message exactly once
-      unsubscribe(interceptorSource, topic);
-      const bufferedMsg = lazyInterceptorPending.get(topic);
-      lazyInterceptorPending.delete(topic);
-      DEBUG && console.log(`[ext:lazy-interceptor] Editor loaded, re-publishing ${topic}`);
-      publish(interceptorSource, scopes.GLOBAL, topic, bufferedMsg);
-    });
+        DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired but editor not loaded, loading...`);
+        await loadLazyExtension('editor');
+
+        // Unsubscribe and replay buffered message exactly once
+        unsubscribe(interceptorSource, topic);
+        const bufferedMsg = lazyInterceptorPending.get(topic);
+        lazyInterceptorPending.delete(topic);
+        DEBUG && console.log(`[ext:lazy-interceptor] Editor loaded, re-publishing ${topic}`);
+        publish(interceptorSource, scopes.GLOBAL, topic, bufferedMsg);
+      });
+    }
+
+    DEBUG && console.log('[ext:lazy-interceptor] Registered editor event interceptors');
+  } else {
+    DEBUG && console.log('[ext:lazy-interceptor] Editor is v2 — skipping legacy interceptor');
   }
-
-  DEBUG && console.log('[ext:lazy-interceptor] Registered editor event interceptors');
 }
 
 /**
@@ -1434,8 +1443,11 @@ export async function loadExtensions(): Promise<number> {
     // Register lazy extension commands from manifests (after cmd is ready)
     registerLazyExtensionCommands();
 
-    // Register event interceptors for lazy extensions (e.g. editor:open)
-    registerLazyEventInterceptors();
+    // Register event interceptors for lazy extensions (e.g. editor:open).
+    // V2 features get their event interceptors from tile-lazy (via manifest
+    // `lazyEvents`), so skip them here to avoid duplicate registration that
+    // would try to load the v2 tile through the v1 iframe path.
+    registerLazyEventInterceptors({ skipExtensions: v2FeatureIds });
 
     // Load remaining consolidated extensions — skip declarative-only and lazy ones
     const otherConsolidatedIds = consolidatedIds.filter(id =>
@@ -1475,8 +1487,10 @@ export async function loadExtensions(): Promise<number> {
     // Register lazy extension commands
     registerLazyExtensionCommands();
 
-    // Register event interceptors for lazy extensions (e.g. editor:open)
-    registerLazyEventInterceptors();
+    // Register event interceptors for lazy extensions (e.g. editor:open).
+    // V2 features get their event interceptors from tile-lazy (via manifest
+    // `lazyEvents`), so skip them here to avoid duplicate registration.
+    registerLazyEventInterceptors({ skipExtensions: v2FeatureIds });
   }
 
   // Load external built-in extensions (like 'example') as separate windows
