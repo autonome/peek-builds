@@ -14,7 +14,14 @@
 
   console.log(`[ext:${extId}] background.html loaded`);
 
-  // Signal ready to main process
+  // Initialize extension FIRST so its subscribers (cmd:register-batch, etc.)
+  // are registered before any other extension publishes commands on ext:ready.
+  if (extension.init) {
+    console.log(`[ext:${extId}] calling init()`);
+    await extension.init();
+  }
+
+  // Signal ready to main process — only after subscribers are in place.
   api.publish('ext:ready', {
     id: extId,
     manifest: {
@@ -23,12 +30,6 @@
       version: '1.0.0'
     }
   }, api.scopes.SYSTEM);
-
-  // Initialize extension
-  if (extension.init) {
-    console.log(`[ext:${extId}] calling init()`);
-    extension.init();
-  }
 
   // Handle shutdown request from main process
   api.subscribe('app:shutdown', () => {
