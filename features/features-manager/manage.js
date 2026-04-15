@@ -13,11 +13,23 @@ const hasPeekAPI = !!api;
 const contentEl = document.getElementById('content');
 const searchInput = document.getElementById('search-input');
 const featureCountEl = document.querySelector('.feature-count');
+const installUriInput = document.getElementById('install-uri-input');
+const installBtn = document.getElementById('install-btn');
+const installPreview = document.getElementById('install-preview');
+const previewTitle = document.getElementById('preview-title');
+const previewMeta = document.getElementById('preview-meta');
+const previewCapabilities = document.getElementById('preview-capabilities');
+const previewCloseBtn = document.getElementById('preview-close');
+const previewCancelBtn = document.getElementById('preview-cancel');
+const previewInstallBtn = document.getElementById('preview-install');
+const installStatus = document.getElementById('install-status');
+const installStatusText = document.getElementById('install-status-text');
 
 // ─── State ──────────────────────────────────────────────────────────
 
 let features = [];
 let searchFilter = '';
+let pendingInstallUri = null;  // AT URI currently being previewed
 
 // ─── Data loading ───────────────────────────────────────────────────
 
@@ -229,6 +241,212 @@ searchInput.addEventListener('input', () => {
   searchFilter = searchInput.value.trim();
   render();
 });
+
+// ─── Install Flow ───────────────────────────────────────────────────
+
+function showStatus(message, type = 'info') {
+  installStatus.style.display = '';
+  installStatus.className = 'install-status' + (type !== 'info' ? ` ${type}` : '');
+  installStatusText.textContent = message;
+}
+
+function hideStatus() {
+  installStatus.style.display = 'none';
+}
+
+function hidePreview() {
+  installPreview.style.display = 'none';
+  pendingInstallUri = null;
+}
+
+function formatCapabilityName(name) {
+  // Turn 'pubsub.system' or 'filesystem' into readable form
+  return name.replace(/\./g, ' > ').replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+function renderCapabilityList(capabilities) {
+  const items = [];
+
+  if (capabilities.pubsub) {
+    items.push(`PubSub (scopes: ${capabilities.pubsub.scopes.join(', ')})`);
+    if (capabilities.pubsub.topics) {
+      items.push(`Topics: ${capabilities.pubsub.topics.join(', ')}`);
+    }
+  }
+  if (capabilities.datastore) {
+    items.push(`Datastore (tables: ${capabilities.datastore.tables.join(', ')})`);
+  }
+  if (capabilities.network) {
+    items.push(`Network (domains: ${capabilities.network.domains.join(', ')})`);
+  }
+  if (capabilities.window) {
+    const perms = [];
+    if (capabilities.window.create) perms.push('create');
+    if (capabilities.window.query) perms.push('query');
+    if (capabilities.window.manage) perms.push('manage');
+    items.push(`Window (${perms.join(', ')})`);
+  }
+  if (capabilities.filesystem) {
+    items.push('Filesystem access');
+  }
+  if (capabilities.commands) items.push('Commands');
+  if (capabilities.shortcuts) items.push('Shortcuts');
+  if (capabilities.sync) items.push('Sync');
+  if (capabilities.theme) items.push('Theme');
+  if (capabilities.settings) items.push('Settings');
+
+  return items;
+}
+
+async function resolveAtUri(atUri) {
+  if (!hasPeekAPI) return;
+
+  hidePreview();
+  showStatus('Resolving AT URI...');
+
+  try {
+    const result = await api.ipc.invoke('feature-install:resolve', { atUri });
+
+    if (result.error) {
+      showStatus(result.error, 'error');
+      return;
+    }
+
+    const { manifest, source } = result;
+
+    // Get capability preview
+    const capResult = await api.ipc.invoke('feature-install:preview-capabilities', {
+      manifestCapabilities: manifest.capabilities,
+      featureId: manifest.id,
+    });
+
+    hideStatus();
+
+    // Show preview
+    pendingInstallUri = atUri;
+    previewTitle.textContent = manifest.name || manifest.id;
+
+    // Meta info
+    previewMeta.innerHTML = '';
+    const metaRows = [
+      ['ID', manifest.id],
+      ['Version', source.version || manifest.version || 'unknown'],
+      ['Publisher', source.publisherName || source.publisher || 'unknown'],
+      ['DID', source.publisher || 'unknown'],
+    ];
+
+    if (manifest.description) {
+      metaRows.push(['Description', manifest.description]);
+    }
+
+    for (const [label, value] of metaRows) {
+      const row = document.createElement('div');
+      row.className = 'preview-meta-row';
+      row.innerHTML = `<span class="preview-meta-label">${label}</span><span class="preview-meta-value">${escapeHtml(value)}</span>`;
+      previewMeta.appendChild(row);
+    }
+
+    // Capabilities
+    previewCapabilities.innerHTML = '';
+
+    if (capResult && !capResult.error) {
+      const grantedItems = renderCapabilityList(capResult.granted);
+      const deniedItems = capResult.denied || [];
+
+      if (grantedItems.length > 0 || deniedItems.length > 0) {
+        const heading = document.createElement('h3');
+        heading.textContent = 'Capabilities';
+        previewCapabilities.appendChild(heading);
+
+        const list = document.createElement('ul');
+        list.className = 'capability-list';
+
+        for (const item of grantedItems) {
+          const li = document.createElement('li');
+          li.className = 'capability-item granted';
+          li.textContent = item;
+          list.appendChild(li);
+        }
+
+        for (const item of deniedItems) {
+          const li = document.createElement('li');
+          li.className = 'capability-item denied';
+          li.textContent = `${formatCapabilityName(item)} (denied)`;
+          list.appendChild(li);
+        }
+
+        previewCapabilities.appendChild(list);
+      }
+    }
+
+    installPreview.style.display = '';
+
+  } catch (err) {
+    console.error('[features-manager] resolve error:', err);
+    showStatus(`Error: ${err.message}`, 'error');
+  }
+}
+
+async function confirmInstall() {
+  if (!hasPeekAPI || !pendingInstallUri) return;
+
+  const atUri = pendingInstallUri;
+  hidePreview();
+  showStatus('Installing feature...');
+
+  try {
+    const result = await api.ipc.invoke('feature-install:install', {
+      atUri,
+      userApproved: true,
+    });
+
+    if (result.error) {
+      showStatus(`Install failed: ${result.error}`, 'error');
+      return;
+    }
+
+    showStatus(`Installed "${result.entry.name}" successfully`, 'success');
+    installUriInput.value = '';
+
+    // Reload feature list
+    await loadFeatures();
+
+    // Auto-hide success after 3s
+    setTimeout(hideStatus, 3000);
+
+  } catch (err) {
+    console.error('[features-manager] install error:', err);
+    showStatus(`Error: ${err.message}`, 'error');
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Install bar event listeners
+installBtn.addEventListener('click', () => {
+  const uri = installUriInput.value.trim();
+  if (!uri) return;
+  resolveAtUri(uri);
+});
+
+installUriInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const uri = installUriInput.value.trim();
+    if (!uri) return;
+    resolveAtUri(uri);
+  }
+});
+
+previewCloseBtn.addEventListener('click', hidePreview);
+previewCancelBtn.addEventListener('click', () => {
+  hidePreview();
+  hideStatus();
+});
+previewInstallBtn.addEventListener('click', confirmInstall);
 
 // ─── PubSub listeners for real-time updates ─────────────────────────
 

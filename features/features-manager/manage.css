@@ -82,6 +82,168 @@ body {
   cursor: not-allowed;
 }
 
+/* Install bar */
+.install-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--base02);
+}
+
+.install-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--base03);
+  border-radius: 4px;
+  background: var(--base01);
+  color: var(--base05);
+  font-size: 12px;
+  font-family: var(--theme-font-mono, monospace);
+}
+
+.install-input:focus {
+  outline: none;
+  border-color: var(--base0D);
+}
+
+.install-input::placeholder {
+  color: var(--base03);
+}
+
+.btn.primary {
+  background: var(--base0D);
+  color: var(--base00);
+  border-color: var(--base0D);
+}
+
+.btn.primary:hover {
+  background: color-mix(in srgb, var(--base0D) 85%, white);
+}
+
+/* Install preview panel */
+.install-preview {
+  margin: 12px 16px;
+  border: 1px solid var(--base03);
+  border-radius: 6px;
+  background: var(--base01);
+  overflow: hidden;
+}
+
+.install-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--base02);
+}
+
+.install-preview-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--base05);
+}
+
+.install-preview-body {
+  padding: 12px;
+}
+
+.preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--base04);
+}
+
+.preview-meta-row {
+  display: flex;
+  gap: 8px;
+}
+
+.preview-meta-label {
+  font-weight: 600;
+  color: var(--base05);
+  min-width: 80px;
+}
+
+.preview-meta-value {
+  color: var(--base04);
+  word-break: break-all;
+}
+
+.preview-capabilities {
+  font-size: 12px;
+}
+
+.preview-capabilities h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--base05);
+  margin-bottom: 6px;
+}
+
+.capability-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.capability-item {
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.capability-item.granted {
+  background: color-mix(in srgb, var(--base0B) 15%, transparent);
+  color: var(--base0B);
+}
+
+.capability-item.denied {
+  background: color-mix(in srgb, var(--base08) 15%, transparent);
+  color: var(--base08);
+}
+
+.install-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--base02);
+}
+
+/* Install status */
+.install-status {
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--base0D) 10%, transparent);
+  border-bottom: 1px solid var(--base02);
+}
+
+.install-status-text {
+  font-size: 12px;
+  color: var(--base0D);
+}
+
+.install-status.error {
+  background: color-mix(in srgb, var(--base08) 10%, transparent);
+}
+
+.install-status.error .install-status-text {
+  color: var(--base08);
+}
+
+.install-status.success {
+  background: color-mix(in srgb, var(--base0B) 10%, transparent);
+}
+
+.install-status.success .install-status-text {
+  color: var(--base0B);
+}
+
 /* Search */
 .search-container {
   padding: 8px 16px;
