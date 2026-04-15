@@ -121,92 +121,193 @@ function buildAPI(): Record<string, unknown> {
   };
 
   // ── PubSub (if granted) ──
+  //
+  // Publish supports two call shapes:
+  //   api.publish(topic, data, scope?)        // v1-style
+  //   api.pubsub.publish(topic, data, scope?) // v2-style (kept for clarity)
+  // Subscribe supports an optional scope tail argument — callers like editor use
+  // `api.subscribe('editor:open', handler, api.scopes.GLOBAL)`. Scope is only
+  // advisory for the client — capability-based enforcement happens in main.
+
+  function publishImpl(topic: string, data: unknown, scope?: number) {
+    if (!tokenValid) {
+      console.warn('[tile-preload] publish called before initialize()');
+      return;
+    }
+    ipcRenderer.send('tile:pubsub:publish', {
+      token: tileToken,
+      source: sourceAddress,
+      scope: scope || 2,
+      topic,
+      data,
+    });
+  }
+
+  function subscribeImpl(topic: string, callback: (data: unknown) => void, _scope?: number) {
+    if (!tokenValid) {
+      console.warn('[tile-preload] subscribe called before initialize()');
+      return () => {};
+    }
+    ipcRenderer.send('tile:pubsub:subscribe', {
+      token: tileToken,
+      source: sourceAddress,
+      topic,
+    });
+
+    const handler = (_event: unknown, msg: unknown) => {
+      callback(msg);
+    };
+    ipcRenderer.on(`pubsub:${topic}`, handler);
+
+    return () => {
+      ipcRenderer.removeListener(`pubsub:${topic}`, handler);
+      ipcRenderer.send('tile:pubsub:unsubscribe', {
+        token: tileToken,
+        source: sourceAddress,
+        topic,
+      });
+    };
+  }
+
+  api.publish = publishImpl;
+  api.subscribe = subscribeImpl;
 
   api.pubsub = {
-    /**
-     * Publish a message to a topic
-     * Scope enforcement happens in the main process based on granted pubsub scopes
-     */
-    publish: (topic: string, data: unknown, scope?: number) => {
-      if (!tokenValid) {
-        console.warn('[tile-preload] pubsub.publish called before initialize()');
-        return;
-      }
-      ipcRenderer.send('tile:pubsub:publish', {
-        token: tileToken,
-        source: sourceAddress,
-        scope: scope || 2, // Default to SELF
-        topic,
-        data,
-      });
-    },
-
-    /**
-     * Subscribe to a topic
-     */
-    subscribe: (topic: string, callback: (data: unknown) => void) => {
-      if (!tokenValid) {
-        console.warn('[tile-preload] pubsub.subscribe called before initialize()');
-        return () => {};
-      }
-      // Register with main process
-      ipcRenderer.send('tile:pubsub:subscribe', {
-        token: tileToken,
-        source: sourceAddress,
-        topic,
-      });
-
-      // Listen for messages on this topic
-      const handler = (_event: unknown, msg: unknown) => {
-        callback(msg);
-      };
-      ipcRenderer.on(`pubsub:${topic}`, handler);
-
-      // Return unsubscribe function
-      return () => {
-        ipcRenderer.removeListener(`pubsub:${topic}`, handler);
-        ipcRenderer.send('tile:pubsub:unsubscribe', {
-          token: tileToken,
-          source: sourceAddress,
-          topic,
-        });
-      };
-    },
+    publish: publishImpl,
+    subscribe: subscribeImpl,
   };
 
   // ── Commands (if granted) ──
+  //
+  // Supports two registration shapes to match existing feature code:
+  //
+  //   api.commands.register(name, handler)
+  //     Minimal v2 signature — just attaches a handler for cmd:execute:{name}.
+  //
+  //   api.commands.register({name, description, execute, scope, modes, params, ...})
+  //     v1-compatible signature. Re-publishes cmd:register so the cmd panel
+  //     picks it up (matches preload.js behaviour) and wires the execute
+  //     handler identically.
+  //
+  // Both flow through the shared pubsub-based cmd:execute:{name} / :result
+  // protocol, so lazy-tile replay and the cmd panel proxy work unchanged.
 
   api.commands = {
-    /**
-     * Register a command handler
-     */
-    register: (name: string, handler: (params: unknown) => unknown) => {
+    register: (nameOrCommand: unknown, maybeHandler?: (params: unknown) => unknown) => {
       if (!tokenValid) {
         console.warn('[tile-preload] commands.register called before initialize()');
         return;
       }
+
+      let name: string;
+      let handler: (params: unknown) => unknown;
+      let description = '';
+      let scope: string | undefined;
+      let modes: string[] | undefined;
+      let accepts: unknown;
+      let produces: unknown;
+      let params: unknown;
+
+      if (typeof nameOrCommand === 'string') {
+        name = nameOrCommand;
+        if (typeof maybeHandler !== 'function') {
+          console.error('[tile-preload] commands.register(name, handler): handler must be a function');
+          return;
+        }
+        handler = maybeHandler;
+      } else if (nameOrCommand && typeof nameOrCommand === 'object') {
+        const cmd = nameOrCommand as {
+          name?: string;
+          description?: string;
+          execute?: (params: unknown) => unknown;
+          scope?: string;
+          modes?: string[];
+          accepts?: unknown;
+          produces?: unknown;
+          params?: unknown;
+        };
+        if (!cmd.name || typeof cmd.execute !== 'function') {
+          console.error('[tile-preload] commands.register: name and execute are required');
+          return;
+        }
+        name = cmd.name;
+        handler = cmd.execute;
+        description = cmd.description || '';
+        scope = cmd.scope;
+        modes = cmd.modes;
+        accepts = cmd.accepts;
+        produces = cmd.produces;
+        params = cmd.params;
+      } else {
+        console.error('[tile-preload] commands.register: invalid arguments');
+        return;
+      }
+
       ipcRenderer.send('tile:command:register', {
         token: tileToken,
         tileId,
         name,
       });
 
-      // Listen for command execution
-      ipcRenderer.on(`tile:cmd:execute:${name}`, async (_event: unknown, params: unknown) => {
+      // When called with the object form, also publish cmd:register so the
+      // cmd panel picks up this command even though the manifest may only
+      // have declared metadata (matches the v1 preload flow).
+      if (typeof nameOrCommand === 'object') {
+        ipcRenderer.send('tile:pubsub:publish', {
+          token: tileToken,
+          source: sourceAddress,
+          scope: 3, // GLOBAL
+          topic: 'cmd:register',
+          data: {
+            name,
+            description,
+            source: sourceAddress,
+            scope: scope || 'global',
+            modes: modes || [],
+            accepts: accepts || [],
+            produces: produces || [],
+            params: params || [],
+          },
+        });
+      }
+
+      // Listen for command execution via pubsub relay (`pubsub:cmd:execute:{name}`).
+      // Subscribe so main process forwards the topic to us.
+      const execTopic = `cmd:execute:${name}`;
+      ipcRenderer.send('tile:pubsub:subscribe', {
+        token: tileToken,
+        source: sourceAddress,
+        topic: execTopic,
+      });
+
+      ipcRenderer.on(`pubsub:${execTopic}`, async (_event: unknown, msg: { expectResult?: boolean; resultTopic?: string; [k: string]: unknown }) => {
+        let result: unknown;
+        let error: string | null = null;
         try {
-          const result = await handler(params);
-          ipcRenderer.send('tile:command:result', {
-            token: tileToken,
-            name,
-            result,
-          });
+          result = await handler(msg);
         } catch (err) {
-          ipcRenderer.send('tile:command:result', {
+          error = err instanceof Error ? err.message : String(err);
+          console.error(`[tile-preload] command ${name} threw:`, err);
+        }
+
+        // Publish result if the invoker asked for one (chaining / proxy resolution).
+        if (msg && msg.expectResult && msg.resultTopic) {
+          ipcRenderer.send('tile:pubsub:publish', {
             token: tileToken,
-            name,
-            error: err instanceof Error ? err.message : String(err),
+            source: sourceAddress,
+            scope: 3,
+            topic: msg.resultTopic,
+            data: error ? { error } : result,
           });
         }
+
+        // Also notify tile:command:result (useful for tile-level bookkeeping)
+        ipcRenderer.send('tile:command:result', {
+          token: tileToken,
+          name,
+          result,
+          error: error || undefined,
+        });
       });
     },
   };
@@ -284,6 +385,115 @@ function buildAPI(): Record<string, unknown> {
         filter,
       });
     },
+
+    // ─── v1-compat datastore helpers ──────────────────────────────────
+    // These delegate directly to the core datastore IPC handlers. The v1
+    // preload exposed these for every extension; many features call them.
+    // Capability gating happens at the manifest level — if the tile was
+    // granted the 'datastore' capability with the right tables, we trust
+    // it to call these. The main-process handlers do full validation
+    // and enforcement.
+
+    addAddress: (uri: string, options?: unknown) =>
+      ipcRenderer.invoke('datastore-add-address', { uri, options }),
+    getAddress: (id: string) =>
+      ipcRenderer.invoke('datastore-get-address', { id }),
+    updateAddress: (id: string, updates: unknown) =>
+      ipcRenderer.invoke('datastore-update-address', { id, updates }),
+    queryAddresses: (filter?: unknown) =>
+      ipcRenderer.invoke('datastore-query-addresses', { filter }),
+    addVisit: (addressId: string, options?: unknown) =>
+      ipcRenderer.invoke('datastore-add-visit', { addressId, options }),
+    queryVisits: (filter?: unknown) =>
+      ipcRenderer.invoke('datastore-query-visits', { filter }),
+    addContent: (options: unknown) =>
+      ipcRenderer.invoke('datastore-add-content', { options }),
+    queryContent: (filter?: unknown) =>
+      ipcRenderer.invoke('datastore-query-content', { filter }),
+    getTable: (tableName: string) =>
+      ipcRenderer.invoke('datastore-get-table', { tableName }),
+    setRow: (tableName: string, rowId: string, rowData: unknown) =>
+      ipcRenderer.invoke('datastore-set-row', { tableName, rowId, rowData }),
+    getRow: (tableName: string, rowId: string) =>
+      ipcRenderer.invoke('datastore-get-row', { tableName, rowId }),
+    getStats: () =>
+      ipcRenderer.invoke('datastore-get-stats'),
+
+    // Tag operations
+    getOrCreateTag: (name: string) =>
+      ipcRenderer.invoke('datastore-get-or-create-tag', { name }),
+    tagAddress: (addressId: string, tagId: string) =>
+      ipcRenderer.invoke('datastore-tag-address', { addressId, tagId }),
+    untagAddress: (addressId: string, tagId: string) =>
+      ipcRenderer.invoke('datastore-untag-address', { addressId, tagId }),
+    getTagsByFrecency: (domain?: string) =>
+      ipcRenderer.invoke('datastore-get-tags-by-frecency', { domain }),
+    renameTag: (tagId: string, newName: string) =>
+      ipcRenderer.invoke('datastore-rename-tag', { tagId, newName }),
+    updateTagColor: (tagId: string, color: string) =>
+      ipcRenderer.invoke('datastore-update-tag-color', { tagId, color }),
+    deleteTag: (tagId: string) =>
+      ipcRenderer.invoke('datastore-delete-tag', { tagId }),
+    getAddressTags: (addressId: string) =>
+      ipcRenderer.invoke('datastore-get-address-tags', { addressId }),
+    getAddressesByTag: (tagId: string) =>
+      ipcRenderer.invoke('datastore-get-addresses-by-tag', { tagId }),
+    getUntaggedAddresses: () =>
+      ipcRenderer.invoke('datastore-get-untagged-addresses', {}),
+
+    // Item operations
+    addItem: (type: string, options: unknown = {}) =>
+      ipcRenderer.invoke('datastore-add-item', { type, options }),
+    getItem: (id: string) =>
+      ipcRenderer.invoke('datastore-get-item', { id }),
+    updateItem: (id: string, options: unknown) =>
+      ipcRenderer.invoke('datastore-update-item', { id, options }),
+    deleteItem: (id: string) =>
+      ipcRenderer.invoke('datastore-delete-item', { id }),
+    hardDeleteItem: (id: string) =>
+      ipcRenderer.invoke('datastore-hard-delete-item', { id }),
+    updateItemTitle: (id: string, title: string) =>
+      ipcRenderer.invoke('datastore-update-item-title', { id, title }),
+    updateItemFavicon: (id: string, favicon: string) =>
+      ipcRenderer.invoke('datastore-update-item-favicon', { id, favicon }),
+    queryItems: (filter: unknown = {}) =>
+      ipcRenderer.invoke('datastore-query-items', { filter }),
+    tagItem: (itemId: string, tagId: string) =>
+      ipcRenderer.invoke('datastore-tag-item', { itemId, tagId }),
+    untagItem: (itemId: string, tagId: string) =>
+      ipcRenderer.invoke('datastore-untag-item', { itemId, tagId }),
+    getItemTags: (itemId: string) =>
+      ipcRenderer.invoke('datastore-get-item-tags', { itemId }),
+    getItemsByTag: (tagId: string) =>
+      ipcRenderer.invoke('datastore-get-items-by-tag', { tagId }),
+    getHistory: (filter: unknown = {}) =>
+      ipcRenderer.invoke('datastore-get-history', filter),
+    recordItemVisit: (data: unknown) =>
+      ipcRenderer.invoke('datastore-record-item-visit', data),
+    getItemVisits: (data: unknown) =>
+      ipcRenderer.invoke('datastore-get-item-visits', data),
+    queryItemVisits: (data: unknown = {}) =>
+      ipcRenderer.invoke('datastore-query-item-visits', data),
+    trackNavigation: (data: unknown) =>
+      ipcRenderer.invoke('datastore-track-navigation', data),
+    queryItemsByFrecency: (data: unknown = {}) =>
+      ipcRenderer.invoke('datastore-query-items-by-frecency', data),
+
+    // Item events
+    addItemEvent: (data: unknown) =>
+      ipcRenderer.invoke('datastore-add-item-event', data),
+    getItemEvent: (data: unknown) =>
+      ipcRenderer.invoke('datastore-get-item-event', data),
+    queryItemEvents: (data: unknown = {}) =>
+      ipcRenderer.invoke('datastore-query-item-events', data),
+    deleteItemEvent: (data: unknown) =>
+      ipcRenderer.invoke('datastore-delete-item-event', data),
+    deleteItemEvents: (data: unknown) =>
+      ipcRenderer.invoke('datastore-delete-item-events', data),
+    getLatestItemEvent: (data: unknown) =>
+      ipcRenderer.invoke('datastore-get-latest-item-event', data),
+    countItemEvents: (data: unknown) =>
+      ipcRenderer.invoke('datastore-count-item-events', data),
   };
 
   // ── Network (if granted) ──
@@ -406,6 +616,97 @@ function buildAPI(): Record<string, unknown> {
       if (result.error) return { success: false, error: result.error };
       return { success: true };
     },
+  };
+
+  // ── Shortcuts (v1-compat) ─────────────────────────────────────────
+  // Many features use api.shortcuts.register(shortcut, cb, {global, mode}).
+  // The tile capability model hasn't yet formalised shortcut grants; rather
+  // than stub these out (silently breaking features), delegate to the core
+  // 'registershortcut' / 'unregistershortcut' IPC channels with the tile's
+  // source address. Main-process handlers do the enforcement.
+
+  function rndm(): string {
+    return Math.random().toString(36).slice(2);
+  }
+
+  api.shortcuts = {
+    register: (shortcut: string, cb: () => void, options: { global?: boolean; mode?: string } = {}) => {
+      const isGlobal = options.global === true;
+      const replyTopic = `${shortcut}${rndm()}`;
+      ipcRenderer.send('registershortcut', {
+        source: sourceAddress,
+        shortcut,
+        replyTopic,
+        global: isGlobal,
+        mode: options.mode,
+      });
+      ipcRenderer.on(replyTopic, () => cb());
+    },
+    unregister: (shortcut: string, options: { global?: boolean; mode?: string } = {}) => {
+      const isGlobal = options.global === true;
+      ipcRenderer.send('unregistershortcut', {
+        source: sourceAddress,
+        shortcut,
+        global: isGlobal,
+        mode: options.mode,
+      });
+    },
+  };
+
+  // ── Files (v1-compat) ─────────────────────────────────────────────
+  api.files = {
+    save: (content: string, options: { filename?: string; mimeType?: string } = {}) =>
+      ipcRenderer.invoke('file-save-dialog', {
+        content,
+        filename: options.filename,
+        mimeType: options.mimeType,
+      }),
+    open: () => ipcRenderer.invoke('file-open-dialog'),
+    readFromPath: (filePath: string) =>
+      ipcRenderer.invoke('file-read-from-path', { filePath }),
+    writeToPath: (filePath: string, content: string) =>
+      ipcRenderer.invoke('file-write-to-path', { filePath, content }),
+  };
+
+  // ── Modes (v1-compat) ─────────────────────────────────────────────
+  api.modes = {
+    getWindowMode: (windowId: number | null = null) =>
+      ipcRenderer.invoke('modes:getWindowMode', { windowId }),
+    setMajorMode: (mode: string, windowId: number | null = null) =>
+      ipcRenderer.invoke('modes:setMajorMode', { mode, windowId }),
+    listModes: () => ipcRenderer.invoke('modes:listModes'),
+    getCommandContext: () => ipcRenderer.invoke('modes:getCommandContext'),
+    onModeChange: (callback: (state: { major: string }, windowId?: number) => void) => {
+      subscribeImpl('modes:changed', (msg: unknown) => {
+        const m = msg as { major?: string; windowId?: number };
+        callback({ major: m.major || 'default' }, m.windowId);
+      }, 3);
+    },
+  };
+
+  // ── Context (v1-compat) ───────────────────────────────────────────
+  api.context = {
+    get: (key: string, windowId: number | null = null) =>
+      ipcRenderer.invoke('context-get', { key, windowId }),
+    set: (key: string, value: unknown, metadata?: unknown, windowId?: number | null) =>
+      ipcRenderer.invoke('context-set', { key, value, metadata, windowId }),
+    history: (key: string, limit?: number) =>
+      ipcRenderer.invoke('context-history', { key, limit }),
+    snapshot: (windowId?: number | null) =>
+      ipcRenderer.invoke('context-snapshot', { windowId }),
+    windowsWithValue: (key: string, value: unknown) =>
+      ipcRenderer.invoke('context-windows-with-value', { key, value }),
+    windowsInSpace: (spaceId: string) =>
+      ipcRenderer.invoke('context-windows-in-space', { spaceId }),
+  };
+
+  // ── closeWindow (v1-compat) ───────────────────────────────────────
+  api.closeWindow = (id?: number | null) => {
+    if (id == null) {
+      ipcRenderer.send('tile:window:close', { token: tileToken });
+      return;
+    }
+    ipcRenderer.invoke('window-close', { id });
   };
 
   // ── Log (always available) ──
