@@ -121,23 +121,129 @@ Settings:
 - "Update Available" badge when newer version exists
 
 ### manage.html — Manage Features
-- List non-built-in features from registry, filterable by source (local, atproto, url). Built-in features excluded for now — will be added once the system stabilizes.
+- List non-built-in features from registry, filterable by source (dev, local, atproto, url). Built-in features excluded for now — will be added once the system stabilizes.
 - Per-feature: name, version, source badge, status (active/disabled/pending), update status
-- Actions: enable/disable toggle, remove, check for update, update now, open settings
-- Per-feature update policy selector (auto / notify / pinned)
+- Actions (always visible, never hover-reveal):
+  - All features: enable/disable toggle, remove, open settings (if applicable)
+  - Atproto features: check for update, update now, per-feature update policy selector (auto / notify / pinned)
+  - Dev features: "Reload" (re-reads files from source dir without restart), "Open DevTools" (opens Electron DevTools on the tile's webcontents), "Validate" (checks manifest, resources, capabilities), "Publish" (opens publish wizard pre-selecting this feature)
 - Capability detail view (granted vs denied)
 - Install history section (chronological log)
 - "Install from AT URI" input field
+- **"Create Feature" button** — prompts user for a directory location (native directory picker), scaffolds a new feature there, registers in registry with `source.type = 'dev'`
 - "Check for Updates" button (triggers manual check for all features)
 - Update status badge on features with available updates
 
 ### publish.html — Publish Feature
 - Requires active AT Protocol session (prompts to log in via Lex if not)
-- Step 1: Select local feature directory
+- Can be opened from manage UI's per-feature "Publish" button (pre-selects that feature) or standalone
+- Step 1: Select feature to publish (pre-selected if opened from a dev feature card, otherwise pick from local/dev features)
 - Step 2: Preview (manifest, files, sizes, capabilities)
 - Step 3: Add metadata (description, categories, screenshots, readme)
 - Step 4: Confirm and publish (upload blobs, create record)
 - Step 5: Success with AT URI for sharing
+
+---
+
+## Feature Development
+
+The features manager is the full dev hub for creating, developing, debugging, and publishing features. No CLI commands — everything flows from the manage UI.
+
+### Source type: `dev`
+
+A new source type alongside `builtin`, `local`, `atproto`, `url`. Dev features:
+- Point directly at the developer's source directory (no file copy)
+- The developer owns the source location — Peek just stores the absolute path in the registry
+- Capabilities are auto-approved in dev mode (no approval prompt)
+- CSP is relaxed for dev features to allow DevTools and debugging
+- Appear in the manage UI with dev-specific actions
+
+### Create Feature flow
+
+1. User clicks **"Create Feature"** button in manage UI
+2. Native directory picker opens — user chooses where to create the feature (e.g., `~/Projects/my-feature/`)
+3. User enters a feature name/id in a simple dialog
+4. Scaffold is written to the chosen directory:
+   ```
+   my-feature/
+     manifest.json      # v2 manifest with id, name, one background tile, minimal capabilities
+     background.html    # minimal with api.initialize() call
+     background.js      # empty init function, ready to add logic
+     home.html          # optional UI page template
+     home.js            # minimal UI setup
+     home.css           # basic styles with theme variables
+   ```
+5. Feature is registered in registry with `source.type = 'dev'`, `path` pointing at chosen directory, `userApproved = true`
+6. Feature appears in manage UI immediately with dev-specific actions
+
+### Dev-specific actions in manage UI
+
+- **Reload** — re-reads files from the source directory and reloads the tile without restarting Peek. For background tiles: destroys and recreates the iframe/worker. For window tiles: reloads the window.
+- **Open DevTools** — opens Electron DevTools on the tile's BrowserWindow or iframe webcontents. Essential for console.log debugging, network inspection, DOM inspection.
+- **Validate** — runs manifest validation (schema, required fields), checks all declared resource files exist, checks capability declarations match what the code actually uses (best-effort), reports warnings and errors inline.
+- **Publish** — opens the publish wizard with this feature pre-selected. Same publish flow as Phase 4, just pre-populated.
+
+### Dev feature lifecycle
+
+- Dev features are loaded on startup like any other feature (read from registry, load manifest from path, launch tile)
+- Since path points to the dev's source dir, any file changes are picked up on reload (no re-install needed)
+- Dev features persist across restarts (registered in registry)
+- Removing a dev feature from the manage UI only removes the registry entry — source files on disk are untouched
+- When ready to distribute, the dev publishes from the feature card → publish wizard → atproto
+
+### IPC handlers for dev workflow
+
+- `feature-dev:create` — takes directory path + feature name, writes scaffold files, registers in registry
+- `feature-dev:reload` — takes feature id, destroys and recreates the tile context from the source path
+- `feature-dev:open-devtools` — takes feature id, finds the tile's webcontents, opens DevTools
+- `feature-dev:validate` — takes feature id, reads manifest + files, runs validation checks, returns results
+
+### Scaffold template
+
+The manifest.json scaffold:
+```json
+{
+  "manifestVersion": 2,
+  "id": "{feature-id}",
+  "name": "{Feature Name}",
+  "version": "0.1.0",
+  "description": "",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "width": 800,
+        "height": 600,
+        "title": "{Feature Name}"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": { "scopes": ["self", "global"] },
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "{feature-id}",
+      "description": "Open {Feature Name}",
+      "action": { "type": "window", "url": "home.html" }
+    }
+  ]
+}
+```
+
+### Registry changes for dev
+
+- Add `'dev'` to `FeatureSource.type` union: `'builtin' | 'local' | 'atproto' | 'url' | 'dev'`
+- Dev features: `userApproved` always true, `path` is the external source directory (not under app data)
 
 ---
 
@@ -287,7 +393,18 @@ Datastore table `features_history`:
 24. Add capability-change detection (block auto-update if permissions expanded, require re-approval)
 25. Add `feature:update-available` pubsub event and HUD/badge integration
 
-### Phase 6 — Polish + Indexing
-26. Curated feature directory (well-known list)
-27. Relay/indexer service (separate repo)
-28. Wire browse UI to indexer search API
+### Phase 6 — Feature Development Workflow
+26. Add `'dev'` source type to registry
+27. Implement `feature-dev:create` IPC handler (scaffold writer + registry registration)
+28. Implement `feature-dev:reload` IPC handler (destroy and recreate tile context)
+29. Implement `feature-dev:open-devtools` IPC handler (find tile webcontents, open DevTools)
+30. Implement `feature-dev:validate` IPC handler (manifest + resource validation)
+31. Add "Create Feature" button to manage UI with native directory picker + name dialog
+32. Add dev-specific action buttons to dev feature cards (Reload, Open DevTools, Validate, Publish)
+33. Wire "Publish" button on dev cards to open publish wizard pre-selecting the feature
+34. Write scaffold templates (manifest.json, background.html/js, home.html/js/css)
+
+### Phase 7 — Polish + Indexing
+35. Curated feature directory (well-known list)
+36. Relay/indexer service (separate repo)
+37. Wire browse UI to indexer search API
