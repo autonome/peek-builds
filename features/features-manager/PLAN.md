@@ -33,15 +33,13 @@ Design rationale: individual blobs (not zip/tar) for content-addressability, par
 
 Versioning: query `listRecords` for collection filtered by `featureId`, sort by `createdAt` desc for latest.
 
-### `space.peek.feature.star` (record type)
-
-User signal for popularity. Same pattern as `app.bsky.feed.like`:
-- `subject` (com.atproto.repo.strongRef, required)
-- `createdAt` (datetime, required)
-
 ### `space.peek.feature.defs` (definitions)
 
 Known category values: productivity, developer, social, media, search, privacy, theme, utility, fun.
+
+### Future lexicons (deferred)
+- Recommendations / "installed" signals — social discovery mechanisms, deferred until base system is functional
+- Abuse/safety reporting — flagging malicious features
 
 ---
 
@@ -123,7 +121,7 @@ Settings:
 - "Update Available" badge when newer version exists
 
 ### manage.html — Manage Features
-- List all features from registry, grouped/filterable by source (builtin, local, atproto, url)
+- List non-built-in features from registry, filterable by source (local, atproto, url). Built-in features excluded for now — will be added once the system stabilizes.
 - Per-feature: name, version, source badge, status (active/disabled/pending), update status
 - Actions: enable/disable toggle, remove, check for update, update now, open settings
 - Per-feature update policy selector (auto / notify / pinned)
@@ -172,12 +170,15 @@ New features inherit the `defaultUpdatePolicy` from the features-manager setting
 ### Update Flow
 
 1. Background tile checks for updates on interval
-2. For each feature with an available update:
+2. For each feature with an available update, first compare capabilities:
+   - **If capabilities unchanged or reduced**: proceed based on update policy
+   - **If capabilities expanded (new or broader permissions requested)**: regardless of update policy, do NOT auto-install. Set `availableVersion` in registry, publish `feature:update-available` event with `{capabilitiesChanged: true}`, show notification and visual indicator in manage UI so the user can review and approve the new capabilities.
+3. For features that pass the capability check:
    - If `updatePolicy: 'auto'`: fetch new version from publisher PDS, validate manifest and bundle, install over existing, update registry entry (version, availableVersion cleared), write `update` event to `features_history`
    - If `updatePolicy: 'notify'`: set `availableVersion` in registry, publish `feature:update-available` event, show badge in manage UI
    - If `updatePolicy: 'pinned'`: skip entirely
-3. **Preserve user data**: update installs replace feature files but preserve any user settings or data associated with that feature
-4. **Rollback**: before applying an update, back up the previous version's files to a versioned backup location. If the update fails validation or causes load errors, automatically revert to the previous version and log the failure.
+4. **Preserve user data**: update installs replace feature files but preserve any user settings or data associated with that feature
+5. **Failed updates**: if download or validation fails (corrupt files, invalid manifest, hash mismatch), the update is not applied — the existing version remains in place. The failure is logged to `features_history`. The user can re-install previous versions from their install history (AT URI + version are recorded).
 
 ### Update Commands
 
@@ -245,7 +246,7 @@ Datastore table `features_history`:
 3. **PDS blob limits** — large feature bundles may exceed limits. Show sizes in publish preview.
 4. **Capability approval UX** — `userApproved` flow not yet fully implemented in UI. Needed before atproto installs are safe.
 5. **NSID namespace** — `space.peek.feature.*` requires controlling `peek.space` domain for AT Protocol validation.
-6. **Update atomicity** — updates must be atomic (backup old, install new, verify, or rollback). Partial installs could leave a feature broken.
+6. **Update atomicity** — if download/validation fails, don't install (old version stays). No complex rollback needed — users can re-install previous versions from install history.
 
 ---
 
@@ -283,7 +284,7 @@ Datastore table `features_history`:
 21. Implement `updater.js` — background interval check logic
 22. Wire per-feature update policy UI in manage.html
 23. Implement `check feature updates` and `update feature <name>` commands
-24. Implement rollback mechanism (backup previous version before update)
+24. Add capability-change detection (block auto-update if permissions expanded, require re-approval)
 25. Add `feature:update-available` pubsub event and HUD/badge integration
 
 ### Phase 6 — Polish + Indexing
