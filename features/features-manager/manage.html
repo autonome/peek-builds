@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>Features</title>
+    <link rel="stylesheet" type="text/css" href="manage.css">
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-left">
+        <h1 class="header-title">Features</h1>
+        <span class="feature-count"></span>
+      </div>
+      <div class="header-right">
+        <button class="btn" id="check-updates-btn" disabled title="Check for updates (coming soon)">
+          Check for Updates
+        </button>
+      </div>
+    </header>
+
+    <div class="search-container">
+      <input
+        class="search-input"
+        placeholder="Filter installed features..."
+        type="search"
+        id="search-input"
+      >
+    </div>
+
+    <div class="content" id="content">
+      <div class="loading">Loading features...</div>
+    </div>
+
+    <script>
+      // V2 tile runtime compat shims
+      (function() {
+        const api = window.app;
+        if (!api) return;
+        const isTileV2 = typeof api.initialize === 'function';
+        if (!isTileV2) return;
+        if (api.pubsub && !api.publish) {
+          api.publish = api.pubsub.publish;
+          api.subscribe = api.pubsub.subscribe;
+        }
+        if (api.settings && !api.settings.getExtKey) {
+          api.settings.getExtKey = (extId, key) => api.settings.get(extId + '.' + key);
+        }
+      })();
+    </script>
+    <script type="module" src="manage.js"></script>
+  </body>
+</html>
