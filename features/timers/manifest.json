@@ -1,11 +1,52 @@
 {
+  "manifestVersion": 2,
   "id": "timers",
   "shortname": "timers",
   "name": "Timers",
   "description": "Countdown timers, alarms, stopwatches, and interval timers",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "peek://ext/timers/home.html",
+        "width": 700,
+        "height": 600,
+        "title": "Timers"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "timer:*",
+        "cmd:execute:*",
+        "cmd:register",
+        "cmd:unregister",
+        "ext:ready",
+        "app:shutdown",
+        "ext:timers:shutdown"
+      ]
+    },
+    "datastore": {
+      "tables": ["items"]
+    },
+    "window": {
+      "create": true
+    },
+    "commands": true
+  },
   "commands": [
     {
       "name": "timers",
@@ -15,22 +56,26 @@
     {
       "name": "timer countdown",
       "description": "Start a countdown timer (e.g., 30m, 1h, 5m30s)",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "duration", "type": "string", "required": true, "description": "Duration (e.g., 30m, 1h, 5m30s, 90s)" }]
     },
     {
       "name": "timer alarm",
       "description": "Set an alarm for a specific time (e.g., 6pm, 14:30)",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "time", "type": "string", "required": true, "description": "Time (e.g., 6pm, 14:30, 6:30pm)" }]
     },
     {
       "name": "timer stopwatch",
       "description": "Start a stopwatch that counts up",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "name", "type": "string", "required": false, "description": "Optional name for the stopwatch" }]
     },
     {
       "name": "timer interval",
       "description": "Start a repeating interval timer",
-      "action": { "type": "execute" }
+      "action": { "type": "execute" },
+      "params": [{ "name": "duration", "type": "string", "required": true, "description": "Interval duration (e.g., 25m, 1h)" }]
     }
   ]
 }
