@@ -1,12 +1,48 @@
 {
+  "manifestVersion": 2,
   "id": "scripts",
   "shortname": "scripts",
   "name": "Scripts",
   "description": "Userscripts and content scripts system for web automation",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
   "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "manager",
+      "type": "window",
+      "url": "manager.html",
+      "windowHints": {
+        "key": "scripts-manager",
+        "width": 1200,
+        "height": 800,
+        "title": "Scripts Manager"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:scripts:shutdown",
+        "app:shutdown",
+        "scripts:*"
+      ]
+    },
+    "window": {
+      "create": true
+    },
+    "commands": true,
+    "shortcuts": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "open scripts",
@@ -16,6 +52,12 @@
         "url": "peek://scripts/manager.html",
         "options": { "key": "scripts-manager", "width": 1200, "height": 800, "title": "Scripts Manager" }
       }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Command+Shift+S",
+      "command": "open scripts"
     }
   ]
 }

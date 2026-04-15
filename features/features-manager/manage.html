@@ -14,11 +14,42 @@
         <span class="feature-count"></span>
       </div>
       <div class="header-right">
+        <button class="btn" id="create-feature-btn" title="Create a new feature from scratch">
+          Create Feature
+        </button>
         <button class="btn" id="check-updates-btn" title="Check all features for updates">
           Check for Updates
         </button>
       </div>
     </header>
+
+    <div class="create-feature-form" id="create-feature-form" style="display:none;">
+      <div class="create-feature-header">
+        <h2 class="create-feature-title">Create New Feature</h2>
+        <button class="action-btn" id="create-cancel-btn">Cancel</button>
+      </div>
+      <div class="create-feature-body">
+        <div class="create-field">
+          <label class="create-label">Directory</label>
+          <div class="create-dir-row">
+            <span class="create-dir-path" id="create-dir-path">No directory selected</span>
+            <button class="btn" id="create-pick-dir-btn">Choose...</button>
+          </div>
+        </div>
+        <div class="create-field">
+          <label class="create-label" for="create-feature-id">Feature ID</label>
+          <input class="create-input" type="text" id="create-feature-id" placeholder="my-feature" pattern="[a-z0-9][a-z0-9-]*[a-z0-9]">
+          <span class="create-hint">Lowercase, alphanumeric + hyphens</span>
+        </div>
+        <div class="create-field">
+          <label class="create-label" for="create-feature-name">Feature Name</label>
+          <input class="create-input" type="text" id="create-feature-name" placeholder="My Feature">
+        </div>
+      </div>
+      <div class="create-feature-footer">
+        <button class="btn primary" id="create-submit-btn" disabled>Create</button>
+      </div>
+    </div>
 
     <div class="install-bar">
       <input

@@ -34,6 +34,16 @@ const capReviewChanges = document.getElementById('cap-review-changes');
 const capReviewDismiss = document.getElementById('cap-review-dismiss');
 const capReviewApprove = document.getElementById('cap-review-approve');
 
+// Create Feature form
+const createFeatureBtn = document.getElementById('create-feature-btn');
+const createFeatureForm = document.getElementById('create-feature-form');
+const createCancelBtn = document.getElementById('create-cancel-btn');
+const createPickDirBtn = document.getElementById('create-pick-dir-btn');
+const createDirPath = document.getElementById('create-dir-path');
+const createFeatureId = document.getElementById('create-feature-id');
+const createFeatureName = document.getElementById('create-feature-name');
+const createSubmitBtn = document.getElementById('create-submit-btn');
+
 // ─── State ──────────────────────────────────────────────────────────
 
 let features = [];
