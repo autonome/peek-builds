@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateItemFavicon, updateModeForNavigation, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
+import { initCmd } from './cmd-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { initTray } from './tray.js';
@@ -76,10 +77,15 @@ let extensionHostWindow: BrowserWindow | null = null;
 
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
-const CONSOLIDATED_EXTENSION_IDS = ['cmd', 'editor', 'groups', 'hud', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
+//
+// NOTE: 'cmd' was removed from this list when it was extracted from features/
+// into core app code (app/cmd/). It's now loaded via initCmd() from cmd-glue.ts,
+// which runs before feature loading so the command registry is ready for
+// feature command registrations.
+const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'hud', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
-const EAGER_EXTENSION_IDS = new Set(['cmd', 'hud', 'entities']);
+const EAGER_EXTENSION_IDS = new Set(['hud', 'entities']);
 
 // Track which lazy extensions have been loaded
 const lazyExtensionLoaded = new Set<string>();
@@ -1129,14 +1135,12 @@ export async function loadEnabledExtensions(): Promise<number> {
   const extStart = Date.now();
   const builtinExtIds = getRegisteredExtensionIds();
 
-  // Phase 1: Early - load cmd first (it's the command registry)
+  // Phase 1: Early
+  // Note: cmd (command registry) is no longer loaded here — it's core app code
+  // loaded via initCmd() from cmd-glue.ts in the main loadExtensions() path.
+  // This alternate loader (loadEnabledExtensions) creates a standalone window
+  // per extension, which is NOT how cmd runs — so no cmd handling here.
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
-
-  if (builtinExtIds.includes('cmd') && isBuiltinExtensionEnabled('cmd')) {
-    const cmdStart = Date.now();
-    await createExtensionWindow('cmd');
-    DEBUG && console.log(`[ext:timing] cmd: ${Date.now() - cmdStart}ms`);
-  }
 
   // Phase 2: Commands - other extensions should register commands
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
@@ -1144,9 +1148,8 @@ export async function loadEnabledExtensions(): Promise<number> {
   // Register declarative commands/shortcuts from manifests (after cmd is ready)
   registerDeclarativeCommands();
 
-  // Load remaining built-in extensions in parallel (skip declarative-only)
-  const otherBuiltinIds = builtinExtIds.filter(id => id !== 'cmd');
-  const enabledBuiltinIds = otherBuiltinIds.filter(id => isBuiltinExtensionEnabled(id) && !isDeclarativeOnly(id));
+  // Load built-in extensions in parallel (skip declarative-only)
+  const enabledBuiltinIds = builtinExtIds.filter(id => isBuiltinExtensionEnabled(id) && !isDeclarativeOnly(id));
 
   const parallelStart = Date.now();
   await Promise.allSettled(enabledBuiltinIds.map(id => createExtensionWindow(id)));
@@ -1282,12 +1285,10 @@ async function loadExtensionsConsolidated(): Promise<number> {
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
 
   // Send load commands to extension host
-  // Load cmd first (it's the command registry)
-  if (allExtIds.includes('cmd')) {
-    host.webContents.send('ext:load', { id: 'cmd', url: `peek://cmd/background.html` });
-    // Wait for cmd iframe to load
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  // Note: cmd (command registry) is no longer loaded here — it's loaded via
+  // initCmd() from cmd-glue.ts in the main loadExtensions() path. This
+  // alternate loader is kept for compatibility but should NOT be used alongside
+  // the main loader without coordinating the cmd init phase.
 
   // Phase 2: Commands
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
@@ -1295,8 +1296,8 @@ async function loadExtensionsConsolidated(): Promise<number> {
   // Register declarative commands/shortcuts from manifests (after cmd is ready)
   registerDeclarativeCommands();
 
-  // Load remaining extensions (skip declarative-only)
-  const otherIds = allExtIds.filter(id => id !== 'cmd' && !isDeclarativeOnly(id));
+  // Load extensions (skip declarative-only)
+  const otherIds = allExtIds.filter(id => !isDeclarativeOnly(id));
   for (const extId of otherIds) {
     host.webContents.send('ext:load', { id: extId, url: `peek://${extId}/background.html` });
   }
@@ -1422,36 +1423,34 @@ export async function loadExtensions(): Promise<number> {
     }
   });
 
-  // Create extension host window for consolidated extensions
+  // Always create the extension host window — cmd (the command registry) lives
+  // there as an iframe, even when no features are consolidated. This is core
+  // infrastructure, loaded via cmd-glue.ts before any feature registers commands.
+  const host = await createExtensionHostWindow();
+
+  // Phase 1a: Load cmd (command registry) via cmd-glue. This MUST complete
+  // before any feature tries to register commands via cmd:register pubsub.
+  await initCmd({ host, loadExtInHost, waitForExtLoaded });
+
+  // Phase 2: Commands
+  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
+
+  // Register declarative commands/shortcuts from manifests (after cmd is ready)
+  registerDeclarativeCommands();
+
+  // Register lazy extension commands from manifests (after cmd is ready)
+  registerLazyExtensionCommands();
+
+  // Register event interceptors for lazy extensions (e.g. editor:open).
+  // V2 features get their event interceptors from tile-lazy (via manifest
+  // `lazyEvents`), so skip them here to avoid duplicate registration that
+  // would try to load the v2 tile through the v1 iframe path.
+  registerLazyEventInterceptors({ skipExtensions: v2FeatureIds });
+
   if (consolidatedIds.length > 0) {
-    const host = await createExtensionHostWindow();
-
-    // Load cmd first (command registry) and wait for it to be ready
-    if (consolidatedIds.includes('cmd')) {
-      loadExtInHost(host, 'cmd', 'peek://cmd/background.html');
-      await waitForExtLoaded('cmd', 5000);
-      // Small additional delay to ensure cmd's pubsub subscribers are registered
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Phase 2: Commands
-    publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
-
-    // Register declarative commands/shortcuts from manifests (after cmd is ready)
-    registerDeclarativeCommands();
-
-    // Register lazy extension commands from manifests (after cmd is ready)
-    registerLazyExtensionCommands();
-
-    // Register event interceptors for lazy extensions (e.g. editor:open).
-    // V2 features get their event interceptors from tile-lazy (via manifest
-    // `lazyEvents`), so skip them here to avoid duplicate registration that
-    // would try to load the v2 tile through the v1 iframe path.
-    registerLazyEventInterceptors({ skipExtensions: v2FeatureIds });
-
     // Load remaining consolidated extensions — skip declarative-only and lazy ones
     const otherConsolidatedIds = consolidatedIds.filter(id =>
-      id !== 'cmd' && !isDeclarativeOnly(id) && EAGER_EXTENSION_IDS.has(id)
+      !isDeclarativeOnly(id) && EAGER_EXTENSION_IDS.has(id)
     );
     for (const extId of otherConsolidatedIds) {
       loadExtInHost(host, extId, `peek://${extId}/background.html`);
@@ -1460,7 +1459,7 @@ export async function loadExtensions(): Promise<number> {
     // Also load non-eager consolidated extensions that don't have manifest commands
     // (they need their background page to register commands at runtime)
     const nonEagerWithoutManifestCmds = consolidatedIds.filter(id => {
-      if (id === 'cmd' || isDeclarativeOnly(id) || EAGER_EXTENSION_IDS.has(id)) return false;
+      if (isDeclarativeOnly(id) || EAGER_EXTENSION_IDS.has(id)) return false;
       const extPath = getExtensionPath(id);
       if (!extPath) return false;
       const manifest = loadExtensionManifest(extPath);
@@ -1477,20 +1476,6 @@ export async function loadExtensions(): Promise<number> {
     if (allEagerIds.length > 0) {
       await Promise.all(allEagerIds.map(id => waitForExtLoaded(id, 10000)));
     }
-  } else {
-    // Phase 2: Commands (even if no consolidated)
-    publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
-
-    // Register declarative commands/shortcuts from manifests
-    registerDeclarativeCommands();
-
-    // Register lazy extension commands
-    registerLazyExtensionCommands();
-
-    // Register event interceptors for lazy extensions (e.g. editor:open).
-    // V2 features get their event interceptors from tile-lazy (via manifest
-    // `lazyEvents`), so skip them here to avoid duplicate registration.
-    registerLazyEventInterceptors({ skipExtensions: v2FeatureIds });
   }
 
   // Load external built-in extensions (like 'example') as separate windows

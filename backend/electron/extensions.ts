@@ -154,13 +154,10 @@ export function loadExtensionManifest(extPath: string): ExtensionManifest | null
 /**
  * Check if a built-in extension is enabled
  * Defaults to true for built-in extensions
- * Note: 'cmd' is always enabled - it's the command registry that other extensions depend on
+ * Note: 'cmd' used to be special-cased here but was extracted out of features/
+ * into core app code (app/cmd/). It no longer appears in the extension registry.
  */
 export function isBuiltinExtensionEnabled(extId: string): boolean {
-  // cmd extension cannot be disabled - it's required for command registration
-  if (extId === 'cmd') {
-    return true;
-  }
 
   try {
     const db = getDb();
