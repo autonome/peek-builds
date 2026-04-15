@@ -1,0 +1,396 @@
+#!/usr/bin/env node
+
+/**
+ * Peek MCP Server — exposes Peek's datastore via Model Context Protocol.
+ *
+ * Transport: stdio (JSON-RPC 2.0, newline-delimited JSON)
+ * Spawned by Claude Code as a subprocess.
+ *
+ * Environment:
+ *   PEEK_DB_PATH — path to Peek's datastore.sqlite
+ */
+
+import { createInterface } from 'node:readline';
+import { openDb, queryItems, getItem, createItem, updateItem, deleteItem,
+         listTags, tagItem, untagItem, recordEvent, listTasks, completeTask,
+         getTaskContext, getItemTags } from './db.js';
+
+const SERVER_NAME = 'peek-mcp';
+const SERVER_VERSION = '1.0.0';
+const PROTOCOL_VERSION = '2024-11-05';
+
+// --- Tool definitions ---
+
+const TOOLS = [
+  {
+    name: 'list_items',
+    description: 'Query Peek items by tags, type, or other filters. Returns items with metadata and tags.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tags: { type: 'array', items: { type: 'string' }, description: 'Filter items that have ALL listed tags' },
+        type: { type: 'string', description: 'Filter by item type (url, text, tagset, image, series, feed, entity)' },
+        limit: { type: 'number', description: 'Max results (default 50)' },
+        offset: { type: 'number', description: 'Pagination offset' },
+        sort: { type: 'string', enum: ['recent', 'frecency'], description: 'Sort order (default recent)' },
+      },
+    },
+  },
+  {
+    name: 'get_item',
+    description: 'Get a single Peek item by ID, with all metadata, tags, and details.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Item ID' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'create_item',
+    description: 'Create a new item in Peek. For URLs, set type="url" and provide url. For text notes, set type="text" and provide content.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', description: 'Item type: url, text, tagset, image, series, feed, entity' },
+        url: { type: 'string', description: 'URL (for url-type items)' },
+        title: { type: 'string', description: 'Item title' },
+        content: { type: 'string', description: 'Item content/body' },
+        metadata: { type: 'object', description: 'Additional metadata as JSON object' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags to apply' },
+      },
+      required: ['type'],
+    },
+  },
+  {
+    name: 'update_item',
+    description: 'Update an existing Peek item (title, content, or metadata).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Item ID' },
+        title: { type: 'string', description: 'New title' },
+        content: { type: 'string', description: 'New content' },
+        metadata: { type: 'object', description: 'New metadata (replaces existing)' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'delete_item',
+    description: 'Soft-delete a Peek item (sets deletedAt timestamp, recoverable).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Item ID' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'list_tags',
+    description: 'List all tags in Peek with item counts. Optionally filter by search term.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        search: { type: 'string', description: 'Search term to filter tag names' },
+        limit: { type: 'number', description: 'Max results (default 100)' },
+      },
+    },
+  },
+  {
+    name: 'tag_item',
+    description: 'Add a tag to a Peek item. Creates the tag if it does not exist.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        itemId: { type: 'string', description: 'Item ID' },
+        tagName: { type: 'string', description: 'Tag name' },
+      },
+      required: ['itemId', 'tagName'],
+    },
+  },
+  {
+    name: 'untag_item',
+    description: 'Remove a tag from a Peek item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        itemId: { type: 'string', description: 'Item ID' },
+        tagName: { type: 'string', description: 'Tag name' },
+      },
+      required: ['itemId', 'tagName'],
+    },
+  },
+  {
+    name: 'record_event',
+    description: 'Record a timestamped event for a Peek item (e.g., "started working", "completed", "blocked").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        itemId: { type: 'string', description: 'Item ID' },
+        type: { type: 'string', description: 'Event type (e.g., started, completed, blocked, note)' },
+        value: { type: 'string', description: 'Event value/details' },
+      },
+      required: ['itemId', 'type'],
+    },
+  },
+  {
+    name: 'list_tasks',
+    description: 'List task items (tagged #todo by default). Optionally filter by project tag.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tags: { type: 'array', items: { type: 'string' }, description: 'Task tags (default: ["todo"])' },
+        project: { type: 'string', description: 'Project tag filter (e.g., "peek", "mobile")' },
+      },
+    },
+  },
+  {
+    name: 'complete_task',
+    description: 'Mark a task as done: adds "done" tag, removes "todo" tag, records completion event.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Item ID' },
+        notes: { type: 'string', description: 'Completion notes' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'get_task_context',
+    description: 'Get a task item with full context: metadata, tags, and recent events/history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Item ID' },
+      },
+      required: ['id'],
+    },
+  },
+];
+
+// --- Resource definitions ---
+
+const RESOURCES = [
+  {
+    uri: 'peek://tasks',
+    name: 'Peek Tasks',
+    description: 'All items tagged #todo',
+    mimeType: 'application/json',
+  },
+  {
+    uri: 'peek://tags',
+    name: 'Peek Tags',
+    description: 'All tags with item counts',
+    mimeType: 'application/json',
+  },
+];
+
+const RESOURCE_TEMPLATES = [
+  {
+    uriTemplate: 'peek://tasks/{tag}',
+    name: 'Peek Tasks by Tag',
+    description: 'Tasks filtered by additional tag',
+    mimeType: 'application/json',
+  },
+];
+
+// --- Tool handlers ---
+
+function handleToolCall(name, args) {
+  switch (name) {
+    case 'list_items':
+      return queryItems(args || {});
+    case 'get_item':
+      return getItem(args.id);
+    case 'create_item':
+      return createItem(args);
+    case 'update_item': {
+      const { id, ...rest } = args;
+      return updateItem(id, rest);
+    }
+    case 'delete_item':
+      return deleteItem(args.id);
+    case 'list_tags':
+      return listTags(args || {});
+    case 'tag_item':
+      return tagItem(args.itemId, args.tagName);
+    case 'untag_item':
+      return untagItem(args.itemId, args.tagName);
+    case 'record_event':
+      return recordEvent(args.itemId, args.type, args.value);
+    case 'list_tasks':
+      return listTasks(args || {});
+    case 'complete_task':
+      return completeTask(args.id, args.notes);
+    case 'get_task_context':
+      return getTaskContext(args.id);
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
+// --- Resource handlers ---
+
+function handleResourceRead(uri) {
+  if (uri === 'peek://tasks') {
+    return JSON.stringify(listTasks(), null, 2);
+  }
+  if (uri === 'peek://tags') {
+    return JSON.stringify(listTags(), null, 2);
+  }
+  // peek://tasks/{tag}
+  const taskMatch = uri.match(/^peek:\/\/tasks\/(.+)$/);
+  if (taskMatch) {
+    const tag = decodeURIComponent(taskMatch[1]);
+    return JSON.stringify(listTasks({ tags: ['todo'], project: tag }), null, 2);
+  }
+  throw new Error(`Unknown resource: ${uri}`);
+}
+
+// --- JSON-RPC message handling ---
+
+function makeResponse(id, result) {
+  return { jsonrpc: '2.0', id, result };
+}
+
+function makeError(id, code, message) {
+  return { jsonrpc: '2.0', id, error: { code, message } };
+}
+
+function handleMessage(msg) {
+  const { id, method, params } = msg;
+
+  switch (method) {
+    case 'initialize':
+      return makeResponse(id, {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: {
+          tools: {},
+          resources: { listChanged: false },
+        },
+        serverInfo: {
+          name: SERVER_NAME,
+          version: SERVER_VERSION,
+        },
+      });
+
+    case 'notifications/initialized':
+      // Client notification, no response needed
+      return null;
+
+    case 'ping':
+      return makeResponse(id, {});
+
+    case 'tools/list':
+      return makeResponse(id, { tools: TOOLS });
+
+    case 'tools/call': {
+      const { name, arguments: args } = params;
+      try {
+        const result = handleToolCall(name, args || {});
+        return makeResponse(id, {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        });
+      } catch (err) {
+        return makeResponse(id, {
+          content: [
+            {
+              type: 'text',
+              text: `Error: ${err.message}`,
+            },
+          ],
+          isError: true,
+        });
+      }
+    }
+
+    case 'resources/list':
+      return makeResponse(id, { resources: RESOURCES, resourceTemplates: RESOURCE_TEMPLATES });
+
+    case 'resources/read': {
+      const { uri } = params;
+      try {
+        const text = handleResourceRead(uri);
+        return makeResponse(id, {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text,
+            },
+          ],
+        });
+      } catch (err) {
+        return makeError(id, -32602, err.message);
+      }
+    }
+
+    case 'resources/templates/list':
+      return makeResponse(id, { resourceTemplates: RESOURCE_TEMPLATES });
+
+    default:
+      if (method && method.startsWith('notifications/')) {
+        // Notifications don't need responses
+        return null;
+      }
+      return makeError(id, -32601, `Method not found: ${method}`);
+  }
+}
+
+// --- Main ---
+
+function main() {
+  // Resolve DB path
+  const dbPath = process.env.PEEK_DB_PATH;
+  if (!dbPath) {
+    process.stderr.write('Error: PEEK_DB_PATH environment variable not set\n');
+    process.exit(1);
+  }
+
+  try {
+    openDb(dbPath);
+  } catch (err) {
+    process.stderr.write(`Error opening database: ${err.message}\n`);
+    process.exit(1);
+  }
+
+  process.stderr.write(`Peek MCP Server v${SERVER_VERSION} started\n`);
+  process.stderr.write(`Database: ${dbPath}\n`);
+
+  // Read JSON-RPC messages from stdin (newline-delimited)
+  const rl = createInterface({ input: process.stdin });
+
+  rl.on('line', (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    let msg;
+    try {
+      msg = JSON.parse(trimmed);
+    } catch {
+      process.stderr.write(`Invalid JSON: ${trimmed}\n`);
+      return;
+    }
+
+    const response = handleMessage(msg);
+    if (response) {
+      process.stdout.write(JSON.stringify(response) + '\n');
+    }
+  });
+
+  rl.on('close', () => {
+    process.stderr.write('Peek MCP Server shutting down\n');
+    process.exit(0);
+  });
+}
+
+main();
