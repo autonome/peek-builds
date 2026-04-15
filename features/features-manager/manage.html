@@ -14,7 +14,7 @@
         <span class="feature-count"></span>
       </div>
       <div class="header-right">
-        <button class="btn" id="check-updates-btn" disabled title="Check for updates (coming soon)">
+        <button class="btn" id="check-updates-btn" title="Check all features for updates">
           Check for Updates
         </button>
       </div>
@@ -60,6 +60,27 @@
 
     <div class="content" id="content">
       <div class="loading">Loading features...</div>
+    </div>
+
+    <div class="update-footer" id="update-footer" style="display:none;">
+      <span class="update-footer-text" id="update-footer-text"></span>
+    </div>
+
+    <!-- Capability review modal -->
+    <div class="cap-review-overlay" id="cap-review-overlay" style="display:none;">
+      <div class="cap-review-modal">
+        <div class="cap-review-header">
+          <h2 class="cap-review-title" id="cap-review-title">Review Required</h2>
+        </div>
+        <div class="cap-review-body">
+          <p class="cap-review-desc" id="cap-review-desc"></p>
+          <div class="cap-review-changes" id="cap-review-changes"></div>
+        </div>
+        <div class="cap-review-footer">
+          <button class="btn" id="cap-review-dismiss">Dismiss</button>
+          <button class="btn primary" id="cap-review-approve">Approve &amp; Update</button>
+        </div>
+      </div>
     </div>
 
     <script>

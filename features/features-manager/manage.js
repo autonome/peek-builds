@@ -24,12 +24,22 @@ const previewCancelBtn = document.getElementById('preview-cancel');
 const previewInstallBtn = document.getElementById('preview-install');
 const installStatus = document.getElementById('install-status');
 const installStatusText = document.getElementById('install-status-text');
+const checkUpdatesBtn = document.getElementById('check-updates-btn');
+const updateFooter = document.getElementById('update-footer');
+const updateFooterText = document.getElementById('update-footer-text');
+const capReviewOverlay = document.getElementById('cap-review-overlay');
+const capReviewTitle = document.getElementById('cap-review-title');
+const capReviewDesc = document.getElementById('cap-review-desc');
+const capReviewChanges = document.getElementById('cap-review-changes');
+const capReviewDismiss = document.getElementById('cap-review-dismiss');
+const capReviewApprove = document.getElementById('cap-review-approve');
 
 // ─── State ──────────────────────────────────────────────────────────
 
 let features = [];
 let searchFilter = '';
 let pendingInstallUri = null;  // AT URI currently being previewed
+let pendingCapReviewId = null; // Feature ID pending capability review
 
 // ─── Data loading ───────────────────────────────────────────────────
 
@@ -48,6 +58,7 @@ async function loadFeatures() {
 
     features = result.entries || [];
     render();
+    updateLastCheckedFooter();
   } catch (err) {
     console.error('[features-manager] Failed to load features:', err);
     showEmpty('Failed to load features');
@@ -156,12 +167,75 @@ function createFeatureCard(feature) {
   statusBadge.textContent = isDisabled ? 'Disabled' : 'Active';
   meta.appendChild(statusBadge);
 
+  // Update available badge
+  if (feature.availableVersion) {
+    const updateBadge = document.createElement('span');
+    updateBadge.className = 'feature-update-badge';
+    updateBadge.textContent = `Update: v${feature.availableVersion}`;
+    meta.appendChild(updateBadge);
+  }
+
   info.appendChild(meta);
+
+  // Update policy selector (only for atproto-sourced features)
+  if (sourceType === 'atproto') {
+    const policyRow = document.createElement('div');
+    policyRow.className = 'feature-policy-row';
+
+    const policyLabel = document.createElement('span');
+    policyLabel.className = 'feature-policy-label';
+    policyLabel.textContent = 'Updates:';
+    policyRow.appendChild(policyLabel);
+
+    const policySelect = document.createElement('select');
+    policySelect.className = 'feature-policy-select';
+    const policies = [
+      { value: 'auto', label: 'Auto' },
+      { value: 'notify', label: 'Notify' },
+      { value: 'pinned', label: 'Pinned' },
+    ];
+    for (const p of policies) {
+      const opt = document.createElement('option');
+      opt.value = p.value;
+      opt.textContent = p.label;
+      if ((feature.updatePolicy || 'auto') === p.value) {
+        opt.selected = true;
+      }
+      policySelect.appendChild(opt);
+    }
+    policySelect.addEventListener('change', (e) => {
+      e.stopPropagation();
+      setUpdatePolicy(feature.id, policySelect.value);
+    });
+    policyRow.appendChild(policySelect);
+
+    if (feature.updatePolicy === 'pinned' && feature.pinnedVersion) {
+      const pinned = document.createElement('span');
+      pinned.className = 'feature-pinned-version';
+      pinned.textContent = `v${feature.pinnedVersion}`;
+      policyRow.appendChild(pinned);
+    }
+
+    info.appendChild(policyRow);
+  }
+
   card.appendChild(info);
 
   // Actions — ALWAYS visible
   const actions = document.createElement('div');
   actions.className = 'feature-actions';
+
+  // Update button (if update available)
+  if (feature.availableVersion) {
+    const updateBtn = document.createElement('button');
+    updateBtn.className = 'action-btn primary';
+    updateBtn.textContent = 'Update';
+    updateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyUpdate(feature.id, feature.name);
+    });
+    actions.appendChild(updateBtn);
+  }
 
   // Enable/Disable toggle
   const toggleBtn = document.createElement('button');
@@ -234,6 +308,222 @@ async function removeFeature(id, name) {
     console.error('[features-manager] remove error:', err);
   }
 }
+
+// ─── Update Actions ────────────────────────────────────────────────
+
+async function checkForUpdates() {
+  if (!hasPeekAPI) return;
+
+  checkUpdatesBtn.disabled = true;
+  checkUpdatesBtn.textContent = 'Checking...';
+
+  try {
+    const result = await api.ipc.invoke('feature-update:check-all');
+
+    if (result.error) {
+      console.error('[features-manager] Update check error:', result.error);
+      showStatus(result.error, 'error');
+    } else {
+      const count = (result.updates || []).length;
+      if (count > 0) {
+        showStatus(`${count} update${count > 1 ? 's' : ''} available`, 'info');
+      } else {
+        showStatus('All features are up to date', 'success');
+        setTimeout(hideStatus, 3000);
+      }
+      // Reload to show updated badges
+      await loadFeatures();
+    }
+  } catch (err) {
+    console.error('[features-manager] Update check error:', err);
+    showStatus(`Error: ${err.message}`, 'error');
+  } finally {
+    checkUpdatesBtn.disabled = false;
+    checkUpdatesBtn.textContent = 'Check for Updates';
+    updateLastCheckedFooter();
+  }
+}
+
+async function applyUpdate(id, name) {
+  if (!hasPeekAPI) return;
+
+  showStatus(`Updating "${name}"...`);
+
+  try {
+    const result = await api.ipc.invoke('feature-update:apply', {
+      id,
+      userApproved: false,
+    });
+
+    if (result.capabilitiesChanged) {
+      // Show capability review modal
+      hideStatus();
+      showCapabilityReview(id, name, result.added || [], result.removed || []);
+      return;
+    }
+
+    if (result.error) {
+      showStatus(`Update failed: ${result.error}`, 'error');
+      return;
+    }
+
+    showStatus(`Updated "${name}" successfully`, 'success');
+    setTimeout(hideStatus, 3000);
+    await loadFeatures();
+  } catch (err) {
+    console.error('[features-manager] Update error:', err);
+    showStatus(`Error: ${err.message}`, 'error');
+  }
+}
+
+async function setUpdatePolicy(id, policy) {
+  if (!hasPeekAPI) return;
+
+  try {
+    const result = await api.ipc.invoke('feature-update:set-policy', { id, policy });
+    if (result.error) {
+      console.error('[features-manager] Set policy error:', result.error);
+      return;
+    }
+    // Update local state
+    const feature = features.find(f => f.id === id);
+    if (feature) {
+      feature.updatePolicy = policy;
+      feature.pinnedVersion = result.pinnedVersion;
+      render();
+    }
+  } catch (err) {
+    console.error('[features-manager] Set policy error:', err);
+  }
+}
+
+function showCapabilityReview(id, name, added, removed) {
+  pendingCapReviewId = id;
+  capReviewTitle.textContent = `Review: ${name}`;
+  capReviewDesc.textContent = 'This update requests new capabilities. Review and approve before updating.';
+
+  capReviewChanges.innerHTML = '';
+
+  if (added.length > 0) {
+    const addedSection = document.createElement('div');
+    addedSection.className = 'cap-review-section';
+    const addedTitle = document.createElement('h4');
+    addedTitle.textContent = 'New capabilities requested:';
+    addedSection.appendChild(addedTitle);
+    const list = document.createElement('ul');
+    list.className = 'cap-review-list';
+    for (const item of added) {
+      const li = document.createElement('li');
+      li.className = 'cap-review-item added';
+      li.textContent = formatCapabilityChange(item);
+      list.appendChild(li);
+    }
+    addedSection.appendChild(list);
+    capReviewChanges.appendChild(addedSection);
+  }
+
+  if (removed.length > 0) {
+    const removedSection = document.createElement('div');
+    removedSection.className = 'cap-review-section';
+    const removedTitle = document.createElement('h4');
+    removedTitle.textContent = 'Capabilities removed:';
+    removedSection.appendChild(removedTitle);
+    const list = document.createElement('ul');
+    list.className = 'cap-review-list';
+    for (const item of removed) {
+      const li = document.createElement('li');
+      li.className = 'cap-review-item removed';
+      li.textContent = formatCapabilityChange(item);
+      list.appendChild(li);
+    }
+    removedSection.appendChild(list);
+    capReviewChanges.appendChild(removedSection);
+  }
+
+  capReviewOverlay.style.display = '';
+}
+
+function hideCapabilityReview() {
+  capReviewOverlay.style.display = 'none';
+  pendingCapReviewId = null;
+}
+
+function formatCapabilityChange(item) {
+  // Turn 'network:api.example.com' into 'Network: api.example.com'
+  // Turn 'pubsub.scope:system' into 'PubSub scope: system'
+  return item
+    .replace(/\./g, ' ')
+    .replace(/:/, ': ')
+    .replace(/^(\w)/, (m) => m.toUpperCase());
+}
+
+async function approveAndUpdate() {
+  if (!hasPeekAPI || !pendingCapReviewId) return;
+
+  const id = pendingCapReviewId;
+  hideCapabilityReview();
+  showStatus('Updating with approved capabilities...');
+
+  try {
+    const result = await api.ipc.invoke('feature-update:apply', {
+      id,
+      userApproved: true,
+    });
+
+    if (result.error) {
+      showStatus(`Update failed: ${result.error}`, 'error');
+      return;
+    }
+
+    showStatus('Updated successfully', 'success');
+    setTimeout(hideStatus, 3000);
+    await loadFeatures();
+  } catch (err) {
+    showStatus(`Error: ${err.message}`, 'error');
+  }
+}
+
+function updateLastCheckedFooter() {
+  // Show the most recent lastUpdateCheck from any feature
+  let latest = null;
+  for (const f of features) {
+    if (f.lastUpdateCheck) {
+      if (!latest || f.lastUpdateCheck > latest) {
+        latest = f.lastUpdateCheck;
+      }
+    }
+  }
+
+  if (latest) {
+    updateFooter.style.display = '';
+    updateFooterText.textContent = `Last checked: ${formatRelativeTime(latest)}`;
+  }
+}
+
+function formatRelativeTime(isoString) {
+  try {
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMin = Math.round(diffMs / 60000);
+
+    if (diffMin < 1) return 'just now';
+    if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
+    const diffHours = Math.round(diffMin / 60);
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+    const diffDays = Math.round(diffHours / 24);
+    return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+  } catch {
+    return isoString;
+  }
+}
+
+// Wire up check updates button
+checkUpdatesBtn.addEventListener('click', checkForUpdates);
+
+// Wire up capability review modal buttons
+capReviewDismiss.addEventListener('click', hideCapabilityReview);
+capReviewApprove.addEventListener('click', approveAndUpdate);
 
 // ─── Search ─────────────────────────────────────────────────────────
 
@@ -455,7 +745,9 @@ if (hasPeekAPI) {
     'feature:disabled',
     'feature:enabled',
     'feature:removed',
-    'feature:installed'
+    'feature:installed',
+    'feature:updated',
+    'feature:update-available'
   ];
 
   for (const topic of refreshTopics) {
