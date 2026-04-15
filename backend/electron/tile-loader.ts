@@ -84,6 +84,16 @@ function loadSingleFeature(
   entry: FeatureRegistryEntry,
   config: TileLoaderConfig
 ): FeatureLoadResult {
+  // Skip disabled features
+  if (entry.disabled) {
+    return {
+      id: entry.id,
+      loaded: false,
+      manifestVersion: 'v2',
+      error: 'Feature is disabled',
+    };
+  }
+
   const manifestPath = path.join(entry.path, 'manifest.json');
 
   // Check the feature directory still exists

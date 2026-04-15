@@ -41,6 +41,11 @@ export interface FeatureRegistryEntry {
   userApproved: boolean;                 // user explicitly approved capabilities
   installedAt: string;                   // ISO datetime
   updatedAt?: string;                    // ISO datetime
+  disabled?: boolean;                    // if true, feature is not loaded
+  updatePolicy?: 'auto' | 'notify' | 'pinned'; // default: 'auto'
+  pinnedVersion?: string;               // only meaningful when updatePolicy is 'pinned'
+  lastUpdateCheck?: string;             // ISO datetime of last check
+  availableVersion?: string;            // latest version seen, if newer than installed
 }
 
 /**
@@ -179,6 +184,28 @@ export class FeatureRegistry {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Disable a feature. Returns true if the feature was found and disabled.
+   */
+  disableFeature(id: string): boolean {
+    const entry = this.data.features[id];
+    if (!entry) return false;
+    entry.disabled = true;
+    this.dirty = true;
+    return true;
+  }
+
+  /**
+   * Enable a feature. Returns true if the feature was found and enabled.
+   */
+  enableFeature(id: string): boolean {
+    const entry = this.data.features[id];
+    if (!entry) return false;
+    entry.disabled = false;
+    this.dirty = true;
+    return true;
   }
 
   /**
