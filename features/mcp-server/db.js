@@ -280,9 +280,11 @@ export function untagItem(itemId, tagName) {
 export function recordEvent(itemId, type, value = '') {
   const id = randomUUID();
   const now = Date.now();
+  // content = event type, value = numeric (0 default), metadata = string details
+  const metaStr = value ? JSON.stringify({ notes: value }) : '{}';
   execute(`
-    INSERT INTO item_events (id, itemId, content, value, occurredAt, createdAt)
-    VALUES (${esc(id)}, ${esc(itemId)}, ${esc(type)}, ${value ? value : 0}, ${now}, ${now});
+    INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+    VALUES (${esc(id)}, ${esc(itemId)}, ${esc(type)}, 0, ${now}, ${esc(metaStr)}, ${now});
   `);
   return { success: true, id, itemId, type };
 }
