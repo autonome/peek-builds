@@ -744,13 +744,16 @@ export function registerTileIpcHandlers(): void {
     // Remove from registry
     const result = registry.unregisterFeature(args.id);
     if (result) {
-      // Delete feature files (non-builtin only, safe because builtin check above)
-      try {
-        if (fs.existsSync(entry.path)) {
-          fs.rmSync(entry.path, { recursive: true });
+      // Delete feature files (non-builtin, non-dev only)
+      // Dev features: source files owned by developer, only unregister
+      if (entry.source.type !== 'dev') {
+        try {
+          if (fs.existsSync(entry.path)) {
+            fs.rmSync(entry.path, { recursive: true });
+          }
+        } catch (err) {
+          console.error(`[tile-ipc] Failed to delete feature files at ${entry.path}:`, err);
         }
-      } catch (err) {
-        console.error(`[tile-ipc] Failed to delete feature files at ${entry.path}:`, err);
       }
       registry.saveRegistry();
 

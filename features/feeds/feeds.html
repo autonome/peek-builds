@@ -253,6 +253,15 @@
     import { getFeeds, getEntries, subscribeFeed, unsubscribeFeed, pollAllFeeds } from './background.js';
 
     const api = window.app;
+
+    // V2 tile runtime shims
+    if (api && typeof api.initialize === 'function') {
+      if (api.pubsub && !api.publish) {
+        api.publish = api.pubsub.publish;
+        api.subscribe = api.pubsub.subscribe;
+      }
+    }
+
     let currentFeedId = null;
 
     // ==================== Rendering ====================

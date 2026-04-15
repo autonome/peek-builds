@@ -1,10 +1,33 @@
 {
+  "manifestVersion": 2,
   "id": "peeks",
   "shortname": "peeks",
   "name": "Peeks",
   "description": "Quick access modal windows for web pages via keyboard shortcuts",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
-  "settingsSchema": "./settings-schema.json"
+  "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html"
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "peeks:*",
+        "ext:ready",
+        "app:shutdown",
+        "ext:peeks:shutdown"
+      ]
+    },
+    "window": {
+      "create": true
+    },
+    "shortcuts": true,
+    "settings": true
+  }
 }
