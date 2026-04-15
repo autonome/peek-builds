@@ -122,6 +122,13 @@ export interface TileEntry {
   windowHints?: TileWindowHints;
   /** If true, this tile is loaded lazily on first use */
   lazy?: boolean;
+  /**
+   * Pubsub topics that trigger lazy loading of this tile when published.
+   * Used when another feature publishes an event (e.g. `editor:open`) that
+   * this tile needs to handle, but this tile hasn't been loaded yet.
+   * Only meaningful when `lazy: true`.
+   */
+  lazyEvents?: string[];
 }
 
 /**
@@ -312,6 +319,20 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
 
       if (!tile.url || typeof tile.url !== 'string') {
         errors.push({ path: `${prefix}.url`, message: 'tile url is required' });
+      }
+
+      // Validate lazyEvents (optional array of strings)
+      if (tile.lazyEvents !== undefined) {
+        if (!Array.isArray(tile.lazyEvents)) {
+          errors.push({ path: `${prefix}.lazyEvents`, message: 'lazyEvents must be an array of strings' });
+        } else {
+          for (let j = 0; j < tile.lazyEvents.length; j++) {
+            const ev = tile.lazyEvents[j];
+            if (typeof ev !== 'string' || ev.length === 0) {
+              errors.push({ path: `${prefix}.lazyEvents[${j}]`, message: 'lazyEvents entries must be non-empty strings' });
+            }
+          }
+        }
       }
     }
   }
