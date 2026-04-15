@@ -15,6 +15,7 @@ import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, 
 import { initCmd } from './cmd-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
+import { getLoadedTileIds, getTileManifest } from './tile-launcher.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
@@ -1550,6 +1551,20 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
     running.push({
       id: extId,
       manifest: manifest || { id: extId },
+      status: 'running'
+    });
+  }
+
+  // Add v2 tiles launched by the tile-launcher as separate BrowserWindows.
+  // These aren't in loadedConsolidatedExtensions (that's for iframes in the host)
+  // or extensionWindows (that's for legacy external extensions).
+  for (const tileId of getLoadedTileIds()) {
+    if (running.some(r => r.id === tileId)) continue;
+    if (!isBuiltinExtensionEnabled(tileId)) continue;
+    const tileManifest = getTileManifest(tileId);
+    running.push({
+      id: tileId,
+      manifest: tileManifest || { id: tileId },
       status: 'running'
     });
   }

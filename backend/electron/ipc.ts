@@ -2594,44 +2594,59 @@ export function registerWindowHandlers(): void {
         }
       }
 
-      // Check for space mode inheritance from options
-      // If opener passed spaceMode, inherit it instead of URL-based detection
+      // Check for explicit mode inheritance from options: spaceMode or groupMode.
+      // If opener passed spaceMode/groupMode, set that mode explicitly.
       if (options.spaceMode) {
         const { spaceId, spaceName, color } = options.spaceMode;
-        // Set space mode via context API
         addContextEntry('mode', 'space', {
           windowId: win.id,
           source: msg.source,
           metadata: { spaceId, spaceName, color, url: modeUrl }
         });
         DEBUG && console.log('Inherited space mode for window:', win.id, 'space:', spaceName);
+      } else if (options.groupMode) {
+        const { groupId, groupName, color } = options.groupMode;
+        addContextEntry('mode', 'group', {
+          windowId: win.id,
+          source: msg.source,
+          metadata: { groupId, groupName, color, url: modeUrl }
+        });
+        DEBUG && console.log('Inherited group mode for window:', win.id, 'group:', groupName);
       } else {
-        // Check if opener is in space mode - inherit if so
-        let openerSpaceMode = null;
+        // No explicit mode option — check if opener is in space or group mode and inherit.
+        let openerModeValue: string | null = null;
+        let openerMetadata: Record<string, unknown> | null = null;
+        let openerWindowId: number | null = null;
         const callingWin = BrowserWindow.fromWebContents(ev.sender);
         if (callingWin && !callingWin.isDestroyed()) {
           const openerContext = getContextEntry('mode', callingWin.id);
-          if (openerContext && openerContext.value === 'space' && openerContext.metadata) {
-            openerSpaceMode = openerContext;
+          if (
+            openerContext &&
+            (openerContext.value === 'space' || openerContext.value === 'group') &&
+            openerContext.metadata
+          ) {
+            openerModeValue = openerContext.value as string;
+            openerMetadata = openerContext.metadata as Record<string, unknown>;
+            openerWindowId = openerContext.windowId as number;
           }
         }
 
-        if (openerSpaceMode) {
-          // Inherit space mode from opener (window lineage)
-          addContextEntry('mode', 'space', {
+        if (openerModeValue && openerMetadata) {
+          // Inherit mode from opener (window lineage)
+          addContextEntry('mode', openerModeValue, {
             windowId: win.id,
             source: msg.source,
             metadata: {
-              ...openerSpaceMode.metadata,
+              ...openerMetadata,
               url: modeUrl,
-              inheritedFrom: openerSpaceMode.windowId
+              inheritedFrom: openerWindowId
             }
           });
-          DEBUG && console.log('Inherited space mode from opener:', openerSpaceMode.metadata?.spaceName);
+          DEBUG && console.log(`Inherited ${openerModeValue} mode from opener`);
         } else {
-          // No space mode inheritance — only explicit spaceMode option or direct
-          // opener lineage propagates space mode. Do NOT fall back to
-          // lastFocusedVisibleWindowId, as that causes space leakage to unrelated
+          // No mode inheritance — only explicit spaceMode/groupMode option or direct
+          // opener lineage propagates mode. Do NOT fall back to
+          // lastFocusedVisibleWindowId, as that causes mode leakage to unrelated
           // windows (external app opens, peeks, slides, etc.)
           const detectedMode = detectModeFromUrl(modeUrl);
           addContextEntry('mode', detectedMode, {
