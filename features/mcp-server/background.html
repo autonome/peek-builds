@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <title>MCP Server Extension</title>
+</head>
+<body>
+<script type="module">
+  import extension from './background.js';
+
+  const hasPeekAPI = typeof window.app !== 'undefined';
+  const api = hasPeekAPI ? window.app : null;
+  const extId = extension.id;
+
+  console.log(`[ext:${extId}] background.html loaded`);
+
+  const isTileV2 = hasPeekAPI && typeof api.initialize === 'function';
+
+  if (hasPeekAPI && isTileV2) {
+    if (api.pubsub && !api.publish) {
+      api.publish = api.pubsub.publish;
+      api.subscribe = api.pubsub.subscribe;
+    }
+
+    await api.initialize();
+
+    if (extension.init) {
+      await extension.init();
+    }
+
+    api.onShutdown(() => {
+      if (extension.uninit) extension.uninit();
+    });
+
+  } else if (hasPeekAPI) {
+    if (extension.init) {
+      await extension.init();
+    }
+
+    const registeredTopics = Object.keys(window._cmdHandlers || {})
+      .map(name => `cmd:execute:${name}`);
+
+    api.publish('ext:ready', {
+      id: extId,
+      registeredTopics,
+      manifest: { id: extension.id, version: '1.0.0' }
+    }, api.scopes.SYSTEM);
+
+    api.subscribe('app:shutdown', () => {
+      if (extension.uninit) extension.uninit();
+    }, api.scopes.SYSTEM);
+
+  } else {
+    console.log(`[ext:${extId}] Running in standalone mode`);
+    if (extension.init) extension.init();
+  }
+</script>
+</body>
+</html>

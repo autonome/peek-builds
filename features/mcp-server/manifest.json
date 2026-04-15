@@ -1,0 +1,27 @@
+{
+  "manifestVersion": 2,
+  "id": "mcp-server",
+  "name": "MCP Server",
+  "version": "1.0.0",
+  "description": "Expose Peek data to Claude Code via Model Context Protocol",
+  "builtin": true,
+  "hidden": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    }
+  ],
+  "capabilities": {
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "mcp server setup",
+      "description": "Configure Claude Code to use Peek as an MCP server",
+      "action": { "type": "execute" }
+    }
+  ]
+}
