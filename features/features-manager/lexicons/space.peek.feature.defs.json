@@ -1,0 +1,22 @@
+{
+  "lexicon": 1,
+  "id": "space.peek.feature.defs",
+  "description": "Shared definitions for the Peek feature publishing system.",
+  "defs": {
+    "knownCategories": {
+      "type": "string",
+      "description": "Known category values for feature classification",
+      "knownValues": [
+        "productivity",
+        "developer",
+        "social",
+        "media",
+        "search",
+        "privacy",
+        "theme",
+        "utility",
+        "fun"
+      ]
+    }
+  }
+}

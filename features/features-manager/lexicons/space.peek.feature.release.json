@@ -1,0 +1,145 @@
+{
+  "lexicon": 1,
+  "id": "space.peek.feature.release",
+  "description": "A published release of a Peek feature. One record per version (append-only, TID key).",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["featureId", "name", "version", "manifest", "bundle", "createdAt"],
+        "properties": {
+          "featureId": {
+            "type": "string",
+            "description": "Stable feature identifier, matches manifest.id",
+            "maxLength": 128
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable feature name",
+            "maxLength": 256
+          },
+          "version": {
+            "type": "string",
+            "description": "Semantic version string",
+            "maxLength": 32
+          },
+          "manifest": {
+            "type": "blob",
+            "description": "The feature's manifest.json as an application/json blob",
+            "accept": ["application/json"],
+            "maxSize": 65536
+          },
+          "bundle": {
+            "type": "ref",
+            "ref": "#bundleRef",
+            "description": "All feature files as individual blobs"
+          },
+          "description": {
+            "type": "string",
+            "description": "Feature description",
+            "maxLength": 2048
+          },
+          "categories": {
+            "type": "array",
+            "description": "Category tags from known values",
+            "maxLength": 10,
+            "items": {
+              "type": "string",
+              "knownValues": [
+                "productivity", "developer", "social", "media",
+                "search", "privacy", "theme", "utility", "fun"
+              ]
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "description": "Capability names declared by the feature for pre-install transparency",
+            "items": {
+              "type": "string"
+            }
+          },
+          "icon": {
+            "type": "blob",
+            "description": "Feature icon (PNG or SVG)",
+            "accept": ["image/png", "image/svg+xml"],
+            "maxSize": 262144
+          },
+          "screenshots": {
+            "type": "array",
+            "description": "Feature screenshots",
+            "maxLength": 5,
+            "items": {
+              "type": "blob",
+              "accept": ["image/png", "image/jpeg"],
+              "maxSize": 2097152
+            }
+          },
+          "readme": {
+            "type": "string",
+            "description": "Markdown readme content",
+            "maxLength": 32768
+          },
+          "license": {
+            "type": "string",
+            "description": "SPDX license identifier",
+            "maxLength": 64
+          },
+          "homepage": {
+            "type": "string",
+            "format": "uri",
+            "description": "Project homepage URL"
+          },
+          "minPeekVersion": {
+            "type": "string",
+            "description": "Minimum Peek version required",
+            "maxLength": 32
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "ISO 8601 datetime of record creation"
+          }
+        }
+      }
+    },
+    "bundleRef": {
+      "type": "object",
+      "description": "References to all feature files as individual blobs",
+      "required": ["files", "totalSize"],
+      "properties": {
+        "files": {
+          "type": "array",
+          "description": "Array of file entries",
+          "maxLength": 100,
+          "items": {
+            "type": "ref",
+            "ref": "#fileEntry"
+          }
+        },
+        "totalSize": {
+          "type": "integer",
+          "description": "Total size of all files in bytes"
+        }
+      }
+    },
+    "fileEntry": {
+      "type": "object",
+      "description": "A single file in the feature bundle",
+      "required": ["path", "blob"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path within the feature directory",
+          "maxLength": 512
+        },
+        "blob": {
+          "type": "blob",
+          "description": "The file content as a blob",
+          "maxSize": 5242880
+        }
+      }
+    }
+  }
+}
