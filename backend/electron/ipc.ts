@@ -4014,7 +4014,15 @@ export function registerWindowHandlers(): void {
     const win = BrowserWindow.fromWebContents(ev.sender);
     if (!win || win.isDestroyed()) return { success: false, error: 'Window not found' };
     const display = screen.getDisplayMatching(win.getBounds());
-    return { success: true, data: { workArea: display.workArea, bounds: display.bounds, scaleFactor: display.scaleFactor } };
+    // Return workArea/bounds/scaleFactor both at top-level (for tests & direct invoke callers)
+    // and under `data` (preserved for existing page.js code which checks `.success`/`.data`).
+    return {
+      success: true,
+      workArea: display.workArea,
+      bounds: display.bounds,
+      scaleFactor: display.scaleFactor,
+      data: { workArea: display.workArea, bounds: display.bounds, scaleFactor: display.scaleFactor },
+    };
   });
 
   ipcMain.handle('window-set-bounds', (ev, msg) => {
