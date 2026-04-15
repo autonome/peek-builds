@@ -279,6 +279,14 @@ export function getLoadedTileIds(): string[] {
 }
 
 /**
+ * Get all BrowserWindow instances for loaded tiles.
+ * Used by the pubsub broadcaster to forward messages to v2 tile windows.
+ */
+export function getAllTileWindows(): BrowserWindow[] {
+  return Array.from(tileWindows.values()).filter(win => !win.isDestroyed());
+}
+
+/**
  * Unload a tile — close its window and revoke tokens
  */
 export function unloadTile(tileId: string, entryId: string): void {

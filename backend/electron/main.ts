@@ -15,7 +15,7 @@ import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, 
 import { initCmd } from './cmd-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
-import { getLoadedTileIds, getTileManifest } from './tile-launcher.js';
+import { getLoadedTileIds, getTileManifest, getAllTileWindows } from './tile-launcher.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
@@ -201,6 +201,28 @@ export async function initialize(): Promise<void> {
         } catch {
           // Window may have been destroyed between check and send (during shutdown)
         }
+      }
+    }
+
+    // Broadcast to v2 tile BrowserWindows (launched by tile-launcher).
+    // Without this, v2 tiles that subscribe to global pubsub events (editor:open,
+    // item:created, etc.) never receive them, because they're not in
+    // extensionWindows or the consolidated extension host.
+    for (const tileWin of getAllTileWindows()) {
+      try {
+        const winOrigin = tileWin.webContents.getURL();
+        const winOriginPrefix = winOrigin.startsWith('peek://')
+          ? new URL(winOrigin).origin
+          : winOrigin;
+        // Don't echo back to sender
+        if (winOriginPrefix !== sourceOrigin) {
+          tileWin.webContents.send(`pubsub:${topic}`, {
+            ...(msg as object),
+            source
+          });
+        }
+      } catch {
+        // Window may have been destroyed between check and send
       }
     }
   });
