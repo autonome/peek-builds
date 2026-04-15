@@ -821,5 +821,137 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── Feature Browse (AT Protocol) ──
+
+  ipcMain.handle('feature-browse:resolve-publisher', async (_event, args: {
+    token: string;
+    query: string; // handle or DID
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    if (!args.query || !args.query.trim()) {
+      return { error: 'Handle or DID is required' };
+    }
+
+    const { resolveHandleToDid, resolveDid } = await import('./atproto-source.js');
+
+    try {
+      const query = args.query.trim();
+      let did: string;
+
+      if (query.startsWith('did:')) {
+        did = query;
+      } else {
+        // Resolve handle to DID
+        const resolved = await resolveHandleToDid(query);
+        if (!resolved) {
+          return { error: `Could not resolve handle "${query}"` };
+        }
+        did = resolved;
+      }
+
+      // Resolve DID to get PDS URL and handle
+      const identity = await resolveDid(did);
+      if (!identity) {
+        return { error: `Could not resolve DID: ${did}` };
+      }
+
+      return {
+        did,
+        handle: identity.handle,
+        pdsUrl: identity.pdsUrl,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to resolve publisher: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-browse:list-by-publisher', async (_event, args: {
+    token: string;
+    did: string;
+    pdsUrl: string;
+    cursor?: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    if (!args.did || !args.pdsUrl) {
+      return { error: 'DID and PDS URL are required' };
+    }
+
+    try {
+      const params = new URLSearchParams({
+        repo: args.did,
+        collection: 'space.peek.feature.release',
+        limit: '100',
+      });
+      if (args.cursor) {
+        params.set('cursor', args.cursor);
+      }
+
+      const url = `${args.pdsUrl}/xrpc/com.atproto.repo.listRecords?${params.toString()}`;
+      const res = await fetch(url);
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        return { error: `PDS returned ${res.status}: ${body}` };
+      }
+
+      const data = await res.json() as {
+        records: Array<{
+          uri: string;
+          cid: string;
+          value: Record<string, unknown>;
+        }>;
+        cursor?: string;
+      };
+
+      // Group records by featureId and pick latest version for each
+      const featureMap = new Map<string, {
+        uri: string;
+        featureId: string;
+        name: string;
+        version: string;
+        description?: string;
+        categories?: string[];
+        capabilities?: string[];
+        createdAt: string;
+      }>();
+
+      for (const rec of data.records || []) {
+        const val = rec.value as Record<string, unknown>;
+        const featureId = val.featureId as string;
+        if (!featureId) continue;
+
+        const existing = featureMap.get(featureId);
+        const createdAt = val.createdAt as string || '';
+
+        // Keep latest by createdAt
+        if (!existing || createdAt > existing.createdAt) {
+          featureMap.set(featureId, {
+            uri: rec.uri,
+            featureId,
+            name: (val.name as string) || featureId,
+            version: (val.version as string) || 'unknown',
+            description: val.description as string | undefined,
+            categories: val.categories as string[] | undefined,
+            capabilities: val.capabilities as string[] | undefined,
+            createdAt,
+          });
+        }
+      }
+
+      return {
+        records: Array.from(featureMap.values()),
+        cursor: data.cursor,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to list records: ${message}` };
+    }
+  });
+
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');
 }
