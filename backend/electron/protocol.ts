@@ -300,6 +300,21 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       const extId = parts[0];
       const extPath = parts.slice(1).join('/') || 'index.html';
 
+      // Backwards-compat: peek://ext/cmd/{path} resolves to app/cmd/ now that
+      // cmd has been extracted out of the features/ directory into core app code.
+      // Features across the codebase import `peek://ext/cmd/nouns.js` — preserve
+      // that URL contract.
+      if (extId === 'cmd') {
+        const absolutePath = path.resolve(rootDir, 'app', 'cmd', extPath);
+        const cmdBase = path.resolve(rootDir, 'app', 'cmd');
+        if (!absolutePath.startsWith(cmdBase)) {
+          console.error('Path traversal attempt blocked:', absolutePath);
+          return new Response('Forbidden', { status: 403 });
+        }
+        DEBUG && console.log(`[protocol] ext/cmd/${extPath} -> ${absolutePath}`);
+        return fetchFile(absolutePath, req.url);
+      }
+
       const extBasePath = getExtensionPath(extId);
       if (!extBasePath) {
         DEBUG && console.log('Extension not found:', extId);
@@ -502,6 +517,22 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
           'Expires': '0'
         }
       });
+    }
+
+    // Backwards-compat: peek://cmd/{path} resolves to app/cmd/
+    // cmd used to be a consolidated extension served from features/cmd/; it's
+    // now core app code in app/cmd/. The extension-host iframe still uses this
+    // origin (peek://cmd/background.html) for isolation.
+    if (host === 'cmd') {
+      const cmdPath = pathname || 'background.html';
+      const absolutePath = path.resolve(rootDir, 'app', 'cmd', cmdPath);
+      const cmdBase = path.resolve(rootDir, 'app', 'cmd');
+      if (!absolutePath.startsWith(cmdBase)) {
+        console.error('Path traversal attempt blocked:', absolutePath);
+        return new Response('Forbidden', { status: 403 });
+      }
+      DEBUG && console.log(`[protocol] cmd/${cmdPath} -> ${absolutePath}`);
+      return fetchFile(absolutePath, req.url);
     }
 
     // Handle per-extension hosts: peek://{ext-id}/{path}
