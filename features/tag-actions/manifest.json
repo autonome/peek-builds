@@ -1,12 +1,61 @@
 {
+  "manifestVersion": 2,
   "id": "tag-actions",
   "shortname": "tag-actions",
   "name": "Tag Actions",
   "description": "Define custom actions triggered by tags",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
   "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "tag-actions-home",
+        "width": 560,
+        "height": 400,
+        "title": "Tag Pairs"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["self", "global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:tag-actions:shutdown",
+        "app:shutdown",
+        "tag:*",
+        "item:created",
+        "tag-actions:get-pairs",
+        "tag-actions:get-pairs:response",
+        "tag-actions:set-pairs",
+        "tag-actions:set-pairs:response",
+        "tag-actions:get-all",
+        "tag-actions:get-all:response",
+        "tag-actions:create",
+        "tag-actions:create:response",
+        "tag-actions:update",
+        "tag-actions:update:response",
+        "tag-actions:delete",
+        "tag-actions:delete:response"
+      ]
+    },
+    "window": {
+      "create": true
+    },
+    "commands": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "tag actions",
