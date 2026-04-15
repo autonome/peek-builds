@@ -1,10 +1,61 @@
 {
+  "manifestVersion": 2,
   "id": "entities",
   "shortname": "entities",
   "name": "Entity Recognition",
   "description": "Automatically extracts and indexes entities (people, places, orgs, events) from visited pages",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": false
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "entities-browser",
+        "width": 900,
+        "height": 700,
+        "title": "Entities"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["self", "global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:entities:shutdown",
+        "app:shutdown",
+        "item:created",
+        "page:content-ready",
+        "entities:extract",
+        "entities:extract:response",
+        "entities:extracted",
+        "entities:search",
+        "entities:search:response",
+        "entities:get-for-url",
+        "entities:get-for-url:response"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "item_events", "item_tags", "tags"]
+    },
+    "network": {
+      "domains": ["*"]
+    },
+    "window": {
+      "create": true,
+      "query": true
+    },
+    "commands": true
+  },
   "commands": [
     {
       "name": "extract entities",
