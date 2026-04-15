@@ -356,7 +356,7 @@ function buildAPI(): Record<string, unknown> {
 
   api.settings = {
     /**
-     * Get a setting value
+     * Get a setting value (returns raw value, no wrapper)
      */
     get: (key: string) => {
       if (!tokenValid) return Promise.reject(new Error('Not initialized'));
@@ -376,6 +376,35 @@ function buildAPI(): Record<string, unknown> {
         key,
         value,
       });
+    },
+
+    /**
+     * v1 compatibility alias — get returns {success, data} shape
+     * matching legacy preload's settings.getKey().
+     */
+    getKey: async (key: string) => {
+      if (!tokenValid) return { success: false, error: 'Not initialized' };
+      const result = await ipcRenderer.invoke('tile:settings:get', {
+        token: tileToken,
+        key,
+      });
+      if (result.error) return { success: false, error: result.error };
+      return { success: true, data: result.value };
+    },
+
+    /**
+     * v1 compatibility alias — set returns {success, error?} shape
+     * matching legacy preload's settings.setKey().
+     */
+    setKey: async (key: string, value: unknown) => {
+      if (!tokenValid) return { success: false, error: 'Not initialized' };
+      const result = await ipcRenderer.invoke('tile:settings:set', {
+        token: tileToken,
+        key,
+        value,
+      });
+      if (result.error) return { success: false, error: result.error };
+      return { success: true };
     },
   };
 

@@ -16,7 +16,7 @@
  * Every handler validates the capability token before executing.
  */
 
-import { ipcMain, BrowserWindow, net, dialog, webContents } from 'electron';
+import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -30,6 +30,7 @@ import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 import { invokeWindowOpen } from './ipc.js';
+import { getActiveThemeId } from './protocol.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -576,10 +577,14 @@ export function registerTileIpcHandlers(): void {
       return { error: 'Theme capability not granted' };
     }
 
-    // Return basic theme info — actual theme state comes from main
+    // Return real theme state by querying the active theme + color scheme.
+    const themeId = getActiveThemeId();
+    const isDark = nativeTheme.shouldUseDarkColors;
     return {
-      // The real implementation would query the active theme
-      activeTheme: 'peek',
+      activeTheme: themeId,
+      themeId,
+      isDark,
+      effectiveScheme: isDark ? 'dark' : 'light',
     };
   });
 
@@ -594,9 +599,22 @@ export function registerTileIpcHandlers(): void {
       return { error: 'Settings capability not granted' };
     }
 
-    // Scoped to the tile's own settings namespace
-    // The real implementation would use the datastore
-    return { value: null };
+    // Scoped to the tile's own feature_settings namespace.
+    try {
+      const db = getDb();
+      const row = db.prepare(
+        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
+      ).get(grant.tileId, args.key) as { value: string } | undefined;
+      if (!row) return { value: null };
+      try {
+        return { value: JSON.parse(row.value) };
+      } catch {
+        return { value: row.value };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { error: message };
+    }
   });
 
   ipcMain.handle('tile:settings:set', async (_event, args: {
@@ -609,11 +627,27 @@ export function registerTileIpcHandlers(): void {
       return { error: 'Settings capability not granted' };
     }
 
-    // Scoped to the tile's own settings namespace
-    return { success: true };
+    // Scoped to the tile's own feature_settings namespace.
+    try {
+      const db = getDb();
+      const jsonValue = JSON.stringify(args.value);
+      db.prepare(`
+        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(`${grant.tileId}_${args.key}`, grant.tileId, args.key, jsonValue, Date.now());
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
   });
 
   // ── Datastore ──
+
+  // NOTE: tile:datastore:* are not yet implemented. No feature currently uses them.
+  // When a feature needs scoped table access, wire these to getDb() with per-tile
+  // row filtering (e.g., WHERE source = grant.tileId) and a SQL allow-list per table.
+  // Returning explicit errors avoids silent data loss from pretend-successful writes.
 
   ipcMain.handle('tile:datastore:get', async (_event, args: {
     token: string;
@@ -624,13 +658,10 @@ export function registerTileIpcHandlers(): void {
     if (!grant || !hasCapability(grant, 'datastore')) {
       return { error: 'Datastore capability not granted' };
     }
-
     if (!hasDatastoreTable(grant, args.table)) {
       return { error: `Table not allowed: ${args.table}` };
     }
-
-    // The real implementation would use getDb()
-    return { value: null };
+    return { error: 'tile:datastore:get not yet implemented — use pubsub + ipc to reach core datastore' };
   });
 
   ipcMain.handle('tile:datastore:set', async (_event, args: {
@@ -643,13 +674,10 @@ export function registerTileIpcHandlers(): void {
     if (!grant || !hasCapability(grant, 'datastore')) {
       return { error: 'Datastore capability not granted' };
     }
-
     if (!hasDatastoreTable(grant, args.table)) {
       return { error: `Table not allowed: ${args.table}` };
     }
-
-    // The real implementation would use getDb()
-    return { success: true };
+    return { success: false, error: 'tile:datastore:set not yet implemented — no feature currently requires it' };
   });
 
   ipcMain.handle('tile:datastore:query', async (_event, args: {
@@ -661,13 +689,10 @@ export function registerTileIpcHandlers(): void {
     if (!grant || !hasCapability(grant, 'datastore')) {
       return { error: 'Datastore capability not granted' };
     }
-
     if (!hasDatastoreTable(grant, args.table)) {
       return { error: `Table not allowed: ${args.table}` };
     }
-
-    // The real implementation would use getDb()
-    return { rows: [] };
+    return { rows: [], error: 'tile:datastore:query not yet implemented — no feature currently requires it' };
   });
 
   // ── Feature Registry ──
