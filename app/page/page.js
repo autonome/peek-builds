@@ -2047,10 +2047,14 @@ function updateSpaceModeWidget() {
 async function initModeContext() {
   try {
     const existingMode = await api.context.get('mode');
-    if (existingMode.success && existingMode.data && existingMode.data.value === 'space') {
-      currentMode = 'space';
+    if (
+      existingMode.success &&
+      existingMode.data &&
+      (existingMode.data.value === 'space' || existingMode.data.value === 'group')
+    ) {
+      currentMode = existingMode.data.value;
       currentModeMetadata = existingMode.data.metadata || {};
-      DEBUG && console.log('[page] Inherited space mode, preserving:', currentModeMetadata);
+      DEBUG && console.log(`[page] Inherited ${currentMode} mode, preserving:`, currentModeMetadata);
     } else {
       const result = await api.context.setMode('page', {
         metadata: {
