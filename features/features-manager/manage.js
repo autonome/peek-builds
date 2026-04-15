@@ -50,6 +50,7 @@ let features = [];
 let searchFilter = '';
 let pendingInstallUri = null;  // AT URI currently being previewed
 let pendingCapReviewId = null; // Feature ID pending capability review
+let createDirSelected = null;  // Selected directory for feature creation
 
 // ─── Data loading ───────────────────────────────────────────────────
 
@@ -134,8 +135,9 @@ function showEmpty(errorMsg) {
 }
 
 function createFeatureCard(feature) {
+  const isDev = feature.source?.type === 'dev';
   const card = document.createElement('div');
-  card.className = 'feature-card' + (feature.disabled ? ' disabled' : '');
+  card.className = 'feature-card' + (feature.disabled ? ' disabled' : '') + (isDev ? ' dev' : '');
   card.dataset.featureId = feature.id;
 
   const sourceType = feature.source?.type || 'unknown';

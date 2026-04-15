@@ -9,43 +9,72 @@
 <script type="module">
   import extension from './background.js';
 
-  const api = window.app;
+  const hasPeekAPI = typeof window.app !== 'undefined';
+  const api = hasPeekAPI ? window.app : null;
   const extId = extension.id;
 
-  // Initialize extension BEFORE signaling ready
-  // (lazy loading waits for ext:ready, so handlers must be registered first)
-  if (extension.init) {
-    await extension.init();
+  console.log(`[ext:${extId}] background.html loaded`);
+
+  // Detect v2 tile runtime (has api.initialize) vs v1 legacy
+  const isTileV2 = hasPeekAPI && typeof api.initialize === 'function';
+
+  if (hasPeekAPI && isTileV2) {
+    // ── V2 Tile Runtime ──
+    if (api.pubsub && !api.publish) {
+      api.publish = api.pubsub.publish;
+      api.subscribe = api.pubsub.subscribe;
+    }
+
+    if (api.settings && !api.settings.getExtKey) {
+      api.settings.getExtKey = (extId, key) => api.settings.get(`${extId}.${key}`);
+    }
+
+    console.log(`[ext:${extId}] initializing v2 tile`);
+    await api.initialize();
+
+    if (extension.init) {
+      console.log(`[ext:${extId}] calling init()`);
+      await extension.init();
+    }
+
+    api.onShutdown(() => {
+      console.log(`[ext:${extId}] received shutdown`);
+      if (extension.uninit) {
+        extension.uninit();
+      }
+    });
+
+  } else if (hasPeekAPI) {
+    // ── V1 Legacy Runtime ──
+    if (extension.init) {
+      await extension.init();
+    }
+
+    const registeredTopics = Object.keys(window._cmdHandlers || {})
+      .map(name => `cmd:execute:${name}`);
+
+    api.publish('ext:ready', {
+      id: extId,
+      registeredTopics,
+      manifest: {
+        id: extension.id,
+        labels: extension.labels,
+        version: '1.0.0'
+      }
+    }, api.scopes.SYSTEM);
+
+    api.subscribe('app:shutdown', () => {
+      if (extension.uninit) {
+        extension.uninit();
+      }
+    }, api.scopes.SYSTEM);
+
+    api.subscribe(`ext:${extId}:shutdown`, () => {
+      if (extension.uninit) {
+        extension.uninit();
+      }
+    }, api.scopes.SYSTEM);
   }
-
-  // Collect registered command topics for assertion verification
-  const registeredTopics = Object.keys(window._cmdHandlers || {})
-    .map(name => `cmd:execute:${name}`);
-
-  // Signal ready to main process
-  api.publish('ext:ready', {
-    id: extId,
-    registeredTopics,
-    manifest: {
-      id: extension.id,
-      labels: extension.labels,
-      version: '1.0.0'
-    }
-  }, api.scopes.SYSTEM);
-
-  // Handle shutdown request from main process
-  api.subscribe('app:shutdown', () => {
-    if (extension.uninit) {
-      extension.uninit();
-    }
-  }, api.scopes.SYSTEM);
-
-  // Handle extension-specific shutdown
-  api.subscribe(`ext:${extId}:shutdown`, () => {
-    if (extension.uninit) {
-      extension.uninit();
-    }
-  }, api.scopes.SYSTEM);
 </script>
 </body>
 </html>

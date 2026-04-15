@@ -1,11 +1,48 @@
 {
+  "manifestVersion": 2,
   "id": "lists",
   "shortname": "lists",
   "name": "Lists",
   "description": "Search across local items, tags, and history",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": false,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "lists-home",
+        "width": 700,
+        "height": 768,
+        "title": "Lists"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:lists:shutdown",
+        "app:shutdown",
+        "lists:*"
+      ]
+    },
+    "window": {
+      "create": true
+    },
+    "commands": true,
+    "shortcuts": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "lists",
