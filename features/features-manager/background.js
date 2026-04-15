@@ -8,12 +8,22 @@
  */
 
 import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { checkForUpdates, shouldAutoUpdate, compareCapabilities } from './updater.js';
 
 const hasPeekAPI = typeof window.app !== 'undefined';
 const api = hasPeekAPI ? window.app : null;
 
 /** Cached lex session for publish flow */
 let currentLexSession = null;
+
+/** Update check interval handle */
+let updateCheckIntervalId = null;
+
+/** Default update check interval in ms (24 hours) */
+const DEFAULT_UPDATE_INTERVAL_MS = 1440 * 60 * 1000;
+
+/** Delay before first update check after startup (60 seconds) */
+const STARTUP_CHECK_DELAY_MS = 60 * 1000;
 
 /**
  * Open the features manage window
@@ -171,6 +181,186 @@ const extension = {
       }
     }, api.scopes.GLOBAL);
 
+    // ── Update Checking ──
+
+    /**
+     * Run update check for all installed atproto features.
+     * For each result, apply auto-update or publish notification.
+     */
+    async function runUpdateCheck() {
+      console.log('[features-manager] Running update check...');
+      try {
+        const result = await api.ipc.invoke('feature-update:check-all');
+        if (result.error) {
+          console.error('[features-manager] Update check error:', result.error);
+          return [];
+        }
+
+        const updates = result.updates || [];
+        console.log(`[features-manager] Found ${updates.length} updates`);
+
+        // Get full feature list to check policies and capabilities
+        const listResult = await api.ipc.invoke('feature-registry:list');
+        const features = listResult.entries || [];
+        const featureMap = {};
+        for (const f of features) {
+          featureMap[f.id] = f;
+        }
+
+        for (const update of updates) {
+          const feature = featureMap[update.id];
+          if (!feature) continue;
+
+          const policy = feature.updatePolicy || 'auto';
+
+          if (policy === 'pinned') continue;
+
+          // For auto-update, we need to check capabilities
+          // We don't have the new manifest here directly, but we can
+          // attempt the apply and let the IPC handler guard it
+          if (policy === 'auto') {
+            const applyResult = await api.ipc.invoke('feature-update:apply', {
+              id: update.id,
+              userApproved: false,
+            });
+
+            if (applyResult.capabilitiesChanged) {
+              // Capabilities expanded — notify user
+              api.publish('feature:update-available', {
+                featureId: update.id,
+                name: update.name,
+                currentVersion: update.currentVersion,
+                availableVersion: update.availableVersion,
+                capabilitiesChanged: true,
+                added: applyResult.added,
+                removed: applyResult.removed,
+              }, api.scopes.GLOBAL);
+            } else if (applyResult.error && !applyResult.capabilitiesChanged) {
+              console.error(`[features-manager] Auto-update failed for ${update.id}:`, applyResult.error);
+            } else if (applyResult.success) {
+              console.log(`[features-manager] Auto-updated ${update.id} to ${update.availableVersion}`);
+            }
+          } else if (policy === 'notify') {
+            api.publish('feature:update-available', {
+              featureId: update.id,
+              name: update.name,
+              currentVersion: update.currentVersion,
+              availableVersion: update.availableVersion,
+              capabilitiesChanged: false,
+            }, api.scopes.GLOBAL);
+          }
+        }
+
+        return updates;
+      } catch (err) {
+        console.error('[features-manager] Update check error:', err);
+        return [];
+      }
+    }
+
+    /**
+     * Schedule periodic update checks.
+     */
+    function scheduleUpdateChecks(intervalMs) {
+      if (updateCheckIntervalId) {
+        clearInterval(updateCheckIntervalId);
+      }
+      updateCheckIntervalId = setInterval(runUpdateCheck, intervalMs);
+      console.log(`[features-manager] Update checks scheduled every ${Math.round(intervalMs / 60000)} minutes`);
+    }
+
+    // Schedule first check after startup delay, then at configured interval
+    setTimeout(async () => {
+      await runUpdateCheck();
+
+      // Read the configured interval from settings
+      let intervalMs = DEFAULT_UPDATE_INTERVAL_MS;
+      try {
+        const settingsResult = await api.ipc.invoke('tile:settings:get', { key: 'features-manager.updateCheckInterval' });
+        if (settingsResult.value && typeof settingsResult.value === 'number') {
+          intervalMs = settingsResult.value * 60 * 1000;
+        }
+      } catch (e) {
+        // Use default
+      }
+      scheduleUpdateChecks(intervalMs);
+    }, STARTUP_CHECK_DELAY_MS);
+
+    // Register update commands
+    api.commands.register('check feature updates', async () => {
+      const updates = await runUpdateCheck();
+      if (updates.length === 0) {
+        return {
+          output: {
+            data: 'All features are up to date.',
+            mimeType: 'text/plain',
+            title: 'Feature Updates',
+          },
+        };
+      }
+      return {
+        output: {
+          data: updates.map(u => ({
+            name: u.name,
+            current: u.currentVersion,
+            available: u.availableVersion,
+          })),
+          mimeType: 'application/json',
+          title: `Updates Available (${updates.length})`,
+        },
+      };
+    });
+
+    api.commands.register('update feature', {
+      params: [{
+        name: 'feature',
+        description: 'Feature name or ID to update',
+        type: 'string',
+        required: true,
+      }],
+      execute: async (params) => {
+        const query = (params.feature || '').toLowerCase();
+        if (!query) {
+          return { error: 'Feature name or ID is required' };
+        }
+
+        // Find matching feature
+        const listResult = await api.ipc.invoke('feature-registry:list');
+        const features = listResult.entries || [];
+        const match = features.find(f =>
+          f.id.toLowerCase() === query ||
+          f.name.toLowerCase() === query ||
+          f.name.toLowerCase().includes(query)
+        );
+
+        if (!match) {
+          return { error: `No feature found matching "${params.feature}"` };
+        }
+
+        if (match.source?.type !== 'atproto') {
+          return { error: `Feature "${match.name}" is not from AT Protocol and cannot be updated this way` };
+        }
+
+        // Apply update (userApproved=true overrides notify/pinned for this action)
+        const result = await api.ipc.invoke('feature-update:apply', {
+          id: match.id,
+          userApproved: true,
+        });
+
+        if (result.error) {
+          return { error: result.error };
+        }
+
+        return {
+          output: {
+            data: `Updated "${match.name}" to v${result.entry?.source?.version || 'latest'}`,
+            mimeType: 'text/plain',
+            title: 'Feature Updated',
+          },
+        };
+      },
+    });
+
     // Install flow — orchestrates resolve/preview/install for AT URIs
     api.subscribe('feature:install-request', async (msg) => {
       if (!msg.atUri) return;
@@ -230,6 +420,10 @@ const extension = {
     if (!hasPeekAPI) return;
     unregisterNoun('features');
     api.shortcuts.unregister('CommandOrControl+Shift+X');
+    if (updateCheckIntervalId) {
+      clearInterval(updateCheckIntervalId);
+      updateCheckIntervalId = null;
+    }
   }
 };
 

@@ -139,6 +139,16 @@
       "name": "list features",
       "description": "List installed features",
       "action": { "type": "execute" }
+    },
+    {
+      "name": "check feature updates",
+      "description": "Check all installed features for available updates",
+      "action": { "type": "execute" }
+    },
+    {
+      "name": "update feature",
+      "description": "Update a specific feature to the latest version",
+      "action": { "type": "execute" }
     }
   ],
   "shortcuts": [
