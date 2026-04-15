@@ -1,0 +1,28 @@
+{
+  "prefs": {
+    "type": "object",
+    "properties": {
+      "updateCheckInterval": {
+        "type": "number",
+        "description": "Update check interval in minutes",
+        "default": 1440,
+        "minimum": 60
+      },
+      "defaultUpdatePolicy": {
+        "type": "string",
+        "description": "Default update policy for newly installed features",
+        "enum": ["auto", "notify", "pinned"],
+        "default": "auto"
+      }
+    }
+  },
+  "storageKeys": {
+    "PREFS": "prefs"
+  },
+  "defaults": {
+    "prefs": {
+      "updateCheckInterval": 1440,
+      "defaultUpdatePolicy": "auto"
+    }
+  }
+}

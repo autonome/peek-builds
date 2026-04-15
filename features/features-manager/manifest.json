@@ -1,0 +1,93 @@
+{
+  "manifestVersion": 2,
+  "id": "features-manager",
+  "shortname": "features-manager",
+  "name": "Features Manager",
+  "description": "Browse, install, manage, and publish non-built-in tile features",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "manage",
+      "type": "window",
+      "url": "manage.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "features-manage",
+        "width": 900,
+        "height": 650,
+        "title": "Features"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "feature:*",
+        "ext:ready",
+        "app:shutdown"
+      ]
+    },
+    "datastore": {
+      "tables": ["features_history"]
+    },
+    "window": {
+      "create": true,
+      "query": true
+    },
+    "commands": true,
+    "shortcuts": true,
+    "settings": true
+  },
+  "commands": [
+    {
+      "name": "features",
+      "description": "Open features manager",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/features-manager/manage.html",
+        "options": {
+          "role": "workspace",
+          "key": "features-manage",
+          "width": 900,
+          "height": 650,
+          "title": "Features"
+        }
+      }
+    },
+    {
+      "name": "manage features",
+      "description": "Open features manager",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/features-manager/manage.html",
+        "options": {
+          "role": "workspace",
+          "key": "features-manage",
+          "width": 900,
+          "height": 650,
+          "title": "Features"
+        }
+      }
+    },
+    {
+      "name": "list features",
+      "description": "List installed features",
+      "action": { "type": "execute" }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "CommandOrControl+Shift+X",
+      "command": "features"
+    }
+  ],
+  "settingsSchema": "settings-schema.json"
+}
