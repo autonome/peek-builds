@@ -1,9 +1,35 @@
 {
+  "manifestVersion": 2,
   "id": "pagewidgets-sample",
   "shortname": "pagewidgets-sample",
   "name": "Page Widgets Sample",
   "description": "Sample extension demonstrating the page widget extensibility API",
-  "version": "1.0.0",
-  "background": "background.html",
-  "builtin": true
+  "version": "2.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["self", "global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:pagewidgets-sample:shutdown",
+        "app:shutdown",
+        "page:loaded",
+        "page:navigated",
+        "page:will-close",
+        "page:execute-script",
+        "page:script-result",
+        "widget:register",
+        "widget:render",
+        "widget:close"
+      ]
+    }
+  }
 }
