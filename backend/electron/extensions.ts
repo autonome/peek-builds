@@ -158,7 +158,6 @@ export function loadExtensionManifest(extPath: string): ExtensionManifest | null
  * into core app code (app/cmd/). It no longer appears in the extension registry.
  */
 export function isBuiltinExtensionEnabled(extId: string): boolean {
-
   try {
     const db = getDb();
     // Use 'ext_disabled' key to avoid collision with extension-internal settings.
