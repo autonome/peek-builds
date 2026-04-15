@@ -1,12 +1,59 @@
 {
+  "manifestVersion": 2,
   "id": "groups",
   "shortname": "groups",
   "name": "Groups",
   "description": "Tag-based grouping of addresses",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
-  "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "peek://ext/groups/home.html",
+        "width": 800,
+        "height": 600,
+        "title": "Groups"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "tag:*",
+        "item:*",
+        "group:*",
+        "groups:*",
+        "cmd:*",
+        "window:*",
+        "sync:pull-completed",
+        "ext:ready",
+        "ext:groups:shutdown",
+        "app:shutdown"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags", "item_events"]
+    },
+    "window": {
+      "create": true,
+      "query": true,
+      "manage": true
+    },
+    "commands": true,
+    "shortcuts": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "groups",
@@ -53,5 +100,6 @@
       "keys": "CommandOrControl+G",
       "command": "groups"
     }
-  ]
+  ],
+  "settingsSchema": "./settings-schema.json"
 }
