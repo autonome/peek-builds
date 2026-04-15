@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>Publish Feature</title>
+    <link rel="stylesheet" type="text/css" href="publish.css">
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-left">
+        <h1 class="header-title">Publish Feature</h1>
+      </div>
+      <div class="header-right">
+        <div class="step-indicator" id="step-indicator">
+          <span class="step active" data-step="1">1. Select</span>
+          <span class="step-sep">&rarr;</span>
+          <span class="step" data-step="2">2. Preview</span>
+          <span class="step-sep">&rarr;</span>
+          <span class="step" data-step="3">3. Publish</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="status-bar" id="status-bar" style="display:none;">
+      <span class="status-text" id="status-text"></span>
+    </div>
+
+    <!-- Step 1: Select Feature -->
+    <div class="step-content" id="step-1">
+      <div class="step-body">
+        <div class="content" id="feature-list-content">
+          <div class="loading">Loading local features...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Preview -->
+    <div class="step-content" id="step-2" style="display:none;">
+      <div class="step-body">
+        <div class="preview-section">
+          <h2 class="section-title" id="preview-feature-name">Feature Name</h2>
+          <div class="preview-meta" id="preview-meta"></div>
+        </div>
+
+        <div class="preview-section">
+          <h3 class="section-title">Files</h3>
+          <div class="file-list" id="file-list"></div>
+          <div class="total-size" id="total-size"></div>
+        </div>
+
+        <div class="preview-section">
+          <h3 class="section-title">Metadata</h3>
+          <div class="form-group">
+            <label class="form-label" for="pub-description">Description</label>
+            <textarea class="form-textarea" id="pub-description" rows="3" maxlength="2048" placeholder="Describe what this feature does..."></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Categories</label>
+            <div class="category-grid" id="category-grid"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pub-readme">Readme (Markdown)</label>
+            <textarea class="form-textarea" id="pub-readme" rows="6" maxlength="32768" placeholder="# Feature Name\n\nDetailed description..."></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="pub-license">License (SPDX)</label>
+              <input class="form-input" id="pub-license" type="text" placeholder="MIT" maxlength="64">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="pub-homepage">Homepage URL</label>
+              <input class="form-input" id="pub-homepage" type="url" placeholder="https://...">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-footer">
+        <button class="btn" id="back-to-step-1">Back</button>
+        <button class="btn primary" id="next-to-step-3">Next</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Confirm & Publish -->
+    <div class="step-content" id="step-3" style="display:none;">
+      <div class="step-body">
+        <!-- No session state -->
+        <div class="no-session-panel" id="no-session" style="display:none;">
+          <div class="empty-state">
+            <div class="empty-state-icon" style="font-family: system-ui;">&#128274;</div>
+            <div class="empty-state-title">AT Protocol Login Required</div>
+            <div class="empty-state-hint">
+              Log in via the Lex feature first. Open the command palette and run "lex" to open Lexicon Studio, then log in with your AT Protocol handle.
+            </div>
+          </div>
+        </div>
+
+        <!-- Has session state -->
+        <div class="publish-panel" id="publish-panel" style="display:none;">
+          <div class="publisher-identity">
+            <div class="publisher-label">Publishing as:</div>
+            <div class="publisher-handle" id="pub-handle"></div>
+            <div class="publisher-did" id="pub-did"></div>
+          </div>
+
+          <div class="publish-summary" id="publish-summary"></div>
+
+          <div class="publish-actions">
+            <button class="btn primary publish-btn" id="publish-btn">Publish</button>
+          </div>
+
+          <!-- Progress -->
+          <div class="publish-progress" id="publish-progress" style="display:none;">
+            <div class="progress-label" id="progress-label">Uploading...</div>
+            <div class="progress-bar-container">
+              <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div class="progress-detail" id="progress-detail"></div>
+          </div>
+
+          <!-- Success -->
+          <div class="publish-success" id="publish-success" style="display:none;">
+            <div class="success-title">Published successfully!</div>
+            <div class="success-uri-row">
+              <input class="form-input uri-display" id="success-uri" type="text" readonly>
+              <button class="btn" id="copy-uri-btn">Copy URI</button>
+            </div>
+          </div>
+
+          <!-- Error -->
+          <div class="publish-error" id="publish-error" style="display:none;">
+            <div class="error-title">Publish failed</div>
+            <div class="error-message" id="error-message"></div>
+            <button class="btn" id="retry-btn">Retry</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-footer">
+        <button class="btn" id="back-to-step-2">Back</button>
+      </div>
+    </div>
+
+    <script>
+      // V2 tile runtime compat shims
+      (function() {
+        const api = window.app;
+        if (!api) return;
+        const isTileV2 = typeof api.initialize === 'function';
+        if (!isTileV2) return;
+        if (api.pubsub && !api.publish) {
+          api.publish = api.pubsub.publish;
+          api.subscribe = api.pubsub.subscribe;
+        }
+        if (api.settings && !api.settings.getExtKey) {
+          api.settings.getExtKey = (extId, key) => api.settings.get(extId + '.' + key);
+        }
+      })();
+    </script>
+    <script type="module" src="publish.js"></script>
+  </body>
+</html>
