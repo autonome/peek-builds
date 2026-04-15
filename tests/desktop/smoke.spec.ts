@@ -1365,33 +1365,28 @@ test.describe('Data Persistence @desktop', () => {
 
 test.describe('Core Functionality @desktop', () => {
   test('app launches and extensions load', async () => {
-    // In hybrid mode:
-    // - Built-in extensions (groups, peeks, slides) are in extension host as iframes
-    // - External extensions (example) are in separate windows
+    // After v2 tile migration:
+    // - Legacy v1 extensions (cmd, hud, page) load as iframes in extension-host
+    // - V2 features load as separate background BrowserWindows (peek://{id}/background.html)
+    // - Eager v2 features (e.g. entities, peeks, slides) launch at startup;
+    //   lazy v2 features (e.g. example) launch on first command/event
 
-    // Wait for extension windows to be available with retry
-    let windows = sharedApp.windows();
-    let extWindows = sharedApp.getExtensionWindows();
-
-    // Retry logic for extension windows to be fully loaded
-    const start = Date.now();
-    while (extWindows.length < 1 && Date.now() - start < 10000) {
-      await sleep(200);
-      windows = sharedApp.windows();
-      extWindows = sharedApp.getExtensionWindows();
-    }
-
-    // Check extension host exists (for built-in extensions)
-    const hostWindow = windows.find(w => w.url().includes('extension-host.html'));
-    expect(hostWindow).toBeDefined();
-
-    // Check external extension window exists (example) using waitForWindow for reliability
-    const exampleWindow = await waitForWindow(
+    // Check extension host exists (still used for legacy v1 iframes including cmd)
+    const hostWindow = await waitForWindow(
       () => sharedApp.windows(),
-      'peek://ext/example/background.html',
+      'peek://app/extension-host.html',
       15000
     );
-    expect(exampleWindow).toBeDefined();
+    expect(hostWindow).toBeDefined();
+
+    // Check that at least one eager v2 background tile window exists.
+    // peeks and slides are eager v2 background tiles that launch at startup.
+    const v2BgWindow = await waitForWindow(
+      () => sharedApp.windows(),
+      'peek://peeks/background.html',
+      15000
+    );
+    expect(v2BgWindow).toBeDefined();
   });
 
   test('database is accessible', async () => {
@@ -4178,7 +4173,12 @@ test.describe('Hybrid Extension Mode @desktop', () => {
   });
 
   test('built-in extensions load as iframes in extension host', async () => {
-    // Get the extension host window
+    // After v2 tile migration:
+    // - Only legacy v1 consolidated extensions (cmd, hud, page) load as iframes
+    //   inside the extension-host window. cmd is loaded by cmd-glue.ts.
+    // - V2 features (peeks, slides, groups, editor, etc.) now launch as
+    //   separate background BrowserWindows at peek://{id}/background.html and
+    //   are NOT iframes in the host. See "v2 background tile windows" test below.
     const windows = sharedApp.windows();
     const hostWindow = windows.find(w => w.url().includes('peek://app/extension-host.html'));
     expect(hostWindow).toBeDefined();
@@ -4186,18 +4186,16 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     // Wait for #extensions container to exist (it may be hidden, so use 'attached' state)
     await hostWindow!.waitForSelector('#extensions', { timeout: 15000, state: 'attached' });
 
-    // Wait for at least 4 eager iframes to load (cmd, groups, hud, websearch)
-    // Lazy extensions (editor, lists, windows, pagestream) load on first use
+    // Wait for at least the cmd iframe to load
     await hostWindow!.waitForFunction(
       () => {
         const container = document.getElementById('extensions');
         const iframes = container ? container.querySelectorAll('iframe') : [];
-        return iframes.length >= 4;
+        return Array.from(iframes).some(f => (f as HTMLIFrameElement).src.includes('peek://cmd/'));
       },
       { timeout: 15000 }
     );
 
-    // Now get the iframe data
     const iframeData = await hostWindow!.evaluate(() => {
       const container = document.getElementById('extensions');
       const iframes = container ? Array.from(container.querySelectorAll('iframe')) : [];
@@ -4207,25 +4205,38 @@ test.describe('Hybrid Extension Mode @desktop', () => {
       };
     });
 
-    // Eager extensions: cmd (EAGER_EXTENSION_IDS), hud (EAGER_EXTENSION_IDS),
-    // plus extensions without manifest commands (peeks, slides, page, files, etc.)
-    // Lazy extensions with manifest commands (editor, groups, lists, pagestream,
-    // websearch, windows) load on first use
-    expect(iframeData.count).toBeGreaterThanOrEqual(4);
+    // cmd is always loaded as an iframe in the extension host (via cmd-glue.ts)
+    expect(iframeData.count).toBeGreaterThanOrEqual(1);
     expect(iframeData.srcs.some(s => s.includes('peek://cmd/'))).toBe(true);
-    expect(iframeData.srcs.some(s => s.includes('peek://peeks/'))).toBe(true);
-    expect(iframeData.srcs.some(s => s.includes('peek://slides/'))).toBe(true);
   });
 
-  test('example extension loads as separate window (external)', async () => {
-    // Example extension should load in its own window, not in extension host
-    // Use waitForWindow helper with retry logic
-    const exampleWindow = await waitForWindow(
+  test('v2 background tile windows exist as separate BrowserWindows', async () => {
+    // V2 background tiles (peeks, slides) launch as separate hidden BrowserWindows
+    // at peek://{id}/background.html — NOT as iframes in the extension host.
+    const peeksWin = await waitForWindow(
       () => sharedApp.windows(),
-      'peek://ext/example/background.html',
+      'peek://peeks/background.html',
       15000
     );
-    expect(exampleWindow).toBeDefined();
+    expect(peeksWin).toBeDefined();
+
+    const slidesWin = await waitForWindow(
+      () => sharedApp.windows(),
+      'peek://slides/background.html',
+      15000
+    );
+    expect(slidesWin).toBeDefined();
+  });
+
+  test.skip('example extension loads as separate window (external)', async () => {
+    // SKIPPED: After v2 tile migration, the example extension is a v2 tile
+    // (manifestVersion: 2) with a lazy background tile. It no longer loads at
+    // startup as an "external" v1 window at peek://ext/example/background.html.
+    // Instead it launches at peek://example/background.html on first command
+    // invocation. See the "v2 background tile windows" test for eager v2 tiles.
+    //
+    // No extension currently uses the v1 external-window pattern after the
+    // v2 migration, so there is no equivalent to test here.
   });
 
   test('api.extensions.reload() reloads external extension', async () => {
@@ -5272,10 +5283,13 @@ test.describe('Shortcut Roundtrip @desktop', () => {
       { timeout: 10000 }
     );
 
-    // Find a frame for a consolidated extension (e.g., slides or groups)
+    // After v2 tile migration, slides/groups/peeks are now separate v2 background
+    // BrowserWindows — not iframes in the host. The remaining v1 iframes in the
+    // extension host are cmd (loaded by cmd-glue.ts) and hud (eager v1 consolidated).
+    // Use the cmd iframe since it is always loaded.
     const frames = hostWindow!.frames();
     const extFrame = frames.find(f =>
-      f.url().includes('peek://slides/') || f.url().includes('peek://groups/')
+      f.url().includes('peek://cmd/') || f.url().includes('peek://hud/')
     );
     expect(extFrame).toBeDefined();
 
@@ -5334,10 +5348,11 @@ test.describe('Shortcut Roundtrip @desktop', () => {
     const hostWindow = sharedApp.windows().find(w => w.url().includes('extension-host.html'));
     expect(hostWindow).toBeDefined();
 
-    // Find a frame for a consolidated extension
+    // After v2 tile migration, slides/groups/peeks are now separate v2 background
+    // BrowserWindows — not iframes in the host. Use a remaining v1 iframe (cmd or hud).
     const frames = hostWindow!.frames();
     const extFrame = frames.find(f =>
-      f.url().includes('peek://slides/') || f.url().includes('peek://groups/')
+      f.url().includes('peek://cmd/') || f.url().includes('peek://hud/')
     );
     expect(extFrame).toBeDefined();
 
@@ -5380,63 +5395,14 @@ test.describe('Shortcut Roundtrip @desktop', () => {
     });
   });
 
-  test('shortcut from external extension window roundtrip', async () => {
-    // Register a local shortcut from the example extension (separate BrowserWindow),
-    // trigger it via handleLocalShortcut, verify callback fires.
-    // This tests the standard BrowserWindow path for comparison with the iframe path.
-
-    // Find the example extension window
-    const exampleWindow = await waitForWindow(
-      () => sharedApp.windows(),
-      'peek://ext/example/background.html',
-      15000
-    );
-    expect(exampleWindow).toBeDefined();
-
-    // Register a local shortcut from the example extension window
-    await exampleWindow.evaluate(() => {
-      (window as any).__extShortcutFired = false;
-      (window as any).app.shortcuts.register('Alt+F6', () => {
-        (window as any).__extShortcutFired = true;
-      });
-    });
-
-    // Wait for IPC to propagate
-    await sleep(300);
-
-    // Trigger the shortcut from the main process
-    const handled = await sharedApp.evaluateMain!(({ app }) => {
-      try {
-        const { handleLocalShortcut } = (globalThis as any).__peek_test;
-        return handleLocalShortcut({
-          type: 'keyDown',
-          alt: true,
-          shift: false,
-          meta: false,
-          control: false,
-          code: 'F6'
-        });
-      } catch (e: any) {
-        return 'peek_test-failed: ' + e.message;
-      }
-    });
-
-    expect(handled).toBe(true);
-
-    // Wait for the callback to fire in the example extension window
-    await exampleWindow.waitForFunction(
-      () => (window as any).__extShortcutFired === true,
-      { timeout: 5000 }
-    );
-
-    const fired = await exampleWindow.evaluate(() => (window as any).__extShortcutFired);
-    expect(fired).toBe(true);
-
-    // Clean up
-    await exampleWindow.evaluate(() => {
-      (window as any).app.shortcuts.unregister('Alt+F6');
-      delete (window as any).__extShortcutFired;
-    });
+  test.skip('shortcut from external extension window roundtrip', async () => {
+    // SKIPPED: After v2 tile migration, no extension uses the v1 external-window
+    // pattern (peek://ext/{id}/background.html). The example extension is now a
+    // v2 tile launched at peek://example/background.html. v2 tile windows use
+    // tile-preload.ts which does NOT expose api.shortcuts (capability-scoped API
+    // does not currently include shortcut registration), so this scenario can't
+    // be reproduced. The general BrowserWindow ev.reply roundtrip is still
+    // covered by "local shortcut from background window roundtrip" above.
   });
 });
 
