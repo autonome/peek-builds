@@ -1,11 +1,49 @@
 {
+  "manifestVersion": 2,
   "id": "helpdocs",
   "shortname": "helpdocs",
   "name": "Help docs",
   "description": "Helpful documentation and assistance features",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "overlay",
+      "type": "window",
+      "url": "overlay.html",
+      "windowHints": {
+        "transparent": true,
+        "alwaysOnTop": true,
+        "focusable": false,
+        "resizable": false,
+        "frame": false,
+        "title": "Help Docs"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:helpdocs:shutdown",
+        "app:shutdown",
+        "app:focus-changed"
+      ]
+    },
+    "window": {
+      "create": true,
+      "query": true,
+      "manage": true
+    },
+    "commands": true
+  },
   "commands": [
     {
       "name": "help docs",
