@@ -281,14 +281,13 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       ],
       [Events.TAB]: [
         {
-          // Command has params AND name is already fully typed → enter param mode
-          guard: (p) => guard('hasMatches', p) && guard('commandHasParams', p) && guard('textAlreadyMatchesCommand', p),
+          // Command has params → complete name and enter param mode in one step
+          guard: (p) => guard('hasMatches', p) && guard('commandHasParams', p),
           target: States.PARAM_MODE,
           actions: ['tabCompleteCommand', 'enterParamMode', 'updateGhostText', 'updateResults'],
         },
         {
-          // Command has params but name is only partially typed → complete name first
-          // (next Tab press will enter param mode since name will then be fully typed)
+          // No params — just complete/cycle the name
           guard: 'hasMatches',
           target: States.TYPING,
           actions: ['tabCompleteCommand', 'updateGhostText', 'updateResults'],
@@ -371,6 +370,8 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           actions: ['tabCompleteCommand', 'enterParamMode', 'updateGhostText', 'updateResults'],
         },
         {
+          // In RESULTS_OPEN, Tab cycles through results — only enter param mode
+          // when the name is already fully typed (above guard). Otherwise cycle.
           guard: 'hasMatches',
           target: States.RESULTS_OPEN,
           actions: ['tabCycleInResults', 'updateGhostText', 'renderResults'],
