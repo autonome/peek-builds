@@ -2552,9 +2552,12 @@ export function updateModeForNavigation(windowId: number, url: string): void {
   const detectedMode = detectModeFromUrl(url);
   const currentEntry = getContextEntry('mode', windowId);
 
-  // Don't override group mode with page mode (group mode persists)
-  if (currentEntry?.value === 'space' && detectedMode === 'page') {
-    DEBUG && console.log('main', `Preserving space mode for window ${windowId} during navigation`);
+  // Don't override space/group mode with page mode — they persist through navigation
+  if (
+    (currentEntry?.value === 'space' || currentEntry?.value === 'group') &&
+    detectedMode === 'page'
+  ) {
+    DEBUG && console.log('main', `Preserving ${currentEntry.value} mode for window ${windowId} during navigation`);
     return;
   }
 

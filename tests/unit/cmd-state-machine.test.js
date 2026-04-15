@@ -227,7 +227,7 @@ describe('TYPING transitions', () => {
     assert.equal(machine.getState(), States.PARAM_MODE);
   });
 
-  it('TYPING + Tab with params but partial text -> TYPING (complete name first)', () => {
+  it('TYPING + Tab with params on partial text -> PARAM_MODE (complete name and enter params)', () => {
     machine.getMutableData().matches = ['kagi'];
     machine.getMutableData().typed = 'ka';
     machine.getMutableData().commands = {
@@ -237,8 +237,8 @@ describe('TYPING transitions', () => {
       commandName: 'kagi',
       hasParams: true
     });
-    // Should stay in TYPING — complete the name, don't enter param mode yet
-    assert.equal(machine.getState(), States.TYPING);
+    // Should enter PARAM_MODE — Tab both completes the name AND enters param mode in one action
+    assert.equal(machine.getState(), States.PARAM_MODE);
     assert.equal(result.handled, true);
   });
 
