@@ -129,6 +129,11 @@ let screenBounds = {
 // --- Maximize state ---
 let isMaximized = false;
 let preMaximizeBounds = null; // { x, y, width, height } screen bounds before maximize
+// Raw WINDOW bounds captured before maximize (used to restore to the exact same
+// window rect, bypassing computeWindowBounds margin math which may differ from
+// how the window was originally sized — e.g., in headless test mode where the
+// canvas margin adjustment in ipc.ts window-open is skipped).
+let preMaximizeWindowBounds = null;
 
 // NOTE: The window always includes navbar space (NAVBAR_HEIGHT) to avoid
 // visual jumps on show/hide. Navbar visibility is CSS-only — no window resize.
@@ -501,10 +506,15 @@ async function toggleMaximize() {
     }
 
     if (isMaximized) {
-      // Restore from maximize
+      // Restore from maximize. Use the saved WINDOW bounds directly — they
+      // were captured from the live window before maximize, so restoring with
+      // them guarantees byte-for-byte bounds equivalence regardless of any
+      // canvas margin adjustments (which may or may not be applied in
+      // headless/test environments).
       isMaximized = false;
       document.body.classList.remove('maximized');
 
+      const restoreWindowBounds = preMaximizeWindowBounds;
       if (preMaximizeBounds) {
         screenBounds.x = preMaximizeBounds.x;
         screenBounds.y = preMaximizeBounds.y;
@@ -512,10 +522,15 @@ async function toggleMaximize() {
         screenBounds.height = preMaximizeBounds.height;
         preMaximizeBounds = null;
       }
+      preMaximizeWindowBounds = null;
 
       updatePositions();
       centerColumn.style.opacity = '0';
-      await api.window.setBounds(computeWindowBounds(screenBounds));
+      if (restoreWindowBounds) {
+        await api.window.setBounds(restoreWindowBounds);
+      } else {
+        await api.window.setBounds(computeWindowBounds(screenBounds));
+      }
       centerColumn.style.opacity = '1';
       updateUrlParams();
       return;
@@ -537,6 +552,22 @@ async function toggleMaximize() {
       width: screenBounds.width,
       height: screenBounds.height,
     };
+    // Also capture the live WINDOW bounds — restoring via these bypasses
+    // any computeWindowBounds margin math so the restored window matches
+    // exactly what the user had before maximizing.
+    try {
+      const windowBoundsResult = await api.window.getBounds();
+      if (windowBoundsResult && windowBoundsResult.success !== false) {
+        preMaximizeWindowBounds = {
+          x: windowBoundsResult.x,
+          y: windowBoundsResult.y,
+          width: windowBoundsResult.width,
+          height: windowBoundsResult.height,
+        };
+      }
+    } catch {
+      preMaximizeWindowBounds = null;
+    }
 
     isMaximized = true;
     document.body.classList.add('maximized');
@@ -811,6 +842,7 @@ function startDrag(screenX, screenY) {
   if (isMaximized && preMaximizeBounds) {
     const restoreW = preMaximizeBounds.width;
     const restoreH = preMaximizeBounds.height;
+    const savedWindowBounds = preMaximizeWindowBounds;
     isMaximized = false;
     document.body.classList.remove('maximized');
 
@@ -820,9 +852,23 @@ function startDrag(screenX, screenY) {
     screenBounds.width = restoreW;
     screenBounds.height = restoreH;
     preMaximizeBounds = null;
+    preMaximizeWindowBounds = null;
 
     updatePositions();
-    api.window.setBounds(computeWindowBounds(screenBounds));
+    // If we captured raw window bounds before maximize, restore to those exact
+    // dimensions so the window matches its pre-maximize size byte-for-byte.
+    // Only override position (centered on cursor); keep saved width/height.
+    if (savedWindowBounds) {
+      const computed = computeWindowBounds(screenBounds);
+      api.window.setBounds({
+        x: computed.x,
+        y: computed.y,
+        width: savedWindowBounds.width,
+        height: savedWindowBounds.height,
+      });
+    } else {
+      api.window.setBounds(computeWindowBounds(screenBounds));
+    }
   }
   isDragging = true;
   dragStartScreenX = screenX;
