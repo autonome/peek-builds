@@ -16,18 +16,18 @@
  * Every handler validates the capability token before executing.
  */
 
-import { ipcMain, BrowserWindow, net } from 'electron';
+import { ipcMain, BrowserWindow, net, dialog, webContents } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { validateToken, getGrantForToken, signalTileReady } from './tile-launcher.js';
+import { validateToken, getGrantForToken, signalTileReady, getTileWindow } from './tile-launcher.js';
 import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js';
 import { DEBUG } from './config.js';
 import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
 import { getDb } from './datastore.js';
 import { installFromBundle } from './feature-installer.js';
-import { resolveCapabilities } from './tile-manifest.js';
+import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────

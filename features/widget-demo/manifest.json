@@ -1,11 +1,38 @@
 {
+  "manifestVersion": 2,
   "id": "widget-demo",
   "shortname": "widget-demo",
   "name": "Widget Demo",
   "description": "Demonstration extension showcasing widget sheet capabilities",
-  "version": "1.0.0",
-  "background": false,
+  "version": "2.0.0",
   "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html"
+    },
+    {
+      "id": "sheet",
+      "type": "window",
+      "url": "sheet.html",
+      "windowHints": {
+        "key": "peek://ext/widget-demo/sheet.html",
+        "title": "Widget Demo"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": ["ext:ready", "app:shutdown", "ext:widget-demo:shutdown"]
+    },
+    "window": {
+      "create": true
+    },
+    "commands": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "widget demo",

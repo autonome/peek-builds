@@ -14,37 +14,75 @@
 
   console.log(`[ext:${extId}] background.html loaded`);
 
-  // Signal ready to main process
-  api.publish('ext:ready', {
-    id: extId,
-    manifest: {
-      id: extension.id,
-      labels: extension.labels,
-      version: '1.0.0'
-    }
-  }, api.scopes.SYSTEM);
+  // Detect v2 tile runtime (has api.initialize) vs v1 legacy
+  const isTileV2 = typeof api.initialize === 'function';
 
-  // Initialize extension
-  if (extension.init) {
-    console.log(`[ext:${extId}] calling init()`);
-    extension.init();
+  if (isTileV2) {
+    // ── V2 Tile Runtime ──
+    // Shim flat pubsub methods so existing background.js keeps working
+    if (api.pubsub && !api.publish) {
+      api.publish = api.pubsub.publish;
+      api.subscribe = api.pubsub.subscribe;
+    }
+
+    // Shim settings.getExtKey if missing (v2 only has get/set)
+    if (api.settings && !api.settings.getExtKey) {
+      api.settings.getExtKey = (extId, key) => api.settings.get(`${extId}.${key}`);
+    }
+
+    // Initialize tile — validates capability token with main process
+    console.log(`[ext:${extId}] initializing v2 tile`);
+    await api.initialize();
+
+    // Initialize extension (registers commands)
+    if (extension.init) {
+      console.log(`[ext:${extId}] calling init()`);
+      await extension.init();
+    }
+
+    // Register shutdown handler
+    api.onShutdown(() => {
+      console.log(`[ext:${extId}] received shutdown`);
+      if (extension.uninit) {
+        extension.uninit();
+      }
+    });
+
+  } else {
+    // ── V1 Legacy Runtime ──
+
+    // Signal ready to main process
+    api.publish('ext:ready', {
+      id: extId,
+      manifest: {
+        id: extension.id,
+        labels: extension.labels,
+        version: '1.0.0'
+      }
+    }, api.scopes.SYSTEM);
+
+    // Initialize extension
+    if (extension.init) {
+      console.log(`[ext:${extId}] calling init()`);
+      extension.init();
+    }
+
+    // Handle shutdown request from main process
+    api.subscribe('app:shutdown', () => {
+      console.log(`[ext:${extId}] received shutdown`);
+      if (extension.uninit) {
+        extension.uninit();
+      }
+    }, api.scopes.SYSTEM);
+
+    // Handle extension-specific shutdown
+    api.subscribe(`ext:${extId}:shutdown`, () => {
+      console.log(`[ext:${extId}] received extension shutdown`);
+      if (extension.uninit) {
+        extension.uninit();
+      }
+    }, api.scopes.SYSTEM);
   }
-
-  // Handle shutdown request from main process
-  api.subscribe('app:shutdown', () => {
-    console.log(`[ext:${extId}] received shutdown`);
-    if (extension.uninit) {
-      extension.uninit();
-    }
-  }, api.scopes.SYSTEM);
-
-  // Handle extension-specific shutdown
-  api.subscribe(`ext:${extId}:shutdown`, () => {
-    console.log(`[ext:${extId}] received extension shutdown`);
-    if (extension.uninit) {
-      extension.uninit();
-    }
-  }, api.scopes.SYSTEM);
 </script>
 </body>
 </html>

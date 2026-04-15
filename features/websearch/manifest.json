@@ -1,12 +1,54 @@
 {
+  "manifestVersion": 2,
   "id": "websearch",
   "shortname": "websearch",
   "name": "Web Search",
   "description": "Search the web from the command palette with engine discovery and suggestions",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
   "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "websearch-home",
+        "width": 600,
+        "height": 500,
+        "title": "Web Search"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:websearch:shutdown",
+        "app:shutdown",
+        "page:loaded",
+        "window:closed",
+        "websearch:*"
+      ]
+    },
+    "network": {
+      "domains": ["*"]
+    },
+    "window": {
+      "create": true,
+      "query": true
+    },
+    "commands": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "web search",
