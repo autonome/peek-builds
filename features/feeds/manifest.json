@@ -1,11 +1,54 @@
 {
+  "manifestVersion": 2,
   "id": "feeds",
   "shortname": "feeds",
   "name": "Feed Reader",
   "description": "Simple RSS/Atom feed reader demonstrating the series and feeds APIs",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
+  "builtin": true,
   "settingsSchema": "./settings-schema.json",
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "feeds-reader",
+      "type": "window",
+      "url": "feeds.html",
+      "windowHints": {
+        "key": "feeds-reader",
+        "width": 900,
+        "height": 700,
+        "title": "Feed Reader"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:feeds:shutdown",
+        "app:shutdown",
+        "item:created"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "item_events"]
+    },
+    "network": {
+      "domains": ["*"]
+    },
+    "window": {
+      "create": true
+    },
+    "commands": true,
+    "shortcuts": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "open feeds",
@@ -20,6 +63,13 @@
       "name": "refresh feeds",
       "description": "Refresh all feeds",
       "action": { "type": "execute" }
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+Shift+F",
+      "command": "open feeds",
+      "global": true
     }
   ]
 }

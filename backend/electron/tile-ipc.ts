@@ -1056,7 +1056,7 @@ export function registerTileIpcHandlers(): void {
     // Return all features (local and builtin) that could be published
     const all = registry.listFeatures();
     const publishable = all.filter(e =>
-      e.source.type === 'local' || e.source.type === 'builtin'
+      e.source.type === 'local' || e.source.type === 'builtin' || e.source.type === 'dev'
     );
 
     return {
@@ -1553,6 +1553,581 @@ export function registerTileIpcHandlers(): void {
     registry.saveRegistry();
 
     return { success: true, policy: entry.updatePolicy, pinnedVersion: entry.pinnedVersion };
+  });
+
+  // ── Feature Dev Workflow ──
+
+  ipcMain.handle('feature-dev:pick-directory', async () => {
+    try {
+      const result = await dialog.showOpenDialog({
+        properties: ['openDirectory', 'createDirectory'],
+        title: 'Choose directory for new feature',
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { canceled: true };
+      }
+      return { path: result.filePaths[0] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to open directory picker: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-dev:create', async (_event, args: {
+    token: string;
+    directoryPath: string;
+    featureId: string;
+    featureName: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    // Validate featureId: lowercase, alphanumeric + hyphens, no spaces
+    const idRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
+    if (!args.featureId || args.featureId.length < 2 || !idRegex.test(args.featureId)) {
+      return { error: 'Feature ID must be lowercase alphanumeric with hyphens (min 2 chars, no leading/trailing hyphens)' };
+    }
+
+    if (!args.featureName || !args.featureName.trim()) {
+      return { error: 'Feature name is required' };
+    }
+
+    // Check the parent directory exists
+    const parentDir = path.dirname(args.directoryPath);
+    if (!fs.existsSync(parentDir)) {
+      return { error: `Parent directory does not exist: ${parentDir}` };
+    }
+
+    // Check for conflicts in registry
+    const existing = registry.getFeature(args.featureId);
+    if (existing) {
+      return { error: `Feature "${args.featureId}" is already registered in the registry` };
+    }
+
+    try {
+      // Create directory if it doesn't exist
+      if (!fs.existsSync(args.directoryPath)) {
+        fs.mkdirSync(args.directoryPath, { recursive: true });
+      }
+
+      const featureId = args.featureId;
+      const featureName = args.featureName.trim();
+
+      // Write scaffold files
+      const manifestContent = JSON.stringify({
+        manifestVersion: 2,
+        id: featureId,
+        name: featureName,
+        version: '0.1.0',
+        description: '',
+        tiles: [
+          {
+            id: 'background',
+            type: 'background',
+            url: 'background.html',
+            lazy: true,
+          },
+          {
+            id: 'home',
+            type: 'window',
+            url: 'home.html',
+            windowHints: {
+              width: 800,
+              height: 600,
+              title: featureName,
+            },
+          },
+        ],
+        capabilities: {
+          pubsub: { scopes: ['self', 'global'] },
+          commands: true,
+        },
+        commands: [
+          {
+            name: featureId,
+            description: `Open ${featureName}`,
+            action: { type: 'window', url: 'home.html' },
+          },
+        ],
+      }, null, 2);
+
+      const backgroundHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <title>${featureName} Background</title>
+</head>
+<body>
+<script type="module">
+  import { init, uninit } from './background.js';
+
+  const api = window.app;
+  const hasPeekAPI = !!api;
+
+  if (hasPeekAPI && typeof api.initialize === 'function') {
+    // V2 Tile Runtime
+    if (api.pubsub && !api.publish) {
+      api.publish = api.pubsub.publish;
+      api.subscribe = api.pubsub.subscribe;
+    }
+
+    await api.initialize();
+
+    if (init) await init();
+
+    api.onShutdown(() => {
+      if (uninit) uninit();
+    });
+  } else if (hasPeekAPI) {
+    // V1 Legacy Runtime
+    if (init) await init();
+
+    api.publish('ext:ready', {
+      id: '${featureId}',
+      registeredTopics: Object.keys(window._cmdHandlers || {}).map(n => \`cmd:execute:\${n}\`),
+      manifest: { id: '${featureId}', version: '0.1.0' }
+    }, api.scopes.SYSTEM);
+
+    api.subscribe('app:shutdown', () => {
+      if (uninit) uninit();
+    }, api.scopes.SYSTEM);
+  }
+<\/script>
+</body>
+</html>`;
+
+      const backgroundJs = `/**
+ * ${featureName} — Background script
+ *
+ * This runs in a hidden background context. Use it for:
+ * - Registering commands
+ * - Subscribing to events
+ * - Background processing
+ *
+ * Export init() to run setup, uninit() for cleanup.
+ */
+
+const api = window.app;
+
+export async function init() {
+  console.log('[${featureId}] Background initialized');
+
+  // Register commands, subscribe to events, etc.
+  // Example:
+  // api.commands.register({
+  //   name: '${featureId}',
+  //   description: 'Open ${featureName}',
+  //   execute: () => {
+  //     api.window.open('peek://${featureId}/home.html', {
+  //       key: '${featureId}-home',
+  //       width: 800,
+  //       height: 600,
+  //       title: '${featureName}'
+  //     });
+  //   }
+  // });
+}
+
+export function uninit() {
+  console.log('[${featureId}] Background shutdown');
+}
+`;
+
+      const homeHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+  <title>${featureName}</title>
+  <link rel="stylesheet" type="text/css" href="home.css">
+</head>
+<body>
+  <header class="header">
+    <h1 class="header-title">${featureName}</h1>
+  </header>
+
+  <main class="content">
+    <div class="welcome">
+      <h2>Welcome to ${featureName}</h2>
+      <p>Edit <code>home.html</code>, <code>home.js</code>, and <code>home.css</code> to build your feature UI.</p>
+      <p>Use the Reload button in the Features Manager to see changes without restarting.</p>
+    </div>
+  </main>
+
+  <script>
+    // V2 tile runtime compat shims
+    (function() {
+      const api = window.app;
+      if (!api) return;
+      const isTileV2 = typeof api.initialize === 'function';
+      if (!isTileV2) return;
+      if (api.pubsub && !api.publish) {
+        api.publish = api.pubsub.publish;
+        api.subscribe = api.pubsub.subscribe;
+      }
+    })();
+  <\/script>
+  <script type="module" src="home.js"><\/script>
+</body>
+</html>`;
+
+      const homeJs = `/**
+ * ${featureName} — Home page script
+ *
+ * This is the main UI for your feature.
+ * The Peek API is available at window.app
+ */
+
+const api = window.app;
+const hasPeekAPI = !!api;
+
+async function init() {
+  if (hasPeekAPI && typeof api.initialize === 'function') {
+    await api.initialize();
+  }
+
+  console.log('[${featureId}] Home page loaded');
+
+  // Your UI logic here
+}
+
+init();
+`;
+
+      const homeCss = `/* Import Peek theme variables */
+@import url('peek://theme/variables.css');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--theme-font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+body {
+  background: var(--base00);
+  color: var(--base05);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--base02);
+  -webkit-app-region: drag;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--base05);
+}
+
+.content {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.welcome {
+  max-width: 480px;
+  margin: 40px auto;
+  text-align: center;
+}
+
+.welcome h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--base05);
+  margin-bottom: 12px;
+}
+
+.welcome p {
+  font-size: 13px;
+  color: var(--base04);
+  margin-bottom: 8px;
+}
+
+.welcome code {
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: var(--theme-font-mono, monospace);
+  font-size: 12px;
+}
+`;
+
+      // Write all scaffold files
+      fs.writeFileSync(path.join(args.directoryPath, 'manifest.json'), manifestContent, 'utf-8');
+      fs.writeFileSync(path.join(args.directoryPath, 'background.html'), backgroundHtml, 'utf-8');
+      fs.writeFileSync(path.join(args.directoryPath, 'background.js'), backgroundJs, 'utf-8');
+      fs.writeFileSync(path.join(args.directoryPath, 'home.html'), homeHtml, 'utf-8');
+      fs.writeFileSync(path.join(args.directoryPath, 'home.js'), homeJs, 'utf-8');
+      fs.writeFileSync(path.join(args.directoryPath, 'home.css'), homeCss, 'utf-8');
+
+      // Resolve capabilities (dev = all granted, like builtin)
+      const manifestParsed = JSON.parse(manifestContent);
+      const capGrant = resolveCapabilities(featureId, manifestParsed.capabilities, true);
+
+      // Register in feature registry
+      const entry = {
+        id: featureId,
+        name: featureName,
+        path: args.directoryPath,
+        source: {
+          type: 'dev' as const,
+          version: '0.1.0',
+        },
+        grantedCapabilities: capGrant.capabilities,
+        userApproved: true,
+        installedAt: new Date().toISOString(),
+      };
+
+      registry.registerFeature(entry);
+      registry.saveRegistry();
+
+      // Write history event
+      writeFeatureHistory(featureId, 'install', '0.1.0', 'dev');
+
+      // Publish installed event
+      publish('feature-registry', scopes.GLOBAL, 'feature:installed', {
+        id: featureId,
+        name: featureName,
+        source: { type: 'dev' },
+      });
+
+      return { success: true, entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to create feature: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-dev:reload', async (_event, args: {
+    token: string;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.featureId);
+    if (!entry) return { error: `Feature not found: ${args.featureId}` };
+
+    try {
+      // Strategy: find any webContents whose URL starts with peek://{featureId}/
+      const urlPrefix = `peek://${args.featureId}/`;
+      const allContents = webContents.getAllWebContents();
+      let reloaded = 0;
+
+      for (const wc of allContents) {
+        const url = wc.getURL();
+        if (url.startsWith(urlPrefix)) {
+          wc.reload();
+          reloaded++;
+          continue;
+        }
+
+        // Also check frames in extension host (iframes)
+        try {
+          const mainFrame = wc.mainFrame;
+          for (const frame of mainFrame.framesInSubtree) {
+            if (frame !== mainFrame && frame.url && frame.url.startsWith(urlPrefix)) {
+              // Reload the iframe by navigating it again
+              frame.executeJavaScript('location.reload()');
+              reloaded++;
+            }
+          }
+        } catch {
+          // Some webContents may not have frames accessible
+        }
+      }
+
+      // Also try the tile launcher's tracked windows
+      const manifest = entry.path ? JSON.parse(
+        fs.readFileSync(path.join(entry.path, 'manifest.json'), 'utf-8')
+      ) : null;
+
+      if (manifest && manifest.tiles) {
+        for (const tile of manifest.tiles) {
+          const win = getTileWindow(args.featureId, tile.id);
+          if (win && !win.isDestroyed()) {
+            win.webContents.reload();
+            reloaded++;
+          }
+        }
+      }
+
+      if (reloaded === 0) {
+        return { success: true, message: 'No active tiles found to reload. Feature will load on next launch.' };
+      }
+
+      return { success: true, message: `Reloaded ${reloaded} tile(s)` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to reload feature: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-dev:open-devtools', async (_event, args: {
+    token: string;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    try {
+      const urlPrefix = `peek://${args.featureId}/`;
+      const allContents = webContents.getAllWebContents();
+      let opened = 0;
+
+      // First try direct BrowserWindows with matching URLs
+      for (const wc of allContents) {
+        const url = wc.getURL();
+        if (url.startsWith(urlPrefix)) {
+          wc.openDevTools();
+          opened++;
+        }
+      }
+
+      // If no direct match, check extension host frames
+      if (opened === 0) {
+        for (const wc of allContents) {
+          try {
+            const mainFrame = wc.mainFrame;
+            for (const frame of mainFrame.framesInSubtree) {
+              if (frame !== mainFrame && frame.url && frame.url.startsWith(urlPrefix)) {
+                // For iframes in extension host, open devtools on the host window
+                // (Electron doesn't support opening devtools on individual frames)
+                wc.openDevTools();
+                opened++;
+                break;
+              }
+            }
+          } catch {
+            // Skip inaccessible webContents
+          }
+          if (opened > 0) break;
+        }
+      }
+
+      if (opened === 0) {
+        return { error: 'No active tiles found. The feature may not be loaded yet.' };
+      }
+
+      return { success: true, message: `Opened DevTools for ${opened} context(s)` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to open DevTools: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-dev:validate', async (_event, args: {
+    token: string;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.featureId);
+    if (!entry) return { error: `Feature not found: ${args.featureId}` };
+
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    try {
+      const featurePath = entry.path;
+
+      // Check directory exists
+      if (!fs.existsSync(featurePath)) {
+        return { valid: false, errors: [`Feature directory not found: ${featurePath}`], warnings: [] };
+      }
+
+      // Read and validate manifest
+      const manifestPath = path.join(featurePath, 'manifest.json');
+      if (!fs.existsSync(manifestPath)) {
+        return { valid: false, errors: ['manifest.json not found'], warnings: [] };
+      }
+
+      let raw: Record<string, unknown>;
+      try {
+        const manifestJson = fs.readFileSync(manifestPath, 'utf-8');
+        raw = JSON.parse(manifestJson);
+      } catch (parseErr) {
+        return { valid: false, errors: [`Invalid JSON in manifest.json: ${parseErr}`], warnings: [] };
+      }
+
+      // Check manifest version
+      const version = detectManifestVersion(raw);
+      if (version !== 'v2') {
+        errors.push(`Manifest is ${version}, expected v2`);
+      }
+
+      // Run schema validation
+      const validationErrors = validateTileManifest(raw);
+      for (const ve of validationErrors) {
+        errors.push(`${ve.path}: ${ve.message}`);
+      }
+
+      // Check that all files referenced in tiles[].url exist on disk
+      const tiles = raw.tiles as Array<{ id: string; url: string }> | undefined;
+      if (tiles && Array.isArray(tiles)) {
+        for (const tile of tiles) {
+          if (tile.url) {
+            const tilePath = path.join(featurePath, tile.url);
+            if (!fs.existsSync(tilePath)) {
+              errors.push(`Tile "${tile.id}" references "${tile.url}" which does not exist`);
+            }
+          }
+        }
+      }
+
+      // Check settingsSchema file if declared
+      const settingsSchema = raw.settingsSchema as string | undefined;
+      if (settingsSchema) {
+        const schemaPath = path.join(featurePath, settingsSchema);
+        if (!fs.existsSync(schemaPath)) {
+          errors.push(`Settings schema file "${settingsSchema}" not found`);
+        }
+      }
+
+      // Warnings for common issues
+      if (!raw.description || (raw.description as string).trim() === '') {
+        warnings.push('No description set in manifest');
+      }
+      if (!raw.version) {
+        warnings.push('No version set in manifest');
+      }
+
+      return {
+        valid: errors.length === 0,
+        errors,
+        warnings,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { valid: false, errors: [`Validation failed: ${message}`], warnings: [] };
+    }
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');
