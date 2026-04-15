@@ -953,5 +953,209 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── Feature Publish ──
+
+  ipcMain.handle('feature-publish:list-local', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    // Return all features (local and builtin) that could be published
+    const all = registry.listFeatures();
+    const publishable = all.filter(e =>
+      e.source.type === 'local' || e.source.type === 'builtin'
+    );
+
+    return {
+      features: publishable.map(e => ({
+        id: e.id,
+        name: e.name,
+        version: e.source.version || '0.0.0',
+        path: e.path,
+        sourceType: e.source.type,
+        description: (e as any).description || '',
+      })),
+    };
+  });
+
+  ipcMain.handle('feature-publish:read-feature-files', async (_event, args: {
+    token: string;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.featureId);
+    if (!entry) return { error: `Feature not found: ${args.featureId}` };
+
+    try {
+      const featurePath = entry.path;
+      if (!fs.existsSync(featurePath)) {
+        return { error: `Feature directory not found: ${featurePath}` };
+      }
+
+      const files: Array<{
+        relativePath: string;
+        content: string; // base64
+        size: number;
+        mimeType: string;
+      }> = [];
+
+      function readDir(dirPath: string, prefix: string): void {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const dirent of entries) {
+          // Skip hidden files/dirs, node_modules, .git
+          if (dirent.name.startsWith('.') || dirent.name === 'node_modules') continue;
+
+          const fullPath = path.join(dirPath, dirent.name);
+          const relativePath = prefix ? `${prefix}/${dirent.name}` : dirent.name;
+
+          if (dirent.isDirectory()) {
+            readDir(fullPath, relativePath);
+          } else if (dirent.isFile()) {
+            const data = fs.readFileSync(fullPath);
+            const ext = path.extname(dirent.name).toLowerCase();
+            const mimeType = getMimeType(ext);
+
+            files.push({
+              relativePath,
+              content: data.toString('base64'),
+              size: data.length,
+              mimeType,
+            });
+          }
+        }
+      }
+
+      readDir(featurePath, '');
+
+      return {
+        featureId: args.featureId,
+        name: entry.name,
+        path: featurePath,
+        files,
+        totalSize: files.reduce((sum, f) => sum + f.size, 0),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to read feature files: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-publish:upload-blob', async (_event, args: {
+    token: string;
+    pdsUrl: string;
+    accessToken: string;
+    dpopKeyPairJwk: { publicKey: object; privateKey: object };
+    refreshToken: string;
+    did: string;
+    data: string; // base64 encoded
+    mimeType: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    try {
+      const binaryData = Buffer.from(args.data, 'base64');
+      const url = `${args.pdsUrl}/xrpc/com.atproto.repo.uploadBlob`;
+
+      // Use net.fetch for blob upload from main process
+      let res = await net.fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${args.accessToken}`,
+          'Content-Type': args.mimeType,
+        },
+        body: binaryData,
+      });
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        return { error: `Blob upload failed (${res.status}): ${errBody}` };
+      }
+
+      const result = await res.json();
+      return { blob: result.blob };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Blob upload failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('feature-publish:create-record', async (_event, args: {
+    token: string;
+    pdsUrl: string;
+    accessToken: string;
+    did: string;
+    record: Record<string, unknown>;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    try {
+      const url = `${args.pdsUrl}/xrpc/com.atproto.repo.createRecord`;
+
+      const body = {
+        repo: args.did,
+        collection: 'space.peek.feature.release',
+        record: args.record,
+      };
+
+      const res = await net.fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${args.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        return { error: `Record creation failed (${res.status}): ${errBody}` };
+      }
+
+      const result = await res.json() as { uri: string; cid: string };
+      return { uri: result.uri, cid: result.cid };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Record creation failed: ${message}` };
+    }
+  });
+
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');
+}
+
+// ─── MIME type helper ─────────────────────────────────────────────
+
+function getMimeType(ext: string): string {
+  const mimeTypes: Record<string, string> = {
+    '.json': 'application/json',
+    '.js': 'application/javascript',
+    '.mjs': 'application/javascript',
+    '.ts': 'application/typescript',
+    '.html': 'text/html',
+    '.htm': 'text/html',
+    '.css': 'text/css',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.ico': 'image/x-icon',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.md': 'text/markdown',
+    '.txt': 'text/plain',
+  };
+  return mimeTypes[ext] || 'application/octet-stream';
 }
