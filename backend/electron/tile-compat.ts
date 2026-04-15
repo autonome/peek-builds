@@ -122,10 +122,13 @@ export function loadV2Tile(
 
   // Check if any tile entry is marked as lazy (or if the tile isn't eager)
   const hasLazyEntries = manifest.tiles.some(t => t.lazy === true);
+  const hasLazyEvents = manifest.tiles.some(t => Array.isArray(t.lazyEvents) && t.lazyEvents.length > 0);
   const shouldLazyLoad = !isEager && (hasLazyEntries || manifest.tiles.some(t => t.type === 'background'));
+  const hasCommands = !!(manifest.commands && manifest.commands.length > 0);
 
-  if (shouldLazyLoad && manifest.commands && manifest.commands.length > 0) {
-    // Lazy load: register command stubs, load tile on first use
+  if (shouldLazyLoad && (hasCommands || hasLazyEvents)) {
+    // Lazy load: register command stubs and/or event interceptors.
+    // The tile is loaded on first command invocation or first lazy event publish.
     registerLazyTile(manifest, ext.path, config.tilePreloadPath);
     DEBUG && console.log(`[tile-compat] Registered ${ext.id} for lazy loading`);
     return null;

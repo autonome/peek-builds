@@ -11,14 +11,71 @@
  */
 
 import { publish, subscribe, unsubscribe, scopes, hasSubscriber } from './pubsub.js';
-import { launchTile, waitForTileReady, isTileLoaded, type TileLaunchOptions } from './tile-launcher.js';
+import {
+  launchTile as _launchTile,
+  waitForTileReady as _waitForTileReady,
+  isTileLoaded as _isTileLoaded,
+  type TileLaunchOptions,
+  type TileLaunchResult,
+} from './tile-launcher.js';
 import { type TileManifestV2, type TileCommand } from './tile-manifest.js';
 import { DEBUG } from './config.js';
+
+// ─── Launcher Injection (for testability) ───────────────────────────
+
+/**
+ * Hooks used by the lazy loader to interact with the tile launcher.
+ * Tests can swap these out to avoid creating real BrowserWindow instances.
+ */
+export interface TileLazyLauncher {
+  launchTile: (options: TileLaunchOptions) => TileLaunchResult | void;
+  waitForTileReady: (tileId: string, entryId: string) => Promise<void>;
+  isTileLoaded: (tileId: string, entryId: string) => boolean;
+}
+
+let launcher: TileLazyLauncher = {
+  launchTile: _launchTile,
+  waitForTileReady: _waitForTileReady,
+  isTileLoaded: _isTileLoaded,
+};
+
+/**
+ * Override the launcher hooks. Intended for tests only.
+ * Pass `null` to restore the real launcher.
+ */
+export function __setTileLazyLauncherForTest(override: Partial<TileLazyLauncher> | null): void {
+  if (override === null) {
+    launcher = {
+      launchTile: _launchTile,
+      waitForTileReady: _waitForTileReady,
+      isTileLoaded: _isTileLoaded,
+    };
+    return;
+  }
+  launcher = {
+    launchTile: override.launchTile ?? _launchTile,
+    waitForTileReady: override.waitForTileReady ?? _waitForTileReady,
+    isTileLoaded: override.isTileLoaded ?? _isTileLoaded,
+  };
+}
+
+/**
+ * Reset internal state. Tests only.
+ */
+export function __resetTileLazyStateForTest(): void {
+  lazyCommandPending.clear();
+  lazyEventPending.clear();
+  lazyTileRegistry.clear();
+  loadingTiles.clear();
+}
 
 // ─── State ───────────────────────────────────────────────────────────
 
 /** Pending lazy load: command name -> buffered message */
 const lazyCommandPending = new Map<string, unknown>();
+
+/** Pending lazy load: `${tileId}:${topic}` -> buffered message */
+const lazyEventPending = new Map<string, unknown>();
 
 /** Tiles registered for lazy loading: tileId -> launch options (without window) */
 const lazyTileRegistry = new Map<string, {
@@ -58,7 +115,32 @@ export function registerLazyTile(
     }
   }
 
-  DEBUG && console.log(`[tile-lazy] Registered lazy tile: ${tileId} with ${manifest.commands?.length || 0} commands`);
+  // Register event interceptors for any tile entries that declare lazyEvents
+  const eventTopics = collectLazyEventTopics(manifest);
+  for (const topic of eventTopics) {
+    registerEventInterceptor(tileId, topic);
+  }
+
+  DEBUG && console.log(
+    `[tile-lazy] Registered lazy tile: ${tileId} with ${manifest.commands?.length || 0} commands, ${eventTopics.length} lazy events`
+  );
+}
+
+/**
+ * Collect all lazyEvents topics declared across a manifest's tile entries.
+ * Deduplicates topics that appear in multiple entries.
+ */
+function collectLazyEventTopics(manifest: TileManifestV2): string[] {
+  const topics = new Set<string>();
+  for (const tile of manifest.tiles) {
+    if (!tile.lazyEvents) continue;
+    for (const topic of tile.lazyEvents) {
+      if (typeof topic === 'string' && topic.length > 0) {
+        topics.add(topic);
+      }
+    }
+  }
+  return Array.from(topics);
 }
 
 /**
@@ -92,7 +174,7 @@ function registerCommandStub(tileId: string, cmd: TileCommand): void {
       // Wait for the tile to be ready
       const bgEntry = getBackgroundEntry(tileId);
       if (bgEntry) {
-        await waitForTileReady(tileId, bgEntry);
+        await launcher.waitForTileReady(tileId, bgEntry);
       }
 
       // Verify the real handler registered (exclude our stub prefix)
@@ -143,6 +225,80 @@ function registerCommandStub(tileId: string, cmd: TileCommand): void {
   );
 }
 
+/**
+ * Register a single event interceptor stub for lazy loading
+ *
+ * Mirrors the command stub pattern but for pubsub topics. When the topic
+ * fires before the tile is loaded:
+ * 1. Buffer the message (latest wins for concurrent fires)
+ * 2. Load the tile
+ * 3. Wait for tile:ready
+ * 4. Verify the real handler subscribed (exclude our stub prefix)
+ * 5. Re-publish the buffered message for the real handler
+ *
+ * After successful load, the stub unsubscribes itself so future publishes
+ * reach the real handler directly.
+ */
+function registerEventInterceptor(tileId: string, topic: string): void {
+  const stubSource = `lazy-interceptor/${tileId}/${topic}`;
+  const pendingKey = `${tileId}:${topic}`;
+
+  subscribe(stubSource, scopes.GLOBAL, topic, async (msg: unknown) => {
+    // If the tile is already loaded, ignore — the real handler fires from
+    // the same publish (pubsub iterates all subscribers). Also unsubscribe
+    // the stub so we don't keep re-entering.
+    const bgEntry = getBackgroundEntry(tileId);
+    if (bgEntry && launcher.isTileLoaded(tileId, bgEntry)) {
+      unsubscribe(stubSource, topic);
+      return;
+    }
+
+    // Buffer the latest message (latest wins for concurrent fires)
+    const alreadyLoading = lazyEventPending.has(pendingKey);
+    lazyEventPending.set(pendingKey, msg);
+
+    if (alreadyLoading) {
+      DEBUG && console.log(`[tile-lazy] ${topic} fired again during load of ${tileId}, buffering`);
+      return;
+    }
+
+    DEBUG && console.log(`[tile-lazy] ${topic} fired but tile ${tileId} not loaded, loading...`);
+
+    try {
+      await loadLazyTile(tileId);
+
+      // Wait for the tile to be ready (loadLazyTile already waits, but be defensive)
+      if (bgEntry) {
+        await launcher.waitForTileReady(tileId, bgEntry);
+      }
+
+      // Unsubscribe the stub now that the real handler should be in place
+      unsubscribe(stubSource, topic);
+
+      // Verify the real handler registered (exclude our stub prefix)
+      const hasRealHandler = hasSubscriber(topic, undefined, `lazy-interceptor/${tileId}/`);
+      if (!hasRealHandler) {
+        console.warn(`[tile-lazy] Tile ${tileId} loaded but no handler registered for ${topic}`);
+      }
+
+      // Replay the buffered message exactly once
+      const buffered = lazyEventPending.get(pendingKey);
+      lazyEventPending.delete(pendingKey);
+      DEBUG && console.log(`[tile-lazy] Tile ${tileId} loaded, re-publishing ${topic}`);
+      publish(stubSource, scopes.GLOBAL, topic, buffered);
+    } catch (err) {
+      console.error(`[tile-lazy] Failed to load tile ${tileId} for event ${topic}:`, err);
+      lazyEventPending.delete(pendingKey);
+
+      // Re-register the stub so the event can be retried
+      // (only if we actually unsubscribed — on load failure the stub is still attached)
+      if (!hasSubscriber(topic, stubSource)) {
+        registerEventInterceptor(tileId, topic);
+      }
+    }
+  });
+}
+
 // ─── Tile Loading ────────────────────────────────────────────────────
 
 /**
@@ -150,13 +306,13 @@ function registerCommandStub(tileId: string, cmd: TileCommand): void {
  */
 async function loadLazyTile(tileId: string): Promise<void> {
   // Already loaded or loading
-  if (isTileLoaded(tileId, getBackgroundEntry(tileId) || 'background')) {
+  if (launcher.isTileLoaded(tileId, getBackgroundEntry(tileId) || 'background')) {
     return;
   }
   if (loadingTiles.has(tileId)) {
     // Wait for the existing load to complete
     const bgEntry = getBackgroundEntry(tileId) || 'background';
-    await waitForTileReady(tileId, bgEntry);
+    await launcher.waitForTileReady(tileId, bgEntry);
     return;
   }
 
@@ -175,7 +331,7 @@ async function loadLazyTile(tileId: string): Promise<void> {
     }
 
     // Launch the tile
-    const result = launchTile({
+    launcher.launchTile({
       tilePath: config.tilePath,
       manifest: config.manifest,
       preloadPath: config.preloadPath,
@@ -183,17 +339,22 @@ async function loadLazyTile(tileId: string): Promise<void> {
     });
 
     // Set up a safety timeout
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => {
+      timeoutHandle = setTimeout(() => {
         reject(new Error(`[tile-lazy] Load timeout for ${tileId} (${LAZY_LOAD_TIMEOUT_MS}ms)`));
       }, LAZY_LOAD_TIMEOUT_MS);
     });
 
     // Wait for ready or timeout
-    await Promise.race([
-      waitForTileReady(tileId, bgTile.id),
-      timeoutPromise,
-    ]);
+    try {
+      await Promise.race([
+        launcher.waitForTileReady(tileId, bgTile.id),
+        timeoutPromise,
+      ]);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
 
     DEBUG && console.log(`[tile-lazy] Tile loaded and ready: ${tileId}`);
   } finally {
