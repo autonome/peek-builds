@@ -23,6 +23,8 @@ import path from 'node:path';
 import { validateToken, getGrantForToken, signalTileReady } from './tile-launcher.js';
 import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js';
 import { DEBUG } from './config.js';
+import { getFeatureRegistry } from './feature-startup.js';
+import { getDb } from './datastore.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -522,6 +524,145 @@ export function registerTileIpcHandlers(): void {
 
     // The real implementation would use getDb()
     return { rows: [] };
+  });
+
+  // ── Feature Registry ──
+
+  ipcMain.handle('feature-registry:list', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    // Return all non-builtin entries
+    const all = registry.listFeatures();
+    const nonBuiltin = all.filter(e => e.source.type !== 'builtin');
+    return { entries: nonBuiltin };
+  });
+
+  ipcMain.handle('feature-registry:get', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    return { entry };
+  });
+
+  ipcMain.handle('feature-registry:disable', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    if (entry.source.type === 'builtin') return { error: 'Cannot disable builtin features' };
+
+    const result = registry.disableFeature(args.id);
+    if (result) {
+      registry.saveRegistry();
+      publish('feature-registry', scopes.GLOBAL, 'feature:disabled', { id: args.id });
+    }
+    return { success: result };
+  });
+
+  ipcMain.handle('feature-registry:enable', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+
+    const result = registry.enableFeature(args.id);
+    if (result) {
+      registry.saveRegistry();
+      publish('feature-registry', scopes.GLOBAL, 'feature:enabled', { id: args.id });
+    }
+    return { success: result };
+  });
+
+  ipcMain.handle('feature-registry:remove', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    if (entry.source.type === 'builtin') return { error: 'Cannot remove builtin features' };
+
+    // Remove from registry
+    const result = registry.unregisterFeature(args.id);
+    if (result) {
+      // Delete feature files (non-builtin only, safe because builtin check above)
+      try {
+        if (fs.existsSync(entry.path)) {
+          fs.rmSync(entry.path, { recursive: true });
+        }
+      } catch (err) {
+        console.error(`[tile-ipc] Failed to delete feature files at ${entry.path}:`, err);
+      }
+      registry.saveRegistry();
+      publish('feature-registry', scopes.GLOBAL, 'feature:removed', { id: args.id });
+    }
+    return { success: result };
+  });
+
+  ipcMain.handle('feature-registry:history', async (_event, args: {
+    token: string;
+    featureId?: string;
+    limit?: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { error: 'Invalid token' };
+
+    try {
+      const db = getDb();
+      let sql = 'SELECT * FROM features_history';
+      const params: unknown[] = [];
+
+      if (args.featureId) {
+        sql += ' WHERE featureId = ?';
+        params.push(args.featureId);
+      }
+
+      sql += ' ORDER BY timestamp DESC';
+
+      if (args.limit) {
+        sql += ' LIMIT ?';
+        params.push(args.limit);
+      }
+
+      const rows = db.prepare(sql).all(...params);
+      return { entries: rows };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to query history: ${message}` };
+    }
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');

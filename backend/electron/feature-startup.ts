@@ -44,6 +44,19 @@ export interface FeatureStartupResult {
   registry: FeatureRegistry;
 }
 
+// ─── Singleton Registry Access ──────────────────────────────────────
+
+/** Module-level reference to the registry, set during initializeFeatures() */
+let _registry: FeatureRegistry | null = null;
+
+/**
+ * Get the feature registry instance (available after initializeFeatures() is called).
+ * Returns null if the feature system hasn't been initialized yet.
+ */
+export function getFeatureRegistry(): FeatureRegistry | null {
+  return _registry;
+}
+
 // ─── Startup ────────────────────────────────────────────────────────
 
 /**
@@ -57,6 +70,9 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
   // 1. Load registry
   const registry = new FeatureRegistry(config.appDataDir);
   registry.loadRegistry();
+
+  // Store singleton reference for IPC handlers
+  _registry = registry;
 
   // 2. Sync builtins
   const sync = syncBuiltinFeatures(config.builtinFeaturesDir, registry);
