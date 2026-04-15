@@ -33,6 +33,13 @@ let pendingRegistrations = [];
 let registrationTimer = null;
 const BATCH_DELAY_MS = 16; // ~1 frame
 
+// Persistent record of every command registered via this preload context.
+// Used to re-publish to cmd if it loads after these registrations were sent —
+// otherwise the initial cmd:register-batch is lost (cmd's subscriber not yet
+// installed). Deduped server-side by name (commandRegistry.set).
+const registeredCommandsByName = new Map();
+let cmdReadySubscribed = false;
+
 function flushRegistrations() {
   if (pendingRegistrations.length === 0) return;
 
@@ -48,6 +55,37 @@ function flushRegistrations() {
   });
 
   DEBUG && console.log('[preload] commands.flush: sent batch of', batch.length, 'commands');
+}
+
+// Subscribe once to ext:ready — when cmd extension reports ready, re-publish
+// the entire accumulated registration set so commands registered before cmd
+// loaded still land in the registry. Safe: cmd dedupes by name.
+function ensureCmdReadyReplaySubscribed() {
+  if (cmdReadySubscribed) return;
+  cmdReadySubscribed = true;
+
+  const replyTopic = `ext:ready:${rndm()}`;
+  ipcRenderer.send('subscribe', {
+    source: sourceAddress,
+    scope: 1, // SYSTEM — ext:ready is published on SYSTEM scope
+    topic: 'ext:ready',
+    replyTopic
+  });
+
+  ipcRenderer.on(replyTopic, (_ev, msg) => {
+    if (!msg || msg.id !== 'cmd') return;
+    if (registeredCommandsByName.size === 0) return;
+
+    const commands = Array.from(registeredCommandsByName.values());
+    DEBUG && console.log('[preload] cmd ready — replaying', commands.length, 'command registrations');
+
+    ipcRenderer.send('publish', {
+      source: sourceAddress,
+      scope: 3, // GLOBAL
+      topic: 'cmd:register-batch',
+      data: { commands }
+    });
+  });
 }
 
 // Context detection for permission tiers
@@ -1364,8 +1402,7 @@ api.commands = {
       }
     });
 
-    // Queue registration for batching (improves startup performance)
-    pendingRegistrations.push({
+    const registrationEntry = {
       name: command.name,
       description: command.description || '',
       source: sourceAddress,
@@ -1375,7 +1412,15 @@ api.commands = {
       accepts: command.accepts || [],
       produces: command.produces || [],
       params: command.params || []
-    });
+    };
+
+    // Queue registration for batching (improves startup performance)
+    pendingRegistrations.push(registrationEntry);
+
+    // Remember every command registered through this preload so we can replay
+    // them when cmd extension loads (handles register-before-cmd-ready race).
+    registeredCommandsByName.set(command.name, registrationEntry);
+    ensureCmdReadyReplaySubscribed();
 
     // Debounce: flush after BATCH_DELAY_MS of no new registrations
     clearTimeout(registrationTimer);
@@ -1399,6 +1444,9 @@ api.commands = {
     if (window._cmdHandlers) {
       delete window._cmdHandlers[name];
     }
+
+    // Drop from replay record so it isn't re-published on the next cmd ready
+    registeredCommandsByName.delete(name);
 
     // Notify cmd to remove the command (GLOBAL scope for cross-window)
     ipcRenderer.send('publish', {
