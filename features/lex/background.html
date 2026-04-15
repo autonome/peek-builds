@@ -17,8 +17,46 @@
   console.log(`[ext:${extId}] background.html loaded`);
   console.log(`[ext:${extId}] Peek API available:`, hasPeekAPI);
 
-  if (hasPeekAPI) {
-    // Initialize extension
+  // Detect v2 tile runtime (has api.initialize) vs v1 legacy
+  const isTileV2 = hasPeekAPI && typeof api.initialize === 'function';
+
+  if (hasPeekAPI && isTileV2) {
+    // ── V2 Tile Runtime ──
+    // Shim flat pubsub methods so existing code keeps working.
+    if (api.pubsub && !api.publish) {
+      api.publish = api.pubsub.publish;
+      api.subscribe = api.pubsub.subscribe;
+    }
+
+    // Shim settings.getExtKey if missing (v2 only has get/set)
+    if (api.settings && !api.settings.getExtKey) {
+      api.settings.getExtKey = (extId, key) => api.settings.get(`${extId}.${key}`);
+    }
+    // Shim settings.getKey/setKey — used by lex for session/profile/lexiconDirectory
+    if (api.settings && !api.settings.getKey) {
+      api.settings.getKey = (key) => api.settings.get(key);
+    }
+    if (api.settings && !api.settings.setKey) {
+      api.settings.setKey = (key, value) => api.settings.set(key, value);
+    }
+
+    console.log(`[ext:${extId}] initializing v2 tile`);
+    await api.initialize();
+
+    if (extension.init) {
+      console.log(`[ext:${extId}] calling init()`);
+      await extension.init();
+    }
+
+    api.onShutdown(() => {
+      console.log(`[ext:${extId}] received shutdown`);
+      if (extension.uninit) {
+        extension.uninit();
+      }
+    });
+
+  } else if (hasPeekAPI) {
+    // ── V1 Legacy Runtime ──
     if (extension.init) {
       console.log(`[ext:${extId}] calling init()`);
       await extension.init();

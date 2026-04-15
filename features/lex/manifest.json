@@ -1,11 +1,75 @@
 {
+  "manifestVersion": 2,
   "id": "lex",
   "shortname": "lex",
   "name": "Lexicon Studio",
   "description": "Your AT Protocol identity and data",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "lex-home",
+        "width": 860,
+        "height": 620,
+        "title": "Lexicon Studio"
+      }
+    },
+    {
+      "id": "chain-form",
+      "type": "window",
+      "url": "chain-form.html",
+      "windowHints": {
+        "role": "panel",
+        "width": 520,
+        "height": 560,
+        "title": "New Record"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "lex:*",
+        "chain-popup:*",
+        "cmd:*",
+        "ext:ready",
+        "ext:lex:shutdown",
+        "app:shutdown"
+      ]
+    },
+    "network": {
+      "domains": [
+        "*.bsky.network",
+        "*.bsky.social",
+        "bsky.social",
+        "public.api.bsky.app",
+        "plc.directory",
+        "*.host.bsky.network",
+        "lexidex.bsky.dev",
+        "api.lexicon.store",
+        "raw.githubusercontent.com",
+        "github.com"
+      ]
+    },
+    "window": {
+      "create": true,
+      "query": true
+    },
+    "commands": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "lexicon studio",
