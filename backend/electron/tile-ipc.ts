@@ -115,6 +115,40 @@ function scopeNumberToName(scopeNum: number): 'self' | 'global' | 'system' {
   }
 }
 
+// ─── Feature History Helper ─────────────────────────────────────────
+
+/**
+ * Write an event to the features_history table
+ */
+function writeFeatureHistory(
+  featureId: string,
+  event: string,
+  version?: string,
+  sourceType?: string,
+  sourceUri?: string,
+  publisher?: string,
+  capabilities?: Record<string, unknown>
+): void {
+  try {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO features_history (featureId, event, version, sourceType, sourceUri, publisher, capabilities, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      featureId,
+      event,
+      version || null,
+      sourceType || null,
+      sourceUri || null,
+      publisher || null,
+      capabilities ? JSON.stringify(capabilities) : '{}',
+      new Date().toISOString()
+    );
+  } catch (err) {
+    console.error('[tile-ipc] Failed to write feature history:', err);
+  }
+}
+
 // ─── IPC Handler Registration ────────────────────────────────────────
 
 /**
@@ -627,6 +661,18 @@ export function registerTileIpcHandlers(): void {
         console.error(`[tile-ipc] Failed to delete feature files at ${entry.path}:`, err);
       }
       registry.saveRegistry();
+
+      // Write history event
+      writeFeatureHistory(
+        args.id,
+        'uninstall',
+        entry.source.version,
+        entry.source.type,
+        entry.source.uri,
+        entry.source.publisher,
+        entry.grantedCapabilities as unknown as Record<string, unknown>
+      );
+
       publish('feature-registry', scopes.GLOBAL, 'feature:removed', { id: args.id });
     }
     return { success: result };

@@ -304,6 +304,20 @@ const createTableStatements = `
   );
   CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
   CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
+
+  CREATE TABLE IF NOT EXISTS features_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    featureId TEXT NOT NULL,
+    event TEXT NOT NULL,
+    version TEXT,
+    sourceType TEXT,
+    sourceUri TEXT,
+    publisher TEXT,
+    capabilities TEXT DEFAULT '{}',
+    timestamp TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_features_history_feature ON features_history(featureId);
+  CREATE INDEX IF NOT EXISTS idx_features_history_time ON features_history(timestamp DESC);
 `;
 
 // Module state
