@@ -1699,7 +1699,7 @@ export function registerTileIpcHandlers(): void {
       if (uninit) uninit();
     }, api.scopes.SYSTEM);
   }
-<\/script>
+<${'/'}script>
 </body>
 </html>`;
 
@@ -1774,8 +1774,8 @@ export function uninit() {
         api.subscribe = api.pubsub.subscribe;
       }
     })();
-  <\/script>
-  <script type="module" src="home.js"><\/script>
+  <${'/'}script>
+  <script type="module" src="home.js"><${'/'}script>
 </body>
 </html>`;
 
