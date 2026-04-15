@@ -1325,14 +1325,65 @@ async function loadExtensionsConsolidated(): Promise<number> {
 export async function loadExtensions(): Promise<number> {
   const extStart = Date.now();
 
-  // ── V2 Feature Startup ──
-  // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
-  // V2 manifests are handled by the tile launcher; v1 manifests fall through to legacy loading below.
   const featuresDir = path.join(config.rootDir, 'features');
   const tilePreloadPath = path.join(config.rootDir, 'backend', 'electron', 'tile-preload.js');
   const v1FeatureIds = new Set<string>();
   const v2FeatureIds = new Set<string>();
 
+  // Helper: wait for an extension to appear in loadedConsolidatedExtensions.
+  const waitForExtLoaded = (extId: string, timeoutMs: number): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      if (loadedConsolidatedExtensions.has(extId)) { resolve(); return; }
+      const interval = setInterval(() => {
+        if (loadedConsolidatedExtensions.has(extId)) {
+          clearInterval(interval);
+          clearTimeout(timeout);
+          resolve();
+        }
+      }, 10);
+      const timeout = setTimeout(() => {
+        clearInterval(interval);
+        loadedConsolidatedExtensions.add(extId); // Fallback
+        DEBUG && console.log(`[ext] Timeout waiting for ${extId}, marking as loaded (fallback)`);
+        resolve();
+      }, timeoutMs);
+    });
+  };
+
+  // Helper: create iframe in extension host via executeJavaScript.
+  const loadExtInHost = (host: BrowserWindow, id: string, url: string): void => {
+    host.webContents.executeJavaScript(`
+      (function() {
+        if (document.getElementById('ext-${id}')) return;
+        var iframe = document.createElement('iframe');
+        iframe.src = '${url}';
+        iframe.id = 'ext-${id}';
+        document.getElementById('extensions').appendChild(iframe);
+      })();
+    `).catch((err: Error) => {
+      console.error('[ext:host] Failed to create iframe for', id, err);
+    });
+  };
+
+  // Subscribe to ext:ready — extensions publish this after registering their handlers.
+  subscribe(getSystemAddress(), scopes.SYSTEM, 'ext:ready', (data: unknown) => {
+    const extId = (data as { id?: string })?.id;
+    const registeredTopics = (data as { registeredTopics?: string[] })?.registeredTopics;
+    if (extId) {
+      handleLazyExtensionReady(extId, registeredTopics);
+    }
+  });
+
+  // Load the extension host and cmd FIRST — cmd owns the command registry.
+  // Any feature that publishes cmd:register or cmd:register-batch must find
+  // cmd already subscribed, otherwise registration is lost.
+  const host = await createExtensionHostWindow();
+  await initCmd({ host, loadExtInHost, waitForExtLoaded });
+
+  // ── V2 Feature Startup ──
+  // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
+  // V2 manifests are handled by the tile launcher; v1 manifests fall through to legacy loading below.
+  // This runs AFTER initCmd so tile-lazy's cmd:register-batch publishes reach cmd.
   try {
     const featureResult: FeatureStartupResult = initializeFeatures({
       appDataDir: config.userDataPath,
@@ -1375,62 +1426,6 @@ export async function loadExtensions(): Promise<number> {
 
   // Phase 1: Early
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
-
-  // Helper: wait for an extension to appear in loadedConsolidatedExtensions
-  // (populated by did-frame-finish-load handler in createExtensionHostWindow)
-  const waitForExtLoaded = (extId: string, timeoutMs: number): Promise<void> => {
-    return new Promise<void>((resolve) => {
-      if (loadedConsolidatedExtensions.has(extId)) { resolve(); return; }
-      const interval = setInterval(() => {
-        if (loadedConsolidatedExtensions.has(extId)) {
-          clearInterval(interval);
-          clearTimeout(timeout);
-          resolve();
-        }
-      }, 10);
-      const timeout = setTimeout(() => {
-        clearInterval(interval);
-        loadedConsolidatedExtensions.add(extId); // Fallback
-        DEBUG && console.log(`[ext] Timeout waiting for ${extId}, marking as loaded (fallback)`);
-        resolve();
-      }, timeoutMs);
-    });
-  };
-
-  // Helper: create iframe in extension host via executeJavaScript
-  // This bypasses IPC/contextBridge for reliability
-  const loadExtInHost = (host: BrowserWindow, id: string, url: string): void => {
-    host.webContents.executeJavaScript(`
-      (function() {
-        if (document.getElementById('ext-${id}')) return;
-        var iframe = document.createElement('iframe');
-        iframe.src = '${url}';
-        iframe.id = 'ext-${id}';
-        document.getElementById('extensions').appendChild(iframe);
-      })();
-    `).catch((err: Error) => {
-      console.error('[ext:host] Failed to create iframe for', id, err);
-    });
-  };
-
-  // Subscribe to ext:ready — extensions publish this after registering their handlers.
-  // This resolves lazy-load promises so the stub can safely re-publish commands.
-  subscribe(getSystemAddress(), scopes.SYSTEM, 'ext:ready', (data: unknown) => {
-    const extId = (data as { id?: string })?.id;
-    const registeredTopics = (data as { registeredTopics?: string[] })?.registeredTopics;
-    if (extId) {
-      handleLazyExtensionReady(extId, registeredTopics);
-    }
-  });
-
-  // Always create the extension host window — cmd (the command registry) lives
-  // there as an iframe, even when no features are consolidated. This is core
-  // infrastructure, loaded via cmd-glue.ts before any feature registers commands.
-  const host = await createExtensionHostWindow();
-
-  // Phase 1a: Load cmd (command registry) via cmd-glue. This MUST complete
-  // before any feature tries to register commands via cmd:register pubsub.
-  await initCmd({ host, loadExtInHost, waitForExtLoaded });
 
   // Phase 2: Commands
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
@@ -1517,11 +1512,13 @@ export async function loadExtensions(): Promise<number> {
 export function getRunningExtensions(): Array<{ id: string; manifest: unknown; status: string }> {
   const running: Array<{ id: string; manifest: unknown; status: string }> = [];
 
-  // Add consolidated extensions that have actually loaded (in extension host iframes)
+  // Add consolidated extensions that have actually loaded (in extension host iframes).
+  // Iterates loadedConsolidatedExtensions (populated by did-frame-finish-load), which
+  // includes both CONSOLIDATED_EXTENSION_IDS features AND core pseudo-extensions like
+  // cmd that are loaded by core glue (cmd-glue.ts) rather than by the feature system.
   if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
-    for (const extId of CONSOLIDATED_EXTENSION_IDS) {
+    for (const extId of loadedConsolidatedExtensions) {
       if (!isBuiltinExtensionEnabled(extId)) continue;
-      if (!loadedConsolidatedExtensions.has(extId)) continue;
       const extPath = getExtensionPath(extId);
       const manifest = extPath ? loadExtensionManifest(extPath) : null;
       running.push({
