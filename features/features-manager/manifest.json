@@ -36,6 +36,18 @@
         "height": 720,
         "title": "Browse Features"
       }
+    },
+    {
+      "id": "publish",
+      "type": "window",
+      "url": "publish.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "features-publish",
+        "width": 700,
+        "height": 600,
+        "title": "Publish Feature"
+      }
     }
   ],
   "capabilities": {
@@ -44,11 +56,15 @@
       "topics": [
         "feature:*",
         "ext:ready",
-        "app:shutdown"
+        "app:shutdown",
+        "lex:session-changed"
       ]
     },
     "datastore": {
       "tables": ["features_history"]
+    },
+    "network": {
+      "domains": ["*.bsky.network", "*.bsky.social", "public.api.bsky.app", "plc.directory", "*.host.bsky.network"]
     },
     "window": {
       "create": true,
@@ -101,6 +117,21 @@
           "width": 960,
           "height": 720,
           "title": "Browse Features"
+        }
+      }
+    },
+    {
+      "name": "publish feature",
+      "description": "Publish a local feature to AT Protocol",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/features-manager/publish.html",
+        "options": {
+          "role": "workspace",
+          "key": "features-publish",
+          "width": 700,
+          "height": 600,
+          "title": "Publish Feature"
         }
       }
     },

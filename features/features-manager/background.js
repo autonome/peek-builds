@@ -12,6 +12,9 @@ import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 const hasPeekAPI = typeof window.app !== 'undefined';
 const api = hasPeekAPI ? window.app : null;
 
+/** Cached lex session for publish flow */
+let currentLexSession = null;
+
 /**
  * Open the features manage window
  */
@@ -26,6 +29,23 @@ function openManage() {
     });
   } else {
     window.open('./manage.html', '_blank');
+  }
+}
+
+/**
+ * Open the publish feature window
+ */
+function openPublish() {
+  if (hasPeekAPI) {
+    api.window.open('peek://ext/features-manager/publish.html', {
+      role: 'workspace',
+      key: 'features-publish',
+      width: 700,
+      height: 600,
+      title: 'Publish Feature'
+    });
+  } else {
+    window.open('./publish.html', '_blank');
   }
 }
 
@@ -137,6 +157,17 @@ const extension = {
         api.publish('feature:remove-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
       } catch (err) {
         api.publish('feature:remove-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
+      }
+    }, api.scopes.GLOBAL);
+
+    // Listen for lex session changes (used by publish flow)
+    api.subscribe('lex:session-changed', (msg) => {
+      if (msg.session) {
+        currentLexSession = msg.session;
+        console.log('[features-manager] Lex session updated for', currentLexSession.handle);
+      } else {
+        currentLexSession = null;
+        console.log('[features-manager] Lex session cleared');
       }
     }, api.scopes.GLOBAL);
 
