@@ -10,8 +10,23 @@
  * - Lifecycle: load manifest -> grant capabilities -> create context -> tile calls initialize() -> tile:ready
  */
 
-import { BrowserWindow } from 'electron';
+import type { BrowserWindow } from 'electron';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+
+// Lazy-load BrowserWindow via CommonJS require so this module can be imported
+// under ELECTRON_RUN_AS_NODE=1 (where electron's named ESM exports are empty).
+// Consumers that never actually launch a window (e.g. unit tests that stub
+// the launcher) won't trigger the require.
+const requireElectron = createRequire(import.meta.url);
+let _BrowserWindow: typeof import('electron').BrowserWindow | null = null;
+function getBrowserWindowCtor(): typeof import('electron').BrowserWindow {
+  if (_BrowserWindow) return _BrowserWindow;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const electron = requireElectron('electron') as typeof import('electron');
+  _BrowserWindow = electron.BrowserWindow;
+  return _BrowserWindow;
+}
 
 import {
   type TileManifestV2,
@@ -148,6 +163,7 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
     windowOptions.skipTaskbar = true;
   }
 
+  const BrowserWindow = getBrowserWindowCtor();
   const win = new BrowserWindow(windowOptions);
 
   // Build the URL for this tile: peek://{tileId}/{url}

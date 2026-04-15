@@ -244,16 +244,19 @@ function registerEventInterceptor(tileId: string, topic: string): void {
   const pendingKey = `${tileId}:${topic}`;
 
   subscribe(stubSource, scopes.GLOBAL, topic, async (msg: unknown) => {
-    // If the tile is already loaded, ignore — the real handler fires from
-    // the same publish (pubsub iterates all subscribers). Also unsubscribe
-    // the stub so we don't keep re-entering.
+    // If the tile is already loaded AND the real handler is subscribed, the
+    // real handler fired from this same publish call (pubsub iterates all
+    // subscribers). Just unsubscribe the stub and skip replay to avoid
+    // duplicate delivery.
     const bgEntry = getBackgroundEntry(tileId);
-    if (bgEntry && launcher.isTileLoaded(tileId, bgEntry)) {
+    const tileLoaded = bgEntry ? launcher.isTileLoaded(tileId, bgEntry) : false;
+    const realHandlerPresent = hasSubscriber(topic, undefined, `lazy-interceptor/${tileId}/`);
+    if (tileLoaded && realHandlerPresent) {
       unsubscribe(stubSource, topic);
       return;
     }
 
-    // Buffer the latest message (latest wins for concurrent fires)
+    // Buffer the latest message (latest wins for concurrent fires during load)
     const alreadyLoading = lazyEventPending.has(pendingKey);
     lazyEventPending.set(pendingKey, msg);
 
@@ -262,12 +265,13 @@ function registerEventInterceptor(tileId: string, topic: string): void {
       return;
     }
 
-    DEBUG && console.log(`[tile-lazy] ${topic} fired but tile ${tileId} not loaded, loading...`);
+    DEBUG && console.log(`[tile-lazy] ${topic} fired, ensuring tile ${tileId} is loaded`);
 
     try {
       await loadLazyTile(tileId);
 
       // Wait for the tile to be ready (loadLazyTile already waits, but be defensive)
+      const bgEntry = getBackgroundEntry(tileId);
       if (bgEntry) {
         await launcher.waitForTileReady(tileId, bgEntry);
       }
@@ -281,7 +285,7 @@ function registerEventInterceptor(tileId: string, topic: string): void {
         console.warn(`[tile-lazy] Tile ${tileId} loaded but no handler registered for ${topic}`);
       }
 
-      // Replay the buffered message exactly once
+      // Replay the buffered (latest) message exactly once
       const buffered = lazyEventPending.get(pendingKey);
       lazyEventPending.delete(pendingKey);
       DEBUG && console.log(`[tile-lazy] Tile ${tileId} loaded, re-publishing ${topic}`);
@@ -289,12 +293,6 @@ function registerEventInterceptor(tileId: string, topic: string): void {
     } catch (err) {
       console.error(`[tile-lazy] Failed to load tile ${tileId} for event ${topic}:`, err);
       lazyEventPending.delete(pendingKey);
-
-      // Re-register the stub so the event can be retried
-      // (only if we actually unsubscribed — on load failure the stub is still attached)
-      if (!hasSubscriber(topic, stubSource)) {
-        registerEventInterceptor(tileId, topic);
-      }
     }
   });
 }
