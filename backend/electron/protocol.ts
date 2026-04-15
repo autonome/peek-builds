@@ -146,7 +146,7 @@ export function registerScheme(): void {
       standard: true,
       secure: true,
       supportFetchAPI: true,
-      bypassCSP: false,
+      bypassCSP: true, // Required for peek:// pages to load inline scripts/styles. Tile security enforced via per-response CSP headers instead.
       corsEnabled: false,
       allowServiceWorkers: false
     }
