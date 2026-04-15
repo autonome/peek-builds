@@ -21,7 +21,7 @@ import type { TileCapabilities } from './tile-manifest.js';
  * Where a feature came from
  */
 export interface FeatureSource {
-  type: 'builtin' | 'local' | 'atproto' | 'url';
+  type: 'builtin' | 'local' | 'atproto' | 'url' | 'dev';
   publisher?: string;       // for atproto: DID; for url: domain
   publisherName?: string;   // human-readable publisher name
   uri?: string;             // source-specific URI
