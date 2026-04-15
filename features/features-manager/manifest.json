@@ -24,6 +24,18 @@
         "height": 650,
         "title": "Features"
       }
+    },
+    {
+      "id": "browse",
+      "type": "window",
+      "url": "browse.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "features-browse",
+        "width": 960,
+        "height": 720,
+        "title": "Browse Features"
+      }
     }
   ],
   "capabilities": {
@@ -74,6 +86,21 @@
           "width": 900,
           "height": 650,
           "title": "Features"
+        }
+      }
+    },
+    {
+      "name": "browse features",
+      "description": "Browse and search features by publisher",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/features-manager/browse.html",
+        "options": {
+          "role": "workspace",
+          "key": "features-browse",
+          "width": 960,
+          "height": 720,
+          "title": "Browse Features"
         }
       }
     },

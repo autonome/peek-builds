@@ -30,6 +30,23 @@ function openManage() {
 }
 
 /**
+ * Open the features browse window
+ */
+function openBrowse() {
+  if (hasPeekAPI) {
+    api.window.open('peek://ext/features-manager/browse.html', {
+      role: 'workspace',
+      key: 'features-browse',
+      width: 960,
+      height: 720,
+      title: 'Browse Features'
+    });
+  } else {
+    window.open('./browse.html', '_blank');
+  }
+}
+
+/**
  * Query installed non-builtin features via IPC
  */
 async function queryFeatures({ search } = {}) {
@@ -84,7 +101,8 @@ const extension = {
       singular: 'feature',
       description: 'Installed non-built-in features',
       query: queryFeatures,
-      browse: () => { openManage(); },
+      browse: () => { openBrowse(); },
+      open: () => { openManage(); },
       produces: 'application/json'
     });
 
