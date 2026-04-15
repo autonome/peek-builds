@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+    <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
+    <title>Browse Features</title>
+    <link rel="stylesheet" type="text/css" href="browse.css">
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-left">
+        <h1 class="header-title">Browse Features</h1>
+        <span class="result-count" id="result-count"></span>
+      </div>
+      <div class="header-right">
+        <button class="btn" id="manage-btn">Manage Installed</button>
+      </div>
+    </header>
+
+    <div class="search-bar">
+      <input
+        class="search-input"
+        placeholder="Enter handle or DID (e.g., alice.bsky.social)"
+        type="text"
+        id="publisher-input"
+        autofocus
+      >
+      <button class="btn primary" id="search-btn">Search</button>
+    </div>
+
+    <div class="status-bar" id="status-bar" style="display:none;">
+      <span class="status-text" id="status-text"></span>
+    </div>
+
+    <div class="publisher-info" id="publisher-info" style="display:none;">
+      <div class="publisher-handle" id="publisher-handle"></div>
+      <div class="publisher-did" id="publisher-did"></div>
+    </div>
+
+    <div class="install-preview" id="install-preview" style="display:none;">
+      <div class="install-preview-header">
+        <h2 class="install-preview-title" id="preview-title">Feature Name</h2>
+        <button class="action-btn" id="preview-close">Cancel</button>
+      </div>
+      <div class="install-preview-body">
+        <div class="preview-meta" id="preview-meta"></div>
+        <div class="preview-capabilities" id="preview-capabilities"></div>
+      </div>
+      <div class="install-preview-footer">
+        <button class="btn" id="preview-cancel">Cancel</button>
+        <button class="btn primary" id="preview-install">Install</button>
+      </div>
+    </div>
+
+    <div class="content" id="content">
+      <div class="empty-state">
+        <div class="empty-state-icon" style="font-family: system-ui;">&#128270;</div>
+        <div class="empty-state-title">Search for features</div>
+        <div class="empty-state-hint">Enter a handle or DID to browse published features.</div>
+      </div>
+    </div>
+
+    <script>
+      // V2 tile runtime compat shims
+      (function() {
+        const api = window.app;
+        if (!api) return;
+        const isTileV2 = typeof api.initialize === 'function';
+        if (!isTileV2) return;
+        if (api.pubsub && !api.publish) {
+          api.publish = api.pubsub.publish;
+          api.subscribe = api.pubsub.subscribe;
+        }
+        if (api.settings && !api.settings.getExtKey) {
+          api.settings.getExtKey = (extId, key) => api.settings.get(extId + '.' + key);
+        }
+      })();
+    </script>
+    <script type="module" src="browse.js"></script>
+  </body>
+</html>
