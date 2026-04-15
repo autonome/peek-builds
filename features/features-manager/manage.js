@@ -262,12 +262,111 @@ function createFeatureCard(feature) {
   // Remove
   const removeBtn = document.createElement('button');
   removeBtn.className = 'action-btn danger';
-  removeBtn.textContent = 'Remove';
+  removeBtn.textContent = isDev ? 'Unregister' : 'Remove';
   removeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    removeFeature(feature.id, feature.name);
+    if (isDev) {
+      unregisterDevFeature(feature.id, feature.name);
+    } else {
+      removeFeature(feature.id, feature.name);
+    }
   });
   actions.appendChild(removeBtn);
+
+  // Dev-specific actions
+  if (isDev) {
+    const devActions = document.createElement('div');
+    devActions.className = 'feature-dev-actions';
+
+    const reloadBtn = document.createElement('button');
+    reloadBtn.className = 'action-btn';
+    reloadBtn.textContent = 'Reload';
+    reloadBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      reloadBtn.textContent = 'Reloading...';
+      reloadBtn.disabled = true;
+      try {
+        const result = await api.ipc.invoke('feature-dev:reload', { featureId: feature.id });
+        reloadBtn.textContent = result.error ? 'Error' : 'Reloaded';
+        if (result.error) console.error('[features-manager] reload error:', result.error);
+        setTimeout(() => { reloadBtn.textContent = 'Reload'; reloadBtn.disabled = false; }, 1500);
+      } catch (err) {
+        console.error('[features-manager] reload error:', err);
+        reloadBtn.textContent = 'Reload';
+        reloadBtn.disabled = false;
+      }
+    });
+    devActions.appendChild(reloadBtn);
+
+    const devtoolsBtn = document.createElement('button');
+    devtoolsBtn.className = 'action-btn';
+    devtoolsBtn.textContent = 'DevTools';
+    devtoolsBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const result = await api.ipc.invoke('feature-dev:open-devtools', { featureId: feature.id });
+        if (result.error) {
+          showStatus(result.error, 'error');
+          setTimeout(hideStatus, 3000);
+        }
+      } catch (err) {
+        console.error('[features-manager] devtools error:', err);
+      }
+    });
+    devActions.appendChild(devtoolsBtn);
+
+    const validateBtn = document.createElement('button');
+    validateBtn.className = 'action-btn';
+    validateBtn.textContent = 'Validate';
+    validateBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      validateBtn.textContent = 'Validating...';
+      validateBtn.disabled = true;
+      try {
+        const result = await api.ipc.invoke('feature-dev:validate', { featureId: feature.id });
+        if (result.error) {
+          showStatus(result.error, 'error');
+        } else if (result.valid) {
+          const warnMsg = result.warnings.length > 0
+            ? ` (${result.warnings.length} warning${result.warnings.length > 1 ? 's' : ''})`
+            : '';
+          showStatus(`Validation passed${warnMsg}`, 'success');
+          if (result.warnings.length > 0) {
+            console.log('[features-manager] Validation warnings:', result.warnings);
+          }
+        } else {
+          showStatus(`Validation failed: ${result.errors.join('; ')}`, 'error');
+        }
+        setTimeout(hideStatus, 5000);
+      } catch (err) {
+        console.error('[features-manager] validate error:', err);
+        showStatus(`Error: ${err.message}`, 'error');
+      } finally {
+        validateBtn.textContent = 'Validate';
+        validateBtn.disabled = false;
+      }
+    });
+    devActions.appendChild(validateBtn);
+
+    const publishBtn = document.createElement('button');
+    publishBtn.className = 'action-btn primary';
+    publishBtn.textContent = 'Publish';
+    publishBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Open publish.html with featureId pre-selected
+      if (hasPeekAPI) {
+        api.window.open(`peek://features-manager/publish.html?featureId=${encodeURIComponent(feature.id)}`, {
+          key: 'features-publish',
+          width: 700,
+          height: 600,
+          title: 'Publish Feature',
+        });
+      }
+    });
+    devActions.appendChild(publishBtn);
+
+    card.appendChild(devActions);
+  }
 
   card.appendChild(actions);
 
@@ -320,6 +419,112 @@ async function removeFeature(id, name) {
     console.error('[features-manager] remove error:', err);
   }
 }
+
+async function unregisterDevFeature(id, name) {
+  if (!hasPeekAPI) return;
+
+  const confirmed = confirm(`Unregister dev feature "${name}"? Source files on disk will NOT be deleted.`);
+  if (!confirmed) return;
+
+  try {
+    const result = await api.ipc.invoke('feature-registry:remove', { id });
+    if (result.error) {
+      console.error(`[features-manager] unregister error:`, result.error);
+      return;
+    }
+    features = features.filter(f => f.id !== id);
+    render();
+  } catch (err) {
+    console.error('[features-manager] unregister error:', err);
+  }
+}
+
+// ─── Create Feature Flow ───────────────────────────────────────────
+
+function showCreateForm() {
+  createFeatureForm.style.display = '';
+  createDirSelected = null;
+  createDirPath.textContent = 'No directory selected';
+  createFeatureId.value = '';
+  createFeatureName.value = '';
+  createSubmitBtn.disabled = true;
+}
+
+function hideCreateForm() {
+  createFeatureForm.style.display = 'none';
+  createDirSelected = null;
+}
+
+function updateCreateSubmitState() {
+  const hasDir = !!createDirSelected;
+  const hasId = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(createFeatureId.value.trim());
+  const hasName = createFeatureName.value.trim().length > 0;
+  createSubmitBtn.disabled = !(hasDir && hasId && hasName);
+}
+
+createFeatureBtn.addEventListener('click', showCreateForm);
+createCancelBtn.addEventListener('click', hideCreateForm);
+
+createPickDirBtn.addEventListener('click', async () => {
+  if (!hasPeekAPI) return;
+  try {
+    const result = await api.ipc.invoke('feature-dev:pick-directory');
+    if (result.canceled || result.error) return;
+    createDirSelected = result.path;
+    createDirPath.textContent = result.path;
+    // Auto-suggest feature ID from directory name
+    const dirName = result.path.split('/').pop() || '';
+    if (!createFeatureId.value && dirName) {
+      const suggested = dirName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
+      if (suggested.length >= 2) {
+        createFeatureId.value = suggested;
+      }
+    }
+    if (!createFeatureName.value && dirName) {
+      // Title case from directory name
+      createFeatureName.value = dirName
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+    }
+    updateCreateSubmitState();
+  } catch (err) {
+    console.error('[features-manager] pick directory error:', err);
+  }
+});
+
+createFeatureId.addEventListener('input', updateCreateSubmitState);
+createFeatureName.addEventListener('input', updateCreateSubmitState);
+
+createSubmitBtn.addEventListener('click', async () => {
+  if (!hasPeekAPI || !createDirSelected) return;
+
+  createSubmitBtn.disabled = true;
+  createSubmitBtn.textContent = 'Creating...';
+
+  try {
+    const result = await api.ipc.invoke('feature-dev:create', {
+      directoryPath: createDirSelected,
+      featureId: createFeatureId.value.trim(),
+      featureName: createFeatureName.value.trim(),
+    });
+
+    if (result.error) {
+      showStatus(result.error, 'error');
+      setTimeout(hideStatus, 5000);
+    } else {
+      hideCreateForm();
+      showStatus(`Created feature "${result.entry.name}" at ${createDirSelected}`, 'success');
+      setTimeout(hideStatus, 5000);
+      await loadFeatures();
+    }
+  } catch (err) {
+    console.error('[features-manager] create error:', err);
+    showStatus(`Error: ${err.message}`, 'error');
+  } finally {
+    createSubmitBtn.disabled = false;
+    createSubmitBtn.textContent = 'Create';
+  }
+});
 
 // ─── Update Actions ────────────────────────────────────────────────
 

@@ -47,6 +47,12 @@
 
     // Listen for updates from background.js
     if (window.app) {
+      // V2 tile runtime shims
+      if (typeof window.app.initialize === 'function') {
+        if (window.app.pubsub && !window.app.subscribe) {
+          window.app.subscribe = window.app.pubsub.subscribe;
+        }
+      }
       window.app.subscribe('spaces:border-update', (msg) => {
         if (msg.color) {
           document.documentElement.style.setProperty('--color', msg.color);

@@ -1,11 +1,71 @@
 {
+  "manifestVersion": 2,
   "id": "spaces",
   "shortname": "spaces",
   "name": "Spaces",
   "description": "Workspace mode with auto-tagging, screen border, and session management",
-  "version": "1.0.0",
-  "background": "background.html",
+  "version": "2.0.0",
   "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "width": 800,
+        "height": 600,
+        "title": "Spaces"
+      }
+    },
+    {
+      "id": "border",
+      "type": "window",
+      "url": "border.html",
+      "windowHints": {
+        "role": "overlay",
+        "transparent": true,
+        "frame": false,
+        "focusable": false,
+        "alwaysOnTop": true
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "ext:spaces:shutdown",
+        "app:shutdown",
+        "cmd:execute:*",
+        "cmd:register",
+        "cmd:unregister",
+        "item:created",
+        "tag:item-removed",
+        "window:focused",
+        "window:closed",
+        "app:focus-changed",
+        "spaces:*"
+      ]
+    },
+    "datastore": {
+      "tables": ["tags", "items", "item_tags"]
+    },
+    "window": {
+      "create": true,
+      "query": true,
+      "manage": true
+    },
+    "commands": true,
+    "settings": true
+  },
   "commands": [
     {
       "name": "open space",
