@@ -1083,6 +1083,137 @@ function buildAPI(): Record<string, unknown> {
     open: () => ipcRenderer.invoke('tile:dialogs:open', { token: tileToken }),
   };
 
+  // ── Features ──────────────────────────────────────────────────────
+  //
+  // Dual-path implementation mirroring api.shortcuts / api.context:
+  //
+  //   - STRICT: when the tile's manifest declared a `features` capability
+  //     (`true` or `{ read?, install?, manage?, sources? }`), route through
+  //     `tile:features:*`. Main-process handlers validate the token +
+  //     capability shape + per-action gates + source allowlist.
+  //
+  //   - V1-COMPAT: when no features capability was declared, fall back
+  //     to the legacy `feature-registry:*` / `feature-install:*` /
+  //     `feature-browse:*` channels. Those remain available through the
+  //     migration window and the settings UI continues to use them.
+  //
+  // The decision is made per-call because `grantedCapabilities` is
+  // populated asynchronously by `initialize()`.
+
+  function hasFeaturesCapability(): boolean {
+    const fc = grantedCapabilities?.features;
+    if (fc === true) return true;
+    if (fc && typeof fc === 'object') return true;
+    return false;
+  }
+
+  const featuresCompat = {
+    list: (sourceType?: string) =>
+      ipcRenderer.invoke('feature-registry:list', { token: tileToken, sourceType }),
+    get: (id: string) =>
+      ipcRenderer.invoke('feature-registry:get', { token: tileToken, id }),
+    history: (featureId?: string, limit?: number) =>
+      ipcRenderer.invoke('feature-registry:history', { token: tileToken, featureId, limit }),
+    enable: (id: string, tilePreloadPath?: string) =>
+      ipcRenderer.invoke('feature-registry:enable', { token: tileToken, id, tilePreloadPath }),
+    disable: (id: string) =>
+      ipcRenderer.invoke('feature-registry:disable', { token: tileToken, id }),
+    remove: (id: string) =>
+      ipcRenderer.invoke('feature-registry:remove', { token: tileToken, id }),
+    installResolve: (atUri: string) =>
+      ipcRenderer.invoke('feature-install:resolve', { token: tileToken, atUri }),
+    previewCapabilities: (manifestCapabilities: unknown, featureId: string) =>
+      ipcRenderer.invoke('feature-install:preview-capabilities', {
+        token: tileToken,
+        manifestCapabilities,
+        featureId,
+      }),
+    install: (atUri: string, userApproved: boolean) =>
+      ipcRenderer.invoke('feature-install:install', { token: tileToken, atUri, userApproved }),
+    resolvePublisher: (query: string) =>
+      ipcRenderer.invoke('feature-browse:resolve-publisher', { token: tileToken, query }),
+  };
+
+  const featuresStrict = {
+    list: (sourceType?: string) =>
+      ipcRenderer.invoke('tile:features:list', { token: tileToken, sourceType }),
+    get: (id: string) =>
+      ipcRenderer.invoke('tile:features:get', { token: tileToken, id }),
+    history: (featureId?: string, limit?: number) =>
+      ipcRenderer.invoke('tile:features:history', { token: tileToken, featureId, limit }),
+    enable: (id: string, tilePreloadPath?: string) =>
+      ipcRenderer.invoke('tile:features:enable', { token: tileToken, id, tilePreloadPath }),
+    disable: (id: string) =>
+      ipcRenderer.invoke('tile:features:disable', { token: tileToken, id }),
+    remove: (id: string) =>
+      ipcRenderer.invoke('tile:features:remove', { token: tileToken, id }),
+    installResolve: (atUri: string) =>
+      ipcRenderer.invoke('tile:features:install-resolve', { token: tileToken, atUri }),
+    previewCapabilities: (manifestCapabilities: unknown, featureId: string) =>
+      ipcRenderer.invoke('tile:features:preview-capabilities', {
+        token: tileToken,
+        manifestCapabilities,
+        featureId,
+      }),
+    install: (atUri: string, userApproved: boolean) =>
+      ipcRenderer.invoke('tile:features:install', { token: tileToken, atUri, userApproved }),
+    resolvePublisher: (query: string) =>
+      ipcRenderer.invoke('tile:features:browse-resolve-publisher', { token: tileToken, query }),
+  };
+
+  api.features = {
+    list: wrapCompat('features', 'list', (sourceType: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.list(sourceType as string | undefined)
+        : featuresCompat.list(sourceType as string | undefined);
+    }),
+    get: wrapCompat('features', 'get', (id: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.get(id as string)
+        : featuresCompat.get(id as string);
+    }),
+    history: wrapCompat('features', 'history', (featureId: unknown, limit: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.history(featureId as string | undefined, limit as number | undefined)
+        : featuresCompat.history(featureId as string | undefined, limit as number | undefined);
+    }),
+    enable: wrapCompat('features', 'enable', (id: unknown, tilePreloadPath: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.enable(id as string, tilePreloadPath as string | undefined)
+        : featuresCompat.enable(id as string, tilePreloadPath as string | undefined);
+    }),
+    disable: wrapCompat('features', 'disable', (id: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.disable(id as string)
+        : featuresCompat.disable(id as string);
+    }),
+    remove: wrapCompat('features', 'remove', (id: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.remove(id as string)
+        : featuresCompat.remove(id as string);
+    }),
+    installResolve: wrapCompat('features', 'installResolve', (atUri: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.installResolve(atUri as string)
+        : featuresCompat.installResolve(atUri as string);
+    }),
+    previewCapabilities: wrapCompat('features', 'previewCapabilities', (mc: unknown, id: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.previewCapabilities(mc, id as string)
+        : featuresCompat.previewCapabilities(mc, id as string);
+    }),
+    install: wrapCompat('features', 'install', (atUri: unknown, userApproved: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.install(atUri as string, userApproved as boolean)
+        : featuresCompat.install(atUri as string, userApproved as boolean);
+    }),
+    resolvePublisher: wrapCompat('features', 'resolvePublisher', (query: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.resolvePublisher(query as string)
+        : featuresCompat.resolvePublisher(query as string);
+    }),
+  };
+
   // ── closeWindow (v1-compat) ───────────────────────────────────────
   //
   // When the tile has declared the `window` capability, the close goes
