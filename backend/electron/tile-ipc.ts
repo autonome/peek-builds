@@ -53,6 +53,18 @@ import {
   getItemsByTag as dsGetItemsByTag,
   getOrCreateTag as dsGetOrCreateTag,
   getTagsByFrecency as dsGetTagsByFrecency,
+  renameTag as dsRenameTag,
+  updateTagColor as dsUpdateTagColor,
+  deleteTag as dsDeleteTag,
+  getStats as dsGetStats,
+  hardDeleteItem as dsHardDeleteItem,
+  updateItemTitle as dsUpdateItemTitle,
+  updateItemFavicon as dsUpdateItemFavicon,
+  recordItemVisit as dsRecordItemVisit,
+  getItemVisits as dsGetItemVisits,
+  queryItemVisits as dsQueryItemVisits,
+  trackNavigation as dsTrackNavigation,
+  queryItemsByFrecency as dsQueryItemsByFrecency,
   addItemEvent as dsAddItemEvent,
   queryItemEvents as dsQueryItemEvents,
   getLatestItemEvent as dsGetLatestItemEvent,
@@ -3753,6 +3765,215 @@ export function registerTileIpcHandlers(): void {
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-item-events', check.error); return { error: check.error }; }
     try {
       const data = dsDeleteItemEvents(args.itemId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── Additional tag operations ──
+
+  ipcMain.handle('tile:datastore:rename-tag', async (_event, args: {
+    token: string;
+    tagId: string;
+    newName: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:rename-tag', check.error); return { error: check.error }; }
+    try {
+      const data = dsRenameTag(args.tagId, args.newName);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:update-tag-color', async (_event, args: {
+    token: string;
+    tagId: string;
+    color: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-tag-color', check.error); return { error: check.error }; }
+    try {
+      const data = dsUpdateTagColor(args.tagId, args.color);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:delete-tag', async (_event, args: {
+    token: string;
+    tagId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-tag', check.error); return { error: check.error }; }
+    try {
+      const data = dsDeleteTag(args.tagId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── Stats (no table restriction) ──
+
+  ipcMain.handle('tile:datastore:get-stats', async (_event, args: {
+    token: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, []);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-stats', check.error); return { error: check.error }; }
+    try {
+      const data = dsGetStats();
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── Additional item operations ──
+
+  ipcMain.handle('tile:datastore:hard-delete-item', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:hard-delete-item', check.error); return { error: check.error }; }
+    try {
+      const data = dsHardDeleteItem(args.id);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:update-item-title', async (_event, args: {
+    token: string;
+    url: string;
+    title: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-item-title', check.error); return { error: check.error }; }
+    try {
+      const data = dsUpdateItemTitle(args.url, args.title);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:update-item-favicon', async (_event, args: {
+    token: string;
+    url: string;
+    faviconUrl: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-item-favicon', check.error); return { error: check.error }; }
+    try {
+      const data = dsUpdateItemFavicon(args.url, args.faviconUrl);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── Visit / history operations (require 'items') ──
+
+  ipcMain.handle('tile:datastore:record-item-visit', async (_event, args: {
+    token: string;
+    itemId: string;
+    options?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:record-item-visit', check.error); return { error: check.error }; }
+    try {
+      const data = dsRecordItemVisit(args.itemId, args.options as Parameters<typeof dsRecordItemVisit>[1]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-item-visits', async (_event, args: {
+    token: string;
+    itemId: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item-visits', check.error); return { error: check.error }; }
+    try {
+      const data = dsGetItemVisits(args.itemId, args.filter as Parameters<typeof dsGetItemVisits>[1]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:query-item-visits', async (_event, args: {
+    token: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-item-visits', check.error); return { error: check.error }; }
+    try {
+      const data = dsQueryItemVisits(args.filter as Parameters<typeof dsQueryItemVisits>[0]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-history', async (_event, args: {
+    token: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-history', check.error); return { error: check.error }; }
+    try {
+      const filter = (args.filter as Parameters<typeof dsQueryItemVisits>[0]) || {};
+      const visits = dsQueryItemVisits(filter);
+      const enriched = visits.map(v => {
+        const item = dsGetItem(v.itemId);
+        return {
+          ...v,
+          addressId: v.itemId,
+          uri: item?.content || '',
+          title: item?.title || '',
+          domain: item?.domain || '',
+          protocol: '',
+          favicon: item?.favicon || '',
+        };
+      });
+      return { success: true, data: enriched };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:track-navigation', async (_event, args: {
+    token: string;
+    uri: string;
+    options?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:track-navigation', check.error); return { error: check.error }; }
+    try {
+      const data = dsTrackNavigation(args.uri, args.options as Parameters<typeof dsTrackNavigation>[1]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:query-items-by-frecency', async (_event, args: {
+    token: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-items-by-frecency', check.error); return { error: check.error }; }
+    try {
+      const data = dsQueryItemsByFrecency(args.filter as Parameters<typeof dsQueryItemsByFrecency>[0]);
       return { success: true, data };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
