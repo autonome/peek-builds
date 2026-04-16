@@ -59,8 +59,8 @@ const request = (topic, data = {}) => {
     const handler = (msg) => {
       resolve(msg);
     };
-    api.subscribe(`${topic}:response`, handler, api.scopes.GLOBAL);
-    api.publish(topic, data, api.scopes.GLOBAL);
+    api.pubsub.subscribe(`${topic}:response`, handler, api.scopes.GLOBAL);
+    api.pubsub.publish(topic, data, api.scopes.GLOBAL);
   });
 };
 

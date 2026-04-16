@@ -200,19 +200,19 @@ const init = async () => {
   registerCommands();
 
   // Respond to pairs CRUD from the home UI
-  api.subscribe('tag-actions:get-pairs', () => {
-    api.publish('tag-actions:get-pairs:response', {
+  api.pubsub.subscribe('tag-actions:get-pairs', () => {
+    api.pubsub.publish('tag-actions:get-pairs:response', {
       success: true,
       data: currentPairs
     }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag-actions:set-pairs', async (msg) => {
+  api.pubsub.subscribe('tag-actions:set-pairs', async (msg) => {
     if (Array.isArray(msg.pairs)) {
       currentPairs = msg.pairs;
       await saveSettings();
     }
-    api.publish('tag-actions:set-pairs:response', {
+    api.pubsub.publish('tag-actions:set-pairs:response', {
       success: true,
       data: currentPairs
     }, api.scopes.GLOBAL);
@@ -220,15 +220,15 @@ const init = async () => {
 
   // Backward-compatible: respond to get-all with derived action rules
   // so tag-action-affordances.js cache still works
-  api.subscribe('tag-actions:get-all', () => {
-    api.publish('tag-actions:get-all:response', {
+  api.pubsub.subscribe('tag-actions:get-all', () => {
+    api.pubsub.publish('tag-actions:get-all:response', {
       success: true,
       data: currentActions
     }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   // Legacy CRUD endpoints -- respond gracefully but pairs is the source of truth now
-  api.subscribe('tag-actions:create', async (msg) => {
+  api.pubsub.subscribe('tag-actions:create', async (msg) => {
     // If it looks like a toggle action, convert to pair
     if (msg.actionType === 'toggle' && msg.actionConfig) {
       currentPairs.push({
@@ -238,15 +238,15 @@ const init = async () => {
       });
       await saveSettings();
     }
-    api.publish('tag-actions:create:response', { success: true }, api.scopes.GLOBAL);
+    api.pubsub.publish('tag-actions:create:response', { success: true }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag-actions:update', async (msg) => {
-    api.publish('tag-actions:update:response', { success: true }, api.scopes.GLOBAL);
+  api.pubsub.subscribe('tag-actions:update', async (msg) => {
+    api.pubsub.publish('tag-actions:update:response', { success: true }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag-actions:delete', async (msg) => {
-    api.publish('tag-actions:delete:response', { success: true }, api.scopes.GLOBAL);
+  api.pubsub.subscribe('tag-actions:delete', async (msg) => {
+    api.pubsub.publish('tag-actions:delete:response', { success: true }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   debug && console.log('[tag-actions] initialized with', currentPairs.length, 'pairs');
