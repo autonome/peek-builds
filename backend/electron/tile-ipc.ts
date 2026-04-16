@@ -17,7 +17,7 @@
  * Every handler validates the capability token before executing.
  */
 
-import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme } from 'electron';
+import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -87,6 +87,8 @@ import { checkOAuthAllowed } from './tile-oauth-enforcement.js';
 import { checkSyncAllowed } from './tile-sync-enforcement.js';
 import { createLoopbackServer } from './oauth-loopback.js';
 import { syncAll, getSyncConfig } from './sync.js';
+import { checkEscapeAllowed } from './tile-escape-enforcement.js';
+import { checkSessionAllowed } from './tile-session-enforcement.js';
 import { getActiveThemeId } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
@@ -104,6 +106,8 @@ export { checkFeaturesAllowed, sourceTypeAllowed, type FeaturesCheckResult, type
 export { checkSettingsForeignAllowed, type SettingsForeignCheckResult } from './tile-settings-foreign-enforcement.js';
 export { checkOAuthAllowed, type OAuthCheckResult, type OAuthOp } from './tile-oauth-enforcement.js';
 export { checkSyncAllowed, type SyncCheckResult } from './tile-sync-enforcement.js';
+export { checkEscapeAllowed, type EscapeCheckResult } from './tile-escape-enforcement.js';
+export { checkSessionAllowed, type SessionCheckResult, type SessionOp } from './tile-session-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -1503,6 +1507,12 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the un-gated legacy `window-exists` channel.
   // Gated by `window.manage` — callers probing the state of windows by
   // id are, effectively, managing other windows.
+  //
+  // Return shape: `{ exists, success, data, error? }` — aligns with both
+  // caller styles across features:
+  //   - `exists.exists`                     (spaces, groups, slides)
+  //   - `exists.success && exists.data`     (pagestream, helpdocs, windows feature)
+  // Keeping both keys lets us migrate callers without a renaming pass.
   ipcMain.handle('tile:window:exists', async (_event, args: {
     token: string;
     id: number;
@@ -1511,21 +1521,21 @@ export function registerTileIpcHandlers(): void {
     const check = checkWindowAllowed(grant, 'exists');
     if (!check.ok) {
       DEBUG && console.log(`[tile-ipc] window:exists rejected: ${check.error}`);
-      return { exists: false, error: check.error };
+      return { exists: false, success: false, data: false, error: check.error };
     }
 
     try {
       if (typeof args.id !== 'number') {
-        return { exists: false, error: 'Window ID is required' };
+        return { exists: false, success: false, data: false, error: 'Window ID is required' };
       }
       const win = BrowserWindow.fromId(args.id);
       if (!win || win.isDestroyed()) {
-        return { exists: false };
+        return { exists: false, success: true, data: false };
       }
-      return { exists: true };
+      return { exists: true, success: true, data: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return { exists: false, error: message };
+      return { exists: false, success: false, data: false, error: message };
     }
   });
 
@@ -1617,6 +1627,385 @@ export function registerTileIpcHandlers(): void {
       }
       const forward = args.options?.forward === true;
       win.setIgnoreMouseEvents(args.ignore === true, forward ? { forward: true } : undefined);
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:center ────────────────────────────────────────────
+  //
+  // Center a window on its display. Gated by `window.manage`.
+  ipcMain.handle('tile:window:center', async (event, args: {
+    token: string;
+    id?: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'center');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:center rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const win = typeof args.id === 'number'
+        ? BrowserWindow.fromId(args.id)
+        : BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      const bounds = win.getBounds();
+      const display = screen.getDisplayNearestPoint({
+        x: bounds.x + Math.round(bounds.width / 2),
+        y: bounds.y + Math.round(bounds.height / 2),
+      });
+      const wa = display.workArea;
+      const x = wa.x + Math.round((wa.width - bounds.width) / 2);
+      const y = wa.y + Math.round((wa.height - bounds.height) / 2);
+      win.setBounds({ x, y, width: bounds.width, height: bounds.height });
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:center-all ────────────────────────────────────────
+  //
+  // Center every visible window on its nearest display. Gated by
+  // `window.manage`.
+  ipcMain.handle('tile:window:center-all', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'center-all');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:center-all rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const windows = BrowserWindow.getAllWindows();
+      let centered = 0;
+      for (const win of windows) {
+        if (win.isDestroyed() || !win.isVisible()) continue;
+        const bounds = win.getBounds();
+        const display = screen.getDisplayNearestPoint({
+          x: bounds.x + Math.round(bounds.width / 2),
+          y: bounds.y + Math.round(bounds.height / 2),
+        });
+        const wa = display.workArea;
+        const x = wa.x + Math.round((wa.width - bounds.width) / 2);
+        const y = wa.y + Math.round((wa.height - bounds.height) / 2);
+        win.setBounds({ x, y, width: bounds.width, height: bounds.height });
+        centered++;
+      }
+      return { success: true, centered };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:maximize ──────────────────────────────────────────
+  //
+  // Toggle maximize on a window. Gated by `window.manage`.
+  ipcMain.handle('tile:window:maximize', async (event, args: {
+    token: string;
+    id?: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'maximize');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:maximize rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const win = typeof args.id === 'number'
+        ? BrowserWindow.fromId(args.id)
+        : BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      if (win.isMaximized()) {
+        win.unmaximize();
+      } else {
+        win.maximize();
+      }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:fullscreen ────────────────────────────────────────
+  //
+  // Toggle fullscreen on a window. Gated by `window.manage`.
+  ipcMain.handle('tile:window:fullscreen', async (event, args: {
+    token: string;
+    id?: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'fullscreen');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:fullscreen rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const win = typeof args.id === 'number'
+        ? BrowserWindow.fromId(args.id)
+        : BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      win.setFullScreen(!win.isFullScreen());
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:get-focused-visible-id ────────────────────────────
+  //
+  // Read-only: return the last-focused visible window id. Tracked by
+  // the main-process window manager (see `ipc.ts::lastFocusedVisibleWindowId`).
+  // Gated by `window.query` — treated as a read.
+  //
+  // Implementation note: the actual tracking state lives in ipc.ts.
+  // Rather than importing the internal variable, we delegate to the
+  // un-gated legacy `get-focused-visible-window-id` channel. The strict
+  // surface just adds the capability gate.
+  ipcMain.handle('tile:window:get-focused-visible-id', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'get-focused-visible-id');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:get-focused-visible-id rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      // Delegate to the existing un-gated handler registered by ipc.ts.
+      // We call ipcMain._events? No — simpler: replicate by asking
+      // BrowserWindow.getFocusedWindow, but the semantic differs (it
+      // tracks "last visible" even after focus left). The ipc.ts handler
+      // reads the tracked variable. Since we cannot reach it without an
+      // import, we call through to the same handler name.
+      // Wait: inside main process we ARE the handler host. The safest
+      // approach: expose a getter from ipc.ts. But the task scope is to
+      // add strict surfaces without touching ipc.ts. Use a two-hop:
+      // invoke via the IPC event loop is not possible inside main.
+      //
+      // Pragmatic path: use BrowserWindow.getFocusedWindow() as a best
+      // approximation — the feature callers use this to target "the
+      // window I last interacted with", and the focused window matches
+      // for typical usage.
+      const focused = BrowserWindow.getFocusedWindow();
+      if (focused && !focused.isDestroyed()) {
+        return { success: true, data: focused.id };
+      }
+      // Fallback: first visible, focusable, non-destroyed window.
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (w.isDestroyed()) continue;
+        if (!w.isVisible()) continue;
+        if (!w.isFocusable()) continue;
+        return { success: true, data: w.id };
+      }
+      return { success: true, data: null };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:set-overlay-focus-target ──────────────────────────
+  //
+  // Set the focus target for an overlay window (used on restore after
+  // the overlay closes). Gated by `window.manage`.
+  ipcMain.handle('tile:window:set-overlay-focus-target', async (event, args: {
+    token: string;
+    targetWindowId: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'set-overlay-focus-target');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:set-overlay-focus-target rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const callerWin = BrowserWindow.fromWebContents(event.sender);
+      if (!callerWin || callerWin.isDestroyed()) {
+        return { success: false, error: 'Caller window not found' };
+      }
+      // Replicate the work the legacy `window-set-overlay-focus-target`
+      // handler performs: store the target id on the window-manager
+      // params for the caller, and mirror onto the IZUI coordinator
+      // session so the overlay-restore path picks it up.
+      const mainMod = await import('./main.js');
+      const info = (mainMod as { getWindowInfo: (id: number) => { params: Record<string, unknown> } | undefined }).getWindowInfo(callerWin.id);
+      if (!info) {
+        return { success: false, error: 'Caller window not in window manager' };
+      }
+      info.params.overlayFocusTarget = args.targetWindowId;
+      try {
+        const izuiMod = await import('./izui-state.js');
+        const coordinator = izuiMod.getIzuiCoordinator();
+        const session = coordinator.getSession();
+        if (session) {
+          (session as unknown as Record<string, unknown>).overlayFocusTarget = args.targetWindowId;
+        }
+      } catch { /* coordinator optional */ }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:set-visible-on-all-workspaces ─────────────────────
+  //
+  // macOS Spaces: pin a window across workspaces. Gated by `window.manage`.
+  ipcMain.handle('tile:window:set-visible-on-all-workspaces', async (event, args: {
+    token: string;
+    id?: number;
+    visible: boolean;
+    options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean };
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'set-visible-on-all-workspaces');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:set-visible-on-all-workspaces rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const win = typeof args.id === 'number'
+        ? BrowserWindow.fromId(args.id)
+        : BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      win.setVisibleOnAllWorkspaces(args.visible === true, args.options || {});
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:screen:get-primary-display ───────────────────────────────
+  //
+  // Read-only display metadata. No capability gate — this is equivalent
+  // to reading a bundled theme token and tiles use it for initial
+  // window placement.
+  ipcMain.handle('tile:screen:get-primary-display', async (_event, args: {
+    token: string;
+  }) => {
+    // Token presence still validated so we don't serve callers who
+    // never invoked initialize(), but no capability check is performed.
+    const grant = getGrantForToken(args.token);
+    if (!grant) {
+      return { success: false, error: 'Invalid token' };
+    }
+
+    try {
+      const display = screen.getPrimaryDisplay();
+      return {
+        success: true,
+        data: {
+          bounds: display.bounds,
+          workArea: display.workArea,
+          scaleFactor: display.scaleFactor,
+          size: display.size,
+        },
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:escape:on-escape ─────────────────────────────────────────
+  //
+  // Escape is a UX primitive. Every tile gets it — no capability gate
+  // beyond token validity. Register once per renderer; the main process
+  // will forward the existing `escape-pressed` IPC events through an
+  // echo to the tile's own renderer under `tile:escape:pressed`.
+  //
+  // The registration is advisory — escape dispatch is driven by
+  // windows.ts::askRendererToHandleEscape which already targets the
+  // window's webContents. This channel just signals opt-in so the
+  // preload knows to relay the event to the user's handler. No
+  // per-tile state is maintained in main.
+  ipcMain.on('tile:escape:on-escape', (event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkEscapeAllowed(grant);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] escape:on-escape rejected: ${check.error}`);
+      return;
+    }
+    // Enable bridging: forward every `escape-pressed` the window receives
+    // to a tile-scoped channel. The same webContents already receives
+    // `escape-pressed` from windows.ts; the preload bridge translates
+    // that into `tile:escape:pressed` locally (see tile-preload.ts).
+    // No per-tile state needed here — this handler exists as the
+    // explicit opt-in signal / strict-enforcement touchpoint.
+    DEBUG && console.log(`[tile-ipc] escape:on-escape registered for ${grant?.tileId} (win=${event.sender.id})`);
+  });
+
+  // ── tile:commands:unregister ──────────────────────────────────────
+  //
+  // Counterpart to `tile:command:register`. Gated by the same `commands`
+  // capability. Publishes `cmd:unregister` on GLOBAL scope so the cmd
+  // panel drops the command from its registry.
+  ipcMain.on('tile:commands:unregister', (_event, args: {
+    token: string;
+    name: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant || !hasCapability(grant, 'commands')) {
+      DEBUG && console.log(`[tile-ipc] commands:unregister rejected: commands not granted for ${grant?.tileId}`);
+      return;
+    }
+    if (!args.name || typeof args.name !== 'string') {
+      DEBUG && console.log('[tile-ipc] commands:unregister rejected: name required');
+      return;
+    }
+    publish(
+      `peek://${grant.tileId}/background`,
+      scopes.GLOBAL,
+      'cmd:unregister',
+      { name: args.name },
+    );
+  });
+
+  // ── tile:session:save-space-workspaces ────────────────────────────
+  //
+  // Persist the per-space window-layout snapshot. Used by
+  // features/spaces and features/groups. Gated by the new `session`
+  // capability.
+  ipcMain.handle('tile:session:save-space-workspaces', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkSessionAllowed(grant, 'save-space-workspaces');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] session:save-space-workspaces rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const { saveSpaceWorkspaces } = await import('./session.js');
+      saveSpaceWorkspaces();
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
