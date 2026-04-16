@@ -78,14 +78,6 @@ function hasPubSubScope(grant: CapabilityGrant, scope: 'self' | 'global' | 'syst
 }
 
 /**
- * Check if a datastore table is in the grant
- */
-function hasDatastoreTable(grant: CapabilityGrant, table: string): boolean {
-  if (!grant.capabilities.datastore) return false;
-  return grant.capabilities.datastore.tables.includes(table);
-}
-
-/**
  * Check if a network domain is allowed
  * Supports wildcard matching (e.g., '*.example.com' matches 'api.example.com')
  */
