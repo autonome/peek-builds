@@ -39,11 +39,7 @@
     {
       "name": "hello",
       "description": "Open hello-world diagnostic window",
-      "action": {
-        "type": "window",
-        "url": "peek://ext/hello-world/home.html",
-        "options": { "width": 700, "height": 900, "title": "Hello World Trace" }
-      }
+      "action": { "type": "execute" }
     }
   ]
 }

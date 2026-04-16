@@ -28,6 +28,28 @@
 
   console.log('[hello-world:bg] ready — invoke `hello` command to open trace window');
 
+  // Handle the `hello` command: open the trace window, return a result so
+  // the cmd panel spinner resolves (declarative `type: window` actions
+  // don't publish `:result`, leaving the spinner hanging).
+  if (api?.pubsub?.subscribe) {
+    api.pubsub.subscribe('cmd:execute:hello', async (msg) => {
+      const resultTopic = msg?.resultTopic;
+      try {
+        await api.window.open('peek://ext/hello-world/home.html', {
+          width: 700, height: 900, title: 'Hello World Trace',
+        });
+        if (resultTopic && api.pubsub?.publish) {
+          api.pubsub.publish(resultTopic, { success: true }, api.scopes?.GLOBAL);
+        }
+      } catch (err) {
+        console.error('[hello-world:bg] failed to open trace window:', err);
+        if (resultTopic && api.pubsub?.publish) {
+          api.pubsub.publish(resultTopic, { success: false, error: String(err?.message || err) }, api.scopes?.GLOBAL);
+        }
+      }
+    }, api.scopes?.GLOBAL);
+  }
+
   if (api && typeof api.onShutdown === 'function') {
     api.onShutdown(() => {
       console.log(`[hello-world:bg] shutdown received`);
