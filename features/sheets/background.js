@@ -43,7 +43,10 @@ const createSheet = async (name) => {
     items: []
   };
 
-  await api.settings.setKey(key, config);
+  const result = await api.settings.set(key, config);
+  if (result && result.error) {
+    console.error('[ext:sheets] Failed to save sheet:', result.error);
+  }
   return { sheetId, key, config };
 };
 

@@ -25,9 +25,9 @@ const getSheetIdFromUrl = () => {
  */
 const loadSheetConfig = async () => {
   const key = `sheet:${sheetId}`;
-  const result = await api.settings.getKey(key);
-  if (result.success && result.data) {
-    return result.data;
+  const result = await api.settings.get(key);
+  if (result && !result.error && result.value) {
+    return result.value;
   }
   return null;
 };
@@ -38,7 +38,11 @@ const loadSheetConfig = async () => {
 const saveSheetConfig = async () => {
   if (!sheetConfig) return;
   const key = `sheet:${sheetId}`;
-  await api.settings.setKey(key, sheetConfig);
+  const result = await api.settings.set(key, sheetConfig);
+  if (result && result.error) {
+    console.error('[sheets] Failed to save config:', result.error);
+    return;
+  }
   debug && console.log('[sheets] Config saved:', key);
 };
 
