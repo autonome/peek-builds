@@ -59,6 +59,7 @@ interface FeatureReleaseRecord {
   description?: string;
   categories?: string[];
   capabilities?: string[];
+  minPeekVersion?: string;
   createdAt: string;
 }
 
@@ -70,6 +71,18 @@ interface ResolvedFeature {
   record: FeatureReleaseRecord;
   manifest: TileManifestV2;
   atUri: string;
+}
+
+/** Options for constructing an AtprotoSource */
+export interface AtprotoSourceOptions {
+  /**
+   * The current running Peek version (semver). Used to enforce the
+   * record's optional `minPeekVersion` field at install time.
+   *
+   * If omitted, the `minPeekVersion` check is skipped (defensive default
+   * so tests and non-Electron callers don't need to provide one).
+   */
+  peekVersion?: string;
 }
 
 // ─── AT URI Parsing ─────────────────────────────────────────────────
@@ -149,6 +162,36 @@ export function computeCidV1Sha256Raw(bytes: Buffer | Uint8Array): string {
     digest,
   ]);
   return 'b' + encodeBase32NoPad(cidBytes);
+}
+
+// ─── Semver Comparison ──────────────────────────────────────────────
+
+/**
+ * Parse a semver-ish string into [major, minor, patch] numbers.
+ * Missing parts default to 0. Ignores anything after the first '-' or '+'
+ * (so "1.2.3-rc.1" parses as 1.2.3). Non-numeric segments parse as 0.
+ */
+function parseSemver(v: string): [number, number, number] {
+  const clean = String(v).trim().replace(/^v/, '').split(/[-+]/)[0];
+  const parts = clean.split('.');
+  const n = (s: string | undefined): number => {
+    const x = Number.parseInt(s ?? '0', 10);
+    return Number.isFinite(x) && x >= 0 ? x : 0;
+  };
+  return [n(parts[0]), n(parts[1]), n(parts[2])];
+}
+
+/**
+ * Compare two semver strings. Returns:
+ *   -1 if a < b,  0 if equal,  1 if a > b.
+ */
+export function compareSemver(a: string, b: string): -1 | 0 | 1 {
+  const [aMa, aMi, aPa] = parseSemver(a);
+  const [bMa, bMi, bPa] = parseSemver(b);
+  if (aMa !== bMa) return aMa < bMa ? -1 : 1;
+  if (aMi !== bMi) return aMi < bMi ? -1 : 1;
+  if (aPa !== bPa) return aPa < bPa ? -1 : 1;
+  return 0;
 }
 
 // ─── Identity Resolution ────────────────────────────────────────────
@@ -270,12 +313,17 @@ export async function getBlob(
  * AtprotoSource implements TileSource for AT Protocol feature records.
  *
  * Usage:
- *   const source = new AtprotoSource();
+ *   const source = new AtprotoSource({ peekVersion: app.getVersion() });
  *   const metadata = await source.resolve('at://did:plc:.../space.peek.feature.release/...');
  *   const bundle = await source.fetch('at://did:plc:.../space.peek.feature.release/...');
  */
 export class AtprotoSource implements TileSource {
   type = 'atproto';
+  private peekVersion?: string;
+
+  constructor(options: AtprotoSourceOptions = {}) {
+    this.peekVersion = options.peekVersion;
+  }
 
   /**
    * Internal resolve that returns full data (used by both resolve() and fetch()).
@@ -317,6 +365,18 @@ export class AtprotoSource implements TileSource {
     }
     if (!record.bundle || !Array.isArray(record.bundle.files)) {
       throw new Error('Record missing bundle or bundle.files array');
+    }
+
+    // 5b. Enforce minPeekVersion, if declared.
+    // We check as early as possible so we don't download blobs for a release
+    // that can't run on this build anyway.
+    if (record.minPeekVersion && this.peekVersion) {
+      if (compareSemver(this.peekVersion, record.minPeekVersion) < 0) {
+        throw new Error(
+          `Feature requires Peek ${record.minPeekVersion} or newer ` +
+          `(current version: ${this.peekVersion}). Please update Peek to install.`
+        );
+      }
     }
 
     // 6. Download manifest blob and parse as TileManifestV2.

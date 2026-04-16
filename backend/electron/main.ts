@@ -1438,6 +1438,7 @@ export async function loadExtensions(): Promise<number> {
       builtinFeaturesDir: featuresDir,
       tilePreloadPath,
       eagerIds: EAGER_EXTENSION_IDS,
+      peekVersion: app.getVersion(),
       onV1Feature: (id: string, _featurePath: string, _manifest: unknown) => {
         // Collect v1 feature IDs — they'll be loaded via the legacy path below
         v1FeatureIds.add(id);

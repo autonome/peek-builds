@@ -30,6 +30,8 @@ export interface FeatureStartupConfig {
   eagerIds?: Set<string>;
   /** Callback for v1 features needing legacy loading */
   onV1Feature?: (id: string, featurePath: string, manifest: unknown) => void;
+  /** Current Peek app version (for minPeekVersion checks on installs) */
+  peekVersion?: string;
 }
 
 export interface FeatureStartupResult {
@@ -85,7 +87,7 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
 
   // Store singleton references for IPC handlers
   _registry = registry;
-  _atprotoSource = new AtprotoSource();
+  _atprotoSource = new AtprotoSource({ peekVersion: config.peekVersion });
 
   // 2. Sync builtins
   const sync = syncBuiltinFeatures(config.builtinFeaturesDir, registry);
