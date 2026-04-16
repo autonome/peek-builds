@@ -152,14 +152,14 @@ const init = async () => {
   }
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
-  api.subscribe('peeks:settings-changed', () => {
+  api.pubsub.subscribe('peeks:settings-changed', () => {
     console.log('[ext:peeks] settings changed, reinitializing');
     reinit();
   }, api.scopes.GLOBAL);
 
   // Listen for settings updates from Settings UI
   // Settings UI sends proposed changes, we validate and save
-  api.subscribe('peeks:settings-update', async (msg) => {
+  api.pubsub.subscribe('peeks:settings-update', async (msg) => {
     console.log('[ext:peeks] settings-update received:', msg);
 
     try {
@@ -192,7 +192,7 @@ const init = async () => {
       await reinit();
 
       // Confirm change back to Settings UI
-      api.publish('peeks:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('peeks:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
       console.error('[ext:peeks] settings-update error:', err);
     }
