@@ -784,6 +784,20 @@ function buildAPI(): Record<string, unknown> {
         filter,
       });
     },
+
+    /**
+     * Extract DOM content (html/text/title) from a live webContents by
+     * URL. Gated on the `datastore` capability — the operation reads
+     * from user-owned browsing state and fits the datastore domain.
+     * Used by entities to harvest page content for downstream parsing.
+     */
+    extractPageContent: (url: string) => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:datastore:extract-page-content', {
+        token: tileToken,
+        url,
+      });
+    },
   };
 
   const datastoreCompat = {
@@ -1490,6 +1504,118 @@ function buildAPI(): Record<string, unknown> {
         ? featuresStrict.resolvePublisher(query as string)
         : featuresCompat.resolvePublisher(query as string);
     }),
+
+    // ── Admin surfaces (strict-only) ─────────────────────────────────
+    //
+    // Gated on the new sub-capability action flags added in the Apr-2026
+    // features gap-fill:
+    //   - update* → features.update
+    //   - dev*    → features.dev
+    //   - publish* → features.publish
+    //   - devtoolsOpen → features.devtools
+    //   - browseListByPublisher → features.browse (defaults to read)
+    //
+    // These are only routed through the strict channel — no v1-compat
+    // shim because the legacy channels in tile-ipc.ts (`feature-update:*`
+    // etc.) only check token presence, not capability. Tiles that
+    // haven't declared the action will get a gate rejection from the
+    // strict handler — the correct behaviour.
+
+    updateCheckAll: () =>
+      ipcRenderer.invoke('tile:features:update-check-all', { token: tileToken }),
+    updateApply: (id: string, userApproved?: boolean) =>
+      ipcRenderer.invoke('tile:features:update-apply', { token: tileToken, id, userApproved }),
+    updateSetPolicy: (id: string, policy: 'auto' | 'notify' | 'pinned') =>
+      ipcRenderer.invoke('tile:features:update-set-policy', { token: tileToken, id, policy }),
+
+    devReload: (featureId: string) =>
+      ipcRenderer.invoke('tile:features:dev-reload', { token: tileToken, featureId }),
+    devValidate: (featureId: string) =>
+      ipcRenderer.invoke('tile:features:dev-validate', { token: tileToken, featureId }),
+    devPickDirectory: () =>
+      ipcRenderer.invoke('tile:features:dev-pick-directory', { token: tileToken }),
+    devCreate: (params: {
+      directoryPath: string; featureId: string; featureName: string;
+    }) =>
+      ipcRenderer.invoke('tile:features:dev-create', {
+        token: tileToken,
+        directoryPath: params?.directoryPath,
+        featureId: params?.featureId,
+        featureName: params?.featureName,
+      }),
+
+    publishListLocal: () =>
+      ipcRenderer.invoke('tile:features:publish-list-local', { token: tileToken }),
+    publishReadFeatureFiles: (featureId: string) =>
+      ipcRenderer.invoke('tile:features:publish-read-feature-files', { token: tileToken, featureId }),
+
+    devtoolsOpen: (featureId: string, entryId?: string) =>
+      ipcRenderer.invoke('tile:features:devtools-open', { token: tileToken, featureId, entryId }),
+
+    browseListByPublisher: (params: {
+      did: string; pdsUrl: string; cursor?: string;
+    }) =>
+      ipcRenderer.invoke('tile:features:browse-list-by-publisher', {
+        token: tileToken,
+        did: params?.did,
+        pdsUrl: params?.pdsUrl,
+        cursor: params?.cursor,
+      }),
+  };
+
+  // ── IZUI ──────────────────────────────────────────────────────────
+  //
+  // Gated on the boolean `izui` capability. Routes through strict
+  // `tile:izui:*` handlers which in turn call the same coordinator used
+  // by the v1 `izui-*` channels. Each method returns the primitive
+  // result (not an envelope) — matching the shape the existing callers
+  // (`izui-manage.js`, `windows.js`, `hud/widgets/izui.js`) already use.
+
+  function hasIzuiCapability(): boolean {
+    return grantedCapabilities?.izui === true;
+  }
+
+  api.izui = {
+    isTransient: async () => {
+      if (!hasIzuiCapability()) {
+        // Fall back to the legacy channel so existing callers keep
+        // working until manifests are updated to declare `izui: true`.
+        return ipcRenderer.invoke('izui-is-transient');
+      }
+      const result = await ipcRenderer.invoke('tile:izui:is-transient', { token: tileToken });
+      if (result && typeof result === 'object' && 'transient' in result) {
+        return (result as { transient: boolean }).transient;
+      }
+      return result;
+    },
+    getEffectiveMode: async () => {
+      if (!hasIzuiCapability()) return ipcRenderer.invoke('izui-get-effective-mode');
+      const result = await ipcRenderer.invoke('tile:izui:get-effective-mode', { token: tileToken });
+      if (result && typeof result === 'object' && 'mode' in result) {
+        return (result as { mode: string }).mode;
+      }
+      return result;
+    },
+    getState: async () => {
+      if (!hasIzuiCapability()) return ipcRenderer.invoke('izui-get-state');
+      const result = await ipcRenderer.invoke('tile:izui:get-state', { token: tileToken });
+      if (result && typeof result === 'object' && 'state' in result) {
+        return (result as { state: unknown }).state;
+      }
+      return result;
+    },
+    getPreOverlayFocusTarget: async () => {
+      if (!hasIzuiCapability()) return ipcRenderer.invoke('izui-get-pre-overlay-focus-target');
+      const result = await ipcRenderer.invoke('tile:izui:get-pre-overlay-focus-target', { token: tileToken });
+      if (result && typeof result === 'object' && 'target' in result) {
+        return (result as { target: unknown }).target;
+      }
+      return result;
+    },
+    closeSelf: () => {
+      if (!hasIzuiCapability()) return ipcRenderer.invoke('izui-close-self');
+      return ipcRenderer.invoke('tile:izui:close-self', { token: tileToken });
+    },
   };
 
   // ── OAuth ─────────────────────────────────────────────────────────
