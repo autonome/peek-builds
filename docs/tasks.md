@@ -66,8 +66,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [ ] Missing strict surfaces: `api.window.center/centerAll/maximize/fullscreen/getFocusedVisibleWindowId/setOverlayFocusTarget`, `api.izui.*`, `api.escape.*`. Used by `windows` feature and others; currently fall back to legacy preload in separate BrowserWindows.
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
-  - [ ] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
-  - [ ] Round 3 (complex): entities, hud, spaces, groups, editor, lex, wonderwall, features-manager
+  - [x] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
+  - [ ] Round 3 (complex): entities, spaces, groups, editor, lex, wonderwall, features-manager (hud is already core, not v1)
 - [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
 
