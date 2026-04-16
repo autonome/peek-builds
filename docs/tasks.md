@@ -17,21 +17,21 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 ## Deferred from audits / fixes
 
 ### Atproto install flow hardening (from atproto pipeline audit, 2026-04-16)
-- [ ] CID validation on downloaded bundle blobs (currently no integrity check)
-- [ ] Atomic install with rollback on partial failure (currently leaves corrupted state)
-- [ ] `minPeekVersion` enforcement on install (lexicon field defined but ignored)
-- [ ] Icon/screenshot blob handling in publish.js (lexicon supports, wizard doesn't)
+- [x] CID validation on downloaded bundle blobs
+- [x] Atomic install with rollback on partial failure (temp dir + rename)
+- [x] `minPeekVersion` enforcement on install
+- [x] Icon/screenshot blob handling in publish.js
 
 ### Pubsub audit follow-ups (2026-04-16)
-- [x] Missing tag lifecycle events: `tag:created`, `tag:renamed`, `tag:deleted` (groups can't react to tag ops; orphaned groups when tag deleted) — emitted from `datastore.ts` so every caller (legacy ipc handlers, strict `tile:datastore:*` handlers, direct imports) fires the event
-- [ ] 7 bare `tagItem()` calls bypass events (incidental fix during trimming Phase 3 sweep; locations in pubsub audit)
+- [x] Missing tag lifecycle events: `tag:created`, `tag:renamed`, `tag:deleted`
+- [x] Bare `tagItem()` bypasses — 3 of 7 converted (sync + 2 ipc handlers); 2 in `datastore.ts` kept bare pending dedicated pass; 1 in `tile-ipc.ts` already publishes manually
 
 ### Security audit follow-ups (2026-04-16)
-- [ ] CSP gaps on error responses (404/500/redirects don't get CSP headers) — `protocol.ts:557`
+- [x] CSP gaps on error responses — catch-block fallback now applies CSP for tile origins
 
 ### Settings audit follow-ups (2026-04-16)
-- [ ] Backend defaults enforcement (`api.settings.get()` returns null if key never set, ignores manifest `defaults`)
-- [ ] JSON Schema validation for settings-schema.json files (currently loaded but not validated)
+- [x] Backend defaults enforcement
+- [x] JSON Schema validation for settings-schema.json files
 - [ ] Dedicated settings isolation / defaults / UI tests (only migration tests exist)
 
 ---
@@ -41,6 +41,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 ### Tiles v1-compat trimming (from `docs/tile-preload-trimming-plan.md`)
 - [x] Phase 1 — inventory + capability-violation logger
 - [ ] Phase 2 — build strict APIs alongside shims (3-5 days)
+  - [x] Phase 2.3 — strict shortcuts IPC + keys allowlist
+  - [ ] Remaining: context capability, window strict extensions, features strict, dialogs, settings cleanup
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
 - [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
@@ -50,11 +52,11 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 ### Core extraction (from `docs/core-extraction-plan.md`)
 - [x] cmd → `app/cmd/`
-- [ ] hud → `app/hud/` + `backend/electron/hud-glue.ts`
+- [x] hud → `app/hud/` + `backend/electron/hud-glue.ts`
 - [ ] page → `app/page/` (FROZEN canvas architecture — needs design first)
 
 ### Feature conversion holdouts
-- [ ] Remaining v1 features: cmd (extracted), hud (pending extraction), page (pending design)
+- [ ] Remaining v1 features: page (pending design)
 
 ---
 
@@ -62,6 +64,12 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 Keep short — for recent context only. Prune after a few weeks.
 
+- 2026-04-16 HUD extraction to `app/hud/` + `hud-glue.ts` (mirrors cmd extraction)
+- 2026-04-16 Atproto install hardening (CID + atomic + minPeekVersion); publish wizard icon/screenshot upload
+- 2026-04-16 Settings backend defaults + schema-validation on load
+- 2026-04-16 Strict `tile:shortcuts:*` IPC with keys allowlist (trimming Phase 2.3)
+- 2026-04-16 Tag pubsub gap fixes: sync.ts + 2 ipc handlers now use `tagItemAndPublish`
+- 2026-04-16 CSP on protocol.ts error fallback for tile origins
 - 2026-04-16 Tag lifecycle pubsub events (datastore.ts emits tag:created/renamed/deleted/color-changed for all callers)
 - 2026-04-16 Observability fixes (console forwarding, crash detection, DevTools IPC, global error handlers)
 - 2026-04-16 Tile lifecycle fixes (shutdown signal, unsubscribe-on-close, disable/remove unload, listener dedup, crashed scope→GLOBAL)
