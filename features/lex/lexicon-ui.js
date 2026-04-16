@@ -44,10 +44,10 @@ async function loadPersistedSchemas() {
 
   try {
     if (typeof window !== 'undefined' && window.app?.settings) {
-      const result = await window.app.settings.getKey(LEXICON_SCHEMAS_KEY);
-      if (result.success && result.data && typeof result.data === 'object') {
+      const result = await window.app.settings.get(LEXICON_SCHEMAS_KEY);
+      if (result && !result.error && result.value && typeof result.value === 'object') {
         let count = 0;
-        for (const [nsid, entry] of Object.entries(result.data)) {
+        for (const [nsid, entry] of Object.entries(result.value)) {
           if (entry && entry.schema && !schemaCache.has(nsid)) {
             schemaCache.set(nsid, entry.schema);
             count++;
@@ -70,12 +70,12 @@ async function persistSchema(nsid, schema) {
   try {
     if (typeof window !== 'undefined' && window.app?.settings) {
       // Load existing persisted data, merge in the new schema
-      const result = await window.app.settings.getKey(LEXICON_SCHEMAS_KEY);
-      const existing = (result.success && result.data && typeof result.data === 'object')
-        ? result.data
+      const result = await window.app.settings.get(LEXICON_SCHEMAS_KEY);
+      const existing = (result && !result.error && result.value && typeof result.value === 'object')
+        ? result.value
         : {};
       existing[nsid] = { schema, fetchedAt: Date.now() };
-      await window.app.settings.setKey(LEXICON_SCHEMAS_KEY, existing);
+      await window.app.settings.set(LEXICON_SCHEMAS_KEY, existing);
     }
   } catch (err) {
     console.warn(`[lexicon-ui] Failed to persist schema for ${nsid}:`, err);

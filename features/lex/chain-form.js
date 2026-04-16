@@ -31,7 +31,7 @@ import {
 const api = window.app;
 
 function emitChannel(topic, data) {
-  api.publish(topic, data, api.scopes.GLOBAL);
+  api.pubsub.publish(topic, data, api.scopes.GLOBAL);
 }
 
 // Read URL params
@@ -48,9 +48,9 @@ const STORAGE_KEY = 'session';
 async function loadSession() {
   if (!api) return;
   try {
-    const result = await api.settings.getKey(STORAGE_KEY);
-    if (result.success && result.data) {
-      currentSession = result.data;
+    const result = await api.settings.get(STORAGE_KEY);
+    if (result && !result.error && result.value) {
+      currentSession = result.value;
       console.log('[chain-form] Restored session for', currentSession.handle);
     }
   } catch (err) {
@@ -61,7 +61,7 @@ async function loadSession() {
 async function saveSession() {
   if (!api || !currentSession) return;
   try {
-    await api.settings.setKey(STORAGE_KEY, currentSession);
+    await api.settings.set(STORAGE_KEY, currentSession);
   } catch (err) {
     console.warn('[chain-form] Failed to save session:', err);
   }
@@ -114,7 +114,7 @@ function publishResult(data) {
   if (resultPublished) return;
   resultPublished = true;
 
-  api.publish('chain-popup:result', {
+  api.pubsub.publish('chain-popup:result', {
     sessionId,
     data: data || null,
     mimeType: 'application/json',
@@ -267,11 +267,13 @@ btnCancel.addEventListener('click', () => {
   window.close();
 });
 
-// Escape handler
-api.escape.onEscape(() => {
-  publishResult(null);
-  return { handled: false }; // Let the window close
-});
+// Escape handler — guard since api.escape may not be exposed in strict mode
+if (api.escape) {
+  api.escape.onEscape(() => {
+    publishResult(null);
+    return { handled: false }; // Let the window close
+  });
+}
 
 // Safety net: publish result on unload
 window.addEventListener('beforeunload', () => {
@@ -308,7 +310,7 @@ async function init() {
   let received = false;
 
   // Subscribe for content from the cmd panel
-  api.subscribe('chain-popup:content', (msg) => {
+  api.pubsub.subscribe('chain-popup:content', (msg) => {
     if (msg.sessionId !== sessionId) return;
     if (received) return;
     received = true;

@@ -27,9 +27,9 @@ let knownCollectionNsids = [];
 
 async function loadSession() {
   try {
-    const result = await api.settings.getKey(STORAGE_KEY);
-    if (result.success && result.data) {
-      currentSession = result.data;
+    const result = await api.settings.get(STORAGE_KEY);
+    if (result && !result.error && result.value) {
+      currentSession = result.value;
       console.log('[lex:bg] Restored session for', currentSession.handle);
     }
   } catch (err) {
@@ -83,10 +83,13 @@ async function fetchLexiconDirectoryFromNetwork() {
   allLexicons.sort((a, b) => a.nsid.localeCompare(b.nsid));
 
   try {
-    await api.settings.setKey(LEXICON_DIR_KEY, {
+    const setResult = await api.settings.set(LEXICON_DIR_KEY, {
       lexicons: allLexicons,
       fetchedAt: Date.now(),
     });
+    if (setResult && setResult.error) {
+      console.warn('[lex:bg] Failed to persist lexicon directory:', setResult.error);
+    }
   } catch (err) {
     console.warn('[lex:bg] Failed to persist lexicon directory:', err);
   }
@@ -101,12 +104,12 @@ async function fetchLexiconDirectory() {
   if (lexiconCacheLoading) return null;
 
   try {
-    const result = await api.settings.getKey(LEXICON_DIR_KEY);
-    if (result.success && result.data && result.data.lexicons) {
-      lexiconCache = result.data.lexicons;
+    const result = await api.settings.get(LEXICON_DIR_KEY);
+    if (result && !result.error && result.value && result.value.lexicons) {
+      lexiconCache = result.value.lexicons;
       console.log(`[lex:bg] Restored ${lexiconCache.length} lexicons from persisted cache`);
 
-      const age = Date.now() - (result.data.fetchedAt || 0);
+      const age = Date.now() - (result.value.fetchedAt || 0);
       if (age > LEXICON_DIR_MAX_AGE_MS) {
         console.log('[lex:bg] Lexicon directory cache is stale, refreshing in background...');
         fetchLexiconDirectoryFromNetwork().catch(err => {
@@ -273,7 +276,7 @@ const extension = {
     discoverCollections();
 
     // Listen for session changes from the UI window
-    api.subscribe('lex:session-changed', (msg) => {
+    api.pubsub.subscribe('lex:session-changed', (msg) => {
       if (msg.session) {
         currentSession = msg.session;
         console.log('[lex:bg] Session updated for', currentSession.handle);

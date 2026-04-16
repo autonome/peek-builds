@@ -66,11 +66,11 @@ function onCollectionsChanged(nsids) {
 
 function onRecentLexiconsChanged() {
   // Also publish for chain-form.js (runs in separate modal window)
-  api.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
+  api.pubsub.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
 }
 
 // Listen for recent lexicon changes from chain-form.js
-api.subscribe('lex:recent-lexicons-changed', (msg) => {
+api.pubsub.subscribe('lex:recent-lexicons-changed', (msg) => {
   if (Array.isArray(msg.nsids)) {
     for (const nsid of msg.nsids) {
       if (!state.recentLexicons.includes(nsid)) {
@@ -99,12 +99,12 @@ const PROFILE_KEY = 'profile';
 async function saveSession() {
   if (!api) return;
   try {
-    await api.settings.setKey(STORAGE_KEY, currentSession);
+    await api.settings.set(STORAGE_KEY, currentSession);
     if (currentProfile) {
-      await api.settings.setKey(PROFILE_KEY, currentProfile);
+      await api.settings.set(PROFILE_KEY, currentProfile);
     }
     // Notify background script of session change
-    api.publish('lex:session-changed', { session: currentSession }, api.scopes.GLOBAL);
+    api.pubsub.publish('lex:session-changed', { session: currentSession }, api.scopes.GLOBAL);
   } catch (err) {
     console.warn('[lex] Failed to save session:', err);
   }
@@ -113,14 +113,14 @@ async function saveSession() {
 async function loadSession() {
   if (!api) return;
   try {
-    const result = await api.settings.getKey(STORAGE_KEY);
-    if (result.success && result.data) {
-      currentSession = result.data;
+    const result = await api.settings.get(STORAGE_KEY);
+    if (result && !result.error && result.value) {
+      currentSession = result.value;
       console.log('[lex] Restored session for', currentSession.handle);
     }
-    const profileResult = await api.settings.getKey(PROFILE_KEY);
-    if (profileResult.success && profileResult.data) {
-      currentProfile = profileResult.data;
+    const profileResult = await api.settings.get(PROFILE_KEY);
+    if (profileResult && !profileResult.error && profileResult.value) {
+      currentProfile = profileResult.value;
     }
   } catch (err) {
     console.warn('[lex] Failed to load session:', err);
@@ -132,10 +132,10 @@ async function clearSession() {
   currentProfile = null;
   if (api) {
     try {
-      await api.settings.setKey(STORAGE_KEY, null);
-      await api.settings.setKey(PROFILE_KEY, null);
+      await api.settings.set(STORAGE_KEY, null);
+      await api.settings.set(PROFILE_KEY, null);
       // Notify background script of session clear
-      api.publish('lex:session-changed', { session: null }, api.scopes.GLOBAL);
+      api.pubsub.publish('lex:session-changed', { session: null }, api.scopes.GLOBAL);
     } catch (err) {
       console.warn('[lex] Failed to clear session:', err);
     }
@@ -221,7 +221,7 @@ async function fetchLexiconDirectoryFromNetwork() {
 
   if (api) {
     try {
-      await api.settings.setKey(LEXICON_DIR_KEY, {
+      await api.settings.set(LEXICON_DIR_KEY, {
         lexicons: allLexicons,
         fetchedAt: Date.now(),
       });
@@ -241,12 +241,12 @@ async function fetchLexiconDirectory() {
 
   if (api) {
     try {
-      const result = await api.settings.getKey(LEXICON_DIR_KEY);
-      if (result.success && result.data && result.data.lexicons) {
-        lexiconCache = result.data.lexicons;
+      const result = await api.settings.get(LEXICON_DIR_KEY);
+      if (result && !result.error && result.value && result.value.lexicons) {
+        lexiconCache = result.value.lexicons;
         console.log(`[lex] Restored ${lexiconCache.length} lexicons from persisted cache`);
 
-        const age = Date.now() - (result.data.fetchedAt || 0);
+        const age = Date.now() - (result.value.fetchedAt || 0);
         if (age > LEXICON_DIR_MAX_AGE_MS) {
           console.log('[lex] Lexicon directory cache is stale, refreshing in background...');
           fetchLexiconDirectoryFromNetwork().catch(err => {
@@ -649,7 +649,7 @@ async function init() {
   loadRecentLexicons();
 
   // Listen for open-create from command palette
-  api.subscribe('lex:open-create', (msg) => {
+  api.pubsub.subscribe('lex:open-create', (msg) => {
     if (!state.authenticated) return;
     if (msg.nsid) {
       switchPanel('create');
@@ -1664,9 +1664,9 @@ const MAX_RECENT_LEXICONS = 20;
 
 async function loadRecentLexicons() {
   try {
-    const result = await api.settings.getKey(RECENT_LEXICONS_KEY);
-    if (result.success && Array.isArray(result.data)) {
-      state.recentLexicons = result.data;
+    const result = await api.settings.get(RECENT_LEXICONS_KEY);
+    if (result && !result.error && Array.isArray(result.value)) {
+      state.recentLexicons = result.value;
     }
   } catch {}
   renderRecentLexicons();
@@ -1674,7 +1674,7 @@ async function loadRecentLexicons() {
 
 async function saveRecentLexicons() {
   try {
-    await api.settings.setKey(RECENT_LEXICONS_KEY, state.recentLexicons);
+    await api.settings.set(RECENT_LEXICONS_KEY, state.recentLexicons);
   } catch {}
 }
 

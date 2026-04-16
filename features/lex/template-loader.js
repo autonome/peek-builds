@@ -236,7 +236,7 @@ export function getAvailableTemplates() {
 async function persistActiveTemplate(packId) {
   try {
     if (window.app?.settings) {
-      await window.app.settings.setKey(ACTIVE_TEMPLATE_KEY, packId);
+      await window.app.settings.set(ACTIVE_TEMPLATE_KEY, packId);
     }
   } catch (err) {
     console.warn('[template-loader] Failed to persist active template:', err);
@@ -249,9 +249,9 @@ async function persistActiveTemplate(packId) {
 async function restoreActiveTemplate() {
   try {
     if (window.app?.settings) {
-      const result = await window.app.settings.getKey(ACTIVE_TEMPLATE_KEY);
-      if (result.success && typeof result.data === 'string' && templates.has(result.data)) {
-        activeTemplateId = result.data;
+      const result = await window.app.settings.get(ACTIVE_TEMPLATE_KEY);
+      if (result && !result.error && typeof result.value === 'string' && templates.has(result.value)) {
+        activeTemplateId = result.value;
       }
     }
   } catch {
