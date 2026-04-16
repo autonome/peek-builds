@@ -352,9 +352,10 @@ describe('resolveCapabilities', () => {
       window: { create: true, query: true },
     };
     const grant = resolveCapabilities('test', requested, false);
-    assert.ok(grant.capabilities.window);
-    assert.strictEqual(grant.capabilities.window.create, true);
-    assert.strictEqual(grant.capabilities.window.query, true);
+    const wc = grant.capabilities.window;
+    assert.ok(wc && typeof wc === 'object', 'window should be an object after resolution');
+    assert.strictEqual((wc as { create: boolean }).create, true);
+    assert.strictEqual((wc as { query: boolean }).query, true);
   });
 
   it('should grant theme and settings as requested', () => {
