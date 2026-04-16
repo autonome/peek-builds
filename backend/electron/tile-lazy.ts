@@ -10,7 +10,7 @@
  * for the v2 tile manifest format.
  */
 
-import { publish, subscribe, unsubscribe, scopes, hasSubscriber } from './pubsub.js';
+import { publish, subscribe, unsubscribe, scopes, hasSubscriber, getSystemAddress } from './pubsub.js';
 import {
   launchTile as _launchTile,
   waitForTileReady as _waitForTileReady,
@@ -160,6 +160,27 @@ function registerCommandStub(tileId: string, cmd: TileCommand): void {
   // Subscribe to the execute topic as a stub
   subscribe(stubSource, scopes.GLOBAL, executeTopic, async (msg: unknown) => {
     DEBUG && console.log(`[tile-lazy] Stub invoked for ${cmd.name}, loading tile ${tileId}`);
+
+    // Declarative `type: window` commands don't need the tile loaded —
+    // the main process can open the window directly. This avoids the race
+    // condition where tile:ready fires before api.commands.register runs.
+    if (cmd.action?.type === 'window' && cmd.action.url) {
+      DEBUG && console.log(`[tile-lazy] Declarative window action for ${cmd.name}, opening directly`);
+      publish(getSystemAddress(), scopes.GLOBAL, 'window:reopen-request', {
+        url: cmd.action.url,
+        options: {
+          ...(cmd.action.options || {}),
+          trackingSource: 'declarative',
+          trackingSourceId: cmd.name,
+        },
+      });
+      // Publish result so cmd panel spinner resolves
+      const typed = msg as { resultTopic?: string } | null;
+      if (typed?.resultTopic) {
+        publish(stubSource, scopes.GLOBAL, typed.resultTopic, { success: true });
+      }
+      return;
+    }
 
     // Buffer the latest message (latest wins for concurrent invocations)
     lazyCommandPending.set(cmd.name, msg);
