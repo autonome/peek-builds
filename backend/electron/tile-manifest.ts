@@ -66,6 +66,23 @@ export interface FilesystemCapability {
 }
 
 /**
+ * Shortcuts capability: can register keyboard shortcuts
+ *
+ * May be expressed in the manifest as:
+ *   - `true` — tile may register any shortcut
+ *   - `{ keys: [...] }` — only these exact shortcut strings may be registered
+ *
+ * When `keys` is provided, the strict IPC handlers reject any attempt to
+ * register a shortcut not in the list. When `keys` is omitted (or the
+ * capability is `true`), no per-key filtering is applied — backward
+ * compatible with manifests declaring `shortcuts: true`.
+ */
+export interface ShortcutsCapability {
+  /** If present, only these shortcuts can be registered */
+  keys?: string[];
+}
+
+/**
  * All capabilities a tile can request
  */
 export interface TileCapabilities {
@@ -77,7 +94,7 @@ export interface TileCapabilities {
   /** Can register commands in the command palette */
   commands?: boolean;
   /** Can register keyboard shortcuts */
-  shortcuts?: boolean;
+  shortcuts?: boolean | ShortcutsCapability;
   /** Can access sync APIs */
   sync?: boolean;
   /** Can read/write theme settings */
@@ -382,6 +399,30 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
         }
       }
     }
+
+    // Validate shortcuts capability shape — must be boolean or { keys?: string[] }
+    if (caps.shortcuts !== undefined) {
+      const sc = caps.shortcuts;
+      if (typeof sc === 'boolean') {
+        // valid
+      } else if (sc && typeof sc === 'object') {
+        const scObj = sc as Record<string, unknown>;
+        if (scObj.keys !== undefined) {
+          if (!Array.isArray(scObj.keys)) {
+            errors.push({ path: 'capabilities.shortcuts.keys', message: 'keys must be an array of strings' });
+          } else {
+            for (let i = 0; i < scObj.keys.length; i++) {
+              const k = scObj.keys[i];
+              if (typeof k !== 'string' || k.length === 0) {
+                errors.push({ path: `capabilities.shortcuts.keys[${i}]`, message: 'keys entries must be non-empty strings' });
+              }
+            }
+          }
+        }
+      } else {
+        errors.push({ path: 'capabilities.shortcuts', message: 'shortcuts must be boolean or { keys: string[] }' });
+      }
+    }
   }
 
   // Commands validation
@@ -526,9 +567,15 @@ export function resolveCapabilities(
     granted.commands = true;
   }
 
-  // Shortcuts: grant as requested
+  // Shortcuts: grant as requested. Preserve object shape so strict IPC
+  // handlers can read the `keys` allowlist (manifests may declare
+  // `shortcuts: true` OR `shortcuts: { keys: [...] }`).
   if (requested.shortcuts) {
-    granted.shortcuts = true;
+    if (requested.shortcuts === true) {
+      granted.shortcuts = true;
+    } else if (typeof requested.shortcuts === 'object') {
+      granted.shortcuts = { ...requested.shortcuts };
+    }
   }
 
   // Sync: builtin only
