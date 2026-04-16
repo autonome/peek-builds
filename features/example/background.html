@@ -14,47 +14,24 @@
 
   console.log(`[ext:${extId}] background.html loaded`);
 
-  if (api) {
-    // ── V2 Tile Runtime ──
-    // Initialize tile — validates capability token with main process
-    console.log(`[ext:${extId}] initializing v2 tile`);
-    await api.initialize();
+  // ── V2 Tile Runtime ──
+  // Initialize tile — validates capability token with main process
+  console.log(`[ext:${extId}] initializing v2 tile`);
+  await api.initialize();
 
-    // Initialize extension (registers commands)
-    if (extension.init) {
-      console.log(`[ext:${extId}] calling init()`);
-      await extension.init();
-    }
-
-    // Register shutdown handler
-    api.onShutdown(() => {
-      console.log(`[ext:${extId}] received shutdown`);
-      if (extension.uninit) {
-        extension.uninit();
-      }
-    });
-  } else {
-    // Running as a regular website - limited functionality
-    console.log(`[ext:${extId}] Running in standalone mode (no Peek API)`);
-
-    if (extension.init) {
-      extension.init();
-    }
-
-    // Show a message indicating standalone mode
-    document.body.innerHTML = `
-      <div style="font-family: system-ui; padding: 20px; max-width: 600px; margin: 0 auto;">
-        <h1>Example Extension</h1>
-        <p>Running in standalone mode (Peek API not available).</p>
-        <p>When running inside Peek, this extension provides:</p>
-        <ul>
-          <li>Command palette integration</li>
-          <li>Persistent image storage</li>
-        </ul>
-        <p><a href="./gallery.html">Open Gallery →</a></p>
-      </div>
-    `;
+  // Initialize extension (registers commands)
+  if (extension.init) {
+    console.log(`[ext:${extId}] calling init()`);
+    await extension.init();
   }
+
+  // Register shutdown handler
+  api.onShutdown(() => {
+    console.log(`[ext:${extId}] received shutdown`);
+    if (extension.uninit) {
+      extension.uninit();
+    }
+  });
 </script>
 </body>
 </html>

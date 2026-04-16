@@ -71,71 +71,11 @@ function validateToken(): Promise<boolean> {
   return promise;
 }
 
-// ─── Capability-Violation Logger (Phase 1) ───────────────────────────
-//
-// v1-compat shims delegate directly to legacy IPC handlers that do not
-// perform capability enforcement. As part of the tile-preload trimming
-// plan (docs/tile-preload-trimming-plan.md), we log the first call to
-// each (tileId, surface.method) pair so we can measure real usage and
-// verify zero-hit before deletion in Phase 4.
-//
-// Rules (see trimming plan Phase 1):
-// - Log once per (tileId, "surface.method") pair.
-// - NEVER throw, NEVER change behaviour — observational only.
-// - Applies only to v1-compat surfaces that will be removed or replaced
-//   by strict-mode equivalents. Strict surfaces (pubsub, window.open/
-//   close/getInfo, filesystem, network, theme, sync, scopes, commands)
-//   are NOT wrapped.
-
-const compatSeen = new Set<string>();
-
-function logCompatViolation(surface: string, method: string): void {
-  const key = `${tileId}::${surface}.${method}`;
-  if (compatSeen.has(key)) return;
-  compatSeen.add(key);
-  try {
-    // Intentional console.warn — these land in the tile's devtools and in
-    // the main-process renderer-log handler. Phase 5 will promote these
-    // to a pubsub topic or a throw under TILE_STRICT=true.
-    console.warn(`[tile-compat] tile=${tileId} called shim api.${surface}.${method}(...) — no strict enforcement`);
-  } catch (_err) {
-    // Logging must never throw.
-  }
-}
-
-/**
- * Wrap a zero-or-more-arg function so its first invocation logs a
- * capability-violation warning. Preserves `this`, arguments, and return
- * value exactly. Errors in the wrapped call propagate unchanged.
- */
-function wrapCompat<F extends (...args: unknown[]) => unknown>(
-  surface: string,
-  method: string,
-  fn: F,
-): F {
-  const wrapped = function (this: unknown, ...args: unknown[]): unknown {
-    logCompatViolation(surface, method);
-    return fn.apply(this, args);
-  };
-  return wrapped as F;
-}
-
-/**
- * Wrap every own method of an object with wrapCompat under the given
- * surface name. Non-function properties are copied through unchanged.
- */
-function wrapCompatObject<T extends Record<string, unknown>>(surface: string, obj: T): T {
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(obj)) {
-    const val = obj[key];
-    if (typeof val === 'function') {
-      out[key] = wrapCompat(surface, key, val as (...args: unknown[]) => unknown);
-    } else {
-      out[key] = val;
-    }
-  }
-  return out as T;
-}
+// ─── Phase 4: v1-compat violation logger REMOVED ─────────────────────
+// The wrapCompat / wrapCompatObject helpers and the compatSeen set were
+// used during Phases 1-3 to log first-use of v1 shims. All shims have
+// now been replaced with hard-fail stubs or strict-only paths, so the
+// logger infrastructure is no longer needed.
 
 // ─── API Builder ─────────────────────────────────────────────────────
 
@@ -250,11 +190,14 @@ function buildAPI(): Record<string, unknown> {
     };
   }
 
-  // Top-level `api.publish` / `api.subscribe` are v1-compat aliases for
-  // `api.pubsub.publish` / `api.pubsub.subscribe`. Log usage to drive the
-  // Phase 4 removal (see tile-preload-trimming-plan.md).
-  api.publish = wrapCompat('publish', '(top-level)', publishImpl as (...args: unknown[]) => unknown);
-  api.subscribe = wrapCompat('subscribe', '(top-level)', subscribeImpl as (...args: unknown[]) => unknown);
+  // Phase 4: top-level api.publish / api.subscribe shims REMOVED.
+  // Use api.pubsub.publish / api.pubsub.subscribe instead.
+  api.publish = (..._args: unknown[]) => {
+    throw new Error('[tile-preload] api.publish was removed in Phase 4; use api.pubsub.publish');
+  };
+  api.subscribe = (..._args: unknown[]) => {
+    throw new Error('[tile-preload] api.subscribe was removed in Phase 4; use api.pubsub.subscribe');
+  };
 
   api.pubsub = {
     publish: publishImpl,
@@ -741,11 +684,9 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Datastore (if granted) ──
   //
-  // Strict surfaces (get/set/query) route through `tile:datastore:*` which
-  // enforces per-table capability. Everything below the divider is a
-  // v1-compat helper that delegates to legacy IPC handlers without
-  // capability checks — these are wrapped with wrapCompat to log first-use
-  // per tile (see Phase 1 of the trimming plan).
+  // Strict surfaces (get/set/query/extractPageContent) route through
+  // `tile:datastore:*` which enforces per-table capability. The v1-compat
+  // helper methods were removed in Phase 4 and replaced with hard-fail stubs.
 
   const datastoreStrict = {
     /**
@@ -800,121 +741,60 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
-  const datastoreCompat = {
-    // ─── v1-compat datastore helpers ──────────────────────────────────
-    // These delegate directly to the core datastore IPC handlers. The v1
-    // preload exposed these for every extension; many features call them.
-    // Capability gating happens at the manifest level — if the tile was
-    // granted the 'datastore' capability with the right tables, we trust
-    // it to call these. The main-process handlers do full validation
-    // and enforcement.
-
-    addAddress: (uri: string, options?: unknown) =>
-      ipcRenderer.invoke('datastore-add-address', { uri, options }),
-    getAddress: (id: string) =>
-      ipcRenderer.invoke('datastore-get-address', { id }),
-    updateAddress: (id: string, updates: unknown) =>
-      ipcRenderer.invoke('datastore-update-address', { id, updates }),
-    queryAddresses: (filter?: unknown) =>
-      ipcRenderer.invoke('datastore-query-addresses', { filter }),
-    addVisit: (addressId: string, options?: unknown) =>
-      ipcRenderer.invoke('datastore-add-visit', { addressId, options }),
-    queryVisits: (filter?: unknown) =>
-      ipcRenderer.invoke('datastore-query-visits', { filter }),
-    addContent: (options: unknown) =>
-      ipcRenderer.invoke('datastore-add-content', { options }),
-    queryContent: (filter?: unknown) =>
-      ipcRenderer.invoke('datastore-query-content', { filter }),
-    getTable: (tableName: string) =>
-      ipcRenderer.invoke('datastore-get-table', { tableName }),
-    setRow: (tableName: string, rowId: string, rowData: unknown) =>
-      ipcRenderer.invoke('datastore-set-row', { tableName, rowId, rowData }),
-    getRow: (tableName: string, rowId: string) =>
-      ipcRenderer.invoke('datastore-get-row', { tableName, rowId }),
-    getStats: () =>
-      ipcRenderer.invoke('datastore-get-stats'),
-
-    // Tag operations
-    getOrCreateTag: (name: string) =>
-      ipcRenderer.invoke('datastore-get-or-create-tag', { name }),
-    tagAddress: (addressId: string, tagId: string) =>
-      ipcRenderer.invoke('datastore-tag-address', { addressId, tagId }),
-    untagAddress: (addressId: string, tagId: string) =>
-      ipcRenderer.invoke('datastore-untag-address', { addressId, tagId }),
-    getTagsByFrecency: (domain?: string) =>
-      ipcRenderer.invoke('datastore-get-tags-by-frecency', { domain }),
-    renameTag: (tagId: string, newName: string) =>
-      ipcRenderer.invoke('datastore-rename-tag', { tagId, newName }),
-    updateTagColor: (tagId: string, color: string) =>
-      ipcRenderer.invoke('datastore-update-tag-color', { tagId, color }),
-    deleteTag: (tagId: string) =>
-      ipcRenderer.invoke('datastore-delete-tag', { tagId }),
-    getAddressTags: (addressId: string) =>
-      ipcRenderer.invoke('datastore-get-address-tags', { addressId }),
-    getAddressesByTag: (tagId: string) =>
-      ipcRenderer.invoke('datastore-get-addresses-by-tag', { tagId }),
-    getUntaggedAddresses: () =>
-      ipcRenderer.invoke('datastore-get-untagged-addresses', {}),
-
-    // Item operations
-    addItem: (type: string, options: unknown = {}) =>
-      ipcRenderer.invoke('datastore-add-item', { type, options }),
-    getItem: (id: string) =>
-      ipcRenderer.invoke('datastore-get-item', { id }),
-    updateItem: (id: string, options: unknown) =>
-      ipcRenderer.invoke('datastore-update-item', { id, options }),
-    deleteItem: (id: string) =>
-      ipcRenderer.invoke('datastore-delete-item', { id }),
-    hardDeleteItem: (id: string) =>
-      ipcRenderer.invoke('datastore-hard-delete-item', { id }),
-    updateItemTitle: (id: string, title: string) =>
-      ipcRenderer.invoke('datastore-update-item-title', { id, title }),
-    updateItemFavicon: (id: string, favicon: string) =>
-      ipcRenderer.invoke('datastore-update-item-favicon', { id, favicon }),
-    queryItems: (filter: unknown = {}) =>
-      ipcRenderer.invoke('datastore-query-items', { filter }),
-    tagItem: (itemId: string, tagId: string) =>
-      ipcRenderer.invoke('datastore-tag-item', { itemId, tagId }),
-    untagItem: (itemId: string, tagId: string) =>
-      ipcRenderer.invoke('datastore-untag-item', { itemId, tagId }),
-    getItemTags: (itemId: string) =>
-      ipcRenderer.invoke('datastore-get-item-tags', { itemId }),
-    getItemsByTag: (tagId: string) =>
-      ipcRenderer.invoke('datastore-get-items-by-tag', { tagId }),
-    getHistory: (filter: unknown = {}) =>
-      ipcRenderer.invoke('datastore-get-history', filter),
-    recordItemVisit: (data: unknown) =>
-      ipcRenderer.invoke('datastore-record-item-visit', data),
-    getItemVisits: (data: unknown) =>
-      ipcRenderer.invoke('datastore-get-item-visits', data),
-    queryItemVisits: (data: unknown = {}) =>
-      ipcRenderer.invoke('datastore-query-item-visits', data),
-    trackNavigation: (data: unknown) =>
-      ipcRenderer.invoke('datastore-track-navigation', data),
-    queryItemsByFrecency: (data: unknown = {}) =>
-      ipcRenderer.invoke('datastore-query-items-by-frecency', data),
-
-    // Item events
-    addItemEvent: (data: unknown) =>
-      ipcRenderer.invoke('datastore-add-item-event', data),
-    getItemEvent: (data: unknown) =>
-      ipcRenderer.invoke('datastore-get-item-event', data),
-    queryItemEvents: (data: unknown = {}) =>
-      ipcRenderer.invoke('datastore-query-item-events', data),
-    deleteItemEvent: (data: unknown) =>
-      ipcRenderer.invoke('datastore-delete-item-event', data),
-    deleteItemEvents: (data: unknown) =>
-      ipcRenderer.invoke('datastore-delete-item-events', data),
-    getLatestItemEvent: (data: unknown) =>
-      ipcRenderer.invoke('datastore-get-latest-item-event', data),
-    countItemEvents: (data: unknown) =>
-      ipcRenderer.invoke('datastore-count-item-events', data),
-  };
-
-  // Wrap each compat method with first-use logging (observational only).
+  // Phase 4: v1-compat datastore helpers REMOVED (datastoreCompat object deleted). Only strict surface remains.
+  // All legacy delegating methods (addAddress, addItem, tagAddress, etc.) have
+  // been removed. Use api.datastore.get / .set / .query / .extractPageContent
+  // (strict, token-gated) or migrate the feature to named tile:datastore:* IPC.
   api.datastore = {
     ...datastoreStrict,
-    ...wrapCompatObject('datastore', datastoreCompat as unknown as Record<string, unknown>),
+    // Hard-fail stubs for removed v1-compat names — catch unmigrated callers early.
+    addAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addAddress removed in Phase 4; use tile:datastore:* IPC directly'); },
+    getAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getAddress removed in Phase 4'); },
+    updateAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateAddress removed in Phase 4'); },
+    queryAddresses: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryAddresses removed in Phase 4'); },
+    addVisit: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addVisit removed in Phase 4'); },
+    queryVisits: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryVisits removed in Phase 4'); },
+    addContent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addContent removed in Phase 4'); },
+    queryContent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryContent removed in Phase 4'); },
+    getTable: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getTable removed in Phase 4'); },
+    setRow: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.setRow removed in Phase 4'); },
+    getRow: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getRow removed in Phase 4'); },
+    getStats: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getStats removed in Phase 4'); },
+    getOrCreateTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getOrCreateTag removed in Phase 4'); },
+    tagAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.tagAddress removed in Phase 4'); },
+    untagAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.untagAddress removed in Phase 4'); },
+    getTagsByFrecency: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getTagsByFrecency removed in Phase 4'); },
+    renameTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.renameTag removed in Phase 4'); },
+    updateTagColor: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateTagColor removed in Phase 4'); },
+    deleteTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.deleteTag removed in Phase 4'); },
+    getAddressTags: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getAddressTags removed in Phase 4'); },
+    getAddressesByTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getAddressesByTag removed in Phase 4'); },
+    getUntaggedAddresses: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getUntaggedAddresses removed in Phase 4'); },
+    addItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addItem removed in Phase 4'); },
+    getItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItem removed in Phase 4'); },
+    updateItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateItem removed in Phase 4'); },
+    deleteItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.deleteItem removed in Phase 4'); },
+    hardDeleteItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.hardDeleteItem removed in Phase 4'); },
+    updateItemTitle: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateItemTitle removed in Phase 4'); },
+    updateItemFavicon: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateItemFavicon removed in Phase 4'); },
+    queryItems: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryItems removed in Phase 4'); },
+    tagItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.tagItem removed in Phase 4'); },
+    untagItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.untagItem removed in Phase 4'); },
+    getItemTags: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItemTags removed in Phase 4'); },
+    getItemsByTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItemsByTag removed in Phase 4'); },
+    getHistory: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getHistory removed in Phase 4'); },
+    recordItemVisit: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.recordItemVisit removed in Phase 4'); },
+    getItemVisits: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItemVisits removed in Phase 4'); },
+    queryItemVisits: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryItemVisits removed in Phase 4'); },
+    trackNavigation: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.trackNavigation removed in Phase 4'); },
+    queryItemsByFrecency: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryItemsByFrecency removed in Phase 4'); },
+    addItemEvent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addItemEvent removed in Phase 4'); },
+    getItemEvent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItemEvent removed in Phase 4'); },
+    queryItemEvents: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryItemEvents removed in Phase 4'); },
+    deleteItemEvent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.deleteItemEvent removed in Phase 4'); },
+    deleteItemEvents: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.deleteItemEvents removed in Phase 4'); },
+    getLatestItemEvent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getLatestItemEvent removed in Phase 4'); },
+    countItemEvents: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.countItemEvents removed in Phase 4'); },
   };
 
   // ── Network (if granted) ──
@@ -1013,33 +893,18 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * v1 compatibility alias — get returns {success, data} shape
-     * matching legacy preload's settings.getKey().
+     * Phase 4: getKey REMOVED. Use api.settings.get(key) instead.
      */
-    getKey: wrapCompat('settings', 'getKey', async (key: unknown) => {
-      if (!tokenValid) return { success: false, error: 'Not initialized' };
-      const result = await ipcRenderer.invoke('tile:settings:get', {
-        token: tileToken,
-        key,
-      });
-      if (result.error) return { success: false, error: result.error };
-      return { success: true, data: result.value };
-    }),
+    getKey: (..._args: unknown[]) => {
+      throw new Error('[tile-preload] api.settings.getKey removed in Phase 4; use api.settings.get');
+    },
 
     /**
-     * v1 compatibility alias — set returns {success, error?} shape
-     * matching legacy preload's settings.setKey().
+     * Phase 4: setKey REMOVED. Use api.settings.set(key, value) instead.
      */
-    setKey: wrapCompat('settings', 'setKey', async (key: unknown, value: unknown) => {
-      if (!tokenValid) return { success: false, error: 'Not initialized' };
-      const result = await ipcRenderer.invoke('tile:settings:set', {
-        token: tileToken,
-        key,
-        value,
-      });
-      if (result.error) return { success: false, error: result.error };
-      return { success: true };
-    }),
+    setKey: (..._args: unknown[]) => {
+      throw new Error('[tile-preload] api.settings.setKey removed in Phase 4; use api.settings.set');
+    },
 
     /**
      * Cross-tile foreign-read: fetch another tile's stored setting
@@ -1058,20 +923,23 @@ function buildAPI(): Record<string, unknown> {
      * The decision is made per-call because `grantedCapabilities` is
      * populated asynchronously by `initialize()`.
      */
-    getExtKey: wrapCompat('settings', 'getExtKey', async (extId: unknown, key: unknown) => {
+    /**
+     * Phase 4: getExtKey v1-compat fallback REMOVED. Strict path only.
+     * Tile manifest must declare settings.readForeign to use this.
+     */
+    getExtKey: async (extId: unknown, key: unknown) => {
       if (!extId || !key) {
         return { success: false, error: 'extId and key are required' };
       }
-      if (hasSettingsForeignCapability()) {
-        const result = await ipcRenderer.invoke('tile:settings:get-foreign', {
-          token: tileToken,
-          foreignExtId: extId,
-          key,
-        });
-        return result;
+      if (!hasSettingsForeignCapability()) {
+        throw new Error('[tile-preload] api.settings.getExtKey requires settings.readForeign capability in manifest (Phase 4: v1-compat fallback removed)');
       }
-      return ipcRenderer.invoke('feature-settings-get-key', { extId, key });
-    }),
+      return ipcRenderer.invoke('tile:settings:get-foreign', {
+        token: tileToken,
+        foreignExtId: extId,
+        key,
+      });
+    },
   };
 
   /**
@@ -1169,100 +1037,44 @@ function buildAPI(): Record<string, unknown> {
     });
   }
 
-  function registerShortcutCompat(
-    shortcut: unknown,
-    cb: unknown,
-    options: unknown,
-  ): void {
-    const opts = (options || {}) as { global?: boolean; mode?: string };
-    const callback = cb as () => void;
-    const isGlobal = opts.global === true;
-    const replyTopic = `${shortcut}${rndm()}`;
-    ipcRenderer.send('registershortcut', {
-      source: sourceAddress,
-      shortcut,
-      replyTopic,
-      global: isGlobal,
-      mode: opts.mode,
-    });
-    ipcRenderer.on(replyTopic, () => callback());
-  }
+  // Phase 4: registerShortcutCompat / unregisterShortcutCompat REMOVED.
 
-  function unregisterShortcutCompat(
-    shortcut: unknown,
-    options: unknown,
-  ): void {
-    const opts = (options || {}) as { global?: boolean; mode?: string };
-    const isGlobal = opts.global === true;
-    ipcRenderer.send('unregistershortcut', {
-      source: sourceAddress,
-      shortcut,
-      global: isGlobal,
-      mode: opts.mode,
-    });
-  }
-
+// Phase 4: v1-compat shortcuts fallback REMOVED. Strict path only.
+  // Tiles must declare `shortcuts` in their manifest capabilities.
   api.shortcuts = {
-    // NOTE: wrapCompat still wraps the top-level entry to log v1-shape calls
-    // while the trimming plan is in Phase 1/2. The wrapper delegates to the
-    // strict IPC when the tile has the capability, falling back to the legacy
-    // channel otherwise. Callers do not need to change their code — their
-    // manifest declaration controls which path runs.
-    register: wrapCompat('shortcuts', 'register', (
-      shortcut: unknown,
-      cb: unknown,
-      options: unknown,
-    ) => {
-      if (hasShortcutsCapability()) {
-        registerShortcutStrict(shortcut, cb, options);
-      } else {
-        registerShortcutCompat(shortcut, cb, options);
+    register: (shortcut: unknown, cb: unknown, options: unknown) => {
+      if (!hasShortcutsCapability()) {
+        throw new Error('[tile-preload] api.shortcuts.register requires shortcuts capability in manifest (Phase 4: v1-compat fallback removed)');
       }
-    }),
-    unregister: wrapCompat('shortcuts', 'unregister', (
-      shortcut: unknown,
-      options: unknown,
-    ) => {
-      if (hasShortcutsCapability()) {
-        unregisterShortcutStrict(shortcut, options);
-      } else {
-        unregisterShortcutCompat(shortcut, options);
+      registerShortcutStrict(shortcut, cb, options);
+    },
+    unregister: (shortcut: unknown, options: unknown) => {
+      if (!hasShortcutsCapability()) {
+        throw new Error('[tile-preload] api.shortcuts.unregister requires shortcuts capability in manifest (Phase 4: v1-compat fallback removed)');
       }
-    }),
-  };
-
-  // ── Files (v1-compat) ─────────────────────────────────────────────
-  const filesCompat = {
-    save: (content: string, options: { filename?: string; mimeType?: string } = {}) =>
-      ipcRenderer.invoke('file-save-dialog', {
-        content,
-        filename: options.filename,
-        mimeType: options.mimeType,
-      }),
-    open: () => ipcRenderer.invoke('file-open-dialog'),
-    readFromPath: (filePath: string) =>
-      ipcRenderer.invoke('file-read-from-path', { filePath }),
-    writeToPath: (filePath: string, content: string) =>
-      ipcRenderer.invoke('file-write-to-path', { filePath, content }),
-  };
-  api.files = wrapCompatObject('files', filesCompat as unknown as Record<string, unknown>);
-
-  // ── Modes (v1-compat) ─────────────────────────────────────────────
-  const modesCompat = {
-    getWindowMode: (windowId: number | null = null) =>
-      ipcRenderer.invoke('modes:getWindowMode', { windowId }),
-    setMajorMode: (mode: string, windowId: number | null = null) =>
-      ipcRenderer.invoke('modes:setMajorMode', { mode, windowId }),
-    listModes: () => ipcRenderer.invoke('modes:listModes'),
-    getCommandContext: () => ipcRenderer.invoke('modes:getCommandContext'),
-    onModeChange: (callback: (state: { major: string }, windowId?: number) => void) => {
-      subscribeImpl('modes:changed', (msg: unknown) => {
-        const m = msg as { major?: string; windowId?: number };
-        callback({ major: m.major || 'default' }, m.windowId);
-      }, 3);
+      unregisterShortcutStrict(shortcut, options);
     },
   };
-  api.modes = wrapCompatObject('modes', modesCompat as unknown as Record<string, unknown>);
+
+  // ── Files (Phase 4: v1-compat REMOVED) ───────────────────────────
+  // Use api.dialogs.save / api.dialogs.open for file dialogs,
+  // and api.filesystem.read / api.filesystem.write for path operations.
+  api.files = {
+    save: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.save removed in Phase 4; use api.dialogs.save'); },
+    open: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.open removed in Phase 4; use api.dialogs.open'); },
+    readFromPath: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.readFromPath removed in Phase 4; use api.filesystem.read'); },
+    writeToPath: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.writeToPath removed in Phase 4; use api.filesystem.write'); },
+  };
+
+  // ── Modes (Phase 4: REMOVED — was unused per trimming plan §1 row 6) ──
+  // api.modes was confirmed zero-usage. Hard-fail stubs catch any survivor.
+  api.modes = {
+    getWindowMode: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused); use api.context.*'); },
+    setMajorMode: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused)'); },
+    listModes: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused)'); },
+    getCommandContext: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused)'); },
+    onModeChange: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused)'); },
+  };
 
   // ── Context ───────────────────────────────────────────────────────
   //
@@ -1318,36 +1130,36 @@ function buildAPI(): Record<string, unknown> {
   };
 
   api.context = {
-    get: wrapCompat('context', 'get', (key: unknown, windowId: unknown) => {
+    get: (key: unknown, windowId: unknown) => {
       return hasContextCapability()
         ? contextStrict.get(key as string, (windowId ?? null) as number | null)
         : contextCompat.get(key as string, (windowId ?? null) as number | null);
-    }),
-    set: wrapCompat('context', 'set', (key: unknown, value: unknown, metadata: unknown, windowId: unknown) => {
+    },
+    set: (key: unknown, value: unknown, metadata: unknown, windowId: unknown) => {
       return hasContextCapability()
         ? contextStrict.set(key as string, value, metadata as Record<string, unknown> | undefined, (windowId ?? null) as number | null)
         : contextCompat.set(key as string, value, metadata, (windowId ?? null) as number | null);
-    }),
-    history: wrapCompat('context', 'history', (key: unknown, limit: unknown) => {
+    },
+    history: (key: unknown, limit: unknown) => {
       return hasContextCapability()
         ? contextStrict.history(key as string, limit as number | undefined)
         : contextCompat.history(key as string, limit as number | undefined);
-    }),
-    snapshot: wrapCompat('context', 'snapshot', (windowId: unknown) => {
+    },
+    snapshot: (windowId: unknown) => {
       return hasContextCapability()
         ? contextStrict.snapshot((windowId ?? null) as number | null)
         : contextCompat.snapshot((windowId ?? null) as number | null);
-    }),
-    windowsWithValue: wrapCompat('context', 'windowsWithValue', (key: unknown, value: unknown) => {
+    },
+    windowsWithValue: (key: unknown, value: unknown) => {
       return hasContextCapability()
         ? contextStrict.windowsWithValue(key as string, value)
         : contextCompat.windowsWithValue(key as string, value);
-    }),
-    windowsInSpace: wrapCompat('context', 'windowsInSpace', (spaceId: unknown) => {
+    },
+    windowsInSpace: (spaceId: unknown) => {
       return hasContextCapability()
         ? contextStrict.windowsInSpace(spaceId as string)
         : contextCompat.windowsInSpace(spaceId as string);
-    }),
+    },
   };
 
   // ── Dialogs ───────────────────────────────────────────────────────
@@ -1454,56 +1266,56 @@ function buildAPI(): Record<string, unknown> {
   };
 
   api.features = {
-    list: wrapCompat('features', 'list', (sourceType: unknown) => {
+    list: (sourceType: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.list(sourceType as string | undefined)
         : featuresCompat.list(sourceType as string | undefined);
-    }),
-    get: wrapCompat('features', 'get', (id: unknown) => {
+    },
+    get: (id: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.get(id as string)
         : featuresCompat.get(id as string);
-    }),
-    history: wrapCompat('features', 'history', (featureId: unknown, limit: unknown) => {
+    },
+    history: (featureId: unknown, limit: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.history(featureId as string | undefined, limit as number | undefined)
         : featuresCompat.history(featureId as string | undefined, limit as number | undefined);
-    }),
-    enable: wrapCompat('features', 'enable', (id: unknown, tilePreloadPath: unknown) => {
+    },
+    enable: (id: unknown, tilePreloadPath: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.enable(id as string, tilePreloadPath as string | undefined)
         : featuresCompat.enable(id as string, tilePreloadPath as string | undefined);
-    }),
-    disable: wrapCompat('features', 'disable', (id: unknown) => {
+    },
+    disable: (id: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.disable(id as string)
         : featuresCompat.disable(id as string);
-    }),
-    remove: wrapCompat('features', 'remove', (id: unknown) => {
+    },
+    remove: (id: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.remove(id as string)
         : featuresCompat.remove(id as string);
-    }),
-    installResolve: wrapCompat('features', 'installResolve', (atUri: unknown) => {
+    },
+    installResolve: (atUri: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.installResolve(atUri as string)
         : featuresCompat.installResolve(atUri as string);
-    }),
-    previewCapabilities: wrapCompat('features', 'previewCapabilities', (mc: unknown, id: unknown) => {
+    },
+    previewCapabilities: (mc: unknown, id: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.previewCapabilities(mc, id as string)
         : featuresCompat.previewCapabilities(mc, id as string);
-    }),
-    install: wrapCompat('features', 'install', (atUri: unknown, userApproved: unknown) => {
+    },
+    install: (atUri: unknown, userApproved: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.install(atUri as string, userApproved as boolean)
         : featuresCompat.install(atUri as string, userApproved as boolean);
-    }),
-    resolvePublisher: wrapCompat('features', 'resolvePublisher', (query: unknown) => {
+    },
+    resolvePublisher: (query: unknown) => {
       return hasFeaturesCapability()
         ? featuresStrict.resolvePublisher(query as string)
         : featuresCompat.resolvePublisher(query as string);
-    }),
+    },
 
     // ── Admin surfaces (strict-only) ─────────────────────────────────
     //
@@ -1666,17 +1478,17 @@ function buildAPI(): Record<string, unknown> {
   };
 
   api.oauth = {
-    startLoopback: wrapCompat('oauth', 'startLoopback', (options: unknown) => {
+    startLoopback: (options: unknown) => {
       const opts = (options || {}) as { callbackPath?: string; timeoutMs?: number; provider?: string };
       return hasOAuthCapability()
         ? oauthStrict.startLoopback(opts)
         : oauthCompat.startLoopback(opts);
-    }),
-    awaitCallback: wrapCompat('oauth', 'awaitCallback', (port: unknown) => {
+    },
+    awaitCallback: (port: unknown) => {
       return hasOAuthCapability()
         ? oauthStrict.awaitCallback(port as number)
         : oauthCompat.awaitCallback(port as number);
-    }),
+    },
   };
 
   // ── Sync ──────────────────────────────────────────────────────────
@@ -1696,40 +1508,18 @@ function buildAPI(): Record<string, unknown> {
   }
 
   api.sync = {
-    syncAll: wrapCompat('sync', 'syncAll', () => {
+    syncAll: () => {
       return hasSyncCapability()
         ? ipcRenderer.invoke('tile:sync:sync-all', { token: tileToken })
         : ipcRenderer.invoke('sync-full');
-    }),
+    },
   };
 
-  // ── closeWindow (v1-compat) ───────────────────────────────────────
-  //
-  // When the tile has declared the `window` capability, the close goes
-  // through the strict handler (which enforces sender-ownership / the
-  // `manage` flag). When it hasn't, we fall back to the un-gated legacy
-  // channel — matching the dual-path policy of api.window.close().
-  //
-  // Note on api.window.close(): the strict path uses
-  // `ipcRenderer.send('tile:window:close', ...)` which is fire-and-forget
-  // — it returns `undefined`, NOT a Promise, and chaining `.catch()` on
-  // its return value will throw a TypeError. Callers that need a
-  // confirmation signal should use `api.window.exists(id)` afterwards
-  // or rely on the window-close pubsub event. This mirrors the v1
-  // preload.js behaviour where close was similarly fire-and-forget.
-  api.closeWindow = wrapCompat('closeWindow', '(call)', (id?: unknown) => {
-    if (hasWindowCapability()) {
-      ipcRenderer.send('tile:window:close', {
-        token: tileToken,
-        id: id as number | undefined,
-      });
-      return;
-    }
-    if (id == null) {
-      return;
-    }
-    ipcRenderer.invoke('window-close', { id });
-  });
+  // ── closeWindow (Phase 4: REMOVED — was unused per trimming plan §1 row 8) ──
+  // Use api.window.close() instead.
+  api.closeWindow = (..._args: unknown[]) => {
+    throw new Error('[tile-preload] api.closeWindow removed in Phase 4 (was unused); use api.window.close()');
+  };
 
   // ── Screen (always available; read-only) ──────────────────────────
   //
