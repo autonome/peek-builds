@@ -50,6 +50,16 @@
       "query": true,
       "manage": true
     },
+    "context": {
+      "read": ["mode"],
+      "write": ["mode"],
+      "modes": true
+    },
+    "filesystem": {
+      "read": ["*"],
+      "write": ["*"]
+    },
+    "dialogs": true,
     "commands": true,
     "shortcuts": true,
     "settings": true
@@ -69,7 +79,6 @@
   ],
   "settingsSchema": "./settings-schema.json",
   "_notes": {
-    "filesystemDeferred": "File read/write capability is intentionally NOT declared. api.files.* calls (open, save, readFromPath, writeToPath) will not work under v2 until the filesystem capability model is finalized. UI/pane layout/CodeMirror/autosave-to-datastore still work.",
     "lazyEventInterceptors": "The background tile declares `lazyEvents: ['editor:open', 'editor:add']` so tile-lazy.ts registers pubsub stubs that load the tile on first event publish. This replaces the v1 main.ts registerLazyEventInterceptors() path for editor — v2 features declare their lazy-triggering events directly in their manifest and the runtime wires the interceptor stubs via tile-lazy.ts."
   }
 }
