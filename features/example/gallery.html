@@ -166,25 +166,14 @@
   <input type="file" id="file-input" accept="image/*" multiple>
 
   <script type="module">
-    // V2 tile runtime compat shims — bridge flat api.publish/subscribe
-    // to api.pubsub.publish/subscribe so existing code works unchanged.
-    (function() {
-      const api = window.app;
-      if (!api) return;
-      const isTileV2 = typeof api.initialize === 'function';
-      if (!isTileV2) return;
-      if (api.pubsub && !api.publish) {
-        api.publish = api.pubsub.publish;
-        api.subscribe = api.pubsub.subscribe;
-      }
-      if (api.settings && !api.settings.getExtKey) {
-        api.settings.getExtKey = (extId, key) => api.settings.get(extId + '.' + key);
-      }
-    })();
-
     // Feature detection
     const hasPeekAPI = typeof window.app !== 'undefined';
     const api = hasPeekAPI ? window.app : null;
+
+    // Initialize tile — validates capability token with main process
+    if (hasPeekAPI && typeof api.initialize === 'function') {
+      await api.initialize();
+    }
 
     // In-memory storage for standalone mode
     const localImages = new Map();
@@ -370,7 +359,7 @@
 
     // Listen for new images from the extension
     if (hasPeekAPI) {
-      api.subscribe('example:image-added', (msg) => {
+      api.pubsub.subscribe('example:image-added', (msg) => {
         console.log('[gallery] Image added event:', msg);
         renderGallery();
       }, api.scopes.GLOBAL);
