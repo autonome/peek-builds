@@ -137,6 +137,7 @@ function buildAPI(): Record<string, unknown> {
   // ── Scopes (always available for reference) ──
 
   api.scopes = {
+    SYSTEM: 1,
     SELF: 2,
     GLOBAL: 3,
   };
