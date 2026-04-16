@@ -800,6 +800,20 @@ webview.addEventListener('did-start-navigation', (e) => {
   loadingLifecycle.startLoading();
 });
 
+// Track server-side redirects (HTTP 301/302).
+// Electron's <webview> fires did-redirect-navigation (not did-start-navigation)
+// when a server returns a redirect response. Without this, latestNavigationUrl
+// stays at the original URL, so the did-fail-load(-3) handler for the original
+// URL incorrectly calls stopLoading() while the redirect target is still loading.
+// Example: post.nl (301) → postnl.nl — without this fix, the page stays blank.
+webview.addEventListener('did-redirect-navigation', (e) => {
+  if (!e.isMainFrame) return;
+  console.log('[page] Server redirect:', e.url, '(updating latestNavigationUrl)');
+  latestNavigationUrl = e.url;
+  // Clear any previous failure on new redirect destination
+  lastFailedNavUrl = null;
+});
+
 webview.addEventListener('did-stop-loading', () => {
   console.log('[page] did-stop-loading fired');
   loadingLifecycle.stopLoading();
