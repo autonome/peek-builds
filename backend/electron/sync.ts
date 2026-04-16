@@ -25,9 +25,9 @@ import {
   updateItem,
   getItemTags,
   getOrCreateTag,
-  tagItem,
   generateId,
 } from './datastore.js';
+import { tagItemAndPublish } from './tag-events.js';
 import { DEBUG } from './config.js';
 import { DATASTORE_VERSION, PROTOCOL_VERSION } from '../version.js';
 import {
@@ -464,7 +464,14 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
 }
 
 /**
- * Sync tags from server to a local item
+ * Sync tags from server to a local item.
+ *
+ * This wipes and re-applies tags for the item — bulk enough that we don't
+ * bother emitting `tag:item-removed` per removed link (that would be noisy
+ * and UIs already refresh on `sync:pull-completed`). We DO publish
+ * `tag:item-added` via `tagItemAndPublish` for each new link so reactive
+ * UIs (groups, page tags widget) pick up server-originated tags without
+ * waiting for a full refresh.
  */
 function syncTagsToItem(itemId: string, tagNames: string[]): void {
   const db = getDb();
@@ -472,10 +479,10 @@ function syncTagsToItem(itemId: string, tagNames: string[]): void {
   // Remove existing tags for this item
   db.prepare('DELETE FROM item_tags WHERE itemId = ?').run(itemId);
 
-  // Add new tags
+  // Add new tags — publish per-add so UIs update reactively
   for (const tagName of tagNames) {
     const { tag } = getOrCreateTag(tagName);
-    tagItem(itemId, tag.id);
+    tagItemAndPublish(itemId, tag.id);
   }
 }
 

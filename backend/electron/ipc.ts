@@ -35,7 +35,6 @@ import {
   deleteItem,
   hardDeleteItem,
   queryItems,
-  tagItem,
   untagItem,
   getItemTags,
   getItemsByTag,
@@ -164,6 +163,8 @@ import {
   syncAll,
   getSyncStatus,
 } from './sync.js';
+
+import { tagItemAndPublish } from './tag-events.js';
 
 import {
   getBackupConfig,
@@ -327,28 +328,9 @@ function itemToAddress(item: Item): Record<string, unknown> {
   };
 }
 
-/**
- * Auto-tag an item with the group tag if the calling window (or the last
- * focused visible window) is in group mode. This handles the case where
- * items are created via cmd palette or other intermediary windows while
- * the user is working in a group context.
- * Returns true if the item was tagged.
- */
-/**
- * Tag an item and publish the event so UIs (groups, tags) update reactively
- */
-function tagItemAndPublish(itemId: string, tagId: string): void {
-  const result = tagItem(itemId, tagId);
-  if (!result.alreadyExists) {
-    const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(tagId) as { name: string } | undefined;
-    publish('system', PubSubScopes.GLOBAL, 'tag:item-added', {
-      tagId,
-      tagName: tag?.name,
-      itemId
-    });
-  }
-}
-
+// tagItemAndPublish / untagItemAndPublish live in ./tag-events.js so
+// non-IPC main-process callers (e.g. sync.ts) can use them without
+// introducing a circular import through ipc.ts.
 
 /**
  * Register datastore IPC handlers
@@ -579,21 +561,17 @@ export function registerDatastoreHandlers(): void {
   // Tag-address handlers — redirected to item tagging
   ipcMain.handle('datastore-tag-address', async (ev, data) => {
     try {
-      const result = tagItem(data.addressId, data.tagId);
+      // Route through the publishing helper so the canonical tag:item-added
+      // event (with itemType) is emitted alongside the legacy
+      // tag:address-added event kept here for backward compatibility.
+      const result = tagItemAndPublish(data.addressId, data.tagId);
 
-      // Emit events for backward compat
       if (!result.alreadyExists) {
         const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(data.tagId) as { name: string } | undefined;
-        // Emit both old and new event names
         publish('system', PubSubScopes.GLOBAL, 'tag:address-added', {
           tagId: data.tagId,
           tagName: tag?.name,
           addressId: data.addressId
-        });
-        publish('system', PubSubScopes.GLOBAL, 'tag:item-added', {
-          tagId: data.tagId,
-          tagName: tag?.name,
-          itemId: data.addressId
         });
         if (DEBUG) console.log('[ipc] tag:address-added (redirected to tagItem)', data.tagId, data.addressId);
       }
@@ -832,23 +810,12 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-tag-item', async (ev, data) => {
     try {
-      const result = tagItem(data.itemId, data.tagId);
-
-      // Emit event if this is a new link (not already tagged)
-      if (!result.alreadyExists) {
-        // Fetch tag name and item type for event payload
-        const db = getDb();
-        const tag = db.prepare('SELECT name FROM tags WHERE id = ?').get(data.tagId) as { name: string } | undefined;
-        const item = db.prepare('SELECT type FROM items WHERE id = ?').get(data.itemId) as { type: string } | undefined;
-        publish('system', PubSubScopes.GLOBAL, 'tag:item-added', {
-          tagId: data.tagId,
-          tagName: tag?.name,
-          itemId: data.itemId,
-          itemType: item?.type
-        });
-        if (DEBUG) console.log('[ipc] tag:item-added', data.tagId, data.itemId);
+      // Use the helper so every caller goes through one publish path —
+      // avoids drift between handlers when the event payload evolves.
+      const result = tagItemAndPublish(data.itemId, data.tagId);
+      if (DEBUG && !result.alreadyExists) {
+        console.log('[ipc] tag:item-added', data.tagId, data.itemId);
       }
-
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
