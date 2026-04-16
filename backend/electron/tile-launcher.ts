@@ -44,6 +44,7 @@ import {
   revokeTokensForTile,
   clearAllTokens,
 } from './tile-tokens.js';
+import { scopes, publish, getSystemAddress } from './pubsub.js';
 import { DEBUG } from './config.js';
 
 // Re-export token functions for consumers
@@ -175,15 +176,60 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
   tileWindows.set(key, win);
   loadedManifests.set(manifest.id, manifest);
 
+  // Forward console messages from the tile's webContents to the main process
+  // stdout. Without this, console.log/error/warn inside tile code vanishes
+  // silently and there is no way to correlate a log line to a specific tile.
+  // Electron 40's console-message event surfaces `event.level` (0..3) and
+  // `event.message` (see backend/electron/ipc.ts:2486 for the same pattern).
+  win.webContents.on('console-message', (event) => {
+    try {
+      const level = parseInt(String((event as { level?: unknown }).level), 10);
+      const message = String((event as { message?: unknown }).message ?? '');
+      const levelLabels = ['verbose', 'info', 'warning', 'error'];
+      const levelLabel = levelLabels[level] || 'info';
+      // Errors/warnings always forwarded; info/debug only when DEBUG is on.
+      if (level >= 2) {
+        console.error(`[tile:${manifest.id}:${entry.id}] [${levelLabel}] ${message}`);
+      } else if (DEBUG) {
+        console.log(`[tile:${manifest.id}:${entry.id}] [${levelLabel}] ${message}`);
+      }
+    } catch {
+      // Logging must never throw.
+    }
+  });
+
+  // Track render-process crashes — without this, tiles crash silently.
+  // On crash: revoke the capability token, drop tracked state, and publish
+  // a SYSTEM-scope `tile:crashed` event so UI can react (e.g. show a crash
+  // banner or surface via features-manager).
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error(
+      `[tile:${manifest.id}:${entry.id}] Render process gone: ${details.reason} (exitCode=${details.exitCode})`
+    );
+    tileWindows.delete(key);
+    readyTiles.delete(key);
+    revokeToken(token);
+    try {
+      publish(getSystemAddress(), scopes.SYSTEM, 'tile:crashed', {
+        tileId: manifest.id,
+        entryId: entry.id,
+        reason: details.reason,
+        exitCode: details.exitCode,
+      });
+    } catch (err) {
+      console.error(`[tile:${manifest.id}:${entry.id}] Failed to publish tile:crashed event:`, err);
+    }
+  });
+
   // Clean up on close
   win.on('closed', () => {
     tileWindows.delete(key);
     readyTiles.delete(key);
     revokeToken(token);
-    DEBUG && console.log(`[tile-launcher] Tile closed: ${key}`);
+    DEBUG && console.log(`[tile-launcher:${manifest.id}:${entry.id}] Tile closed`);
   });
 
-  DEBUG && console.log(`[tile-launcher] Launched tile: ${key} -> ${tileUrl}`);
+  DEBUG && console.log(`[tile-launcher:${manifest.id}:${entry.id}] Launched -> ${tileUrl}`);
 
   return { tileId: manifest.id, entryId: entry.id, token, window: win, grant };
 }
