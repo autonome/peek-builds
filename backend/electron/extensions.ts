@@ -10,6 +10,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb } from './datastore.js';
+import {
+  validateSettingsSchema,
+  logValidationIssues,
+} from './settings-schema-validation.js';
 
 // Declarative command action types
 export interface CommandActionWindow {
@@ -132,13 +136,32 @@ export function loadExtensionManifest(extPath: string): ExtensionManifest | null
     if (manifest.settingsSchema) {
       const schemaPath = path.join(extPath, manifest.settingsSchema);
       if (fs.existsSync(schemaPath)) {
-        const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf-8'));
-        // Merge schema fields into manifest for Settings UI
-        manifest.schemas = { prefs: schema.prefs, item: schema.item };
-        manifest.storageKeys = schema.storageKeys;
-        manifest.defaults = schema.defaults;
-        if (schema.labels) {
-          manifest.labels = schema.labels;
+        try {
+          const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf-8'));
+
+          // Validate the schema shape. Any issues are logged but never block
+          // the feature from loading — an invalid schema just means its
+          // settings UI may not render, not that the feature is unusable.
+          const extId = manifest.id || manifest.shortname || path.basename(extPath);
+          try {
+            const result = validateSettingsSchema(schema);
+            logValidationIssues(extId, result);
+          } catch (validationErr) {
+            const vmsg = validationErr instanceof Error ? validationErr.message : String(validationErr);
+            console.error(`[schema-validation] ${extId}: validator threw unexpectedly:`, vmsg);
+          }
+
+          // Merge schema fields into manifest for Settings UI
+          manifest.schemas = { prefs: schema.prefs, item: schema.item };
+          manifest.storageKeys = schema.storageKeys;
+          manifest.defaults = schema.defaults;
+          if (schema.labels) {
+            manifest.labels = schema.labels;
+          }
+        } catch (schemaErr) {
+          const extId = manifest.id || manifest.shortname || path.basename(extPath);
+          const msg = schemaErr instanceof Error ? schemaErr.message : String(schemaErr);
+          console.error(`[schema-validation] ${extId}: failed to parse ${manifest.settingsSchema}:`, msg);
         }
       }
     }
