@@ -1,6 +1,8 @@
 # Example Extension - Image Gallery
 
-This example extension demonstrates key patterns for building Peek extensions:
+This example extension is the **reference template for new Peek extensions**.
+It demonstrates the strict (v2 tile) API shape, which is the supported form
+for all newly written features.
 
 ## Features
 
@@ -26,6 +28,37 @@ if (hasPeekAPI) {
   console.log('Running without Peek API');
 }
 ```
+
+## Tile Initialization
+
+Every v2 tile must call `api.initialize()` before using any capability-gated
+APIs — this validates the capability token with the main process.
+`background.html` does this before calling `extension.init()`; any other
+window tile (like `gallery.html`) does the same at the top of its script.
+
+```javascript
+if (hasPeekAPI && typeof api.initialize === 'function') {
+  await api.initialize();
+}
+```
+
+## Pubsub (strict form)
+
+Use `api.pubsub.publish` / `api.pubsub.subscribe` directly. The flat
+`api.publish` / `api.subscribe` helpers are v1-compat shims and should not be
+used in new code.
+
+```javascript
+api.pubsub.publish('example:image-added', payload, api.scopes.GLOBAL);
+
+api.pubsub.subscribe('example:image-added', (msg) => {
+  renderGallery();
+}, api.scopes.GLOBAL);
+```
+
+The manifest must declare every topic you publish or subscribe to under
+`capabilities.pubsub.topics`, plus the scopes you use under
+`capabilities.pubsub.scopes`.
 
 ## Command with Mime Type Acceptance
 
@@ -69,12 +102,15 @@ async function getStoredImages() {
 }
 ```
 
+Every datastore table you access must be listed in
+`capabilities.datastore.tables` in the manifest.
+
 ## Files
 
-- `manifest.json` - Extension metadata
-- `background.html` - Entry point with feature detection
+- `manifest.json` - Extension metadata and capability grants
+- `background.html` - Entry point: calls `api.initialize()` then `extension.init()`
 - `background.js` - Main extension logic
-- `gallery.html` - Image gallery UI
+- `gallery.html` - Image gallery UI (a separate window tile)
 - `settings-schema.json` - Settings UI schema
 
 ## Commands
