@@ -27,7 +27,6 @@ import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
 import {
   getDb,
-  isValidTable,
   getTable as dsGetTable,
   setRow as dsSetRow,
   getRow as dsGetRow,
@@ -56,6 +55,10 @@ import { resolveCapabilities, validateTileManifest, detectManifestVersion } from
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 import { invokeWindowOpen } from './ipc.js';
 import { getActiveThemeId } from './protocol.js';
+import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
+
+// Re-export for test access — keeps the public enforcement API on tile-ipc.
+export { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -80,50 +83,6 @@ function hasPubSubScope(grant: CapabilityGrant, scope: 'self' | 'global' | 'syst
 function hasDatastoreTable(grant: CapabilityGrant, table: string): boolean {
   if (!grant.capabilities.datastore) return false;
   return grant.capabilities.datastore.tables.includes(table);
-}
-
-/**
- * Check that every table in the list is granted. Returns the first missing
- * table (for a precise error message), or null if all are granted.
- */
-function missingDatastoreTable(grant: CapabilityGrant, tables: string[]): string | null {
-  for (const t of tables) {
-    if (!hasDatastoreTable(grant, t)) return t;
-  }
-  return null;
-}
-
-/**
- * Validate a datastore request: token valid, capability granted, all required
- * tables in the allowlist. Returns { grant } on success or { error } on failure.
- *
- * Exported for unit tests — the IPC handlers delegate here for enforcement.
- */
-export function validateTileDatastoreRequest(
-  token: string | undefined,
-  requiredTables: string[]
-): { grant: CapabilityGrant } | { error: string } {
-  if (!token || typeof token !== 'string') {
-    return { error: 'Invalid token' };
-  }
-  const grant = getGrantForToken(token);
-  if (!grant) {
-    return { error: 'Invalid token' };
-  }
-  if (!hasCapability(grant, 'datastore')) {
-    return { error: 'Datastore capability not granted' };
-  }
-  // Validate each table name against the core allow-list AND against the grant.
-  for (const table of requiredTables) {
-    if (!isValidTable(table)) {
-      return { error: `Invalid table: ${table}` };
-    }
-  }
-  const missing = missingDatastoreTable(grant, requiredTables);
-  if (missing !== null) {
-    return { error: `Table not allowed: ${missing}` };
-  }
-  return { grant };
 }
 
 /**
