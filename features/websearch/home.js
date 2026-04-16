@@ -16,11 +16,11 @@ const debug = api.debug;
 // — different origins, so BroadcastChannel cannot work. Use IPC pubsub instead.
 
 function onChannel(topic, handler) {
-  api.subscribe(topic, handler, api.scopes.GLOBAL);
+  api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
-  api.publish(topic, data, api.scopes.GLOBAL);
+  api.pubsub.publish(topic, data, api.scopes.GLOBAL);
 }
 
 // ===== Utilities =====

@@ -25,11 +25,11 @@ const debug = api.debug;
 // — different origins, so BroadcastChannel cannot work. Use IPC pubsub instead.
 
 function onChannel(topic, handler) {
-  api.subscribe(topic, handler, api.scopes.GLOBAL);
+  api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
-  api.publish(topic, data, api.scopes.GLOBAL);
+  api.pubsub.publish(topic, data, api.scopes.GLOBAL);
 }
 
 const address = 'peek://websearch/home.html';
@@ -415,7 +415,7 @@ const discoverEngine = async (opensearchUrl, pageUrl) => {
     await addEngine(engine);
 
     // Publish discovery event for UI notifications
-    api.publish('websearch:engine-discovered', {
+    api.pubsub.publish('websearch:engine-discovered', {
       engine: { id: engine.id, name: engine.name, searchUrl: engine.searchUrl }
     }, api.scopes.GLOBAL);
 
@@ -715,7 +715,7 @@ const handleEngineRequest = async (msg) => {
       if (msg.engineId && getEngine(msg.engineId)) {
         currentSettings.prefs.defaultEngine = msg.engineId;
         await saveSettings(currentSettings);
-        api.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
+        api.pubsub.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
       }
       break;
 
@@ -747,7 +747,7 @@ const init = async () => {
   initCommands();
 
   // Listen for page load events for OpenSearch discovery
-  api.subscribe('page:loaded', handlePageLoaded, api.scopes.GLOBAL);
+  api.pubsub.subscribe('page:loaded', handlePageLoaded, api.scopes.GLOBAL);
 
   // Listen for suggestion requests via BroadcastChannel
   onChannel('websearch:request-suggestions', handleSuggestionRequest);
@@ -756,7 +756,7 @@ const init = async () => {
   onChannel('websearch:engine-request', handleEngineRequest);
 
   // Listen for window close events
-  api.subscribe('window:closed', async (msg) => {
+  api.pubsub.subscribe('window:closed', async (msg) => {
     const closedWindowId = msg?.id;
     if (closedWindowId === searchWindowId) {
       debug && console.log('[ext:websearch] Search window closed');
@@ -765,7 +765,7 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Listen for settings changes to hot-reload
-  api.subscribe('websearch:settings-changed', async () => {
+  api.pubsub.subscribe('websearch:settings-changed', async () => {
     debug && console.log('[ext:websearch] settings changed, reinitializing');
     uninit();
     currentSettings = await loadSettings();
@@ -774,7 +774,7 @@ const init = async () => {
   }, api.scopes.SELF);
 
   // Listen for settings updates from Settings UI
-  api.subscribe('websearch:settings-update', async (msg) => {
+  api.pubsub.subscribe('websearch:settings-update', async (msg) => {
     debug && console.log('[ext:websearch] settings-update received:', msg);
 
     try {
@@ -800,7 +800,7 @@ const init = async () => {
       await loadEngines();
       initCommands();
 
-      api.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
+      api.pubsub.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
     } catch (err) {
       console.error('[ext:websearch] settings-update error:', err);
     }
