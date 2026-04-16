@@ -46,8 +46,7 @@
       "create": true
     },
     "commands": true,
-    "shortcuts": true,
-    "settings": true
+    "shortcuts": true
   },
   "commands": [
     {
