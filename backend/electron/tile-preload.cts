@@ -1247,6 +1247,51 @@ function buildAPI(): Record<string, unknown> {
         ? contextStrict.windowsInSpace(spaceId as string)
         : contextCompat.windowsInSpace(spaceId as string);
     },
+
+    // ── Convenience aliases ──────────────────────────────────────────
+    // These wrap the generic get/set/subscribe surface for the common
+    // 'mode' key, mirroring v1 preload.js api.context.setMode / getMode
+    // / watchMode / getWindowsInSpace.
+
+    setMode: (mode: unknown) => hasContextCapability()
+      ? contextStrict.set('mode', mode)
+      : contextCompat.set('mode', mode),
+
+    getMode: () => hasContextCapability()
+      ? contextStrict.get('mode', null)
+      : contextCompat.get('mode', null),
+
+    /**
+     * Watch for mode changes.
+     * Subscribes to `context:changed` and fires callback with the new mode
+     * value whenever the 'mode' key changes. Also performs an initial get so
+     * the caller receives the current value immediately.
+     * Returns an unsubscribe function.
+     */
+    watchMode: (callback: (mode: unknown, entry?: unknown) => void) => {
+      const unsubscribe = subscribeImpl('context:changed', (msg: unknown) => {
+        const m = msg as { key?: string; value?: unknown };
+        if (m.key === 'mode') {
+          callback(m.value ?? null, m);
+        }
+      });
+      // Fire initial value so caller doesn't have to do a separate getMode().
+      const getPromise = hasContextCapability()
+        ? contextStrict.get('mode', null)
+        : contextCompat.get('mode', null);
+      (getPromise as Promise<unknown>).then((result: unknown) => {
+        const r = result as { success?: boolean; data?: unknown; value?: unknown } | null;
+        const value = r && typeof r === 'object' ? (('data' in r) ? (r as { data: unknown }).data : (r as { value: unknown }).value) : null;
+        callback(value ?? null, null);
+      }).catch(() => {
+        callback(null, null);
+      });
+      return unsubscribe;
+    },
+
+    getWindowsInSpace: (spaceId: unknown) => hasContextCapability()
+      ? contextStrict.windowsInSpace(spaceId as string)
+      : contextCompat.windowsInSpace(spaceId as string),
   };
 
   // ── Dialogs ───────────────────────────────────────────────────────
