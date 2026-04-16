@@ -1,10 +1,14 @@
 #!/bin/bash
-# Merge an isolated agent's commits back into the main workspace.
+# Merge an isolated agent's commits back into the default jj workspace.
 #
 # Usage: scripts/finalize-isolated-agent.sh <agent-name>
 #
-# Rebases any commits the agent made onto the current main workspace @.
+# Rebases any commits the agent made onto the default workspace's @.
 # Workspace and profile are PRESERVED for reuse by the next spawn.
+#
+# This does NOT touch the `main` bookmark/branch. It only moves commits
+# between local jj workspaces (default <-- agent). Pushing to main is an
+# explicit user action, never done here.
 #
 # If the rebase is clean (all commits apply), the agent workspace's @ now
 # tracks the rebased versions — it's effectively "idle" and can be reused
@@ -19,30 +23,40 @@ if [ $# -lt 1 ]; then
 fi
 
 NAME="$1"
-MAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-WS_DIR="${MAIN_DIR}/../mpeek-agent-${NAME}"
-WS_NAME="mpeek-agent-${NAME}"
+DEFAULT_WS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+AGENT_WS_DIR="${DEFAULT_WS_DIR}/../mpeek-agent-${NAME}"
+AGENT_WS_NAME="mpeek-agent-${NAME}"
 
-if [ ! -d "$WS_DIR" ]; then
-  echo "error: ${WS_DIR} does not exist" >&2
+if [ ! -d "$AGENT_WS_DIR" ]; then
+  echo "error: ${AGENT_WS_DIR} does not exist" >&2
   exit 1
 fi
 
-cd "$MAIN_DIR"
+cd "$DEFAULT_WS_DIR"
 
 # Agent's useful commits are at @- and below (not @ itself, which is the
 # empty working-copy commit). Rebase range: commits reachable from the
-# agent's @- but not from main workspace's @.
-AGENT_PARENT="${WS_NAME}@-"
+# agent's @- but not from the default workspace's @.
+AGENT_PARENT="${AGENT_WS_NAME}@-"
 
 NEW_COMMITS=$(jj log -r "(::${AGENT_PARENT}) ~ (::@)" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null || true)
 
 if [ -z "$NEW_COMMITS" ]; then
-  echo "no new commits from ${WS_NAME} to rebase" >&2
+  echo "no new commits from ${AGENT_WS_NAME} to rebase" >&2
   exit 0
 fi
 
-echo "Rebasing commits from ${AGENT_PARENT} onto current main workspace @" >&2
+echo "Rebasing commits from ${AGENT_PARENT} onto default workspace @" >&2
 jj rebase -s "roots((::${AGENT_PARENT}) ~ (::@))" -d @ >&2
 
-echo "finalized ${WS_NAME} — workspace preserved for reuse" >&2
+# After rebase the agent's commits are children of default @ but default @
+# itself hasn't moved. Advance default @ onto the rebased head so the next
+# commit made in the default workspace includes the agent's work.
+NEW_HEAD=$(jj log -r "${AGENT_PARENT}" --no-graph -T 'commit_id' 2>/dev/null | head -1)
+DEFAULT_HEAD=$(jj log -r @ --no-graph -T 'commit_id' | head -1)
+if [ -n "$NEW_HEAD" ] && [ "$NEW_HEAD" != "$DEFAULT_HEAD" ]; then
+  echo "Advancing default workspace @ onto ${NEW_HEAD:0:12}" >&2
+  jj new "$NEW_HEAD" >&2
+fi
+
+echo "finalized ${AGENT_WS_NAME} — workspace preserved for reuse" >&2
