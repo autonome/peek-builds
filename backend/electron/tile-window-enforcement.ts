@@ -33,6 +33,13 @@ import type { CapabilityGrant, WindowCapability } from './tile-manifest.js';
  * - `show` — make a hidden window visible; gated by `manage`.
  * - `hide` — hide a visible window; gated by `manage`.
  * - `set-ignore-mouse` — toggle click-through on a window; gated by `manage`.
+ * - `center` — center a window on its display; gated by `manage`.
+ * - `center-all` — center every visible window; gated by `manage`.
+ * - `maximize` — toggle maximize on a window; gated by `manage`.
+ * - `fullscreen` — toggle fullscreen on a window; gated by `manage`.
+ * - `get-focused-visible-id` — read lastFocusedVisibleWindowId; gated by `query`.
+ * - `set-overlay-focus-target` — set overlay restore target; gated by `manage`.
+ * - `set-visible-on-all-workspaces` — pin window across macOS Spaces; gated by `manage`.
  */
 export type WindowOp =
   | 'open'
@@ -42,7 +49,14 @@ export type WindowOp =
   | 'exists'
   | 'show'
   | 'hide'
-  | 'set-ignore-mouse';
+  | 'set-ignore-mouse'
+  | 'center'
+  | 'center-all'
+  | 'maximize'
+  | 'fullscreen'
+  | 'get-focused-visible-id'
+  | 'set-overlay-focus-target'
+  | 'set-visible-on-all-workspaces';
 
 export type WindowCheckResult =
   | { ok: true }
@@ -136,11 +150,26 @@ export function checkWindowAllowed(
     case 'exists':
     case 'show':
     case 'hide':
-    case 'set-ignore-mouse': {
+    case 'set-ignore-mouse':
+    case 'center':
+    case 'center-all':
+    case 'maximize':
+    case 'fullscreen':
+    case 'set-overlay-focus-target':
+    case 'set-visible-on-all-workspaces': {
       // Mutating / probing an existing window by id is treated as a
       // management operation. Gated by `manage`.
       if (cap.manage !== true) {
         return { ok: false, error: `window.manage capability required for ${op}` };
+      }
+      return { ok: true };
+    }
+
+    case 'get-focused-visible-id': {
+      // Read-only — surface the last focused visible window id.
+      // Treated as a query, gated by `query`.
+      if (cap.query !== true) {
+        return { ok: false, error: 'window.query capability not granted' };
       }
       return { ok: true };
     }
