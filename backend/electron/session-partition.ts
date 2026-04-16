@@ -225,8 +225,32 @@ function copyDirectoryRecursive(src: string, dest: string): void {
 }
 
 /**
+ * Given a desired save path, return a path that does not already exist on disk.
+ * If the desired path is free, returns it unchanged.
+ * Otherwise appends an incrementing counter before the extension:
+ *   download.jpg → download-1.jpg → download-2.jpg → …
+ */
+export function resolveUniqueDownloadPath(desiredPath: string): string {
+  if (!fs.existsSync(desiredPath)) {
+    return desiredPath;
+  }
+  const ext = path.extname(desiredPath);
+  const base = desiredPath.slice(0, desiredPath.length - ext.length);
+  let counter = 1;
+  while (true) {
+    const candidate = `${base}-${counter}${ext}`;
+    if (!fs.existsSync(candidate)) {
+      return candidate;
+    }
+    counter++;
+  }
+}
+
+/**
  * Register a will-download handler on a session.
  * Saves downloads to the user's Downloads folder.
+ * If a file with the same name already exists, appends an incrementing
+ * counter before the extension (e.g. download-1.jpg, download-2.jpg).
  *
  * Three cases:
  * 1. Top-level BrowserWindow (not webview): close it — no page to show.
@@ -238,7 +262,8 @@ function copyDirectoryRecursive(src: string, dest: string): void {
 function registerDownloadHandler(ses: Session): void {
   ses.on('will-download', (_event, item, webContents) => {
     const filename = item.getFilename();
-    const savePath = path.join(app.getPath('downloads'), filename);
+    const desiredPath = path.join(app.getPath('downloads'), filename);
+    const savePath = resolveUniqueDownloadPath(desiredPath);
     item.setSavePath(savePath);
     console.log('[download] Saving:', filename, '→', savePath);
 
