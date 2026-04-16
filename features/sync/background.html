@@ -22,7 +22,7 @@
   }
 
   // Signal ready to main process
-  api.publish('ext:ready', {
+  api.pubsub.publish('ext:ready', {
     id: extId,
     manifest: {
       id: extension.id,
@@ -32,7 +32,7 @@
   }, api.scopes.SYSTEM);
 
   // Handle shutdown request from main process
-  api.subscribe('app:shutdown', () => {
+  api.pubsub.subscribe('app:shutdown', () => {
     console.log(`[ext:${extId}] received shutdown`);
     if (extension.uninit) {
       extension.uninit();
@@ -40,7 +40,7 @@
   }, api.scopes.SYSTEM);
 
   // Handle extension-specific shutdown
-  api.subscribe(`ext:${extId}:shutdown`, () => {
+  api.pubsub.subscribe(`ext:${extId}:shutdown`, () => {
     console.log(`[ext:${extId}] received extension shutdown`);
     if (extension.uninit) {
       extension.uninit();
