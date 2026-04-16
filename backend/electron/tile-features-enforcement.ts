@@ -25,14 +25,29 @@ import type { CapabilityGrant, FeaturesCapability, FeatureSourceType } from './t
 /**
  * Which features operation is being checked. Groups map onto the
  * existing `feature-registry:*` / `feature-install:*` / `feature-browse:*`
- * IPC channels and the action dimensions on `FeaturesCapability`.
+ * / `feature-update:*` / `feature-dev:*` / `feature-publish:*` /
+ * `feature-devtools:*` IPC channels and the action dimensions on
+ * `FeaturesCapability`.
  *
  * - `read` — `list`, `get`, `history`. Gated by `read`.
- * - `install` — `resolve`, `preview`, `install` (plus browse helpers).
- *   Gated by `install`.
+ * - `install` — `resolve`, `preview`, `install`. Gated by `install`.
  * - `manage` — `enable`, `disable`, `remove`. Gated by `manage`.
+ * - `update` — `check-all`, `apply`, `set-policy`. Gated by `update`.
+ * - `dev` — `reload`, `validate`, `pick-directory`, `create`. Gated by `dev`.
+ * - `publish` — `list-local`, `read-feature-files`. Gated by `publish`.
+ * - `devtools` — `open`. Gated by `devtools`.
+ * - `browse` — `list-by-publisher`. Gated by `browse`, defaulting to
+ *   the `read` action when `browse` is not explicitly set.
  */
-export type FeaturesAction = 'read' | 'install' | 'manage';
+export type FeaturesAction =
+  | 'read'
+  | 'install'
+  | 'manage'
+  | 'update'
+  | 'dev'
+  | 'publish'
+  | 'devtools'
+  | 'browse';
 
 export type FeaturesCheckResult =
   | { ok: true }
@@ -71,6 +86,21 @@ function actionAllowed(cap: FeaturesCapability, action: FeaturesAction): boolean
       return cap.install === true;
     case 'manage':
       return cap.manage === true;
+    case 'update':
+      return cap.update === true;
+    case 'dev':
+      return cap.dev === true;
+    case 'publish':
+      return cap.publish === true;
+    case 'devtools':
+      return cap.devtools === true;
+    case 'browse':
+      // `browse` falls back to `read` when not explicitly set — listing
+      // records is a read-shaped op. When the manifest author declared
+      // `browse: false` explicitly, block it even if read is allowed.
+      if (cap.browse === true) return true;
+      if (cap.browse === false) return false;
+      return cap.read !== false;
   }
 }
 
