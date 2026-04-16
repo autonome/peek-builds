@@ -35,7 +35,7 @@
     div.className = 'entry ' + cls;
     div.textContent = msg;
     out.appendChild(div);
-    console.log('[hello-world:home]', msg);
+    console.error('[hello-world:home]', msg);
   }
 
   function header(msg) {
@@ -43,7 +43,7 @@
     div.className = 'entry header';
     div.textContent = '── ' + msg + ' ──';
     out.appendChild(div);
-    console.log('[hello-world:home] ──', msg, '──');
+    console.error('[hello-world:home] ── ' + msg + ' ──');
   }
 
   // ── Phase 1: inspect api surface ──

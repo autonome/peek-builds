@@ -1364,10 +1364,13 @@ export async function loadExtensions(): Promise<number> {
   const extStart = Date.now();
 
   const featuresDir = path.join(config.rootDir, 'features');
-  // tsc emits to dist/, not source tree. For dev (`yarn start`) and packaged
-  // builds alike, rootDir is the project root, so the compiled preload lives at
-  // dist/backend/electron/tile-preload.js.
-  const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.js');
+  // Preload source is tile-preload.cts (CommonJS TypeScript) so tsc emits
+  // tile-preload.cjs — Electron preload scripts must be CommonJS under
+  // sandbox: true. A plain .ts source with `module: NodeNext` would emit
+  // `export {};` at the end, which Electron rejects ("Unable to load
+  // preload script") and silently falls back to no preload — every v2
+  // tile API (api.initialize, api.pubsub.subscribe, etc.) would be absent.
+  const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.cjs');
   // Expose to config so other code paths (window-open IPC handler in particular)
   // can use the tile preload for v2 tile URLs.
   setTilePreloadPath(tilePreloadPath);

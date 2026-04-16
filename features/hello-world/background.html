@@ -26,7 +26,7 @@
     console.warn('[hello-world:bg] no api.initialize — running under legacy preload?');
   }
 
-  console.log('[hello-world:bg] ready');
+  console.log('[hello-world:bg] ready — invoke `hello` command to open trace window');
 
   if (api && typeof api.onShutdown === 'function') {
     api.onShutdown(() => {
