@@ -28,26 +28,10 @@
 
   console.log('[hello-world:bg] ready — invoke `hello` command to open trace window');
 
-  // Register the `hello` command via api.commands.register (the standard
-  // v2 tile pattern — lazy system checks for handler via this mechanism,
-  // not raw pubsub subscribe).
-  if (api?.commands?.register) {
-    api.commands.register({
-      name: 'hello',
-      description: 'Open hello-world diagnostic window',
-      execute: async () => {
-        try {
-          await api.window.open('peek://ext/hello-world/home.html', {
-            width: 700, height: 900, title: 'Hello World Trace',
-          });
-          return { success: true };
-        } catch (err) {
-          console.error('[hello-world:bg] failed to open trace window:', err);
-          return { success: false, error: String(err?.message || err) };
-        }
-      }
-    });
-  }
+  // The `hello` command uses declarative `type: window` action in the
+  // manifest — handled by executeDeclarativeAction in main.ts, no
+  // runtime handler needed here. This avoids the tile-lazy race
+  // condition where tile:ready fires before api.commands.register runs.
 
   if (api && typeof api.onShutdown === 'function') {
     api.onShutdown(() => {
