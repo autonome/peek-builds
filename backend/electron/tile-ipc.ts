@@ -12,6 +12,7 @@
  * - tile:filesystem:* — path-gated file access
  * - tile:theme:* — theme info
  * - tile:settings:* — settings access
+ * - tile:features:* — feature registry read + (gated) install/manage
  *
  * Every handler validates the capability token before executing.
  */
@@ -80,6 +81,7 @@ import { checkShortcutAllowed } from './tile-shortcuts-enforcement.js';
 import { checkContextAllowed } from './tile-context-enforcement.js';
 import { checkDialogAllowed } from './tile-dialogs-enforcement.js';
 import { checkWindowAllowed } from './tile-window-enforcement.js';
+import { checkFeaturesAllowed, sourceTypeAllowed } from './tile-features-enforcement.js';
 import { getActiveThemeId } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
@@ -93,6 +95,7 @@ export { checkShortcutAllowed, type ShortcutCheckResult } from './tile-shortcuts
 export { checkContextAllowed, type ContextCheckResult, type ContextOp } from './tile-context-enforcement.js';
 export { checkDialogAllowed, type DialogsCheckResult } from './tile-dialogs-enforcement.js';
 export { checkWindowAllowed, type WindowCheckResult, type WindowOp } from './tile-window-enforcement.js';
+export { checkFeaturesAllowed, sourceTypeAllowed, type FeaturesCheckResult, type FeaturesAction } from './tile-features-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -208,7 +211,7 @@ function compareCapabilitiesSimple(
   // Boolean capabilities (or boolean-or-object capabilities treated as
   // present/absent for change detection — deeper allowlist diffs are
   // out of scope for the auto-update expansion guard).
-  const boolCaps: Array<keyof TileCapabilities> = ['commands', 'shortcuts', 'sync', 'theme', 'settings', 'context', 'dialogs'];
+  const boolCaps: Array<keyof TileCapabilities> = ['commands', 'shortcuts', 'sync', 'theme', 'settings', 'context', 'dialogs', 'features'];
   for (const cap of boolCaps) {
     const had = !!cur[cap];
     const has = !!nxt[cap];
@@ -892,6 +895,452 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
+    }
+  });
+
+  // ── Features (strict) ────────────────────────────────────────────
+  //
+  // Strict tile:features:* handlers that enforce the `features`
+  // capability for feature-registry reads and, when explicitly
+  // granted, install/manage operations. The legacy channels
+  // `feature-registry:*` / `feature-install:*` / `feature-browse:*`
+  // remain as the v1-compat surface for the settings UI; they only
+  // check that the caller has a valid token, without gating on a
+  // declared capability. Tile authors who want to drive the registry
+  // from their own window should declare `features` in the manifest
+  // and route through these strict handlers instead.
+  //
+  // Validation order for each op:
+  //   1. Token must resolve to a valid grant.
+  //   2. Grant must include the `features` capability (boolean or object).
+  //   3. Per-action gate via checkFeaturesAllowed (pure module):
+  //      - list/get/history: `read` (defaulted true when capability declared).
+  //      - resolve/preview/install + browse: `install` (must be true).
+  //      - enable/disable/remove: `manage` (must be true).
+  //   4. If `sources` allowlist is set, entry/source must be in the list.
+
+  ipcMain.handle('tile:features:list', async (_event, args: {
+    token: string;
+    /** Optional filter by source type (rejected if not in sources allowlist). */
+    sourceType?: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'read');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:list rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    // Honour an explicit sourceType filter — but only after checking it
+    // against the capability allowlist, so a tile scoped to `atproto`
+    // can't smuggle out builtin entries by passing `sourceType: 'builtin'`.
+    if (args.sourceType !== undefined) {
+      const allowed = sourceTypeAllowed(grant, args.sourceType as never);
+      if (!allowed) {
+        return { error: `features source "${args.sourceType}" not in capability sources allowlist` };
+      }
+    }
+
+    const all = args.sourceType
+      ? registry.listFeatures({ sourceType: args.sourceType as never })
+      : registry.listFeatures();
+
+    // Existing v1-compat handler hides builtins from the default list;
+    // mirror that policy here so strict callers see the same surface.
+    // Tiles that need to see builtins must pass sourceType: 'builtin'
+    // (and have 'builtin' in their sources allowlist).
+    const base = args.sourceType
+      ? all
+      : all.filter(e => e.source.type !== 'builtin');
+
+    // Apply per-entry source allowlist filtering. No-op when the
+    // capability omits `sources` (allowed = true for all).
+    const entries = base.filter(e => sourceTypeAllowed(grant, e.source.type));
+    return { entries };
+  });
+
+  ipcMain.handle('tile:features:get', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'read');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:get rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+
+    // Source allowlist: treat as not-found when caller cannot see this source.
+    if (!sourceTypeAllowed(grant, entry.source.type)) {
+      return { error: `Feature not found: ${args.id}` };
+    }
+
+    return { entry };
+  });
+
+  ipcMain.handle('tile:features:history', async (_event, args: {
+    token: string;
+    featureId?: string;
+    limit?: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'read');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:history rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    // When scoped by featureId, enforce the source allowlist against
+    // the live entry (if any). Unknown ids fall through — history rows
+    // may exist for removed features and strict callers with the
+    // appropriate sources list should still see them.
+    if (args.featureId) {
+      const registry = getFeatureRegistry();
+      const entry = registry?.getFeature(args.featureId);
+      if (entry && !sourceTypeAllowed(grant, entry.source.type)) {
+        return { error: `Feature not found: ${args.featureId}` };
+      }
+    }
+
+    try {
+      const db = getDb();
+      let sql = 'SELECT * FROM features_history';
+      const params: unknown[] = [];
+
+      if (args.featureId) {
+        sql += ' WHERE featureId = ?';
+        params.push(args.featureId);
+      }
+
+      sql += ' ORDER BY timestamp DESC';
+
+      if (args.limit) {
+        sql += ' LIMIT ?';
+        params.push(args.limit);
+      }
+
+      const rows = db.prepare(sql).all(...params);
+      return { entries: rows };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to query history: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:enable', async (_event, args: {
+    token: string;
+    id: string;
+    tilePreloadPath?: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'manage');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:enable rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    if (!sourceTypeAllowed(grant, entry.source.type)) {
+      return { error: `features source "${entry.source.type}" not in capability sources allowlist` };
+    }
+
+    const result = registry.enableFeature(args.id);
+    if (result) {
+      registry.saveRegistry();
+
+      if (entry.source.type === 'builtin' && args.tilePreloadPath) {
+        try {
+          const manifestPath = path.join(entry.path, 'manifest.json');
+          const parsed = parseManifestFile(manifestPath);
+          if (parsed?.version === 'v2' && parsed.v2) {
+            const bgTile = parsed.v2.tiles.find(t => t.type === 'background');
+            if (bgTile && !isTileLoaded(args.id, bgTile.id)) {
+              launchTile({
+                tilePath: entry.path,
+                manifest: parsed.v2,
+                preloadPath: args.tilePreloadPath,
+                entryId: bgTile.id,
+              });
+            }
+          }
+        } catch (err) {
+          console.error(`[tile-ipc] Failed to relaunch ${args.id} on enable:`, err);
+        }
+      }
+
+      publish('feature-registry', scopes.GLOBAL, 'feature:enabled', { id: args.id });
+    }
+    return { success: result };
+  });
+
+  ipcMain.handle('tile:features:disable', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'manage');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:disable rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    if (entry.source.type === 'builtin') return { error: 'Cannot disable builtin features' };
+    if (!sourceTypeAllowed(grant, entry.source.type)) {
+      return { error: `features source "${entry.source.type}" not in capability sources allowlist` };
+    }
+
+    const result = registry.disableFeature(args.id);
+    if (result) {
+      registry.saveRegistry();
+
+      const manifest = getTileManifest(args.id);
+      if (manifest) {
+        for (const t of manifest.tiles) {
+          if (isTileLoaded(args.id, t.id)) {
+            try {
+              await unloadTile(args.id, t.id);
+            } catch (err) {
+              console.error(`[tile-ipc] Failed to unload ${args.id}:${t.id} on disable:`, err);
+            }
+          }
+        }
+      }
+
+      publish('feature-registry', scopes.GLOBAL, 'feature:disabled', { id: args.id });
+    }
+    return { success: result };
+  });
+
+  ipcMain.handle('tile:features:remove', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'manage');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:remove rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    if (entry.source.type === 'builtin') return { error: 'Cannot remove builtin features' };
+    if (!sourceTypeAllowed(grant, entry.source.type)) {
+      return { error: `features source "${entry.source.type}" not in capability sources allowlist` };
+    }
+
+    // Mirror v1-compat: tear down running tile windows before deleting files.
+    const manifest = getTileManifest(args.id);
+    if (manifest) {
+      for (const t of manifest.tiles) {
+        if (isTileLoaded(args.id, t.id)) {
+          try {
+            await unloadTile(args.id, t.id);
+          } catch (err) {
+            console.error(`[tile-ipc] Failed to unload ${args.id}:${t.id} on remove:`, err);
+          }
+        }
+      }
+    }
+
+    const result = registry.unregisterFeature(args.id);
+    if (result) {
+      if (entry.source.type !== 'dev') {
+        try {
+          if (fs.existsSync(entry.path)) {
+            fs.rmSync(entry.path, { recursive: true });
+          }
+        } catch (err) {
+          console.error(`[tile-ipc] Failed to delete feature files at ${entry.path}:`, err);
+        }
+      }
+      registry.saveRegistry();
+
+      writeFeatureHistory(
+        args.id,
+        'uninstall',
+        entry.source.version,
+        entry.source.type,
+        entry.source.uri,
+        entry.source.publisher,
+        entry.grantedCapabilities as unknown as Record<string, unknown>
+      );
+
+      publish('feature-registry', scopes.GLOBAL, 'feature:removed', { id: args.id });
+    }
+    return { success: result };
+  });
+
+  ipcMain.handle('tile:features:install-resolve', async (_event, args: {
+    token: string;
+    atUri: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    // Resolve is a pre-install read against the atproto source. Gate on
+    // `install` since it's only meaningful as a step toward installing.
+    // Source-type check: always 'atproto' for this endpoint.
+    const check = checkFeaturesAllowed(grant, 'install', 'atproto');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:install-resolve rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const source = getAtprotoSource();
+    if (!source) return { error: 'AtprotoSource not initialized' };
+
+    try {
+      const metadata = await source.resolve(args.atUri);
+      return { manifest: metadata.manifest, source: metadata.source };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to resolve AT URI: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:preview-capabilities', async (_event, args: {
+    token: string;
+    manifestCapabilities: TileCapabilities;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'install');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:preview-capabilities rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    try {
+      const result = resolveCapabilities(args.featureId, args.manifestCapabilities, false);
+      return { granted: result.capabilities, denied: result.denied };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to resolve capabilities: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:install', async (_event, args: {
+    token: string;
+    atUri: string;
+    userApproved: boolean;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'install', 'atproto');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:install rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    if (!args.userApproved) {
+      return { error: 'User approval required before installation' };
+    }
+
+    const source = getAtprotoSource();
+    if (!source) return { error: 'AtprotoSource not initialized' };
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    try {
+      const metadata = await source.resolve(args.atUri);
+      const bundle = await source.fetch(args.atUri);
+
+      const result = installFromBundle(
+        bundle,
+        metadata.source,
+        registry,
+        { force: true, userApproved: true }
+      );
+
+      if (!result.success) {
+        return { error: result.error };
+      }
+
+      registry.saveRegistry();
+
+      writeFeatureHistory(
+        result.entry!.id,
+        'install',
+        metadata.source.version,
+        'atproto',
+        args.atUri,
+        metadata.source.publisher,
+        result.entry!.grantedCapabilities as unknown as Record<string, unknown>
+      );
+
+      publish('feature-registry', scopes.GLOBAL, 'feature:installed', {
+        id: result.entry!.id,
+        name: result.entry!.name,
+        source: metadata.source,
+      });
+
+      return { success: true, entry: result.entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Installation failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:browse-resolve-publisher', async (_event, args: {
+    token: string;
+    query: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'install', 'atproto');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:browse-resolve-publisher rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    if (!args.query || !args.query.trim()) {
+      return { error: 'Handle or DID is required' };
+    }
+
+    const { resolveHandleToDid, resolveDid } = await import('./atproto-source.js');
+
+    try {
+      const query = args.query.trim();
+      let did: string;
+
+      if (query.startsWith('did:')) {
+        did = query;
+      } else {
+        const resolved = await resolveHandleToDid(query);
+        if (!resolved) {
+          return { error: `Could not resolve handle "${query}"` };
+        }
+        did = resolved;
+      }
+
+      const identity = await resolveDid(did);
+      if (!identity) {
+        return { error: `Could not resolve DID: ${did}` };
+      }
+
+      return { did, handle: identity.handle, pdsUrl: identity.pdsUrl };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to resolve publisher: ${message}` };
     }
   });
 
