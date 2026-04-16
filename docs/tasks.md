@@ -59,6 +59,9 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [ ] Missing `api.sync.*` surface (discovered during sync migration; feature declares `sync: true` cap but tile-preload has no strict routing for it; `background.js` guards the call)
   - [ ] Missing `api.window.exists/show/hide/setIgnoreMouseEvents` surface in tile-preload.ts (used by helpdocs, groups, windows, pagestream, spaces, slides — discovered during helpdocs migration). Needs strict `tile:window:exists/show/hide/set-ignore-mouse` handlers gated by `window.manage` capability.
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
+  - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
+  - [ ] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
+  - [ ] Round 3 (complex): entities, hud, spaces, groups, editor, lex, wonderwall, features-manager
 - [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
 
