@@ -27,15 +27,25 @@
   ],
   "capabilities": {
     "pubsub": {
-      "scopes": ["self", "global", "system"],
+      "scopes": ["global", "system"],
       "topics": [
         "ext:ready",
         "ext:pagestream:shutdown",
         "app:shutdown",
         "window:closed",
         "pagestream:settings-changed",
-        "pagestream:settings-update"
+        "pagestream:settings-update",
+        "pagestream:nav",
+        "page:navigate",
+        "item:created",
+        "item:deleted",
+        "tag:item-added",
+        "tag:item-removed",
+        "sync:pull-completed"
       ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags", "item_visits"]
     },
     "window": {
       "create": true,
