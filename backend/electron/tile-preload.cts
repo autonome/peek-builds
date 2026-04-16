@@ -927,26 +927,43 @@ function buildAPI(): Record<string, unknown> {
   // shape — wrapped to log first-use per tile.
   api.settings = {
     /**
-     * Get a setting value (returns raw value, no wrapper)
+     * Get a setting value. Returns a normalised response object that
+     * satisfies BOTH the legacy `{success, data}` shape used by most
+     * feature callers AND the strict `{value, error}` shape emitted by
+     * `tile:settings:get`. Fields present on the returned object:
+     *   success  — true when no error occurred
+     *   data     — the stored value (alias for `value`)
+     *   value    — the stored value (strict-IPC field, kept for callers
+     *              that already destructure the strict shape)
+     *   error    — error string when the call failed, undefined otherwise
      */
-    get: (key: string) => {
+    get: async (key: string) => {
       if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:settings:get', {
+      const r = await ipcRenderer.invoke('tile:settings:get', {
         token: tileToken,
         key,
-      });
+      }) as { value?: unknown; error?: string } | null;
+      if (!r || r.error) {
+        return { success: false, data: undefined, value: undefined, error: r?.error ?? 'unknown error' };
+      }
+      return { success: true, data: r.value, value: r.value, error: undefined };
     },
 
     /**
-     * Set a setting value
+     * Set a setting value. Returns a normalised `{success, error}` object
+     * so callers that inspect the result get a consistent shape.
      */
-    set: (key: string, value: unknown) => {
+    set: async (key: string, value: unknown) => {
       if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:settings:set', {
+      const r = await ipcRenderer.invoke('tile:settings:set', {
         token: tileToken,
         key,
         value,
-      });
+      }) as { error?: string } | null;
+      if (!r || r.error) {
+        return { success: false, error: r?.error ?? 'unknown error' };
+      }
+      return { success: true, error: undefined };
     },
 
     /**
@@ -983,19 +1000,27 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Phase 4: getExtKey v1-compat fallback REMOVED. Strict path only.
      * Tile manifest must declare settings.readForeign to use this.
+     *
+     * Returns a normalised `{success, data, value, error}` object so that
+     * callers using either the legacy `{success, data}` shape or the strict
+     * `{value, error}` shape both work correctly.
      */
     getExtKey: async (extId: unknown, key: unknown) => {
       if (!extId || !key) {
-        return { success: false, error: 'extId and key are required' };
+        return { success: false, data: undefined, value: undefined, error: 'extId and key are required' };
       }
       if (!hasSettingsForeignCapability()) {
         throw new Error('[tile-preload] api.settings.getExtKey requires settings.readForeign capability in manifest (Phase 4: v1-compat fallback removed)');
       }
-      return ipcRenderer.invoke('tile:settings:get-foreign', {
+      const r = await ipcRenderer.invoke('tile:settings:get-foreign', {
         token: tileToken,
         foreignExtId: extId,
         key,
-      });
+      }) as { value?: unknown; error?: string } | null;
+      if (!r || r.error) {
+        return { success: false, data: undefined, value: undefined, error: r?.error ?? 'unknown error' };
+      }
+      return { success: true, data: r.value, value: r.value, error: undefined };
     },
   };
 
