@@ -25,7 +25,10 @@ function makeGrant(caps: TileCapabilities, builtin = false): CapabilityGrant {
   return resolveCapabilities('test-tile', caps, builtin);
 }
 
-const ALL_ACTIONS: FeaturesAction[] = ['read', 'install', 'manage'];
+const ALL_ACTIONS: FeaturesAction[] = [
+  'read', 'install', 'manage',
+  'update', 'dev', 'publish', 'devtools', 'browse',
+];
 
 // ─── Token / Grant Presence ──────────────────────────────────────────
 
@@ -88,6 +91,101 @@ describe('checkFeaturesAllowed — features: true (read-only shorthand)', () => 
       assert.match(result.error, /features\.manage capability not granted/i);
     }
   });
+
+  it('rejects admin actions (update/dev/publish/devtools) when features is true', () => {
+    const grant = makeGrant({ features: true });
+    for (const action of ['update', 'dev', 'publish', 'devtools'] as const) {
+      const result = checkFeaturesAllowed(grant, action);
+      assert.strictEqual(result.ok, false, `${action} should be denied`);
+      if (!result.ok) {
+        assert.match(result.error, new RegExp(`features\\.${action} capability not granted`, 'i'));
+      }
+    }
+  });
+
+  it('allows browse when features is true (defaults to read)', () => {
+    // `browse` has no explicit default — it falls back to `read`.
+    // `features: true` implies read allowed, so browse is too.
+    const grant = makeGrant({ features: true });
+    assert.strictEqual(checkFeaturesAllowed(grant, 'browse').ok, true);
+  });
+});
+
+// ─── Admin action gates ──────────────────────────────────────────────
+
+describe('checkFeaturesAllowed — admin actions (update/dev/publish/devtools)', () => {
+  it('features: { update: true } allows only update + read', () => {
+    const grant = makeGrant({ features: { update: true } });
+    assert.strictEqual(checkFeaturesAllowed(grant, 'update').ok, true);
+    assert.strictEqual(checkFeaturesAllowed(grant, 'read').ok, true);
+    for (const action of ['install', 'manage', 'dev', 'publish', 'devtools'] as const) {
+      assert.strictEqual(
+        checkFeaturesAllowed(grant, action).ok, false,
+        `${action} should be denied`,
+      );
+    }
+  });
+
+  it('features: { dev: true } allows only dev + read', () => {
+    const grant = makeGrant({ features: { dev: true } });
+    assert.strictEqual(checkFeaturesAllowed(grant, 'dev').ok, true);
+    assert.strictEqual(checkFeaturesAllowed(grant, 'read').ok, true);
+    for (const action of ['install', 'manage', 'update', 'publish', 'devtools'] as const) {
+      assert.strictEqual(checkFeaturesAllowed(grant, action).ok, false);
+    }
+  });
+
+  it('features: { publish: true } allows only publish + read', () => {
+    const grant = makeGrant({ features: { publish: true } });
+    assert.strictEqual(checkFeaturesAllowed(grant, 'publish').ok, true);
+    assert.strictEqual(checkFeaturesAllowed(grant, 'read').ok, true);
+    for (const action of ['install', 'manage', 'update', 'dev', 'devtools'] as const) {
+      assert.strictEqual(checkFeaturesAllowed(grant, action).ok, false);
+    }
+  });
+
+  it('features: { devtools: true } allows only devtools + read', () => {
+    const grant = makeGrant({ features: { devtools: true } });
+    assert.strictEqual(checkFeaturesAllowed(grant, 'devtools').ok, true);
+    assert.strictEqual(checkFeaturesAllowed(grant, 'read').ok, true);
+    for (const action of ['install', 'manage', 'update', 'dev', 'publish'] as const) {
+      assert.strictEqual(checkFeaturesAllowed(grant, action).ok, false);
+    }
+  });
+
+  it('features: { browse: true } allows browse + read (even with read:false inherited)', () => {
+    const grant = makeGrant({ features: { browse: true } });
+    assert.strictEqual(checkFeaturesAllowed(grant, 'browse').ok, true);
+    assert.strictEqual(checkFeaturesAllowed(grant, 'read').ok, true);
+  });
+
+  it('features: { browse: false } explicitly blocks browse even if read is allowed', () => {
+    const grant = makeGrant({ features: { read: true, browse: false } });
+    assert.strictEqual(checkFeaturesAllowed(grant, 'read').ok, true);
+    const result = checkFeaturesAllowed(grant, 'browse');
+    assert.strictEqual(result.ok, false);
+  });
+
+  it('features: { read: false } also blocks browse (browse defaults to read)', () => {
+    const grant = makeGrant({ features: { read: false, manage: true } });
+    assert.strictEqual(checkFeaturesAllowed(grant, 'browse').ok, false);
+  });
+
+  it('features-manager shape (all admin flags true) allows every action', () => {
+    const grant = makeGrant({
+      features: {
+        read: true, install: true, manage: true,
+        update: true, dev: true, publish: true, devtools: true, browse: true,
+        sources: ['builtin', 'local', 'atproto', 'url', 'dev'],
+      },
+    });
+    for (const action of ALL_ACTIONS) {
+      assert.strictEqual(
+        checkFeaturesAllowed(grant, action).ok, true,
+        `${action} should be allowed`,
+      );
+    }
+  });
 });
 
 // ─── Per-action gating ───────────────────────────────────────────────
@@ -125,12 +223,23 @@ describe('checkFeaturesAllowed — per-action flags', () => {
     assert.strictEqual(checkFeaturesAllowed(grant, 'manage').ok, true);
   });
 
-  it('features: { read: true, install: true, manage: true } allows all', () => {
+  it('features: { read, install, manage: true } allows read/install/manage/browse', () => {
     const grant = makeGrant({
       features: { read: true, install: true, manage: true },
     });
-    for (const action of ALL_ACTIONS) {
-      assert.strictEqual(checkFeaturesAllowed(grant, action).ok, true);
+    // Admin actions (update/dev/publish/devtools) are still gated and
+    // must be explicitly granted — see "admin actions" suite below.
+    for (const action of ['read', 'install', 'manage', 'browse'] as const) {
+      assert.strictEqual(
+        checkFeaturesAllowed(grant, action).ok, true,
+        `${action} should be allowed`,
+      );
+    }
+    for (const action of ['update', 'dev', 'publish', 'devtools'] as const) {
+      assert.strictEqual(
+        checkFeaturesAllowed(grant, action).ok, false,
+        `${action} should still require explicit grant`,
+      );
     }
   });
 
@@ -328,6 +437,35 @@ describe('tile-manifest validation — features capability shape', () => {
       },
     });
     assert.deepStrictEqual(errors, []);
+  });
+
+  it('accepts admin action flags (update/dev/publish/devtools/browse)', async () => {
+    const { validateTileManifest } = await import('./tile-manifest.js');
+    const errors = validateTileManifest({
+      id: 't', name: 'T',
+      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      capabilities: {
+        features: {
+          update: true, dev: true, publish: true, devtools: true, browse: true,
+        },
+      },
+    });
+    assert.deepStrictEqual(errors, []);
+  });
+
+  it('rejects non-boolean update flag', async () => {
+    const { validateTileManifest } = await import('./tile-manifest.js');
+    const errors = validateTileManifest({
+      id: 't', name: 'T',
+      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      capabilities: {
+        features: { update: 'yes' as unknown as boolean },
+      },
+    });
+    assert.ok(
+      errors.some(e => e.path === 'capabilities.features.update'),
+      'expected an update validation error',
+    );
   });
 
   it('rejects invalid source type', async () => {
