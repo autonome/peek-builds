@@ -1,14 +1,15 @@
 #!/bin/bash
-# Merge an isolated agent's commits back into the main workspace and clean up.
+# Merge an isolated agent's commits back into the main workspace.
 #
 # Usage: scripts/finalize-isolated-agent.sh <agent-name>
 #
-# Assumes the isolated workspace was created via spawn-isolated-agent.sh and
-# named mpeek-agent-<name>. Rebases any commits the agent made (from the
-# workspace's @- back to the shared ancestor with main workspace's @-) onto
-# the current main workspace @.
+# Rebases any commits the agent made onto the current main workspace @.
+# Workspace and profile are PRESERVED for reuse by the next spawn.
 #
-# After rebase, forgets the workspace and removes its directory.
+# If the rebase is clean (all commits apply), the agent workspace's @ now
+# tracks the rebased versions — it's effectively "idle" and can be reused
+# via spawn-isolated-agent.sh <same-name>. If you want to tear it down,
+# use scripts/clean-isolated-agent.sh.
 
 set -euo pipefail
 
@@ -29,32 +30,19 @@ fi
 
 cd "$MAIN_DIR"
 
-# Find the agent's head commit (the @- of the agent's workspace).
-# jj workspace list shows: workspace_id  change_id  commit_id
-# Grep by workspace name and extract the commit id.
-AGENT_HEAD=$(jj workspace list | awk -v ws="$WS_NAME" '$1 == ws":" { print $NF }')
+# Agent's useful commits are at @- and below (not @ itself, which is the
+# empty working-copy commit). Rebase range: commits reachable from the
+# agent's @- but not from main workspace's @.
+AGENT_PARENT="${WS_NAME}@-"
 
-if [ -z "$AGENT_HEAD" ]; then
-  echo "error: could not find workspace ${WS_NAME} in jj workspace list" >&2
-  exit 1
+NEW_COMMITS=$(jj log -r "(::${AGENT_PARENT}) ~ (::@)" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null || true)
+
+if [ -z "$NEW_COMMITS" ]; then
+  echo "no new commits from ${WS_NAME} to rebase" >&2
+  exit 0
 fi
 
-# The agent's working copy commit is usually empty (at tip). The useful commits
-# are @-, @--, etc. back to the fork point. Rebase the roots of the agent's
-# branch onto the main workspace's current @.
-# `roots(::{agent}@ ~ ::@)` gives commits reachable from agent's tip but not
-# from main's tip — i.e., the new commits the agent made.
-AGENT_WORKSPACE_REF="${WS_NAME}@"
-echo "Rebasing ${AGENT_WORKSPACE_REF} commits onto current main workspace @" >&2
+echo "Rebasing commits from ${AGENT_PARENT} onto current main workspace @" >&2
+jj rebase -s "roots((::${AGENT_PARENT}) ~ (::@))" -d @ >&2
 
-# Use -r/-s to rebase. If the agent's tip is the working-copy empty commit,
-# start from its parent. Let jj figure out the diff.
-jj rebase -s "roots(::${AGENT_WORKSPACE_REF} ~ ::@)" -d @ >&2
-
-# Forget the workspace (removes it from jj's tracking).
-jj workspace forget "$WS_NAME" >&2
-
-# Remove the directory.
-rm -rf "$WS_DIR"
-
-echo "finalized ${WS_NAME}" >&2
+echo "finalized ${WS_NAME} — workspace preserved for reuse" >&2

@@ -1,15 +1,24 @@
 #!/bin/bash
-# Create an isolated jj workspace for a background agent.
+# Claim an isolated jj workspace for a background agent.
 #
 # Usage: scripts/spawn-isolated-agent.sh <agent-name>
 #
-# Creates ../mpeek-agent-<name>/ as a jj workspace off the current @.
-# Symlinks node_modules from the main workspace so the agent doesn't need
-# to re-run yarn install. Prints the absolute path on stdout.
+# Workspaces are pooled — this script REUSES existing mpeek-agent-<name>
+# if one exists, resetting its working copy to match main workspace's @.
+# If it doesn't exist, it's created.
 #
-# Finalize with scripts/finalize-isolated-agent.sh <agent-name> when the
-# agent is done — that rebases the agent's commits back into the main
-# workspace and removes the isolated workspace.
+# Each agent gets a dedicated Electron profile (PROFILE=agent-<name>) so
+# tests/dev don't race on DB, ports, or window state with other agents or
+# the main workspace.
+#
+# Prints two lines on stdout:
+#   <absolute-workspace-path>
+#   PROFILE=agent-<name>
+#
+# Finalize with scripts/finalize-isolated-agent.sh <agent-name> to merge
+# the agent's commits back into the main workspace. The workspace and
+# profile are PRESERVED for reuse. Use scripts/clean-isolated-agent.sh
+# to actually tear one down.
 
 set -euo pipefail
 
@@ -21,30 +30,43 @@ fi
 NAME="$1"
 MAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WS_DIR="${MAIN_DIR}/../mpeek-agent-${NAME}"
+WS_NAME="mpeek-agent-${NAME}"
+PROFILE="agent-${NAME}"
 
-if [ -e "$WS_DIR" ]; then
-  echo "error: ${WS_DIR} already exists" >&2
-  exit 1
-fi
-
-# Create workspace (jj workspace add creates the new directory and a working copy there).
 cd "$MAIN_DIR"
-jj workspace add "$WS_DIR" >&2
 
-# Symlink node_modules so the agent can run yarn build / yarn test:unit without reinstall.
-# Safe as long as package.json doesn't diverge during the agent's lifetime.
-if [ -d "${MAIN_DIR}/node_modules" ]; then
-  ln -s "${MAIN_DIR}/node_modules" "${WS_DIR}/node_modules"
-fi
+if [ -d "$WS_DIR" ]; then
+  # Reuse existing workspace. Reset its @ to main workspace's @ so the agent
+  # starts on top of current main state, not whatever was there last time.
+  # We do this by running jj new from the workspace's own perspective.
+  (cd "$WS_DIR" && jj new --no-edit "@" >/dev/null 2>&1) || true
+  # Ensure the workspace tracks current main @ by aborting any stale working
+  # copy state and creating a new commit on top of the main workspace's @.
+  MAIN_AT=$(jj log -r @ --no-graph -T 'commit_id' 2>/dev/null | head -1)
+  if [ -n "$MAIN_AT" ]; then
+    (cd "$WS_DIR" && jj new "$MAIN_AT" >/dev/null 2>&1) || true
+  fi
+else
+  # Create new workspace.
+  jj workspace add "$WS_DIR" >&2
 
-# Symlink .yarn/cache if present, same rationale.
-if [ -d "${MAIN_DIR}/.yarn" ]; then
-  # Don't symlink the whole .yarn — jj tracks install-state.gz. Only missing pieces.
-  if [ ! -e "${WS_DIR}/.yarn/releases" ] && [ -d "${MAIN_DIR}/.yarn/releases" ]; then
+  # Symlink node_modules and .yarn/releases so agent can run yarn scripts.
+  if [ -d "${MAIN_DIR}/node_modules" ]; then
+    ln -s "${MAIN_DIR}/node_modules" "${WS_DIR}/node_modules"
+  fi
+  if [ -d "${MAIN_DIR}/.yarn/releases" ]; then
     mkdir -p "${WS_DIR}/.yarn"
     ln -s "${MAIN_DIR}/.yarn/releases" "${WS_DIR}/.yarn/releases"
   fi
 fi
 
-# Print path for the caller to pass to the agent.
+# Reset the profile directory so the agent starts with clean state.
+# Peek stores profile data at ~/Library/Application Support/Peek/<profile>/
+PROFILE_DIR="${HOME}/Library/Application Support/Peek/${PROFILE}"
+if [ -d "$PROFILE_DIR" ]; then
+  rm -rf "$PROFILE_DIR"
+fi
+
+# Print workspace path and profile env var for the caller.
 echo "$WS_DIR"
+echo "PROFILE=${PROFILE}"
