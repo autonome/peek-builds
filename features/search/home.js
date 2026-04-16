@@ -292,7 +292,7 @@ const createResultCard = (item) => {
     onDelete: async (item) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       await api.datastore.deleteItem(item.id);
-      api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+      api.pubsub.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
       state.results = state.results.filter(r => r.id !== item.id);
       state.itemTags.delete(item.id);
       render();
@@ -300,7 +300,7 @@ const createResultCard = (item) => {
     onTagRemove: async (item, tag) => {
       try {
         await api.datastore.untagItem(item.id, tag.id);
-        api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
         // Update local tag cache and re-render
         const currentTags = state.itemTags.get(item.id) || [];
         state.itemTags.set(item.id, currentTags.filter(t => t.id !== tag.id));
@@ -330,7 +330,7 @@ const createResultCard = (item) => {
           height: 768
         });
       } else if (itemType === 'text') {
-        api.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
       }
     }
   });
@@ -358,7 +358,7 @@ const deleteSelectedItem = async () => {
   if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
 
   await api.datastore.deleteItem(item.id);
-  api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+  api.pubsub.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
   state.results = state.results.filter(r => r.id !== item.id);
   state.itemTags.delete(item.id);
   render();
@@ -441,27 +441,27 @@ const debouncedRefresh = debounce(async () => {
   render();
 }, 150);
 
-api.subscribe('sync:pull-completed', (msg) => {
+api.pubsub.subscribe('sync:pull-completed', (msg) => {
   debug && console.log('[search] sync:pull-completed event received:', msg);
   debouncedRefresh();
 }, api.scopes.GLOBAL);
 
-api.subscribe('item:created', (msg) => {
+api.pubsub.subscribe('item:created', (msg) => {
   debug && console.log('[search] item:created event received:', msg);
   debouncedRefresh();
 }, api.scopes.GLOBAL);
 
-api.subscribe('item:deleted', (msg) => {
+api.pubsub.subscribe('item:deleted', (msg) => {
   debug && console.log('[search] item:deleted event received:', msg);
   debouncedRefresh();
 }, api.scopes.GLOBAL);
 
-api.subscribe('tag:item-added', (msg) => {
+api.pubsub.subscribe('tag:item-added', (msg) => {
   debug && console.log('[search] tag:item-added event received:', msg);
   debouncedRefresh();
 }, api.scopes.GLOBAL);
 
-api.subscribe('tag:item-removed', (msg) => {
+api.pubsub.subscribe('tag:item-removed', (msg) => {
   debug && console.log('[search] tag:item-removed event received:', msg);
   debouncedRefresh();
 }, api.scopes.GLOBAL);
