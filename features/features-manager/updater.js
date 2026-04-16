@@ -295,11 +295,14 @@ export function shouldAutoUpdate(feature, newManifest) {
  * - If newer, set availableVersion in the result
  *
  * @param {object[]} features - Array of FeatureRegistryEntry objects
- * @param {object} ipc - IPC interface (api.ipc) for calling main process
+ * @param {object} featuresApi - strict api.features surface (with
+ *   resolvePublisher + browseListByPublisher). Passing the whole `api`
+ *   object also works — this helper only reads `resolvePublisher` and
+ *   `browseListByPublisher`.
  * @returns {Promise<object[]>} - Features with available updates, each with
  *   { id, name, currentVersion, availableVersion, atUri, capabilityComparison }
  */
-export async function checkForUpdates(features, ipc) {
+export async function checkForUpdates(features, featuresApi) {
   const updates = [];
 
   // Filter to atproto-sourced features only
@@ -320,18 +323,17 @@ export async function checkForUpdates(features, ipc) {
   // For each publisher, query their PDS for release records
   for (const [did, pubFeatures] of byPublisher) {
     try {
-      // Resolve publisher to get PDS URL
-      const publisherResult = await ipc.invoke('feature-browse:resolve-publisher', {
-        query: did,
-      });
+      // Resolve publisher to get PDS URL (strict — `features.install` gate)
+      const publisherResult = await featuresApi.resolvePublisher(did);
 
       if (publisherResult.error || !publisherResult.pdsUrl) {
         console.warn(`[updater] Could not resolve publisher ${did}:`, publisherResult.error);
         continue;
       }
 
-      // List all release records from this publisher
-      const listResult = await ipc.invoke('feature-browse:list-by-publisher', {
+      // List all release records from this publisher (strict —
+      // `features.browse` gate, defaults to read).
+      const listResult = await featuresApi.browseListByPublisher({
         did: publisherResult.did,
         pdsUrl: publisherResult.pdsUrl,
       });

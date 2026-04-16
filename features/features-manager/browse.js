@@ -272,10 +272,9 @@ async function searchPublisher(query) {
     showPublisher(pubResult);
     showStatus('Listing published features...');
 
-    // Step 2: List feature records from publisher's PDS
-    // NOTE: `feature-browse:list-by-publisher` not yet covered by strict
-    // `api.features.*` — retained as `api.ipc.invoke` until strict handler added.
-    const listResult = await api.ipc.invoke('feature-browse:list-by-publisher', {
+    // Step 2: List feature records from publisher's PDS (strict path —
+    // gated on `features.browse` capability, defaults to `read`).
+    const listResult = await api.features.browseListByPublisher({
       did: pubResult.did,
       pdsUrl: pubResult.pdsUrl,
     });

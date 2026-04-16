@@ -284,8 +284,8 @@ function createFeatureCard(feature) {
   openDevtoolsBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     try {
-      // NOTE: `feature-devtools:*` not yet covered by strict `api.features.*`.
-      const result = await api.ipc.invoke('feature-devtools:open', { featureId: feature.id });
+      // Strict path — gated on `features.devtools` capability.
+      const result = await api.features.devtoolsOpen(feature.id);
       if (result && result.error) {
         showStatus(result.error, 'error');
         setTimeout(hideStatus, 3000);
@@ -311,8 +311,8 @@ function createFeatureCard(feature) {
       reloadBtn.textContent = 'Reloading...';
       reloadBtn.disabled = true;
       try {
-        // NOTE: `feature-dev:*` not yet covered by strict `api.features.*`.
-        const result = await api.ipc.invoke('feature-dev:reload', { featureId: feature.id });
+        // Strict path — gated on `features.dev` capability.
+        const result = await api.features.devReload(feature.id);
         reloadBtn.textContent = result.error ? 'Error' : 'Reloaded';
         if (result.error) console.error('[features-manager] reload error:', result.error);
         setTimeout(() => { reloadBtn.textContent = 'Reload'; reloadBtn.disabled = false; }, 1500);
@@ -332,8 +332,8 @@ function createFeatureCard(feature) {
       validateBtn.textContent = 'Validating...';
       validateBtn.disabled = true;
       try {
-        // NOTE: `feature-dev:*` not yet covered by strict `api.features.*`.
-        const result = await api.ipc.invoke('feature-dev:validate', { featureId: feature.id });
+        // Strict path — gated on `features.dev` capability.
+        const result = await api.features.devValidate(feature.id);
         if (result.error) {
           showStatus(result.error, 'error');
         } else if (result.valid) {
@@ -478,8 +478,8 @@ createCancelBtn.addEventListener('click', hideCreateForm);
 createPickDirBtn.addEventListener('click', async () => {
   if (!hasPeekAPI) return;
   try {
-    // NOTE: `feature-dev:*` not yet covered by strict `api.features.*`.
-    const result = await api.ipc.invoke('feature-dev:pick-directory');
+    // Strict path — gated on `features.dev` capability.
+    const result = await api.features.devPickDirectory();
     if (result.canceled || result.error) return;
     createDirSelected = result.path;
     createDirPath.textContent = result.path;
@@ -513,8 +513,8 @@ createSubmitBtn.addEventListener('click', async () => {
   createSubmitBtn.textContent = 'Creating...';
 
   try {
-    // NOTE: `feature-dev:*` not yet covered by strict `api.features.*`.
-    const result = await api.ipc.invoke('feature-dev:create', {
+    // Strict path — gated on `features.dev` capability.
+    const result = await api.features.devCreate({
       directoryPath: createDirSelected,
       featureId: createFeatureId.value.trim(),
       featureName: createFeatureName.value.trim(),
@@ -547,8 +547,8 @@ async function checkForUpdates() {
   checkUpdatesBtn.textContent = 'Checking...';
 
   try {
-    // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
-    const result = await api.ipc.invoke('feature-update:check-all');
+    // Strict path — gated on `features.update` capability.
+    const result = await api.features.updateCheckAll();
 
     if (result.error) {
       console.error('[features-manager] Update check error:', result.error);
@@ -580,11 +580,8 @@ async function applyUpdate(id, name) {
   showStatus(`Updating "${name}"...`);
 
   try {
-    // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
-    const result = await api.ipc.invoke('feature-update:apply', {
-      id,
-      userApproved: false,
-    });
+    // Strict path — gated on `features.update` capability.
+    const result = await api.features.updateApply(id, false);
 
     if (result.capabilitiesChanged) {
       // Show capability review modal
@@ -611,8 +608,8 @@ async function setUpdatePolicy(id, policy) {
   if (!hasPeekAPI) return;
 
   try {
-    // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
-    const result = await api.ipc.invoke('feature-update:set-policy', { id, policy });
+    // Strict path — gated on `features.update` capability.
+    const result = await api.features.updateSetPolicy(id, policy);
     if (result.error) {
       console.error('[features-manager] Set policy error:', result.error);
       return;
@@ -697,11 +694,8 @@ async function approveAndUpdate() {
   showStatus('Updating with approved capabilities...');
 
   try {
-    // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
-    const result = await api.ipc.invoke('feature-update:apply', {
-      id,
-      userApproved: true,
-    });
+    // Strict path — gated on `features.update` capability.
+    const result = await api.features.updateApply(id, true);
 
     if (result.error) {
       showStatus(`Update failed: ${result.error}`, 'error');

@@ -138,8 +138,8 @@ async function loadLocalFeatures() {
   }
 
   try {
-    // NOTE: `feature-publish:*` not yet covered by strict `api.features.*`.
-    const result = await api.ipc.invoke('feature-publish:list-local');
+    // Strict path — gated on `features.publish` capability.
+    const result = await api.features.publishListLocal();
 
     if (result.error) {
       featureListContent.innerHTML = `<div class="empty-state"><div class="empty-state-title">${escapeHtml(result.error)}</div></div>`;
@@ -223,10 +223,8 @@ async function selectFeature(feature) {
   showStatus('Reading feature files...');
 
   try {
-    // NOTE: `feature-publish:*` not yet covered by strict `api.features.*`.
-    const result = await api.ipc.invoke('feature-publish:read-feature-files', {
-      featureId: feature.id,
-    });
+    // Strict path — gated on `features.publish` capability.
+    const result = await api.features.publishReadFeatureFiles(feature.id);
 
     if (result.error) {
       showStatus(result.error, 'error');

@@ -190,10 +190,8 @@ const extension = {
     async function runUpdateCheck() {
       console.log('[features-manager] Running update check...');
       try {
-        // NOTE: `feature-update:*` channels are not yet covered by strict
-        // `api.features.*` — retained as `api.ipc.invoke` until strict handlers
-        // are added (see docs/tile-preload-trimming-plan.md).
-        const result = await api.ipc.invoke('feature-update:check-all');
+        // Strict path — gated on `features.update` capability.
+        const result = await api.features.updateCheckAll();
         if (result.error) {
           console.error('[features-manager] Update check error:', result.error);
           return [];
@@ -222,10 +220,7 @@ const extension = {
           // We don't have the new manifest here directly, but we can
           // attempt the apply and let the IPC handler guard it
           if (policy === 'auto') {
-            const applyResult = await api.ipc.invoke('feature-update:apply', {
-              id: update.id,
-              userApproved: false,
-            });
+            const applyResult = await api.features.updateApply(update.id, false);
 
             if (applyResult.capabilitiesChanged) {
               // Capabilities expanded — notify user
@@ -345,11 +340,7 @@ const extension = {
         }
 
         // Apply update (userApproved=true overrides notify/pinned for this action)
-        // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
-        const result = await api.ipc.invoke('feature-update:apply', {
-          id: match.id,
-          userApproved: true,
-        });
+        const result = await api.features.updateApply(match.id, true);
 
         if (result.error) {
           return { error: result.error };

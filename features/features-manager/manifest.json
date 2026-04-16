@@ -55,6 +55,11 @@
       "read": true,
       "install": true,
       "manage": true,
+      "update": true,
+      "dev": true,
+      "publish": true,
+      "devtools": true,
+      "browse": true,
       "sources": ["builtin", "local", "atproto", "url", "dev"]
     },
     "pubsub": {
