@@ -273,6 +273,30 @@ function createFeatureCard(feature) {
   });
   actions.appendChild(removeBtn);
 
+  // DevTools — available for ALL features (installed or dev-source).
+  // Observability: lets a user crack open any running tile's devtools
+  // to inspect console logs, network, DOM. Uses the new unified
+  // `feature-devtools:open` IPC handler which doesn't require a
+  // capability token (it's origin-gated to peek:// callers).
+  const openDevtoolsBtn = document.createElement('button');
+  openDevtoolsBtn.className = 'action-btn';
+  openDevtoolsBtn.textContent = 'DevTools';
+  openDevtoolsBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      const result = await api.ipc.invoke('feature-devtools:open', { featureId: feature.id });
+      if (result && result.error) {
+        showStatus(result.error, 'error');
+        setTimeout(hideStatus, 3000);
+      }
+    } catch (err) {
+      console.error('[features-manager] devtools error:', err);
+      showStatus(`DevTools error: ${err.message}`, 'error');
+      setTimeout(hideStatus, 3000);
+    }
+  });
+  actions.appendChild(openDevtoolsBtn);
+
   // Dev-specific actions
   if (isDev) {
     const devActions = document.createElement('div');
@@ -297,23 +321,6 @@ function createFeatureCard(feature) {
       }
     });
     devActions.appendChild(reloadBtn);
-
-    const devtoolsBtn = document.createElement('button');
-    devtoolsBtn.className = 'action-btn';
-    devtoolsBtn.textContent = 'DevTools';
-    devtoolsBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      try {
-        const result = await api.ipc.invoke('feature-dev:open-devtools', { featureId: feature.id });
-        if (result.error) {
-          showStatus(result.error, 'error');
-          setTimeout(hideStatus, 3000);
-        }
-      } catch (err) {
-        console.error('[features-manager] devtools error:', err);
-      }
-    });
-    devActions.appendChild(devtoolsBtn);
 
     const validateBtn = document.createElement('button');
     validateBtn.className = 'action-btn';

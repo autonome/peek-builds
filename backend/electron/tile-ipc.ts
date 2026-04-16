@@ -2488,6 +2488,92 @@ body {
     }
   });
 
+  // ── feature-devtools:open ──
+  //
+  // Opens DevTools for ANY tile feature (installed or dev-source), unlike
+  // `feature-dev:open-devtools` which is token-gated and primarily used for
+  // dev-source features. DevTools is a developer affordance — no capability
+  // check required, but we gate by caller origin so only privileged UIs
+  // (the main app, features-manager, etc.) can open devtools.
+  //
+  // Args: { featureId: string, entryId?: string }
+  //   - featureId — the tile id
+  //   - entryId   — which tile entry (defaults to 'background')
+  ipcMain.handle('feature-devtools:open', async (ev, args: {
+    featureId: string;
+    entryId?: string;
+  }) => {
+    // Origin gate: only allow from privileged callers. The main app window
+    // and all builtin peek:// surfaces are trusted. External web content
+    // should never reach here (they can't reach ipcMain anyway), but this
+    // is a cheap belt-and-suspenders check.
+    try {
+      const senderUrl = ev.sender.getURL();
+      if (!senderUrl.startsWith('peek://')) {
+        return { error: 'Unauthorized origin' };
+      }
+    } catch {
+      return { error: 'Unable to verify caller origin' };
+    }
+
+    if (!args || !args.featureId) {
+      return { error: 'featureId is required' };
+    }
+
+    const entryId = args.entryId || 'background';
+
+    try {
+      // First try the tile launcher's tracked windows (v2 tiles — installed or dev).
+      const win = getTileWindow(args.featureId, entryId);
+      if (win && !win.isDestroyed()) {
+        win.webContents.openDevTools({ mode: 'detach' });
+        return { success: true, message: `Opened DevTools for ${args.featureId}:${entryId}` };
+      }
+
+      // Fallback: scan webContents for any window whose URL belongs to this
+      // tile. Handles cases where the tile is running in a window we don't
+      // track (e.g. extension host iframe, or a window entry not recorded
+      // in the launcher map).
+      const urlPrefix = `peek://${args.featureId}/`;
+      const allContents = webContents.getAllWebContents();
+      let opened = 0;
+      for (const wc of allContents) {
+        if (wc.getURL().startsWith(urlPrefix)) {
+          wc.openDevTools({ mode: 'detach' });
+          opened++;
+        }
+      }
+
+      // Also scan extension host iframes — same pattern as feature-dev:open-devtools.
+      if (opened === 0) {
+        for (const wc of allContents) {
+          try {
+            const mainFrame = wc.mainFrame;
+            for (const frame of mainFrame.framesInSubtree) {
+              if (frame !== mainFrame && frame.url && frame.url.startsWith(urlPrefix)) {
+                wc.openDevTools({ mode: 'detach' });
+                opened++;
+                break;
+              }
+            }
+          } catch {
+            // Skip inaccessible webContents
+          }
+          if (opened > 0) break;
+        }
+      }
+
+      if (opened === 0) {
+        return { error: `No active tile found for ${args.featureId}:${entryId}. The feature may not be loaded yet.` };
+      }
+
+      return { success: true, message: `Opened DevTools for ${opened} context(s)` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to open DevTools: ${message}` };
+    }
+  });
+
   ipcMain.handle('feature-dev:validate', async (_event, args: {
     token: string;
     featureId: string;
