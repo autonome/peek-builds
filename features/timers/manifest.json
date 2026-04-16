@@ -31,7 +31,10 @@
       "scopes": ["global", "system"],
       "topics": [
         "timer:*",
-        "cmd:execute:*",
+        "cmd:execute:timer countdown",
+        "cmd:execute:timer alarm",
+        "cmd:execute:timer stopwatch",
+        "cmd:execute:timer interval",
         "cmd:register",
         "cmd:unregister",
         "ext:ready",
