@@ -16,18 +16,13 @@
   ],
   "capabilities": {
     "pubsub": {
-      "scopes": ["global", "system"],
+      "scopes": ["global"],
       "topics": [
-        "slides:*",
-        "window:closed",
-        "ext:ready",
-        "app:shutdown",
-        "ext:slides:shutdown"
+        "slides:settings-changed"
       ]
     },
     "window": {
       "create": true,
-      "query": true,
       "manage": true
     },
     "shortcuts": true,
