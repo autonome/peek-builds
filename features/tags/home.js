@@ -459,7 +459,7 @@ const setupEventListeners = () => {
   }, 150);
 
   // Subscribe to tag events for reactive updates
-  api.subscribe('tag:item-added', (msg) => {
+  api.pubsub.subscribe('tag:item-added', (msg) => {
     debug && console.log('[tags] tag:item-added event received:', msg);
     // Optimistic local update before debounced full refresh
     const currentTags = state.itemTags.get(msg.itemId) || [];
@@ -470,7 +470,7 @@ const setupEventListeners = () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:item-removed', (msg) => {
+  api.pubsub.subscribe('tag:item-removed', (msg) => {
     debug && console.log('[tags] tag:item-removed event received:', msg);
     // Optimistic local update
     const currentTags = state.itemTags.get(msg.itemId) || [];
@@ -478,7 +478,7 @@ const setupEventListeners = () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:created', (msg) => {
+  api.pubsub.subscribe('tag:created', (msg) => {
     debug && console.log('[tags] tag:created event received:', msg);
     // Optimistic local update
     if (!state.tags.find(t => t.id === msg.tagId)) {
@@ -487,23 +487,23 @@ const setupEventListeners = () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:renamed', (msg) => {
+  api.pubsub.subscribe('tag:renamed', (msg) => {
     debug && console.log('[tags] tag:renamed event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:deleted', (msg) => {
+  api.pubsub.subscribe('tag:deleted', (msg) => {
     debug && console.log('[tags] tag:deleted event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Subscribe to item events for reactive updates
-  api.subscribe('item:created', (msg) => {
+  api.pubsub.subscribe('item:created', (msg) => {
     debug && console.log('[tags] item:created event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('item:deleted', (msg) => {
+  api.pubsub.subscribe('item:deleted', (msg) => {
     debug && console.log('[tags] item:deleted event received:', msg);
     // Optimistic local update - remove deleted item from state
     state.items = state.items.filter(i => i.id !== msg.itemId);
@@ -511,20 +511,20 @@ const setupEventListeners = () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('item:updated', (msg) => {
+  api.pubsub.subscribe('item:updated', (msg) => {
     debug && console.log('[tags] item:updated event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Subscribe to sync events — sync operations bypass per-item events,
   // so we need this to refresh when new data arrives via sync
-  api.subscribe('sync:pull-completed', (msg) => {
+  api.pubsub.subscribe('sync:pull-completed', (msg) => {
     debug && console.log('[tags] sync:pull-completed event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Subscribe to entity extraction events to update entity filter bar
-  api.subscribe('entities:extracted', (msg) => {
+  api.pubsub.subscribe('entities:extracted', (msg) => {
     debug && console.log('[tags] entities:extracted event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
@@ -578,7 +578,7 @@ const setupEventListeners = () => {
 
   // Add item button
   document.querySelector('.add-item-btn').addEventListener('click', () => {
-    api.publish('editor:add', {}, api.scopes.GLOBAL);
+    api.pubsub.publish('editor:add', {}, api.scopes.GLOBAL);
   });
 
   // Keyboard navigation
@@ -590,8 +590,8 @@ const setupEventListeners = () => {
   }
 
   // Listen for editor settings changes to live-reload vim mode on embedded editor
-  if (api?.subscribe) {
-    api.subscribe('editor:settings-changed', async () => {
+  if (api?.pubsub?.subscribe) {
+    api.pubsub.subscribe('editor:settings-changed', async () => {
       debug && console.log('[tags] Editor settings changed, reloading vim mode');
       await loadEditorVimPreference();
       if (embeddedEditor) {
@@ -1299,8 +1299,8 @@ const performEditorAutosave = async (content) => {
       }
 
       // Publish change event for other extensions
-      if (api?.publish) {
-        api.publish('editor:changed', { action: 'update', itemId: state.editingItem.id }, api.scopes.GLOBAL);
+      if (api?.pubsub?.publish) {
+        api.pubsub.publish('editor:changed', { action: 'update', itemId: state.editingItem.id }, api.scopes.GLOBAL);
       }
     } else {
       console.error('[tags] Editor autosave failed:', result.error);
