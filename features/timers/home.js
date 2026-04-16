@@ -183,9 +183,9 @@ const createTimerCard = (timer) => {
       pauseBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (meta.status === 'paused') {
-          api.publish('timer:resume', { id: timer.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('timer:resume', { id: timer.id }, api.scopes.GLOBAL);
         } else {
-          api.publish('timer:pause', { id: timer.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('timer:pause', { id: timer.id }, api.scopes.GLOBAL);
         }
       });
       btnContainer.appendChild(pauseBtn);
@@ -198,7 +198,7 @@ const createTimerCard = (timer) => {
     stopBtn.textContent = 'Stop';
     stopBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      api.publish('timer:stop', { id: timer.id }, api.scopes.GLOBAL);
+      api.pubsub.publish('timer:stop', { id: timer.id }, api.scopes.GLOBAL);
     });
     btnContainer.appendChild(stopBtn);
 
@@ -215,7 +215,7 @@ const createTimerCard = (timer) => {
     deleteBtn.textContent = 'Delete';
     deleteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      api.publish('timer:delete', { id: timer.id }, api.scopes.GLOBAL);
+      api.pubsub.publish('timer:delete', { id: timer.id }, api.scopes.GLOBAL);
     });
     footer.appendChild(deleteBtn);
   }
@@ -320,7 +320,7 @@ const init = async () => {
   });
 
   // Request current timer state from background
-  api.subscribe('timer:state-response', (msg) => {
+  api.pubsub.subscribe('timer:state-response', (msg) => {
     if (msg.timers) {
       allTimers = msg.timers;
       render();
@@ -328,20 +328,20 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Subscribe to tick events for live display updates
-  api.subscribe('timer:tick', handleTick, api.scopes.GLOBAL);
+  api.pubsub.subscribe('timer:tick', handleTick, api.scopes.GLOBAL);
 
   // Subscribe to state changes (pause, resume, stop, delete, complete)
-  api.subscribe('timer:state-changed', () => {
+  api.pubsub.subscribe('timer:state-changed', () => {
     // Re-request full state to re-render
-    api.publish('timer:request-state', {}, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:request-state', {}, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  api.subscribe('timer:completed', () => {
-    api.publish('timer:request-state', {}, api.scopes.GLOBAL);
+  api.pubsub.subscribe('timer:completed', () => {
+    api.pubsub.publish('timer:request-state', {}, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   // Request initial state
-  api.publish('timer:request-state', {}, api.scopes.GLOBAL);
+  api.pubsub.publish('timer:request-state', {}, api.scopes.GLOBAL);
 };
 
 document.addEventListener('DOMContentLoaded', init);
