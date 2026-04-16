@@ -32,6 +32,7 @@ import { tableNames } from '../types/index.js';
 import { DEBUG } from './config.js';
 import { DATASTORE_VERSION } from '../version.js';
 import { addDeviceMetadata } from './device.js';
+import { publish, scopes as pubsubScopes, getSystemAddress } from './pubsub.js';
 
 // Load canonical schema for validation
 // Path is relative to compiled JS in dist/backend/electron/
@@ -2762,17 +2763,50 @@ export function getOrCreateTag(name: string): { tag: Tag; created: boolean } {
   `).run(tagId, name.trim(), slug, '#999999', '', '', '{}', timestamp, timestamp, 0, 0, 0);
 
   const newTag = getDb().prepare('SELECT * FROM tags WHERE id = ?').get(tagId) as Tag;
+
+  // Emit tag:created so any caller (legacy ipc, strict tile handlers, direct
+  // imports) triggers downstream UI refreshes (groups, tags page, etc.).
+  try {
+    publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:created', {
+      tagId: newTag.id,
+      name: newTag.name,
+      // Back-compat alias used by existing listeners
+      tagName: newTag.name,
+    });
+    if (DEBUG) console.log('[datastore] tag:created', newTag.id, newTag.name);
+  } catch (err) {
+    if (DEBUG) console.warn('[datastore] failed to publish tag:created', err);
+  }
+
   return { tag: newTag, created: true };
 }
 
 export function renameTag(id: string, newName: string): Tag | null {
   const slug = newName.toLowerCase().trim().replace(/\s+/g, '-');
   const timestamp = now();
+
+  // Capture old name for the event payload before mutating.
+  const existing = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(id) as { name: string } | undefined;
+
   const result = getDb().prepare(
     'UPDATE tags SET name = ?, slug = ?, updatedAt = ? WHERE id = ?'
   ).run(newName.trim(), slug, timestamp, id);
   if (result.changes === 0) return null;
-  return getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
+
+  const updated = getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
+
+  try {
+    publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:renamed', {
+      tagId: id,
+      oldName: existing?.name,
+      newName: updated.name,
+    });
+    if (DEBUG) console.log('[datastore] tag:renamed', id, existing?.name, '->', updated.name);
+  } catch (err) {
+    if (DEBUG) console.warn('[datastore] failed to publish tag:renamed', err);
+  }
+
+  return updated;
 }
 
 export function updateTagColor(id: string, color: string): Tag | null {
@@ -2781,14 +2815,48 @@ export function updateTagColor(id: string, color: string): Tag | null {
     'UPDATE tags SET color = ?, updatedAt = ? WHERE id = ?'
   ).run(color, timestamp, id);
   if (result.changes === 0) return null;
-  return getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
+
+  const updated = getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
+
+  try {
+    publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:color-changed', {
+      tagId: id,
+      color,
+    });
+    if (DEBUG) console.log('[datastore] tag:color-changed', id, color);
+  } catch (err) {
+    if (DEBUG) console.warn('[datastore] failed to publish tag:color-changed', err);
+  }
+
+  return updated;
 }
 
 export function deleteTag(id: string): boolean {
   const db = getDb();
+
+  // Look up name before deleting so event consumers (groups, etc.) can
+  // identify the orphaned tag.
+  const existing = db.prepare('SELECT name FROM tags WHERE id = ?').get(id) as { name: string } | undefined;
+
   db.prepare('DELETE FROM item_tags WHERE tagId = ?').run(id);
   const result = db.prepare('DELETE FROM tags WHERE id = ?').run(id);
-  return result.changes > 0;
+  const deleted = result.changes > 0;
+
+  if (deleted) {
+    try {
+      publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:deleted', {
+        tagId: id,
+        name: existing?.name,
+        // Back-compat alias
+        tagName: existing?.name,
+      });
+      if (DEBUG) console.log('[datastore] tag:deleted', id, existing?.name);
+    } catch (err) {
+      if (DEBUG) console.warn('[datastore] failed to publish tag:deleted', err);
+    }
+  }
+
+  return deleted;
 }
 
 export function getTagsByFrecency(domain?: string): Tag[] {

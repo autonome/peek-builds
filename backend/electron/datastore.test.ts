@@ -266,4 +266,129 @@ describe('Desktop Datastore Tests', () => {
       assert.strictEqual(tagLinks.length, 0);
     });
   });
+
+  describe('Tag lifecycle events', () => {
+    // Pubsub is a sibling module; load it once for the whole suite.
+    let pubsub: typeof import('./pubsub.js');
+
+    before(async () => {
+      pubsub = await import('./pubsub.js');
+    });
+
+    it('should publish tag:created when a new tag is inserted', () => {
+      const events: Array<Record<string, unknown>> = [];
+      const sub = 'peek://test/tag-created';
+      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:created', (msg) => {
+        events.push(msg as Record<string, unknown>);
+      });
+
+      const { tag, created } = datastore.getOrCreateTag('event-new-tag');
+      assert.strictEqual(created, true);
+      assert.strictEqual(events.length, 1);
+      assert.strictEqual(events[0].tagId, tag.id);
+      assert.strictEqual(events[0].name, tag.name);
+
+      pubsub.unsubscribe(sub, 'tag:created');
+    });
+
+    it('should NOT publish tag:created when an existing tag is returned', () => {
+      // Seed the tag first (consumes the expected event)
+      datastore.getOrCreateTag('event-existing-tag');
+
+      const events: Array<Record<string, unknown>> = [];
+      const sub = 'peek://test/tag-created-noop';
+      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:created', (msg) => {
+        events.push(msg as Record<string, unknown>);
+      });
+
+      const { created } = datastore.getOrCreateTag('event-existing-tag');
+      assert.strictEqual(created, false);
+      assert.strictEqual(events.length, 0);
+
+      pubsub.unsubscribe(sub, 'tag:created');
+    });
+
+    it('should publish tag:renamed with oldName and newName', () => {
+      const { tag } = datastore.getOrCreateTag('event-rename-before');
+
+      const events: Array<Record<string, unknown>> = [];
+      const sub = 'peek://test/tag-renamed';
+      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:renamed', (msg) => {
+        events.push(msg as Record<string, unknown>);
+      });
+
+      const updated = datastore.renameTag(tag.id, 'event-rename-after');
+      assert.ok(updated);
+      assert.strictEqual(events.length, 1);
+      assert.strictEqual(events[0].tagId, tag.id);
+      assert.strictEqual(events[0].oldName, 'event-rename-before');
+      assert.strictEqual(events[0].newName, 'event-rename-after');
+
+      pubsub.unsubscribe(sub, 'tag:renamed');
+    });
+
+    it('should NOT publish tag:renamed when the tag id does not exist', () => {
+      const events: Array<Record<string, unknown>> = [];
+      const sub = 'peek://test/tag-renamed-miss';
+      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:renamed', (msg) => {
+        events.push(msg as Record<string, unknown>);
+      });
+
+      const result = datastore.renameTag('tag-does-not-exist', 'whatever');
+      assert.strictEqual(result, null);
+      assert.strictEqual(events.length, 0);
+
+      pubsub.unsubscribe(sub, 'tag:renamed');
+    });
+
+    it('should publish tag:deleted with id and name', () => {
+      const { tag } = datastore.getOrCreateTag('event-delete-me');
+
+      const events: Array<Record<string, unknown>> = [];
+      const sub = 'peek://test/tag-deleted';
+      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:deleted', (msg) => {
+        events.push(msg as Record<string, unknown>);
+      });
+
+      const deleted = datastore.deleteTag(tag.id);
+      assert.strictEqual(deleted, true);
+      assert.strictEqual(events.length, 1);
+      assert.strictEqual(events[0].tagId, tag.id);
+      assert.strictEqual(events[0].name, 'event-delete-me');
+
+      pubsub.unsubscribe(sub, 'tag:deleted');
+    });
+
+    it('should NOT publish tag:deleted when no row was removed', () => {
+      const events: Array<Record<string, unknown>> = [];
+      const sub = 'peek://test/tag-deleted-miss';
+      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:deleted', (msg) => {
+        events.push(msg as Record<string, unknown>);
+      });
+
+      const deleted = datastore.deleteTag('tag-does-not-exist');
+      assert.strictEqual(deleted, false);
+      assert.strictEqual(events.length, 0);
+
+      pubsub.unsubscribe(sub, 'tag:deleted');
+    });
+
+    it('should publish tag:color-changed when color updates', () => {
+      const { tag } = datastore.getOrCreateTag('event-color');
+
+      const events: Array<Record<string, unknown>> = [];
+      const sub = 'peek://test/tag-color';
+      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:color-changed', (msg) => {
+        events.push(msg as Record<string, unknown>);
+      });
+
+      const updated = datastore.updateTagColor(tag.id, '#ff00ff');
+      assert.ok(updated);
+      assert.strictEqual(events.length, 1);
+      assert.strictEqual(events[0].tagId, tag.id);
+      assert.strictEqual(events[0].color, '#ff00ff');
+
+      pubsub.unsubscribe(sub, 'tag:color-changed');
+    });
+  });
 });

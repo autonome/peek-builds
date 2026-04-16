@@ -565,17 +565,10 @@ export function registerDatastoreHandlers(): void {
   // Tag operations
   ipcMain.handle('datastore-get-or-create-tag', async (ev, data) => {
     try {
+      // NOTE: getOrCreateTag() itself publishes 'tag:created' on new inserts
+      // (see datastore.ts). Keeping the publish there ensures tile-ipc /
+      // direct-import callers also emit the lifecycle event.
       const result = getOrCreateTag(data.name);
-
-      // Emit event if tag was newly created
-      if (result.created) {
-        publish('system', PubSubScopes.GLOBAL, 'tag:created', {
-          tagId: result.tag.id,
-          tagName: result.tag.name
-        });
-        if (DEBUG) console.log('[ipc] tag:created', result.tag.id, result.tag.name);
-      }
-
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -651,14 +644,8 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-rename-tag', async (ev, data) => {
     try {
+      // renameTag() publishes 'tag:renamed' internally (datastore.ts).
       const result = renameTag(data.tagId, data.newName);
-      if (result) {
-        publish('system', PubSubScopes.GLOBAL, 'tag:renamed', {
-          tagId: data.tagId,
-          newName: data.newName
-        });
-        if (DEBUG) console.log('[ipc] tag:renamed', data.tagId, data.newName);
-      }
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -668,14 +655,8 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-update-tag-color', async (ev, data) => {
     try {
+      // updateTagColor() publishes 'tag:color-changed' internally (datastore.ts).
       const result = updateTagColor(data.tagId, data.color);
-      if (result) {
-        publish('system', PubSubScopes.GLOBAL, 'tag:color-changed', {
-          tagId: data.tagId,
-          color: data.color
-        });
-        DEBUG && console.log('[ipc] tag:color-changed', data.tagId, data.color);
-      }
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -685,13 +666,8 @@ export function registerDatastoreHandlers(): void {
 
   ipcMain.handle('datastore-delete-tag', async (ev, data) => {
     try {
+      // deleteTag() publishes 'tag:deleted' internally (datastore.ts).
       const result = deleteTag(data.tagId);
-      if (result) {
-        publish('system', PubSubScopes.GLOBAL, 'tag:deleted', {
-          tagId: data.tagId
-        });
-        if (DEBUG) console.log('[ipc] tag:deleted', data.tagId);
-      }
       return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
