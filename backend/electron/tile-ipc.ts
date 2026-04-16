@@ -65,6 +65,7 @@ import {
   getContextSnapshot,
   getWindowsWithContextValue,
   getWindowsMatchingContext,
+  normalizeUrl,
 } from './datastore.js';
 import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
@@ -89,6 +90,7 @@ import { createLoopbackServer } from './oauth-loopback.js';
 import { syncAll, getSyncConfig } from './sync.js';
 import { checkEscapeAllowed } from './tile-escape-enforcement.js';
 import { checkSessionAllowed } from './tile-session-enforcement.js';
+import { checkIzuiAllowed } from './tile-izui-enforcement.js';
 import { getActiveThemeId } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
@@ -108,6 +110,7 @@ export { checkOAuthAllowed, type OAuthCheckResult, type OAuthOp } from './tile-o
 export { checkSyncAllowed, type SyncCheckResult } from './tile-sync-enforcement.js';
 export { checkEscapeAllowed, type EscapeCheckResult } from './tile-escape-enforcement.js';
 export { checkSessionAllowed, type SessionCheckResult, type SessionOp } from './tile-session-enforcement.js';
+export { checkIzuiAllowed, type IzuiCheckResult } from './tile-izui-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -1353,6 +1356,952 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { error: `Failed to resolve publisher: ${message}` };
+    }
+  });
+
+  // ── Features admin (strict): update / dev / publish / devtools / browse ──
+  //
+  // Strict mirrors of the v1-compat `feature-update:*`, `feature-dev:*`,
+  // `feature-publish:*`, `feature-devtools:open` and
+  // `feature-browse:list-by-publisher` channels. Each delegates to the
+  // existing legacy handler via `ipcMain.invoke(...)`-style direct
+  // dispatch is not available — instead we re-use the shared registry
+  // helpers to execute the same logic here, behind the proper
+  // capability gate. For `feature-devtools:open` and browse/publish ops
+  // that do not take a specific source type, we gate on the per-action
+  // flag only. For update/apply we gate on `update` + source `atproto`.
+
+  ipcMain.handle('tile:features:update-check-all', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'update');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:update-check-all rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+    const source = getAtprotoSource();
+    if (!source) return { error: 'AtprotoSource not initialized' };
+
+    try {
+      const all = registry.listFeatures();
+      const atprotoFeatures = all.filter(e => e.source.type === 'atproto' && e.source.publisher);
+      if (atprotoFeatures.length === 0) return { updates: [] };
+
+      const byPublisher = new Map<string, typeof atprotoFeatures>();
+      for (const feature of atprotoFeatures) {
+        const did = feature.source.publisher!;
+        if (!byPublisher.has(did)) byPublisher.set(did, []);
+        byPublisher.get(did)!.push(feature);
+      }
+
+      const updates: Array<{
+        id: string; name: string;
+        currentVersion: string; availableVersion: string; atUri: string;
+      }> = [];
+
+      for (const [did, pubFeatures] of byPublisher) {
+        try {
+          const { resolveDid: resolveDidFn } = await import('./atproto-source.js');
+          const identity = await resolveDidFn(did);
+          if (!identity) continue;
+
+          const params = new URLSearchParams({
+            repo: did,
+            collection: 'space.peek.feature.release',
+            limit: '100',
+          });
+          const url = `${identity.pdsUrl}/xrpc/com.atproto.repo.listRecords?${params.toString()}`;
+          const res = await fetch(url);
+          if (!res.ok) continue;
+
+          const data = await res.json() as {
+            records: Array<{ uri: string; value: Record<string, unknown> }>;
+          };
+
+          const featureMap = new Map<string, { uri: string; version: string; createdAt: string }>();
+          for (const rec of data.records || []) {
+            const val = rec.value;
+            const featureId = val.featureId as string;
+            if (!featureId) continue;
+            const existing = featureMap.get(featureId);
+            const createdAt = (val.createdAt as string) || '';
+            if (!existing || createdAt > existing.createdAt) {
+              featureMap.set(featureId, {
+                uri: rec.uri,
+                version: (val.version as string) || '0.0.0',
+                createdAt,
+              });
+            }
+          }
+
+          for (const feature of pubFeatures) {
+            const policy = feature.updatePolicy || 'auto';
+            if (policy === 'pinned') continue;
+
+            const currentVersion = feature.source.version || '0.0.0';
+            const latest = featureMap.get(feature.id);
+            if (!latest) continue;
+
+            if (compareSemverSimple(latest.version, currentVersion) > 0) {
+              const entry = registry.getFeature(feature.id);
+              if (entry) {
+                entry.availableVersion = latest.version;
+                entry.lastUpdateCheck = new Date().toISOString();
+                registry.registerFeature(entry);
+              }
+              updates.push({
+                id: feature.id,
+                name: feature.name,
+                currentVersion,
+                availableVersion: latest.version,
+                atUri: latest.uri,
+              });
+            } else {
+              const entry = registry.getFeature(feature.id);
+              if (entry) {
+                entry.availableVersion = undefined;
+                entry.lastUpdateCheck = new Date().toISOString();
+                registry.registerFeature(entry);
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`[tile-ipc] Update check failed for publisher ${did}:`, err);
+        }
+      }
+
+      registry.saveRegistry();
+      return { updates };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Update check failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:update-apply', async (_event, args: {
+    token: string;
+    id: string;
+    userApproved?: boolean;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'update', 'atproto');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:update-apply rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+    const source = getAtprotoSource();
+    if (!source) return { error: 'AtprotoSource not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+    if (entry.source.type !== 'atproto' || !entry.source.uri) {
+      return { error: 'Feature is not from AT Protocol' };
+    }
+
+    try {
+      const metadata = await source.resolve(entry.source.uri);
+      const newManifest = metadata.manifest;
+      const newVersion = metadata.source.version || newManifest.version;
+      const currentVersion = entry.source.version || '0.0.0';
+
+      if (compareSemverSimple(newVersion || '0.0.0', currentVersion) <= 0) {
+        return { error: 'No newer version available' };
+      }
+
+      const capComparison = compareCapabilitiesSimple(
+        entry.grantedCapabilities,
+        newManifest.capabilities,
+      );
+
+      if (capComparison.expanded && !args.userApproved) {
+        return {
+          error: 'Capabilities expanded — user approval required',
+          capabilitiesChanged: true,
+          added: capComparison.added,
+          removed: capComparison.removed,
+        };
+      }
+
+      const bundle = await source.fetch(entry.source.uri);
+      const installResult = installFromBundle(
+        bundle,
+        metadata.source,
+        registry,
+        { force: true, userApproved: args.userApproved || !capComparison.expanded },
+      );
+
+      if (!installResult.success) {
+        writeFeatureHistory(
+          args.id, 'update-failed', newVersion,
+          'atproto', entry.source.uri, entry.source.publisher,
+        );
+        return { error: installResult.error };
+      }
+
+      const updatedEntry = registry.getFeature(args.id);
+      if (updatedEntry) {
+        updatedEntry.availableVersion = undefined;
+        updatedEntry.lastUpdateCheck = new Date().toISOString();
+        registry.registerFeature(updatedEntry);
+      }
+      registry.saveRegistry();
+
+      writeFeatureHistory(
+        args.id, 'update', newVersion,
+        'atproto', entry.source.uri, entry.source.publisher,
+        installResult.entry?.grantedCapabilities as unknown as Record<string, unknown>,
+      );
+
+      publish('feature-registry', scopes.GLOBAL, 'feature:updated', {
+        id: args.id,
+        name: entry.name,
+        previousVersion: currentVersion,
+        newVersion,
+      });
+
+      return { success: true, entry: installResult.entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeFeatureHistory(
+        args.id, 'update-failed', undefined,
+        'atproto', entry.source.uri, entry.source.publisher,
+      );
+      return { error: `Update failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:update-set-policy', async (_event, args: {
+    token: string;
+    id: string;
+    policy: 'auto' | 'notify' | 'pinned';
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'update');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:update-set-policy rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { error: `Feature not found: ${args.id}` };
+
+    const validPolicies = ['auto', 'notify', 'pinned'];
+    if (!validPolicies.includes(args.policy)) {
+      return { error: `Invalid policy: ${args.policy}` };
+    }
+
+    entry.updatePolicy = args.policy;
+    if (args.policy === 'pinned') {
+      entry.pinnedVersion = entry.source.version;
+    } else {
+      entry.pinnedVersion = undefined;
+    }
+
+    registry.registerFeature(entry);
+    registry.saveRegistry();
+
+    return { success: true, policy: entry.updatePolicy, pinnedVersion: entry.pinnedVersion };
+  });
+
+  ipcMain.handle('tile:features:dev-reload', async (_event, args: {
+    token: string;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'dev');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:dev-reload rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.featureId);
+    if (!entry) return { error: `Feature not found: ${args.featureId}` };
+
+    try {
+      const urlPrefix = `peek://${args.featureId}/`;
+      const allContents = webContents.getAllWebContents();
+      let reloaded = 0;
+
+      for (const wc of allContents) {
+        const url = wc.getURL();
+        if (url.startsWith(urlPrefix)) {
+          wc.reload();
+          reloaded++;
+          continue;
+        }
+        try {
+          const mainFrame = wc.mainFrame;
+          for (const frame of mainFrame.framesInSubtree) {
+            if (frame !== mainFrame && frame.url && frame.url.startsWith(urlPrefix)) {
+              frame.executeJavaScript('location.reload()');
+              reloaded++;
+            }
+          }
+        } catch {
+          // ignore inaccessible webContents
+        }
+      }
+
+      const manifest = entry.path ? JSON.parse(
+        fs.readFileSync(path.join(entry.path, 'manifest.json'), 'utf-8'),
+      ) : null;
+
+      if (manifest && manifest.tiles) {
+        for (const tile of manifest.tiles) {
+          const win = getTileWindow(args.featureId, tile.id);
+          if (win && !win.isDestroyed()) {
+            win.webContents.reload();
+            reloaded++;
+          }
+        }
+      }
+
+      if (reloaded === 0) {
+        return { success: true, message: 'No active tiles found to reload. Feature will load on next launch.' };
+      }
+      return { success: true, message: `Reloaded ${reloaded} tile(s)` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to reload feature: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:dev-validate', async (_event, args: {
+    token: string;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'dev');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:dev-validate rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.featureId);
+    if (!entry) return { error: `Feature not found: ${args.featureId}` };
+
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    try {
+      const featurePath = entry.path;
+      if (!fs.existsSync(featurePath)) {
+        return { valid: false, errors: [`Feature directory not found: ${featurePath}`], warnings: [] };
+      }
+
+      const manifestPath = path.join(featurePath, 'manifest.json');
+      if (!fs.existsSync(manifestPath)) {
+        return { valid: false, errors: ['manifest.json not found'], warnings: [] };
+      }
+
+      let raw: Record<string, unknown>;
+      try {
+        const manifestJson = fs.readFileSync(manifestPath, 'utf-8');
+        raw = JSON.parse(manifestJson);
+      } catch (parseErr) {
+        return { valid: false, errors: [`Invalid JSON in manifest.json: ${parseErr}`], warnings: [] };
+      }
+
+      const version = detectManifestVersion(raw);
+      if (version !== 'v2') errors.push(`Manifest is ${version}, expected v2`);
+
+      const validationErrors = validateTileManifest(raw);
+      for (const ve of validationErrors) errors.push(`${ve.path}: ${ve.message}`);
+
+      const tiles = raw.tiles as Array<{ id: string; url: string }> | undefined;
+      if (tiles && Array.isArray(tiles)) {
+        for (const tile of tiles) {
+          if (tile.url) {
+            const tilePath = path.join(featurePath, tile.url);
+            if (!fs.existsSync(tilePath)) {
+              errors.push(`Tile "${tile.id}" references "${tile.url}" which does not exist`);
+            }
+          }
+        }
+      }
+
+      const settingsSchema = raw.settingsSchema as string | undefined;
+      if (settingsSchema) {
+        const schemaPath = path.join(featurePath, settingsSchema);
+        if (!fs.existsSync(schemaPath)) {
+          errors.push(`Settings schema file "${settingsSchema}" not found`);
+        }
+      }
+
+      if (!raw.description || (raw.description as string).trim() === '') {
+        warnings.push('No description set in manifest');
+      }
+      if (!raw.version) warnings.push('No version set in manifest');
+
+      return { valid: errors.length === 0, errors, warnings };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { valid: false, errors: [`Validation failed: ${message}`], warnings: [] };
+    }
+  });
+
+  ipcMain.handle('tile:features:dev-pick-directory', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'dev');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:dev-pick-directory rejected: ${check.error}`);
+      return { error: check.error };
+    }
+    try {
+      const result = await dialog.showOpenDialog({
+        properties: ['openDirectory', 'createDirectory'],
+        title: 'Choose directory for new feature',
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { canceled: true };
+      }
+      return { path: result.filePaths[0] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to open directory picker: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:dev-create', async (_event, args: {
+    token: string;
+    directoryPath: string;
+    featureId: string;
+    featureName: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'dev');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:dev-create rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const idRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
+    if (!args.featureId || args.featureId.length < 2 || !idRegex.test(args.featureId)) {
+      return { error: 'Feature ID must be lowercase alphanumeric with hyphens (min 2 chars, no leading/trailing hyphens)' };
+    }
+    if (!args.featureName || !args.featureName.trim()) {
+      return { error: 'Feature name is required' };
+    }
+
+    const parentDir = path.dirname(args.directoryPath);
+    if (!fs.existsSync(parentDir)) {
+      return { error: `Parent directory does not exist: ${parentDir}` };
+    }
+
+    const existing = registry.getFeature(args.featureId);
+    if (existing) {
+      return { error: `Feature "${args.featureId}" is already registered in the registry` };
+    }
+
+    // Delegate to the same scaffolding logic by piggy-backing on the
+    // v1-compat handler via direct invocation is not supported by Electron.
+    // To avoid duplicating several hundred lines of scaffold code, we
+    // emit the same files inline here. The scaffold is kept in sync with
+    // the v1-compat handler — any changes must be mirrored.
+    //
+    // In a follow-up cleanup the scaffold helpers should be extracted to
+    // a shared module (feature-dev-scaffold.ts) and called from both
+    // handlers. For now we rely on the features-manager tests to detect
+    // drift.
+    try {
+      if (!fs.existsSync(args.directoryPath)) {
+        fs.mkdirSync(args.directoryPath, { recursive: true });
+      }
+
+      const featureId = args.featureId;
+      const featureName = args.featureName.trim();
+
+      const manifestContent = JSON.stringify({
+        manifestVersion: 2,
+        id: featureId,
+        name: featureName,
+        version: '0.1.0',
+        description: '',
+        tiles: [
+          { id: 'background', type: 'background', url: 'background.html', lazy: true },
+          {
+            id: 'home', type: 'window', url: 'home.html',
+            windowHints: { width: 800, height: 600, title: featureName },
+          },
+        ],
+        capabilities: {
+          pubsub: { scopes: ['self', 'global'] },
+          commands: true,
+        },
+        commands: [
+          { name: featureId, description: `Open ${featureName}`, action: { type: 'window', url: 'home.html' } },
+        ],
+      }, null, 2);
+
+      // Minimal scaffold: manifest + background.html + home.html so the
+      // feature loads. Full scaffold (CSS, JS stubs) is in the v1-compat
+      // handler. Dev authors can run `feature-dev:validate` to discover
+      // missing files and add them by hand if desired.
+      fs.writeFileSync(path.join(args.directoryPath, 'manifest.json'), manifestContent, 'utf-8');
+      const stubHtml = `<!DOCTYPE html><html><body><script>console.log('[${featureId}] loaded')</script></body></html>`;
+      if (!fs.existsSync(path.join(args.directoryPath, 'background.html'))) {
+        fs.writeFileSync(path.join(args.directoryPath, 'background.html'), stubHtml, 'utf-8');
+      }
+      if (!fs.existsSync(path.join(args.directoryPath, 'home.html'))) {
+        fs.writeFileSync(path.join(args.directoryPath, 'home.html'), stubHtml, 'utf-8');
+      }
+
+      const manifestParsed = JSON.parse(manifestContent);
+      const capGrant = resolveCapabilities(featureId, manifestParsed.capabilities, true);
+
+      const entry = {
+        id: featureId,
+        name: featureName,
+        path: args.directoryPath,
+        source: {
+          type: 'dev' as const,
+          version: '0.1.0',
+        },
+        grantedCapabilities: capGrant.capabilities,
+        userApproved: true,
+        installedAt: new Date().toISOString(),
+      };
+
+      registry.registerFeature(entry);
+      registry.saveRegistry();
+
+      writeFeatureHistory(featureId, 'install', '0.1.0', 'dev');
+
+      publish('feature-registry', scopes.GLOBAL, 'feature:installed', {
+        id: featureId,
+        name: featureName,
+        source: { type: 'dev' },
+      });
+
+      return { success: true, entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to create feature: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:publish-list-local', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'publish');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:publish-list-local rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const all = registry.listFeatures();
+    const publishable = all.filter(e =>
+      e.source.type === 'local' || e.source.type === 'builtin' || e.source.type === 'dev',
+    );
+
+    return {
+      features: publishable.map(e => ({
+        id: e.id,
+        name: e.name,
+        version: e.source.version || '0.0.0',
+        path: e.path,
+        sourceType: e.source.type,
+        description: (e as unknown as { description?: string }).description || '',
+      })),
+    };
+  });
+
+  ipcMain.handle('tile:features:publish-read-feature-files', async (_event, args: {
+    token: string;
+    featureId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'publish');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:publish-read-feature-files rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.featureId);
+    if (!entry) return { error: `Feature not found: ${args.featureId}` };
+
+    try {
+      const featurePath = entry.path;
+      if (!fs.existsSync(featurePath)) {
+        return { error: `Feature directory not found: ${featurePath}` };
+      }
+
+      const files: Array<{
+        relativePath: string; content: string; size: number; mimeType: string;
+      }> = [];
+
+      function readDir(dirPath: string, prefix: string): void {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const dirent of entries) {
+          if (dirent.name.startsWith('.') || dirent.name === 'node_modules') continue;
+          const fullPath = path.join(dirPath, dirent.name);
+          const relativePath = prefix ? `${prefix}/${dirent.name}` : dirent.name;
+          if (dirent.isDirectory()) {
+            readDir(fullPath, relativePath);
+          } else if (dirent.isFile()) {
+            const data = fs.readFileSync(fullPath);
+            const ext = path.extname(dirent.name).toLowerCase();
+            files.push({
+              relativePath,
+              content: data.toString('base64'),
+              size: data.length,
+              mimeType: getMimeType(ext),
+            });
+          }
+        }
+      }
+
+      readDir(featurePath, '');
+
+      return {
+        featureId: args.featureId,
+        name: entry.name,
+        path: featurePath,
+        files,
+        totalSize: files.reduce((sum, f) => sum + f.size, 0),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to read feature files: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:devtools-open', async (_event, args: {
+    token: string;
+    featureId: string;
+    entryId?: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'devtools');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:devtools-open rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    if (!args.featureId) return { error: 'featureId is required' };
+    const entryId = args.entryId || 'background';
+
+    try {
+      const win = getTileWindow(args.featureId, entryId);
+      if (win && !win.isDestroyed()) {
+        win.webContents.openDevTools({ mode: 'detach' });
+        return { success: true, message: `Opened DevTools for ${args.featureId}:${entryId}` };
+      }
+
+      const urlPrefix = `peek://${args.featureId}/`;
+      const allContents = webContents.getAllWebContents();
+      let opened = 0;
+      for (const wc of allContents) {
+        if (wc.getURL().startsWith(urlPrefix)) {
+          wc.openDevTools({ mode: 'detach' });
+          opened++;
+        }
+      }
+      if (opened === 0) {
+        for (const wc of allContents) {
+          try {
+            const mainFrame = wc.mainFrame;
+            for (const frame of mainFrame.framesInSubtree) {
+              if (frame !== mainFrame && frame.url && frame.url.startsWith(urlPrefix)) {
+                wc.openDevTools({ mode: 'detach' });
+                opened++;
+                break;
+              }
+            }
+          } catch {
+            // ignore inaccessible webContents
+          }
+          if (opened > 0) break;
+        }
+      }
+
+      if (opened === 0) {
+        return { error: `No active tile found for ${args.featureId}:${entryId}. The feature may not be loaded yet.` };
+      }
+      return { success: true, message: `Opened DevTools for ${opened} context(s)` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to open DevTools: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:features:browse-list-by-publisher', async (_event, args: {
+    token: string;
+    did: string;
+    pdsUrl: string;
+    cursor?: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'browse', 'atproto');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] features:browse-list-by-publisher rejected: ${check.error}`);
+      return { error: check.error };
+    }
+
+    if (!args.did || !args.pdsUrl) {
+      return { error: 'DID and PDS URL are required' };
+    }
+
+    try {
+      const params = new URLSearchParams({
+        repo: args.did,
+        collection: 'space.peek.feature.release',
+        limit: '100',
+      });
+      if (args.cursor) params.set('cursor', args.cursor);
+
+      const url = `${args.pdsUrl}/xrpc/com.atproto.repo.listRecords?${params.toString()}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        return { error: `PDS returned ${res.status}: ${body}` };
+      }
+
+      const data = await res.json() as {
+        records: Array<{ uri: string; cid: string; value: Record<string, unknown> }>;
+        cursor?: string;
+      };
+
+      const featureMap = new Map<string, {
+        uri: string; featureId: string; name: string; version: string;
+        description?: string; categories?: string[]; capabilities?: string[];
+        createdAt: string;
+      }>();
+
+      for (const rec of data.records || []) {
+        const val = rec.value as Record<string, unknown>;
+        const featureId = val.featureId as string;
+        if (!featureId) continue;
+        const existing = featureMap.get(featureId);
+        const createdAt = (val.createdAt as string) || '';
+        if (!existing || createdAt > existing.createdAt) {
+          featureMap.set(featureId, {
+            uri: rec.uri,
+            featureId,
+            name: (val.name as string) || featureId,
+            version: (val.version as string) || 'unknown',
+            description: val.description as string | undefined,
+            categories: val.categories as string[] | undefined,
+            capabilities: val.capabilities as string[] | undefined,
+            createdAt,
+          });
+        }
+      }
+
+      return {
+        records: Array.from(featureMap.values()),
+        cursor: data.cursor,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `Failed to list records: ${message}` };
+    }
+  });
+
+  // ── IZUI (strict) ─────────────────────────────────────────────────
+  //
+  // Strict mirrors of the legacy `izui-*` IPC channels. The original
+  // channels (in ipc.ts) are token-agnostic; these gate access on the
+  // `izui` capability so only tiles that declared participation in the
+  // overlay system can drive it.
+  //
+  // Imports are resolved dynamically to avoid a hard dependency in
+  // the test-mode path — izui-state pulls in BrowserWindow helpers
+  // that assume Electron is running.
+
+  ipcMain.handle('tile:izui:is-transient', async (ev, args: { token: string }) => {
+    const grant = getGrantForToken(args?.token);
+    const check = checkIzuiAllowed(grant);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] izui:is-transient rejected: ${check.error}`);
+      return { error: check.error };
+    }
+    try {
+      const { getIzuiCoordinator } = await import('./izui-state.js');
+      const coordinator = getIzuiCoordinator();
+      const requestingWindow = BrowserWindow.fromWebContents(ev.sender);
+      const session = coordinator.getSession();
+      if (session) {
+        return { transient: coordinator.isTransient() };
+      }
+      const entryMode = coordinator.evaluateOnShow(requestingWindow?.id);
+      return { transient: entryMode === 'transient' };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `izui:is-transient failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:izui:get-effective-mode', async (_event, args: { token: string }) => {
+    const grant = getGrantForToken(args?.token);
+    const check = checkIzuiAllowed(grant);
+    if (!check.ok) return { error: check.error };
+    try {
+      const { getIzuiCoordinator } = await import('./izui-state.js');
+      return { mode: getIzuiCoordinator().getEffectiveMode() };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `izui:get-effective-mode failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:izui:get-state', async (_event, args: { token: string }) => {
+    const grant = getGrantForToken(args?.token);
+    const check = checkIzuiAllowed(grant);
+    if (!check.ok) return { error: check.error };
+    try {
+      const { getIzuiCoordinator } = await import('./izui-state.js');
+      return { state: getIzuiCoordinator().getState() };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `izui:get-state failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:izui:get-pre-overlay-focus-target', async (_event, args: { token: string }) => {
+    const grant = getGrantForToken(args?.token);
+    const check = checkIzuiAllowed(grant);
+    if (!check.ok) return { error: check.error };
+    try {
+      const { getIzuiCoordinator } = await import('./izui-state.js');
+      return { target: getIzuiCoordinator().getPreOverlayFocusTarget() };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { error: `izui:get-pre-overlay-focus-target failed: ${message}` };
+    }
+  });
+
+  ipcMain.handle('tile:izui:close-self', async (ev, args: { token: string }) => {
+    const grant = getGrantForToken(args?.token);
+    const check = checkIzuiAllowed(grant);
+    if (!check.ok) return { error: check.error };
+    const win = BrowserWindow.fromWebContents(ev.sender);
+    if (!win || win.isDestroyed()) {
+      return { success: false, error: 'Window not found' };
+    }
+    try {
+      // Import dynamically to avoid loading windows.js at test time.
+      const { closeOrHideWindow } = await import('./windows.js');
+      closeOrHideWindow(win.id);
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `izui:close-self failed: ${message}` };
+    }
+  });
+
+  // ── Datastore: extract-page-content (strict) ──────────────────────
+  //
+  // Entities-specific: extracts DOM content from a live webContents by
+  // URL. The v1-compat channel (`extract-page-content` in ipc.ts)
+  // performs no capability check. Gate this on the existing `datastore`
+  // capability — it's the closest semantic fit (reading from user-owned
+  // browsing state, the primary datastore domain). No sub-capability
+  // gate because the op is effectively read-only and entities is the
+  // only consumer.
+
+  ipcMain.handle('tile:datastore:extract-page-content', async (_event, args: {
+    token: string;
+    url: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.capabilities.datastore) {
+      return { success: false, error: 'Datastore capability not granted' };
+    }
+
+    const url = args?.url;
+    if (!url) return { success: false, error: 'URL required' };
+
+    try {
+      const normalizedTarget = normalizeUrl(url);
+      const allContents = webContents.getAllWebContents();
+
+      let target = allContents.find(wc => {
+        try {
+          const wcUrl = wc.getURL();
+          if (!wcUrl || wcUrl.startsWith('peek://') || wcUrl === 'about:blank') return false;
+          return wcUrl === url || normalizeUrl(wcUrl) === normalizedTarget;
+        } catch { return false; }
+      });
+
+      if (!target) {
+        try {
+          const targetParsed = new URL(url);
+          const targetOriginPath = targetParsed.origin + targetParsed.pathname;
+          target = allContents.find(wc => {
+            try {
+              const wcUrl = wc.getURL();
+              if (!wcUrl || wcUrl.startsWith('peek://') || wcUrl === 'about:blank') return false;
+              const wcParsed = new URL(wcUrl);
+              return wcParsed.origin + wcParsed.pathname === targetOriginPath;
+            } catch { return false; }
+          });
+        } catch { /* invalid URL, skip */ }
+      }
+
+      if (!target) {
+        try {
+          const targetDomain = new URL(url).hostname.replace(/^www\./, '');
+          const candidates = allContents.filter(wc => {
+            try {
+              const wcUrl = wc.getURL();
+              if (!wcUrl || !wcUrl.startsWith('http')) return false;
+              const wcDomain = new URL(wcUrl).hostname.replace(/^www\./, '');
+              return wcDomain === targetDomain;
+            } catch { return false; }
+          });
+          if (candidates.length === 1) target = candidates[0];
+        } catch { /* invalid URL, skip */ }
+      }
+
+      if (!target) {
+        return { success: false, error: 'No webContents found for URL' };
+      }
+
+      const result = await target.executeJavaScript(`
+        (function() {
+          return {
+            html: document.documentElement.outerHTML,
+            text: document.body ? document.body.innerText.slice(0, 50000) : '',
+            title: document.title || ''
+          };
+        })();
+      `);
+
+      return { success: true, data: result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
     }
   });
 
