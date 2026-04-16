@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateItemFavicon, updateModeForNavigation, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCmd } from './cmd-glue.js';
+import { initHud } from './hud-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles } from './tile-launcher.js';
@@ -79,14 +80,15 @@ let extensionHostWindow: BrowserWindow | null = null;
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
 //
-// NOTE: 'cmd' was removed from this list when it was extracted from features/
-// into core app code (app/cmd/). It's now loaded via initCmd() from cmd-glue.ts,
-// which runs before feature loading so the command registry is ready for
-// feature command registrations.
-const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'hud', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
+// NOTE: 'cmd' and 'hud' were removed from this list when they were extracted
+// from features/ into core app code (app/cmd/ and app/hud/). They're now
+// loaded via initCmd() / initHud() from cmd-glue.ts / hud-glue.ts, which run
+// before feature loading so the command registry is ready for feature command
+// registrations.
+const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
-const EAGER_EXTENSION_IDS = new Set(['hud', 'entities']);
+const EAGER_EXTENSION_IDS = new Set(['entities']);
 
 // Track which lazy extensions have been loaded
 const lazyExtensionLoaded = new Set<string>();
@@ -262,13 +264,8 @@ export async function initialize(): Promise<void> {
     (app as any).on('did-become-active', () => {
       getIzuiCoordinator().setAppFocused(true);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
-      // Show alwaysOnTop overlay windows (e.g. HUD) when app regains focus
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed() && win.isAlwaysOnTop() && (win as any).__hudHidden) {
-          win.showInactive();
-          (win as any).__hudHidden = false;
-        }
-      }
+      // Showing alwaysOnTop overlay windows (e.g. HUD) when the app regains
+      // focus is handled by hud-glue.ts.
     });
     (app as any).on('did-resign-active', () => {
       const coordBefore = getIzuiCoordinator();
@@ -308,15 +305,8 @@ export async function initialize(): Promise<void> {
         DEBUG && console.log('[izui] Skipping overlay close in did-resign-active (within cooldown: exit=', coordinator.isWithinOverlayExitCooldown(), 'entry=', coordinator.isWithinOverlayEntryCooldown(), ')');
       }
 
-      // Hide non-focusable alwaysOnTop overlay windows (e.g. HUD) when app loses focus.
-      // Skip focusable alwaysOnTop windows (e.g. cmd panel) — they have their own
-      // blur handler for hide/show and would blink (show-hide-show) if hidden here.
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed() && win.isAlwaysOnTop() && win.isVisible() && !win.isFocusable()) {
-          win.hide();
-          (win as any).__hudHidden = true;
-        }
-      }
+      // Hiding non-focusable alwaysOnTop overlay windows (e.g. HUD) when the
+      // app loses focus is handled by hud-glue.ts.
     });
   } else {
     // Non-macOS fallback: use browser-window-focus/blur with focused-window check
@@ -1428,6 +1418,12 @@ export async function loadExtensions(): Promise<number> {
   const host = await createExtensionHostWindow();
   await initCmd({ host, loadExtInHost, waitForExtLoaded });
 
+  // Load HUD right after cmd — it's core app infrastructure like cmd, and
+  // registers the `hud` command + CmdOrCtrl+H shortcut via the portable api.
+  // loadExtInHost/waitForExtLoaded populates loadedConsolidatedExtensions so
+  // getRunningExtensions() still reports hud.
+  await initHud({ host, loadExtInHost, waitForExtLoaded });
+
   // ── V2 Feature Startup ──
   // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
   // V2 manifests are handled by the tile launcher; v1 manifests fall through to legacy loading below.
@@ -1438,7 +1434,6 @@ export async function loadExtensions(): Promise<number> {
       builtinFeaturesDir: featuresDir,
       tilePreloadPath,
       eagerIds: EAGER_EXTENSION_IDS,
-      peekVersion: app.getVersion(),
       onV1Feature: (id: string, _featurePath: string, _manifest: unknown) => {
         // Collect v1 feature IDs — they'll be loaded via the legacy path below
         v1FeatureIds.add(id);
@@ -1564,7 +1559,8 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
   // Add consolidated extensions that have actually loaded (in extension host iframes).
   // Iterates loadedConsolidatedExtensions (populated by did-frame-finish-load), which
   // includes both CONSOLIDATED_EXTENSION_IDS features AND core pseudo-extensions like
-  // cmd that are loaded by core glue (cmd-glue.ts) rather than by the feature system.
+  // cmd and hud that are loaded by core glue (cmd-glue.ts, hud-glue.ts) rather than
+  // by the feature system.
   if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
     for (const extId of loadedConsolidatedExtensions) {
       if (!isBuiltinExtensionEnabled(extId)) continue;
