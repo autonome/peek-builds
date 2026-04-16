@@ -258,11 +258,13 @@ export function getExtensionPath(id: string): string | null {
  * The protocol request handler - extracted so it can be registered on multiple sessions
  */
 async function handleProtocolRequest(req: Request): Promise<Response> {
+  // Capture host up-front so an unexpected error below still lets us apply
+  // CSP to the fallback 404 when the request targets a tile origin.
+  let host: string | null = null;
   try {
-    let { host, pathname } = new URL(req.url);
-
-    // trim leading slash
-    pathname = pathname.replace(/^\//, '');
+    const url = new URL(req.url);
+    host = url.host;
+    let pathname = url.pathname.replace(/^\//, '');
 
     // Handle bare imports (e.g., peek://lit or peek://app/components/lit)
     // When modules import 'lit', browser resolves relative to module URL
@@ -628,7 +630,18 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     return fetchFile(absolutePath, req.url);
   } catch (err) {
     console.error(`[protocol] Failed to handle ${req.url}:`, err);
-    return new Response('Not Found', { status: 404 });
+    const errResponse = new Response('Not Found', { status: 404 });
+    if (host) {
+      const tileManifest = getTileManifest(host);
+      const isTileOrigin = tileManifest !== null || isLazyTileRegistered(host);
+      if (isTileOrigin) {
+        const csp = tileManifest
+          ? buildCSPForTile(tileManifest.capabilities)
+          : buildDefaultCSP();
+        return injectCSPHeader(errResponse, csp);
+      }
+    }
+    return errResponse;
   }
 }
 
