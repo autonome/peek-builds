@@ -18,7 +18,6 @@
   },
   "scripts": {
     "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "agent-setup": "git -C .agent-workflow pull 2>/dev/null || git clone https://tangled.sh/burrito.space/multi-agent-workflow .agent-workflow && echo 'Agent workflow updated!'",
     "//-- Development (BACKEND=electron|tauri, defaults to electron) --//": "",
     "dev": "[ \"${BACKEND:-}\" = \"tauri\" ] && yarn dev:tauri || yarn dev:electron",
     "dev:electron": "./scripts/timed.sh sh -c 'yarn check:native && yarn build && DEBUG=1 electron .'",

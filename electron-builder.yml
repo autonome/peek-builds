@@ -25,8 +25,6 @@ files:
   - "!.yarn/**"
   - "!.claude"
   - "!.claude/**"
-  # Exclude agent workflow (symlink to external directory)
-  - "!.agent-workflow"
   - "!.agent-task.md"
   # Exclude agent workspaces (CRITICAL - these are full project copies)
   - "!tmp"

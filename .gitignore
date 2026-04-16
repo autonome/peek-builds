@@ -33,10 +33,12 @@ playwright-report/
 # Claude Code local settings
 .claude/
 
-# Multi-agent workflow (cloned via yarn agent-setup)
-.agent-workflow/
+# Agent task scratch files
 .agent-task.md
 /CLAUDE.md
+
+# Isolated agent workspaces (created by scripts/spawn-isolated-agent.sh)
+../mpeek-agent-*
 
 # Backup files
 *.bak
@@ -64,4 +66,3 @@ package.js
 protocol-imports.diff
 test/
 tmp/
-.agent-workflow
