@@ -64,12 +64,23 @@ import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 import { invokeWindowOpen } from './ipc.js';
+import {
+  registerGlobalShortcut,
+  unregisterGlobalShortcut,
+  registerLocalShortcut,
+  unregisterLocalShortcut,
+} from './shortcuts.js';
+import { checkShortcutAllowed } from './tile-shortcuts-enforcement.js';
 import { getActiveThemeId } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
 
 // Re-export for test access — keeps the public enforcement API on tile-ipc.
 export { validateTileDatastoreRequest } from './tile-datastore-scope.js';
+
+// Re-export the strict-shortcut helper so older callers / tests can still
+// import from 'tile-ipc' even though the logic lives in its own pure module.
+export { checkShortcutAllowed, type ShortcutCheckResult } from './tile-shortcuts-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -423,6 +434,116 @@ export function registerTileIpcHandlers(): void {
       topic,
       args.error ? { error: args.error } : { result: args.result }
     );
+  });
+
+  // ── Shortcuts (strict) ────────────────────────────────────────────
+  //
+  // Strict tile:shortcuts:* handlers that enforce the `shortcuts`
+  // capability (§HIGH bypass #2 in the security audit). The legacy
+  // `registershortcut` / `unregistershortcut` channels remain on ipc.ts
+  // as the v1-compat surface and are NOT token-gated — tile-preload
+  // routes through these strict handlers when the tile's manifest
+  // declares the `shortcuts` capability.
+  //
+  // Validation order:
+  //   1. Token must resolve to a valid grant.
+  //   2. Grant must include the `shortcuts` capability.
+  //   3. If the capability is a `ShortcutsCapability` object with a
+  //      `keys` allowlist, the shortcut must appear in that list.
+  //
+  // On validation failure we reply with `{ error }` on `replyTopic`
+  // if provided so the renderer can surface the rejection; we still
+  // return early (no registration performed).
+
+  ipcMain.on('tile:shortcuts:register', (ev, args: {
+    token: string;
+    source?: string;
+    shortcut: string;
+    replyTopic?: string;
+    global?: boolean;
+    mode?: string;
+    options?: { global?: boolean; mode?: string };
+  }) => {
+    // Accept either top-level global/mode or nested options.{global,mode}
+    // so renderer callers can pick whichever shape they want.
+    const opts = args.options || {};
+    const isGlobal = args.global === true || opts.global === true;
+    const modeStr = args.mode ?? opts.mode;
+
+    const replyError = (message: string): void => {
+      if (args.replyTopic) {
+        try {
+          if (!ev.sender.isDestroyed()) {
+            ev.reply(args.replyTopic, { error: message });
+          }
+        } catch {
+          // swallow — reply failures are non-fatal for registration rejection
+        }
+      }
+    };
+
+    const grant = getGrantForToken(args.token);
+    const check = checkShortcutAllowed(grant, args.shortcut);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] shortcuts:register rejected: ${check.error}`);
+      replyError(check.error);
+      return;
+    }
+    // check.ok guarantees grant is non-null per checkShortcutAllowed contract.
+    const activeGrant = grant as CapabilityGrant;
+    const source = args.source || `peek://${activeGrant.tileId}/background`;
+
+    // Callback mirrors ipc.ts registershortcut: reply to the sender frame
+    // on replyTopic when the shortcut fires so the renderer can invoke the
+    // user-supplied callback. Guard against destroyed senders (tile
+    // reload / iframe removed).
+    const callback = (): void => {
+      DEBUG && console.log('[tile-ipc] shortcut fired', args.shortcut, 'for', activeGrant.tileId);
+      if (!args.replyTopic) return;
+      try {
+        if (!ev.sender.isDestroyed()) {
+          ev.reply(args.replyTopic, { foo: 'bar' });
+        }
+      } catch (err) {
+        DEBUG && console.log('[tile-ipc] shortcut reply failed:', err);
+      }
+    };
+
+    if (isGlobal) {
+      registerGlobalShortcut(args.shortcut, source, callback);
+    } else {
+      const modeConditions = modeStr ? { majorMode: modeStr as import('./datastore.js').MajorModeId } : undefined;
+      registerLocalShortcut(args.shortcut, source, callback, modeConditions);
+    }
+  });
+
+  ipcMain.on('tile:shortcuts:unregister', (_ev, args: {
+    token: string;
+    source?: string;
+    shortcut: string;
+    global?: boolean;
+    mode?: string;
+    options?: { global?: boolean; mode?: string };
+  }) => {
+    const opts = args.options || {};
+    const isGlobal = args.global === true || opts.global === true;
+    const modeStr = args.mode ?? opts.mode;
+
+    const grant = getGrantForToken(args.token);
+    const check = checkShortcutAllowed(grant, args.shortcut);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] shortcuts:unregister rejected: ${check.error}`);
+      return;
+    }
+    const activeGrant = grant as CapabilityGrant;
+    const source = args.source || `peek://${activeGrant.tileId}/background`;
+
+    if (isGlobal) {
+      unregisterGlobalShortcut(args.shortcut);
+    } else {
+      const modeConditions = modeStr ? { majorMode: modeStr as import('./datastore.js').MajorModeId } : undefined;
+      unregisterLocalShortcut(args.shortcut, source, modeConditions);
+    }
   });
 
   // ── Window Management ──
