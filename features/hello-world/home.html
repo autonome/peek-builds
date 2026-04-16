@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <title>Hello World Trace</title>
+  <style>
+    body {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      margin: 0;
+      padding: 16px;
+      background: #111;
+      color: #eee;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    h1 { font-size: 14px; margin: 0 0 12px; color: #6f6; }
+    .entry { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
+    .ok { color: #6f6; }
+    .fail { color: #f66; }
+    .info { color: #99f; }
+    .warn { color: #fc6; }
+    .header { color: #ccc; border-top: 1px solid #333; margin-top: 8px; padding-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Hello World Trace</h1>
+  <div id="output"></div>
+
+<script type="module">
+  const out = document.getElementById('output');
+
+  function log(msg, cls = 'info') {
+    const div = document.createElement('div');
+    div.className = 'entry ' + cls;
+    div.textContent = msg;
+    out.appendChild(div);
+    console.log('[hello-world:home]', msg);
+  }
+
+  function header(msg) {
+    const div = document.createElement('div');
+    div.className = 'entry header';
+    div.textContent = '── ' + msg + ' ──';
+    out.appendChild(div);
+    console.log('[hello-world:home] ──', msg, '──');
+  }
+
+  // ── Phase 1: inspect api surface ──
+  header('window.app surface inspection');
+
+  const api = window.app;
+  log('window.app present: ' + !!api, api ? 'ok' : 'fail');
+  if (!api) {
+    log('FATAL: no preload injected. Stopping.', 'fail');
+    throw new Error('no api');
+  }
+
+  log('api.initialize is function: ' + (typeof api.initialize === 'function'), typeof api.initialize === 'function' ? 'ok' : 'fail');
+  log('api.pubsub present: ' + !!api.pubsub, api.pubsub ? 'ok' : 'fail');
+  log('api.pubsub.subscribe is function: ' + (typeof api.pubsub?.subscribe === 'function'), typeof api.pubsub?.subscribe === 'function' ? 'ok' : 'fail');
+  log('api.pubsub.publish is function: ' + (typeof api.pubsub?.publish === 'function'), typeof api.pubsub?.publish === 'function' ? 'ok' : 'fail');
+  log('api.subscribe is function: ' + (typeof api.subscribe === 'function'), typeof api.subscribe === 'function' ? 'ok' : 'fail');
+  log('api.publish is function: ' + (typeof api.publish === 'function'), typeof api.publish === 'function' ? 'ok' : 'fail');
+  log('api.datastore present: ' + !!api.datastore, api.datastore ? 'ok' : 'fail');
+  log('api.datastore.queryItems is function: ' + (typeof api.datastore?.queryItems === 'function'), typeof api.datastore?.queryItems === 'function' ? 'ok' : 'fail');
+  log('api.scopes present: ' + !!api.scopes, api.scopes ? 'ok' : 'fail');
+  log('api.getTileId: ' + (api.getTileId ? api.getTileId() : 'n/a'));
+
+  // ── Phase 2: initialize ──
+  header('initialize');
+  if (typeof api.initialize === 'function') {
+    log('awaiting api.initialize()...');
+    try {
+      const initResult = await api.initialize();
+      log('initialize resolved: ' + JSON.stringify(initResult).slice(0, 200), 'ok');
+    } catch (err) {
+      log('initialize THREW: ' + (err.message || err), 'fail');
+    }
+  } else {
+    log('skipping — no api.initialize (legacy preload)', 'warn');
+  }
+
+  // ── Phase 3: query datastore ──
+  header('datastore query (before subscribe)');
+  if (api.datastore?.queryItems) {
+    try {
+      const q = await api.datastore.queryItems({});
+      if (q && typeof q === 'object' && 'success' in q) {
+        log('queryItems shape {success,data}: success=' + q.success + ' count=' + (q.data?.length ?? 'n/a'), q.success ? 'ok' : 'fail');
+        if (q.error) log('error: ' + q.error, 'fail');
+      } else if (Array.isArray(q)) {
+        log('queryItems shape array: count=' + q.length, 'ok');
+      } else {
+        log('queryItems unknown shape: ' + JSON.stringify(q).slice(0, 200), 'warn');
+      }
+    } catch (err) {
+      log('queryItems THREW: ' + (err.message || err), 'fail');
+    }
+  } else {
+    log('skipping — no api.datastore.queryItems', 'fail');
+  }
+
+  // ── Phase 4: subscribe ──
+  header('pubsub subscribe');
+  if (api.pubsub?.subscribe) {
+    try {
+      const unsub = api.pubsub.subscribe('item:created', (msg) => {
+        log('event item:created received: ' + JSON.stringify(msg).slice(0, 200), 'ok');
+      }, api.scopes?.GLOBAL);
+      log('pubsub.subscribe returned: ' + (typeof unsub), typeof unsub === 'function' ? 'ok' : 'warn');
+    } catch (err) {
+      log('pubsub.subscribe THREW: ' + (err.message || err), 'fail');
+    }
+  } else {
+    log('skipping — no api.pubsub.subscribe', 'fail');
+  }
+
+  if (api.subscribe) {
+    try {
+      api.subscribe('hello:ping', (msg) => {
+        log('event hello:ping received: ' + JSON.stringify(msg).slice(0, 200), 'ok');
+      }, api.scopes?.GLOBAL);
+      log('api.subscribe(hello:ping) registered', 'ok');
+    } catch (err) {
+      log('api.subscribe THREW: ' + (err.message || err), 'fail');
+    }
+  }
+
+  // ── Phase 5: publish a ping ──
+  header('pubsub publish');
+  if (api.pubsub?.publish) {
+    try {
+      api.pubsub.publish('hello:ping', { ts: Date.now() }, api.scopes?.GLOBAL);
+      log('pubsub.publish hello:ping fired (expect echo above)', 'ok');
+    } catch (err) {
+      log('pubsub.publish THREW: ' + (err.message || err), 'fail');
+    }
+  } else {
+    log('skipping — no api.pubsub.publish', 'fail');
+  }
+
+  // ── Phase 6: second query after init+subscribe ──
+  header('datastore query (after init+subscribe)');
+  if (api.datastore?.queryItems) {
+    try {
+      const q = await api.datastore.queryItems({});
+      log('re-query returned count=' + (q?.data?.length ?? q?.length ?? 'unknown'), 'ok');
+    } catch (err) {
+      log('re-query THREW: ' + (err.message || err), 'fail');
+    }
+  }
+
+  header('trace complete');
+  log('see console for full trace');
+</script>
+</body>
+</html>

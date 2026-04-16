@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <title>Hello World Background</title>
+</head>
+<body>
+<script type="module">
+  const api = window.app;
+  const extId = 'hello-world';
+
+  console.log('[hello-world:bg] background.html loaded');
+  console.log('[hello-world:bg] api present:', !!api);
+  console.log('[hello-world:bg] api.initialize is function:', typeof api?.initialize);
+
+  if (api && typeof api.initialize === 'function') {
+    console.log('[hello-world:bg] calling api.initialize()...');
+    try {
+      const result = await api.initialize();
+      console.log('[hello-world:bg] initialize resolved:', result);
+    } catch (err) {
+      console.error('[hello-world:bg] initialize threw:', err);
+    }
+  } else {
+    console.warn('[hello-world:bg] no api.initialize — running under legacy preload?');
+  }
+
+  console.log('[hello-world:bg] ready');
+
+  if (api && typeof api.onShutdown === 'function') {
+    api.onShutdown(() => {
+      console.log(`[hello-world:bg] shutdown received`);
+    });
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+{
+  "manifestVersion": 2,
+  "id": "hello-world",
+  "shortname": "hello-world",
+  "name": "Hello World",
+  "description": "Minimal v2 tile for diagnostic tracing",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "width": 700,
+        "height": 900,
+        "title": "Hello World Trace"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": ["hello:ping", "item:created", "item:deleted"]
+    },
+    "datastore": {
+      "tables": ["items"]
+    },
+    "window": { "create": true },
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "hello",
+      "description": "Open hello-world diagnostic window",
+      "action": {
+        "type": "window",
+        "url": "peek://ext/hello-world/home.html",
+        "options": { "width": 700, "height": 900, "title": "Hello World Trace" }
+      }
+    }
+  ]
+}
