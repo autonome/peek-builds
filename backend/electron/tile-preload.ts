@@ -281,6 +281,11 @@ function buildAPI(): Record<string, unknown> {
   // second `pubsub:cmd:execute:{name}` listener).
   const registeredCommands = new Map<string, (params: unknown) => unknown>();
 
+  function hasCommandsCapability(): boolean {
+    const cc = grantedCapabilities?.commands;
+    return cc === true;
+  }
+
   api.commands = {
     register: (nameOrCommand: unknown, maybeHandler?: (params: unknown) => unknown) => {
       if (!tokenValid) {
@@ -411,6 +416,44 @@ function buildAPI(): Record<string, unknown> {
           error: error || undefined,
         });
       });
+    },
+
+    /**
+     * Unregister a previously-registered command. Removes the local
+     * handler and publishes `cmd:unregister` so the cmd panel drops
+     * it from its registry.
+     *
+     * Dual-path:
+     *   - STRICT: when the tile declared the `commands` capability,
+     *     route through the gated `tile:commands:unregister` channel.
+     *   - V1-COMPAT: fall back to a direct `publish(cmd:unregister)`
+     *     on GLOBAL scope — matches the v1 preload.js behaviour.
+     */
+    unregister: (name: unknown) => {
+      if (typeof name !== 'string' || name.length === 0) {
+        console.error('[tile-preload] commands.unregister: name is required');
+        return;
+      }
+      // Drop local handler so repeated registers don't leak state.
+      registeredCommands.delete(name);
+
+      if (hasCommandsCapability() && tokenValid) {
+        ipcRenderer.send('tile:commands:unregister', {
+          token: tileToken,
+          name,
+        });
+        return;
+      }
+      // V1-compat path: publish cmd:unregister on GLOBAL scope.
+      if (tokenValid) {
+        ipcRenderer.send('tile:pubsub:publish', {
+          token: tileToken,
+          source: sourceAddress,
+          scope: 3, // GLOBAL
+          topic: 'cmd:unregister',
+          data: { name },
+        });
+      }
     },
   };
 
@@ -579,6 +622,119 @@ function buildAPI(): Record<string, unknown> {
         id: typeof id === 'number' ? id : undefined,
         ignore,
         forward: options?.forward === true,
+      });
+    },
+
+    /**
+     * Center a window on its display. Strict path requires
+     * `window.manage`; otherwise falls back to legacy `window-center`.
+     */
+    center: (id?: number) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:center', {
+          token: tileToken,
+          id,
+        });
+      }
+      return ipcRenderer.invoke('window-center', { id });
+    },
+
+    /**
+     * Center every visible window on its nearest display. Strict path
+     * requires `window.manage`; otherwise falls back to legacy
+     * `window-center-all`.
+     */
+    centerAll: () => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:center-all', {
+          token: tileToken,
+        });
+      }
+      return ipcRenderer.invoke('window-center-all');
+    },
+
+    /**
+     * Toggle maximize on a window. Strict path requires `window.manage`;
+     * otherwise falls back to legacy `window-maximize`.
+     */
+    maximize: (id?: number) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:maximize', {
+          token: tileToken,
+          id,
+        });
+      }
+      return ipcRenderer.invoke('window-maximize', { id });
+    },
+
+    /**
+     * Toggle fullscreen on a window. Strict path requires `window.manage`;
+     * otherwise falls back to legacy `window-fullscreen`.
+     */
+    fullscreen: (id?: number) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:fullscreen', {
+          token: tileToken,
+          id,
+        });
+      }
+      return ipcRenderer.invoke('window-fullscreen', { id });
+    },
+
+    /**
+     * Get the last-focused visible window id. Read-only — strict path
+     * requires `window.query`; otherwise falls back to legacy
+     * `get-focused-visible-window-id`.
+     */
+    getFocusedVisibleWindowId: () => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:get-focused-visible-id', {
+          token: tileToken,
+        });
+      }
+      return ipcRenderer.invoke('get-focused-visible-window-id');
+    },
+
+    /**
+     * Set the overlay focus target — captures which window should be
+     * focused after an overlay closes. Strict path requires
+     * `window.manage`; otherwise falls back to legacy
+     * `window-set-overlay-focus-target`.
+     */
+    setOverlayFocusTarget: (targetWindowId: number) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:set-overlay-focus-target', {
+          token: tileToken,
+          targetWindowId,
+        });
+      }
+      return ipcRenderer.invoke('window-set-overlay-focus-target', {
+        targetWindowId,
+      });
+    },
+
+    /**
+     * Pin a window across macOS Spaces. Strict path requires
+     * `window.manage`; otherwise falls back to legacy
+     * `window-set-visible-on-all-workspaces`.
+     */
+    setVisibleOnAllWorkspaces: (
+      id: number | null | undefined,
+      visible: boolean,
+      options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
+    ) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:set-visible-on-all-workspaces', {
+          token: tileToken,
+          id: typeof id === 'number' ? id : undefined,
+          visible,
+          options,
+        });
+      }
+      return ipcRenderer.invoke('window-set-visible-on-all-workspaces', {
+        id: typeof id === 'number' ? id : undefined,
+        visible,
+        options: options || {},
       });
     },
   };
@@ -1427,6 +1583,14 @@ function buildAPI(): Record<string, unknown> {
   // through the strict handler (which enforces sender-ownership / the
   // `manage` flag). When it hasn't, we fall back to the un-gated legacy
   // channel — matching the dual-path policy of api.window.close().
+  //
+  // Note on api.window.close(): the strict path uses
+  // `ipcRenderer.send('tile:window:close', ...)` which is fire-and-forget
+  // — it returns `undefined`, NOT a Promise, and chaining `.catch()` on
+  // its return value will throw a TypeError. Callers that need a
+  // confirmation signal should use `api.window.exists(id)` afterwards
+  // or rely on the window-close pubsub event. This mirrors the v1
+  // preload.js behaviour where close was similarly fire-and-forget.
   api.closeWindow = wrapCompat('closeWindow', '(call)', (id?: unknown) => {
     if (hasWindowCapability()) {
       ipcRenderer.send('tile:window:close', {
@@ -1440,6 +1604,99 @@ function buildAPI(): Record<string, unknown> {
     }
     ipcRenderer.invoke('window-close', { id });
   });
+
+  // ── Screen (always available; read-only) ──────────────────────────
+  //
+  // Read-only display metadata. Tiles use this for initial window
+  // placement sizing — no gate is appropriate since the data is
+  // already exposed via the browser's `window.screen` globals. The
+  // strict IPC form returns the same shape as the legacy channel so
+  // callers that read `result.success && result.data` work unchanged.
+  api.screen = {
+    getPrimaryDisplay: () => {
+      if (tokenValid) {
+        return ipcRenderer.invoke('tile:screen:get-primary-display', {
+          token: tileToken,
+        });
+      }
+      // Fallback if called before initialize() — use legacy channel.
+      return ipcRenderer.invoke('screen-get-primary-display');
+    },
+  };
+
+  // ── Session (if granted) ──────────────────────────────────────────
+  //
+  // Session operations require the `session` capability. Minimal
+  // surface for now — only `saveSpaceWorkspaces`. Used by
+  // features/spaces and features/groups to persist per-space window
+  // layouts.
+  function hasSessionCapability(): boolean {
+    return grantedCapabilities?.session === true;
+  }
+
+  api.session = {
+    saveSpaceWorkspaces: () => {
+      if (hasSessionCapability() && tokenValid) {
+        return ipcRenderer.invoke('tile:session:save-space-workspaces', {
+          token: tileToken,
+        });
+      }
+      // V1-compat fallback: legacy ungated channel.
+      return ipcRenderer.invoke('save-space-workspaces');
+    },
+  };
+
+  // ── Escape (always available; no capability gate) ─────────────────
+  //
+  // Escape is a UX primitive. Every tile can register an onEscape
+  // callback — it's called when the main process dispatches an ESC
+  // event to this window. The callback returns `{ handled: true }`
+  // to tell the backend "I handled the ESC, don't close the window",
+  // or `{ handled: false }` (or undefined) to let the backend decide.
+  //
+  // Implementation: the existing `escape-pressed` IPC is shared with
+  // the v1 preload (windows.ts dispatches the same channel per-window
+  // regardless of preload variant). We listen to it here and invoke
+  // the tile's callback, replying on the provided responseChannel.
+  let tileEscapeCallback: (() => unknown) | null = null;
+  let tileEscapeInstalled = false;
+  api.escape = {
+    onEscape: (callback: () => unknown) => {
+      if (typeof callback !== 'function') {
+        tileEscapeCallback = null;
+        return;
+      }
+      tileEscapeCallback = callback;
+      // Signal opt-in to main (informational; drives first-use logging).
+      if (tokenValid) {
+        ipcRenderer.send('tile:escape:on-escape', { token: tileToken });
+      }
+      if (tileEscapeInstalled) return;
+      tileEscapeInstalled = true;
+      ipcRenderer.on('escape-pressed', async (
+        _event: unknown,
+        data: { responseChannel?: string },
+      ) => {
+        try {
+          let result: unknown = { handled: false };
+          if (tileEscapeCallback) {
+            result = await tileEscapeCallback();
+            if (result == null || typeof result !== 'object') {
+              result = { handled: false };
+            }
+          }
+          if (data?.responseChannel) {
+            ipcRenderer.send(data.responseChannel, result);
+          }
+        } catch (err) {
+          console.error('[tile-preload] escape handler threw:', err);
+          if (data?.responseChannel) {
+            ipcRenderer.send(data.responseChannel, { handled: false });
+          }
+        }
+      });
+    },
+  };
 
   // ── Log (always available) ──
 
