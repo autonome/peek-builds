@@ -82,7 +82,13 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [x] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
   - [x] Round 3 (complex): entities, spaces, groups, editor, lex, wonderwall, features-manager
   - **Phase 3 complete** — all 26 features migrated to strict capability-gated calls; v2 shim blocks dropped from v2 paths; v1 legacy fallback branches preserved pending Phase 4 shim removal
-- [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
+- [x] Phase 4 — removed v1-compat shims + hard-fail stubs; deleted v1 else-branches in 22 feature HTMLs; 54 new stub tests
+  - [ ] **Runtime-breaking** stub callers discovered in Phase 4 sweep — must fix before Phase 5:
+    - `features/pagewidgets-sample/background.js`: `api.publish/subscribe` (still v1 pattern)
+    - `features/files/background.js`: `api.files.open/save` — migrate to `api.dialogs.*` / `api.filesystem.*`
+    - `features/groups/background.js`: `api.settings.getExtKey('spaces', ...)` — add `settings.readForeign: ['spaces']` to manifest
+    - `features/tags/home.js`: `api.settings.getExtKey` — add `settings.readForeign` to manifest
+    - `features/features-manager/publish.js`: `api.settings.getExtKey('lex', 'session')` — add `settings.readForeign: ['lex']` to manifest
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
 
 ### Features-manager atproto plan phases (from `features/features-manager/PLAN.md`)
@@ -102,6 +108,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 Keep short — for recent context only. Prune after a few weeks.
 
+- 2026-04-16 Trimming Phase 4 closed: v1-compat shims removed, hard-fail stubs in their place, v1 else-branches deleted from 22 feature HTMLs (2218 tests passing)
 - 2026-04-16 Trimming Phase 3 gap-fill: new capabilities (escape/session/izui/oauth/sync/settings.readForeign); extended window ops; features admin; extract-page-content (2164 tests passing)
 - 2026-04-16 Trimming Phase 3 closed: all 26 features migrated to strict capabilities
 - 2026-04-16 Trimming Phase 2 closed: strict window + features IPC + settings-cleanup audit (2065 tests passing)
