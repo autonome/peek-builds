@@ -214,6 +214,34 @@ export interface FeaturesCapability {
   /** Allow enable / disable / remove of existing features. */
   manage?: boolean;
   /**
+   * Allow `feature-update:*` admin ops (check-all / apply / set-policy).
+   * Required for tiles that drive the update flow (features-manager).
+   */
+  update?: boolean;
+  /**
+   * Allow `feature-dev:*` admin ops (reload / validate / pick-directory /
+   * create). Required for tiles that scaffold and iterate on dev features.
+   */
+  dev?: boolean;
+  /**
+   * Allow `feature-publish:*` admin ops (list-local / read-feature-files).
+   * Required for tiles that publish features to AT Protocol.
+   */
+  publish?: boolean;
+  /**
+   * Allow `feature-devtools:open` to open DevTools on any installed tile.
+   * Privileged observability affordance — only management UIs should
+   * declare this.
+   */
+  devtools?: boolean;
+  /**
+   * Allow `feature-browse:list-by-publisher` to enumerate feature
+   * records hosted on a publisher's PDS. Gated on `browse` (defaults
+   * to the existing `read` action when omitted — see
+   * `tile-features-enforcement.ts`).
+   */
+  browse?: boolean;
+  /**
    * Optional allowlist of feature sources this tile may see or manage.
    * If omitted, all source types are permitted (subject to per-op
    * checks — e.g. builtin features cannot be removed).
@@ -251,6 +279,26 @@ export interface SettingsCapability {
    */
   readForeign?: string[];
 }
+
+/**
+ * IZUI capability: access to the IZUI (mode/overlay/role) coordinator.
+ *
+ * IZUI is Peek's role-based overlay system. Tiles that participate in
+ * overlay lifecycle (windows switcher, cmd panel, hud) need to read the
+ * coordinator state and — for builtin UI surfaces — ask their own window
+ * to close via `izui:close-self`.
+ *
+ * The capability is a simple boolean. Strict `tile:izui:*` handlers
+ * mirror the legacy `izui-*` IPC channels (defined in `ipc.ts`) and
+ * gate them all behind this single grant.
+ *
+ * Shape rationale: IZUI operations are tightly coupled and mostly
+ * read-only; there is no natural privilege boundary that warrants
+ * sub-caps. Any future split (e.g. `izui: { read, closeSelf }`) can be
+ * layered on top of this without breaking manifests that declared
+ * `izui: true`.
+ */
+export type IzuiCapability = boolean;
 
 /**
  * All capabilities a tile can request
@@ -292,6 +340,8 @@ export interface TileCapabilities {
    * future expansion to an object form with sub-flags.
    */
   session?: boolean;
+  /** Can query IZUI coordinator state / ask own window to close */
+  izui?: IzuiCapability;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────
@@ -679,15 +729,18 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
     }
 
     // Validate features capability shape — must be boolean or
-    // { read?: boolean; install?: boolean; manage?: boolean;
-    //   sources?: FeatureSourceType[] }
+    // { read?, install?, manage?, update?, dev?, publish?, devtools?,
+    //   browse?: boolean; sources?: FeatureSourceType[] }
     if (caps.features !== undefined) {
       const fc = caps.features;
       if (typeof fc === 'boolean') {
         // valid
       } else if (fc && typeof fc === 'object') {
         const fcObj = fc as Record<string, unknown>;
-        for (const flagKey of ['read', 'install', 'manage'] as const) {
+        for (const flagKey of [
+          'read', 'install', 'manage',
+          'update', 'dev', 'publish', 'devtools', 'browse',
+        ] as const) {
           if (fcObj[flagKey] !== undefined && typeof fcObj[flagKey] !== 'boolean') {
             errors.push({ path: `capabilities.features.${flagKey}`, message: `${flagKey} must be a boolean` });
           }
@@ -706,7 +759,14 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
           }
         }
       } else {
-        errors.push({ path: 'capabilities.features', message: 'features must be boolean or { read?, install?, manage?, sources? }' });
+        errors.push({ path: 'capabilities.features', message: 'features must be boolean or { read?, install?, manage?, update?, dev?, publish?, devtools?, browse?, sources? }' });
+      }
+    }
+
+    // Validate izui capability shape — must be boolean
+    if (caps.izui !== undefined) {
+      if (typeof caps.izui !== 'boolean') {
+        errors.push({ path: 'capabilities.izui', message: 'izui must be a boolean' });
       }
     }
 
@@ -1042,6 +1102,11 @@ export function resolveCapabilities(
   // Session: grant as requested (boolean-only for now).
   if (requested.session) {
     granted.session = true;
+  }
+
+  // IZUI: boolean grant. Passes through 1:1.
+  if (requested.izui) {
+    granted.izui = true;
   }
 
   return { tileId, capabilities: granted, denied };
