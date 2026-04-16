@@ -248,20 +248,20 @@ function handlePageLoad(msg) {
           }))
         }, api.scopes.GLOBAL);
 
-        // Update context if context API is available
-        if (api.context && api.context.set) {
-          try {
-            await api.context.set('entities', entities.map(e => ({
-              id: e.id,
-              name: e.name,
-              type: e.entityType,
-              confidence: e.confidence
-            })), {
-              metadata: { url, extractedAt: Date.now() }
-            });
-          } catch (err) {
-            console.warn('[entities] Context update failed:', err.message);
-          }
+        // Update context with the latest extracted entities for this window.
+        // The `context` capability is declared in the manifest with
+        // read/write allowlisted to the `entities` key.
+        try {
+          await api.context.set('entities', entities.map(e => ({
+            id: e.id,
+            name: e.name,
+            type: e.entityType,
+            confidence: e.confidence
+          })), {
+            metadata: { url, extractedAt: Date.now() }
+          });
+        } catch (err) {
+          console.warn('[entities] Context update failed:', err.message);
         }
       }
     } catch (err) {

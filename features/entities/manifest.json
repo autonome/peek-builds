@@ -54,6 +54,10 @@
       "create": true,
       "query": true
     },
+    "context": {
+      "read": ["entities"],
+      "write": ["entities"]
+    },
     "commands": true
   },
   "commands": [
