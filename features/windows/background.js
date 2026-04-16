@@ -28,11 +28,9 @@ let windowsViewId = null;
  * Load settings from datastore
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
-  if (result.success && result.data) {
-    return {
-      prefs: result.data.prefs || defaults.prefs
-    };
+  const result = await api.settings.get('prefs');
+  if (result && !result.error && result.value) {
+    return { prefs: result.value };
   }
   return { prefs: defaults.prefs };
 };
@@ -170,7 +168,7 @@ const init = async () => {
   initCommands();
 
   // Track when the windows view is closed so we know to recreate it
-  api.subscribe('window:closed', async (msg) => {
+  api.pubsub.subscribe('window:closed', async (msg) => {
     if (msg?.id === windowsViewId) {
       debug && console.log('[ext:windows] Windows view closed');
       windowsViewId = null;

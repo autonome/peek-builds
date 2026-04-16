@@ -20,15 +20,6 @@
 
   if (hasPeekAPI && isTileV2) {
     // ── V2 Tile Runtime ──
-    if (api.pubsub && !api.publish) {
-      api.publish = api.pubsub.publish;
-      api.subscribe = api.pubsub.subscribe;
-    }
-
-    if (api.settings && !api.settings.getExtKey) {
-      api.settings.getExtKey = (extId, key) => api.settings.get(`${extId}.${key}`);
-    }
-
     console.log(`[ext:${extId}] initializing v2 tile`);
     await api.initialize();
 
@@ -54,7 +45,7 @@
     const registeredTopics = Object.keys(window._cmdHandlers || {})
       .map(name => `cmd:execute:${name}`);
 
-    api.publish('ext:ready', {
+    api.pubsub.publish('ext:ready', {
       id: extId,
       registeredTopics,
       manifest: {
@@ -64,14 +55,14 @@
       }
     }, api.scopes.SYSTEM);
 
-    api.subscribe('app:shutdown', () => {
+    api.pubsub.subscribe('app:shutdown', () => {
       console.log(`[ext:${extId}] received shutdown`);
       if (extension.uninit) {
         extension.uninit();
       }
     }, api.scopes.SYSTEM);
 
-    api.subscribe(`ext:${extId}:shutdown`, () => {
+    api.pubsub.subscribe(`ext:${extId}:shutdown`, () => {
       console.log(`[ext:${extId}] received extension shutdown`);
       if (extension.uninit) {
         extension.uninit();
