@@ -48,7 +48,13 @@
         "cmd:register",
         "cmd:unregister",
         "item:created",
+        "item:deleted",
+        "tag:item-added",
         "tag:item-removed",
+        "tag:created",
+        "tag:renamed",
+        "tag:color-changed",
+        "sync:pull-completed",
         "window:focused",
         "window:closed",
         "app:focus-changed",
@@ -57,6 +63,12 @@
     },
     "datastore": {
       "tables": ["tags", "items", "item_tags"]
+    },
+    "context": {
+      "read": ["mode"],
+      "write": ["mode"],
+      "modes": true,
+      "queryWindows": true
     },
     "window": {
       "create": true,
