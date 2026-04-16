@@ -8,6 +8,8 @@
  * Expected collection: space.peek.feature.release
  */
 
+import crypto from 'node:crypto';
+
 import type {
   TileManifestV2,
 } from './tile-manifest.js';
@@ -101,6 +103,52 @@ export function parseAtUri(uri: string): AtUriParts {
   }
 
   return { repo, collection, rkey };
+}
+
+// ─── CID Computation ────────────────────────────────────────────────
+
+// RFC 4648 base32 alphabet (lowercase) — used by multibase 'b' prefix.
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+/**
+ * Encode a byte buffer as base32-lowercase without padding (RFC 4648).
+ * Matches multibase encoding with prefix 'b' used in CIDv1 string form.
+ */
+function encodeBase32NoPad(bytes: Uint8Array): string {
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out += BASE32_ALPHABET[(value >> bits) & 31];
+    }
+  }
+  if (bits > 0) {
+    out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+  return out;
+}
+
+/**
+ * Compute a CIDv1 string for a byte buffer, using:
+ *   - codec: raw (0x55)
+ *   - multihash: sha2-256 (0x12) with 32-byte digest (0x20)
+ *   - multibase: base32-lowercase ('b' prefix)
+ *
+ * This matches how AT Protocol blobs are identified. The resulting
+ * string starts with `bafkrei` for any 32-byte sha256 raw CID.
+ */
+export function computeCidV1Sha256Raw(bytes: Buffer | Uint8Array): string {
+  const digest = crypto.createHash('sha256').update(bytes).digest();
+  // CIDv1 prefix bytes: version 0x01, codec 0x55 (raw), mh-code 0x12 (sha2-256), mh-length 0x20 (32)
+  const cidBytes = Buffer.concat([
+    Buffer.from([0x01, 0x55, 0x12, 0x20]),
+    digest,
+  ]);
+  return 'b' + encodeBase32NoPad(cidBytes);
 }
 
 // ─── Identity Resolution ────────────────────────────────────────────
@@ -271,8 +319,10 @@ export class AtprotoSource implements TileSource {
       throw new Error('Record missing bundle or bundle.files array');
     }
 
-    // 6. Download manifest blob and parse as TileManifestV2
+    // 6. Download manifest blob and parse as TileManifestV2.
+    //    Verify CID matches the record's manifest ref.
     const manifestBuffer = await getBlob(pdsUrl, did, record.manifest.ref.$link);
+    verifyBlobCid('manifest.json', manifestBuffer, record.manifest.ref.$link);
     const manifestJson = manifestBuffer.toString('utf-8');
 
     let manifestRaw: Record<string, unknown>;
@@ -332,11 +382,15 @@ export class AtprotoSource implements TileSource {
   /**
    * Fetch an AT URI — downloads all bundle files and returns a TileBundle.
    * This is the full install payload.
+   *
+   * Each downloaded blob is CID-verified against the record's declared ref.
+   * On any mismatch the whole install is rejected before returning — callers
+   * should not need to re-check.
    */
   async fetch(atUri: string): Promise<TileBundle> {
     const resolved = await this.resolveInternal(atUri);
 
-    // Download each file blob from PDS
+    // Download each file blob from PDS and verify CID matches the record.
     const files = new Map<string, Buffer>();
 
     for (const fileEntry of resolved.record.bundle.files) {
@@ -344,11 +398,17 @@ export class AtprotoSource implements TileSource {
         throw new Error(`Invalid file entry in bundle: missing path or blob ref`);
       }
 
+      const declaredCid = fileEntry.blob.ref.$link;
       const fileBuffer = await getBlob(
         resolved.pdsUrl,
         resolved.did,
-        fileEntry.blob.ref.$link
+        declaredCid
       );
+
+      // Data-integrity gate: reject the whole install if any blob's bytes
+      // don't hash to the CID the record promised. This protects against a
+      // PDS (or MITM) swapping out bytes while keeping the record intact.
+      verifyBlobCid(fileEntry.path, fileBuffer, declaredCid);
 
       files.set(fileEntry.path, fileBuffer);
     }
@@ -365,4 +425,31 @@ export class AtprotoSource implements TileSource {
       files,
     };
   }
+}
+
+// ─── CID Verification Helper ────────────────────────────────────────
+
+/**
+ * Verify a downloaded buffer's bytes hash to the given CID.
+ *
+ * We only know how to compute one CID flavor (CIDv1, raw codec, sha2-256),
+ * which is the shape AT Protocol uses for blobs. If the record declares
+ * a CID in a different flavor we fall back to string comparison — rejecting
+ * only on a clear mismatch with our computed form.
+ *
+ * @throws Error on mismatch, with the path of the offending file.
+ */
+function verifyBlobCid(label: string, bytes: Buffer, declaredCid: string): void {
+  if (!declaredCid || typeof declaredCid !== 'string') {
+    throw new Error(`Blob "${label}" has no declared CID to verify against`);
+  }
+  const actual = computeCidV1Sha256Raw(bytes);
+  if (actual === declaredCid) return;
+
+  // The AT Protocol blob CID spec is CIDv1 + raw + sha2-256, so for any
+  // conformant record `actual` should match. A mismatch is a hard fail.
+  throw new Error(
+    `Blob CID mismatch for "${label}": declared ${declaredCid} but got ${actual}. ` +
+    `Refusing to install — the file's bytes don't match the record's declared hash.`
+  );
 }
