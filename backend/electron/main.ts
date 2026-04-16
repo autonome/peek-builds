@@ -1364,7 +1364,10 @@ export async function loadExtensions(): Promise<number> {
   const extStart = Date.now();
 
   const featuresDir = path.join(config.rootDir, 'features');
-  const tilePreloadPath = path.join(config.rootDir, 'backend', 'electron', 'tile-preload.js');
+  // tsc emits to dist/, not source tree. For dev (`yarn start`) and packaged
+  // builds alike, rootDir is the project root, so the compiled preload lives at
+  // dist/backend/electron/tile-preload.js.
+  const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.js');
   const v1FeatureIds = new Set<string>();
   const v2FeatureIds = new Set<string>();
 
