@@ -511,6 +511,76 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('window-list', {});
     },
+
+    /**
+     * Check if a window with the given id is still open. Strict path
+     * requires `window.manage`; otherwise falls back to the un-gated
+     * legacy `window-exists` channel.
+     */
+    exists: (id: number) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:exists', {
+          token: tileToken,
+          id,
+        });
+      }
+      return ipcRenderer.invoke('window-exists', { id });
+    },
+
+    /**
+     * Show a hidden window. Strict path requires `window.manage`;
+     * otherwise falls back to the un-gated legacy `window-show`
+     * channel.
+     */
+    show: (id: number) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:show', {
+          token: tileToken,
+          id,
+        });
+      }
+      return ipcRenderer.invoke('window-show', { id });
+    },
+
+    /**
+     * Hide a visible window. Strict path requires `window.manage`;
+     * otherwise falls back to the un-gated legacy `window-hide`
+     * channel.
+     */
+    hide: (id: number) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:hide', {
+          token: tileToken,
+          id,
+        });
+      }
+      return ipcRenderer.invoke('window-hide', { id });
+    },
+
+    /**
+     * Toggle click-through on a window. Strict path requires
+     * `window.manage`; otherwise falls back to the un-gated legacy
+     * `window-set-ignore-mouse-events` channel.
+     */
+    setIgnoreMouseEvents: (
+      id: number | null | undefined,
+      ignore: boolean,
+      options?: { forward?: boolean },
+    ) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:set-ignore-mouse', {
+          token: tileToken,
+          id: typeof id === 'number' ? id : undefined,
+          ignore,
+          options,
+        });
+      }
+      return ipcRenderer.invoke('window-set-ignore-mouse-events', {
+        id: typeof id === 'number' ? id : undefined,
+        ignore,
+        forward: options?.forward === true,
+      });
+    },
   };
 
   // ── Datastore (if granted) ──
