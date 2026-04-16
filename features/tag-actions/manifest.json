@@ -29,13 +29,11 @@
   ],
   "capabilities": {
     "pubsub": {
-      "scopes": ["self", "global", "system"],
+      "scopes": ["global", "system"],
       "topics": [
         "ext:ready",
         "ext:tag-actions:shutdown",
         "app:shutdown",
-        "tag:*",
-        "item:created",
         "tag-actions:get-pairs",
         "tag-actions:get-pairs:response",
         "tag-actions:set-pairs",
