@@ -116,28 +116,13 @@ describe('Phase 4 hard-fail stubs — api.settings.getKey/setKey', () => {
   });
 });
 
-describe('Phase 4 hard-fail stubs — api.datastore compat helpers', () => {
-  const compatMethods = [
-    'addAddress', 'getAddress', 'updateAddress', 'queryAddresses',
-    'addVisit', 'queryVisits', 'addContent', 'queryContent',
-    'getTable', 'setRow', 'getRow', 'getStats',
-    'getOrCreateTag', 'tagAddress', 'untagAddress', 'getTagsByFrecency',
-    'renameTag', 'updateTagColor', 'deleteTag', 'getAddressTags', 'getAddressesByTag',
-    'getUntaggedAddresses',
-    'addItem', 'getItem', 'updateItem', 'deleteItem', 'hardDeleteItem',
-    'queryItems', 'tagItem', 'untagItem', 'getItemTags', 'getItemsByTag',
-    'addItemEvent', 'queryItemEvents', 'countItemEvents',
-  ];
-
-  for (const method of compatMethods) {
-    test(`api.datastore.${method} stub contains Phase 4 error`, () => {
-      assert.ok(
-        hasHardFailStub(method),
-        `api.datastore.${method} should have a hard-fail stub with Phase 4 error message`,
-      );
-    });
-  }
-});
+// NOTE: Phase 4 initially replaced these datastore compat methods with
+// hard-fail stubs, but feature code was never migrated off them — the
+// stubs broke every tile UI. The methods were restored as thin routing
+// wrappers to the legacy `datastore-*` IPC channels. Tracked in
+// docs/tasks.md under "Phase 4 datastore restoration". This test block
+// is intentionally left out until we finish the strict migration and
+// can reintroduce the hard-fail stubs.
 
 describe('Phase 4 — strict surfaces still present', () => {
   test('api.datastore.get strict surface still present', () => {

@@ -741,60 +741,72 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
-  // Phase 4: v1-compat datastore helpers REMOVED (datastoreCompat object deleted). Only strict surface remains.
-  // All legacy delegating methods (addAddress, addItem, tagAddress, etc.) have
-  // been removed. Use api.datastore.get / .set / .query / .extractPageContent
-  // (strict, token-gated) or migrate the feature to named tile:datastore:* IPC.
+  // Named datastore methods that features rely on. Each routes to the
+  // corresponding legacy `datastore-*` IPC channel in ipc.ts. Phase 4
+  // originally turned these into hard-fail stubs, but feature code was
+  // never migrated off them (Phase 3 explicitly said "keep API name"),
+  // so the stubs broke every tile UI. Restored as thin routing wrappers.
+  //
+  // Follow-up (tracked in docs/tasks.md): build equivalent strict
+  // `tile:datastore:*` handlers for the methods that don't have them
+  // yet (renameTag/updateTagColor/deleteTag/queryItemVisits/getHistory/
+  // updateItemTitle/updateItemFavicon/etc.), then migrate callers one
+  // by one.
+  const ds = (channel: string, data: unknown = {}) => ipcRenderer.invoke(channel, data);
   api.datastore = {
     ...datastoreStrict,
-    // Hard-fail stubs for removed v1-compat names — catch unmigrated callers early.
-    addAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addAddress removed in Phase 4; use tile:datastore:* IPC directly'); },
-    getAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getAddress removed in Phase 4'); },
-    updateAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateAddress removed in Phase 4'); },
-    queryAddresses: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryAddresses removed in Phase 4'); },
-    addVisit: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addVisit removed in Phase 4'); },
-    queryVisits: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryVisits removed in Phase 4'); },
-    addContent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addContent removed in Phase 4'); },
-    queryContent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryContent removed in Phase 4'); },
-    getTable: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getTable removed in Phase 4'); },
-    setRow: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.setRow removed in Phase 4'); },
-    getRow: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getRow removed in Phase 4'); },
-    getStats: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getStats removed in Phase 4'); },
-    getOrCreateTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getOrCreateTag removed in Phase 4'); },
-    tagAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.tagAddress removed in Phase 4'); },
-    untagAddress: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.untagAddress removed in Phase 4'); },
-    getTagsByFrecency: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getTagsByFrecency removed in Phase 4'); },
-    renameTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.renameTag removed in Phase 4'); },
-    updateTagColor: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateTagColor removed in Phase 4'); },
-    deleteTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.deleteTag removed in Phase 4'); },
-    getAddressTags: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getAddressTags removed in Phase 4'); },
-    getAddressesByTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getAddressesByTag removed in Phase 4'); },
-    getUntaggedAddresses: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getUntaggedAddresses removed in Phase 4'); },
-    addItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addItem removed in Phase 4'); },
-    getItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItem removed in Phase 4'); },
-    updateItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateItem removed in Phase 4'); },
-    deleteItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.deleteItem removed in Phase 4'); },
-    hardDeleteItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.hardDeleteItem removed in Phase 4'); },
-    updateItemTitle: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateItemTitle removed in Phase 4'); },
-    updateItemFavicon: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.updateItemFavicon removed in Phase 4'); },
-    queryItems: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryItems removed in Phase 4'); },
-    tagItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.tagItem removed in Phase 4'); },
-    untagItem: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.untagItem removed in Phase 4'); },
-    getItemTags: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItemTags removed in Phase 4'); },
-    getItemsByTag: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItemsByTag removed in Phase 4'); },
-    getHistory: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getHistory removed in Phase 4'); },
-    recordItemVisit: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.recordItemVisit removed in Phase 4'); },
-    getItemVisits: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItemVisits removed in Phase 4'); },
-    queryItemVisits: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryItemVisits removed in Phase 4'); },
-    trackNavigation: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.trackNavigation removed in Phase 4'); },
-    queryItemsByFrecency: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryItemsByFrecency removed in Phase 4'); },
-    addItemEvent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.addItemEvent removed in Phase 4'); },
-    getItemEvent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getItemEvent removed in Phase 4'); },
-    queryItemEvents: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.queryItemEvents removed in Phase 4'); },
-    deleteItemEvent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.deleteItemEvent removed in Phase 4'); },
-    deleteItemEvents: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.deleteItemEvents removed in Phase 4'); },
-    getLatestItemEvent: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.getLatestItemEvent removed in Phase 4'); },
-    countItemEvents: (..._args: unknown[]) => { throw new Error('[tile-preload] api.datastore.countItemEvents removed in Phase 4'); },
+    // Address helpers
+    addAddress: (data: unknown) => ds('datastore-add-address', data),
+    getAddress: (data: unknown) => ds('datastore-get-address', data),
+    updateAddress: (data: unknown) => ds('datastore-update-address', data),
+    queryAddresses: (data: unknown) => ds('datastore-query-addresses', data),
+    addVisit: (data: unknown) => ds('datastore-add-visit', data),
+    queryVisits: (data: unknown) => ds('datastore-query-visits', data),
+    addContent: (data: unknown) => ds('datastore-add-content', data),
+    queryContent: (data: unknown) => ds('datastore-query-content', data),
+    // Generic table helpers
+    getTable: (table: string) => ds('datastore-get-table', { table }),
+    setRow: (table: string, id: string, row: unknown) => ds('datastore-set-row', { table, id, row }),
+    getRow: (table: string, id: string) => ds('datastore-get-row', { table, id }),
+    getStats: () => ds('datastore-get-stats'),
+    // Tag helpers
+    getOrCreateTag: (name: string) => ds('datastore-get-or-create-tag', { name }),
+    tagAddress: (addressId: string, tagId: string) => ds('datastore-tag-address', { addressId, tagId }),
+    untagAddress: (addressId: string, tagId: string) => ds('datastore-untag-address', { addressId, tagId }),
+    getTagsByFrecency: (domain?: string) => ds('datastore-get-tags-by-frecency', { domain }),
+    renameTag: (tagId: string, newName: string) => ds('datastore-rename-tag', { tagId, newName }),
+    updateTagColor: (tagId: string, color: string) => ds('datastore-update-tag-color', { tagId, color }),
+    deleteTag: (tagId: string) => ds('datastore-delete-tag', { tagId }),
+    getAddressTags: (addressId: string) => ds('datastore-get-address-tags', { addressId }),
+    getAddressesByTag: (tagId: string) => ds('datastore-get-addresses-by-tag', { tagId }),
+    getUntaggedAddresses: (data?: unknown) => ds('datastore-get-untagged-addresses', data || {}),
+    // Item helpers
+    addItem: (type: string, data: unknown) => ds('datastore-add-item', { type, data }),
+    getItem: (itemId: string) => ds('datastore-get-item', { itemId }),
+    updateItem: (itemId: string, updates: unknown) => ds('datastore-update-item', { itemId, updates }),
+    deleteItem: (itemId: string) => ds('datastore-delete-item', { itemId }),
+    hardDeleteItem: (itemId: string) => ds('datastore-hard-delete-item', { itemId }),
+    updateItemTitle: (url: string, title: string) => ds('datastore-update-item-title', { url, title }),
+    updateItemFavicon: (url: string, favicon: string) => ds('datastore-update-item-favicon', { url, favicon }),
+    queryItems: (filter: unknown = {}) => ds('datastore-query-items', filter),
+    tagItem: (itemId: string, tagId: string) => ds('datastore-tag-item', { itemId, tagId }),
+    untagItem: (itemId: string, tagId: string) => ds('datastore-untag-item', { itemId, tagId }),
+    getItemTags: (itemId: string) => ds('datastore-get-item-tags', { itemId }),
+    getItemsByTag: (tagId: string) => ds('datastore-get-items-by-tag', { tagId }),
+    getHistory: (filter: unknown = {}) => ds('datastore-get-history', filter),
+    recordItemVisit: (itemId: string, data: unknown) => ds('datastore-record-item-visit', { itemId, data }),
+    getItemVisits: (itemId: string) => ds('datastore-get-item-visits', { itemId }),
+    queryItemVisits: (filter: unknown = {}) => ds('datastore-query-item-visits', filter),
+    trackNavigation: (data: unknown) => ds('datastore-track-navigation', data),
+    queryItemsByFrecency: (filter: unknown = {}) => ds('datastore-query-items-by-frecency', filter),
+    // Item event helpers
+    addItemEvent: (itemId: string, data: unknown) => ds('datastore-add-item-event', { itemId, data }),
+    getItemEvent: (eventId: string) => ds('datastore-get-item-event', { eventId }),
+    queryItemEvents: (filter: unknown = {}) => ds('datastore-query-item-events', filter),
+    deleteItemEvent: (eventId: string) => ds('datastore-delete-item-event', { eventId }),
+    deleteItemEvents: (filter: unknown) => ds('datastore-delete-item-events', filter),
+    getLatestItemEvent: (itemId: string, eventType?: string) => ds('datastore-get-latest-item-event', { itemId, eventType }),
+    countItemEvents: (filter: unknown = {}) => ds('datastore-count-item-events', filter),
   };
 
   // ── Network (if granted) ──
