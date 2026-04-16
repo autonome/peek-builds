@@ -190,14 +190,14 @@ function buildAPI(): Record<string, unknown> {
     };
   }
 
-  // Phase 4: top-level api.publish / api.subscribe shims REMOVED.
-  // Use api.pubsub.publish / api.pubsub.subscribe instead.
-  api.publish = (..._args: unknown[]) => {
-    throw new Error('[tile-preload] api.publish was removed in Phase 4; use api.pubsub.publish');
-  };
-  api.subscribe = (..._args: unknown[]) => {
-    throw new Error('[tile-preload] api.subscribe was removed in Phase 4; use api.pubsub.subscribe');
-  };
+  // Phase 4 intent was to remove top-level api.publish / api.subscribe as
+  // hard-fail stubs, but several shared libraries in app/ (app/index.js,
+  // app/hud/widgets/*, app/lib/tag-action-affordances.js, app/settings/
+  // settings.js) still call them directly. Restored as thin aliases to
+  // api.pubsub.publish / api.pubsub.subscribe so those shared libs work
+  // under tile-preload without touching every call site.
+  api.publish = publishImpl;
+  api.subscribe = subscribeImpl;
 
   api.pubsub = {
     publish: publishImpl,
