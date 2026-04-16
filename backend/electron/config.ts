@@ -24,6 +24,7 @@ export const TILE_STRICT = process.env.TILE_STRICT === 'true';
 
 // Runtime configuration (set during app initialization)
 let _preloadPath: string = '';
+let _tilePreloadPath: string = '';
 let _profile: string = '';
 
 /**
@@ -53,6 +54,20 @@ export function setProfile(profile: string): void {
  */
 export function getPreloadPath(): string {
   return _preloadPath;
+}
+
+/**
+ * Set the v2 tile preload script path (called during app initialization)
+ */
+export function setTilePreloadPath(tilePreloadPath: string): void {
+  _tilePreloadPath = tilePreloadPath;
+}
+
+/**
+ * Get the v2 tile preload script path
+ */
+export function getTilePreloadPath(): string {
+  return _tilePreloadPath;
 }
 
 /**

@@ -365,6 +365,78 @@ export function getAllTileWindows(): BrowserWindow[] {
 }
 
 /**
+ * Resolve a peek:// URL to v2 tile web preferences (preload + token).
+ *
+ * Used by the `window-open` IPC handler so that windows opened via
+ * `api.window.open('peek://ext/<tile>/<entry.url>')` or
+ * `api.window.open('peek://<tile>/<entry.url>')` get the strict tile
+ * preload with a capability token, instead of the legacy `preload.js`
+ * (which has the old v1 API surface and no `api.initialize()`).
+ *
+ * Returns null when:
+ *   - the URL isn't a `peek://` tile URL
+ *   - the feature isn't a registered v2 tile
+ *   - no tile entry matches the URL's path
+ * In those cases the caller should fall back to the legacy preload.
+ *
+ * The returned `additionalArguments` are formatted as Electron web-pref
+ * args: `--tile-id=X --tile-entry=Y --tile-token=Z`. tile-preload.ts
+ * reads these in its sync bootstrap before context-bridge injection.
+ */
+export function getTileWebPreferencesForUrl(
+  url: string,
+  tilePreloadPath: string,
+  lookupLazyManifest: (tileId: string) => TileManifestV2 | null,
+): { preload: string; additionalArguments: string[]; tileId: string; entryId: string } | null {
+  let host: string;
+  let pathPart: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'peek:') return null;
+    const cleanPath = parsed.pathname.replace(/^\//, '');
+    if (parsed.host === 'ext') {
+      // peek://ext/<tileId>/<entry.url>
+      const segments = cleanPath.split('/');
+      if (segments.length < 2) return null;
+      host = segments[0];
+      pathPart = segments.slice(1).join('/');
+    } else {
+      host = parsed.host;
+      pathPart = cleanPath;
+    }
+  } catch {
+    return null;
+  }
+
+  const manifest = getTileManifest(host) || lookupLazyManifest(host);
+  if (!manifest) return null;
+
+  // Prefer a 'window' type entry whose url matches; fall back to any entry.
+  const entry =
+    manifest.tiles.find(t => t.type === 'window' && t.url === pathPart)
+    || manifest.tiles.find(t => t.url === pathPart);
+  if (!entry) return null;
+
+  const grant = resolveCapabilities(
+    manifest.id,
+    manifest.capabilities,
+    manifest.builtin === true,
+  );
+  const token = generateToken(manifest.id, entry.id, grant);
+
+  return {
+    preload: tilePreloadPath,
+    additionalArguments: [
+      `--tile-id=${manifest.id}`,
+      `--tile-entry=${entry.id}`,
+      `--tile-token=${token}`,
+    ],
+    tileId: manifest.id,
+    entryId: entry.id,
+  };
+}
+
+/**
  * Send the `tile:shutdown` IPC to a single tile window, wait a short grace
  * period for its `api.onShutdown()` callbacks to run, and then close the
  * BrowserWindow.

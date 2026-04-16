@@ -381,6 +381,15 @@ export function isLazyTileRegistered(tileId: string): boolean {
 }
 
 /**
+ * Get the manifest for a lazy-registered tile (without forcing load).
+ * Used by the window-open IPC handler to recognise v2 tile URLs before
+ * the tile has actually booted.
+ */
+export function getLazyTileManifest(tileId: string): TileManifestV2 | null {
+  return lazyTileRegistry.get(tileId)?.manifest || null;
+}
+
+/**
  * Get all registered lazy tile IDs
  */
 export function getLazyTileIds(): string[] {

@@ -20,7 +20,7 @@ import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles } 
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
-import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, DEBUG } from './config.js';
+import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, setTilePreloadPath, DEBUG } from './config.js';
 import { trackWindow } from './display-watcher.js';
 import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
@@ -1368,6 +1368,9 @@ export async function loadExtensions(): Promise<number> {
   // builds alike, rootDir is the project root, so the compiled preload lives at
   // dist/backend/electron/tile-preload.js.
   const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.js');
+  // Expose to config so other code paths (window-open IPC handler in particular)
+  // can use the tile preload for v2 tile URLs.
+  setTilePreloadPath(tilePreloadPath);
   const v1FeatureIds = new Set<string>();
   const v2FeatureIds = new Set<string>();
 

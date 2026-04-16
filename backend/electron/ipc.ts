@@ -118,11 +118,15 @@ import {
   APP_DEF_HEIGHT,
   WEB_CORE_ADDRESS,
   getPreloadPath,
+  getTilePreloadPath,
   IPC_CHANNELS,
   isHeadless,
   isTestProfile,
   DEBUG,
 } from './config.js';
+
+import { getTileWebPreferencesForUrl } from './tile-launcher.js';
+import { getLazyTileManifest } from './tile-lazy.js';
 
 import {
   captureThumbnail,
@@ -2276,6 +2280,19 @@ export function registerWindowHandlers(): void {
     // Use profile-specific session for isolation
     const profileSession = getProfileSession();
 
+    // If this URL points to a registered v2 tile, use the tile preload
+    // (tile-preload.js) with a capability token so the feature's home.html
+    // gets `api.initialize()`, `api.pubsub.subscribe/publish`, strict
+    // `api.datastore.*` routing, and every other v2 surface.
+    //
+    // Non-tile URLs (web pages, legacy extension content, new-tab, etc.)
+    // fall back to the legacy preload.js.
+    const tileWebPrefs = getTileWebPreferencesForUrl(
+      url,
+      getTilePreloadPath(),
+      getLazyTileManifest,
+    );
+
     // Prepare browser window options
     const winOptions: Electron.BrowserWindowConstructorOptions = {
       frame: isWebPage ? false : frameDefault, // Web pages are always frameless
@@ -2289,7 +2306,8 @@ export function registerWindowHandlers(): void {
       ...(useCanvas ? { hasShadow: false, resizable: false } : {}),
       webPreferences: {
         ...options.webPreferences,
-        preload: getPreloadPath(),
+        preload: tileWebPrefs ? tileWebPrefs.preload : getPreloadPath(),
+        additionalArguments: tileWebPrefs ? tileWebPrefs.additionalArguments : options.webPreferences?.additionalArguments,
         session: profileSession,
         webviewTag: useCanvas ? true : (options.webPreferences?.webviewTag || false),
       }
