@@ -30,6 +30,7 @@
       "read": ["*"],
       "write": ["*"]
     },
+    "dialogs": { "types": ["save", "open"] },
     "commands": true
   },
   "commands": [

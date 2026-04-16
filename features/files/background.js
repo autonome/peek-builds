@@ -146,7 +146,7 @@ const commandDefinitions = [
 
     execute: async (ctx) => {
       try {
-        const result = await api.files.open();
+        const result = await api.dialogs.open();
 
         if (!result.success) {
           if (result.canceled) {
@@ -293,7 +293,7 @@ const commandDefinitions = [
         }
 
         // Use the native save dialog
-        const result = await api.files.save(content, { filename, mimeType });
+        const result = await api.dialogs.save(content, { filename, mimeType });
 
         if (result.canceled) {
           return { success: true, message: 'Save cancelled' };

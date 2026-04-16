@@ -47,7 +47,7 @@ function executeContentScript(script, timeout = 5000) {
     }
 
     // Listen for the result
-    unsub = api.subscribe('page:script-result', (msg) => {
+    unsub = api.pubsub.subscribe('page:script-result', (msg) => {
       if (msg.requestId !== requestId) return;
       cleanup();
 
@@ -65,7 +65,7 @@ function executeContentScript(script, timeout = 5000) {
     }, timeout);
 
     // Request execution
-    api.publish('page:execute-script', {
+    api.pubsub.publish('page:execute-script', {
       extensionId: EXTENSION_ID,
       requestId,
       script,
@@ -179,7 +179,7 @@ async function onPageLoaded(msg) {
     const meta = await executeContentScript(METADATA_EXTRACTION_SCRIPT);
     const html = buildWidgetHtml(meta);
 
-    api.publish('widget:render', {
+    api.pubsub.publish('widget:render', {
       extensionId: EXTENSION_ID,
       widgetId: WIDGET_ID,
       title: 'Page Summary',
@@ -190,7 +190,7 @@ async function onPageLoaded(msg) {
   } catch (err) {
     console.warn('[ext:pagewidgets-sample] Failed to extract metadata:', err.message);
 
-    api.publish('widget:render', {
+    api.pubsub.publish('widget:render', {
       extensionId: EXTENSION_ID,
       widgetId: WIDGET_ID,
       title: 'Page Summary',
@@ -213,7 +213,7 @@ function onPageNavigated(msg) {
  * Handle page:will-close — clean up widget
  */
 function onPageWillClose() {
-  api.publish('widget:close', {
+  api.pubsub.publish('widget:close', {
     extensionId: EXTENSION_ID,
     widgetId: WIDGET_ID,
   }, api.scopes.GLOBAL);
@@ -225,7 +225,7 @@ const init = async () => {
   console.log('[ext:pagewidgets-sample] init');
 
   // Step 1: Register our widget
-  api.publish('widget:register', {
+  api.pubsub.publish('widget:register', {
     extensionId: EXTENSION_ID,
     widgetId: WIDGET_ID,
     title: 'Page Summary',
@@ -233,9 +233,9 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Step 2: Listen for page lifecycle events
-  api.subscribe('page:loaded', onPageLoaded, api.scopes.GLOBAL);
-  api.subscribe('page:navigated', onPageNavigated, api.scopes.GLOBAL);
-  api.subscribe('page:will-close', onPageWillClose, api.scopes.GLOBAL);
+  api.pubsub.subscribe('page:loaded', onPageLoaded, api.scopes.GLOBAL);
+  api.pubsub.subscribe('page:navigated', onPageNavigated, api.scopes.GLOBAL);
+  api.pubsub.subscribe('page:will-close', onPageWillClose, api.scopes.GLOBAL);
 
   console.log('[ext:pagewidgets-sample] Initialized — listening for page events');
 };

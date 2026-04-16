@@ -49,7 +49,7 @@
     },
     "commands": true,
     "shortcuts": true,
-    "settings": true
+    "settings": { "readForeign": ["editor"] }
   },
   "commands": [
     {
