@@ -83,6 +83,53 @@ export interface ShortcutsCapability {
 }
 
 /**
+ * Context capability: access to the context-entry key/value store.
+ *
+ * Strict `tile:context:*` handlers gate each operation on the shape of
+ * this grant:
+ *   - `read` — key allowlist for `get` / `history`. If omitted, every
+ *     key is readable (backward-compatible "unrestricted" mode).
+ *   - `write` — key allowlist for `set`. If omitted, every key is
+ *     writable.
+ *   - `modes` — gates the `setMode` / `watchMode` future helpers and
+ *     any write to the well-known `mode` key.
+ *   - `queryWindows` — gates `windowsWithValue` / `windowsInSpace`.
+ *
+ * Like ShortcutsCapability, the capability may also be declared as
+ * `true` in a manifest — treated as an empty object (unrestricted,
+ * no window-query privileges).
+ */
+export interface ContextCapability {
+  /** Keys the tile can read; omitted = all keys */
+  read?: string[];
+  /** Keys the tile can write; omitted = all keys */
+  write?: string[];
+  /** Allow mode management (setMode/watchMode + writing the `mode` key) */
+  modes?: boolean;
+  /** Allow windowsInSpace / windowsWithValue queries */
+  queryWindows?: boolean;
+}
+
+/**
+ * Dialogs capability: permission to show native save/open file dialogs.
+ *
+ * May be expressed in the manifest as:
+ *   - `true` — tile may invoke any supported dialog type
+ *   - `{ types: [...] }` — only the listed dialog types may be invoked
+ *
+ * Supported types (current surface): `'save'`, `'open'`. The strict
+ * IPC handlers reject any invocation whose type is not in the list.
+ * When `types` is omitted (or the capability is `true`), no per-type
+ * filtering is applied.
+ */
+export type DialogType = 'save' | 'open';
+
+export interface DialogsCapability {
+  /** If present, only these dialog types can be shown */
+  types?: DialogType[];
+}
+
+/**
  * All capabilities a tile can request
  */
 export interface TileCapabilities {
@@ -101,6 +148,10 @@ export interface TileCapabilities {
   theme?: boolean;
   /** Can read/write user settings */
   settings?: boolean;
+  /** Can read/write application context (mode, spaces, user keys) */
+  context?: boolean | ContextCapability;
+  /** Can invoke native file dialogs (save/open) */
+  dialogs?: boolean | DialogsCapability;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────
@@ -423,6 +474,64 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
         errors.push({ path: 'capabilities.shortcuts', message: 'shortcuts must be boolean or { keys: string[] }' });
       }
     }
+
+    // Validate context capability shape — must be boolean or
+    // { read?: string[]; write?: string[]; modes?: boolean; queryWindows?: boolean }
+    if (caps.context !== undefined) {
+      const cc = caps.context;
+      if (typeof cc === 'boolean') {
+        // valid
+      } else if (cc && typeof cc === 'object') {
+        const ccObj = cc as Record<string, unknown>;
+        for (const listKey of ['read', 'write'] as const) {
+          const v = ccObj[listKey];
+          if (v !== undefined) {
+            if (!Array.isArray(v)) {
+              errors.push({ path: `capabilities.context.${listKey}`, message: `${listKey} must be an array of strings` });
+            } else {
+              for (let i = 0; i < v.length; i++) {
+                const k = v[i];
+                if (typeof k !== 'string' || k.length === 0) {
+                  errors.push({ path: `capabilities.context.${listKey}[${i}]`, message: `${listKey} entries must be non-empty strings` });
+                }
+              }
+            }
+          }
+        }
+        for (const flagKey of ['modes', 'queryWindows'] as const) {
+          if (ccObj[flagKey] !== undefined && typeof ccObj[flagKey] !== 'boolean') {
+            errors.push({ path: `capabilities.context.${flagKey}`, message: `${flagKey} must be a boolean` });
+          }
+        }
+      } else {
+        errors.push({ path: 'capabilities.context', message: 'context must be boolean or { read?, write?, modes?, queryWindows? }' });
+      }
+    }
+
+    // Validate dialogs capability shape — must be boolean or { types?: ('save'|'open')[] }
+    if (caps.dialogs !== undefined) {
+      const dc = caps.dialogs;
+      if (typeof dc === 'boolean') {
+        // valid
+      } else if (dc && typeof dc === 'object') {
+        const dcObj = dc as Record<string, unknown>;
+        if (dcObj.types !== undefined) {
+          if (!Array.isArray(dcObj.types)) {
+            errors.push({ path: 'capabilities.dialogs.types', message: 'types must be an array of dialog type strings' });
+          } else {
+            const valid = new Set(['save', 'open']);
+            for (let i = 0; i < dcObj.types.length; i++) {
+              const t = dcObj.types[i];
+              if (typeof t !== 'string' || !valid.has(t)) {
+                errors.push({ path: `capabilities.dialogs.types[${i}]`, message: 'types entries must be one of: save, open' });
+              }
+            }
+          }
+        }
+      } else {
+        errors.push({ path: 'capabilities.dialogs', message: 'dialogs must be boolean or { types: string[] }' });
+      }
+    }
   }
 
   // Commands validation
@@ -595,6 +704,27 @@ export function resolveCapabilities(
   // Settings: grant as requested
   if (requested.settings) {
     granted.settings = true;
+  }
+
+  // Context: preserve object shape so strict IPC handlers can read the
+  // read/write allowlists and modes/queryWindows flags. Manifests may
+  // declare `context: true` OR an object form.
+  if (requested.context) {
+    if (requested.context === true) {
+      granted.context = true;
+    } else if (typeof requested.context === 'object') {
+      granted.context = { ...requested.context };
+    }
+  }
+
+  // Dialogs: preserve object shape (types allowlist). Manifests may
+  // declare `dialogs: true` OR `dialogs: { types: [...] }`.
+  if (requested.dialogs) {
+    if (requested.dialogs === true) {
+      granted.dialogs = true;
+    } else if (typeof requested.dialogs === 'object') {
+      granted.dialogs = { ...requested.dialogs };
+    }
   }
 
   return { tileId, capabilities: granted, denied };
