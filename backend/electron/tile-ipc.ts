@@ -25,7 +25,32 @@ import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js
 import { DEBUG } from './config.js';
 import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
-import { getDb } from './datastore.js';
+import {
+  getDb,
+  isValidTable,
+  getTable as dsGetTable,
+  setRow as dsSetRow,
+  getRow as dsGetRow,
+  addItem as dsAddItem,
+  getItem as dsGetItem,
+  updateItem as dsUpdateItem,
+  deleteItem as dsDeleteItem,
+  queryItems as dsQueryItems,
+  tagItem as dsTagItem,
+  untagItem as dsUntagItem,
+  getItemTags as dsGetItemTags,
+  getItemsByTag as dsGetItemsByTag,
+  getOrCreateTag as dsGetOrCreateTag,
+  getTagsByFrecency as dsGetTagsByFrecency,
+  addItemEvent as dsAddItemEvent,
+  queryItemEvents as dsQueryItemEvents,
+  getLatestItemEvent as dsGetLatestItemEvent,
+  countItemEvents as dsCountItemEvents,
+  deleteItemEvent as dsDeleteItemEvent,
+  deleteItemEvents as dsDeleteItemEvents,
+  getItemEvent as dsGetItemEvent,
+} from './datastore.js';
+import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
@@ -55,6 +80,50 @@ function hasPubSubScope(grant: CapabilityGrant, scope: 'self' | 'global' | 'syst
 function hasDatastoreTable(grant: CapabilityGrant, table: string): boolean {
   if (!grant.capabilities.datastore) return false;
   return grant.capabilities.datastore.tables.includes(table);
+}
+
+/**
+ * Check that every table in the list is granted. Returns the first missing
+ * table (for a precise error message), or null if all are granted.
+ */
+function missingDatastoreTable(grant: CapabilityGrant, tables: string[]): string | null {
+  for (const t of tables) {
+    if (!hasDatastoreTable(grant, t)) return t;
+  }
+  return null;
+}
+
+/**
+ * Validate a datastore request: token valid, capability granted, all required
+ * tables in the allowlist. Returns { grant } on success or { error } on failure.
+ *
+ * Exported for unit tests — the IPC handlers delegate here for enforcement.
+ */
+export function validateTileDatastoreRequest(
+  token: string | undefined,
+  requiredTables: string[]
+): { grant: CapabilityGrant } | { error: string } {
+  if (!token || typeof token !== 'string') {
+    return { error: 'Invalid token' };
+  }
+  const grant = getGrantForToken(token);
+  if (!grant) {
+    return { error: 'Invalid token' };
+  }
+  if (!hasCapability(grant, 'datastore')) {
+    return { error: 'Datastore capability not granted' };
+  }
+  // Validate each table name against the core allow-list AND against the grant.
+  for (const table of requiredTables) {
+    if (!isValidTable(table)) {
+      return { error: `Invalid table: ${table}` };
+    }
+  }
+  const missing = missingDatastoreTable(grant, requiredTables);
+  if (missing !== null) {
+    return { error: `Table not allowed: ${missing}` };
+  }
+  return { grant };
 }
 
 /**
@@ -643,25 +712,82 @@ export function registerTileIpcHandlers(): void {
   });
 
   // ── Datastore ──
+  //
+  // Scoped per-table access. Every handler:
+  //   1. Validates the token (via getGrantForToken)
+  //   2. Requires the `datastore` capability
+  //   3. Checks that every table the op touches is in the grant's tables list
+  //   4. Delegates to the real datastore function
+  //
+  // Multi-table ops (tag-item, get-item-tags, get-items-by-tag) require ALL
+  // of their tables to be granted, not just one.
 
-  // NOTE: tile:datastore:* are not yet implemented. No feature currently uses them.
-  // When a feature needs scoped table access, wire these to getDb() with per-tile
-  // row filtering (e.g., WHERE source = grant.tileId) and a SQL allow-list per table.
-  // Returning explicit errors avoids silent data loss from pretend-successful writes.
+  // Generic row/table operations — the operand table must be granted.
+
+  ipcMain.handle('tile:datastore:get-table', async (_event, args: {
+    token: string;
+    table: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetTable(args.table as TableName);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-row', async (_event, args: {
+    token: string;
+    table: string;
+    rowId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetRow(args.table as TableName, args.rowId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:set-row', async (_event, args: {
+    token: string;
+    table: string;
+    rowId: string;
+    rowData: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    if ('error' in check) return { error: check.error };
+    try {
+      dsSetRow(args.table as TableName, args.rowId, args.rowData || {});
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // Back-compat aliases for the v1 tile-preload API surface.
+  // `get(table, key)` maps to get-row; `set(table, key, value)` maps to set-row
+  // with a `value` column; `query(table, filter)` returns matching rows.
+  // These exist because tile-preload.ts currently invokes them; the preload
+  // cleanup is a separate task.
 
   ipcMain.handle('tile:datastore:get', async (_event, args: {
     token: string;
     table: string;
     key: string;
   }) => {
-    const grant = getGrantForToken(args.token);
-    if (!grant || !hasCapability(grant, 'datastore')) {
-      return { error: 'Datastore capability not granted' };
+    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetRow(args.table as TableName, args.key);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
-    if (!hasDatastoreTable(grant, args.table)) {
-      return { error: `Table not allowed: ${args.table}` };
-    }
-    return { error: 'tile:datastore:get not yet implemented — use pubsub + ipc to reach core datastore' };
   });
 
   ipcMain.handle('tile:datastore:set', async (_event, args: {
@@ -670,14 +796,19 @@ export function registerTileIpcHandlers(): void {
     key: string;
     value: unknown;
   }) => {
-    const grant = getGrantForToken(args.token);
-    if (!grant || !hasCapability(grant, 'datastore')) {
-      return { error: 'Datastore capability not granted' };
+    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    if ('error' in check) return { error: check.error };
+    try {
+      // If the caller passed an object, write it as a row; otherwise store
+      // the scalar under a `value` column so key/value access round-trips.
+      const rowData = (args.value && typeof args.value === 'object' && !Array.isArray(args.value))
+        ? args.value as Record<string, unknown>
+        : { value: args.value };
+      dsSetRow(args.table as TableName, args.key, rowData);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
-    if (!hasDatastoreTable(grant, args.table)) {
-      return { error: `Table not allowed: ${args.table}` };
-    }
-    return { success: false, error: 'tile:datastore:set not yet implemented — no feature currently requires it' };
   });
 
   ipcMain.handle('tile:datastore:query', async (_event, args: {
@@ -685,14 +816,335 @@ export function registerTileIpcHandlers(): void {
     table: string;
     filter?: Record<string, unknown>;
   }) => {
-    const grant = getGrantForToken(args.token);
-    if (!grant || !hasCapability(grant, 'datastore')) {
-      return { error: 'Datastore capability not granted' };
+    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    if ('error' in check) return { error: check.error };
+    try {
+      const table = dsGetTable(args.table as TableName);
+      const rows = Object.values(table);
+      const filter = args.filter;
+      const filtered = filter
+        ? rows.filter(row => {
+            for (const [k, v] of Object.entries(filter)) {
+              if (row[k] !== v) return false;
+            }
+            return true;
+          })
+        : rows;
+      return { success: true, rows: filtered };
+    } catch (error) {
+      return { success: false, rows: [], error: error instanceof Error ? error.message : String(error) };
     }
-    if (!hasDatastoreTable(grant, args.table)) {
-      return { error: `Table not allowed: ${args.table}` };
+  });
+
+  // ── Item operations (require 'items' in tables) ──
+
+  ipcMain.handle('tile:datastore:add-item', async (_event, args: {
+    token: string;
+    type: string;
+    options?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) return { error: check.error };
+    try {
+      // dsAddItem takes ItemType; trust the caller to pass a valid one.
+      const result = dsAddItem(args.type as Parameters<typeof dsAddItem>[0], (args.options as Parameters<typeof dsAddItem>[1]) || {});
+      publish('system', scopes.GLOBAL, 'item:created', {
+        itemId: result.id,
+        itemType: args.type,
+        content: (args.options as Record<string, unknown> | undefined)?.content,
+      });
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
-    return { rows: [], error: 'tile:datastore:query not yet implemented — no feature currently requires it' };
+  });
+
+  ipcMain.handle('tile:datastore:get-item', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetItem(args.id);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:update-item', async (_event, args: {
+    token: string;
+    id: string;
+    options: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const result = dsUpdateItem(args.id, args.options as Parameters<typeof dsUpdateItem>[1]);
+      if (result) {
+        const db = getDb();
+        const item = db.prepare('SELECT type FROM items WHERE id = ?').get(args.id) as { type: string } | undefined;
+        publish('system', scopes.GLOBAL, 'item:updated', {
+          itemId: args.id,
+          itemType: item?.type,
+        });
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:delete-item', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const db = getDb();
+      const item = db.prepare('SELECT type FROM items WHERE id = ?').get(args.id) as { type: string } | undefined;
+      const result = dsDeleteItem(args.id);
+      if (result) {
+        publish('system', scopes.GLOBAL, 'item:deleted', {
+          itemId: args.id,
+          itemType: item?.type,
+        });
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:query-items', async (_event, args: {
+    token: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsQueryItems(args.filter as Parameters<typeof dsQueryItems>[0]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── Tag operations ──
+
+  ipcMain.handle('tile:datastore:get-or-create-tag', async (_event, args: {
+    token: string;
+    name: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetOrCreateTag(args.name);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-tags-by-frecency', async (_event, args: {
+    token: string;
+    domain?: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetTagsByFrecency(args.domain);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── Item-tag link operations (multi-table) ──
+
+  ipcMain.handle('tile:datastore:tag-item', async (_event, args: {
+    token: string;
+    itemId: string;
+    tagId: string;
+  }) => {
+    // Writes to item_tags, reads/updates tags frequency, reads items implicitly.
+    // Require both 'tags' and 'item_tags' to be granted (matching feature manifests).
+    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const result = dsTagItem(args.itemId, args.tagId);
+      if (!result.alreadyExists) {
+        const db = getDb();
+        const tag = db.prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
+        const item = db.prepare('SELECT type FROM items WHERE id = ?').get(args.itemId) as { type: string } | undefined;
+        publish('system', scopes.GLOBAL, 'tag:item-added', {
+          tagId: args.tagId,
+          tagName: tag?.name,
+          itemId: args.itemId,
+          itemType: item?.type,
+        });
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:untag-item', async (_event, args: {
+    token: string;
+    itemId: string;
+    tagId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
+      const result = dsUntagItem(args.itemId, args.tagId);
+      if (result) {
+        publish('system', scopes.GLOBAL, 'tag:item-removed', {
+          tagId: args.tagId,
+          tagName: tag?.name,
+          itemId: args.itemId,
+        });
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-item-tags', async (_event, args: {
+    token: string;
+    itemId: string;
+  }) => {
+    // Joins tags × item_tags — require both.
+    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetItemTags(args.itemId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-items-by-tag', async (_event, args: {
+    token: string;
+    tagId: string;
+  }) => {
+    // Joins items × item_tags — require both.
+    const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetItemsByTag(args.tagId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── Item event operations (series & feeds) ──
+
+  ipcMain.handle('tile:datastore:add-item-event', async (_event, args: {
+    token: string;
+    itemId: string;
+    options?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsAddItemEvent(args.itemId, args.options as Parameters<typeof dsAddItemEvent>[1]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-item-event', async (_event, args: {
+    token: string;
+    eventId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetItemEvent(args.eventId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:query-item-events', async (_event, args: {
+    token: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsQueryItemEvents(args.filter as Parameters<typeof dsQueryItemEvents>[0]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-latest-item-event', async (_event, args: {
+    token: string;
+    itemId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsGetLatestItemEvent(args.itemId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:count-item-events', async (_event, args: {
+    token: string;
+    itemId: string;
+    filter?: { since?: number; until?: number };
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsCountItemEvents(args.itemId, args.filter || {});
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:delete-item-event', async (_event, args: {
+    token: string;
+    eventId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsDeleteItemEvent(args.eventId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:delete-item-events', async (_event, args: {
+    token: string;
+    itemId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+    if ('error' in check) return { error: check.error };
+    try {
+      const data = dsDeleteItemEvents(args.itemId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   // ── Feature Registry ──
