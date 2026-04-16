@@ -50,6 +50,12 @@
       "query": true,
       "manage": true
     },
+    "context": {
+      "read": ["mode"],
+      "write": ["mode"],
+      "modes": true,
+      "queryWindows": true
+    },
     "commands": true,
     "shortcuts": true,
     "settings": true
