@@ -66,6 +66,7 @@ import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 import { invokeWindowOpen } from './ipc.js';
 import { getActiveThemeId } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
+import { resolveSettingDefault } from './tile-settings-defaults.js';
 
 // Re-export for test access — keeps the public enforcement API on tile-ipc.
 export { validateTileDatastoreRequest } from './tile-datastore-scope.js';
@@ -635,7 +636,14 @@ export function registerTileIpcHandlers(): void {
       const row = db.prepare(
         'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
       ).get(grant.tileId, args.key) as { value: string } | undefined;
-      if (!row) return { value: null };
+      if (!row) {
+        // No stored value — fall back to the manifest's declared default
+        // (loaded from the tile's settingsSchema.defaults). If no default
+        // is declared for this key, return null to match the legacy shape.
+        const manifest = getTileManifest(grant.tileId);
+        const fallback = resolveSettingDefault(manifest, args.key);
+        return { value: fallback === undefined ? null : fallback };
+      }
       try {
         return { value: JSON.parse(row.value) };
       } catch {

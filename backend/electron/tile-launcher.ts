@@ -46,6 +46,7 @@ import {
 } from './tile-tokens.js';
 import { scopes, publish, getSystemAddress, unsubscribeAllByPrefix } from './pubsub.js';
 import { DEBUG } from './config.js';
+import { loadSchemaDefaults } from './tile-settings-defaults.js';
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks
 // before the BrowserWindow is forcibly closed. Kept small so app-quit and
@@ -175,6 +176,15 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
   // Build the URL for this tile: peek://{tileId}/{url}
   const tileUrl = `peek://${manifest.id}/${entry.url}`;
   win.loadURL(tileUrl);
+
+  // Populate manifest.defaults from the tile's settingsSchema file so
+  // tile:settings:get can fall back to declared defaults on DB miss.
+  // Loaded once per tile process; subsequent launches reuse the cached
+  // object if it was already populated.
+  if (manifest.defaults === undefined) {
+    const defaults = loadSchemaDefaults(tilePath, manifest.settingsSchema);
+    if (defaults) manifest.defaults = defaults;
+  }
 
   // Track the window
   const key = `${manifest.id}:${entry.id}`;

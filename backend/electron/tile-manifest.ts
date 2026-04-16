@@ -199,6 +199,18 @@ export interface TileManifestV2 {
   shortcuts?: TileShortcut[];
   /** Settings schema file path */
   settingsSchema?: string;
+  /**
+   * Default settings values, loaded from the `settingsSchema` file's
+   * `defaults` field at tile-load time (see tile-settings-defaults.ts).
+   *
+   * Used by `tile:settings:get` to return a fallback when the key has never
+   * been written to `feature_settings`. Shape mirrors the raw `defaults`
+   * object in the schema file — typically `{ prefs: { ... }, ... }`.
+   *
+   * Resolution supports both flat keys (`defaults[key]`) and dotted keys
+   * (`defaults.prefs.foo` via `api.settings.get('prefs.foo')`).
+   */
+  defaults?: Record<string, unknown>;
 }
 
 /**
