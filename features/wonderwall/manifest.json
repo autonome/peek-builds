@@ -36,12 +36,22 @@
       ]
     },
     "network": {
-      "domains": ["*"]
+      "domains": [
+        "accounts.google.com",
+        "oauth2.googleapis.com",
+        "www.googleapis.com",
+        "soundcloud.com",
+        "api.soundcloud.com",
+        "secure.soundcloud.com",
+        "www.reddit.com",
+        "oauth.reddit.com"
+      ]
     },
     "window": {
       "create": true
     },
-    "commands": true
+    "commands": true,
+    "settings": true
   },
   "commands": [
     {
