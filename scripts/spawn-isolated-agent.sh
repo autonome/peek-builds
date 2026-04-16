@@ -26,12 +26,19 @@
 
 set -euo pipefail
 
-if [ $# -lt 1 ]; then
-  echo "usage: $0 <agent-name>" >&2
+# Name source (in priority order):
+#   1. $1 positional arg (interactive / manual use)
+#   2. $AGENT_NAME env var
+#   3. /tmp/mpeek-agent-name file contents (used by Claude Code calls so the
+#      invocation has no varying args and only needs one allowlist approval)
+NAME="${1:-${AGENT_NAME:-}}"
+if [ -z "$NAME" ] && [ -r /tmp/mpeek-agent-name ]; then
+  NAME=$(cat /tmp/mpeek-agent-name)
+fi
+if [ -z "$NAME" ]; then
+  echo "usage: $0 <agent-name>   OR write name to /tmp/mpeek-agent-name" >&2
   exit 2
 fi
-
-NAME="$1"
 DEFAULT_WS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 AGENT_WS_DIR="${DEFAULT_WS_DIR}/../mpeek-agent-${NAME}"
 AGENT_WS_NAME="mpeek-agent-${NAME}"
