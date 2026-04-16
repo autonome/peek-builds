@@ -1490,6 +1490,132 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── tile:window:exists ────────────────────────────────────────────
+  //
+  // Strict counterpart of the un-gated legacy `window-exists` channel.
+  // Gated by `window.manage` — callers probing the state of windows by
+  // id are, effectively, managing other windows.
+  ipcMain.handle('tile:window:exists', async (_event, args: {
+    token: string;
+    id: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'exists');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:exists rejected: ${check.error}`);
+      return { exists: false, error: check.error };
+    }
+
+    try {
+      if (typeof args.id !== 'number') {
+        return { exists: false, error: 'Window ID is required' };
+      }
+      const win = BrowserWindow.fromId(args.id);
+      if (!win || win.isDestroyed()) {
+        return { exists: false };
+      }
+      return { exists: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { exists: false, error: message };
+    }
+  });
+
+  // ── tile:window:show ──────────────────────────────────────────────
+  //
+  // Show a hidden window. Gated by `window.manage`.
+  ipcMain.handle('tile:window:show', async (_event, args: {
+    token: string;
+    id: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'show');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:show rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      if (typeof args.id !== 'number') {
+        return { success: false, error: 'Window ID is required' };
+      }
+      const win = BrowserWindow.fromId(args.id);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      win.show();
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:hide ──────────────────────────────────────────────
+  //
+  // Hide a visible window. Gated by `window.manage`.
+  ipcMain.handle('tile:window:hide', async (_event, args: {
+    token: string;
+    id: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'hide');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:hide rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      if (typeof args.id !== 'number') {
+        return { success: false, error: 'Window ID is required' };
+      }
+      const win = BrowserWindow.fromId(args.id);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      win.hide();
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:set-ignore-mouse ──────────────────────────────────
+  //
+  // Toggle click-through on a window. Gated by `window.manage`.
+  // `options.forward` matches the Electron `setIgnoreMouseEvents`
+  // second-argument shape (only `{ forward: true }` is honoured, per
+  // the legacy `window-set-ignore-mouse-events` handler).
+  ipcMain.handle('tile:window:set-ignore-mouse', async (event, args: {
+    token: string;
+    id?: number;
+    ignore: boolean;
+    options?: { forward?: boolean };
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'set-ignore-mouse');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:set-ignore-mouse rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const win = typeof args.id === 'number'
+        ? BrowserWindow.fromId(args.id)
+        : BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      const forward = args.options?.forward === true;
+      win.setIgnoreMouseEvents(args.ignore === true, forward ? { forward: true } : undefined);
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
   // ── Network Fetch ──
 
   ipcMain.handle('tile:network:fetch', async (_event, args: {
