@@ -57,7 +57,10 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [x] Phase 2 — strict features IPC + read/install/manage/sources allowlist
   - **Phase 2 complete** — all strict IPC surfaces landed; next is Phase 3 per-feature migration
   - [ ] Missing `api.sync.*` surface (discovered during sync migration; feature declares `sync: true` cap but tile-preload has no strict routing for it; `background.js` guards the call)
-  - [ ] Missing `api.window.exists/show/hide/setIgnoreMouseEvents` surface in tile-preload.ts (used by helpdocs, groups, windows, pagestream, spaces, slides — discovered during helpdocs migration). Needs strict `tile:window:exists/show/hide/set-ignore-mouse` handlers gated by `window.manage` capability.
+  - [x] Missing `api.window.exists/show/hide/setIgnoreMouseEvents` surface — strict handlers added, gated by `window.manage`
+  - [ ] Missing `api.escape.onEscape` surface in tile-preload.ts (used by tags, entities, search, lex, lists). Current convention: `if (api.escape)` guard — works only with v1 preload.
+  - [ ] Missing `api.scopes.SYSTEM` in tile-preload.ts (only SELF=2 and GLOBAL=3 exposed). `api.scopes.SYSTEM` silently evaluates to `undefined` which publishImpl defaults to SELF — semantic drift for lifecycle events like `ext:ready`, `app:shutdown`.
+  - [ ] Settings response shape: strict path returns `{value, error}` but several features destructure `{success, data}` (v1 shape). Preload may wrap back, but needs audit. Found in peeks so far.
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
   - [ ] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
