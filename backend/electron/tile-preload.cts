@@ -104,10 +104,15 @@ function buildAPI(): Record<string, unknown> {
       throw new Error('Tile token validation failed. Tile may have been revoked.');
     }
 
-    // Signal ready to main process
-    ipcRenderer.send('tile:ready', { tileId, tileEntry });
-
-    return { capabilities: grantedCapabilities };
+    // Defer tile:ready to the next event-loop tick so any synchronous
+    // post-initialize code in background.html (e.g. extension.init() +
+    // api.commands.register()) has a chance to complete before the lazy
+    // system's hasSubscriber check fires.
+    const result = { capabilities: grantedCapabilities };
+    setTimeout(() => {
+      ipcRenderer.send('tile:ready', { tileId, tileEntry });
+    }, 0);
+    return result;
   };
 
   /**
