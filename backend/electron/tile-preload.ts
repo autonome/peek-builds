@@ -414,37 +414,102 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
-  // ── Window (if granted) ──
+  // ── Window ────────────────────────────────────────────────────────
+  //
+  // Dual-path implementation mirroring api.shortcuts / api.context:
+  //
+  //   - STRICT: when the tile's manifest declared a `window` capability
+  //     (`true` or `{ create?, query?, manage?, urls? }`), route through
+  //     `tile:window:*`. The main-process handlers validate the token +
+  //     capability shape + per-op gates + URL allowlist.
+  //
+  //   - V1-COMPAT: when no window capability was declared, fall back to
+  //     the legacy `window-open` / `window-close` / `window-list` IPC
+  //     channels. Those channels remain available for the Phase 3/4
+  //     migration per the tile-preload trimming plan.
+  //
+  // The decision is made per-call because `grantedCapabilities` is
+  // populated asynchronously by `initialize()`.
+
+  function hasWindowCapability(): boolean {
+    const wc = grantedCapabilities?.window;
+    if (wc === true) return true;
+    if (wc && typeof wc === 'object') return true;
+    return false;
+  }
 
   api.window = {
     /**
-     * Open a new window
+     * Open a new window. Routes through strict IPC when the tile has
+     * declared a `window` capability; otherwise falls back to the
+     * un-gated legacy `window-open` channel.
      */
     open: (url: string, options?: Record<string, unknown>) => {
       if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:window:open', {
-        token: tileToken,
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:open', {
+          token: tileToken,
+          url,
+          options,
+        });
+      }
+      return ipcRenderer.invoke('window-open', {
+        source: sourceAddress,
         url,
-        options,
+        options: options || {},
       });
     },
 
     /**
-     * Close the current tile window
+     * Close a window. With no id, closes the caller's own tile window.
+     * With an id, closes the target window (requires `window.manage`
+     * under strict mode). Falls back to legacy `window-close` when no
+     * window capability is declared.
      */
-    close: () => {
-      ipcRenderer.send('tile:window:close', {
-        token: tileToken,
-      });
+    close: (id?: number) => {
+      if (hasWindowCapability()) {
+        ipcRenderer.send('tile:window:close', {
+          token: tileToken,
+          id,
+        });
+        return;
+      }
+      if (id == null) {
+        // No strict grant, no id — best-effort: try legacy close on the
+        // caller's own window via window-close is unsafe without an id,
+        // so drop the call silently (matches previous behavior).
+        return;
+      }
+      ipcRenderer.invoke('window-close', { id });
     },
 
     /**
-     * Get info about the current window
+     * Get info about the current window. Routes through strict IPC when
+     * the tile has declared the capability; otherwise falls back to a
+     * best-effort minimal object (v1 tiles did not have this API).
      */
     getInfo: () => {
-      return ipcRenderer.invoke('tile:window:info', {
-        token: tileToken,
-      });
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:info', {
+          token: tileToken,
+        });
+      }
+      // No legacy equivalent — return an error consistent with the
+      // strict path's shape.
+      return Promise.resolve({ error: 'window capability not granted' });
+    },
+
+    /**
+     * List open windows. Strict-only — requires `window.query`. In
+     * v1-compat mode this falls back to `window-list` for parity.
+     */
+    list: () => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:list', {
+          token: tileToken,
+        });
+      }
+      return ipcRenderer.invoke('window-list', {});
     },
   };
 
@@ -1019,9 +1084,20 @@ function buildAPI(): Record<string, unknown> {
   };
 
   // ── closeWindow (v1-compat) ───────────────────────────────────────
+  //
+  // When the tile has declared the `window` capability, the close goes
+  // through the strict handler (which enforces sender-ownership / the
+  // `manage` flag). When it hasn't, we fall back to the un-gated legacy
+  // channel — matching the dual-path policy of api.window.close().
   api.closeWindow = wrapCompat('closeWindow', '(call)', (id?: unknown) => {
+    if (hasWindowCapability()) {
+      ipcRenderer.send('tile:window:close', {
+        token: tileToken,
+        id: id as number | undefined,
+      });
+      return;
+    }
     if (id == null) {
-      ipcRenderer.send('tile:window:close', { token: tileToken });
       return;
     }
     ipcRenderer.invoke('window-close', { id });
