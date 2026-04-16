@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 
-import { buildCSPForTile, buildDefaultCSP } from './tile-csp.js';
+import { buildCSPForTile, buildDefaultCSP, injectCSPHeader, isHTMLResponse } from './tile-csp.js';
 import type { TileCapabilities } from './tile-manifest.js';
 
 describe('buildDefaultCSP', () => {
@@ -161,5 +161,113 @@ describe('CSP exfiltration vectors', () => {
     const parts = connectSrc.split(/\s+/).filter(p => p !== "'self'" && p !== '');
     assert.strictEqual(parts.length, 1, 'only one external domain should be allowed');
     assert.strictEqual(parts[0], 'https://api.example.com');
+  });
+});
+
+// ─── injectCSPHeader — apply to every response path ──────────────────
+//
+// Regression coverage for the protocol handler fix that extends CSP
+// injection to error responses, redirects, and non-HTML sub-resources.
+// Previously CSP was only injected when the response was HTML *and* the
+// tile manifest was known. The handler now applies CSP on every tile
+// response; these tests verify the primitive used to do so.
+
+describe('injectCSPHeader on every response type', () => {
+  it('should inject CSP on a 404 error response', () => {
+    const original = new Response('Not Found', { status: 404 });
+    const csp = buildDefaultCSP();
+    const injected = injectCSPHeader(original, csp);
+    assert.strictEqual(injected.status, 404);
+    assert.strictEqual(injected.headers.get('Content-Security-Policy'), csp);
+  });
+
+  it('should inject CSP on a 500 server-error response', () => {
+    const original = new Response('Internal Server Error', { status: 500 });
+    const csp = buildDefaultCSP();
+    const injected = injectCSPHeader(original, csp);
+    assert.strictEqual(injected.status, 500);
+    assert.ok(injected.headers.get('Content-Security-Policy')?.includes("default-src 'self'"));
+  });
+
+  it('should inject CSP on a 403 forbidden response (path traversal)', () => {
+    const original = new Response('Forbidden', { status: 403 });
+    const csp = buildDefaultCSP();
+    const injected = injectCSPHeader(original, csp);
+    assert.strictEqual(injected.status, 403);
+    assert.ok(injected.headers.get('Content-Security-Policy'));
+  });
+
+  it('should inject CSP on a 302 redirect response', () => {
+    const original = new Response(null, {
+      status: 302,
+      headers: { Location: 'https://example.com/' },
+    });
+    const csp = buildDefaultCSP();
+    const injected = injectCSPHeader(original, csp);
+    assert.strictEqual(injected.status, 302);
+    assert.strictEqual(injected.headers.get('Location'), 'https://example.com/');
+    assert.ok(injected.headers.get('Content-Security-Policy'));
+  });
+
+  it('should inject CSP on a non-HTML sub-resource (JS)', () => {
+    const original = new Response('export const x = 1;', {
+      status: 200,
+      headers: { 'Content-Type': 'application/javascript' },
+    });
+    assert.ok(!isHTMLResponse(original), 'sanity: JS response is not HTML');
+    const csp = buildDefaultCSP();
+    const injected = injectCSPHeader(original, csp);
+    assert.strictEqual(injected.status, 200);
+    assert.strictEqual(injected.headers.get('Content-Type'), 'application/javascript');
+    assert.ok(injected.headers.get('Content-Security-Policy'));
+  });
+
+  it('should inject CSP on a non-HTML sub-resource (CSS)', () => {
+    const original = new Response('body{}', {
+      status: 200,
+      headers: { 'Content-Type': 'text/css' },
+    });
+    assert.ok(!isHTMLResponse(original));
+    const injected = injectCSPHeader(original, buildDefaultCSP());
+    assert.strictEqual(injected.headers.get('Content-Type'), 'text/css');
+    assert.ok(injected.headers.get('Content-Security-Policy'));
+  });
+
+  it('should inject CSP on a font binary response', () => {
+    const original = new Response(new ArrayBuffer(8), {
+      status: 200,
+      headers: { 'Content-Type': 'font/woff2' },
+    });
+    const injected = injectCSPHeader(original, buildDefaultCSP());
+    assert.strictEqual(injected.headers.get('Content-Type'), 'font/woff2');
+    assert.ok(injected.headers.get('Content-Security-Policy'));
+  });
+
+  it('should preserve other headers when injecting CSP', () => {
+    const original = new Response('body', {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html',
+        'Cache-Control': 'no-store',
+        'X-Custom': 'keep-me',
+      },
+    });
+    const injected = injectCSPHeader(original, buildDefaultCSP());
+    assert.strictEqual(injected.headers.get('Cache-Control'), 'no-store');
+    assert.strictEqual(injected.headers.get('X-Custom'), 'keep-me');
+    assert.ok(injected.headers.get('Content-Security-Policy'));
+  });
+
+  it('should use buildDefaultCSP as a safe fallback when manifest is missing', () => {
+    // Fallback CSP must still block worker-src, object-src, form-action, and
+    // disallow any external connect-src — otherwise the error-response path
+    // could be used as an exfiltration escape hatch.
+    const csp = buildDefaultCSP();
+    assert.ok(csp.includes("worker-src 'none'"));
+    assert.ok(csp.includes("object-src 'none'"));
+    assert.ok(csp.includes("form-action 'none'"));
+    assert.ok(csp.includes("frame-src 'none'"));
+    const connectSrc = csp.match(/connect-src ([^;]+)/)?.[1] || '';
+    assert.ok(!connectSrc.includes('https://'), 'fallback connect-src must not allow external domains');
   });
 });

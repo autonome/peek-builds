@@ -19,7 +19,8 @@ import { getDb } from './datastore.js';
 import { getThumbnailPath } from './thumbnails.js';
 import { DEBUG } from './config.js';
 import { getTileManifest } from './tile-launcher.js';
-import { buildCSPForTile, buildDefaultCSP, injectCSPHeader, isHTMLResponse } from './tile-csp.js';
+import { isLazyTileRegistered } from './tile-lazy.js';
+import { buildCSPForTile, buildDefaultCSP, injectCSPHeader } from './tile-csp.js';
 
 export const APP_SCHEME = 'peek';
 export const APP_PROTOCOL = `${APP_SCHEME}:`;
@@ -543,24 +544,39 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       const extPath = pathname || 'background.html';
       const absolutePath = path.resolve(extBasePath, extPath);
 
-      // Security: ensure path stays within extension folder
+      // A v2 tile origin is identified by having either a loaded manifest
+      // (eager tiles) or a registered lazy manifest (not yet instantiated).
+      // V1 extensions share the same per-extension host path but are not
+      // tiles — we do not inject a tile CSP for them.
+      const tileManifest = getTileManifest(host);
+      const isTileOrigin = tileManifest !== null || isLazyTileRegistered(host);
+
+      // Security: ensure path stays within extension folder. For tile origins
+      // we still want CSP on the 403, so we synthesize the forbidden response
+      // and fall through to the CSP-injection tail instead of returning early.
       const normalizedBase = path.normalize(extBasePath);
+      let response: Response;
       if (!absolutePath.startsWith(normalizedBase)) {
         console.error('Path traversal attempt blocked:', absolutePath);
-        return new Response('Forbidden', { status: 403 });
+        response = new Response('Forbidden', { status: 403 });
+      } else {
+        response = await fetchFile(absolutePath, req.url);
       }
 
-      const response = await fetchFile(absolutePath, req.url);
-
-      // CSP injection for v2 tile manifests
-      // If this extension has a loaded v2 tile manifest, inject CSP headers on HTML responses
-      if (isHTMLResponse(response)) {
-        const tileManifest = getTileManifest(host);
-        if (tileManifest) {
-          const csp = buildCSPForTile(tileManifest.capabilities);
-          DEBUG && console.log(`[protocol] Injecting CSP for tile ${host}:`, csp);
-          return injectCSPHeader(response, csp);
-        }
+      // CSP injection for v2 tile origins.
+      // Apply to EVERY response regardless of status or Content-Type so
+      // error responses (404/500), redirects (3xx), and sub-resources
+      // (JS/CSS/fonts) cannot be used to escape the tile's declared
+      // capability sandbox. Fall back to the maximally-restrictive default
+      // CSP when the manifest isn't available (e.g. in-flight errors
+      // before `loadedManifests.set()` completes, or lazy-registered
+      // tiles whose background hasn't launched yet).
+      if (isTileOrigin) {
+        const csp = tileManifest
+          ? buildCSPForTile(tileManifest.capabilities)
+          : buildDefaultCSP();
+        DEBUG && console.log(`[protocol] Injecting CSP for tile ${host} (status ${response.status}):`, csp);
+        return injectCSPHeader(response, csp);
       }
 
       return response;
