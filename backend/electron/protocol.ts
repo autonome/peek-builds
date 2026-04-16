@@ -334,6 +334,21 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         return fetchFile(absolutePath, req.url);
       }
 
+      // Backwards-compat: peek://ext/page/{path} resolves to app/page/ now that
+      // page has been extracted out of features/ into core app code.
+      // The page background iframe URL was peek://ext/page/background.html; we
+      // preserve that URL contract so any existing open windows don't break.
+      if (extId === 'page') {
+        const absolutePath = path.resolve(rootDir, 'app', 'page', extPath);
+        const pageBase = path.resolve(rootDir, 'app', 'page');
+        if (!absolutePath.startsWith(pageBase)) {
+          console.error('Path traversal attempt blocked:', absolutePath);
+          return new Response('Forbidden', { status: 403 });
+        }
+        DEBUG && console.log(`[protocol] ext/page/${extPath} -> ${absolutePath}`);
+        return fetchFile(absolutePath, req.url);
+      }
+
       const extBasePath = getExtensionPath(extId);
       if (!extBasePath) {
         DEBUG && console.log('Extension not found:', extId);
@@ -567,6 +582,22 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         return new Response('Forbidden', { status: 403 });
       }
       DEBUG && console.log(`[protocol] hud/${hudPath} -> ${absolutePath}`);
+      return fetchFile(absolutePath, req.url);
+    }
+
+    // Backwards-compat: peek://page/{path} resolves to app/page/
+    // page used to be a consolidated extension served from features/page/; it's
+    // now core app code in app/page/. The extension-host iframe uses this
+    // origin (peek://page/background.html) for isolation.
+    if (host === 'page') {
+      const pagePath = pathname || 'background.html';
+      const absolutePath = path.resolve(rootDir, 'app', 'page', pagePath);
+      const pageBase = path.resolve(rootDir, 'app', 'page');
+      if (!absolutePath.startsWith(pageBase)) {
+        console.error('Path traversal attempt blocked:', absolutePath);
+        return new Response('Forbidden', { status: 403 });
+      }
+      DEBUG && console.log(`[protocol] page/${pagePath} -> ${absolutePath}`);
       return fetchFile(absolutePath, req.url);
     }
 

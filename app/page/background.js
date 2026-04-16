@@ -1,9 +1,18 @@
 /**
- * Page Extension Background Script
+ * Page Background Script
  *
- * Page and window-related commands (open, modal)
+ * Page and window-related commands (open, modal).
  *
- * Runs in isolated extension process (peek://ext/page/background.html)
+ * Page is NOT a feature — it's core app infrastructure. The cross-platform
+ * page code (canvas UI, webview host) lives in ./app/page/. This background
+ * script registers the `open` and `modal` commands via the portable
+ * `api.commands.register()` surface.
+ *
+ * Runs inside the consolidated extension host iframe at peek://page/background.html
+ * (backwards-compat access at peek://ext/page/background.html).
+ *
+ * Previously lived in features/page/background.js; moved to app/page/ as part
+ * of the core extraction (docs/page-extraction-plan.md).
  */
 
 const api = window.app;
@@ -96,7 +105,7 @@ const commandDefinitions = [
           success: true
         };
       } catch (error) {
-        console.error('[ext:page] Failed to open window:', error);
+        console.error('[page] Failed to open window:', error);
         return {
           error: 'Failed to open window: ' + error.message,
           address: normalizedAddress
@@ -123,7 +132,7 @@ const commandDefinitions = [
           height: 500
         });
       } catch (error) {
-        console.error('[ext:page] Failed to open modal window:', error);
+        console.error('[page] Failed to open modal window:', error);
         return { error: 'Failed to open modal window: ' + error.message };
       }
 

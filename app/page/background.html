@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
-  <title>Page Extension</title>
+  <title>Page</title>
 </head>
 <body>
 <script type="module">
@@ -12,12 +12,12 @@
   const api = window.app;
   const extId = extension.id;
 
-  console.log(`[ext:${extId}] background.html loaded`);
+  console.log(`[page] background.html loaded`);
 
   // Initialize extension BEFORE publishing ext:ready
   // (commands must be registered before lazy stub re-publishes)
   if (extension.init) {
-    console.log(`[ext:${extId}] calling init()`);
+    console.log(`[page] calling init()`);
     await extension.init();
   }
 
@@ -38,7 +38,7 @@
 
   // Handle shutdown request from main process
   api.subscribe('app:shutdown', () => {
-    console.log(`[ext:${extId}] received shutdown`);
+    console.log(`[page] received shutdown`);
     if (extension.uninit) {
       extension.uninit();
     }
@@ -46,7 +46,7 @@
 
   // Handle extension-specific shutdown
   api.subscribe(`ext:${extId}:shutdown`, () => {
-    console.log(`[ext:${extId}] received extension shutdown`);
+    console.log(`[page] received extension shutdown`);
     if (extension.uninit) {
       extension.uninit();
     }

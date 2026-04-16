@@ -14,6 +14,7 @@ import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, u
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCmd } from './cmd-glue.js';
 import { initHud } from './hud-glue.js';
+import { initPage } from './page-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles } from './tile-launcher.js';
@@ -80,12 +81,11 @@ let extensionHostWindow: BrowserWindow | null = null;
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
 //
-// NOTE: 'cmd' and 'hud' were removed from this list when they were extracted
-// from features/ into core app code (app/cmd/ and app/hud/). They're now
-// loaded via initCmd() / initHud() from cmd-glue.ts / hud-glue.ts, which run
-// before feature loading so the command registry is ready for feature command
-// registrations.
-const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'page', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
+// NOTE: 'cmd', 'hud', and 'page' were removed from this list when they were
+// extracted from features/ into core app code (app/cmd/, app/hud/, app/page/).
+// They're now loaded via initCmd() / initHud() / initPage() from their
+// respective glue files, which run before feature loading.
+const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
 const EAGER_EXTENSION_IDS = new Set(['entities']);
@@ -1432,6 +1432,13 @@ export async function loadExtensions(): Promise<number> {
   // loadExtInHost/waitForExtLoaded populates loadedConsolidatedExtensions so
   // getRunningExtensions() still reports hud.
   await initHud({ host, loadExtInHost, waitForExtLoaded });
+
+  // Load page background right after hud — registers the `open` and `modal`
+  // commands. Page is core infrastructure (the canvas architecture in
+  // app/page/index.html + page.js is the primary web rendering surface).
+  // loadExtInHost/waitForExtLoaded populates loadedConsolidatedExtensions so
+  // getRunningExtensions() still reports page.
+  await initPage({ host, loadExtInHost, waitForExtLoaded });
 
   // ── V2 Feature Startup ──
   // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
