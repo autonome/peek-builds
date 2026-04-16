@@ -34,14 +34,14 @@ try {
 function onChannel(topic, handler) {
   if (!scriptsChannelHandlers[topic]) scriptsChannelHandlers[topic] = [];
   scriptsChannelHandlers[topic].push(handler);
-  if (!scriptsChannel) api.subscribe(topic, handler, api.scopes.GLOBAL);
+  if (!scriptsChannel) api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
   if (scriptsChannel) {
     scriptsChannel.postMessage({ topic, data });
   } else {
-    api.publish(topic, data, api.scopes.GLOBAL);
+    api.pubsub.publish(topic, data, api.scopes.GLOBAL);
   }
 }
 

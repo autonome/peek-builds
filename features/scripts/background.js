@@ -40,14 +40,14 @@ try {
 function onChannel(topic, handler) {
   if (!scriptsChannelHandlers[topic]) scriptsChannelHandlers[topic] = [];
   scriptsChannelHandlers[topic].push(handler);
-  if (!scriptsChannel) api.subscribe(topic, handler, api.scopes.GLOBAL);
+  if (!scriptsChannel) api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
 }
 
 function emitChannel(topic, data) {
   if (scriptsChannel) {
     scriptsChannel.postMessage({ topic, data });
   } else {
-    api.publish(topic, data, api.scopes.GLOBAL);
+    api.pubsub.publish(topic, data, api.scopes.GLOBAL);
   }
 }
 
@@ -195,7 +195,7 @@ const executeScript = async (scriptId, executionContext) => {
     await updateScript(scriptId, { lastExecutedAt: Date.now() });
 
     // Publish execution result
-    api.publish('scripts:executed', {
+    api.pubsub.publish('scripts:executed', {
       scriptId,
       result,
       url: executionContext.url
@@ -335,9 +335,9 @@ const init = async () => {
   });
 
   // Keep scripts:execute on IPC for cross-extension access
-  api.subscribe('scripts:execute', async (msg) => {
+  api.pubsub.subscribe('scripts:execute', async (msg) => {
     const result = await executeScript(msg.scriptId, msg.context);
-    api.publish('scripts:execute:response', result, api.scopes.GLOBAL);
+    api.pubsub.publish('scripts:execute:response', result, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
 };
