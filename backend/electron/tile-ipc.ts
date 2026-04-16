@@ -58,6 +58,12 @@ import {
   deleteItemEvent as dsDeleteItemEvent,
   deleteItemEvents as dsDeleteItemEvents,
   getItemEvent as dsGetItemEvent,
+  addContextEntry,
+  getContextEntry,
+  queryContextHistory,
+  getContextSnapshot,
+  getWindowsWithContextValue,
+  getWindowsMatchingContext,
 } from './datastore.js';
 import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
@@ -71,6 +77,8 @@ import {
   unregisterLocalShortcut,
 } from './shortcuts.js';
 import { checkShortcutAllowed } from './tile-shortcuts-enforcement.js';
+import { checkContextAllowed } from './tile-context-enforcement.js';
+import { checkDialogAllowed } from './tile-dialogs-enforcement.js';
 import { getActiveThemeId } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
@@ -81,6 +89,8 @@ export { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 // Re-export the strict-shortcut helper so older callers / tests can still
 // import from 'tile-ipc' even though the logic lives in its own pure module.
 export { checkShortcutAllowed, type ShortcutCheckResult } from './tile-shortcuts-enforcement.js';
+export { checkContextAllowed, type ContextCheckResult, type ContextOp } from './tile-context-enforcement.js';
+export { checkDialogAllowed, type DialogsCheckResult } from './tile-dialogs-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -193,8 +203,10 @@ function compareCapabilitiesSimple(
   const cur = currentCaps || {} as TileCapabilities;
   const nxt = newCaps || {} as TileCapabilities;
 
-  // Boolean capabilities
-  const boolCaps: Array<keyof TileCapabilities> = ['commands', 'shortcuts', 'sync', 'theme', 'settings'];
+  // Boolean capabilities (or boolean-or-object capabilities treated as
+  // present/absent for change detection — deeper allowlist diffs are
+  // out of scope for the auto-update expansion guard).
+  const boolCaps: Array<keyof TileCapabilities> = ['commands', 'shortcuts', 'sync', 'theme', 'settings', 'context', 'dialogs'];
   for (const cap of boolCaps) {
     const had = !!cur[cap];
     const has = !!nxt[cap];
@@ -543,6 +555,341 @@ export function registerTileIpcHandlers(): void {
     } else {
       const modeConditions = modeStr ? { majorMode: modeStr as import('./datastore.js').MajorModeId } : undefined;
       unregisterLocalShortcut(args.shortcut, source, modeConditions);
+    }
+  });
+
+  // ── Context (strict) ──────────────────────────────────────────────
+  //
+  // Strict tile:context:* handlers that enforce the `context` capability.
+  // The legacy `context-get` / `context-set` / `context-history` /
+  // `context-snapshot` / `context-windows-*` channels in ipc.ts remain
+  // the v1-compat surface and are NOT token-gated — tile-preload routes
+  // through these strict handlers when the tile's manifest declares the
+  // `context` capability. See docs/tile-preload-trimming-plan.md §2.5.
+  //
+  // Validation order for each op:
+  //   1. Token must resolve to a valid grant.
+  //   2. Grant must include the `context` capability (boolean or object).
+  //   3. Per-op gates applied via checkContextAllowed (pure module):
+  //      - get/history: key must be in `read` allowlist (if set).
+  //      - set: key must be in `write` allowlist (if set); writing the
+  //        `mode` key additionally requires `modes: true`.
+  //      - windowsWithValue/windowsInSpace: require `queryWindows: true`.
+  //      - snapshot: no per-op gate beyond the capability itself.
+
+  ipcMain.handle('tile:context:get', async (ev, args: {
+    token: string;
+    key: string;
+    windowId?: number | null;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkContextAllowed(grant, 'get', args.key);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] context:get rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      let windowId = args.windowId;
+      if (windowId == null) {
+        const callingWin = BrowserWindow.fromWebContents(ev.sender);
+        windowId = callingWin?.id ?? null;
+      }
+      const entry = getContextEntry(args.key, windowId);
+      return { success: true, data: entry };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:context:set', async (ev, args: {
+    token: string;
+    key: string;
+    value: unknown;
+    metadata?: Record<string, unknown>;
+    windowId?: number | null;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkContextAllowed(grant, 'set', args.key);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] context:set rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    // check.ok guarantees grant is non-null.
+    const activeGrant = grant as CapabilityGrant;
+    try {
+      let windowId = args.windowId;
+      if (windowId == null) {
+        const callingWin = BrowserWindow.fromWebContents(ev.sender);
+        windowId = callingWin?.id ?? null;
+      }
+      const source = `peek://${activeGrant.tileId}/background`;
+      const result = addContextEntry(args.key, args.value, {
+        metadata: args.metadata,
+        windowId,
+        source,
+      });
+      // Publish context:changed so watchers see the write (parity with
+      // the legacy context-set handler in ipc.ts).
+      publish(
+        source,
+        scopes.GLOBAL,
+        'context:changed',
+        {
+          key: args.key,
+          value: args.value,
+          metadata: args.metadata || {},
+          windowId,
+          source,
+          entryId: result.id,
+        },
+      );
+      return { success: true, data: result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:context:history', async (_ev, args: {
+    token: string;
+    key?: string;
+    windowId?: number | null;
+    since?: number;
+    until?: number;
+    limit?: number;
+    order?: 'asc' | 'desc';
+  }) => {
+    const grant = getGrantForToken(args.token);
+    // history has a key-scoped gate only when the caller specified a
+    // key. Unscoped history queries still require the capability but
+    // not a specific allowlist entry — the datastore query itself
+    // returns all keys, which the read allowlist cannot meaningfully
+    // restrict without iterating per-entry. We therefore require an
+    // explicit `key` when a read allowlist is configured.
+    const cap = grant?.capabilities.context;
+    if (grant && cap && typeof cap === 'object' && Array.isArray((cap as { read?: string[] }).read) && !args.key) {
+      return { success: false, error: 'context key required for history when read allowlist is configured' };
+    }
+    const check = checkContextAllowed(grant, 'history', args.key);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] context:history rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const entries = queryContextHistory({
+        key: args.key,
+        windowId: args.windowId ?? undefined,
+        since: args.since,
+        until: args.until,
+        limit: args.limit,
+        order: args.order,
+      });
+      return { success: true, data: entries };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:context:snapshot', async (_ev, args: {
+    token: string;
+    timestamp?: number;
+    keys?: string[];
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkContextAllowed(grant, 'snapshot');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] context:snapshot rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const ts = typeof args.timestamp === 'number' ? args.timestamp : Date.now();
+      const snapshot = getContextSnapshot(ts, args.keys || []);
+      return { success: true, data: snapshot };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:context:windows-with-value', async (_ev, args: {
+    token: string;
+    key: string;
+    value: unknown;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkContextAllowed(grant, 'windowsWithValue', args.key);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] context:windows-with-value rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const windowIds = getWindowsWithContextValue(args.key, args.value);
+      return { success: true, data: windowIds };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:context:windows-in-space', async (_ev, args: {
+    token: string;
+    spaceId: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkContextAllowed(grant, 'windowsInSpace');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] context:windows-in-space rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const windowIds = getWindowsMatchingContext('mode', (entry) => {
+        return entry.value === 'space' && (entry.metadata as { spaceId?: string } | undefined)?.spaceId === args.spaceId;
+      });
+      return { success: true, data: windowIds };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── Dialogs (strict) ──────────────────────────────────────────────
+  //
+  // Strict tile:dialogs:save / tile:dialogs:open handlers that enforce
+  // the `dialogs` capability. The v1-compat surface was the
+  // `file-save-dialog` / `file-open-dialog` IPC channels with
+  // `api.files.save/open` preload wrappers, neither capability-gated.
+  // The strict handlers reuse the same Electron `dialog.show*Dialog`
+  // flow while requiring a declared capability + optional type
+  // allowlist. See docs/tile-preload-trimming-plan.md §2.4.
+
+  ipcMain.handle('tile:dialogs:save', async (ev, args: {
+    token: string;
+    content: string;
+    filename?: string;
+    mimeType?: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkDialogAllowed(grant, 'save');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] dialogs:save rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const filters: Electron.FileFilter[] = [];
+      if (args.mimeType) {
+        const extMap: Record<string, { name: string; extensions: string[] }> = {
+          'application/json': { name: 'JSON', extensions: ['json'] },
+          'text/csv': { name: 'CSV', extensions: ['csv'] },
+          'text/plain': { name: 'Text', extensions: ['txt'] },
+          'text/html': { name: 'HTML', extensions: ['html', 'htm'] },
+        };
+        const filter = extMap[args.mimeType];
+        if (filter) filters.push(filter);
+      }
+      filters.push({ name: 'All Files', extensions: ['*'] });
+
+      const senderWindow = BrowserWindow.fromWebContents(ev.sender);
+      const focusedWindow = BrowserWindow.getFocusedWindow();
+      const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
+        ? focusedWindow
+        : (senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null);
+
+      const dialogOpts: Electron.SaveDialogOptions = {
+        defaultPath: args.filename,
+        filters,
+      };
+      const result = parentWindow
+        ? await dialog.showSaveDialog(parentWindow, dialogOpts)
+        : await dialog.showSaveDialog(dialogOpts);
+
+      if (result.canceled || !result.filePath) {
+        return { success: false, canceled: true };
+      }
+
+      fs.writeFileSync(result.filePath, args.content, 'utf-8');
+      return { success: true, path: result.filePath };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:dialogs:open', async (ev, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkDialogAllowed(grant, 'open');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] dialogs:open rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const senderWindow = BrowserWindow.fromWebContents(ev.sender);
+      const focusedWindow = BrowserWindow.getFocusedWindow();
+      const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
+        ? focusedWindow
+        : (senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null);
+
+      const openDialogOpts: Electron.OpenDialogOptions = {
+        properties: ['openFile'],
+        filters: [
+          { name: 'All Files', extensions: ['*'] },
+          { name: 'Text Files', extensions: ['txt', 'md', 'json', 'html', 'csv', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log'] },
+          { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'rtf'] },
+        ],
+      };
+      const result = parentWindow
+        ? await dialog.showOpenDialog(parentWindow, openDialogOpts)
+        : await dialog.showOpenDialog(openDialogOpts);
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+
+      const filePath = result.filePaths[0];
+      const stats = fs.statSync(filePath);
+      const fileName = path.basename(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+
+      const extToMime: Record<string, string> = {
+        '.md': 'text/markdown',
+        '.markdown': 'text/markdown',
+        '.txt': 'text/plain',
+        '.text': 'text/plain',
+        '.json': 'application/json',
+        '.html': 'text/html',
+        '.htm': 'text/html',
+        '.csv': 'text/csv',
+        '.xml': 'application/xml',
+        '.yaml': 'text/yaml',
+        '.yml': 'text/yaml',
+        '.svg': 'image/svg+xml',
+      };
+      const mimeType = extToMime[ext] || 'application/octet-stream';
+      const isText = mimeType.startsWith('text/') ||
+                     mimeType === 'application/json' ||
+                     mimeType === 'application/xml' ||
+                     mimeType === 'image/svg+xml';
+
+      let content: string | null = null;
+      if (isText) content = fs.readFileSync(filePath, 'utf-8');
+
+      return {
+        success: true,
+        data: {
+          name: fileName,
+          path: filePath,
+          size: stats.size,
+          mimeType,
+          content,
+          isText,
+        },
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
     }
   });
 
