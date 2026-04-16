@@ -85,10 +85,10 @@ import {
 import {
   initChromeExtensionManager,
   loadEnabledChromeExtensions,
-  getChromeExtensionUiEntries,
   openChromeExtensionPage,
   cleanupChromeExtensions,
   isChromeExtensionLoaded,
+  getChromeExtensionOptionsCommands,
 } from './chrome-extensions.js';
 import {
   initProfilesDb,
@@ -395,43 +395,46 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 /**
- * Register command palette entries for chrome extension UI pages.
- * Called after chrome extensions are loaded so we know which ones
- * have options pages or popups.
+ * Register command-palette entries for loaded chrome extensions that
+ * expose an options page (manifest.options_page or manifest.options_ui.page).
  *
- * For each UI entry point, registers a command and subscribes to
- * its execution topic so the main process can open the window.
+ * For each such extension we register a "<name> options" command and
+ * subscribe to its execution topic so the main process can open the
+ * options page in a new BrowserWindow via openChromeExtensionPage().
+ *
+ * Only options pages are registered here — other manifest UI entry
+ * points (popup, newtab, devtools, etc.) are intentionally out of
+ * scope; those have their own surfaces.
  */
 function registerChromeExtensionCommands(): void {
-  const entries = getChromeExtensionUiEntries();
-  if (entries.length === 0) return;
+  const commands = getChromeExtensionOptionsCommands();
+  if (commands.length === 0) return;
 
   const systemAddress = getSystemAddress();
 
-  for (const entry of entries) {
-    const commandName = entry.type === 'options'
-      ? `${entry.extensionName} Settings`
-      : entry.extensionName;
+  for (const cmd of commands) {
+    const execTopic = `cmd:execute:${cmd.commandName}`;
 
-    // Subscribe to execution topic so we can handle it from the main process
-    const execTopic = `cmd:execute:${commandName}`;
+    // Subscribe to execution topic so we handle invocation in the main process.
+    // Publish :result back immediately so the cmd panel proxy resolves instead
+    // of waiting for its 30s timeout (openChromeExtensionPage is fire-and-forget
+    // from the cmd panel's perspective).
     subscribe(systemAddress, scopes.GLOBAL, execTopic, () => {
-      DEBUG && console.log(`[chrome-ext] Executing command: ${commandName}`);
-      openChromeExtensionPage(entry.extensionId, entry.type);
+      DEBUG && console.log(`[chrome-ext] Executing command: ${cmd.commandName}`);
+      openChromeExtensionPage(cmd.extensionId, 'options');
+      publish(systemAddress, scopes.GLOBAL, `${execTopic}:result`, { success: true });
     });
 
-    // Register the command with the cmd extension
+    // Register the command with the cmd registry.
     publish(systemAddress, scopes.GLOBAL, 'cmd:register', {
-      name: commandName,
-      description: entry.type === 'options'
-        ? `Open ${entry.extensionName} settings`
-        : `Open ${entry.extensionName} popup`,
+      name: cmd.commandName,
+      description: `Open ${cmd.extensionName} options page`,
       source: systemAddress,
       scope: 'global',
     });
   }
 
-  DEBUG && console.log(`[chrome-ext] Registered ${entries.length} command(s) for chrome extension UI pages`);
+  DEBUG && console.log(`[chrome-ext] Registered ${commands.length} options command(s) for chrome extensions`);
 }
 
 // ***** init *****

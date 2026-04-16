@@ -18,6 +18,7 @@ import path from 'node:path';
 import { getDb } from './datastore.js';
 import { getProfileSession } from './session-partition.js';
 import { registerAll } from './chrome-api-polyfills/index.js';
+import { buildOptionsCommandName } from './chrome-extensions-helpers.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -677,4 +678,42 @@ export async function cleanupChromeExtensions(): Promise<void> {
   discoveredExtensions.clear();
   loadedExtensions.clear();
   extensionsDir = null;
+}
+
+
+/**
+ * Info needed to register a single "options" command for a loaded chrome extension.
+ */
+export interface ChromeExtensionOptionsCommand {
+  extensionId: string;
+  extensionName: string;
+  commandName: string;
+  url: string;
+}
+
+// Re-export the pure helpers from the split module so callers only need
+// one import path.
+export { sanitizeExtensionName, buildOptionsCommandName } from './chrome-extensions-helpers.js';
+
+/**
+ * Enumerate the options-page commands that should be registered for all
+ * currently-loaded chrome extensions that expose an options UI. Pure —
+ * derives everything from the already-populated discovery + loaded maps.
+ */
+export function getChromeExtensionOptionsCommands(): ChromeExtensionOptionsCommand[] {
+  const commands: ChromeExtensionOptionsCommand[] = [];
+  const entries = getChromeExtensionUiEntries();
+  for (const entry of entries) {
+    if (entry.type !== 'options') continue;
+    if (!entry.openable) continue;
+    const discovered = discoveredExtensions.get(entry.extensionId);
+    const rawName = discovered?.name || entry.extensionName;
+    commands.push({
+      extensionId: entry.extensionId,
+      extensionName: rawName,
+      commandName: buildOptionsCommandName(rawName, entry.extensionId),
+      url: entry.url,
+    });
+  }
+  return commands;
 }
