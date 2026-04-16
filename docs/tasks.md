@@ -85,7 +85,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 - [x] Phase 4 — removed v1-compat shims + hard-fail stubs; deleted v1 else-branches in 22 feature HTMLs; 54 new stub tests; 5 runtime-breaking callers fixed (pagewidgets-sample, files, groups, tags, features-manager)
   - [x] **Datastore restoration** — Phase 4 over-reached and stubbed out the `api.datastore.*` named methods that every feature actually calls. Restored as legacy-channel routes (thin wrappers over `datastore-*` IPC in ipc.ts). The generic strict surface (`api.datastore.{get,set,query,extractPageContent}`) remains unchanged alongside it.
   - [ ] Follow-up: build strict `tile:datastore:*` handlers for methods without them (renameTag/updateTagColor/deleteTag/queryItemVisits/getHistory/updateItemTitle/updateItemFavicon/hardDeleteItem/recordItemVisit/getItemVisits/trackNavigation/queryItemsByFrecency/addAddress-family). Then migrate callers to strict and reintroduce hard-fail stubs for the named methods.
-- [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
+- [x] Phase 5 — TILE_STRICT env flag (throws on cap violations); tile:capability-violation pubsub topic with rate limiting; static tile-api.d.ts
+  - **Tiles trimming COMPLETE** — all 5 phases done. Known follow-ups tracked above (missing strict datastore handlers, legacy routing cleanup) — not blocking.
 
 ### Features-manager atproto plan phases (from `features/features-manager/PLAN.md`)
 - [ ] Phase 7 — polish + indexing (curated directory, relay/indexer service as separate repo)
@@ -104,6 +105,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 Keep short — for recent context only. Prune after a few weeks.
 
+- 2026-04-16 Trimming Phase 5 closed: TILE_STRICT env flag, capability-violation pubsub topic with rate limiting, static tile-api.d.ts
+- 2026-04-16 Trimming Phase 4 datastore restoration: Phase 4 over-reached; named api.datastore.* methods restored as legacy routes (the strict surface remains)
 - 2026-04-16 Trimming Phase 4 closed: v1-compat shims removed, hard-fail stubs in their place, v1 else-branches deleted from 22 feature HTMLs (2218 tests passing)
 - 2026-04-16 Trimming Phase 3 gap-fill: new capabilities (escape/session/izui/oauth/sync/settings.readForeign); extended window ops; features admin; extract-page-content (2164 tests passing)
 - 2026-04-16 Trimming Phase 3 closed: all 26 features migrated to strict capabilities
