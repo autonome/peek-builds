@@ -64,6 +64,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [ ] Settings response shape: strict path returns `{value, error}` but several features destructure `{success, data}` (v1 shape). Preload may wrap back, but needs audit. Found in peeks so far.
   - [ ] `api.window.close` in strict path is fire-and-forget `ipcRenderer.send` (no promise). Document this; any existing `.catch()` chains need try/catch instead. Discovered in slides migration.
   - [ ] Missing strict surfaces: `api.window.center/centerAll/maximize/fullscreen/getFocusedVisibleWindowId/setOverlayFocusTarget`, `api.izui.*`, `api.escape.*`. Used by `windows` feature and others; currently fall back to legacy preload in separate BrowserWindows.
+  - [ ] Missing `api.oauth.startLoopback/awaitCallback` surface in tile-preload (used by wonderwall). Needs an `oauth` capability + strict tile IPC before v1 shim removal — wonderwall will break otherwise.
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
   - [x] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
