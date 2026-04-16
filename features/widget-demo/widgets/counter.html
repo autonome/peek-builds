@@ -66,8 +66,8 @@
     };
 
     const saveCount = async () => {
-      if (api?.settings?.setKey) {
-        await api.settings.setKey(SETTINGS_KEY, count);
+      if (api?.settings?.set) {
+        await api.settings.set(SETTINGS_KEY, count);
       }
     };
 
@@ -91,11 +91,11 @@
 
     // Load saved count
     const init = async () => {
-      if (api?.settings?.getKey) {
+      if (api?.settings?.get) {
         try {
-          const result = await api.settings.getKey(SETTINGS_KEY);
-          if (result.success && result.data !== undefined && result.data !== null) {
-            count = Number(result.data) || 0;
+          const result = await api.settings.get(SETTINGS_KEY);
+          if (!result.error && result.value !== undefined && result.value !== null) {
+            count = Number(result.value) || 0;
             updateDisplay();
           }
         } catch (err) {

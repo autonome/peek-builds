@@ -55,14 +55,14 @@ let editing = false;
  * Creates default config if none exists (lazy init, no background page needed).
  */
 const loadSheetConfig = async () => {
-  const result = await api.settings.getKey(DEMO_SHEET_KEY);
-  if (result.success && result.data) {
-    return result.data;
+  const result = await api.settings.get(DEMO_SHEET_KEY);
+  if (!result.error && result.value) {
+    return result.value;
   }
 
   // No config exists — create default (previously done in background.js)
   const config = buildDefaultSheetConfig();
-  await api.settings.setKey(DEMO_SHEET_KEY, config);
+  await api.settings.set(DEMO_SHEET_KEY, config);
   console.log('[widget-demo] Created default demo sheet config with', config.items.length, 'widgets');
   return config;
 };
@@ -72,7 +72,7 @@ const loadSheetConfig = async () => {
  */
 const saveSheetConfig = async () => {
   if (!sheetConfig) return;
-  await api.settings.setKey(DEMO_SHEET_KEY, sheetConfig);
+  await api.settings.set(DEMO_SHEET_KEY, sheetConfig);
   debug && console.log('[widget-demo] Config saved');
 };
 

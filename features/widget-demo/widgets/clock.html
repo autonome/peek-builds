@@ -106,8 +106,8 @@
       btn24h.classList.toggle('active', is24h);
       updateClock();
 
-      if (api?.settings?.setKey) {
-        await api.settings.setKey(SETTINGS_KEY, is24h ? '24h' : '12h');
+      if (api?.settings?.set) {
+        await api.settings.set(SETTINGS_KEY, is24h ? '24h' : '12h');
       }
     };
 
@@ -116,11 +116,11 @@
 
     // Load saved format
     const loadFormat = async () => {
-      if (api?.settings?.getKey) {
+      if (api?.settings?.get) {
         try {
-          const result = await api.settings.getKey(SETTINGS_KEY);
-          if (result.success && result.data) {
-            use24h = result.data === '24h';
+          const result = await api.settings.get(SETTINGS_KEY);
+          if (!result.error && result.value) {
+            use24h = result.value === '24h';
             btn12h.classList.toggle('active', !use24h);
             btn24h.classList.toggle('active', use24h);
           }

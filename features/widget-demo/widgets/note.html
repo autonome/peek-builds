@@ -71,9 +71,9 @@
     let saveTimer = null;
 
     const saveNote = async () => {
-      if (api?.settings?.setKey) {
+      if (api?.settings?.set) {
         try {
-          await api.settings.setKey(SETTINGS_KEY, noteEl.value);
+          await api.settings.set(SETTINGS_KEY, noteEl.value);
           statusEl.textContent = 'Saved';
           statusEl.classList.add('saved');
           setTimeout(() => {
@@ -96,11 +96,11 @@
 
     // Load saved note
     const init = async () => {
-      if (api?.settings?.getKey) {
+      if (api?.settings?.get) {
         try {
-          const result = await api.settings.getKey(SETTINGS_KEY);
-          if (result.success && result.data !== undefined && result.data !== null) {
-            noteEl.value = String(result.data);
+          const result = await api.settings.get(SETTINGS_KEY);
+          if (!result.error && result.value !== undefined && result.value !== null) {
+            noteEl.value = String(result.value);
           }
         } catch (err) {
           console.log('[widget-demo:note] Failed to load note:', err);

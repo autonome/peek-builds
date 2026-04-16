@@ -63,15 +63,15 @@ const buildDefaultSheetConfig = () => {
  * Creates a default config if none exists.
  */
 const ensureSheetConfig = async () => {
-  const result = await api.settings.getKey(DEMO_SHEET_KEY);
-  if (result.success && result.data) {
+  const result = await api.settings.get(DEMO_SHEET_KEY);
+  if (!result.error && result.value) {
     debug && console.log('[ext:widget-demo] Demo sheet config already exists');
-    return result.data;
+    return result.value;
   }
 
   // Create default config
   const config = buildDefaultSheetConfig();
-  await api.settings.setKey(DEMO_SHEET_KEY, config);
+  await api.settings.set(DEMO_SHEET_KEY, config);
   console.log('[ext:widget-demo] Created default demo sheet config with', config.items.length, 'widgets');
   return config;
 };

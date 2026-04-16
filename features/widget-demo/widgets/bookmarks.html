@@ -207,8 +207,8 @@
     };
 
     const saveBookmarks = async () => {
-      if (api?.settings?.setKey) {
-        await api.settings.setKey(SETTINGS_KEY, bookmarks);
+      if (api?.settings?.set) {
+        await api.settings.set(SETTINGS_KEY, bookmarks);
       }
     };
 
@@ -241,11 +241,11 @@
 
     // Load saved bookmarks
     const init = async () => {
-      if (api?.settings?.getKey) {
+      if (api?.settings?.get) {
         try {
-          const result = await api.settings.getKey(SETTINGS_KEY);
-          if (result.success && Array.isArray(result.data)) {
-            bookmarks = result.data;
+          const result = await api.settings.get(SETTINGS_KEY);
+          if (!result.error && Array.isArray(result.value)) {
+            bookmarks = result.value;
           } else {
             bookmarks = DEFAULT_BOOKMARKS;
             saveBookmarks();
