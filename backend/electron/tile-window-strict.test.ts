@@ -227,6 +227,86 @@ describe('checkWindowAllowed — list/info require query', () => {
   });
 });
 
+// ─── exists / show / hide / set-ignore-mouse require manage ──────────
+
+describe('checkWindowAllowed — manage-gated ops (exists/show/hide/set-ignore-mouse)', () => {
+  const manageOps: Array<'exists' | 'show' | 'hide' | 'set-ignore-mouse'> = [
+    'exists',
+    'show',
+    'hide',
+    'set-ignore-mouse',
+  ];
+
+  it('rejects each op when grant is null', () => {
+    for (const op of manageOps) {
+      const result = checkWindowAllowed(null, op);
+      assert.strictEqual(result.ok, false, `op=${op}`);
+      if (!result.ok) {
+        assert.match(result.error, /invalid token/i, `op=${op}`);
+      }
+    }
+  });
+
+  it('rejects each op when window capability is not granted', () => {
+    const grant = makeGrant({ pubsub: { scopes: ['self'] } });
+    for (const op of manageOps) {
+      const result = checkWindowAllowed(grant, op);
+      assert.strictEqual(result.ok, false, `op=${op}`);
+      if (!result.ok) {
+        assert.match(result.error, /window capability not granted/i, `op=${op}`);
+      }
+    }
+  });
+
+  it('rejects each op when only create is set (no manage)', () => {
+    const grant = makeGrant({ window: { create: true } });
+    for (const op of manageOps) {
+      const result = checkWindowAllowed(grant, op);
+      assert.strictEqual(result.ok, false, `op=${op}`);
+      if (!result.ok) {
+        assert.match(result.error, /window\.manage/i, `op=${op}`);
+        assert.match(result.error, new RegExp(op.replace(/-/g, '\\-')), `op=${op}`);
+      }
+    }
+  });
+
+  it('rejects each op when only query is set (no manage)', () => {
+    const grant = makeGrant({ window: { query: true } });
+    for (const op of manageOps) {
+      const result = checkWindowAllowed(grant, op);
+      assert.strictEqual(result.ok, false, `op=${op}`);
+      if (!result.ok) {
+        assert.match(result.error, /window\.manage/i, `op=${op}`);
+      }
+    }
+  });
+
+  it('allows each op when manage is true', () => {
+    const grant = makeGrant({ window: { manage: true } });
+    for (const op of manageOps) {
+      assert.strictEqual(checkWindowAllowed(grant, op).ok, true, `op=${op}`);
+    }
+  });
+
+  it('allows each op when window: true (implies manage)', () => {
+    const grant = makeGrant({ window: true });
+    for (const op of manageOps) {
+      assert.strictEqual(checkWindowAllowed(grant, op).ok, true, `op=${op}`);
+    }
+  });
+
+  it('urls allowlist is ignored for manage-gated ops (they do not take URLs)', () => {
+    // Even with a restrictive urls allowlist, manage-gated ops are
+    // allowed — the allowlist only applies to `open`.
+    const grant = makeGrant({
+      window: { create: true, manage: true, urls: ['peek://only-me/'] },
+    });
+    for (const op of manageOps) {
+      assert.strictEqual(checkWindowAllowed(grant, op).ok, true, `op=${op}`);
+    }
+  });
+});
+
 // ─── Grant-resolution interop ────────────────────────────────────────
 
 describe('resolveCapabilities — window shape preservation', () => {
