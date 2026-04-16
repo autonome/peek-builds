@@ -33,8 +33,18 @@
         "ext:ready",
         "ext:lists:shutdown",
         "app:shutdown",
-        "lists:*"
+        "lists:settings-changed",
+        "lists:settings-update",
+        "sync:pull-completed",
+        "item:created",
+        "item:deleted",
+        "tag:item-added",
+        "tag:item-removed",
+        "editor:open"
       ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags", "item_visits"]
     },
     "window": {
       "create": true
