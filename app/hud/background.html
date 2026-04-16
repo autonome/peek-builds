@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
-  <title>HUD Extension</title>
+  <title>HUD</title>
 </head>
 <body>
 <script type="module">
@@ -12,13 +12,15 @@
   const api = window.app;
   const extId = extension.id;
 
-  // Initialize extension BEFORE signaling ready
-  // (command handlers must be registered before ext:ready so lazy stubs can re-publish)
+  // Initialize HUD BEFORE signaling ready so its handlers are registered
+  // before any other code publishes commands on ext:ready.
   if (extension.init) {
     await extension.init();
   }
 
-  // Signal ready to main process
+  // Signal ready to main process — the hud-glue waitForExtLoaded tracker
+  // watches did-frame-finish-load, but the ext:ready publish is also kept
+  // to populate loadedConsolidatedExtensions for getRunningExtensions().
   api.publish('ext:ready', {
     id: extId,
     manifest: {
@@ -35,7 +37,7 @@
     }
   }, api.scopes.SYSTEM);
 
-  // Handle extension-specific shutdown
+  // Handle hud-specific shutdown
   api.subscribe(`ext:${extId}:shutdown`, () => {
     if (extension.uninit) {
       extension.uninit();

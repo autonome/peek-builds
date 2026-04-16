@@ -1,14 +1,19 @@
 /**
- * HUD Extension Background Script
+ * HUD Background Script
  *
  * Always-on-top overlay showing current mode, IZUI state, and window context.
  * Uses the widget sheet system — each piece of HUD info is an individual
  * widget page rendered via webview in a peek-grid freeform layout.
  *
- * Commands and shortcuts are declared in manifest.json.
- * This extension loads eagerly (needs startup state restoration).
+ * HUD is NOT a feature — it's core app infrastructure that ships with every
+ * copy of Peek. It used to live in features/hud/; now it lives in app/hud/
+ * and is loaded by backend/electron/hud-glue.ts.
  *
- * Runs in isolated extension process (peek://ext/hud/background.html)
+ * Commands and shortcuts are registered imperatively here (unlike features
+ * that declare them in manifest.json) — there is no manifest for HUD.
+ *
+ * Runs inside the consolidated extension host iframe (peek://hud/background.html),
+ * with backcompat access at peek://ext/hud/background.html.
  */
 
 const api = window.app;
@@ -17,6 +22,7 @@ const debug = api.debug;
 const HUD_ADDRESS = 'peek://ext/hud/hud.html';
 const STORAGE_KEY = 'hud_enabled';
 const HUD_SHEET_KEY = 'hud_sheet';
+const TOGGLE_SHORTCUT = 'CommandOrControl+H';
 
 // Default HUD sheet layout — arranges widget pages vertically
 const WIDGET_WIDTH = 220;
@@ -106,7 +112,7 @@ const saveState = (enabled) => {
   try {
     localStorage.setItem(STORAGE_KEY, String(enabled));
   } catch (err) {
-    console.error('[ext:hud] Failed to save state:', err);
+    console.error('[hud] Failed to save state:', err);
   }
 };
 
@@ -168,10 +174,10 @@ const openHud = async () => {
     if (result.success) {
       hudWindowId = result.id;
     } else {
-      console.error('[ext:hud] Failed to open HUD:', result.error);
+      console.error('[hud] Failed to open HUD:', result.error);
     }
   } catch (error) {
-    console.error('[ext:hud] Error opening HUD:', error);
+    console.error('[hud] Error opening HUD:', error);
   }
 };
 
@@ -234,18 +240,20 @@ const init = async () => {
   // Ensure HUD sheet config exists (create default if needed)
   await ensureSheetConfig();
 
-  // Register command handler — manifest declares the command,
-  // shortcuts are registered from manifest by main.ts for eager extensions
+  // Register command and shortcut imperatively — HUD has no manifest.
   api.commands.register({
     name: 'hud',
     description: 'Toggle HUD overlay on/off',
     execute: async () => await toggleHud()
   });
 
-  // Shortcuts declared in manifest.json — no imperative registration needed
+  api.shortcuts.register(TOGGLE_SHORTCUT, () => {
+    toggleHud();
+  });
 
-  // App focus hide/show is handled in the main process (did-resign-active / did-become-active)
-  // for reliability — alwaysOnTop windows are hidden/shown directly without pubsub round-trip.
+  // App focus hide/show is handled in backend/electron/hud-glue.ts
+  // (did-resign-active / did-become-active) for reliability — alwaysOnTop
+  // windows are hidden/shown directly without pubsub round-trip.
   api.subscribe('app:focus-changed', (msg) => {
     appFocused = !!msg.focused;
   }, api.scopes.GLOBAL);
@@ -257,7 +265,11 @@ const init = async () => {
 };
 
 const uninit = () => {
-  // Shortcuts are managed by manifest — no imperative unregister needed
+  try {
+    api.shortcuts.unregister(TOGGLE_SHORTCUT);
+  } catch (err) {
+    // Ignore — may already be unregistered during shutdown
+  }
   closeHud();
 };
 
