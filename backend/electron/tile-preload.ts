@@ -171,12 +171,27 @@ function buildAPI(): Record<string, unknown> {
   };
 
   /**
-   * Register a shutdown handler
+   * Register a shutdown handler.
+   *
+   * The underlying IPC listener is installed exactly once. Subsequent calls
+   * replace the stored callback — repeated `api.onShutdown(cb)` invocations
+   * do NOT accumulate listeners on the `tile:shutdown` channel. This matters
+   * for hot-reload scenarios and features that re-register on every init.
    */
+  let shutdownCallback: (() => void) | null = null;
+  let shutdownListenerInstalled = false;
   api.onShutdown = (callback: () => void) => {
-    ipcRenderer.on('tile:shutdown', () => {
-      callback();
-    });
+    shutdownCallback = typeof callback === 'function' ? callback : null;
+    if (!shutdownListenerInstalled) {
+      shutdownListenerInstalled = true;
+      ipcRenderer.on('tile:shutdown', () => {
+        try {
+          shutdownCallback?.();
+        } catch (err) {
+          console.error('[tile-preload] onShutdown callback threw:', err);
+        }
+      });
+    }
   };
 
   // ── Scopes (always available for reference) ──
@@ -261,6 +276,11 @@ function buildAPI(): Record<string, unknown> {
   // Both flow through the shared pubsub-based cmd:execute:{name} / :result
   // protocol, so lazy-tile replay and the cmd panel proxy work unchanged.
 
+  // Per-command handler registry. Prevents duplicate IPC listeners if a tile
+  // re-registers the same command (swap handler in-place instead of adding a
+  // second `pubsub:cmd:execute:{name}` listener).
+  const registeredCommands = new Map<string, (params: unknown) => unknown>();
+
   api.commands = {
     register: (nameOrCommand: unknown, maybeHandler?: (params: unknown) => unknown) => {
       if (!tokenValid) {
@@ -312,6 +332,16 @@ function buildAPI(): Record<string, unknown> {
         return;
       }
 
+      // Deduplicate: if this command was already registered, swap the handler
+      // in-place (no new IPC listener, no new pubsub subscribe) and skip the
+      // rest of the setup. This prevents listener accumulation when a tile
+      // re-registers the same command (e.g. after hot reload).
+      const alreadyRegistered = registeredCommands.has(name);
+      registeredCommands.set(name, handler);
+      if (alreadyRegistered) {
+        return;
+      }
+
       ipcRenderer.send('tile:command:register', {
         token: tileToken,
         tileId,
@@ -350,10 +380,13 @@ function buildAPI(): Record<string, unknown> {
       });
 
       ipcRenderer.on(`pubsub:${execTopic}`, async (_event: unknown, msg: { expectResult?: boolean; resultTopic?: string; [k: string]: unknown }) => {
+        // Look up the current handler by name — honours in-place swaps.
+        const currentHandler = registeredCommands.get(name);
+        if (!currentHandler) return;
         let result: unknown;
         let error: string | null = null;
         try {
-          result = await handler(msg);
+          result = await currentHandler(msg);
         } catch (err) {
           error = err instanceof Error ? err.message : String(err);
           console.error(`[tile-preload] command ${name} threw:`, err);

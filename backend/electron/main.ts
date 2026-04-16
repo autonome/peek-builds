@@ -15,7 +15,7 @@ import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, 
 import { initCmd } from './cmd-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
-import { getLoadedTileIds, getTileManifest, getAllTileWindows } from './tile-launcher.js';
+import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles } from './tile-launcher.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
@@ -2000,12 +2000,32 @@ export function loadClosedWindowStack(): void {
 
 /**
  * Shutdown the application
+ *
+ * Fires the `app:shutdown` pubsub event, then broadcasts `tile:shutdown` to
+ * every live v2 tile and waits one grace period so tile `api.onShutdown()`
+ * callbacks can run before the BrowserWindows are closed. Finally closes the
+ * database.
+ *
+ * NOTE: entry.ts's `before-quit` handler invokes this without awaiting (that
+ * handler is synchronous). We still perform the broadcast+wait synchronously
+ * from JS's perspective — the whole sequence is short (TILE_SHUTDOWN_GRACE_MS)
+ * and runs on the event loop. Signal paths (SIGINT/SIGTERM) also don't await
+ * but call process.exit() immediately after, so tiles may not finish cleanup
+ * on abrupt termination — that's expected (grace-period cleanup is
+ * best-effort, never guaranteed).
  */
 export async function shutdown(): Promise<void> {
   // Publish shutdown event
   publish(getSystemAddress(), scopes.GLOBAL, 'app:shutdown', {
     timestamp: Date.now()
   });
+
+  // Signal every tile and wait for the shared grace period before closing.
+  try {
+    await unloadAllTiles();
+  } catch (err) {
+    console.error('[main] unloadAllTiles during shutdown failed:', err);
+  }
 
   // Close database
   closeDatabase();

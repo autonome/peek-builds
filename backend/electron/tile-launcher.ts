@@ -44,8 +44,13 @@ import {
   revokeTokensForTile,
   clearAllTokens,
 } from './tile-tokens.js';
-import { scopes, publish, getSystemAddress } from './pubsub.js';
+import { scopes, publish, getSystemAddress, unsubscribeAllByPrefix } from './pubsub.js';
 import { DEBUG } from './config.js';
+
+// Short grace period given to tiles to run their `api.onShutdown()` callbacks
+// before the BrowserWindow is forcibly closed. Kept small so app-quit and
+// feature disable/uninstall don't visibly stall. Exported for tests to tune.
+export const TILE_SHUTDOWN_GRACE_MS = 500;
 
 // Re-export token functions for consumers
 export { generateToken, validateToken, revokeToken, getGrantForToken } from './tile-tokens.js';
@@ -199,9 +204,9 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
   });
 
   // Track render-process crashes — without this, tiles crash silently.
-  // On crash: revoke the capability token, drop tracked state, and publish
-  // a SYSTEM-scope `tile:crashed` event so UI can react (e.g. show a crash
-  // banner or surface via features-manager).
+  // On crash: revoke the capability token, drop tracked state, unsubscribe
+  // any leftover pubsub registrations, and publish a GLOBAL-scope
+  // `tile:crashed` event so UI (e.g. manage/features-manager) can react.
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error(
       `[tile:${manifest.id}:${entry.id}] Render process gone: ${details.reason} (exitCode=${details.exitCode})`
@@ -210,7 +215,16 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
     readyTiles.delete(key);
     revokeToken(token);
     try {
-      publish(getSystemAddress(), scopes.SYSTEM, 'tile:crashed', {
+      // Crashed renderer can't unsubscribe itself — clear every subscription
+      // sourced from this tile so the main-process registry doesn't leak.
+      unsubscribeAllByPrefix(`peek://${manifest.id}/`);
+    } catch (err) {
+      console.error(`[tile:${manifest.id}:${entry.id}] Failed to unsubscribe after crash:`, err);
+    }
+    try {
+      // GLOBAL (not SYSTEM) so non-privileged UIs like the manage panel can
+      // subscribe to tile:crashed and surface a crashed badge.
+      publish(getSystemAddress(), scopes.GLOBAL, 'tile:crashed', {
         tileId: manifest.id,
         entryId: entry.id,
         reason: details.reason,
@@ -221,11 +235,19 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
     }
   });
 
-  // Clean up on close
+  // Clean up on close — drop tracked state, revoke token, and unsubscribe
+  // any pubsub subscriptions the tile registered (these live in the
+  // main-process registry keyed by `peek://{tileId}/{entry}` and won't
+  // clean themselves up when the renderer goes away).
   win.on('closed', () => {
     tileWindows.delete(key);
     readyTiles.delete(key);
     revokeToken(token);
+    try {
+      unsubscribeAllByPrefix(`peek://${manifest.id}/`);
+    } catch (err) {
+      console.error(`[tile-launcher:${manifest.id}:${entry.id}] Failed to unsubscribe on close:`, err);
+    }
     DEBUG && console.log(`[tile-launcher:${manifest.id}:${entry.id}] Tile closed`);
   });
 
@@ -333,15 +355,56 @@ export function getAllTileWindows(): BrowserWindow[] {
 }
 
 /**
- * Unload a tile — close its window and revoke tokens
+ * Send the `tile:shutdown` IPC to a single tile window, wait a short grace
+ * period for its `api.onShutdown()` callbacks to run, and then close the
+ * BrowserWindow.
+ *
+ * Tiles register shutdown callbacks via `api.onShutdown(cb)` in tile-preload.
+ * Without this signal the callback never fires, so intervals / timers /
+ * subscriptions inside the tile leak.
+ *
+ * Returns a promise that resolves once `win.close()` has been called. The
+ * `closed` event (which does the real tracked-state cleanup) may fire a tick
+ * or two later — callers that need to wait for full teardown should listen
+ * for it separately.
  */
-export function unloadTile(tileId: string, entryId: string): void {
+export async function shutdownTile(tileId: string, entryId: string): Promise<void> {
   const key = `${tileId}:${entryId}`;
   const win = tileWindows.get(key);
 
-  if (win && !win.isDestroyed()) {
+  if (!win || win.isDestroyed()) return;
+
+  try {
+    // Notify the tile so `api.onShutdown()` callbacks can run.
+    if (!win.webContents.isDestroyed()) {
+      win.webContents.send('tile:shutdown');
+    }
+  } catch (err) {
+    console.error(`[tile-launcher:${tileId}:${entryId}] Failed to send tile:shutdown:`, err);
+  }
+
+  // Give the tile a short grace period to clean up. We intentionally don't
+  // wait for an ack — a crashing or unresponsive tile must not block quit.
+  await new Promise<void>((resolve) => setTimeout(resolve, TILE_SHUTDOWN_GRACE_MS));
+
+  if (!win.isDestroyed()) {
     win.close();
   }
+}
+
+/**
+ * Unload a tile — send shutdown signal, close its window, revoke tokens.
+ *
+ * The `closed` event handler on the window performs the real tracked-state
+ * cleanup (tileWindows / readyTiles / token revocation / unsubscribeAllByPrefix).
+ * Keep the eager cleanup here too so callers that check isTileLoaded() right
+ * after unloadTile() see the tile as unloaded without waiting for the close
+ * event to fire.
+ */
+export async function unloadTile(tileId: string, entryId: string): Promise<void> {
+  const key = `${tileId}:${entryId}`;
+
+  await shutdownTile(tileId, entryId);
 
   tileWindows.delete(key);
   readyTiles.delete(key);
@@ -353,11 +416,56 @@ export function unloadTile(tileId: string, entryId: string): void {
   DEBUG && console.log(`[tile-launcher] Unloaded tile: ${key}`);
 }
 
+// ─── Test Hooks ──────────────────────────────────────────────────────
+//
+// The tile-launcher internal state (tileWindows, readyTiles, loadedManifests)
+// is private. Tests can install a fake BrowserWindow for a tile so the
+// shutdown / unload path can be exercised without spinning up a real Electron
+// window. Not part of the public API — exported with an underscore prefix.
+
+/** @internal */
+export function __setTileWindowForTest(
+  tileId: string,
+  entryId: string,
+  win: unknown,
+): void {
+  const key = `${tileId}:${entryId}`;
+  tileWindows.set(key, win as BrowserWindow);
+}
+
+/** @internal */
+export function __clearTileStateForTest(): void {
+  tileWindows.clear();
+  readyTiles.clear();
+  readyCallbacks.clear();
+  loadedManifests.clear();
+}
+
 /**
- * Unload all tiles — called during app shutdown
+ * Unload all tiles — called during app shutdown.
+ *
+ * Broadcasts `tile:shutdown` to every tile in parallel, waits the shared grace
+ * period once, then closes all windows. This keeps quit latency bounded to
+ * TILE_SHUTDOWN_GRACE_MS regardless of how many tiles are active.
  */
-export function unloadAllTiles(): void {
-  for (const [key, win] of tileWindows) {
+export async function unloadAllTiles(): Promise<void> {
+  // Phase 1: fan out shutdown signal to every tile.
+  for (const [, win] of tileWindows) {
+    if (win.isDestroyed()) continue;
+    try {
+      if (!win.webContents.isDestroyed()) {
+        win.webContents.send('tile:shutdown');
+      }
+    } catch (err) {
+      console.error('[tile-launcher] Failed to send tile:shutdown during unloadAllTiles:', err);
+    }
+  }
+
+  // Phase 2: single grace-period wait for all tiles to run their onShutdown.
+  await new Promise<void>((resolve) => setTimeout(resolve, TILE_SHUTDOWN_GRACE_MS));
+
+  // Phase 3: close every window.
+  for (const [, win] of tileWindows) {
     if (!win.isDestroyed()) {
       win.close();
     }

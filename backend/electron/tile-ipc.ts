@@ -20,7 +20,17 @@ import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme } from 'e
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { validateToken, getGrantForToken, signalTileReady, getTileWindow } from './tile-launcher.js';
+import {
+  validateToken,
+  getGrantForToken,
+  signalTileReady,
+  getTileWindow,
+  isTileLoaded,
+  unloadTile,
+  launchTile,
+  getTileManifest,
+} from './tile-launcher.js';
+import { parseManifestFile } from './tile-manifest.js';
 import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js';
 import { DEBUG } from './config.js';
 import { getFeatureRegistry } from './feature-startup.js';
@@ -1147,6 +1157,24 @@ export function registerTileIpcHandlers(): void {
     const result = registry.disableFeature(args.id);
     if (result) {
       registry.saveRegistry();
+
+      // Tear down any running tile windows for this feature. The registry
+      // update alone does not stop a tile that is already running — its
+      // BrowserWindow keeps responding to events until closed. Send the
+      // shutdown signal + close the window via unloadTile().
+      const manifest = getTileManifest(args.id);
+      if (manifest) {
+        for (const t of manifest.tiles) {
+          if (isTileLoaded(args.id, t.id)) {
+            try {
+              await unloadTile(args.id, t.id);
+            } catch (err) {
+              console.error(`[tile-ipc] Failed to unload ${args.id}:${t.id} on disable:`, err);
+            }
+          }
+        }
+      }
+
       publish('feature-registry', scopes.GLOBAL, 'feature:disabled', { id: args.id });
     }
     return { success: result };
@@ -1155,6 +1183,8 @@ export function registerTileIpcHandlers(): void {
   ipcMain.handle('feature-registry:enable', async (_event, args: {
     token: string;
     id: string;
+    /** Path to the tile preload script (main process provides this). */
+    tilePreloadPath?: string;
   }) => {
     const grant = getGrantForToken(args.token);
     if (!grant) return { error: 'Invalid token' };
@@ -1168,6 +1198,30 @@ export function registerTileIpcHandlers(): void {
     const result = registry.enableFeature(args.id);
     if (result) {
       registry.saveRegistry();
+
+      // If the feature is a builtin that we would have auto-loaded at
+      // startup, relaunch its background tile now. Lazy features load on
+      // first invocation and don't need a restart here.
+      if (entry.source.type === 'builtin' && args.tilePreloadPath) {
+        try {
+          const manifestPath = path.join(entry.path, 'manifest.json');
+          const parsed = parseManifestFile(manifestPath);
+          if (parsed?.version === 'v2' && parsed.v2) {
+            const bgTile = parsed.v2.tiles.find(t => t.type === 'background');
+            if (bgTile && !isTileLoaded(args.id, bgTile.id)) {
+              launchTile({
+                tilePath: entry.path,
+                manifest: parsed.v2,
+                preloadPath: args.tilePreloadPath,
+                entryId: bgTile.id,
+              });
+            }
+          }
+        } catch (err) {
+          console.error(`[tile-ipc] Failed to relaunch ${args.id} on enable:`, err);
+        }
+      }
+
       publish('feature-registry', scopes.GLOBAL, 'feature:enabled', { id: args.id });
     }
     return { success: result };
@@ -1186,6 +1240,23 @@ export function registerTileIpcHandlers(): void {
     const entry = registry.getFeature(args.id);
     if (!entry) return { error: `Feature not found: ${args.id}` };
     if (entry.source.type === 'builtin') return { error: 'Cannot remove builtin features' };
+
+    // Tear down any running tile windows BEFORE deleting files / registry.
+    // Closing the window AFTER rm -rf would strand a live renderer loading
+    // assets that no longer exist. unloadTile() sends the shutdown signal
+    // so the tile's api.onShutdown() callbacks can run.
+    const manifest = getTileManifest(args.id);
+    if (manifest) {
+      for (const t of manifest.tiles) {
+        if (isTileLoaded(args.id, t.id)) {
+          try {
+            await unloadTile(args.id, t.id);
+          } catch (err) {
+            console.error(`[tile-ipc] Failed to unload ${args.id}:${t.id} on remove:`, err);
+          }
+        }
+      }
+    }
 
     // Remove from registry
     const result = registry.unregisterFeature(args.id);

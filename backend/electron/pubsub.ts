@@ -137,6 +137,31 @@ export function unsubscribeAll(source: string): void {
 }
 
 /**
+ * Unsubscribe every topic-subscription whose source key starts with `prefix`.
+ *
+ * Tiles use a per-window source address of `peek://{tileId}/{entry}`. When a
+ * tile window closes (or is disabled / uninstalled), its subscriptions must be
+ * removed from the main-process registry to prevent handler leaks. Pass the
+ * tile prefix `peek://{tileId}/` to clear every entry-level subscription at
+ * once.
+ *
+ * Returns the number of subscriptions removed.
+ */
+export function unsubscribeAllByPrefix(prefix: string): number {
+  if (!prefix) return 0;
+  let removed = 0;
+  for (const [, subscribers] of topics) {
+    for (const key of subscribers.keys()) {
+      if (key.startsWith(prefix)) {
+        subscribers.delete(key);
+        removed++;
+      }
+    }
+  }
+  return removed;
+}
+
+/**
  * Check if a topic has subscribers
  * If source is provided, checks for that specific source.
  * If excludePrefix is provided, checks for any subscriber whose key
