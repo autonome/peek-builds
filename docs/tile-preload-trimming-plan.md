@@ -195,11 +195,19 @@ slides, tag-actions, tags, timers, websearch, widget-demo, windows, wonderwall
 - `groups/background.js`: uses `api.settings.getExtKey` (has `settings.readForeign` declared → strict path works)
 - `tags/home.js`, `features-manager/publish.js`: use `api.settings.getExtKey` (need capability check)
 
-### Phase 5 — Lock down (ongoing)
+### Phase 5 — Lock down ✓ COMPLETE (Apr 2026)
 
-1. Capability-violation events → pubsub topic
-2. `TILE_STRICT=true` env var to throw instead of warn
-3. Generate `window.app` typings from TileCapabilities
+1. ✓ `TILE_STRICT=true` env var — throws instead of warns on capability violations
+2. ✓ Capability-violation events → `tile:capability-violation` pubsub topic (GLOBAL scope, rate-limited 5s)
+3. ✓ Static `window.app` typings in `backend/electron/tile-api.d.ts`
+
+**Deliverables:**
+- `backend/electron/config.ts` — added `TILE_STRICT` flag
+- `backend/electron/tile-violations.ts` — `publishCapabilityViolation()` helper with rate limiting
+- `backend/electron/tile-ipc.ts` — all rejection paths wired to `handleViolation()` (throws in TILE_STRICT mode, publishes violation event always)
+- `backend/electron/tile-api.d.ts` — static typings for `window.app` surface
+- `backend/electron/tile-strict.test.ts` — tests for violation event shape, rate limiting, TILE_STRICT throw contract
+- `docs/tile-api.md` — documented TILE_STRICT, violation topic, and .d.ts reference
 
 ---
 

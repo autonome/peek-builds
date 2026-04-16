@@ -18,6 +18,10 @@ export {
 // Debug mode - set DEBUG=1 to enable logging
 export const DEBUG = !!process.env.DEBUG;
 
+// Strict mode — set TILE_STRICT=true to throw instead of warn on capability violations.
+// Enable in CI and strict-mode development to catch regressions as hard failures.
+export const TILE_STRICT = process.env.TILE_STRICT === 'true';
+
 // Runtime configuration (set during app initialization)
 let _preloadPath: string = '';
 let _profile: string = '';

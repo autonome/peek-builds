@@ -33,7 +33,8 @@ import {
 } from './tile-launcher.js';
 import { parseManifestFile } from './tile-manifest.js';
 import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js';
-import { DEBUG } from './config.js';
+import { DEBUG, TILE_STRICT } from './config.js';
+import { publishCapabilityViolation } from './tile-violations.js';
 import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
 import {
@@ -113,6 +114,36 @@ export { checkSessionAllowed, type SessionCheckResult, type SessionOp } from './
 export { checkIzuiAllowed, type IzuiCheckResult } from './tile-izui-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Handle a capability check failure.
+ *
+ * - Publishes a `tile:capability-violation` event (rate-limited).
+ * - In TILE_STRICT mode, throws immediately so CI / strict dev catch the regression.
+ * - Otherwise, logs in DEBUG mode and returns so the caller can return an error response.
+ */
+function handleViolation(
+  grant: CapabilityGrant | null,
+  capability: string,
+  op: string,
+  reason: string,
+  token?: string,
+): void {
+  const msg = `[tile-ipc] ${op} rejected: ${reason}`;
+  const tileId = grant?.tileId ?? null;
+  publishCapabilityViolation({ tileId, capability, op, token, reason });
+  if (TILE_STRICT) throw new Error(msg);
+  DEBUG && console.log(msg);
+}
+
+/**
+ * Handle a datastore capability check failure (different result shape from check helpers).
+ * Fetches tileId from the token (best-effort) and publishes a violation.
+ */
+function handleDatastoreViolation(token: string | undefined, op: string, reason: string): void {
+  const grant = token ? getGrantForToken(token) : null;
+  handleViolation(grant, 'datastore', op, reason, token);
+}
 
 /**
  * Check if a capability is granted
@@ -376,7 +407,8 @@ export function registerTileIpcHandlers(): void {
     // Check pubsub scope capability
     const scopeName = scopeNumberToName(args.scope);
     if (!hasPubSubScope(grant, scopeName)) {
-      DEBUG && console.log(`[tile-ipc] pubsub:publish rejected: scope ${scopeName} not granted for ${grant.tileId}`);
+      const reason = `scope ${scopeName} not granted for ${grant.tileId}`;
+      handleViolation(grant, 'pubsub', 'pubsub:publish', reason, args.token);
       return;
     }
 
@@ -389,7 +421,8 @@ export function registerTileIpcHandlers(): void {
         return false;
       });
       if (!allowed) {
-        DEBUG && console.log(`[tile-ipc] pubsub:publish rejected: topic ${args.topic} not in allowlist for ${grant.tileId}`);
+        const reason = `topic ${args.topic} not in allowlist for ${grant.tileId}`;
+        handleViolation(grant, 'pubsub', 'pubsub:publish', reason, args.token);
         return;
       }
     }
@@ -431,7 +464,7 @@ export function registerTileIpcHandlers(): void {
   }) => {
     const grant = getGrantForToken(args.token);
     if (!grant || !hasCapability(grant, 'commands')) {
-      DEBUG && console.log(`[tile-ipc] command:register rejected: commands not granted for ${args.tileId}`);
+      handleViolation(grant, 'commands', 'command:register', 'commands not granted', args.token);
       return;
     }
 
@@ -517,7 +550,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkShortcutAllowed(grant, args.shortcut);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] shortcuts:register rejected: ${check.error}`);
+      handleViolation(grant, 'shortcuts', 'shortcuts:register', check.error, args.token);
       replyError(check.error);
       return;
     }
@@ -564,7 +597,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkShortcutAllowed(grant, args.shortcut);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] shortcuts:unregister rejected: ${check.error}`);
+      handleViolation(grant, 'shortcuts', 'shortcuts:unregister', check.error, args.token);
       return;
     }
     const activeGrant = grant as CapabilityGrant;
@@ -605,7 +638,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkContextAllowed(grant, 'get', args.key);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] context:get rejected: ${check.error}`);
+      handleViolation(grant, 'context', 'context:get', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -632,7 +665,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkContextAllowed(grant, 'set', args.key);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] context:set rejected: ${check.error}`);
+      handleViolation(grant, 'context', 'context:set', check.error, args.token);
       return { success: false, error: check.error };
     }
     // check.ok guarantees grant is non-null.
@@ -693,7 +726,7 @@ export function registerTileIpcHandlers(): void {
     }
     const check = checkContextAllowed(grant, 'history', args.key);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] context:history rejected: ${check.error}`);
+      handleViolation(grant, 'context', 'context:history', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -720,7 +753,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkContextAllowed(grant, 'snapshot');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] context:snapshot rejected: ${check.error}`);
+      handleViolation(grant, 'context', 'context:snapshot', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -741,7 +774,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkContextAllowed(grant, 'windowsWithValue', args.key);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] context:windows-with-value rejected: ${check.error}`);
+      handleViolation(grant, 'context', 'context:windows-with-value', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -760,7 +793,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkContextAllowed(grant, 'windowsInSpace');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] context:windows-in-space rejected: ${check.error}`);
+      handleViolation(grant, 'context', 'context:windows-in-space', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -793,7 +826,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkDialogAllowed(grant, 'save');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] dialogs:save rejected: ${check.error}`);
+      handleViolation(grant, 'dialogs', 'dialogs:save', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -842,7 +875,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkDialogAllowed(grant, 'open');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] dialogs:open rejected: ${check.error}`);
+      handleViolation(grant, 'dialogs', 'dialogs:open', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -942,7 +975,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'read');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:list rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:list', check.error, args.token);
       return { error: check.error };
     }
 
@@ -984,7 +1017,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'read');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:get rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:get', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1010,7 +1043,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'read');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:history rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:history', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1059,7 +1092,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'manage');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:enable rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:enable', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1108,7 +1141,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'manage');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:disable rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:disable', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1151,7 +1184,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'manage');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:remove rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:remove', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1217,7 +1250,7 @@ export function registerTileIpcHandlers(): void {
     // Source-type check: always 'atproto' for this endpoint.
     const check = checkFeaturesAllowed(grant, 'install', 'atproto');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:install-resolve rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:install-resolve', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1241,7 +1274,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'install');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:preview-capabilities rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:preview-capabilities', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1262,7 +1295,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'install', 'atproto');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:install rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:install', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1323,7 +1356,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'install', 'atproto');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:browse-resolve-publisher rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:browse-resolve-publisher', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1377,7 +1410,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'update');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:update-check-all rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:update-check-all', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1490,7 +1523,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'update', 'atproto');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:update-apply rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:update-apply', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1585,7 +1618,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'update');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:update-set-policy rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:update-set-policy', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1620,7 +1653,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'dev');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:dev-reload rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:dev-reload', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1686,7 +1719,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'dev');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:dev-validate rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:dev-validate', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1762,7 +1795,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'dev');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:dev-pick-directory rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:dev-pick-directory', check.error, args.token);
       return { error: check.error };
     }
     try {
@@ -1789,7 +1822,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'dev');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:dev-create rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:dev-create', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1907,7 +1940,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'publish');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:publish-list-local rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:publish-list-local', check.error, args.token);
       return { error: check.error };
     }
 
@@ -1938,7 +1971,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'publish');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:publish-read-feature-files rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:publish-read-feature-files', check.error, args.token);
       return { error: check.error };
     }
 
@@ -2002,7 +2035,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'devtools');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:devtools-open rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:devtools-open', check.error, args.token);
       return { error: check.error };
     }
 
@@ -2062,7 +2095,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkFeaturesAllowed(grant, 'browse', 'atproto');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] features:browse-list-by-publisher rejected: ${check.error}`);
+      handleViolation(grant, 'features', 'features:browse-list-by-publisher', check.error, args.token);
       return { error: check.error };
     }
 
@@ -2141,7 +2174,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] izui:is-transient rejected: ${check.error}`);
+      handleViolation(grant, 'izui', 'izui:is-transient', check.error, args?.token);
       return { error: check.error };
     }
     try {
@@ -2163,7 +2196,7 @@ export function registerTileIpcHandlers(): void {
   ipcMain.handle('tile:izui:get-effective-mode', async (_event, args: { token: string }) => {
     const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
-    if (!check.ok) return { error: check.error };
+    if (!check.ok) { handleViolation(grant, 'izui', 'izui:get-effective-mode', check.error, args?.token); return { error: check.error }; }
     try {
       const { getIzuiCoordinator } = await import('./izui-state.js');
       return { mode: getIzuiCoordinator().getEffectiveMode() };
@@ -2176,7 +2209,7 @@ export function registerTileIpcHandlers(): void {
   ipcMain.handle('tile:izui:get-state', async (_event, args: { token: string }) => {
     const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
-    if (!check.ok) return { error: check.error };
+    if (!check.ok) { handleViolation(grant, 'izui', 'izui:get-state', check.error, args?.token); return { error: check.error }; }
     try {
       const { getIzuiCoordinator } = await import('./izui-state.js');
       return { state: getIzuiCoordinator().getState() };
@@ -2189,7 +2222,7 @@ export function registerTileIpcHandlers(): void {
   ipcMain.handle('tile:izui:get-pre-overlay-focus-target', async (_event, args: { token: string }) => {
     const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
-    if (!check.ok) return { error: check.error };
+    if (!check.ok) { handleViolation(grant, 'izui', 'izui:get-pre-overlay-focus-target', check.error, args?.token); return { error: check.error }; }
     try {
       const { getIzuiCoordinator } = await import('./izui-state.js');
       return { target: getIzuiCoordinator().getPreOverlayFocusTarget() };
@@ -2202,7 +2235,7 @@ export function registerTileIpcHandlers(): void {
   ipcMain.handle('tile:izui:close-self', async (ev, args: { token: string }) => {
     const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
-    if (!check.ok) return { error: check.error };
+    if (!check.ok) { handleViolation(grant, 'izui', 'izui:close-self', check.error, args?.token); return { error: check.error }; }
     const win = BrowserWindow.fromWebContents(ev.sender);
     if (!win || win.isDestroyed()) {
       return { success: false, error: 'Window not found' };
@@ -2331,7 +2364,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'open', { url: args.url });
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:open rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:open', check.error, args.token);
       return { error: check.error };
     }
     const activeGrant = grant as CapabilityGrant;
@@ -2377,7 +2410,7 @@ export function registerTileIpcHandlers(): void {
     const ownWindow = args.id == null || (senderWin != null && args.id === senderWin.id);
     const check = checkWindowAllowed(grant, 'close', { ownWindow });
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:close rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:close', check.error, args.token);
       return;
     }
 
@@ -2398,7 +2431,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'info');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:info rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:info', check.error, args.token);
       return { error: check.error };
     }
 
@@ -2422,7 +2455,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'list');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:list rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:list', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2469,7 +2502,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'exists');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:exists rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:exists', check.error, args.token);
       return { exists: false, success: false, data: false, error: check.error };
     }
 
@@ -2498,7 +2531,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'show');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:show rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:show', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2528,7 +2561,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'hide');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:hide rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:hide', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2563,7 +2596,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'set-ignore-mouse');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:set-ignore-mouse rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:set-ignore-mouse', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2593,7 +2626,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'center');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:center rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:center', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2630,7 +2663,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'center-all');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:center-all rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:center-all', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2667,7 +2700,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'maximize');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:maximize rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:maximize', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2700,7 +2733,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'fullscreen');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:fullscreen rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:fullscreen', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2735,7 +2768,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'get-focused-visible-id');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:get-focused-visible-id rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:get-focused-visible-id', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2784,7 +2817,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'set-overlay-focus-target');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:set-overlay-focus-target rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:set-overlay-focus-target', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2830,7 +2863,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'set-visible-on-all-workspaces');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] window:set-visible-on-all-workspaces rejected: ${check.error}`);
+      handleViolation(grant, 'window', 'window:set-visible-on-all-workspaces', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2899,7 +2932,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkEscapeAllowed(grant);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] escape:on-escape rejected: ${check.error}`);
+      handleViolation(grant, 'escape', 'escape:on-escape', check.error, args.token);
       return;
     }
     // Enable bridging: forward every `escape-pressed` the window receives
@@ -2922,7 +2955,7 @@ export function registerTileIpcHandlers(): void {
   }) => {
     const grant = getGrantForToken(args.token);
     if (!grant || !hasCapability(grant, 'commands')) {
-      DEBUG && console.log(`[tile-ipc] commands:unregister rejected: commands not granted for ${grant?.tileId}`);
+      handleViolation(grant, 'commands', 'commands:unregister', 'commands not granted', args.token);
       return;
     }
     if (!args.name || typeof args.name !== 'string') {
@@ -2948,7 +2981,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkSessionAllowed(grant, 'save-space-workspaces');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] session:save-space-workspaces rejected: ${check.error}`);
+      handleViolation(grant, 'session', 'session:save-space-workspaces', check.error, args.token);
       return { success: false, error: check.error };
     }
 
@@ -2971,6 +3004,7 @@ export function registerTileIpcHandlers(): void {
   }) => {
     const grant = getGrantForToken(args.token);
     if (!grant || !hasCapability(grant, 'network')) {
+      handleViolation(grant, 'network', 'network:fetch', 'network capability not granted', args.token);
       return { error: 'Network capability not granted' };
     }
 
@@ -2984,7 +3018,8 @@ export function registerTileIpcHandlers(): void {
     }
 
     if (!isNetworkDomainAllowed(grant, domain)) {
-      DEBUG && console.log(`[tile-ipc] network:fetch rejected: domain ${domain} not allowed for ${grant.tileId}`);
+      const reason = `domain ${domain} not allowed for ${grant.tileId}`;
+      handleViolation(grant, 'network', 'network:fetch', reason, args.token);
       return { error: `Domain not allowed: ${domain}` };
     }
 
@@ -3155,7 +3190,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkSettingsForeignAllowed(grant, args?.foreignExtId);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] settings:get-foreign rejected: ${check.error}`);
+      handleViolation(grant, 'settings', 'settings:get-foreign', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -3203,7 +3238,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkOAuthAllowed(grant, 'start-loopback', args?.provider);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] oauth:start-loopback rejected: ${check.error}`);
+      handleViolation(grant, 'oauth', 'oauth:start-loopback', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -3229,7 +3264,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkOAuthAllowed(grant, 'await-callback');
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] oauth:await-callback rejected: ${check.error}`);
+      handleViolation(grant, 'oauth', 'oauth:await-callback', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -3261,7 +3296,7 @@ export function registerTileIpcHandlers(): void {
     const grant = getGrantForToken(args.token);
     const check = checkSyncAllowed(grant);
     if (!check.ok) {
-      DEBUG && console.log(`[tile-ipc] sync:sync-all rejected: ${check.error}`);
+      handleViolation(grant, 'sync', 'sync:sync-all', check.error, args.token);
       return { success: false, error: check.error };
     }
     try {
@@ -3306,7 +3341,7 @@ export function registerTileIpcHandlers(): void {
     table: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, [args?.table]);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-table', check.error); return { error: check.error }; }
     try {
       const data = dsGetTable(args.table as TableName);
       return { success: true, data };
@@ -3321,7 +3356,7 @@ export function registerTileIpcHandlers(): void {
     rowId: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, [args?.table]);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-row', check.error); return { error: check.error }; }
     try {
       const data = dsGetRow(args.table as TableName, args.rowId);
       return { success: true, data };
@@ -3337,7 +3372,7 @@ export function registerTileIpcHandlers(): void {
     rowData: Record<string, unknown>;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, [args?.table]);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:set-row', check.error); return { error: check.error }; }
     try {
       dsSetRow(args.table as TableName, args.rowId, args.rowData || {});
       return { success: true };
@@ -3358,7 +3393,7 @@ export function registerTileIpcHandlers(): void {
     key: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, [args?.table]);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get', check.error); return { error: check.error }; }
     try {
       const data = dsGetRow(args.table as TableName, args.key);
       return { success: true, data };
@@ -3374,7 +3409,7 @@ export function registerTileIpcHandlers(): void {
     value: unknown;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, [args?.table]);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:set', check.error); return { error: check.error }; }
     try {
       // If the caller passed an object, write it as a row; otherwise store
       // the scalar under a `value` column so key/value access round-trips.
@@ -3394,7 +3429,7 @@ export function registerTileIpcHandlers(): void {
     filter?: Record<string, unknown>;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, [args?.table]);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query', check.error); return { error: check.error }; }
     try {
       const table = dsGetTable(args.table as TableName);
       const rows = Object.values(table);
@@ -3421,7 +3456,7 @@ export function registerTileIpcHandlers(): void {
     options?: Record<string, unknown>;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['items']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-item', check.error); return { error: check.error }; }
     try {
       // dsAddItem takes ItemType; trust the caller to pass a valid one.
       const result = dsAddItem(args.type as Parameters<typeof dsAddItem>[0], (args.options as Parameters<typeof dsAddItem>[1]) || {});
@@ -3441,7 +3476,7 @@ export function registerTileIpcHandlers(): void {
     id: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['items']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item', check.error); return { error: check.error }; }
     try {
       const data = dsGetItem(args.id);
       return { success: true, data };
@@ -3456,7 +3491,7 @@ export function registerTileIpcHandlers(): void {
     options: Record<string, unknown>;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['items']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-item', check.error); return { error: check.error }; }
     try {
       const result = dsUpdateItem(args.id, args.options as Parameters<typeof dsUpdateItem>[1]);
       if (result) {
@@ -3478,7 +3513,7 @@ export function registerTileIpcHandlers(): void {
     id: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['items']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-item', check.error); return { error: check.error }; }
     try {
       const db = getDb();
       const item = db.prepare('SELECT type FROM items WHERE id = ?').get(args.id) as { type: string } | undefined;
@@ -3500,7 +3535,7 @@ export function registerTileIpcHandlers(): void {
     filter?: Record<string, unknown>;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['items']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-items', check.error); return { error: check.error }; }
     try {
       const data = dsQueryItems(args.filter as Parameters<typeof dsQueryItems>[0]);
       return { success: true, data };
@@ -3516,7 +3551,7 @@ export function registerTileIpcHandlers(): void {
     name: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['tags']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-or-create-tag', check.error); return { error: check.error }; }
     try {
       const data = dsGetOrCreateTag(args.name);
       return { success: true, data };
@@ -3530,7 +3565,7 @@ export function registerTileIpcHandlers(): void {
     domain?: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['tags']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-tags-by-frecency', check.error); return { error: check.error }; }
     try {
       const data = dsGetTagsByFrecency(args.domain);
       return { success: true, data };
@@ -3549,7 +3584,7 @@ export function registerTileIpcHandlers(): void {
     // Writes to item_tags, reads/updates tags frequency, reads items implicitly.
     // Require both 'tags' and 'item_tags' to be granted (matching feature manifests).
     const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:tag-item', check.error); return { error: check.error }; }
     try {
       const result = dsTagItem(args.itemId, args.tagId);
       if (!result.alreadyExists) {
@@ -3575,7 +3610,7 @@ export function registerTileIpcHandlers(): void {
     tagId: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:untag-item', check.error); return { error: check.error }; }
     try {
       const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
       const result = dsUntagItem(args.itemId, args.tagId);
@@ -3598,7 +3633,7 @@ export function registerTileIpcHandlers(): void {
   }) => {
     // Joins tags × item_tags — require both.
     const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item-tags', check.error); return { error: check.error }; }
     try {
       const data = dsGetItemTags(args.itemId);
       return { success: true, data };
@@ -3613,7 +3648,7 @@ export function registerTileIpcHandlers(): void {
   }) => {
     // Joins items × item_tags — require both.
     const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-items-by-tag', check.error); return { error: check.error }; }
     try {
       const data = dsGetItemsByTag(args.tagId);
       return { success: true, data };
@@ -3630,7 +3665,7 @@ export function registerTileIpcHandlers(): void {
     options?: Record<string, unknown>;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['item_events']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-item-event', check.error); return { error: check.error }; }
     try {
       const data = dsAddItemEvent(args.itemId, args.options as Parameters<typeof dsAddItemEvent>[1]);
       return { success: true, data };
@@ -3644,7 +3679,7 @@ export function registerTileIpcHandlers(): void {
     eventId: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['item_events']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item-event', check.error); return { error: check.error }; }
     try {
       const data = dsGetItemEvent(args.eventId);
       return { success: true, data };
@@ -3658,7 +3693,7 @@ export function registerTileIpcHandlers(): void {
     filter?: Record<string, unknown>;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['item_events']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-item-events', check.error); return { error: check.error }; }
     try {
       const data = dsQueryItemEvents(args.filter as Parameters<typeof dsQueryItemEvents>[0]);
       return { success: true, data };
@@ -3672,7 +3707,7 @@ export function registerTileIpcHandlers(): void {
     itemId: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['item_events']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-latest-item-event', check.error); return { error: check.error }; }
     try {
       const data = dsGetLatestItemEvent(args.itemId);
       return { success: true, data };
@@ -3687,7 +3722,7 @@ export function registerTileIpcHandlers(): void {
     filter?: { since?: number; until?: number };
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['item_events']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:count-item-events', check.error); return { error: check.error }; }
     try {
       const data = dsCountItemEvents(args.itemId, args.filter || {});
       return { success: true, data };
@@ -3701,7 +3736,7 @@ export function registerTileIpcHandlers(): void {
     eventId: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['item_events']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-item-event', check.error); return { error: check.error }; }
     try {
       const data = dsDeleteItemEvent(args.eventId);
       return { success: true, data };
@@ -3715,7 +3750,7 @@ export function registerTileIpcHandlers(): void {
     itemId: string;
   }) => {
     const check = validateTileDatastoreRequest(args?.token, ['item_events']);
-    if ('error' in check) return { error: check.error };
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-item-events', check.error); return { error: check.error }; }
     try {
       const data = dsDeleteItemEvents(args.itemId);
       return { success: true, data };

@@ -276,3 +276,71 @@ These names exist on `window.app` but throw `Error('[tile-preload] ... removed i
 - `api.files.open/save/readFromPath/writeToPath` → use `api.dialogs.*` / `api.filesystem.*`
 - `api.settings.getKey/setKey` → use `api.settings.get/set`
 - `api.datastore.addItem/getItem/tagItem/...` (30+ methods) → hard-fail stubs
+
+---
+
+## Phase 5: TILE_STRICT mode and capability-violation events
+
+### `TILE_STRICT=true` env flag
+
+Set `TILE_STRICT=true` (environment variable) when starting the Electron main process to
+enable strict mode. In strict mode, any capability violation in a tile IPC handler **throws**
+an `Error` synchronously instead of logging a warning and returning `{ error }`.
+
+**When to enable:**
+- CI pipelines — catches regressions as hard failures before merge
+- Strict-mode local development — surface violations early while writing new tiles
+
+**When NOT to enable:**
+- Production releases — throw paths in IPC handlers can terminate the promise chain and
+  produce blank tiles if a legitimate configuration edge case hits
+
+**What changes:**
+- Every `tile:*` IPC handler that rejects a capability check (shortcuts, context, dialogs,
+  window, features, settings-foreign, oauth, sync, escape, session, izui, datastore, commands,
+  pubsub, network) now calls `handleViolation()` which throws `new Error(msg)` when
+  `TILE_STRICT === true`.
+- The violation event (`tile:capability-violation`) is still published before the throw.
+- Flag is read from `process.env.TILE_STRICT === 'true'` in `backend/electron/config.ts`.
+
+### `tile:capability-violation` pubsub topic
+
+Whenever a tile IPC handler rejects a request due to a missing or insufficient capability,
+a `tile:capability-violation` event is published on `GLOBAL` scope from the system address.
+
+**Subscribe:**
+```js
+api.pubsub.subscribe('tile:capability-violation', (evt) => {
+  console.warn('Capability violation:', evt);
+}, api.scopes.GLOBAL);
+```
+
+**Payload shape:**
+```ts
+{
+  tileId: string | null;      // Tile that triggered the violation (null = invalid token)
+  capability: string;         // e.g. 'shortcuts', 'window', 'datastore'
+  op: string;                 // e.g. 'shortcuts:register', 'window:open'
+  token?: string;             // Raw token from request (may be undefined)
+  reason: string;             // Human-readable rejection reason
+  timestamp: number;          // Date.now() at emission time
+}
+```
+
+**Rate limiting:** The same `(tileId, capability, op)` tuple is coalesced to at most one
+event per 5 seconds. A runaway tile retrying the same operation rapidly emits only one event,
+preventing subscriber flood.
+
+### Static typings — `backend/electron/tile-api.d.ts`
+
+A hand-written `.d.ts` file provides TypeScript autocomplete for the full `window.app` surface.
+It covers all capability-gated surfaces (pubsub, commands, window, datastore, settings,
+shortcuts, context, filesystem, dialogs, network, features, oauth, sync, izui, session,
+screen, escape) plus always-available base API.
+
+Reference it in your tile:
+```ts
+/// <reference path="../../backend/electron/tile-api.d.ts" />
+```
+
+Keep it in sync with `tile-preload.ts` + `tile-ipc.ts` when adding new surfaces.
