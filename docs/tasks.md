@@ -17,8 +17,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 ## Features
 
-- [ ] **Commands for browser-extension options pages.** For each installed Chromium extension that declares an `options_page` (or `options_ui`) in its manifest, auto-register a command like `<extension-name> options` that opens that page directly. Scope: browser extensions only (not Peek v2 tiles / v1 features). Requires iterating installed extensions, reading their manifest, registering into the command registry.
-- [ ] **Bundle TWP (Translate Web Pages) as a default browser extension.** Ship TWP alongside other bundled browser extensions so users get page translation out of the box. Extension homepage: https://github.com/FilipePS/Traduzir-paginas-web
+- [x] **Commands for browser-extension options pages.** Registered `<name> options` command per installed Chromium extension that declares `options_page`/`options_ui.page`.
+- [x] **Bundle TWP (Translate Web Pages) as a default browser extension.** TWP v10.1.1.0 vendored at `chrome-extensions/twp/` (~2.1MB). Auto-loads on startup.
 
 ---
 
@@ -32,7 +32,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 ### Pubsub audit follow-ups (2026-04-16)
 - [x] Missing tag lifecycle events: `tag:created`, `tag:renamed`, `tag:deleted`
-- [x] Bare `tagItem()` bypasses — 3 of 7 converted (sync + 2 ipc handlers); 2 in `datastore.ts` kept bare pending dedicated pass; 1 in `tile-ipc.ts` already publishes manually
+- [x] Bare `tagItem()` bypasses — 5 of 7 converted (sync + 2 ipc handlers + 2 in datastore.ts); 1 in `tile-ipc.ts` already publishes manually
 
 ### Security audit follow-ups (2026-04-16)
 - [x] CSP gaps on error responses — catch-block fallback now applies CSP for tile origins
@@ -40,7 +40,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 ### Settings audit follow-ups (2026-04-16)
 - [x] Backend defaults enforcement
 - [x] JSON Schema validation for settings-schema.json files
-- [ ] Dedicated settings isolation / defaults / UI tests (only migration tests exist)
+- [x] Settings isolation + defaults test coverage (UI render intentionally skipped — no schema-driven renderer exists)
 
 ---
 
@@ -50,7 +50,9 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 - [x] Phase 1 — inventory + capability-violation logger
 - [ ] Phase 2 — build strict APIs alongside shims (3-5 days)
   - [x] Phase 2.3 — strict shortcuts IPC + keys allowlist
-  - [ ] Remaining: context capability, window strict extensions, features strict, dialogs, settings cleanup
+  - [x] Phase 2 — strict context IPC + read/write/modes/queryWindows allowlists
+  - [x] Phase 2 — strict dialogs IPC + types allowlist
+  - [ ] Remaining: window strict extensions, features strict, settings cleanup
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
 - [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
@@ -72,6 +74,11 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 Keep short — for recent context only. Prune after a few weeks.
 
+- 2026-04-16 Bundled TWP translate extension (chrome-extensions/twp/) + commands for all installed browser extensions with options pages
+- 2026-04-16 Strict `tile:context:*` + `tile:dialogs:*` IPC with allowlists (trimming Phase 2)
+- 2026-04-16 Settings isolation + defaults test coverage (34 new tests)
+- 2026-04-16 Datastore `tagItem` pubsub fix (syncContentHashtags + history auto-tag)
+- 2026-04-16 Scripts: `/tmp/mpeek-agent-name` fallback to avoid per-name permission prompts
 - 2026-04-16 HUD extraction to `app/hud/` + `hud-glue.ts` (mirrors cmd extraction)
 - 2026-04-16 Atproto install hardening (CID + atomic + minPeekVersion); publish wizard icon/screenshot upload
 - 2026-04-16 Settings backend defaults + schema-validation on load
