@@ -44,15 +44,34 @@ export interface NetworkCapability {
 }
 
 /**
- * Window capability: can the tile create/manage windows
+ * Window capability: can the tile create/manage windows.
+ *
+ * Strict `tile:window:*` handlers gate each operation on this grant:
+ *   - `create` — required for `tile:window:open`.
+ *   - `query` — required for `tile:window:list` / `tile:window:info`.
+ *   - `manage` — required for `tile:window:close` (when closing a window
+ *     the tile does not itself own).
+ *   - `urls` — optional URL-prefix allowlist applied to `open`. When
+ *     present, the target URL must start with one of the listed prefixes
+ *     (exact string prefix match). Omitted = any peek:// URL allowed.
+ *
+ * The declared shape may be `true` or `WindowCapability`. `true` is
+ * treated as `{ create: true, query: true, manage: true }` (unrestricted,
+ * backward-compatible with pre-strict manifests).
  */
 export interface WindowCapability {
-  /** Can create new windows */
+  /** Can create new windows via `tile:window:open` */
   create?: boolean;
-  /** Can query existing windows */
+  /** Can list/inspect windows via `tile:window:list` / `tile:window:info` */
   query?: boolean;
-  /** Can close/modify windows */
+  /** Can close/modify windows the tile does not own */
   manage?: boolean;
+  /**
+   * Optional URL-prefix allowlist for `open`. If present, the URL passed
+   * to `tile:window:open` must start with one of these prefixes. Useful
+   * for tiles that should only open their own UI (e.g. `['peek://my-tile/']`).
+   */
+  urls?: string[];
 }
 
 /**
@@ -136,7 +155,7 @@ export interface TileCapabilities {
   pubsub?: PubSubCapability;
   datastore?: DatastoreCapability;
   network?: NetworkCapability;
-  window?: WindowCapability;
+  window?: boolean | WindowCapability;
   filesystem?: FilesystemCapability;
   /** Can register commands in the command palette */
   commands?: boolean;
@@ -508,6 +527,36 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
       }
     }
 
+    // Validate window capability shape — must be boolean or
+    // { create?, query?, manage?: boolean; urls?: string[] }
+    if (caps.window !== undefined) {
+      const wc = caps.window;
+      if (typeof wc === 'boolean') {
+        // valid
+      } else if (wc && typeof wc === 'object') {
+        const wcObj = wc as Record<string, unknown>;
+        for (const flagKey of ['create', 'query', 'manage'] as const) {
+          if (wcObj[flagKey] !== undefined && typeof wcObj[flagKey] !== 'boolean') {
+            errors.push({ path: `capabilities.window.${flagKey}`, message: `${flagKey} must be a boolean` });
+          }
+        }
+        if (wcObj.urls !== undefined) {
+          if (!Array.isArray(wcObj.urls)) {
+            errors.push({ path: 'capabilities.window.urls', message: 'urls must be an array of strings' });
+          } else {
+            for (let i = 0; i < wcObj.urls.length; i++) {
+              const u = wcObj.urls[i];
+              if (typeof u !== 'string' || u.length === 0) {
+                errors.push({ path: `capabilities.window.urls[${i}]`, message: 'urls entries must be non-empty strings' });
+              }
+            }
+          }
+        }
+      } else {
+        errors.push({ path: 'capabilities.window', message: 'window must be boolean or { create?, query?, manage?, urls? }' });
+      }
+    }
+
     // Validate dialogs capability shape — must be boolean or { types?: ('save'|'open')[] }
     if (caps.dialogs !== undefined) {
       const dc = caps.dialogs;
@@ -657,9 +706,16 @@ export function resolveCapabilities(
     };
   }
 
-  // Window: grant as requested
+  // Window: preserve shape so strict IPC handlers can read the
+  // create/query/manage flags and urls allowlist. Manifests may
+  // declare `window: true` (treated as `{create, query, manage}` all
+  // granted) OR an object form.
   if (requested.window) {
-    granted.window = { ...requested.window };
+    if (requested.window === true) {
+      granted.window = { create: true, query: true, manage: true };
+    } else if (typeof requested.window === 'object') {
+      granted.window = { ...requested.window };
+    }
   }
 
   // Filesystem: deny for non-builtin (privileged)
