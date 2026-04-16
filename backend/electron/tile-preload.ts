@@ -752,61 +752,105 @@ function buildAPI(): Record<string, unknown> {
   // yet (renameTag/updateTagColor/deleteTag/queryItemVisits/getHistory/
   // updateItemTitle/updateItemFavicon/etc.), then migrate callers one
   // by one.
-  const ds = (channel: string, data: unknown = {}) => ipcRenderer.invoke(channel, data);
   api.datastore = {
     ...datastoreStrict,
     // Address helpers
-    addAddress: (data: unknown) => ds('datastore-add-address', data),
-    getAddress: (data: unknown) => ds('datastore-get-address', data),
-    updateAddress: (data: unknown) => ds('datastore-update-address', data),
-    queryAddresses: (data: unknown) => ds('datastore-query-addresses', data),
-    addVisit: (data: unknown) => ds('datastore-add-visit', data),
-    queryVisits: (data: unknown) => ds('datastore-query-visits', data),
-    addContent: (data: unknown) => ds('datastore-add-content', data),
-    queryContent: (data: unknown) => ds('datastore-query-content', data),
-    // Generic table helpers
-    getTable: (table: string) => ds('datastore-get-table', { table }),
-    setRow: (table: string, id: string, row: unknown) => ds('datastore-set-row', { table, id, row }),
-    getRow: (table: string, id: string) => ds('datastore-get-row', { table, id }),
-    getStats: () => ds('datastore-get-stats'),
+    addAddress: (uri: string, options?: unknown) =>
+      ipcRenderer.invoke('datastore-add-address', { uri, options }),
+    getAddress: (id: string) =>
+      ipcRenderer.invoke('datastore-get-address', { id }),
+    updateAddress: (id: string, updates: unknown) =>
+      ipcRenderer.invoke('datastore-update-address', { id, updates }),
+    queryAddresses: (filter?: unknown) =>
+      ipcRenderer.invoke('datastore-query-addresses', { filter }),
+    addVisit: (addressId: string, options?: unknown) =>
+      ipcRenderer.invoke('datastore-add-visit', { addressId, options }),
+    queryVisits: (filter?: unknown) =>
+      ipcRenderer.invoke('datastore-query-visits', { filter }),
+    addContent: (options: unknown) =>
+      ipcRenderer.invoke('datastore-add-content', { options }),
+    queryContent: (filter?: unknown) =>
+      ipcRenderer.invoke('datastore-query-content', { filter }),
+    getTable: (tableName: string) =>
+      ipcRenderer.invoke('datastore-get-table', { tableName }),
+    setRow: (tableName: string, rowId: string, rowData: unknown) =>
+      ipcRenderer.invoke('datastore-set-row', { tableName, rowId, rowData }),
+    getRow: (tableName: string, rowId: string) =>
+      ipcRenderer.invoke('datastore-get-row', { tableName, rowId }),
+    getStats: () => ipcRenderer.invoke('datastore-get-stats'),
     // Tag helpers
-    getOrCreateTag: (name: string) => ds('datastore-get-or-create-tag', { name }),
-    tagAddress: (addressId: string, tagId: string) => ds('datastore-tag-address', { addressId, tagId }),
-    untagAddress: (addressId: string, tagId: string) => ds('datastore-untag-address', { addressId, tagId }),
-    getTagsByFrecency: (domain?: string) => ds('datastore-get-tags-by-frecency', { domain }),
-    renameTag: (tagId: string, newName: string) => ds('datastore-rename-tag', { tagId, newName }),
-    updateTagColor: (tagId: string, color: string) => ds('datastore-update-tag-color', { tagId, color }),
-    deleteTag: (tagId: string) => ds('datastore-delete-tag', { tagId }),
-    getAddressTags: (addressId: string) => ds('datastore-get-address-tags', { addressId }),
-    getAddressesByTag: (tagId: string) => ds('datastore-get-addresses-by-tag', { tagId }),
-    getUntaggedAddresses: (data?: unknown) => ds('datastore-get-untagged-addresses', data || {}),
+    getOrCreateTag: (name: string) =>
+      ipcRenderer.invoke('datastore-get-or-create-tag', { name }),
+    tagAddress: (addressId: string, tagId: string) =>
+      ipcRenderer.invoke('datastore-tag-address', { addressId, tagId }),
+    untagAddress: (addressId: string, tagId: string) =>
+      ipcRenderer.invoke('datastore-untag-address', { addressId, tagId }),
+    getTagsByFrecency: (domain?: string) =>
+      ipcRenderer.invoke('datastore-get-tags-by-frecency', { domain }),
+    renameTag: (tagId: string, newName: string) =>
+      ipcRenderer.invoke('datastore-rename-tag', { tagId, newName }),
+    updateTagColor: (tagId: string, color: string) =>
+      ipcRenderer.invoke('datastore-update-tag-color', { tagId, color }),
+    deleteTag: (tagId: string) =>
+      ipcRenderer.invoke('datastore-delete-tag', { tagId }),
+    getAddressTags: (addressId: string) =>
+      ipcRenderer.invoke('datastore-get-address-tags', { addressId }),
+    getAddressesByTag: (tagId: string) =>
+      ipcRenderer.invoke('datastore-get-addresses-by-tag', { tagId }),
+    getUntaggedAddresses: () =>
+      ipcRenderer.invoke('datastore-get-untagged-addresses', {}),
     // Item helpers
-    addItem: (type: string, data: unknown) => ds('datastore-add-item', { type, data }),
-    getItem: (itemId: string) => ds('datastore-get-item', { itemId }),
-    updateItem: (itemId: string, updates: unknown) => ds('datastore-update-item', { itemId, updates }),
-    deleteItem: (itemId: string) => ds('datastore-delete-item', { itemId }),
-    hardDeleteItem: (itemId: string) => ds('datastore-hard-delete-item', { itemId }),
-    updateItemTitle: (url: string, title: string) => ds('datastore-update-item-title', { url, title }),
-    updateItemFavicon: (url: string, favicon: string) => ds('datastore-update-item-favicon', { url, favicon }),
-    queryItems: (filter: unknown = {}) => ds('datastore-query-items', filter),
-    tagItem: (itemId: string, tagId: string) => ds('datastore-tag-item', { itemId, tagId }),
-    untagItem: (itemId: string, tagId: string) => ds('datastore-untag-item', { itemId, tagId }),
-    getItemTags: (itemId: string) => ds('datastore-get-item-tags', { itemId }),
-    getItemsByTag: (tagId: string) => ds('datastore-get-items-by-tag', { tagId }),
-    getHistory: (filter: unknown = {}) => ds('datastore-get-history', filter),
-    recordItemVisit: (itemId: string, data: unknown) => ds('datastore-record-item-visit', { itemId, data }),
-    getItemVisits: (itemId: string) => ds('datastore-get-item-visits', { itemId }),
-    queryItemVisits: (filter: unknown = {}) => ds('datastore-query-item-visits', filter),
-    trackNavigation: (data: unknown) => ds('datastore-track-navigation', data),
-    queryItemsByFrecency: (filter: unknown = {}) => ds('datastore-query-items-by-frecency', filter),
-    // Item event helpers
-    addItemEvent: (itemId: string, data: unknown) => ds('datastore-add-item-event', { itemId, data }),
-    getItemEvent: (eventId: string) => ds('datastore-get-item-event', { eventId }),
-    queryItemEvents: (filter: unknown = {}) => ds('datastore-query-item-events', filter),
-    deleteItemEvent: (eventId: string) => ds('datastore-delete-item-event', { eventId }),
-    deleteItemEvents: (filter: unknown) => ds('datastore-delete-item-events', filter),
-    getLatestItemEvent: (itemId: string, eventType?: string) => ds('datastore-get-latest-item-event', { itemId, eventType }),
-    countItemEvents: (filter: unknown = {}) => ds('datastore-count-item-events', filter),
+    addItem: (type: string, options: unknown = {}) =>
+      ipcRenderer.invoke('datastore-add-item', { type, options }),
+    getItem: (id: string) =>
+      ipcRenderer.invoke('datastore-get-item', { id }),
+    updateItem: (id: string, options: unknown) =>
+      ipcRenderer.invoke('datastore-update-item', { id, options }),
+    deleteItem: (id: string) =>
+      ipcRenderer.invoke('datastore-delete-item', { id }),
+    hardDeleteItem: (id: string) =>
+      ipcRenderer.invoke('datastore-hard-delete-item', { id }),
+    updateItemTitle: (id: string, title: string) =>
+      ipcRenderer.invoke('datastore-update-item-title', { id, title }),
+    updateItemFavicon: (id: string, favicon: string) =>
+      ipcRenderer.invoke('datastore-update-item-favicon', { id, favicon }),
+    queryItems: (filter: unknown = {}) =>
+      ipcRenderer.invoke('datastore-query-items', { filter }),
+    tagItem: (itemId: string, tagId: string) =>
+      ipcRenderer.invoke('datastore-tag-item', { itemId, tagId }),
+    untagItem: (itemId: string, tagId: string) =>
+      ipcRenderer.invoke('datastore-untag-item', { itemId, tagId }),
+    getItemTags: (itemId: string) =>
+      ipcRenderer.invoke('datastore-get-item-tags', { itemId }),
+    getItemsByTag: (tagId: string) =>
+      ipcRenderer.invoke('datastore-get-items-by-tag', { tagId }),
+    getHistory: (filter: unknown = {}) =>
+      ipcRenderer.invoke('datastore-get-history', filter),
+    recordItemVisit: (data: unknown) =>
+      ipcRenderer.invoke('datastore-record-item-visit', data),
+    getItemVisits: (data: unknown) =>
+      ipcRenderer.invoke('datastore-get-item-visits', data),
+    queryItemVisits: (data: unknown = {}) =>
+      ipcRenderer.invoke('datastore-query-item-visits', data),
+    trackNavigation: (data: unknown) =>
+      ipcRenderer.invoke('datastore-track-navigation', data),
+    queryItemsByFrecency: (data: unknown = {}) =>
+      ipcRenderer.invoke('datastore-query-items-by-frecency', data),
+    // Item events
+    addItemEvent: (data: unknown) =>
+      ipcRenderer.invoke('datastore-add-item-event', data),
+    getItemEvent: (data: unknown) =>
+      ipcRenderer.invoke('datastore-get-item-event', data),
+    queryItemEvents: (data: unknown = {}) =>
+      ipcRenderer.invoke('datastore-query-item-events', data),
+    deleteItemEvent: (data: unknown) =>
+      ipcRenderer.invoke('datastore-delete-item-event', data),
+    deleteItemEvents: (data: unknown) =>
+      ipcRenderer.invoke('datastore-delete-item-events', data),
+    getLatestItemEvent: (data: unknown) =>
+      ipcRenderer.invoke('datastore-get-latest-item-event', data),
+    countItemEvents: (data: unknown) =>
+      ipcRenderer.invoke('datastore-count-item-events', data),
   };
 
   // ── Network (if granted) ──
