@@ -53,7 +53,9 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [x] Phase 2 — strict context IPC + read/write/modes/queryWindows allowlists
   - [x] Phase 2 — strict dialogs IPC + types allowlist
   - [x] Phase 2 — settings cleanup (audit found every shim still has callers; deferred to Phase 3 or `settings.readForeign` capability work)
-  - [ ] Remaining: window strict IPC, features strict IPC
+  - [x] Phase 2 — strict window IPC + create/query/manage/urls allowlist
+  - [x] Phase 2 — strict features IPC + read/install/manage/sources allowlist
+  - **Phase 2 complete** — all strict IPC surfaces landed; next is Phase 3 per-feature migration
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
 - [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
@@ -75,6 +77,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 Keep short — for recent context only. Prune after a few weeks.
 
+- 2026-04-16 Trimming Phase 2 closed: strict window + features IPC + settings-cleanup audit (2065 tests passing)
 - 2026-04-16 Bundled TWP translate extension (chrome-extensions/twp/) + commands for all installed browser extensions with options pages
 - 2026-04-16 Strict `tile:context:*` + `tile:dialogs:*` IPC with allowlists (trimming Phase 2)
 - 2026-04-16 Settings isolation + defaults test coverage (34 new tests)
