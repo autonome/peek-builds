@@ -30,22 +30,23 @@
     "pubsub": {
       "scopes": ["global", "system"],
       "topics": [
-        "cmd:execute:search",
-        "item:*",
-        "tag:*",
-        "editor:*",
-        "sync:pull-completed",
         "ext:ready",
         "ext:search:shutdown",
-        "app:shutdown"
+        "app:shutdown",
+        "cmd:execute:search",
+        "sync:pull-completed",
+        "item:created",
+        "item:deleted",
+        "tag:item-added",
+        "tag:item-removed",
+        "editor:open"
       ]
     },
     "datastore": {
       "tables": ["items", "tags", "item_tags"]
     },
     "window": {
-      "create": true,
-      "query": true
+      "create": true
     },
     "commands": true
   },
