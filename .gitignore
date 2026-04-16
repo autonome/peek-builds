@@ -55,8 +55,12 @@ TODO-mine.md
 # Device backups (use ~/sync/peek-backups/ instead)
 device-backup-*/
 
-# Chrome extension resources (large binaries)
-chrome-extensions/
+# Chrome extension resources (large binaries).
+# Individual extensions are un-ignored below (must re-include parent and all subpaths).
+chrome-extensions/*
+!chrome-extensions/README.md
+# Exceptions: vendored small extensions we want tracked
+!chrome-extensions/twp/
 
 # Experimental/unused files
 babel.config.json
