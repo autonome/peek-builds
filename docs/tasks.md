@@ -79,10 +79,10 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
     - [x] `api.datastore.extractPageContent` — under existing `datastore` capability
     - [x] `api.features.*` admin: update/dev/publish/devtools/browse actions (extends `FeaturesCapability`); features-manager `api.ipc.invoke` call sites migrated to `api.features.*`
   - **Still open (lower priority / defer to Phase 4 decisions)**:
-    - [ ] `api.scopes.SYSTEM` semantic in tile-preload (currently undefined → defaults to SELF). Affects lifecycle events.
-    - [ ] Settings response shape audit: `{value, error}` strict vs `{success, data}` callers — peeks, slides, wonderwall use v1 shape
-    - [ ] `api.context.setMode`/`getWindowsInSpace` are aliases over already-strict set+modes/queryWindows — not wrapped explicitly
-    - [ ] Cross-tile `api.settings.getExtKey('lex', 'session')` in features-manager can also use the new `settings.readForeign` path; or implement `lex:get-session` pubsub request/response (TBD)
+    - [x] `api.scopes.SYSTEM` exposed in tile-preload
+    - [x] Settings response shape: wrapped to return `{success, data, value, error}` dual shape
+    - [x] `api.context.setMode`/`getMode`/`watchMode`/`getWindowsInSpace` aliases added
+    - [x] `api.settings.getExtKey` routed through `settings.readForeign` with compat shape
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
   - [x] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
@@ -90,7 +90,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - **Phase 3 complete** — all 26 features migrated to strict capability-gated calls; v2 shim blocks dropped from v2 paths; v1 legacy fallback branches preserved pending Phase 4 shim removal
 - [x] Phase 4 — removed v1-compat shims + hard-fail stubs; deleted v1 else-branches in 22 feature HTMLs; 54 new stub tests; 5 runtime-breaking callers fixed (pagewidgets-sample, files, groups, tags, features-manager)
   - [x] **Datastore restoration** — Phase 4 over-reached and stubbed out the `api.datastore.*` named methods that every feature actually calls. Restored as legacy-channel routes (thin wrappers over `datastore-*` IPC in ipc.ts). The generic strict surface (`api.datastore.{get,set,query,extractPageContent}`) remains unchanged alongside it.
-  - [ ] Follow-up: build strict `tile:datastore:*` handlers for methods without them (renameTag/updateTagColor/deleteTag/queryItemVisits/getHistory/updateItemTitle/updateItemFavicon/hardDeleteItem/recordItemVisit/getItemVisits/trackNavigation/queryItemsByFrecency/addAddress-family). Then migrate callers to strict and reintroduce hard-fail stubs for the named methods.
+  - [x] Follow-up: all ~38 datastore methods now have strict `tile:datastore:*` handlers + preload routes through them
 - [x] Phase 5 — TILE_STRICT env flag (throws on cap violations); tile:capability-violation pubsub topic with rate limiting; static tile-api.d.ts
   - **Tiles trimming COMPLETE** — all 5 phases done. Known follow-ups tracked above (missing strict datastore handlers, legacy routing cleanup) — not blocking.
 
