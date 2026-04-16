@@ -65,6 +65,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [ ] `api.window.close` in strict path is fire-and-forget `ipcRenderer.send` (no promise). Document this; any existing `.catch()` chains need try/catch instead. Discovered in slides migration.
   - [ ] Missing strict surfaces: `api.window.center/centerAll/maximize/fullscreen/getFocusedVisibleWindowId/setOverlayFocusTarget`, `api.izui.*`, `api.escape.*`. Used by `windows` feature and others; currently fall back to legacy preload in separate BrowserWindows.
   - [ ] Missing `api.oauth.startLoopback/awaitCallback` surface in tile-preload (used by wonderwall). Needs an `oauth` capability + strict tile IPC before v1 shim removal — wonderwall will break otherwise.
+  - [ ] Missing `api.datastore.extractPageContent` surface in tile-preload (used by entities). Feature-specific helper; needs strict routing or extraction to a different capability.
+  - [ ] Missing `api.commands.unregister` in tile-preload (only `register` exposed). Used by entities and others for cleanup.
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
   - [x] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
