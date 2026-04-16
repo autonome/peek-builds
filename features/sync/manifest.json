@@ -10,9 +10,16 @@
   "tiles": [],
   "capabilities": {
     "pubsub": {
-      "scopes": ["global"],
-      "topics": ["sync:*"]
-    }
+      "scopes": ["global", "system"],
+      "topics": [
+        "sync:*",
+        "ext:ready",
+        "ext:sync:shutdown",
+        "app:shutdown"
+      ]
+    },
+    "commands": true,
+    "sync": true
   },
   "commands": [
     {
