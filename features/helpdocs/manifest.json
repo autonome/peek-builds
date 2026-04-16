@@ -29,18 +29,15 @@
   ],
   "capabilities": {
     "pubsub": {
-      "scopes": ["global", "system"],
+      "scopes": ["global"],
       "topics": [
-        "ext:ready",
-        "ext:helpdocs:shutdown",
-        "app:shutdown",
         "app:focus-changed"
       ]
     },
     "window": {
       "create": true,
-      "query": true,
-      "manage": true
+      "manage": true,
+      "urls": ["peek://ext/helpdocs/overlay.html"]
     },
     "commands": true
   },
