@@ -71,6 +71,72 @@ function validateToken(): Promise<boolean> {
   return promise;
 }
 
+// ─── Capability-Violation Logger (Phase 1) ───────────────────────────
+//
+// v1-compat shims delegate directly to legacy IPC handlers that do not
+// perform capability enforcement. As part of the tile-preload trimming
+// plan (docs/tile-preload-trimming-plan.md), we log the first call to
+// each (tileId, surface.method) pair so we can measure real usage and
+// verify zero-hit before deletion in Phase 4.
+//
+// Rules (see trimming plan Phase 1):
+// - Log once per (tileId, "surface.method") pair.
+// - NEVER throw, NEVER change behaviour — observational only.
+// - Applies only to v1-compat surfaces that will be removed or replaced
+//   by strict-mode equivalents. Strict surfaces (pubsub, window.open/
+//   close/getInfo, filesystem, network, theme, sync, scopes, commands)
+//   are NOT wrapped.
+
+const compatSeen = new Set<string>();
+
+function logCompatViolation(surface: string, method: string): void {
+  const key = `${tileId}::${surface}.${method}`;
+  if (compatSeen.has(key)) return;
+  compatSeen.add(key);
+  try {
+    // Intentional console.warn — these land in the tile's devtools and in
+    // the main-process renderer-log handler. Phase 5 will promote these
+    // to a pubsub topic or a throw under TILE_STRICT=true.
+    console.warn(`[tile-compat] tile=${tileId} called shim api.${surface}.${method}(...) — no strict enforcement`);
+  } catch (_err) {
+    // Logging must never throw.
+  }
+}
+
+/**
+ * Wrap a zero-or-more-arg function so its first invocation logs a
+ * capability-violation warning. Preserves `this`, arguments, and return
+ * value exactly. Errors in the wrapped call propagate unchanged.
+ */
+function wrapCompat<F extends (...args: unknown[]) => unknown>(
+  surface: string,
+  method: string,
+  fn: F,
+): F {
+  const wrapped = function (this: unknown, ...args: unknown[]): unknown {
+    logCompatViolation(surface, method);
+    return fn.apply(this, args);
+  };
+  return wrapped as F;
+}
+
+/**
+ * Wrap every own method of an object with wrapCompat under the given
+ * surface name. Non-function properties are copied through unchanged.
+ */
+function wrapCompatObject<T extends Record<string, unknown>>(surface: string, obj: T): T {
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (typeof val === 'function') {
+      out[key] = wrapCompat(surface, key, val as (...args: unknown[]) => unknown);
+    } else {
+      out[key] = val;
+    }
+  }
+  return out as T;
+}
+
 // ─── API Builder ─────────────────────────────────────────────────────
 
 /**
@@ -169,8 +235,11 @@ function buildAPI(): Record<string, unknown> {
     };
   }
 
-  api.publish = publishImpl;
-  api.subscribe = subscribeImpl;
+  // Top-level `api.publish` / `api.subscribe` are v1-compat aliases for
+  // `api.pubsub.publish` / `api.pubsub.subscribe`. Log usage to drive the
+  // Phase 4 removal (see tile-preload-trimming-plan.md).
+  api.publish = wrapCompat('publish', '(top-level)', publishImpl as (...args: unknown[]) => unknown);
+  api.subscribe = wrapCompat('subscribe', '(top-level)', subscribeImpl as (...args: unknown[]) => unknown);
 
   api.pubsub = {
     publish: publishImpl,
@@ -347,8 +416,14 @@ function buildAPI(): Record<string, unknown> {
   };
 
   // ── Datastore (if granted) ──
+  //
+  // Strict surfaces (get/set/query) route through `tile:datastore:*` which
+  // enforces per-table capability. Everything below the divider is a
+  // v1-compat helper that delegates to legacy IPC handlers without
+  // capability checks — these are wrapped with wrapCompat to log first-use
+  // per tile (see Phase 1 of the trimming plan).
 
-  api.datastore = {
+  const datastoreStrict = {
     /**
      * Get a value from the tile's scoped storage
      */
@@ -385,7 +460,9 @@ function buildAPI(): Record<string, unknown> {
         filter,
       });
     },
+  };
 
+  const datastoreCompat = {
     // ─── v1-compat datastore helpers ──────────────────────────────────
     // These delegate directly to the core datastore IPC handlers. The v1
     // preload exposed these for every extension; many features call them.
@@ -496,6 +573,12 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.invoke('datastore-count-item-events', data),
   };
 
+  // Wrap each compat method with first-use logging (observational only).
+  api.datastore = {
+    ...datastoreStrict,
+    ...wrapCompatObject('datastore', datastoreCompat as unknown as Record<string, unknown>),
+  };
+
   // ── Network (if granted) ──
 
   api.network = {
@@ -564,6 +647,9 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Settings (if granted) ──
 
+  // Settings: `get`/`set` are strict (routed through tile:settings:*).
+  // `getKey`/`setKey` are v1-compat wrappers that massage the response
+  // shape — wrapped to log first-use per tile.
   api.settings = {
     /**
      * Get a setting value (returns raw value, no wrapper)
@@ -592,7 +678,7 @@ function buildAPI(): Record<string, unknown> {
      * v1 compatibility alias — get returns {success, data} shape
      * matching legacy preload's settings.getKey().
      */
-    getKey: async (key: string) => {
+    getKey: wrapCompat('settings', 'getKey', async (key: unknown) => {
       if (!tokenValid) return { success: false, error: 'Not initialized' };
       const result = await ipcRenderer.invoke('tile:settings:get', {
         token: tileToken,
@@ -600,13 +686,13 @@ function buildAPI(): Record<string, unknown> {
       });
       if (result.error) return { success: false, error: result.error };
       return { success: true, data: result.value };
-    },
+    }),
 
     /**
      * v1 compatibility alias — set returns {success, error?} shape
      * matching legacy preload's settings.setKey().
      */
-    setKey: async (key: string, value: unknown) => {
+    setKey: wrapCompat('settings', 'setKey', async (key: unknown, value: unknown) => {
       if (!tokenValid) return { success: false, error: 'Not initialized' };
       const result = await ipcRenderer.invoke('tile:settings:set', {
         token: tileToken,
@@ -615,7 +701,7 @@ function buildAPI(): Record<string, unknown> {
       });
       if (result.error) return { success: false, error: result.error };
       return { success: true };
-    },
+    }),
   };
 
   // ── Shortcuts (v1-compat) ─────────────────────────────────────────
@@ -630,31 +716,41 @@ function buildAPI(): Record<string, unknown> {
   }
 
   api.shortcuts = {
-    register: (shortcut: string, cb: () => void, options: { global?: boolean; mode?: string } = {}) => {
-      const isGlobal = options.global === true;
+    register: wrapCompat('shortcuts', 'register', (
+      shortcut: unknown,
+      cb: unknown,
+      options: unknown,
+    ) => {
+      const opts = (options || {}) as { global?: boolean; mode?: string };
+      const callback = cb as () => void;
+      const isGlobal = opts.global === true;
       const replyTopic = `${shortcut}${rndm()}`;
       ipcRenderer.send('registershortcut', {
         source: sourceAddress,
         shortcut,
         replyTopic,
         global: isGlobal,
-        mode: options.mode,
+        mode: opts.mode,
       });
-      ipcRenderer.on(replyTopic, () => cb());
-    },
-    unregister: (shortcut: string, options: { global?: boolean; mode?: string } = {}) => {
-      const isGlobal = options.global === true;
+      ipcRenderer.on(replyTopic, () => callback());
+    }),
+    unregister: wrapCompat('shortcuts', 'unregister', (
+      shortcut: unknown,
+      options: unknown,
+    ) => {
+      const opts = (options || {}) as { global?: boolean; mode?: string };
+      const isGlobal = opts.global === true;
       ipcRenderer.send('unregistershortcut', {
         source: sourceAddress,
         shortcut,
         global: isGlobal,
-        mode: options.mode,
+        mode: opts.mode,
       });
-    },
+    }),
   };
 
   // ── Files (v1-compat) ─────────────────────────────────────────────
-  api.files = {
+  const filesCompat = {
     save: (content: string, options: { filename?: string; mimeType?: string } = {}) =>
       ipcRenderer.invoke('file-save-dialog', {
         content,
@@ -667,9 +763,10 @@ function buildAPI(): Record<string, unknown> {
     writeToPath: (filePath: string, content: string) =>
       ipcRenderer.invoke('file-write-to-path', { filePath, content }),
   };
+  api.files = wrapCompatObject('files', filesCompat as unknown as Record<string, unknown>);
 
   // ── Modes (v1-compat) ─────────────────────────────────────────────
-  api.modes = {
+  const modesCompat = {
     getWindowMode: (windowId: number | null = null) =>
       ipcRenderer.invoke('modes:getWindowMode', { windowId }),
     setMajorMode: (mode: string, windowId: number | null = null) =>
@@ -683,9 +780,10 @@ function buildAPI(): Record<string, unknown> {
       }, 3);
     },
   };
+  api.modes = wrapCompatObject('modes', modesCompat as unknown as Record<string, unknown>);
 
   // ── Context (v1-compat) ───────────────────────────────────────────
-  api.context = {
+  const contextCompat = {
     get: (key: string, windowId: number | null = null) =>
       ipcRenderer.invoke('context-get', { key, windowId }),
     set: (key: string, value: unknown, metadata?: unknown, windowId?: number | null) =>
@@ -699,15 +797,16 @@ function buildAPI(): Record<string, unknown> {
     windowsInSpace: (spaceId: string) =>
       ipcRenderer.invoke('context-windows-in-space', { spaceId }),
   };
+  api.context = wrapCompatObject('context', contextCompat as unknown as Record<string, unknown>);
 
   // ── closeWindow (v1-compat) ───────────────────────────────────────
-  api.closeWindow = (id?: number | null) => {
+  api.closeWindow = wrapCompat('closeWindow', '(call)', (id?: unknown) => {
     if (id == null) {
       ipcRenderer.send('tile:window:close', { token: tileToken });
       return;
     }
     ipcRenderer.invoke('window-close', { id });
-  };
+  });
 
   // ── Log (always available) ──
 
