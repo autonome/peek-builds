@@ -31,14 +31,12 @@ let currentSettings = {
  * @returns {Promise<{prefs: object, items: array}>}
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
-  if (result.success && result.data) {
-    return {
-      prefs: result.data.prefs || defaults.prefs,
-      items: result.data.items || defaults.items
-    };
-  }
-  return { prefs: defaults.prefs, items: defaults.items };
+  const prefsResult = await api.settings.get('prefs');
+  const itemsResult = await api.settings.get('items');
+  return {
+    prefs: (prefsResult && !prefsResult.error && prefsResult.value) || defaults.prefs,
+    items: (itemsResult && !itemsResult.error && itemsResult.value) || defaults.items
+  };
 };
 
 /**
@@ -46,9 +44,13 @@ const loadSettings = async () => {
  * @param {object} settings - Settings object with prefs and items
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set(settings);
-  if (!result.success) {
-    console.error('[ext:slides] Failed to save settings:', result.error);
+  const prefsResult = await api.settings.set('prefs', settings.prefs);
+  if (prefsResult && prefsResult.error) {
+    console.error('[ext:slides] Failed to save prefs:', prefsResult.error);
+  }
+  const itemsResult = await api.settings.set('items', settings.items);
+  if (itemsResult && itemsResult.error) {
+    console.error('[ext:slides] Failed to save items:', itemsResult.error);
   }
 };
 
@@ -94,9 +96,9 @@ const executeItem = (item) => {
     const windowId = slideWindows.get(key);
     console.log('[ext:slides] Slide already open, verifying window exists with ID:', windowId);
 
-    api.window.exists({ id: windowId }).then(existsResult => {
+    api.window.exists(windowId).then(existsResult => {
       if (existsResult.exists) {
-        api.window.show({ id: windowId }).then(result => {
+        api.window.show(windowId).then(result => {
           if (result.success) {
             console.log('[ext:slides] Successfully showed existing slide:', key);
           } else {
@@ -190,11 +192,19 @@ const uninit = () => {
   // Close or hide all slide windows
   for (const [key, windowId] of slideWindows.entries()) {
     console.log('[ext:slides] Closing slide window:', key);
-    api.window.hide({ id: windowId }).catch(err => {
+    api.window.hide(windowId).then(result => {
+      if (!result || !result.success) {
+        console.error('[ext:slides] Failed to hide slide window:', result && result.error);
+        // Strict close is fire-and-forget (no return value)
+        try { api.window.close(windowId); } catch (err) {
+          console.error('[ext:slides] Error closing slide window:', err);
+        }
+      }
+    }).catch(err => {
       console.error('[ext:slides] Error hiding slide window:', err);
-      api.window.close({ id: windowId }).catch(err => {
-        console.error('[ext:slides] Error closing slide window:', err);
-      });
+      try { api.window.close(windowId); } catch (closeErr) {
+        console.error('[ext:slides] Error closing slide window:', closeErr);
+      }
     });
   }
   slideWindows.clear();
@@ -221,7 +231,7 @@ const init = async () => {
   currentSettings = await loadSettings();
 
   // Add global window closed handler
-  api.subscribe('window:closed', (data) => {
+  api.pubsub.subscribe('window:closed', (data) => {
     for (const [key, windowId] of slideWindows.entries()) {
       if (data.id === windowId) {
         console.log('[ext:slides] Slide window was closed externally:', key);
@@ -236,14 +246,14 @@ const init = async () => {
   }
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
-  api.subscribe('slides:settings-changed', () => {
+  api.pubsub.subscribe('slides:settings-changed', () => {
     console.log('[ext:slides] settings changed, reinitializing');
     reinit();
   }, api.scopes.GLOBAL);
 
   // Listen for settings updates from Settings UI
   // Settings UI sends proposed changes, we validate and save
-  api.subscribe('slides:settings-update', async (msg) => {
+  api.pubsub.subscribe('slides:settings-update', async (msg) => {
     console.log('[ext:slides] settings-update received:', msg);
 
     try {
@@ -276,7 +286,7 @@ const init = async () => {
       await reinit();
 
       // Confirm change back to Settings UI
-      api.publish('slides:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('slides:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
       console.error('[ext:slides] settings-update error:', err);
     }
