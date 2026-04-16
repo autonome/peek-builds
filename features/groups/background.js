@@ -38,10 +38,10 @@ const suspendedGroups = new Map();
  * @returns {Promise<{prefs: object}>}
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
-  if (result.success && result.data) {
+  const result = await api.settings.get('prefs');
+  if (!result.error && result.value) {
     return {
-      prefs: result.data.prefs || defaults.prefs
+      prefs: result.value || defaults.prefs
     };
   }
   return { prefs: defaults.prefs };
@@ -52,8 +52,8 @@ const loadSettings = async () => {
  * @param {object} settings - Settings object with prefs
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set(settings);
-  if (!result.success) {
+  const result = await api.settings.set('prefs', settings.prefs);
+  if (result.error) {
     console.error('[ext:groups] Failed to save settings:', result.error);
   }
 };
@@ -320,9 +320,9 @@ const switchGroup = async (targetGroupName) => {
  */
 const getPinnedItems = async (groupId) => {
   try {
-    const result = await api.settings.getExtKey('groups', `pins:${groupId}`);
-    if (result.success && result.data) {
-      return Array.isArray(result.data) ? result.data : [];
+    const result = await api.settings.get(`pins:${groupId}`);
+    if (!result.error && result.value) {
+      return Array.isArray(result.value) ? result.value : [];
     }
   } catch (err) {
     debug && console.log('[ext:groups] Failed to load pins:', err);
@@ -335,7 +335,7 @@ const getPinnedItems = async (groupId) => {
  */
 const savePinnedItems = async (groupId, pinnedItemIds) => {
   try {
-    await api.settings.setKey(`pins:${groupId}`, pinnedItemIds);
+    await api.settings.set(`pins:${groupId}`, pinnedItemIds);
   } catch (err) {
     console.error('[ext:groups] Failed to save pins:', err);
   }
@@ -376,7 +376,7 @@ const pinItem = async (url, groupId = null) => {
   }
 
   // Publish event for UI reactivity
-  api.publish('group:pin-changed', { groupId, itemId: item.id, pinned: true }, api.scopes.GLOBAL);
+  api.pubsub.publish('group:pin-changed', { groupId, itemId: item.id, pinned: true }, api.scopes.GLOBAL);
 
   console.log(`[ext:groups] Pinned item "${url}" in group ${groupId}`);
   return { success: true, itemId: item.id, groupId };
@@ -416,7 +416,7 @@ const unpinItem = async (url, groupId = null) => {
   }
 
   // Publish event for UI reactivity
-  api.publish('group:pin-changed', { groupId, itemId: item.id, pinned: false }, api.scopes.GLOBAL);
+  api.pubsub.publish('group:pin-changed', { groupId, itemId: item.id, pinned: false }, api.scopes.GLOBAL);
 
   console.log(`[ext:groups] Unpinned item "${url}" from group ${groupId}`);
   return { success: true, itemId: item.id, groupId };
@@ -596,7 +596,11 @@ const openGroup = async (groupName) => {
   let savedBoundsMap = null;
   let sortedUrlItems = urlItems;
   try {
-    const wsResult = await api.settings.getExtKey('spaces', 'workspace:' + tag.id);
+    // Cross-extension read of spaces' workspace snapshot.
+    // Strict tile preload doesn't expose getExtKey — guard for v2 strict.
+    const wsResult = api.settings.getExtKey
+      ? await api.settings.getExtKey('spaces', 'workspace:' + tag.id)
+      : { success: false };
     if (wsResult.success && wsResult.data) {
       const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;
       if (snapshot.version === 1 && Array.isArray(snapshot.windows)) {
@@ -746,13 +750,13 @@ const initCommands = () => {
   // Workspace commands (close, switch, restore) moved to spaces feature.
 
   // "pin <url>" — mark a URL as pinned in the current group
-  api.subscribe('cmd:execute:pin', async (msg) => {
+  api.pubsub.subscribe('cmd:execute:pin', async (msg) => {
     const result = await pinItem(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
-  api.publish('cmd:register', {
+  api.pubsub.publish('cmd:register', {
     name: 'pin',
     description: 'Pin a URL in the current group (always opens with group)',
     source: 'groups',
@@ -763,13 +767,13 @@ const initCommands = () => {
   }, api.scopes.GLOBAL);
 
   // "unpin <url>" — remove pin from a URL in the current group
-  api.subscribe('cmd:execute:unpin', async (msg) => {
+  api.pubsub.subscribe('cmd:execute:unpin', async (msg) => {
     const result = await unpinItem(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
-  api.publish('cmd:register', {
+  api.pubsub.publish('cmd:register', {
     name: 'unpin',
     description: 'Unpin a URL from the current group',
     source: 'groups',
@@ -786,7 +790,7 @@ const uninitCommands = () => {
   unregisterNoun('groups');
   // Unregister standalone commands
   for (const name of ['pin', 'unpin']) {
-    api.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
   }
   console.log('[ext:groups] Noun and commands unregistered: groups');
 };
@@ -807,7 +811,7 @@ const init = async () => {
   // Group mode persists on member windows. It is only cleared when:
   // - The user navigates back to the groups list (handled in home.js showGroups)
   // - The user explicitly changes mode
-  api.subscribe('window:closed', async (msg) => {
+  api.pubsub.subscribe('window:closed', async (msg) => {
     const closedWindowId = msg?.id;
 
     if (closedWindowId === groupsWindowId) {
@@ -817,7 +821,7 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
-  api.subscribe('groups:settings-changed', async () => {
+  api.pubsub.subscribe('groups:settings-changed', async () => {
     console.log('[ext:groups] settings changed, reinitializing');
     uninit();
     currentSettings = await loadSettings();
@@ -827,7 +831,7 @@ const init = async () => {
 
   // Listen for settings updates from Settings UI
   // Settings UI sends proposed changes, we validate and save
-  api.subscribe('groups:settings-update', async (msg) => {
+  api.pubsub.subscribe('groups:settings-update', async (msg) => {
     console.log('[ext:groups] settings-update received:', msg);
 
     try {
@@ -854,7 +858,7 @@ const init = async () => {
       initCommands();
 
       // Confirm change back to Settings UI
-      api.publish('groups:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('groups:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
       console.error('[ext:groups] settings-update error:', err);
     }

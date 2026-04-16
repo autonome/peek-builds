@@ -357,7 +357,9 @@ const init = async () => {
 
   // Register escape handler for internal navigation
   // Backend handles parent centering, child tracking, and focus restoration
-  api.escape.onEscape(handleEscape);
+  if (api.escape) {
+    api.escape.onEscape(handleEscape);
+  }
 
   // Load view preferences and set up toolbar
   loadViewPrefs();
@@ -393,53 +395,53 @@ const init = async () => {
   }, 150);
 
   // Subscribe to tag events for reactive updates
-  api.subscribe('tag:item-added', (msg) => {
+  api.pubsub.subscribe('tag:item-added', (msg) => {
     debug && console.log('[groups] tag:item-added event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:item-removed', (msg) => {
+  api.pubsub.subscribe('tag:item-removed', (msg) => {
     debug && console.log('[groups] tag:item-removed event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('tag:created', (msg) => {
+  api.pubsub.subscribe('tag:created', (msg) => {
     debug && console.log('[groups] tag:created event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Subscribe to item events for reactive updates
-  api.subscribe('item:created', (msg) => {
+  api.pubsub.subscribe('item:created', (msg) => {
     debug && console.log('[groups] item:created event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('item:deleted', (msg) => {
+  api.pubsub.subscribe('item:deleted', (msg) => {
     debug && console.log('[groups] item:deleted event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Subscribe to sync events — sync operations bypass per-item events,
   // so we need this to refresh when new data arrives via sync
-  api.subscribe('sync:pull-completed', (msg) => {
+  api.pubsub.subscribe('sync:pull-completed', (msg) => {
     debug && console.log('[groups] sync:pull-completed event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Subscribe to tag rename events for reactive updates
-  api.subscribe('tag:renamed', (msg) => {
+  api.pubsub.subscribe('tag:renamed', (msg) => {
     debug && console.log('[groups] tag:renamed event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Subscribe to pin change events for reactive updates
-  api.subscribe('group:pin-changed', (msg) => {
+  api.pubsub.subscribe('group:pin-changed', (msg) => {
     debug && console.log('[groups] group:pin-changed event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
   // Subscribe to color changes (e.g. border color resolution persisted back)
-  api.subscribe('tag:color-changed', (msg) => {
+  api.pubsub.subscribe('tag:color-changed', (msg) => {
     debug && console.log('[groups] tag:color-changed event received:', msg);
     debouncedRefresh();
   }, api.scopes.GLOBAL);
@@ -553,9 +555,9 @@ const loadAddressesForTag = async (tagId) => {
 
     // Load pinned items for this group and annotate
     try {
-      const pinsResult = await api.settings.getExtKey('groups', `pins:${tagId}`);
-      if (pinsResult.success && Array.isArray(pinsResult.data)) {
-        const pinnedSet = new Set(pinsResult.data);
+      const pinsResult = await api.settings.get(`pins:${tagId}`);
+      if (!pinsResult.error && Array.isArray(pinsResult.value)) {
+        const pinnedSet = new Set(pinsResult.value);
         addresses = addresses.map(addr => ({
           ...addr,
           _pinned: pinnedSet.has(addr.id)
@@ -1173,7 +1175,7 @@ const createAddressCard = (address) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       try {
         await api.datastore.deleteItem(item.id);
-        api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
         if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
       } catch (err) {
         console.error('[groups] Failed to delete item:', err);
@@ -1182,7 +1184,7 @@ const createAddressCard = (address) => {
     onTagRemove: async (item, tag) => {
       try {
         await api.datastore.untagItem(item.id, tag.id);
-        api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
         if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
       } catch (err) {
         console.error('[groups] Failed to remove tag:', err);
@@ -1240,7 +1242,7 @@ const createAddressCard = (address) => {
         e.stopPropagation();
         try {
           await api.datastore.untagItem(address.id, state.currentTag.id);
-          api.publish('tag:item-removed', { itemId: address.id, tagId: state.currentTag.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('tag:item-removed', { itemId: address.id, tagId: state.currentTag.id }, api.scopes.GLOBAL);
           if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
         } catch (err) {
           console.error('[groups] Failed to remove item from group:', err);
@@ -1320,7 +1322,7 @@ const createAddressCard = (address) => {
         chip.remove();
         try {
           await api.datastore.untagItem(address.id, tag.id);
-          api.publish('tag:item-removed', { itemId: address.id, tagId: tag.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('tag:item-removed', { itemId: address.id, tagId: tag.id }, api.scopes.GLOBAL);
         } catch (err) {
           console.error('[groups] Failed to remove tag:', err);
         }
