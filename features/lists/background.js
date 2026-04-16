@@ -107,7 +107,7 @@ const init = async () => {
   initShortcut(currentSettings.prefs.shortcutKey);
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
-  api.subscribe('lists:settings-changed', async () => {
+  api.pubsub.subscribe('lists:settings-changed', async () => {
     debug && console.log('[ext:lists] settings changed, reinitializing');
     uninitShortcut();
     currentSettings = await loadSettings();
@@ -115,7 +115,7 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Listen for settings updates from Settings UI
-  api.subscribe('lists:settings-update', async (msg) => {
+  api.pubsub.subscribe('lists:settings-update', async (msg) => {
     debug && console.log('[ext:lists] settings-update received:', msg);
 
     try {
@@ -135,7 +135,7 @@ const init = async () => {
       uninitShortcut();
       initShortcut(currentSettings.prefs.shortcutKey);
 
-      api.publish('lists:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('lists:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
       console.error('[ext:lists] settings-update error:', err);
     }
