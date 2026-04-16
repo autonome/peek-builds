@@ -12,6 +12,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 - [ ] **post.nl → postnl.nl redirect shows blank page.** Navigating to post.nl (which server-redirects to postnl.nl) leaves Peek on a blank white page instead of following the redirect. Likely a webview/canvas redirect handling issue. Reproduce: open post.nl in a page window.
 - [ ] **Proton Pass extension doesn't autofill.** Still broken — doesn't show up in form fields, no autofill suggestions. Likely a content-script injection or messaging API gap in the webview/canvas setup. Reproduce: install Proton Pass extension, navigate to any login page, observe no inline autofill UI.
+- [ ] **Download save failing.** Saving a download fails when the target filename already exists. Two possible causes to investigate: (a) need to auto-iterate filenames — `download.jpg` → `download-1.jpg`, `download-2.jpg`, etc., with iterator before the extension; OR (b) the failure is actually in the post-download step that opens the file's local filesystem location (redirect to localfs), not the save itself. Repro and isolate before fixing.
 
 ---
 
