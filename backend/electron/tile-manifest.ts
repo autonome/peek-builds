@@ -286,6 +286,12 @@ export interface TileCapabilities {
   oauth?: boolean | OAuthCapability;
   /** Can query / install / manage installed features */
   features?: boolean | FeaturesCapability;
+  /**
+   * Can invoke session-level operations (e.g. persisting per-space
+   * window layouts). Minimal boolean capability for now — reserved for
+   * future expansion to an object form with sub-flags.
+   */
+  session?: boolean;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────
@@ -769,6 +775,11 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
       }
     }
 
+    // Validate session capability shape — boolean only for now.
+    if (caps.session !== undefined && typeof caps.session !== 'boolean') {
+      errors.push({ path: 'capabilities.session', message: 'session must be a boolean' });
+    }
+
     // Validate dialogs capability shape — must be boolean or { types?: ('save'|'open')[] }
     if (caps.dialogs !== undefined) {
       const dc = caps.dialogs;
@@ -1026,6 +1037,11 @@ export function resolveCapabilities(
     } else if (typeof requested.features === 'object') {
       granted.features = { ...requested.features };
     }
+  }
+
+  // Session: grant as requested (boolean-only for now).
+  if (requested.session) {
+    granted.session = true;
   }
 
   return { tileId, capabilities: granted, denied };
