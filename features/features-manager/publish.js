@@ -363,6 +363,29 @@ function renderStep3() {
   publishBtn.disabled = false;
 }
 
+/**
+ * Decode a base64-encoded string (from IPC) into a Uint8Array for blob upload.
+ */
+function base64ToBytes(b64) {
+  const binStr = atob(b64);
+  const bytes = new Uint8Array(binStr.length);
+  for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Handle a refreshed lex session so future calls within this flow pick up the
+ * rotated tokens. Persistence of the refreshed session is owned by the lex
+ * feature; we just update our in-memory copy and publish an event so other
+ * listeners (including lex's background) can refresh their own state.
+ */
+function onLexSessionRefreshed(updated) {
+  lexSession = updated;
+  try {
+    api.publish('lex:session-changed', { session: updated }, api.scopes?.GLOBAL);
+  } catch {}
+}
+
 async function doPublish() {
   if (isPublishing || !lexSession || !featureFiles) return;
   isPublishing = true;
@@ -376,7 +399,7 @@ async function doPublish() {
   const totalFiles = files.length;
 
   try {
-    // Step 1: Upload each file as a blob
+    // Step 1: Upload each file as a blob (renderer-side DPoP via lex's helpers)
     progressLabel.textContent = 'Uploading files...';
     const fileEntries = [];
 
@@ -385,23 +408,17 @@ async function doPublish() {
       progressDetail.textContent = `${file.relativePath} (${i + 1}/${totalFiles})`;
       progressBar.style.width = `${((i) / (totalFiles + 1)) * 100}%`;
 
-      const blobResult = await api.ipc.invoke('feature-publish:upload-blob', {
-        pdsUrl: lexSession.pdsUrl,
-        accessToken: lexSession.accessToken,
-        dpopKeyPairJwk: lexSession.dpopKeyPairJwk,
-        refreshToken: lexSession.refreshToken,
-        did: lexSession.did,
-        data: file.content,
-        mimeType: file.mimeType,
-      });
-
-      if (blobResult.error) {
-        throw new Error(`Failed to upload ${file.relativePath}: ${blobResult.error}`);
+      const bytes = base64ToBytes(file.content);
+      let blobResp;
+      try {
+        blobResp = await uploadBlob(lexSession, bytes, file.mimeType, onLexSessionRefreshed);
+      } catch (err) {
+        throw new Error(`Failed to upload ${file.relativePath}: ${err.message}`);
       }
 
       fileEntries.push({
         path: file.relativePath,
-        blob: blobResult.blob,
+        blob: blobResp.blob,
       });
     }
 
@@ -410,26 +427,22 @@ async function doPublish() {
     progressBar.style.width = `${(totalFiles / (totalFiles + 1)) * 100}%`;
 
     const manifestFile = files.find(f => f.relativePath === 'manifest.json');
-    let manifestBlob = null;
-
-    if (manifestFile) {
-      const manifestBlobResult = await api.ipc.invoke('feature-publish:upload-blob', {
-        pdsUrl: lexSession.pdsUrl,
-        accessToken: lexSession.accessToken,
-        dpopKeyPairJwk: lexSession.dpopKeyPairJwk,
-        refreshToken: lexSession.refreshToken,
-        did: lexSession.did,
-        data: manifestFile.content,
-        mimeType: 'application/json',
-      });
-
-      if (manifestBlobResult.error) {
-        throw new Error(`Failed to upload manifest: ${manifestBlobResult.error}`);
-      }
-
-      manifestBlob = manifestBlobResult.blob;
-    } else {
+    if (!manifestFile) {
       throw new Error('No manifest.json found in feature files');
+    }
+
+    let manifestBlob;
+    try {
+      const manifestBytes = base64ToBytes(manifestFile.content);
+      const manifestResp = await uploadBlob(
+        lexSession,
+        manifestBytes,
+        'application/json',
+        onLexSessionRefreshed
+      );
+      manifestBlob = manifestResp.blob;
+    } catch (err) {
+      throw new Error(`Failed to upload manifest: ${err.message}`);
     }
 
     // Step 3: Build capabilities list from manifest
@@ -478,22 +491,27 @@ async function doPublish() {
     const homepage = homepageInput.value.trim();
     if (homepage) record.homepage = homepage;
 
-    const createResult = await api.ipc.invoke('feature-publish:create-record', {
-      pdsUrl: lexSession.pdsUrl,
-      accessToken: lexSession.accessToken,
-      did: lexSession.did,
-      record,
-    });
-
-    if (createResult.error) {
-      throw new Error(createResult.error);
+    let createResp;
+    try {
+      createResp = await xrpcPost(
+        lexSession,
+        'com.atproto.repo.createRecord',
+        {
+          repo: lexSession.did,
+          collection: 'space.peek.feature.release',
+          record,
+        },
+        onLexSessionRefreshed
+      );
+    } catch (err) {
+      throw new Error(`Record creation failed: ${err.message}`);
     }
 
     // Success
     progressBar.style.width = '100%';
     publishProgress.style.display = 'none';
     publishSuccess.style.display = '';
-    successUri.value = createResult.uri;
+    successUri.value = createResp.uri;
 
   } catch (err) {
     console.error('[features-manager:publish] Publish error:', err);

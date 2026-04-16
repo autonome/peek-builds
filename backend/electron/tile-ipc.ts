@@ -1658,86 +1658,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('feature-publish:upload-blob', async (_event, args: {
-    token: string;
-    pdsUrl: string;
-    accessToken: string;
-    dpopKeyPairJwk: { publicKey: object; privateKey: object };
-    refreshToken: string;
-    did: string;
-    data: string; // base64 encoded
-    mimeType: string;
-  }) => {
-    const grant = getGrantForToken(args.token);
-    if (!grant) return { error: 'Invalid token' };
-
-    try {
-      const binaryData = Buffer.from(args.data, 'base64');
-      const url = `${args.pdsUrl}/xrpc/com.atproto.repo.uploadBlob`;
-
-      // Use net.fetch for blob upload from main process
-      let res = await net.fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${args.accessToken}`,
-          'Content-Type': args.mimeType,
-        },
-        body: binaryData,
-      });
-
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => '');
-        return { error: `Blob upload failed (${res.status}): ${errBody}` };
-      }
-
-      const result = await res.json();
-      return { blob: result.blob };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { error: `Blob upload failed: ${message}` };
-    }
-  });
-
-  ipcMain.handle('feature-publish:create-record', async (_event, args: {
-    token: string;
-    pdsUrl: string;
-    accessToken: string;
-    did: string;
-    record: Record<string, unknown>;
-  }) => {
-    const grant = getGrantForToken(args.token);
-    if (!grant) return { error: 'Invalid token' };
-
-    try {
-      const url = `${args.pdsUrl}/xrpc/com.atproto.repo.createRecord`;
-
-      const body = {
-        repo: args.did,
-        collection: 'space.peek.feature.release',
-        record: args.record,
-      };
-
-      const res = await net.fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${args.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => '');
-        return { error: `Record creation failed (${res.status}): ${errBody}` };
-      }
-
-      const result = await res.json() as { uri: string; cid: string };
-      return { uri: result.uri, cid: result.cid };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { error: `Record creation failed: ${message}` };
-    }
-  });
+  // NOTE: `feature-publish:upload-blob` and `feature-publish:create-record` IPC
+  // handlers have been removed. The publish flow now calls lex's renderer-side
+  // atproto helpers (uploadBlob / xrpcPost from peek://ext/lex/atproto.js)
+  // directly so that DPoP signing happens in the renderer via Web Crypto —
+  // no backend DPoP implementation is needed.
 
   // ── Feature Update ──
 

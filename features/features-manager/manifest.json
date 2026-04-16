@@ -64,7 +64,14 @@
       "tables": ["features_history"]
     },
     "network": {
-      "domains": ["*.bsky.network", "*.bsky.social", "public.api.bsky.app", "plc.directory", "*.host.bsky.network"]
+      "domains": [
+        "*.bsky.network",
+        "*.bsky.social",
+        "bsky.social",
+        "public.api.bsky.app",
+        "plc.directory",
+        "*.host.bsky.network"
+      ]
     },
     "window": {
       "create": true,
