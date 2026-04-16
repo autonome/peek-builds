@@ -24,7 +24,7 @@
   ],
   "capabilities": {
     "pubsub": {
-      "scopes": ["global", "system"],
+      "scopes": ["system"],
       "topics": [
         "ext:ready",
         "ext:sheets:shutdown",
