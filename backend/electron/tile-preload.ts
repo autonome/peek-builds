@@ -907,7 +907,29 @@ function buildAPI(): Record<string, unknown> {
   };
   api.modes = wrapCompatObject('modes', modesCompat as unknown as Record<string, unknown>);
 
-  // ── Context (v1-compat) ───────────────────────────────────────────
+  // ── Context ───────────────────────────────────────────────────────
+  //
+  // Dual-path implementation mirroring api.shortcuts:
+  //
+  //   - STRICT: when the tile's manifest declared a `context` capability
+  //     (`true` or `{ read?, write?, modes?, queryWindows? }`), route
+  //     through `tile:context:*`. Main-process handlers validate the
+  //     token + capability shape + per-op gates.
+  //
+  //   - V1-COMPAT: when no context capability was declared, fall back
+  //     to the legacy `context-*` IPC channels. Those remain available
+  //     through the Phase 3/4 migration window.
+  //
+  // The decision is made per-call because `grantedCapabilities` is
+  // populated asynchronously by `initialize()`.
+
+  function hasContextCapability(): boolean {
+    const cc = grantedCapabilities?.context;
+    if (cc === true) return true;
+    if (cc && typeof cc === 'object') return true;
+    return false;
+  }
+
   const contextCompat = {
     get: (key: string, windowId: number | null = null) =>
       ipcRenderer.invoke('context-get', { key, windowId }),
@@ -922,7 +944,79 @@ function buildAPI(): Record<string, unknown> {
     windowsInSpace: (spaceId: string) =>
       ipcRenderer.invoke('context-windows-in-space', { spaceId }),
   };
-  api.context = wrapCompatObject('context', contextCompat as unknown as Record<string, unknown>);
+
+  const contextStrict = {
+    get: (key: string, windowId: number | null = null) =>
+      ipcRenderer.invoke('tile:context:get', { token: tileToken, key, windowId }),
+    set: (key: string, value: unknown, metadata?: Record<string, unknown>, windowId?: number | null) =>
+      ipcRenderer.invoke('tile:context:set', { token: tileToken, key, value, metadata, windowId }),
+    history: (key: string, limit?: number) =>
+      ipcRenderer.invoke('tile:context:history', { token: tileToken, key, limit }),
+    snapshot: (windowId?: number | null) =>
+      ipcRenderer.invoke('tile:context:snapshot', { token: tileToken, windowId }),
+    windowsWithValue: (key: string, value: unknown) =>
+      ipcRenderer.invoke('tile:context:windows-with-value', { token: tileToken, key, value }),
+    windowsInSpace: (spaceId: string) =>
+      ipcRenderer.invoke('tile:context:windows-in-space', { token: tileToken, spaceId }),
+  };
+
+  api.context = {
+    get: wrapCompat('context', 'get', (key: unknown, windowId: unknown) => {
+      return hasContextCapability()
+        ? contextStrict.get(key as string, (windowId ?? null) as number | null)
+        : contextCompat.get(key as string, (windowId ?? null) as number | null);
+    }),
+    set: wrapCompat('context', 'set', (key: unknown, value: unknown, metadata: unknown, windowId: unknown) => {
+      return hasContextCapability()
+        ? contextStrict.set(key as string, value, metadata as Record<string, unknown> | undefined, (windowId ?? null) as number | null)
+        : contextCompat.set(key as string, value, metadata, (windowId ?? null) as number | null);
+    }),
+    history: wrapCompat('context', 'history', (key: unknown, limit: unknown) => {
+      return hasContextCapability()
+        ? contextStrict.history(key as string, limit as number | undefined)
+        : contextCompat.history(key as string, limit as number | undefined);
+    }),
+    snapshot: wrapCompat('context', 'snapshot', (windowId: unknown) => {
+      return hasContextCapability()
+        ? contextStrict.snapshot((windowId ?? null) as number | null)
+        : contextCompat.snapshot((windowId ?? null) as number | null);
+    }),
+    windowsWithValue: wrapCompat('context', 'windowsWithValue', (key: unknown, value: unknown) => {
+      return hasContextCapability()
+        ? contextStrict.windowsWithValue(key as string, value)
+        : contextCompat.windowsWithValue(key as string, value);
+    }),
+    windowsInSpace: wrapCompat('context', 'windowsInSpace', (spaceId: unknown) => {
+      return hasContextCapability()
+        ? contextStrict.windowsInSpace(spaceId as string)
+        : contextCompat.windowsInSpace(spaceId as string);
+    }),
+  };
+
+  // ── Dialogs ───────────────────────────────────────────────────────
+  //
+  // Strict-only API: `api.dialogs.save` / `api.dialogs.open` route
+  // through `tile:dialogs:*` when the tile declared a `dialogs`
+  // capability (`true` or `{ types: [...] }`). When the capability is
+  // not declared the strict handler rejects with `dialogs capability
+  // not granted`.
+  //
+  // v1-compat continues through `api.files.save` / `api.files.open`,
+  // which directly hit the un-gated `file-save-dialog` / `file-open-
+  // dialog` channels. The two surfaces coexist until Phase 4 removal.
+
+  api.dialogs = {
+    save: (content: unknown, options: unknown = {}) => {
+      const opts = (options || {}) as { filename?: string; mimeType?: string };
+      return ipcRenderer.invoke('tile:dialogs:save', {
+        token: tileToken,
+        content: content as string,
+        filename: opts.filename,
+        mimeType: opts.mimeType,
+      });
+    },
+    open: () => ipcRenderer.invoke('tile:dialogs:open', { token: tileToken }),
+  };
 
   // ── closeWindow (v1-compat) ───────────────────────────────────────
   api.closeWindow = wrapCompat('closeWindow', '(call)', (id?: unknown) => {
