@@ -149,6 +149,53 @@ export interface DialogsCapability {
 }
 
 /**
+ * Feature source types — see `FeatureSource['type']` in feature-registry.ts.
+ * Exposed here so `FeaturesCapability` can declare a source allowlist
+ * without pulling tile-manifest into a dependency on feature-registry.
+ */
+export type FeatureSourceType = 'builtin' | 'local' | 'atproto' | 'url' | 'dev';
+
+/**
+ * Features capability: access to the feature registry — listing
+ * installed features, reading metadata/history, and (for privileged
+ * manager tiles) installing/enabling/disabling/removing features.
+ *
+ * Strict `tile:features:*` handlers gate each operation on the shape
+ * of this grant:
+ *   - `read` — allows list/get/history queries. Default `true` when
+ *     the capability is declared without an explicit value.
+ *   - `install` — allows installing new features from atproto/url
+ *     sources. Gates `tile:features:install` and the resolve/preview
+ *     helpers. Requires user approval at install time regardless.
+ *   - `manage` — allows enabling, disabling, and removing features
+ *     already in the registry.
+ *   - `sources` — optional allowlist restricting which source types
+ *     the tile can see/manage. When present, list results are filtered
+ *     and get/enable/disable/remove are rejected for entries whose
+ *     source type is not in the list. Omitted = all sources (except
+ *     the main app's behaviour of hiding builtins from list, which
+ *     continues to apply).
+ *
+ * Like ShortcutsCapability/ContextCapability/DialogsCapability, the
+ * capability may also be declared as `true` in a manifest — treated as
+ * an object with `read: true` only (no install/manage privileges).
+ */
+export interface FeaturesCapability {
+  /** Allow listing features + reading metadata / history. Default `true`. */
+  read?: boolean;
+  /** Allow installing new features from registered sources. */
+  install?: boolean;
+  /** Allow enable / disable / remove of existing features. */
+  manage?: boolean;
+  /**
+   * Optional allowlist of feature sources this tile may see or manage.
+   * If omitted, all source types are permitted (subject to per-op
+   * checks — e.g. builtin features cannot be removed).
+   */
+  sources?: FeatureSourceType[];
+}
+
+/**
  * All capabilities a tile can request
  */
 export interface TileCapabilities {
@@ -171,6 +218,8 @@ export interface TileCapabilities {
   context?: boolean | ContextCapability;
   /** Can invoke native file dialogs (save/open) */
   dialogs?: boolean | DialogsCapability;
+  /** Can query / install / manage installed features */
+  features?: boolean | FeaturesCapability;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────
@@ -557,6 +606,39 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
       }
     }
 
+    // Validate features capability shape — must be boolean or
+    // { read?: boolean; install?: boolean; manage?: boolean;
+    //   sources?: FeatureSourceType[] }
+    if (caps.features !== undefined) {
+      const fc = caps.features;
+      if (typeof fc === 'boolean') {
+        // valid
+      } else if (fc && typeof fc === 'object') {
+        const fcObj = fc as Record<string, unknown>;
+        for (const flagKey of ['read', 'install', 'manage'] as const) {
+          if (fcObj[flagKey] !== undefined && typeof fcObj[flagKey] !== 'boolean') {
+            errors.push({ path: `capabilities.features.${flagKey}`, message: `${flagKey} must be a boolean` });
+          }
+        }
+        if (fcObj.sources !== undefined) {
+          if (!Array.isArray(fcObj.sources)) {
+            errors.push({ path: 'capabilities.features.sources', message: 'sources must be an array of source type strings' });
+          } else {
+            const valid = new Set(['builtin', 'local', 'atproto', 'url', 'dev']);
+            for (let i = 0; i < fcObj.sources.length; i++) {
+              const s = fcObj.sources[i];
+              if (typeof s !== 'string' || !valid.has(s)) {
+                errors.push({ path: `capabilities.features.sources[${i}]`, message: 'sources entries must be one of: builtin, local, atproto, url, dev' });
+              }
+            }
+          }
+        }
+      } else {
+        errors.push({ path: 'capabilities.features', message: 'features must be boolean or { read?, install?, manage?, sources? }' });
+      }
+    }
+
+
     // Validate dialogs capability shape — must be boolean or { types?: ('save'|'open')[] }
     if (caps.dialogs !== undefined) {
       const dc = caps.dialogs;
@@ -780,6 +862,16 @@ export function resolveCapabilities(
       granted.dialogs = true;
     } else if (typeof requested.dialogs === 'object') {
       granted.dialogs = { ...requested.dialogs };
+    }
+  }
+
+  // Features: preserve object shape (actions + sources allowlist).
+  // Manifests may declare `features: true` OR an object form.
+  if (requested.features) {
+    if (requested.features === true) {
+      granted.features = true;
+    } else if (typeof requested.features === 'object') {
+      granted.features = { ...requested.features };
     }
   }
 
