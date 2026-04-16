@@ -56,6 +56,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [x] Phase 2 — strict window IPC + create/query/manage/urls allowlist
   - [x] Phase 2 — strict features IPC + read/install/manage/sources allowlist
   - **Phase 2 complete** — all strict IPC surfaces landed; next is Phase 3 per-feature migration
+  - [ ] Missing `api.sync.*` surface (discovered during sync migration; feature declares `sync: true` cap but tile-preload has no strict routing for it; `background.js` guards the call)
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
 - [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
