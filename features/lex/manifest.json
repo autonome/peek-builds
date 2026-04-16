@@ -41,31 +41,23 @@
     "pubsub": {
       "scopes": ["global", "system"],
       "topics": [
-        "lex:*",
-        "chain-popup:*",
-        "cmd:*",
         "ext:ready",
         "ext:lex:shutdown",
-        "app:shutdown"
+        "app:shutdown",
+        "lex:session-changed",
+        "lex:recent-lexicons-changed",
+        "lex:open-create",
+        "chain-popup:content",
+        "chain-popup:result"
       ]
     },
     "network": {
-      "domains": [
-        "*.bsky.network",
-        "*.bsky.social",
-        "bsky.social",
-        "public.api.bsky.app",
-        "plc.directory",
-        "*.host.bsky.network",
-        "lexidex.bsky.dev",
-        "api.lexicon.store",
-        "raw.githubusercontent.com",
-        "github.com"
-      ]
+      "domains": ["*"]
     },
     "window": {
       "create": true,
-      "query": true
+      "query": true,
+      "close": true
     },
     "commands": true,
     "settings": true
