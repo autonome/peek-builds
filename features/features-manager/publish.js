@@ -19,6 +19,13 @@ const CATEGORIES = [
   'search', 'privacy', 'theme', 'utility', 'fun',
 ];
 
+// Media limits (must match space.peek.feature.release lexicon)
+const ICON_MAX_BYTES = 262144;              // 256 KB
+const ICON_ACCEPT = ['image/png', 'image/svg+xml'];
+const SCREENSHOT_MAX_BYTES = 2097152;        // 2 MB
+const SCREENSHOT_ACCEPT = ['image/png', 'image/jpeg'];
+const SCREENSHOTS_MAX_COUNT = 5;
+
 // ─── DOM refs ──────────────────────────────────────────────────────
 
 const stepIndicator = document.getElementById('step-indicator');
@@ -40,6 +47,14 @@ const categoryGrid = document.getElementById('category-grid');
 const readmeInput = document.getElementById('pub-readme');
 const licenseInput = document.getElementById('pub-license');
 const homepageInput = document.getElementById('pub-homepage');
+const iconInput = document.getElementById('pub-icon-input');
+const iconPickBtn = document.getElementById('pub-icon-pick-btn');
+const iconPreview = document.getElementById('pub-icon-preview');
+const iconError = document.getElementById('pub-icon-error');
+const screenshotsInput = document.getElementById('pub-screenshots-input');
+const screenshotsPickBtn = document.getElementById('pub-screenshots-pick-btn');
+const screenshotsPreview = document.getElementById('pub-screenshots-preview');
+const screenshotsError = document.getElementById('pub-screenshots-error');
 const backToStep1 = document.getElementById('back-to-step-1');
 const nextToStep3 = document.getElementById('next-to-step-3');
 
@@ -72,6 +87,10 @@ let featureFiles = null;          // result from read-feature-files IPC
 let selectedCategories = new Set();
 let lexSession = null;            // AT Protocol session from lex feature
 let isPublishing = false;
+
+// Media selections. Each entry: { file: File, mimeType: string, size: number, previewUrl: string }
+let iconSelection = null;
+let screenshotSelections = [];
 
 // ─── Status helpers ────────────────────────────────────────────────
 
@@ -333,6 +352,15 @@ function renderStep3() {
     summaryRows.push(['Description', descriptionInput.value.trim().slice(0, 100) + (descriptionInput.value.trim().length > 100 ? '...' : '')]);
   }
 
+  if (iconSelection) {
+    summaryRows.push(['Icon', `${iconSelection.name} (${formatSize(iconSelection.size)})`]);
+  }
+
+  if (screenshotSelections.length > 0) {
+    const totalSize = screenshotSelections.reduce((n, s) => n + s.size, 0);
+    summaryRows.push(['Screenshots', `${screenshotSelections.length} (${formatSize(totalSize)})`]);
+  }
+
   for (const [label, value] of summaryRows) {
     const row = document.createElement('div');
     row.className = 'summary-row';
@@ -540,6 +568,175 @@ async function loadLexSession() {
   }
 }
 
+// ─── Media picker (icon + screenshots) ────────────────────────────
+
+function createSelection(file) {
+  return {
+    file,
+    mimeType: file.type,
+    size: file.size,
+    name: file.name,
+    previewUrl: URL.createObjectURL(file),
+  };
+}
+
+function revokeSelection(sel) {
+  if (sel && sel.previewUrl) {
+    try { URL.revokeObjectURL(sel.previewUrl); } catch {}
+  }
+}
+
+function showMediaError(el, message) {
+  el.textContent = message || '';
+}
+
+function validateMediaFile(file, { accept, maxBytes, kind }) {
+  if (!accept.includes(file.type)) {
+    return `${kind} "${file.name}": unsupported type (${file.type || 'unknown'}). Allowed: ${accept.join(', ')}.`;
+  }
+  if (file.size > maxBytes) {
+    return `${kind} "${file.name}": ${formatSize(file.size)} exceeds max ${formatSize(maxBytes)}.`;
+  }
+  return null;
+}
+
+function renderIconPreview() {
+  iconPreview.innerHTML = '';
+  if (!iconSelection) {
+    iconPickBtn.textContent = 'Choose icon\u2026';
+    return;
+  }
+
+  iconPickBtn.textContent = 'Replace icon\u2026';
+
+  const item = document.createElement('div');
+  item.className = 'media-preview-item';
+
+  const img = document.createElement('img');
+  img.className = 'media-preview-thumb';
+  img.alt = iconSelection.name;
+  img.src = iconSelection.previewUrl;
+  item.appendChild(img);
+
+  const meta = document.createElement('div');
+  meta.className = 'media-preview-meta';
+  meta.textContent = formatSize(iconSelection.size);
+  meta.title = `${iconSelection.name} (${iconSelection.mimeType})`;
+  item.appendChild(meta);
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'media-preview-remove';
+  removeBtn.setAttribute('aria-label', 'Remove icon');
+  removeBtn.textContent = '\u00d7';
+  removeBtn.addEventListener('click', () => {
+    revokeSelection(iconSelection);
+    iconSelection = null;
+    showMediaError(iconError, '');
+    renderIconPreview();
+  });
+  item.appendChild(removeBtn);
+
+  iconPreview.appendChild(item);
+}
+
+function renderScreenshotsPreview() {
+  screenshotsPreview.innerHTML = '';
+
+  const atLimit = screenshotSelections.length >= SCREENSHOTS_MAX_COUNT;
+  screenshotsPickBtn.disabled = atLimit;
+  screenshotsPickBtn.textContent = atLimit
+    ? `Screenshots (${screenshotSelections.length}/${SCREENSHOTS_MAX_COUNT})`
+    : `Add screenshots\u2026 (${screenshotSelections.length}/${SCREENSHOTS_MAX_COUNT})`;
+
+  screenshotSelections.forEach((sel, idx) => {
+    const item = document.createElement('div');
+    item.className = 'media-preview-item';
+
+    const img = document.createElement('img');
+    img.className = 'media-preview-thumb';
+    img.alt = sel.name;
+    img.src = sel.previewUrl;
+    item.appendChild(img);
+
+    const meta = document.createElement('div');
+    meta.className = 'media-preview-meta';
+    meta.textContent = formatSize(sel.size);
+    meta.title = `${sel.name} (${sel.mimeType})`;
+    item.appendChild(meta);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'media-preview-remove';
+    removeBtn.setAttribute('aria-label', `Remove screenshot ${idx + 1}`);
+    removeBtn.textContent = '\u00d7';
+    removeBtn.addEventListener('click', () => {
+      const [removed] = screenshotSelections.splice(idx, 1);
+      revokeSelection(removed);
+      showMediaError(screenshotsError, '');
+      renderScreenshotsPreview();
+    });
+    item.appendChild(removeBtn);
+
+    screenshotsPreview.appendChild(item);
+  });
+}
+
+function handleIconFileChange(e) {
+  showMediaError(iconError, '');
+  const file = e.target.files && e.target.files[0];
+  // Reset the input so selecting the same file again still fires change
+  e.target.value = '';
+  if (!file) return;
+
+  const err = validateMediaFile(file, {
+    accept: ICON_ACCEPT,
+    maxBytes: ICON_MAX_BYTES,
+    kind: 'Icon',
+  });
+  if (err) {
+    showMediaError(iconError, err);
+    return;
+  }
+
+  if (iconSelection) revokeSelection(iconSelection);
+  iconSelection = createSelection(file);
+  renderIconPreview();
+}
+
+function handleScreenshotsFileChange(e) {
+  showMediaError(screenshotsError, '');
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (files.length === 0) return;
+
+  const remainingSlots = SCREENSHOTS_MAX_COUNT - screenshotSelections.length;
+  const errors = [];
+
+  if (files.length > remainingSlots) {
+    errors.push(`Only ${remainingSlots} more screenshot(s) allowed (max ${SCREENSHOTS_MAX_COUNT}).`);
+  }
+
+  const toAdd = files.slice(0, remainingSlots);
+  for (const file of toAdd) {
+    const err = validateMediaFile(file, {
+      accept: SCREENSHOT_ACCEPT,
+      maxBytes: SCREENSHOT_MAX_BYTES,
+      kind: 'Screenshot',
+    });
+    if (err) {
+      errors.push(err);
+      continue;
+    }
+    screenshotSelections.push(createSelection(file));
+  }
+
+  if (errors.length > 0) {
+    showMediaError(screenshotsError, errors.join(' '));
+  }
+  renderScreenshotsPreview();
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 function formatSize(bytes) {
@@ -559,6 +756,12 @@ function escapeHtml(str) {
 backToStep1.addEventListener('click', () => goToStep(1));
 nextToStep3.addEventListener('click', () => goToStep(3));
 backToStep2.addEventListener('click', () => goToStep(2));
+
+iconPickBtn.addEventListener('click', () => iconInput.click());
+iconInput.addEventListener('change', handleIconFileChange);
+
+screenshotsPickBtn.addEventListener('click', () => screenshotsInput.click());
+screenshotsInput.addEventListener('change', handleScreenshotsFileChange);
 
 publishBtn.addEventListener('click', doPublish);
 

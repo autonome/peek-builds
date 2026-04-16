@@ -74,6 +74,24 @@
               <input class="form-input" id="pub-homepage" type="url" placeholder="https://...">
             </div>
           </div>
+          <div class="form-group">
+            <label class="form-label">Icon (optional, PNG or SVG, max 256&nbsp;KB)</label>
+            <div class="media-picker">
+              <input type="file" id="pub-icon-input" accept="image/png,image/svg+xml" hidden>
+              <button type="button" class="btn" id="pub-icon-pick-btn">Choose icon&hellip;</button>
+              <div class="media-preview-list" id="pub-icon-preview"></div>
+              <div class="media-error" id="pub-icon-error"></div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Screenshots (optional, up to 5, PNG or JPEG, max 2&nbsp;MB each)</label>
+            <div class="media-picker">
+              <input type="file" id="pub-screenshots-input" accept="image/png,image/jpeg" multiple hidden>
+              <button type="button" class="btn" id="pub-screenshots-pick-btn">Add screenshots&hellip;</button>
+              <div class="media-preview-list media-preview-grid" id="pub-screenshots-preview"></div>
+              <div class="media-error" id="pub-screenshots-error"></div>
+            </div>
+          </div>
         </div>
       </div>
 
