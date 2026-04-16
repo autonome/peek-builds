@@ -79,6 +79,7 @@ import {
 import { checkShortcutAllowed } from './tile-shortcuts-enforcement.js';
 import { checkContextAllowed } from './tile-context-enforcement.js';
 import { checkDialogAllowed } from './tile-dialogs-enforcement.js';
+import { checkWindowAllowed } from './tile-window-enforcement.js';
 import { getActiveThemeId } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
@@ -91,6 +92,7 @@ export { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 export { checkShortcutAllowed, type ShortcutCheckResult } from './tile-shortcuts-enforcement.js';
 export { checkContextAllowed, type ContextCheckResult, type ContextOp } from './tile-context-enforcement.js';
 export { checkDialogAllowed, type DialogsCheckResult } from './tile-dialogs-enforcement.js';
+export { checkWindowAllowed, type WindowCheckResult, type WindowOp } from './tile-window-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -893,7 +895,23 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  // ── Window Management ──
+  // ── Window Management (strict) ────────────────────────────────────
+  //
+  // Strict tile:window:* handlers that enforce the `window` capability.
+  // The legacy `window-open` / `window-close` / `window-list` channels
+  // in ipc.ts remain the v1-compat surface and are NOT token-gated —
+  // tile-preload routes through these strict handlers when the tile's
+  // manifest declares the `window` capability.
+  //
+  // Validation order for each op (via checkWindowAllowed pure module):
+  //   1. Token must resolve to a valid grant.
+  //   2. Grant must include the `window` capability (boolean or object).
+  //   3. Per-op gates:
+  //      - open: requires `create: true`; URL must be peek:// and, if
+  //        `urls` prefix allowlist is set, must match a prefix.
+  //      - close: closing the sender's own window always OK; closing
+  //        another window requires `manage: true`.
+  //      - list / info: require `query: true`.
 
   ipcMain.handle('tile:window:open', async (event, args: {
     token: string;
@@ -901,15 +919,16 @@ export function registerTileIpcHandlers(): void {
     options?: Record<string, unknown>;
   }) => {
     const grant = getGrantForToken(args.token);
-    if (!grant || !hasCapability(grant, 'window')) {
-      return { error: 'Window capability not granted' };
+    const check = checkWindowAllowed(grant, 'open', { url: args.url });
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:open rejected: ${check.error}`);
+      return { error: check.error };
     }
+    const activeGrant = grant as CapabilityGrant;
 
-    if (!grant.capabilities.window?.create) {
-      return { error: 'Window create capability not granted' };
-    }
-
-    // Validate URL: must be peek:// or tile's own origin
+    // Validate URL: must be peek:// or tile's own origin. Mirror the
+    // previous guard — the strict `urls` allowlist is an additional
+    // filter on top of this baseline.
     if (!args.url.startsWith('peek://')) {
       return { error: 'Only peek:// URLs can be opened' };
     }
@@ -922,8 +941,8 @@ export function registerTileIpcHandlers(): void {
       return { error: 'Window handler not initialized' };
     }
 
-    const source = `peek://${grant.tileId}/background`;
-    DEBUG && console.log(`[tile:window:open] ${grant.tileId} opening ${args.url}`);
+    const source = `peek://${activeGrant.tileId}/background`;
+    DEBUG && console.log(`[tile:window:open] ${activeGrant.tileId} opening ${args.url}`);
     try {
       return await invokeWindowOpen(event, {
         source,
@@ -932,31 +951,48 @@ export function registerTileIpcHandlers(): void {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[tile:window:open] failed for ${grant.tileId}:`, message);
+      console.error(`[tile:window:open] failed for ${activeGrant.tileId}:`, message);
       return { success: false, error: message };
     }
   });
 
-  ipcMain.on('tile:window:close', (_event, args: {
+  ipcMain.on('tile:window:close', (event, args: {
     token: string;
+    id?: number;
   }) => {
     const grant = getGrantForToken(args.token);
-    if (!grant) return;
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    // ownWindow: closing with no id OR id matching the sender's window
+    // is treated as the tile closing its own context.
+    const ownWindow = args.id == null || (senderWin != null && args.id === senderWin.id);
+    const check = checkWindowAllowed(grant, 'close', { ownWindow });
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:close rejected: ${check.error}`);
+      return;
+    }
 
-    // Find the sender window and close it
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (win && !win.isDestroyed()) {
-      win.close();
+    let target: BrowserWindow | null = null;
+    if (args.id != null) {
+      target = BrowserWindow.fromId(args.id);
+    } else if (senderWin && !senderWin.isDestroyed()) {
+      target = senderWin;
+    }
+    if (target && !target.isDestroyed()) {
+      target.close();
     }
   });
 
-  ipcMain.handle('tile:window:info', async (_event, args: {
+  ipcMain.handle('tile:window:info', async (event, args: {
     token: string;
   }) => {
     const grant = getGrantForToken(args.token);
-    if (!grant) return { error: 'Invalid token' };
+    const check = checkWindowAllowed(grant, 'info');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:info rejected: ${check.error}`);
+      return { error: check.error };
+    }
 
-    const win = BrowserWindow.fromWebContents(_event.sender);
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) {
       return { error: 'Window not found' };
     }
@@ -968,6 +1004,41 @@ export function registerTileIpcHandlers(): void {
       focused: win.isFocused(),
       visible: win.isVisible(),
     };
+  });
+
+  ipcMain.handle('tile:window:list', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkWindowAllowed(grant, 'list');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] window:list rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const windows: Array<{
+        id: number;
+        url: string;
+        title: string;
+        focused: boolean;
+        visible: boolean;
+      }> = [];
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed()) continue;
+        windows.push({
+          id: win.id,
+          url: win.webContents.getURL(),
+          title: win.getTitle(),
+          focused: win.isFocused(),
+          visible: win.isVisible(),
+        });
+      }
+      return { success: true, windows };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
   });
 
   // ── Network Fetch ──
