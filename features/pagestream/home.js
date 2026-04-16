@@ -416,7 +416,7 @@ const moveSelection = (action) => {
     const entry = filtered[state.selectedIndex];
     if (entry) {
       state.openCardIndex = state.selectedIndex;
-      api.publish('page:navigate', {
+      api.pubsub.publish('page:navigate', {
         windowId: state.openWindowId,
         url: entry.item.content
       }, api.scopes.GLOBAL);
@@ -427,7 +427,7 @@ const moveSelection = (action) => {
 // Listen for navigation keys forwarded from page host via pubsub
 // (subscription lives for the lifetime of pagestream — moveSelection
 // is safe to call any time, it just no-ops if nothing is open)
-api.subscribe('pagestream:nav', (msg) => {
+api.pubsub.subscribe('pagestream:nav', (msg) => {
   if (msg.action) moveSelection(msg.action);
 }, api.scopes.GLOBAL);
 
@@ -477,7 +477,7 @@ const createVisitCard = (visit, item, index) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       try {
         await api.datastore.deleteItem(item.id);
-        api.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
       } catch (err) {
         console.error('[pagestream] Failed to delete item:', err);
       }
@@ -485,7 +485,7 @@ const createVisitCard = (visit, item, index) => {
     onTagRemove: async (item, tag) => {
       try {
         await api.datastore.untagItem(item.id, tag.id);
-        api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
       } catch (err) {
         console.error('[pagestream] Failed to remove tag:', err);
       }
@@ -573,7 +573,7 @@ const createVisitCard = (visit, item, index) => {
           chip.remove();
           try {
             await api.datastore.untagItem(item.id, tag.id);
-            api.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+            api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
           } catch (err) {
             console.error('[pagestream] Failed to remove tag:', err);
           }
@@ -703,16 +703,16 @@ const init = async () => {
   }, 150);
 
   // Listen for page host window closing — trigger collapse animation
-  api.subscribe('window:closed', (msg) => {
+  api.pubsub.subscribe('window:closed', (msg) => {
     const closedId = msg?.id;
     if (closedId) onPageHostClosed(closedId);
   }, api.scopes.GLOBAL);
 
-  api.subscribe('item:created', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.subscribe('item:deleted', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.subscribe('tag:item-added', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.subscribe('tag:item-removed', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.subscribe('sync:pull-completed', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('item:created', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('item:deleted', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('tag:item-added', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('tag:item-removed', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('sync:pull-completed', () => debouncedRefresh(), api.scopes.GLOBAL);
 
   setInterval(() => {
     const timeElements = document.querySelectorAll('.card-time');

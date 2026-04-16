@@ -29,11 +29,9 @@ let pagestreamWindowId = null;
  * @returns {Promise<{prefs: object}>}
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
-  if (result.success && result.data) {
-    return {
-      prefs: result.data.prefs || defaults.prefs
-    };
+  const result = await api.settings.get('prefs');
+  if (result && !result.error && result.value) {
+    return { prefs: result.value };
   }
   return { prefs: defaults.prefs };
 };
@@ -43,8 +41,8 @@ const loadSettings = async () => {
  * @param {object} settings - Settings object with prefs
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set(settings);
-  if (!result.success) {
+  const result = await api.settings.set('prefs', settings.prefs);
+  if (result && result.error) {
     console.error('[ext:pagestream] Failed to save settings:', result.error);
   }
 };
@@ -138,7 +136,7 @@ const init = async () => {
   initCommands();
 
   // Listen for window close events
-  api.subscribe('window:closed', async (msg) => {
+  api.pubsub.subscribe('window:closed', async (msg) => {
     const closedWindowId = msg?.id;
     if (closedWindowId === pagestreamWindowId) {
       debug && console.log('[ext:pagestream] Pagestream window closed');
@@ -147,7 +145,7 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Listen for settings changes to hot-reload
-  api.subscribe('pagestream:settings-changed', async () => {
+  api.pubsub.subscribe('pagestream:settings-changed', async () => {
     debug && console.log('[ext:pagestream] settings changed, reinitializing');
     uninit();
     currentSettings = await loadSettings();
@@ -156,7 +154,7 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Listen for settings updates from Settings UI
-  api.subscribe('pagestream:settings-update', async (msg) => {
+  api.pubsub.subscribe('pagestream:settings-update', async (msg) => {
     debug && console.log('[ext:pagestream] settings-update received');
 
     try {
@@ -177,7 +175,7 @@ const init = async () => {
       initShortcut(currentSettings.prefs.shortcutKey);
       initCommands();
 
-      api.publish('pagestream:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('pagestream:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
       console.error('[ext:pagestream] settings-update error:', err);
     }
