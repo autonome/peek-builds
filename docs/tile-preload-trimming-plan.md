@@ -165,12 +165,35 @@ Order: biggest surface first.
 - Grep for remaining shim references
 - Capability-violation log zero entries
 
-### Phase 4 — Remove shims (1-2 days after Phase 3)
+### Phase 4 — Remove shims ✓ COMPLETE (Apr 2026)
 
 Gate: 48-hour zero-violation burn-in.
-1. Delete shim blocks from tile-preload.ts
-2. Add hard-fail runtime assertions for removed names
-3. Update docs
+1. ✓ Delete shim blocks from tile-preload.ts
+2. ✓ Add hard-fail runtime assertions for removed names
+3. ✓ Remove v1-compat violation logger (wrapCompat/wrapCompatObject/compatSeen)
+4. ✓ Remove v1 legacy fallback branches from all feature background.html files (22 files)
+5. ✓ Update docs
+
+**Shims removed:**
+- `api.publish` / `api.subscribe` top-level aliases → hard-fail (use `api.pubsub.*`)
+- `api.datastore.*` v1-compat helpers (30+ methods) → hard-fail stubs (strict `get/set/query/extractPageContent` remain)
+- `api.shortcuts` v1-compat fallback → strict-only, throws if no capability declared
+- `api.files.*` → hard-fail (use `api.dialogs.*` and `api.filesystem.*`)
+- `api.modes.*` → hard-fail (was zero-usage)
+- `api.closeWindow` top-level → hard-fail (use `api.window.close()`)
+- `api.settings.getKey/setKey` → hard-fail (use `api.settings.get/set`)
+- `api.settings.getExtKey` v1-compat fallback → strict-only, throws if no `settings.readForeign` declared
+
+**Feature HTMLs cleaned (22 files):**
+editor, entities, example, features-manager, files, groups, helpdocs, lex,
+mcp-server, pagestream, pagewidgets-sample, peeks, scripts, search, sheets,
+slides, tag-actions, tags, timers, websearch, widget-demo, windows, wonderwall
+
+**Remaining call sites found in non-scope code:**
+- `pagewidgets-sample/background.js`: still uses `api.publish/subscribe` directly (not in task scope — HTML cleaned)
+- `files/background.js`: uses `api.files.open/save` (migrated to throw; feature JS needs update separately)
+- `groups/background.js`: uses `api.settings.getExtKey` (has `settings.readForeign` declared → strict path works)
+- `tags/home.js`, `features-manager/publish.js`: use `api.settings.getExtKey` (need capability check)
 
 ### Phase 5 — Lock down (ongoing)
 
