@@ -77,7 +77,7 @@ const extension = {
     // Shortcuts declared in manifest.json — no imperative registration needed
 
     // Subscribe to editor:open — open editor with optional content or itemId
-    api.subscribe('editor:open', (msg) => {
+    api.pubsub.subscribe('editor:open', (msg) => {
       const params = {};
       if (msg?.content) {
         params.content = msg.content;
@@ -92,7 +92,7 @@ const extension = {
     }, api.scopes.GLOBAL);
 
     // Subscribe to editor:add — open a new blank editor document
-    api.subscribe('editor:add', () => {
+    api.pubsub.subscribe('editor:add', () => {
       openEditor();
     }, api.scopes.GLOBAL);
   },

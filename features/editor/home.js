@@ -153,15 +153,16 @@ const init = async () => {
   let vimMode = false;
   let vimSettings = null; // persisted vim :set settings (wrap, lineNumbers)
   try {
-    if (api?.settings?.getKey) {
-      const result = await api.settings.getKey(PREFS_STORAGE_KEY);
-      if (result.success && result.data && typeof result.data === 'object') {
-        vimMode = !!result.data.vimMode;
+    if (api?.settings?.get) {
+      const result = await api.settings.get(PREFS_STORAGE_KEY);
+      const prefs = result?.value;
+      if (prefs && typeof prefs === 'object') {
+        vimMode = !!prefs.vimMode;
         debug && console.log('[editor] Loaded vimMode from prefs:', vimMode);
 
         // Load persisted vim :set settings
-        if (result.data.vimSettings && typeof result.data.vimSettings === 'object') {
-          vimSettings = result.data.vimSettings;
+        if (prefs.vimSettings && typeof prefs.vimSettings === 'object') {
+          vimSettings = prefs.vimSettings;
           debug && console.log('[editor] Loaded vimSettings from prefs:', vimSettings);
         }
       } else {
@@ -188,15 +189,17 @@ const init = async () => {
   }
 
   // If file path provided, try to load it
-  if (fileParam && api?.files?.readFromPath) {
+  if (fileParam && api?.filesystem?.read) {
     try {
-      const result = await api.files.readFromPath(fileParam);
-      if (result.success && result.data) {
-        initialContent = result.data.content;
-        currentFilePath = result.data.path;
+      const result = await api.filesystem.read(fileParam);
+      if (result && !result.error && typeof result.content === 'string') {
+        initialContent = result.content;
+        currentFilePath = fileParam;
         hasExplicitSource = true;
         debug && console.log('[editor] Loaded file from path:', currentFilePath);
         // basePath will be set after editorLayout is created
+      } else if (result?.error) {
+        debug && console.log('[editor] Failed to load file:', result.error);
       }
     } catch (err) {
       debug && console.log('[editor] Failed to load file:', err);
@@ -278,10 +281,11 @@ const init = async () => {
   onVimSetOption(async (optionName, value) => {
     debug && console.log(`[editor] Vim :set ${optionName}=${value}, persisting`);
     try {
-      if (api?.settings?.getKey && api?.settings?.setKey) {
-        const result = await api.settings.getKey(PREFS_STORAGE_KEY);
-        const prefs = (result.success && result.data && typeof result.data === 'object')
-          ? { ...result.data }
+      if (api?.settings?.get && api?.settings?.set) {
+        const result = await api.settings.get(PREFS_STORAGE_KEY);
+        const existing = result?.value;
+        const prefs = (existing && typeof existing === 'object')
+          ? { ...existing }
           : {};
 
         // Map vim option names to our settings keys
@@ -291,7 +295,7 @@ const init = async () => {
         }
         prefs.vimSettings[settingsKey] = value;
 
-        await api.settings.setKey(PREFS_STORAGE_KEY, prefs);
+        await api.settings.set(PREFS_STORAGE_KEY, prefs);
         debug && console.log('[editor] Persisted vimSettings:', prefs.vimSettings);
       }
     } catch (err) {
@@ -317,10 +321,14 @@ const init = async () => {
   });
 
   Vim.defineEx('quit', 'q', () => {
-    if (api?.window?.close) {
-      api.window.close();
-    } else {
-      window.close();
+    try {
+      if (api?.window?.close) {
+        api.window.close();
+      } else {
+        window.close();
+      }
+    } catch (err) {
+      debug && console.log('[editor:vim] :q — window.close failed:', err);
     }
     debug && console.log('[editor:vim] :q — closing window');
   });
@@ -338,10 +346,14 @@ const init = async () => {
     }
     debug && console.log('[editor:vim] :wq — saved');
     // Close the editor window
-    if (api?.window?.close) {
-      api.window.close();
-    } else {
-      window.close();
+    try {
+      if (api?.window?.close) {
+        api.window.close();
+      } else {
+        window.close();
+      }
+    } catch (err) {
+      debug && console.log('[editor:vim] :wq — window.close failed:', err);
     }
     debug && console.log('[editor:vim] :wq — closing window');
   });
@@ -402,23 +414,24 @@ const init = async () => {
   }
 
   // Listen for settings changes from Settings app to live-reload vim mode and vim settings
-  if (api?.subscribe) {
-    api.subscribe('editor:settings-changed', async () => {
+  if (api?.pubsub?.subscribe) {
+    api.pubsub.subscribe('editor:settings-changed', async () => {
       debug && console.log('[editor] Settings changed, reloading vim mode and vim settings');
       try {
-        if (api?.settings?.getKey) {
-          const result = await api.settings.getKey(PREFS_STORAGE_KEY);
-          if (result.success && result.data && typeof result.data === 'object') {
-            const newVimMode = !!result.data.vimMode;
+        if (api?.settings?.get) {
+          const result = await api.settings.get(PREFS_STORAGE_KEY);
+          const prefs = result?.value;
+          if (prefs && typeof prefs === 'object') {
+            const newVimMode = !!prefs.vimMode;
             if (editorLayout) {
               editorLayout.setVimMode(newVimMode);
             }
             debug && console.log('[editor] Updated vimMode from settings:', newVimMode);
 
             // Apply vim settings if changed
-            if (result.data.vimSettings && editorLayout) {
-              editorLayout.applyVimSettings(result.data.vimSettings);
-              debug && console.log('[editor] Updated vimSettings from settings:', result.data.vimSettings);
+            if (prefs.vimSettings && editorLayout) {
+              editorLayout.applyVimSettings(prefs.vimSettings);
+              debug && console.log('[editor] Updated vimSettings from settings:', prefs.vimSettings);
             }
           }
         }
@@ -500,10 +513,10 @@ const updateWindowTitle = () => {
  * Open a file from disk via the native file picker.
  */
 const openFile = async () => {
-  if (!api?.files?.open) return;
+  if (!api?.dialogs?.open) return;
 
   try {
-    const result = await api.files.open();
+    const result = await api.dialogs.open();
     if (!result.success || result.canceled || !result.data) return;
 
     const { content, path: filePath, name, isText } = result.data;
@@ -549,17 +562,17 @@ const saveToFile = async (content) => {
   if (!content && content !== '') return;
 
   // If we have a file path, write directly
-  if (currentFilePath && api?.files?.writeToPath) {
+  if (currentFilePath && api?.filesystem?.write) {
     saveStatus = 'saving';
     updateSaveStatusUI();
 
     try {
-      const result = await api.files.writeToPath(currentFilePath, content);
-      if (result.success) {
+      const result = await api.filesystem.write(currentFilePath, content);
+      if (result && result.success && !result.error) {
         saveStatus = 'saved';
         debug && console.log('[editor] Saved to file:', currentFilePath);
       } else {
-        console.error('[editor] File save failed:', result.error);
+        console.error('[editor] File save failed:', result?.error);
         saveStatus = 'unsaved';
       }
     } catch (err) {
@@ -572,12 +585,12 @@ const saveToFile = async (content) => {
   }
 
   // No file path — show save-as dialog
-  if (api?.files?.save) {
+  if (api?.dialogs?.save) {
     saveStatus = 'saving';
     updateSaveStatusUI();
 
     try {
-      const result = await api.files.save(content, { filename: 'untitled.md' });
+      const result = await api.dialogs.save(content, { filename: 'untitled.md' });
       if (result.success && result.path) {
         currentFilePath = result.path;
         saveStatus = 'saved';
@@ -627,8 +640,8 @@ const performAutosave = async (content) => {
       debug && console.log('[editor] Autosaved item:', currentItemId, 'title:', title);
 
       // Publish change event
-      if (api?.publish) {
-        api.publish('editor:changed', { action: 'update', itemId: currentItemId }, api.scopes.GLOBAL);
+      if (api?.pubsub?.publish) {
+        api.pubsub.publish('editor:changed', { action: 'update', itemId: currentItemId }, api.scopes.GLOBAL);
       }
     } else {
       console.error('[editor] Autosave failed:', result.error);
@@ -669,8 +682,8 @@ const createDeferredNoteItem = async (content) => {
       }
 
       // Notify that a new item was created
-      if (api?.publish) {
-        api.publish('editor:changed', { action: 'add', itemId: currentItemId }, api.scopes.GLOBAL);
+      if (api?.pubsub?.publish) {
+        api.pubsub.publish('editor:changed', { action: 'add', itemId: currentItemId }, api.scopes.GLOBAL);
       }
 
       // Set context to editor mode
@@ -731,8 +744,8 @@ const scheduleAutosave = (content) => {
  */
 const handleContentChange = async (content) => {
   // Publish change event for other extensions
-  if (api?.publish) {
-    api.publish('editor:contentChanged', { content }, api.scopes.GLOBAL);
+  if (api?.pubsub?.publish) {
+    api.pubsub.publish('editor:contentChanged', { content }, api.scopes.GLOBAL);
   }
 
   // If this is a deferred new note and user typed real content, create the item now

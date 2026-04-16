@@ -19,26 +19,6 @@
 
   if (hasPeekAPI && isTileV2) {
     // ── V2 Tile Runtime ──
-    // Shim flat pubsub methods so existing code (background.js, home.js)
-    // that calls api.publish / api.subscribe keeps working.
-    if (api.pubsub && !api.publish) {
-      api.publish = api.pubsub.publish;
-      api.subscribe = api.pubsub.subscribe;
-    }
-
-    // Shim settings.getExtKey if missing (v2 only has get/set)
-    if (api.settings && !api.settings.getExtKey) {
-      api.settings.getExtKey = (extId, key) => api.settings.get(`${extId}.${key}`);
-    }
-
-    // Shim settings.getKey / setKey used by home.js for prefs
-    if (api.settings && !api.settings.getKey) {
-      api.settings.getKey = (key) => api.settings.get(key);
-    }
-    if (api.settings && !api.settings.setKey) {
-      api.settings.setKey = (key, value) => api.settings.set(key, value);
-    }
-
     // Initialize tile — validates capability token with main process
     await api.initialize();
 
