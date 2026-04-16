@@ -737,48 +737,140 @@ function buildAPI(): Record<string, unknown> {
     }),
   };
 
-  // ── Shortcuts (v1-compat) ─────────────────────────────────────────
-  // Many features use api.shortcuts.register(shortcut, cb, {global, mode}).
-  // The tile capability model hasn't yet formalised shortcut grants; rather
-  // than stub these out (silently breaking features), delegate to the core
-  // 'registershortcut' / 'unregistershortcut' IPC channels with the tile's
-  // source address. Main-process handlers do the enforcement.
+  // ── Shortcuts ─────────────────────────────────────────────────────
+  //
+  // Dual-path implementation:
+  //
+  //   - STRICT: when the tile's manifest declared a `shortcuts` capability
+  //     (`true` or `{ keys: [...] }`), route through `tile:shortcuts:*`.
+  //     The main-process handlers validate the token + capability + keys
+  //     allowlist. This is the path consuming features get automatically
+  //     once their manifest declares `capabilities.shortcuts`.
+  //
+  //   - V1-COMPAT: when no shortcuts capability was declared (or the token
+  //     hasn't been validated yet), fall back to the legacy
+  //     `registershortcut` / `unregistershortcut` IPC channels. Those
+  //     channels remain available for the Phase 3/4 migration per the
+  //     tile-preload trimming plan.
+  //
+  // The decision is made per-call (not at API-build time) because
+  // `grantedCapabilities` is populated asynchronously by `initialize()`.
 
   function rndm(): string {
     return Math.random().toString(36).slice(2);
   }
 
+  function hasShortcutsCapability(): boolean {
+    // Treat the capability as declared when it's `true` or an object.
+    // `false` / `undefined` / `null` fall back to v1-compat.
+    const sc = grantedCapabilities?.shortcuts;
+    if (sc === true) return true;
+    if (sc && typeof sc === 'object') return true;
+    return false;
+  }
+
+  function registerShortcutStrict(
+    shortcut: unknown,
+    cb: unknown,
+    options: unknown,
+  ): void {
+    const opts = (options || {}) as { global?: boolean; mode?: string };
+    const callback = cb as () => void;
+    const isGlobal = opts.global === true;
+    const replyTopic = `${shortcut}${rndm()}`;
+    ipcRenderer.send('tile:shortcuts:register', {
+      token: tileToken,
+      source: sourceAddress,
+      shortcut,
+      replyTopic,
+      global: isGlobal,
+      mode: opts.mode,
+    });
+    ipcRenderer.on(replyTopic, (_event: unknown, msg: { error?: string } | undefined) => {
+      if (msg && typeof msg === 'object' && 'error' in msg && msg.error) {
+        // Rejection — surface to devtools but don't throw (match v1 behaviour
+        // where the IPC would simply never fire the callback).
+        console.warn(`[tile-preload] strict shortcuts.register rejected for ${shortcut}:`, msg.error);
+        return;
+      }
+      callback();
+    });
+  }
+
+  function unregisterShortcutStrict(
+    shortcut: unknown,
+    options: unknown,
+  ): void {
+    const opts = (options || {}) as { global?: boolean; mode?: string };
+    const isGlobal = opts.global === true;
+    ipcRenderer.send('tile:shortcuts:unregister', {
+      token: tileToken,
+      source: sourceAddress,
+      shortcut,
+      global: isGlobal,
+      mode: opts.mode,
+    });
+  }
+
+  function registerShortcutCompat(
+    shortcut: unknown,
+    cb: unknown,
+    options: unknown,
+  ): void {
+    const opts = (options || {}) as { global?: boolean; mode?: string };
+    const callback = cb as () => void;
+    const isGlobal = opts.global === true;
+    const replyTopic = `${shortcut}${rndm()}`;
+    ipcRenderer.send('registershortcut', {
+      source: sourceAddress,
+      shortcut,
+      replyTopic,
+      global: isGlobal,
+      mode: opts.mode,
+    });
+    ipcRenderer.on(replyTopic, () => callback());
+  }
+
+  function unregisterShortcutCompat(
+    shortcut: unknown,
+    options: unknown,
+  ): void {
+    const opts = (options || {}) as { global?: boolean; mode?: string };
+    const isGlobal = opts.global === true;
+    ipcRenderer.send('unregistershortcut', {
+      source: sourceAddress,
+      shortcut,
+      global: isGlobal,
+      mode: opts.mode,
+    });
+  }
+
   api.shortcuts = {
+    // NOTE: wrapCompat still wraps the top-level entry to log v1-shape calls
+    // while the trimming plan is in Phase 1/2. The wrapper delegates to the
+    // strict IPC when the tile has the capability, falling back to the legacy
+    // channel otherwise. Callers do not need to change their code — their
+    // manifest declaration controls which path runs.
     register: wrapCompat('shortcuts', 'register', (
       shortcut: unknown,
       cb: unknown,
       options: unknown,
     ) => {
-      const opts = (options || {}) as { global?: boolean; mode?: string };
-      const callback = cb as () => void;
-      const isGlobal = opts.global === true;
-      const replyTopic = `${shortcut}${rndm()}`;
-      ipcRenderer.send('registershortcut', {
-        source: sourceAddress,
-        shortcut,
-        replyTopic,
-        global: isGlobal,
-        mode: opts.mode,
-      });
-      ipcRenderer.on(replyTopic, () => callback());
+      if (hasShortcutsCapability()) {
+        registerShortcutStrict(shortcut, cb, options);
+      } else {
+        registerShortcutCompat(shortcut, cb, options);
+      }
     }),
     unregister: wrapCompat('shortcuts', 'unregister', (
       shortcut: unknown,
       options: unknown,
     ) => {
-      const opts = (options || {}) as { global?: boolean; mode?: string };
-      const isGlobal = opts.global === true;
-      ipcRenderer.send('unregistershortcut', {
-        source: sourceAddress,
-        shortcut,
-        global: isGlobal,
-        mode: opts.mode,
-      });
+      if (hasShortcutsCapability()) {
+        unregisterShortcutStrict(shortcut, options);
+      } else {
+        unregisterShortcutCompat(shortcut, options);
+      }
     }),
   };
 
