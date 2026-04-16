@@ -3038,7 +3038,20 @@ function syncContentHashtags(itemId: string, content: string): void {
   for (const name of tagNames) {
     if (!currentTagNames.has(name)) {
       const { tag } = getOrCreateTag(name);
-      tagItem(itemId, tag.id);
+      const { alreadyExists } = tagItem(itemId, tag.id);
+      if (!alreadyExists) {
+        try {
+          const item = getDb().prepare('SELECT type FROM items WHERE id = ?').get(itemId) as { type: string } | undefined;
+          publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:item-added', {
+            tagId: tag.id,
+            tagName: tag.name,
+            itemId,
+            itemType: item?.type,
+          });
+        } catch (err) {
+          if (DEBUG) console.warn('[datastore] failed to publish tag:item-added (hashtag)', err);
+        }
+      }
     }
   }
 }
@@ -3666,7 +3679,19 @@ export function trackNavigation(uri: string, options: {
 
     // Tag navigation-created items as history so they're hidden from default views
     const { tag: historyTag } = getOrCreateTag('from:history');
-    tagItem(itemId, historyTag.id);
+    const { alreadyExists } = tagItem(itemId, historyTag.id);
+    if (!alreadyExists) {
+      try {
+        publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:item-added', {
+          tagId: historyTag.id,
+          tagName: historyTag.name,
+          itemId,
+          itemType: 'url',
+        });
+      } catch (err) {
+        if (DEBUG) console.warn('[datastore] failed to publish tag:item-added (history)', err);
+      }
+    }
   }
 
   // Record the visit
