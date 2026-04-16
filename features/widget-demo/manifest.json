@@ -25,7 +25,13 @@
   "capabilities": {
     "pubsub": {
       "scopes": ["global", "system"],
-      "topics": ["ext:ready", "app:shutdown", "ext:widget-demo:shutdown"]
+      "topics": [
+        "ext:ready",
+        "app:shutdown",
+        "ext:widget-demo:shutdown",
+        "cmd:register",
+        "cmd:execute:*"
+      ]
     },
     "window": {
       "create": true
