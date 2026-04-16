@@ -870,7 +870,59 @@ function buildAPI(): Record<string, unknown> {
       if (result.error) return { success: false, error: result.error };
       return { success: true };
     }),
+
+    /**
+     * Cross-tile foreign-read: fetch another tile's stored setting
+     * value (read-only). Dual-path routing:
+     *
+     *   - STRICT: when the tile's manifest declared
+     *     `settings.readForeign` or `settingsForeign`, route through
+     *     `tile:settings:get-foreign`. The main-process handler checks
+     *     the allowlist and scopes the DB query to the named foreign
+     *     tile.
+     *
+     *   - V1-COMPAT: otherwise fall back to the legacy un-gated
+     *     `feature-settings-get-key` channel. Preserves behaviour for
+     *     manifests that haven't declared the new allowlist yet.
+     *
+     * The decision is made per-call because `grantedCapabilities` is
+     * populated asynchronously by `initialize()`.
+     */
+    getExtKey: wrapCompat('settings', 'getExtKey', async (extId: unknown, key: unknown) => {
+      if (!extId || !key) {
+        return { success: false, error: 'extId and key are required' };
+      }
+      if (hasSettingsForeignCapability()) {
+        const result = await ipcRenderer.invoke('tile:settings:get-foreign', {
+          token: tileToken,
+          foreignExtId: extId,
+          key,
+        });
+        return result;
+      }
+      return ipcRenderer.invoke('feature-settings-get-key', { extId, key });
+    }),
   };
+
+  /**
+   * True when the tile has declared a foreign-settings read allowlist via
+   * either `settings: { readForeign: [...] }` or top-level
+   * `settingsForeign`. The actual per-ext allowlist check happens in the
+   * main-process strict handler.
+   */
+  function hasSettingsForeignCapability(): boolean {
+    const caps = grantedCapabilities as Record<string, unknown> | null;
+    if (!caps) return false;
+    const s = caps.settings;
+    if (s && typeof s === 'object') {
+      const rf = (s as { readForeign?: unknown }).readForeign;
+      if (Array.isArray(rf) && rf.length > 0) return true;
+    }
+    if (Array.isArray(caps.settingsForeign) && (caps.settingsForeign as unknown[]).length > 0) {
+      return true;
+    }
+    return false;
+  }
 
   // ── Shortcuts ─────────────────────────────────────────────────────
   //
@@ -1281,6 +1333,91 @@ function buildAPI(): Record<string, unknown> {
       return hasFeaturesCapability()
         ? featuresStrict.resolvePublisher(query as string)
         : featuresCompat.resolvePublisher(query as string);
+    }),
+  };
+
+  // ── OAuth ─────────────────────────────────────────────────────────
+  //
+  // Dual-path implementation mirroring api.shortcuts / api.context:
+  //
+  //   - STRICT: when the tile's manifest declared an `oauth` capability
+  //     (`true` or `{ providers: [...] }`), route through
+  //     `tile:oauth:*`. Main-process handlers validate the token +
+  //     capability shape + optional per-provider allowlist.
+  //
+  //   - V1-COMPAT: when no oauth capability was declared, fall back to
+  //     the legacy `oauth-start-loopback` / `oauth-await-callback`
+  //     channels. Those remain available through the Phase 3/4
+  //     migration window and continue to back wonderwall / lex until
+  //     they opt in.
+  //
+  // The decision is made per-call because `grantedCapabilities` is
+  // populated asynchronously by `initialize()`.
+
+  function hasOAuthCapability(): boolean {
+    const oc = grantedCapabilities?.oauth;
+    if (oc === true) return true;
+    if (oc && typeof oc === 'object') return true;
+    return false;
+  }
+
+  const oauthCompat = {
+    startLoopback: (options?: { callbackPath?: string; timeoutMs?: number }) =>
+      ipcRenderer.invoke('oauth-start-loopback', options),
+    awaitCallback: (port: number) =>
+      ipcRenderer.invoke('oauth-await-callback', { port }),
+  };
+
+  const oauthStrict = {
+    startLoopback: (options?: { callbackPath?: string; timeoutMs?: number; provider?: string }) =>
+      ipcRenderer.invoke('tile:oauth:start-loopback', {
+        token: tileToken,
+        callbackPath: options?.callbackPath,
+        timeoutMs: options?.timeoutMs,
+        provider: options?.provider,
+      }),
+    awaitCallback: (port: number) =>
+      ipcRenderer.invoke('tile:oauth:await-callback', {
+        token: tileToken,
+        port,
+      }),
+  };
+
+  api.oauth = {
+    startLoopback: wrapCompat('oauth', 'startLoopback', (options: unknown) => {
+      const opts = (options || {}) as { callbackPath?: string; timeoutMs?: number; provider?: string };
+      return hasOAuthCapability()
+        ? oauthStrict.startLoopback(opts)
+        : oauthCompat.startLoopback(opts);
+    }),
+    awaitCallback: wrapCompat('oauth', 'awaitCallback', (port: unknown) => {
+      return hasOAuthCapability()
+        ? oauthStrict.awaitCallback(port as number)
+        : oauthCompat.awaitCallback(port as number);
+    }),
+  };
+
+  // ── Sync ──────────────────────────────────────────────────────────
+  //
+  // Dual-path implementation mirroring api.shortcuts:
+  //
+  //   - STRICT: when the tile's manifest declared `sync: true`, route
+  //     through `tile:sync:sync-all`. Main-process handler validates
+  //     the token + capability (and `sync` is builtin-only at manifest
+  //     resolution).
+  //
+  //   - V1-COMPAT: when no sync capability was declared, fall back to
+  //     the legacy `sync-full` channel.
+
+  function hasSyncCapability(): boolean {
+    return grantedCapabilities?.sync === true;
+  }
+
+  api.sync = {
+    syncAll: wrapCompat('sync', 'syncAll', () => {
+      return hasSyncCapability()
+        ? ipcRenderer.invoke('tile:sync:sync-all', { token: tileToken })
+        : ipcRenderer.invoke('sync-full');
     }),
   };
 

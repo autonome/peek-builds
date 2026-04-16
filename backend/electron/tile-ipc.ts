@@ -82,6 +82,11 @@ import { checkContextAllowed } from './tile-context-enforcement.js';
 import { checkDialogAllowed } from './tile-dialogs-enforcement.js';
 import { checkWindowAllowed } from './tile-window-enforcement.js';
 import { checkFeaturesAllowed, sourceTypeAllowed } from './tile-features-enforcement.js';
+import { checkSettingsForeignAllowed } from './tile-settings-foreign-enforcement.js';
+import { checkOAuthAllowed } from './tile-oauth-enforcement.js';
+import { checkSyncAllowed } from './tile-sync-enforcement.js';
+import { createLoopbackServer } from './oauth-loopback.js';
+import { syncAll, getSyncConfig } from './sync.js';
 import { getActiveThemeId } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
@@ -96,6 +101,9 @@ export { checkContextAllowed, type ContextCheckResult, type ContextOp } from './
 export { checkDialogAllowed, type DialogsCheckResult } from './tile-dialogs-enforcement.js';
 export { checkWindowAllowed, type WindowCheckResult, type WindowOp } from './tile-window-enforcement.js';
 export { checkFeaturesAllowed, sourceTypeAllowed, type FeaturesCheckResult, type FeaturesAction } from './tile-features-enforcement.js';
+export { checkSettingsForeignAllowed, type SettingsForeignCheckResult } from './tile-settings-foreign-enforcement.js';
+export { checkOAuthAllowed, type OAuthCheckResult, type OAuthOp } from './tile-oauth-enforcement.js';
+export { checkSyncAllowed, type SyncCheckResult } from './tile-sync-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -211,7 +219,7 @@ function compareCapabilitiesSimple(
   // Boolean capabilities (or boolean-or-object capabilities treated as
   // present/absent for change detection — deeper allowlist diffs are
   // out of scope for the auto-update expansion guard).
-  const boolCaps: Array<keyof TileCapabilities> = ['commands', 'shortcuts', 'sync', 'theme', 'settings', 'context', 'dialogs', 'features'];
+  const boolCaps: Array<keyof TileCapabilities> = ['commands', 'shortcuts', 'sync', 'theme', 'settings', 'context', 'dialogs', 'features', 'oauth'];
   for (const cap of boolCaps) {
     const had = !!cur[cap];
     const has = !!nxt[cap];
@@ -1788,6 +1796,154 @@ export function registerTileIpcHandlers(): void {
         VALUES (?, ?, ?, ?, ?)
       `).run(`${grant.tileId}_${args.key}`, grant.tileId, args.key, jsonValue, Date.now());
       return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── Settings: foreign (strict) ────────────────────────────────────
+  //
+  // Read a setting from ANOTHER tile's `feature_settings` namespace,
+  // gated on the `settings` capability + a `readForeign` allowlist
+  // (or the top-level `settingsForeign` fallback). Mirrors the legacy
+  // `feature-settings-get-key` handler but with capability enforcement.
+  // See `tile-settings-foreign-enforcement.ts` for the pure check.
+  ipcMain.handle('tile:settings:get-foreign', async (_event, args: {
+    token: string;
+    foreignExtId: string;
+    key: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkSettingsForeignAllowed(grant, args?.foreignExtId);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] settings:get-foreign rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const db = getDb();
+      const row = db.prepare(
+        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
+      ).get(args.foreignExtId, args.key) as { value: string } | undefined;
+      if (!row) return { success: true, data: null };
+      try {
+        return { success: true, data: JSON.parse(row.value) };
+      } catch {
+        return { success: true, data: row.value };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── OAuth (strict) ────────────────────────────────────────────────
+  //
+  // Strict tile:oauth:start-loopback / tile:oauth:await-callback handlers
+  // that enforce the `oauth` capability. Mirror the legacy
+  // `oauth-start-loopback` / `oauth-await-callback` channels in ipc.ts —
+  // same loopback server implementation from oauth-loopback.ts, gated on
+  // a declared capability + optional per-provider allowlist. See
+  // `tile-oauth-enforcement.ts` for the pure check.
+  //
+  // Pending flows are keyed by OS-assigned port. The map is isolated
+  // from the legacy ipc.ts one so closing one doesn't tear down the
+  // other — in practice, a tile that opted into strict oauth will not
+  // also be using the legacy api.oauth (their preload only exposes the
+  // strict surface when the capability is declared).
+  const strictOAuthFlows = new Map<number, {
+    waitForCallback: () => Promise<{ params: Record<string, string> }>;
+    cancel: () => void;
+  }>();
+
+  ipcMain.handle('tile:oauth:start-loopback', async (_event, args: {
+    token: string;
+    provider?: string;
+    callbackPath?: string;
+    timeoutMs?: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkOAuthAllowed(grant, 'start-loopback', args?.provider);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] oauth:start-loopback rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const server = await createLoopbackServer({
+        callbackPath: args.callbackPath,
+        timeoutMs: args.timeoutMs,
+      });
+      strictOAuthFlows.set(server.port, {
+        waitForCallback: server.waitForCallback,
+        cancel: server.cancel,
+      });
+      return { success: true, port: server.port };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:oauth:await-callback', async (_event, args: {
+    token: string;
+    port: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkOAuthAllowed(grant, 'await-callback');
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] oauth:await-callback rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const flow = strictOAuthFlows.get(args.port);
+      if (!flow) {
+        return { success: false, error: 'No pending OAuth flow for this port' };
+      }
+      const result = await flow.waitForCallback();
+      strictOAuthFlows.delete(args.port);
+      return { success: true, params: result.params };
+    } catch (error) {
+      strictOAuthFlows.delete(args.port);
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── Sync (strict) ─────────────────────────────────────────────────
+  //
+  // Strict tile:sync:sync-all handler that enforces the `sync`
+  // capability (builtin-only per the resolveCapabilities restriction
+  // in tile-manifest.ts). Delegates to the existing `syncAll` in
+  // sync.ts — same behaviour as the legacy `sync-full` channel in
+  // ipc.ts, but capability-gated for the strict tile surface. See
+  // `tile-sync-enforcement.ts` for the pure check.
+  ipcMain.handle('tile:sync:sync-all', async (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkSyncAllowed(grant);
+    if (!check.ok) {
+      DEBUG && console.log(`[tile-ipc] sync:sync-all rejected: ${check.error}`);
+      return { success: false, error: check.error };
+    }
+    try {
+      const config = getSyncConfig();
+      if (!config.serverUrl || !config.apiKey) {
+        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
+      }
+      const result = await syncAll(config.serverUrl, config.apiKey);
+
+      // Notify all windows that sync pulled new data so they can refresh.
+      // Mirrors the behaviour of the legacy `sync-full` handler.
+      if (result.pulled > 0) {
+        publish('system', scopes.GLOBAL, 'sync:pull-completed', {
+          pulled: result.pulled,
+          pushed: result.pushed,
+          conflicts: result.conflicts,
+        });
+      }
+
+      return { success: true, data: result };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
