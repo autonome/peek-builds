@@ -252,6 +252,22 @@ body {
 
 .search-input {
   width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--base03);
+  border-radius: 4px;
+  background: var(--base01);
+  color: var(--base05);
+  font-size: 12px;
+  font-family: var(--theme-font-sans);
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--base0D);
+}
+
+.search-input::placeholder {
+  color: var(--base03);
 }
 
 /* Main content */
@@ -708,4 +724,107 @@ body {
   padding: 40px;
   color: var(--base04);
   font-size: 13px;
+}
+
+/* Install History */
+.history-section {
+  border-top: 1px solid var(--base02);
+  margin-top: auto;
+}
+
+.history-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--base04);
+  font-size: 11px;
+  font-family: var(--theme-font-sans);
+  cursor: pointer;
+  text-align: left;
+}
+
+.history-toggle:hover {
+  background: var(--base01);
+  color: var(--base05);
+}
+
+.history-toggle-arrow {
+  font-size: 9px;
+  transition: transform 0.15s;
+  margin-left: auto;
+}
+
+.history-content {
+  padding: 0 16px 12px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--base04);
+}
+
+.history-event-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  min-width: 56px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.history-event-badge.install {
+  background: color-mix(in srgb, var(--base0B) 15%, transparent);
+  color: var(--base0B);
+}
+
+.history-event-badge.uninstall,
+.history-event-badge.remove {
+  background: color-mix(in srgb, var(--base08) 15%, transparent);
+  color: var(--base08);
+}
+
+.history-event-badge.update {
+  background: color-mix(in srgb, var(--base09) 15%, transparent);
+  color: var(--base09);
+}
+
+.history-event-badge.approve {
+  background: color-mix(in srgb, var(--base0D) 15%, transparent);
+  color: var(--base0D);
+}
+
+.history-event-badge.deny {
+  background: color-mix(in srgb, var(--base08) 15%, transparent);
+  color: var(--base08);
+}
+
+.history-meta {
+  flex: 1;
+  font-family: var(--theme-font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-time {
+  flex-shrink: 0;
+  color: var(--base03);
 }

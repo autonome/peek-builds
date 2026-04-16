@@ -6,8 +6,20 @@
  * Supports installing features directly from browse results.
  */
 
+import { compareSemver } from './updater.js';
+
 const api = window.app;
 const hasPeekAPI = !!api;
+
+/**
+ * Well-known curated publisher DID for the Peek team's featured directory.
+ * When the browse page opens with no query, this publisher is auto-loaded
+ * to show a default set of featured/curated features.
+ *
+ * TODO: Replace with the actual Peek team DID once the AT Protocol account
+ * is set up and features are published. Set to null to disable auto-load.
+ */
+const CURATED_PUBLISHER_DID = null; // e.g. 'did:plc:xxxxxxxxxxxxxxxxxxxxxxxx'
 
 // ─── DOM refs ───────────────────────────────────────────────────────
 
@@ -51,7 +63,8 @@ function hideStatus() {
 // ─── Publisher info display ─────────────────────────────────────────
 
 function showPublisher(publisher) {
-  publisherHandleEl.textContent = '@' + publisher.handle;
+  const isCurated = CURATED_PUBLISHER_DID && publisher.did === CURATED_PUBLISHER_DID;
+  publisherHandleEl.textContent = (isCurated ? 'Featured: ' : '') + '@' + publisher.handle;
   // Abbreviate DID for display
   const did = publisher.did;
   const abbrev = did.length > 32
@@ -378,7 +391,8 @@ function createFeatureCard(record) {
   const installed = installedFeatures[record.featureId];
   if (installed) {
     const installedVersion = installed.source?.version;
-    if (installedVersion && installedVersion < record.version) {
+    const hasUpdate = installedVersion && compareSemver(record.version, installedVersion) > 0;
+    if (hasUpdate) {
       const updateBadge = document.createElement('span');
       updateBadge.className = 'feature-badge update';
       updateBadge.textContent = 'Update Available';
@@ -426,7 +440,7 @@ function createFeatureCard(record) {
 
   if (installed) {
     const installedVersion = installed.source?.version;
-    if (installedVersion && installedVersion < record.version) {
+    if (installedVersion && compareSemver(record.version, installedVersion) > 0) {
       // Update button
       const updateBtn = document.createElement('button');
       updateBtn.className = 'action-btn primary';
@@ -507,4 +521,21 @@ if (hasPeekAPI) {
 
 // ─── Init ───────────────────────────────────────────────────────────
 
-loadInstalledFeatures();
+async function init() {
+  await loadInstalledFeatures();
+
+  // Auto-load curated directory if configured and no query in URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialQuery = urlParams.get('publisher') || '';
+
+  if (initialQuery) {
+    publisherInput.value = initialQuery;
+    searchPublisher(initialQuery);
+  } else if (CURATED_PUBLISHER_DID) {
+    // Show curated directory with a label
+    publisherInput.placeholder = 'Enter handle or DID, or browse featured below';
+    searchPublisher(CURATED_PUBLISHER_DID);
+  }
+}
+
+init();

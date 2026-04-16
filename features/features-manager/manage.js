@@ -123,7 +123,7 @@ function render() {
 function showEmpty(errorMsg) {
   const hint = errorMsg
     ? errorMsg
-    : 'No features installed. Features installed from AT Protocol URIs will appear here.';
+    : 'No features installed. Install a feature from an AT URI above, browse publishers, or create a new dev feature.';
 
   contentEl.innerHTML = `
     <div class="empty-state">
@@ -365,7 +365,7 @@ function createFeatureCard(feature) {
       e.stopPropagation();
       // Open publish.html with featureId pre-selected
       if (hasPeekAPI) {
-        api.window.open(`peek://features-manager/publish.html?featureId=${encodeURIComponent(feature.id)}`, {
+        api.window.open(`peek://ext/features-manager/publish.html?featureId=${encodeURIComponent(feature.id)}`, {
           key: 'features-publish',
           width: 700,
           height: 600,
@@ -680,10 +680,16 @@ function hideCapabilityReview() {
 function formatCapabilityChange(item) {
   // Turn 'network:api.example.com' into 'Network: api.example.com'
   // Turn 'pubsub.scope:system' into 'PubSub scope: system'
-  return item
-    .replace(/\./g, ' ')
-    .replace(/:/, ': ')
-    .replace(/^(\w)/, (m) => m.toUpperCase());
+  // Split on the first ':' to separate the capability key from value,
+  // then only replace dots in the key part (not in domain values).
+  const colonIdx = item.indexOf(':');
+  if (colonIdx === -1) {
+    // No colon — just a capability name like 'commands', 'shortcuts'
+    return item.replace(/\./g, ' ').replace(/^(\w)/, (m) => m.toUpperCase());
+  }
+  const key = item.slice(0, colonIdx).replace(/\./g, ' ');
+  const value = item.slice(colonIdx + 1);
+  return key.replace(/^(\w)/, (m) => m.toUpperCase()) + ': ' + value;
 }
 
 async function approveAndUpdate() {
@@ -980,6 +986,68 @@ if (hasPeekAPI) {
     }, api.scopes?.GLOBAL);
   }
 }
+
+// ─── Install History ────────────────────────────────────────────────
+
+const historySection = document.getElementById('history-section');
+const historyToggle = document.getElementById('history-toggle');
+const historyContent = document.getElementById('history-content');
+
+async function loadHistory() {
+  if (!hasPeekAPI) return;
+
+  try {
+    const result = await api.features.history(null, 30);
+    if (result.error || !result.entries || result.entries.length === 0) {
+      return;
+    }
+
+    historySection.style.display = '';
+    historyContent.innerHTML = '';
+
+    const list = document.createElement('div');
+    list.className = 'history-list';
+
+    for (const event of result.entries) {
+      const row = document.createElement('div');
+      row.className = 'history-row';
+
+      const eventBadge = document.createElement('span');
+      eventBadge.className = `history-event-badge ${event.event}`;
+      eventBadge.textContent = event.event;
+      row.appendChild(eventBadge);
+
+      const meta = document.createElement('span');
+      meta.className = 'history-meta';
+      const version = event.version ? ` v${event.version}` : '';
+      meta.textContent = `${event.featureId}${version}`;
+      row.appendChild(meta);
+
+      const time = document.createElement('span');
+      time.className = 'history-time';
+      time.textContent = formatRelativeTime(event.timestamp);
+      time.title = event.timestamp;
+      row.appendChild(time);
+
+      list.appendChild(row);
+    }
+
+    historyContent.appendChild(list);
+  } catch (err) {
+    console.error('[features-manager] Failed to load history:', err);
+  }
+}
+
+historyToggle.addEventListener('click', () => {
+  const expanded = historyToggle.getAttribute('aria-expanded') === 'true';
+  historyToggle.setAttribute('aria-expanded', String(!expanded));
+  historyContent.style.display = expanded ? 'none' : '';
+  historyToggle.querySelector('.history-toggle-arrow').style.transform =
+    expanded ? '' : 'rotate(90deg)';
+  if (!expanded && historyContent.innerHTML === '') {
+    loadHistory();
+  }
+});
 
 // ─── Init ───────────────────────────────────────────────────────────
 

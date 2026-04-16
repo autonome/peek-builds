@@ -8,7 +8,10 @@
  */
 
 import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
-import { checkForUpdates, shouldAutoUpdate, compareCapabilities } from './updater.js';
+// Note: updater.js exports compareSemver/compareCapabilities utilities used by
+// browse.js. background.js delegates update checking entirely to the backend
+// via api.features.updateCheckAll() + api.features.updateApply(), so no
+// direct imports from updater.js are needed here.
 
 const hasPeekAPI = typeof window.app !== 'undefined';
 const api = hasPeekAPI ? window.app : null;
