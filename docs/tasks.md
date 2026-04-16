@@ -8,6 +8,12 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 ---
 
+## Tile architecture cleanup (post-conversion)
+
+- [ ] **Single-file tiles as default model.** Most features have a background.html that's pure boilerplate (init + register commands + open home.html) and a home.html with all the real logic. Two separate renderer processes coordinating via pubsub for what could be one show/hide window. Refactor the tile model so single-file tiles (one HTML, show/hide) are the default. Background split only when needed (timers, feeds, editor multi-window). Reduces boilerplate, eliminates cross-context state sync, simplifies authoring. Hello-world tile is already nearly this pattern.
+
+---
+
 ## Bugs
 
 - [ ] **post.nl → postnl.nl redirect shows blank page.** Navigating to post.nl (which server-redirects to postnl.nl) leaves Peek on a blank white page instead of following the redirect. Likely a webview/canvas redirect handling issue. Reproduce: open post.nl in a page window.
