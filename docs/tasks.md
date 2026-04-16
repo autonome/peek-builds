@@ -52,7 +52,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [x] Phase 2.3 — strict shortcuts IPC + keys allowlist
   - [x] Phase 2 — strict context IPC + read/write/modes/queryWindows allowlists
   - [x] Phase 2 — strict dialogs IPC + types allowlist
-  - [ ] Remaining: window strict extensions, features strict, settings cleanup
+  - [x] Phase 2 — settings cleanup (audit found every shim still has callers; deferred to Phase 3 or `settings.readForeign` capability work)
+  - [ ] Remaining: window strict IPC, features strict IPC
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
 - [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
