@@ -15,6 +15,12 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 ---
 
+## Features
+
+- [ ] **Commands for browser-extension options pages.** For each installed Chromium extension that declares an `options_page` (or `options_ui`) in its manifest, auto-register a command like `<extension-name> options` that opens that page directly. Scope: browser extensions only (not Peek v2 tiles / v1 features). Requires iterating installed extensions, reading their manifest, registering into the command registry.
+
+---
+
 ## Deferred from audits / fixes
 
 ### Atproto install flow hardening (from atproto pipeline audit, 2026-04-16)
