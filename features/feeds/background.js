@@ -379,7 +379,7 @@ const extension = {
     setTimeout(pollAllFeeds, 5000);
 
     // React to feed item changes from other sources
-    api.subscribe('item:created', async (msg) => {
+    api.pubsub.subscribe('item:created', async (msg) => {
       if (msg.itemType === 'feed') {
         const item = await api.datastore.getItem(msg.itemId);
         if (item.success && item.data) {

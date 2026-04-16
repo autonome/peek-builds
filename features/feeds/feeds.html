@@ -254,12 +254,9 @@
 
     const api = window.app;
 
-    // V2 tile runtime shims
+    // Initialize tile — validates capability token with main process
     if (api && typeof api.initialize === 'function') {
-      if (api.pubsub && !api.publish) {
-        api.publish = api.pubsub.publish;
-        api.subscribe = api.pubsub.subscribe;
-      }
+      await api.initialize();
     }
 
     let currentFeedId = null;
