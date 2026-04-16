@@ -135,7 +135,32 @@ export function suppressClosedWindowPush(): void {
  * Initialize the application configuration
  * Must be called before app.ready
  */
+/**
+ * Global error handlers — installed once, idempotent.
+ *
+ * Without these, rejected promises and thrown exceptions that escape
+ * the feature/tile loading paths crash the process with no breadcrumb.
+ * We install early in configure() so startup-time errors surface.
+ */
+let _globalErrorHandlersInstalled = false;
+function installGlobalErrorHandlers(): void {
+  if (_globalErrorHandlersInstalled) return;
+  _globalErrorHandlersInstalled = true;
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('[main] Unhandled promise rejection:', reason);
+  });
+
+  process.on('uncaughtException', (error) => {
+    console.error('[main] Uncaught exception:', error);
+  });
+}
+
 export function configure(cfg: AppConfig): void {
+  // Install global error handlers FIRST, before anything else can throw,
+  // so startup errors (protocol registration, config parsing, etc.) surface.
+  installGlobalErrorHandlers();
+
   config = cfg;
 
   // Tier 1 dark mode: 'force' = always dark, 'off'/'system' = respect OS preference
