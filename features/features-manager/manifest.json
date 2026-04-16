@@ -51,6 +51,12 @@
     }
   ],
   "capabilities": {
+    "features": {
+      "read": true,
+      "install": true,
+      "manage": true,
+      "sources": ["builtin", "local", "atproto", "url", "dev"]
+    },
     "pubsub": {
       "scopes": ["global", "system"],
       "topics": [
