@@ -83,7 +83,7 @@ async function queryFeatures({ search } = {}) {
   if (!hasPeekAPI) return { success: false, error: 'No API' };
 
   try {
-    const result = await api.ipc.invoke('feature-registry:list');
+    const result = await api.features.list();
     if (result.error) return { success: false, error: result.error };
 
     let entries = result.entries || [];
@@ -140,38 +140,38 @@ const extension = {
     api.shortcuts.register('CommandOrControl+Shift+X', openManage);
 
     // Subscribe to feature management request events
-    api.subscribe('feature:disable-request', async (msg) => {
+    api.pubsub.subscribe('feature:disable-request', async (msg) => {
       if (!msg.id) return;
       try {
-        const result = await api.ipc.invoke('feature-registry:disable', { id: msg.id });
-        api.publish('feature:disable-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
+        const result = await api.features.disable(msg.id);
+        api.pubsub.publish('feature:disable-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
       } catch (err) {
-        api.publish('feature:disable-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:disable-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
       }
     }, api.scopes.GLOBAL);
 
-    api.subscribe('feature:enable-request', async (msg) => {
+    api.pubsub.subscribe('feature:enable-request', async (msg) => {
       if (!msg.id) return;
       try {
-        const result = await api.ipc.invoke('feature-registry:enable', { id: msg.id });
-        api.publish('feature:enable-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
+        const result = await api.features.enable(msg.id);
+        api.pubsub.publish('feature:enable-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
       } catch (err) {
-        api.publish('feature:enable-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:enable-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
       }
     }, api.scopes.GLOBAL);
 
-    api.subscribe('feature:remove-request', async (msg) => {
+    api.pubsub.subscribe('feature:remove-request', async (msg) => {
       if (!msg.id) return;
       try {
-        const result = await api.ipc.invoke('feature-registry:remove', { id: msg.id });
-        api.publish('feature:remove-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
+        const result = await api.features.remove(msg.id);
+        api.pubsub.publish('feature:remove-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
       } catch (err) {
-        api.publish('feature:remove-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:remove-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
       }
     }, api.scopes.GLOBAL);
 
     // Listen for lex session changes (used by publish flow)
-    api.subscribe('lex:session-changed', (msg) => {
+    api.pubsub.subscribe('lex:session-changed', (msg) => {
       if (msg.session) {
         currentLexSession = msg.session;
         console.log('[features-manager] Lex session updated for', currentLexSession.handle);
@@ -190,6 +190,9 @@ const extension = {
     async function runUpdateCheck() {
       console.log('[features-manager] Running update check...');
       try {
+        // NOTE: `feature-update:*` channels are not yet covered by strict
+        // `api.features.*` — retained as `api.ipc.invoke` until strict handlers
+        // are added (see docs/tile-preload-trimming-plan.md).
         const result = await api.ipc.invoke('feature-update:check-all');
         if (result.error) {
           console.error('[features-manager] Update check error:', result.error);
@@ -200,7 +203,7 @@ const extension = {
         console.log(`[features-manager] Found ${updates.length} updates`);
 
         // Get full feature list to check policies and capabilities
-        const listResult = await api.ipc.invoke('feature-registry:list');
+        const listResult = await api.features.list();
         const features = listResult.entries || [];
         const featureMap = {};
         for (const f of features) {
@@ -226,7 +229,7 @@ const extension = {
 
             if (applyResult.capabilitiesChanged) {
               // Capabilities expanded — notify user
-              api.publish('feature:update-available', {
+              api.pubsub.publish('feature:update-available', {
                 featureId: update.id,
                 name: update.name,
                 currentVersion: update.currentVersion,
@@ -241,7 +244,7 @@ const extension = {
               console.log(`[features-manager] Auto-updated ${update.id} to ${update.availableVersion}`);
             }
           } else if (policy === 'notify') {
-            api.publish('feature:update-available', {
+            api.pubsub.publish('feature:update-available', {
               featureId: update.id,
               name: update.name,
               currentVersion: update.currentVersion,
@@ -276,8 +279,8 @@ const extension = {
       // Read the configured interval from settings
       let intervalMs = DEFAULT_UPDATE_INTERVAL_MS;
       try {
-        const settingsResult = await api.ipc.invoke('tile:settings:get', { key: 'features-manager.updateCheckInterval' });
-        if (settingsResult.value && typeof settingsResult.value === 'number') {
+        const settingsResult = await api.settings.get('features-manager.updateCheckInterval');
+        if (settingsResult && settingsResult.value && typeof settingsResult.value === 'number') {
           intervalMs = settingsResult.value * 60 * 1000;
         }
       } catch (e) {
@@ -325,7 +328,7 @@ const extension = {
         }
 
         // Find matching feature
-        const listResult = await api.ipc.invoke('feature-registry:list');
+        const listResult = await api.features.list();
         const features = listResult.entries || [];
         const match = features.find(f =>
           f.id.toLowerCase() === query ||
@@ -342,6 +345,7 @@ const extension = {
         }
 
         // Apply update (userApproved=true overrides notify/pinned for this action)
+        // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
         const result = await api.ipc.invoke('feature-update:apply', {
           id: match.id,
           userApproved: true,
@@ -362,17 +366,15 @@ const extension = {
     });
 
     // Install flow — orchestrates resolve/preview/install for AT URIs
-    api.subscribe('feature:install-request', async (msg) => {
+    api.pubsub.subscribe('feature:install-request', async (msg) => {
       if (!msg.atUri) return;
 
       try {
         // Step 1: Resolve the AT URI to get metadata
-        const resolveResult = await api.ipc.invoke('feature-install:resolve', {
-          atUri: msg.atUri,
-        });
+        const resolveResult = await api.features.installResolve(msg.atUri);
 
         if (resolveResult.error) {
-          api.publish('feature:install-result', {
+          api.pubsub.publish('feature:install-result', {
             atUri: msg.atUri,
             success: false,
             error: resolveResult.error,
@@ -382,12 +384,9 @@ const extension = {
 
         // Step 2: If userApproved flag is set, proceed directly with install
         if (msg.userApproved) {
-          const installResult = await api.ipc.invoke('feature-install:install', {
-            atUri: msg.atUri,
-            userApproved: true,
-          });
+          const installResult = await api.features.install(msg.atUri, true);
 
-          api.publish('feature:install-result', {
+          api.pubsub.publish('feature:install-result', {
             atUri: msg.atUri,
             success: !installResult.error,
             entry: installResult.entry,
@@ -397,7 +396,7 @@ const extension = {
         }
 
         // Step 3: Otherwise, publish resolved metadata for UI to show preview
-        api.publish('feature:install-result', {
+        api.pubsub.publish('feature:install-result', {
           atUri: msg.atUri,
           success: true,
           phase: 'resolved',
@@ -407,7 +406,7 @@ const extension = {
 
       } catch (err) {
         console.error('[features-manager] install-request error:', err);
-        api.publish('feature:install-result', {
+        api.pubsub.publish('feature:install-result', {
           atUri: msg.atUri,
           success: false,
           error: err.message,

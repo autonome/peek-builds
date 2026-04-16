@@ -61,7 +61,7 @@ async function loadFeatures() {
   }
 
   try {
-    const result = await api.ipc.invoke('feature-registry:list');
+    const result = await api.features.list();
     if (result.error) {
       showEmpty(result.error);
       return;
@@ -284,6 +284,7 @@ function createFeatureCard(feature) {
   openDevtoolsBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     try {
+      // NOTE: `feature-devtools:*` not yet covered by strict `api.features.*`.
       const result = await api.ipc.invoke('feature-devtools:open', { featureId: feature.id });
       if (result && result.error) {
         showStatus(result.error, 'error');
@@ -310,6 +311,7 @@ function createFeatureCard(feature) {
       reloadBtn.textContent = 'Reloading...';
       reloadBtn.disabled = true;
       try {
+        // NOTE: `feature-dev:*` not yet covered by strict `api.features.*`.
         const result = await api.ipc.invoke('feature-dev:reload', { featureId: feature.id });
         reloadBtn.textContent = result.error ? 'Error' : 'Reloaded';
         if (result.error) console.error('[features-manager] reload error:', result.error);
@@ -330,6 +332,7 @@ function createFeatureCard(feature) {
       validateBtn.textContent = 'Validating...';
       validateBtn.disabled = true;
       try {
+        // NOTE: `feature-dev:*` not yet covered by strict `api.features.*`.
         const result = await api.ipc.invoke('feature-dev:validate', { featureId: feature.id });
         if (result.error) {
           showStatus(result.error, 'error');
@@ -385,10 +388,10 @@ function createFeatureCard(feature) {
 async function toggleFeature(id, currentlyDisabled) {
   if (!hasPeekAPI) return;
 
-  const channel = currentlyDisabled ? 'feature-registry:enable' : 'feature-registry:disable';
-
   try {
-    const result = await api.ipc.invoke(channel, { id });
+    const result = currentlyDisabled
+      ? await api.features.enable(id)
+      : await api.features.disable(id);
     if (result.error) {
       console.error(`[features-manager] toggle error:`, result.error);
       return;
@@ -413,7 +416,7 @@ async function removeFeature(id, name) {
   if (!confirmed) return;
 
   try {
-    const result = await api.ipc.invoke('feature-registry:remove', { id });
+    const result = await api.features.remove(id);
     if (result.error) {
       console.error(`[features-manager] remove error:`, result.error);
       return;
@@ -434,7 +437,7 @@ async function unregisterDevFeature(id, name) {
   if (!confirmed) return;
 
   try {
-    const result = await api.ipc.invoke('feature-registry:remove', { id });
+    const result = await api.features.remove(id);
     if (result.error) {
       console.error(`[features-manager] unregister error:`, result.error);
       return;
@@ -475,6 +478,7 @@ createCancelBtn.addEventListener('click', hideCreateForm);
 createPickDirBtn.addEventListener('click', async () => {
   if (!hasPeekAPI) return;
   try {
+    // NOTE: `feature-dev:*` not yet covered by strict `api.features.*`.
     const result = await api.ipc.invoke('feature-dev:pick-directory');
     if (result.canceled || result.error) return;
     createDirSelected = result.path;
@@ -509,6 +513,7 @@ createSubmitBtn.addEventListener('click', async () => {
   createSubmitBtn.textContent = 'Creating...';
 
   try {
+    // NOTE: `feature-dev:*` not yet covered by strict `api.features.*`.
     const result = await api.ipc.invoke('feature-dev:create', {
       directoryPath: createDirSelected,
       featureId: createFeatureId.value.trim(),
@@ -542,6 +547,7 @@ async function checkForUpdates() {
   checkUpdatesBtn.textContent = 'Checking...';
 
   try {
+    // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
     const result = await api.ipc.invoke('feature-update:check-all');
 
     if (result.error) {
@@ -574,6 +580,7 @@ async function applyUpdate(id, name) {
   showStatus(`Updating "${name}"...`);
 
   try {
+    // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
     const result = await api.ipc.invoke('feature-update:apply', {
       id,
       userApproved: false,
@@ -604,6 +611,7 @@ async function setUpdatePolicy(id, policy) {
   if (!hasPeekAPI) return;
 
   try {
+    // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
     const result = await api.ipc.invoke('feature-update:set-policy', { id, policy });
     if (result.error) {
       console.error('[features-manager] Set policy error:', result.error);
@@ -689,6 +697,7 @@ async function approveAndUpdate() {
   showStatus('Updating with approved capabilities...');
 
   try {
+    // NOTE: `feature-update:*` not yet covered by strict `api.features.*`.
     const result = await api.ipc.invoke('feature-update:apply', {
       id,
       userApproved: true,
@@ -819,7 +828,7 @@ async function resolveAtUri(atUri) {
   showStatus('Resolving AT URI...');
 
   try {
-    const result = await api.ipc.invoke('feature-install:resolve', { atUri });
+    const result = await api.features.installResolve(atUri);
 
     if (result.error) {
       showStatus(result.error, 'error');
@@ -829,10 +838,10 @@ async function resolveAtUri(atUri) {
     const { manifest, source } = result;
 
     // Get capability preview
-    const capResult = await api.ipc.invoke('feature-install:preview-capabilities', {
-      manifestCapabilities: manifest.capabilities,
-      featureId: manifest.id,
-    });
+    const capResult = await api.features.previewCapabilities(
+      manifest.capabilities,
+      manifest.id,
+    );
 
     hideStatus();
 
@@ -909,10 +918,7 @@ async function confirmInstall() {
   showStatus('Installing feature...');
 
   try {
-    const result = await api.ipc.invoke('feature-install:install', {
-      atUri,
-      userApproved: true,
-    });
+    const result = await api.features.install(atUri, true);
 
     if (result.error) {
       showStatus(`Install failed: ${result.error}`, 'error');
@@ -975,7 +981,7 @@ if (hasPeekAPI) {
   ];
 
   for (const topic of refreshTopics) {
-    api.subscribe(topic, () => {
+    api.pubsub.subscribe(topic, () => {
       loadFeatures();
     }, api.scopes?.GLOBAL);
   }

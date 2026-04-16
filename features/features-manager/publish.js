@@ -138,6 +138,7 @@ async function loadLocalFeatures() {
   }
 
   try {
+    // NOTE: `feature-publish:*` not yet covered by strict `api.features.*`.
     const result = await api.ipc.invoke('feature-publish:list-local');
 
     if (result.error) {
@@ -222,6 +223,7 @@ async function selectFeature(feature) {
   showStatus('Reading feature files...');
 
   try {
+    // NOTE: `feature-publish:*` not yet covered by strict `api.features.*`.
     const result = await api.ipc.invoke('feature-publish:read-feature-files', {
       featureId: feature.id,
     });
@@ -410,7 +412,7 @@ function base64ToBytes(b64) {
 function onLexSessionRefreshed(updated) {
   lexSession = updated;
   try {
-    api.publish('lex:session-changed', { session: updated }, api.scopes?.GLOBAL);
+    api.pubsub.publish('lex:session-changed', { session: updated }, api.scopes?.GLOBAL);
   } catch {}
 }
 
@@ -556,15 +558,22 @@ async function doPublish() {
 async function loadLexSession() {
   if (!hasPeekAPI) return;
 
-  // Try to get the session from lex settings
-  try {
-    const result = await api.settings.getExtKey('lex', 'session');
-    if (result && result.success && result.data) {
-      lexSession = result.data;
-      console.log('[features-manager:publish] Loaded lex session for', lexSession.handle);
+  // Try to get the session from lex settings.
+  // NOTE: `api.settings.getExtKey` is not part of the strict tile-preload API;
+  // cross-tile settings access is pending a pubsub-based replacement
+  // (docs `lex:get-session` / `lex:session-state`). Until implemented, we rely
+  // on the `lex:session-changed` pubsub broadcast (subscribed below) to
+  // populate `lexSession` after any lex login/logout.
+  if (typeof api.settings.getExtKey === 'function') {
+    try {
+      const result = await api.settings.getExtKey('lex', 'session');
+      if (result && result.success && result.data) {
+        lexSession = result.data;
+        console.log('[features-manager:publish] Loaded lex session for', lexSession.handle);
+      }
+    } catch (err) {
+      console.warn('[features-manager:publish] Could not load lex session:', err);
     }
-  } catch (err) {
-    console.warn('[features-manager:publish] Could not load lex session:', err);
   }
 }
 
@@ -780,7 +789,7 @@ retryBtn.addEventListener('click', () => {
 
 // PubSub: listen for session changes from lex feature
 if (hasPeekAPI) {
-  api.subscribe('lex:session-changed', (msg) => {
+  api.pubsub.subscribe('lex:session-changed', (msg) => {
     if (msg.session) {
       lexSession = msg.session;
       console.log('[features-manager:publish] Session updated for', lexSession.handle);

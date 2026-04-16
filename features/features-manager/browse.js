@@ -117,7 +117,7 @@ async function showInstallPreview(atUri) {
   showStatus('Resolving feature...');
 
   try {
-    const result = await api.ipc.invoke('feature-install:resolve', { atUri });
+    const result = await api.features.installResolve(atUri);
 
     if (result.error) {
       showStatus(result.error, 'error');
@@ -127,10 +127,10 @@ async function showInstallPreview(atUri) {
     const { manifest, source } = result;
 
     // Get capability preview
-    const capResult = await api.ipc.invoke('feature-install:preview-capabilities', {
-      manifestCapabilities: manifest.capabilities,
-      featureId: manifest.id,
-    });
+    const capResult = await api.features.previewCapabilities(
+      manifest.capabilities,
+      manifest.id,
+    );
 
     hideStatus();
 
@@ -205,10 +205,7 @@ async function confirmInstall() {
   showStatus('Installing feature...');
 
   try {
-    const result = await api.ipc.invoke('feature-install:install', {
-      atUri,
-      userApproved: true,
-    });
+    const result = await api.features.install(atUri, true);
 
     if (result.error) {
       showStatus(`Install failed: ${result.error}`, 'error');
@@ -234,7 +231,7 @@ async function loadInstalledFeatures() {
   if (!hasPeekAPI) return;
 
   try {
-    const result = await api.ipc.invoke('feature-registry:list');
+    const result = await api.features.list();
     if (result.entries) {
       installedFeatures = {};
       for (const entry of result.entries) {
@@ -258,9 +255,7 @@ async function searchPublisher(query) {
 
   try {
     // Step 1: Resolve publisher identity
-    const pubResult = await api.ipc.invoke('feature-browse:resolve-publisher', {
-      query,
-    });
+    const pubResult = await api.features.resolvePublisher(query);
 
     if (pubResult.error) {
       showStatus(pubResult.error, 'error');
@@ -278,6 +273,8 @@ async function searchPublisher(query) {
     showStatus('Listing published features...');
 
     // Step 2: List feature records from publisher's PDS
+    // NOTE: `feature-browse:list-by-publisher` not yet covered by strict
+    // `api.features.*` — retained as `api.ipc.invoke` until strict handler added.
     const listResult = await api.ipc.invoke('feature-browse:list-by-publisher', {
       did: pubResult.did,
       pdsUrl: pubResult.pdsUrl,
@@ -503,7 +500,7 @@ previewInstallBtn.addEventListener('click', confirmInstall);
 // ─── PubSub listeners ──────────────────────────────────────────────
 
 if (hasPeekAPI) {
-  api.subscribe('feature:installed', async () => {
+  api.pubsub.subscribe('feature:installed', async () => {
     await loadInstalledFeatures();
     renderResults();
   }, api.scopes?.GLOBAL);

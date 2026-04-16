@@ -114,22 +114,6 @@
       </div>
     </div>
 
-    <script>
-      // V2 tile runtime compat shims
-      (function() {
-        const api = window.app;
-        if (!api) return;
-        const isTileV2 = typeof api.initialize === 'function';
-        if (!isTileV2) return;
-        if (api.pubsub && !api.publish) {
-          api.publish = api.pubsub.publish;
-          api.subscribe = api.pubsub.subscribe;
-        }
-        if (api.settings && !api.settings.getExtKey) {
-          api.settings.getExtKey = (extId, key) => api.settings.get(extId + '.' + key);
-        }
-      })();
-    </script>
     <script type="module" src="manage.js"></script>
   </body>
 </html>
