@@ -582,12 +582,12 @@ document.getElementById('extractBtn').addEventListener('click', async () => {
 
 // Listen for new entity extractions
 if (api) {
-  api.subscribe('entities:extracted', () => {
+  api.pubsub.subscribe('entities:extracted', () => {
     if (currentView === VIEW_LIST) renderEntities();
   }, api.scopes.GLOBAL);
 
   // Also listen for editor changes that might affect entities
-  api.subscribe('editor:changed', () => {
+  api.pubsub.subscribe('editor:changed', () => {
     if (currentView === VIEW_LIST) renderEntities();
   }, api.scopes.GLOBAL);
 
@@ -602,15 +602,15 @@ if (api) {
     };
   })();
 
-  api.subscribe('sync:pull-completed', () => {
+  api.pubsub.subscribe('sync:pull-completed', () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('item:created', () => {
+  api.pubsub.subscribe('item:created', () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 
-  api.subscribe('item:deleted', () => {
+  api.pubsub.subscribe('item:deleted', () => {
     debouncedRefresh();
   }, api.scopes.GLOBAL);
 

@@ -237,7 +237,7 @@ function handlePageLoad(msg) {
 
       if (entities.length > 0) {
         // Publish extraction results
-        api.publish('entities:extracted', {
+        api.pubsub.publish('entities:extracted', {
           url,
           entities: entities.map(e => ({
             id: e.id,
@@ -298,7 +298,7 @@ async function extractCurrentPage() {
 
   // Always publish results so page entities panel updates
   // (even if empty, so the panel can exit "Rescanning..." state)
-  api.publish('entities:extracted', {
+  api.pubsub.publish('entities:extracted', {
     url,
     entities: (entities || []).map(e => ({
       id: e.id,
@@ -390,7 +390,7 @@ const extension = {
     this.registerCommands();
 
     // Listen for page loads (item:created events for URL items)
-    api.subscribe('item:created', (msg) => {
+    api.pubsub.subscribe('item:created', (msg) => {
       if (msg.itemType === 'url') {
         handlePageLoad(msg);
       }
@@ -400,14 +400,14 @@ const extension = {
     // Fires when page-title-updated occurs, meaning the page has loaded
     // enough for content extraction. This catches pages that already exist
     // in history (no item:created) and provides a reliable extraction signal.
-    api.subscribe('page:content-ready', (msg) => {
+    api.pubsub.subscribe('page:content-ready', (msg) => {
       if (msg.url && msg.url.startsWith('http')) {
         handlePageLoad({ content: msg.url, title: msg.title || '' });
       }
     }, api.scopes.GLOBAL);
 
     // Listen for manual extraction requests via pubsub
-    api.subscribe('entities:extract', async (msg) => {
+    api.pubsub.subscribe('entities:extract', async (msg) => {
       if (msg.url) {
         let entities = [];
         try {
@@ -419,7 +419,7 @@ const extension = {
 
         // Always publish extraction results so page entities panel updates
         // (even if empty, so the panel can exit "Rescanning..." state)
-        api.publish('entities:extracted', {
+        api.pubsub.publish('entities:extracted', {
           url: msg.url,
           entities: entities.map(e => ({
             id: e.id,
@@ -430,7 +430,7 @@ const extension = {
           }))
         }, api.scopes.GLOBAL);
 
-        api.publish('entities:extract:response', {
+        api.pubsub.publish('entities:extract:response', {
           url: msg.url,
           entities
         }, api.scopes.GLOBAL);
@@ -438,20 +438,20 @@ const extension = {
     }, api.scopes.GLOBAL);
 
     // Listen for entity queries
-    api.subscribe('entities:search', async (msg) => {
+    api.pubsub.subscribe('entities:search', async (msg) => {
       const entities = await getEntities({
         entityType: msg.type,
         search: msg.query,
         limit: msg.limit || 50
       });
-      api.publish('entities:search:response', {
+      api.pubsub.publish('entities:search:response', {
         query: msg.query,
         entities
       }, api.scopes.GLOBAL);
     }, api.scopes.GLOBAL);
 
     // Listen for get-for-url requests
-    api.subscribe('entities:get-for-url', async (msg) => {
+    api.pubsub.subscribe('entities:get-for-url', async (msg) => {
       if (!msg.url) return;
       // Query item_events where content = url to find entity observations
       const events = await api.datastore.queryItemEvents({
@@ -472,7 +472,7 @@ const extension = {
             entities.push(item.data);
           }
         }
-        api.publish('entities:get-for-url:response', {
+        api.pubsub.publish('entities:get-for-url:response', {
           url: msg.url,
           entities
         }, api.scopes.GLOBAL);
