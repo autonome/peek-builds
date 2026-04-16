@@ -67,6 +67,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [ ] Missing `api.oauth.startLoopback/awaitCallback` surface in tile-preload (used by wonderwall). Needs an `oauth` capability + strict tile IPC before v1 shim removal — wonderwall will break otherwise.
   - [ ] Missing `api.datastore.extractPageContent` surface in tile-preload (used by entities). Feature-specific helper; needs strict routing or extraction to a different capability.
   - [ ] Missing `api.commands.unregister` in tile-preload (only `register` exposed). Used by entities and others for cleanup.
+  - [ ] Missing `api.screen.getPrimaryDisplay`, `api.window.setVisibleOnAllWorkspaces`, `api.context.setMode` (setMode is an alias over set+modes cap but not wrapped), `api.context.getWindowsInSpace` (alias over queryWindows), `api.session.saveSpaceWorkspaces`. Discovered in spaces migration.
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
   - [x] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
