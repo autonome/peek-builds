@@ -68,10 +68,13 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [ ] Missing `api.datastore.extractPageContent` surface in tile-preload (used by entities). Feature-specific helper; needs strict routing or extraction to a different capability.
   - [ ] Missing `api.commands.unregister` in tile-preload (only `register` exposed). Used by entities and others for cleanup.
   - [ ] Missing `api.screen.getPrimaryDisplay`, `api.window.setVisibleOnAllWorkspaces`, `api.context.setMode` (setMode is an alias over set+modes cap but not wrapped), `api.context.getWindowsInSpace` (alias over queryWindows), `api.session.saveSpaceWorkspaces`. Discovered in spaces migration.
+  - [ ] Missing strict surfaces flagged by features-manager: `feature-update:*` (check-all/apply/set-policy — 5 sites), `feature-dev:*` (reload/validate/pick-directory/create — 4 sites), `feature-publish:*` (list-local/read-feature-files — 2 sites), `feature-devtools:open` (1 site), `feature-browse:list-by-publisher` (1 site). Currently kept as `api.ipc.invoke(...)` with NOTE comments.
+  - [ ] Cross-tile `api.settings.getExtKey('lex', 'session')` in features-manager — needs `lex:get-session` pubsub request/response pattern implemented in lex feature.
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
   - [x] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
-  - [ ] Round 3 (complex): entities, spaces, groups, editor, lex, wonderwall, features-manager (hud is already core, not v1)
+  - [x] Round 3 (complex): entities, spaces, groups, editor, lex, wonderwall, features-manager
+  - **Phase 3 complete** — all 26 features migrated to strict capability-gated calls; v2 shim blocks dropped from v2 paths; v1 legacy fallback branches preserved pending Phase 4 shim removal
 - [ ] Phase 4 — remove shims + hard-fail stubs (1-2 days)
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
 
