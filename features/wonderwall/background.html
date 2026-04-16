@@ -22,15 +22,6 @@
 
   if (hasPeekAPI && isTileV2) {
     // ── V2 Tile Runtime ──
-    if (api.pubsub && !api.publish) {
-      api.publish = api.pubsub.publish;
-      api.subscribe = api.pubsub.subscribe;
-    }
-
-    if (api.settings && !api.settings.getExtKey) {
-      api.settings.getExtKey = (extId, key) => api.settings.get(`${extId}.${key}`);
-    }
-
     console.log(`[ext:${extId}] initializing v2 tile`);
     await api.initialize();
 

@@ -6,7 +6,7 @@
  * 2. Define the OAuth config (authUrl, tokenUrl, scopes, clientId)
  * 3. Import and register in services/index.js
  *
- * Token storage uses api.settings.setKey() / getKey() with a per-service key.
+ * Token storage uses api.settings.get() / set() with a per-service key.
  */
 
 const api = typeof window !== 'undefined' && window.app ? window.app : null;
@@ -34,8 +34,8 @@ export function createService({ id, name, icon, color, oauth }) {
     async getToken() {
       if (!api) return null;
       try {
-        const result = await api.settings.getKey(STORAGE_KEY);
-        if (result.success && result.data) return result.data;
+        const result = await api.settings.get(STORAGE_KEY);
+        if (result && !result.error && result.value) return result.value;
       } catch (err) {
         console.warn(`[wonderwall:${id}] Failed to load token:`, err);
       }
@@ -45,13 +45,13 @@ export function createService({ id, name, icon, color, oauth }) {
     /** Persist token data. */
     async setToken(tokenData) {
       if (!api) return;
-      await api.settings.setKey(STORAGE_KEY, tokenData);
+      await api.settings.set(STORAGE_KEY, tokenData);
     },
 
     /** Remove stored token data (disconnect). */
     async clearToken() {
       if (!api) return;
-      await api.settings.setKey(STORAGE_KEY, null);
+      await api.settings.set(STORAGE_KEY, null);
     },
 
     /** Check whether the service has a stored token. */
