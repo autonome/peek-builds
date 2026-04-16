@@ -156,6 +156,32 @@ export interface DialogsCapability {
 export type FeatureSourceType = 'builtin' | 'local' | 'atproto' | 'url' | 'dev';
 
 /**
+ * OAuth capability: permission to drive a browser-based OAuth loopback
+ * flow. The handler opens a local HTTP server on 127.0.0.1 with an
+ * OS-assigned port and waits for the provider to redirect to it.
+ *
+ * May be expressed in the manifest as:
+ *   - `true` — tile may start a loopback for ANY provider
+ *   - `{ providers: [...] }` — tile may only start a loopback when the
+ *     advertised provider hint matches one of the listed strings. A
+ *     single `'*'` entry grants blanket access (equivalent to `true`
+ *     but keeps the object shape).
+ *
+ * The provider hint is optional on `start-loopback` — when the caller
+ * doesn't pass one, the allowlist is NOT consulted (the capability's
+ * presence is sufficient). Consuming tiles that care about per-provider
+ * restrictions should always pass a hint.
+ *
+ * The `await-callback` op never carries a provider hint (it resolves a
+ * pending flow by loopback port) and is therefore only gated on the
+ * capability's presence.
+ */
+export interface OAuthCapability {
+  /** If present, only these provider strings may be used with start-loopback */
+  providers?: string[];
+}
+
+/**
  * Features capability: access to the feature registry — listing
  * installed features, reading metadata/history, and (for privileged
  * manager tiles) installing/enabling/disabling/removing features.
@@ -196,6 +222,37 @@ export interface FeaturesCapability {
 }
 
 /**
+ * Settings capability: permission to read / write the tile's own settings
+ * namespace and (optionally) read OTHER tiles' settings keys.
+ *
+ * May be expressed in the manifest as:
+ *   - `true` — read/write the tile's own settings; no cross-tile access.
+ *   - `{ readForeign: ['ext-id', ...] }` — read/write own settings AND
+ *     read (read-only) from the listed tiles' `feature_settings`
+ *     namespaces. A single `'*'` entry grants blanket foreign-read
+ *     access (intended for privileged builtins — external tiles SHOULD
+ *     enumerate).
+ *
+ * Strict foreign-writes are NOT exposed. A tile can write only within
+ * its own scope via `tile:settings:set`. Cross-tile writes happen today
+ * through the legacy `feature-settings-set-key` channel which the tile
+ * preload does not expose.
+ *
+ * Authors using the plain `settings: true` form who still need foreign
+ * reads may add the top-level `settingsForeign` sibling array as a
+ * fallback — the strict `tile:settings:get-foreign` handler consults
+ * both shapes.
+ */
+export interface SettingsCapability {
+  /**
+   * Allowlist of other tile IDs whose `feature_settings` may be read
+   * via `api.settings.getExtKey(extId, key)`. Omit to deny foreign
+   * reads entirely; set to `['*']` for blanket access.
+   */
+  readForeign?: string[];
+}
+
+/**
  * All capabilities a tile can request
  */
 export interface TileCapabilities {
@@ -212,12 +269,21 @@ export interface TileCapabilities {
   sync?: boolean;
   /** Can read/write theme settings */
   theme?: boolean;
-  /** Can read/write user settings */
-  settings?: boolean;
+  /** Can read/write user settings (own scope; foreign-read via readForeign) */
+  settings?: boolean | SettingsCapability;
+  /**
+   * Fallback top-level allowlist for foreign-setting reads, usable when
+   * `settings` is declared as the plain boolean `true`. Consulted by
+   * `tile:settings:get-foreign` only when `settings.readForeign` is
+   * absent from the grant. Prefer `settings: { readForeign: [...] }`.
+   */
+  settingsForeign?: string[];
   /** Can read/write application context (mode, spaces, user keys) */
   context?: boolean | ContextCapability;
   /** Can invoke native file dialogs (save/open) */
   dialogs?: boolean | DialogsCapability;
+  /** Can drive an OAuth loopback server */
+  oauth?: boolean | OAuthCapability;
   /** Can query / install / manage installed features */
   features?: boolean | FeaturesCapability;
 }
@@ -639,6 +705,70 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
     }
 
 
+    // Validate settings capability shape — must be boolean or { readForeign?: string[] }
+    if (caps.settings !== undefined) {
+      const ss = caps.settings;
+      if (typeof ss === 'boolean') {
+        // valid
+      } else if (ss && typeof ss === 'object') {
+        const ssObj = ss as Record<string, unknown>;
+        if (ssObj.readForeign !== undefined) {
+          if (!Array.isArray(ssObj.readForeign)) {
+            errors.push({ path: 'capabilities.settings.readForeign', message: 'readForeign must be an array of strings' });
+          } else {
+            for (let i = 0; i < ssObj.readForeign.length; i++) {
+              const k = ssObj.readForeign[i];
+              if (typeof k !== 'string' || k.length === 0) {
+                errors.push({ path: `capabilities.settings.readForeign[${i}]`, message: 'readForeign entries must be non-empty strings' });
+              }
+            }
+          }
+        }
+      } else {
+        errors.push({ path: 'capabilities.settings', message: 'settings must be boolean or { readForeign?: string[] }' });
+      }
+    }
+
+    // Validate settingsForeign top-level fallback allowlist — optional
+    // array of non-empty strings. Independent of settings shape so
+    // authors using `settings: true` can still opt in to foreign reads.
+    if (caps.settingsForeign !== undefined) {
+      if (!Array.isArray(caps.settingsForeign)) {
+        errors.push({ path: 'capabilities.settingsForeign', message: 'settingsForeign must be an array of strings' });
+      } else {
+        for (let i = 0; i < (caps.settingsForeign as unknown[]).length; i++) {
+          const k = (caps.settingsForeign as unknown[])[i];
+          if (typeof k !== 'string' || (k as string).length === 0) {
+            errors.push({ path: `capabilities.settingsForeign[${i}]`, message: 'settingsForeign entries must be non-empty strings' });
+          }
+        }
+      }
+    }
+
+    // Validate oauth capability shape — must be boolean or { providers?: string[] }
+    if (caps.oauth !== undefined) {
+      const oc = caps.oauth;
+      if (typeof oc === 'boolean') {
+        // valid
+      } else if (oc && typeof oc === 'object') {
+        const ocObj = oc as Record<string, unknown>;
+        if (ocObj.providers !== undefined) {
+          if (!Array.isArray(ocObj.providers)) {
+            errors.push({ path: 'capabilities.oauth.providers', message: 'providers must be an array of strings' });
+          } else {
+            for (let i = 0; i < ocObj.providers.length; i++) {
+              const p = ocObj.providers[i];
+              if (typeof p !== 'string' || p.length === 0) {
+                errors.push({ path: `capabilities.oauth.providers[${i}]`, message: 'providers entries must be non-empty strings' });
+              }
+            }
+          }
+        }
+      } else {
+        errors.push({ path: 'capabilities.oauth', message: 'oauth must be boolean or { providers?: string[] }' });
+      }
+    }
+
     // Validate dialogs capability shape — must be boolean or { types?: ('save'|'open')[] }
     if (caps.dialogs !== undefined) {
       const dc = caps.dialogs;
@@ -839,9 +969,32 @@ export function resolveCapabilities(
     granted.theme = true;
   }
 
-  // Settings: grant as requested
+  // Settings: preserve object shape so the strict `tile:settings:get-foreign`
+  // handler can read the `readForeign` allowlist. Manifests may declare
+  // `settings: true` OR `settings: { readForeign: [...] }`.
   if (requested.settings) {
-    granted.settings = true;
+    if (requested.settings === true) {
+      granted.settings = true;
+    } else if (typeof requested.settings === 'object') {
+      granted.settings = { ...requested.settings };
+    }
+  }
+
+  // settingsForeign fallback allowlist — granted verbatim when present.
+  // This piggybacks on the `settings` grant and is a no-op without it.
+  if (Array.isArray(requested.settingsForeign) && requested.settingsForeign.length > 0) {
+    granted.settingsForeign = [...requested.settingsForeign];
+  }
+
+  // OAuth: preserve object shape so the strict `tile:oauth:*` handlers
+  // can read the `providers` allowlist. Manifests may declare
+  // `oauth: true` OR `oauth: { providers: [...] }`.
+  if (requested.oauth) {
+    if (requested.oauth === true) {
+      granted.oauth = true;
+    } else if (typeof requested.oauth === 'object') {
+      granted.oauth = { ...requested.oauth };
+    }
   }
 
   // Context: preserve object shape so strict IPC handlers can read the
