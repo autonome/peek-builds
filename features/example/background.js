@@ -7,6 +7,12 @@
  * - Receiving and storing image data
  * - Displaying stored images
  *
+ * This is the reference template for new Peek extensions. It uses the
+ * strict (v2 tile) API shape directly:
+ *   - api.pubsub.publish / api.pubsub.subscribe (no flat api.publish/subscribe)
+ *   - api.datastore.* with tables declared in the manifest
+ *   - api.window.open guarded by the window capability
+ *
  * See docs/PEEK-API.md for the complete API reference.
  */
 
@@ -81,7 +87,7 @@ async function handleImageReceived(ctx) {
 
   // Notify that a new image was added
   if (hasPeekAPI) {
-    api.publish('example:image-added', { id: imageId, ...imageData }, api.scopes.GLOBAL);
+    api.pubsub.publish('example:image-added', { id: imageId, ...imageData }, api.scopes.GLOBAL);
   }
 
   // Open the gallery to show the new image
