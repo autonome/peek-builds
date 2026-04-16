@@ -61,6 +61,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [ ] Missing `api.escape.onEscape` surface in tile-preload.ts (used by tags, entities, search, lex, lists). Current convention: `if (api.escape)` guard — works only with v1 preload.
   - [ ] Missing `api.scopes.SYSTEM` in tile-preload.ts (only SELF=2 and GLOBAL=3 exposed). `api.scopes.SYSTEM` silently evaluates to `undefined` which publishImpl defaults to SELF — semantic drift for lifecycle events like `ext:ready`, `app:shutdown`.
   - [ ] Settings response shape: strict path returns `{value, error}` but several features destructure `{success, data}` (v1 shape). Preload may wrap back, but needs audit. Found in peeks so far.
+  - [ ] `api.window.close` in strict path is fire-and-forget `ipcRenderer.send` (no promise). Document this; any existing `.catch()` chains need try/catch instead. Discovered in slides migration.
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
   - [ ] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
