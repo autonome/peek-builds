@@ -283,22 +283,52 @@ export function installFromBundle(
   const manifestJson = JSON.stringify(manifest, null, 2);
   const manifestCid = computeManifestHash(manifestJson);
 
-  // Write files to target directory
-  const targetDir = path.join(registry.getFeaturesDir(), id);
+  // Atomic install:
+  //   1. Write all files to a sibling temp directory (`.tmp-<id>-<random>`).
+  //   2. If anything fails, blow away the temp dir — target is untouched.
+  //   3. Remove any existing target (force reinstall), then rename temp -> target.
+  //
+  // This avoids leaving a half-written feature directory behind if a write
+  // fails partway through, which is especially important for network-sourced
+  // installs (atproto) where a blob download could blow up mid-way.
+  const featuresDir = registry.getFeaturesDir();
+  const targetDir = path.join(featuresDir, id);
+  const tempSuffix = crypto.randomBytes(6).toString('hex');
+  const tempDir = path.join(featuresDir, `.tmp-${id}-${tempSuffix}`);
+
   try {
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
+    if (!fs.existsSync(featuresDir)) {
+      fs.mkdirSync(featuresDir, { recursive: true });
     }
+    fs.mkdirSync(tempDir, { recursive: true });
 
     for (const [filePath, content] of bundle.files) {
-      const fullPath = path.join(targetDir, filePath);
+      const fullPath = path.join(tempDir, filePath);
       const dir = path.dirname(fullPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
       fs.writeFileSync(fullPath, content);
     }
+
+    // All files written successfully — swap temp into place.
+    // If target already exists (force reinstall), remove it first.
+    if (fs.existsSync(targetDir)) {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+    fs.renameSync(tempDir, targetDir);
   } catch (err) {
+    // Any failure: clean up the temp dir so we don't leak partial writes
+    // in the features directory. Target is guaranteed untouched because
+    // we haven't renamed yet (or the rename itself failed, in which case
+    // targetDir may or may not exist — we leave it alone either way).
+    try {
+      if (fs.existsSync(tempDir)) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Best-effort cleanup; don't mask the original error.
+    }
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, error: `Failed to write files: ${message}` };
   }
