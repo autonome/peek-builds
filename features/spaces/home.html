@@ -63,6 +63,12 @@
     <peek-grid-toolbar class="grid-toolbar" view-mode="columns"></peek-grid-toolbar>
     <peek-grid class="cards" min-item-width="250" gap="10"></peek-grid>
 
-    <script type="module" src="home.js"></script>
+    <script type="module">
+      // Initialize tile (validates capability token) before loading home.js
+      if (window.app && typeof window.app.initialize === 'function') {
+        await window.app.initialize();
+      }
+      await import('./home.js');
+    </script>
   </body>
 </html>

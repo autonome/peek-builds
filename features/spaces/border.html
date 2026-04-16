@@ -37,7 +37,7 @@
 <body>
   <div class="border" id="border"></div>
   <div class="label" id="label"></div>
-  <script>
+  <script type="module">
     const params = new URLSearchParams(window.location.search);
     const color = params.get('color') || '#007aff';
     const name = params.get('name') || 'Space';
@@ -47,13 +47,11 @@
 
     // Listen for updates from background.js
     if (window.app) {
-      // V2 tile runtime shims
-      if (typeof window.app.initialize === 'function') {
-        if (window.app.pubsub && !window.app.subscribe) {
-          window.app.subscribe = window.app.pubsub.subscribe;
-        }
+      const api = window.app;
+      if (typeof api.initialize === 'function') {
+        await api.initialize();
       }
-      window.app.subscribe('spaces:border-update', (msg) => {
+      api.pubsub.subscribe('spaces:border-update', (msg) => {
         if (msg.color) {
           document.documentElement.style.setProperty('--color', msg.color);
           document.getElementById('border').style.borderColor = msg.color;
@@ -61,7 +59,7 @@
         if (msg.name) {
           document.getElementById('label').textContent = msg.name;
         }
-      }, window.app.scopes.GLOBAL);
+      }, api.scopes.GLOBAL);
     }
   </script>
 </body>

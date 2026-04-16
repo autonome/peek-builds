@@ -44,7 +44,7 @@ async function showBorder(color, name) {
       const exists = await api.window.exists(borderWindowId);
       if (exists?.exists) {
         // Update color and name via message
-        api.publish('spaces:border-update', { color: safeColor, name }, api.scopes.GLOBAL);
+        api.pubsub.publish('spaces:border-update', { color: safeColor, name }, api.scopes.GLOBAL);
         return;
       }
     } catch { /* window gone */ }
@@ -128,7 +128,7 @@ async function handleItemCreated(msg) {
     // Tag the item with the space tag
     const result = await api.datastore.tagItem(itemId, spaceTagId);
     if (result.success && !result.alreadyExists) {
-      api.publish('tag:item-added', {
+      api.pubsub.publish('tag:item-added', {
         tagId: spaceTagId,
         itemId,
         source: 'spaces-auto-tag'
@@ -241,10 +241,10 @@ async function openSpace(spaceName) {
   activeSpaceColor = tag.color;
 
   // Check for saved workspace state
-  const wsResult = await api.settings.getExtKey('spaces', 'workspace:' + tag.id);
+  const wsResult = await api.settings.get('workspace:' + tag.id);
   let restored = false;
-  if (wsResult.success && wsResult.data) {
-    const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;
+  if (!wsResult.error && wsResult.value) {
+    const snapshot = typeof wsResult.value === 'string' ? JSON.parse(wsResult.value) : wsResult.value;
     if (snapshot.version === 1 && Array.isArray(snapshot.windows) && snapshot.windows.length > 0) {
       // Restore saved windows
       for (const w of snapshot.windows) {
@@ -333,13 +333,13 @@ async function switchSpace(targetName) {
 
 const initCommands = () => {
   // "open space <name>"
-  api.subscribe('cmd:execute:open space', async (msg) => {
+  api.pubsub.subscribe('cmd:execute:open space', async (msg) => {
     const result = await openSpace(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
-  api.publish('cmd:register', {
+  api.pubsub.publish('cmd:register', {
     name: 'open space',
     description: 'Open a space (restore saved state or show home)',
     source: 'spaces',
@@ -348,13 +348,13 @@ const initCommands = () => {
   }, api.scopes.GLOBAL);
 
   // "close space"
-  api.subscribe('cmd:execute:close space', async (msg) => {
+  api.pubsub.subscribe('cmd:execute:close space', async (msg) => {
     const result = await closeSpace();
     if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
-  api.publish('cmd:register', {
+  api.pubsub.publish('cmd:register', {
     name: 'close space',
     description: 'Save window state and close all space windows',
     source: 'spaces',
@@ -362,13 +362,13 @@ const initCommands = () => {
   }, api.scopes.GLOBAL);
 
   // "switch space <name>"
-  api.subscribe('cmd:execute:switch space', async (msg) => {
+  api.pubsub.subscribe('cmd:execute:switch space', async (msg) => {
     const result = await switchSpace(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
-  api.publish('cmd:register', {
+  api.pubsub.publish('cmd:register', {
     name: 'switch space',
     description: 'Close current space and open another',
     source: 'spaces',
@@ -381,7 +381,7 @@ const initCommands = () => {
 
 const uninitCommands = () => {
   for (const name of ['open space', 'close space', 'switch space']) {
-    api.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
   }
 };
 
@@ -393,15 +393,15 @@ const init = async () => {
   initCommands();
 
   // Subscribe to item:created for auto-tagging
-  api.subscribe('item:created', handleItemCreated, api.scopes.GLOBAL);
+  api.pubsub.subscribe('item:created', handleItemCreated, api.scopes.GLOBAL);
 
   // Subscribe to tag:item-removed for mode reset
-  api.subscribe('tag:item-removed', handleTagRemoved, api.scopes.GLOBAL);
+  api.pubsub.subscribe('tag:item-removed', handleTagRemoved, api.scopes.GLOBAL);
 
   // Subscribe to focus events for border visibility
-  api.subscribe('window:focused', () => updateBorderVisibility(), api.scopes.GLOBAL);
-  api.subscribe('window:closed', () => updateBorderVisibility(), api.scopes.GLOBAL);
-  api.subscribe('app:focus-changed', (msg) => {
+  api.pubsub.subscribe('window:focused', () => updateBorderVisibility(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('window:closed', () => updateBorderVisibility(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('app:focus-changed', (msg) => {
     if (!msg?.focused) {
       // App lost focus — hide border
       scheduleHideBorder();
