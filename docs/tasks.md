@@ -57,19 +57,26 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [x] Phase 2 — strict window IPC + create/query/manage/urls allowlist
   - [x] Phase 2 — strict features IPC + read/install/manage/sources allowlist
   - **Phase 2 complete** — all strict IPC surfaces landed; next is Phase 3 per-feature migration
-  - [ ] Missing `api.sync.*` surface (discovered during sync migration; feature declares `sync: true` cap but tile-preload has no strict routing for it; `background.js` guards the call)
-  - [x] Missing `api.window.exists/show/hide/setIgnoreMouseEvents` surface — strict handlers added, gated by `window.manage`
-  - [ ] Missing `api.escape.onEscape` surface in tile-preload.ts (used by tags, entities, search, lex, lists). Current convention: `if (api.escape)` guard — works only with v1 preload.
-  - [ ] Missing `api.scopes.SYSTEM` in tile-preload.ts (only SELF=2 and GLOBAL=3 exposed). `api.scopes.SYSTEM` silently evaluates to `undefined` which publishImpl defaults to SELF — semantic drift for lifecycle events like `ext:ready`, `app:shutdown`.
-  - [ ] Settings response shape: strict path returns `{value, error}` but several features destructure `{success, data}` (v1 shape). Preload may wrap back, but needs audit. Found in peeks so far.
-  - [ ] `api.window.close` in strict path is fire-and-forget `ipcRenderer.send` (no promise). Document this; any existing `.catch()` chains need try/catch instead. Discovered in slides migration.
-  - [ ] Missing strict surfaces: `api.window.center/centerAll/maximize/fullscreen/getFocusedVisibleWindowId/setOverlayFocusTarget`, `api.izui.*`, `api.escape.*`. Used by `windows` feature and others; currently fall back to legacy preload in separate BrowserWindows.
-  - [ ] Missing `api.oauth.startLoopback/awaitCallback` surface in tile-preload (used by wonderwall). Needs an `oauth` capability + strict tile IPC before v1 shim removal — wonderwall will break otherwise.
-  - [ ] Missing `api.datastore.extractPageContent` surface in tile-preload (used by entities). Feature-specific helper; needs strict routing or extraction to a different capability.
-  - [ ] Missing `api.commands.unregister` in tile-preload (only `register` exposed). Used by entities and others for cleanup.
-  - [ ] Missing `api.screen.getPrimaryDisplay`, `api.window.setVisibleOnAllWorkspaces`, `api.context.setMode` (setMode is an alias over set+modes cap but not wrapped), `api.context.getWindowsInSpace` (alias over queryWindows), `api.session.saveSpaceWorkspaces`. Discovered in spaces migration.
-  - [ ] Missing strict surfaces flagged by features-manager: `feature-update:*` (check-all/apply/set-policy — 5 sites), `feature-dev:*` (reload/validate/pick-directory/create — 4 sites), `feature-publish:*` (list-local/read-feature-files — 2 sites), `feature-devtools:open` (1 site), `feature-browse:list-by-publisher` (1 site). Currently kept as `api.ipc.invoke(...)` with NOTE comments.
-  - [ ] Cross-tile `api.settings.getExtKey('lex', 'session')` in features-manager — needs `lex:get-session` pubsub request/response pattern implemented in lex feature.
+  - **Missing strict surfaces (gap fill complete)**:
+    - [x] `api.window.exists/show/hide/setIgnoreMouseEvents` — gated by `window.manage`
+    - [x] `api.window.center/centerAll/maximize/fullscreen/setOverlayFocusTarget/setVisibleOnAllWorkspaces` — gated by `window.manage`; `getFocusedVisibleWindowId` gated by `window.query`
+    - [x] `api.window.exists` return shape now supports both `{exists}` and `{success, data}` destructure styles
+    - [x] `api.window.close` fire-and-forget documented in tile-preload.ts
+    - [x] `api.escape.onEscape` — no capability gate (UX primitive)
+    - [x] `api.commands.unregister` — gated by existing `commands` capability
+    - [x] `api.screen.getPrimaryDisplay` — no cap (read-only info)
+    - [x] `api.session.saveSpaceWorkspaces` — new `session` capability
+    - [x] `api.settings.getExtKey` — new `settings.readForeign` allowlist (or top-level `settingsForeign` fallback)
+    - [x] `api.oauth.startLoopback/awaitCallback` — new `oauth` capability with optional providers allowlist
+    - [x] `api.sync.syncAll` — new `sync` capability (builtin-only)
+    - [x] `api.izui.*` — new `izui` capability
+    - [x] `api.datastore.extractPageContent` — under existing `datastore` capability
+    - [x] `api.features.*` admin: update/dev/publish/devtools/browse actions (extends `FeaturesCapability`); features-manager `api.ipc.invoke` call sites migrated to `api.features.*`
+  - **Still open (lower priority / defer to Phase 4 decisions)**:
+    - [ ] `api.scopes.SYSTEM` semantic in tile-preload (currently undefined → defaults to SELF). Affects lifecycle events.
+    - [ ] Settings response shape audit: `{value, error}` strict vs `{success, data}` callers — peeks, slides, wonderwall use v1 shape
+    - [ ] `api.context.setMode`/`getWindowsInSpace` are aliases over already-strict set+modes/queryWindows — not wrapped explicitly
+    - [ ] Cross-tile `api.settings.getExtKey('lex', 'session')` in features-manager can also use the new `settings.readForeign` path; or implement `lex:get-session` pubsub request/response (TBD)
 - [ ] Phase 3 — per-feature migration in 3 complexity rounds (2-4 weeks)
   - [x] Round 1 (trivial): sync, widget-demo, helpdocs, websearch, mcp-server, dropzone, timers
   - [x] Round 2 (moderate): tag-actions, peeks, lists, pagestream, slides, scripts, windows, feeds, search, tags, sheets, example
@@ -95,6 +102,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 Keep short — for recent context only. Prune after a few weeks.
 
+- 2026-04-16 Trimming Phase 3 gap-fill: new capabilities (escape/session/izui/oauth/sync/settings.readForeign); extended window ops; features admin; extract-page-content (2164 tests passing)
+- 2026-04-16 Trimming Phase 3 closed: all 26 features migrated to strict capabilities
 - 2026-04-16 Trimming Phase 2 closed: strict window + features IPC + settings-cleanup audit (2065 tests passing)
 - 2026-04-16 Bundled TWP translate extension (chrome-extensions/twp/) + commands for all installed browser extensions with options pages
 - 2026-04-16 Strict `tile:context:*` + `tile:dialogs:*` IPC with allowlists (trimming Phase 2)
