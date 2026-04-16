@@ -83,6 +83,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
   - [x] Round 3 (complex): entities, spaces, groups, editor, lex, wonderwall, features-manager
   - **Phase 3 complete** — all 26 features migrated to strict capability-gated calls; v2 shim blocks dropped from v2 paths; v1 legacy fallback branches preserved pending Phase 4 shim removal
 - [x] Phase 4 — removed v1-compat shims + hard-fail stubs; deleted v1 else-branches in 22 feature HTMLs; 54 new stub tests; 5 runtime-breaking callers fixed (pagewidgets-sample, files, groups, tags, features-manager)
+  - [x] **Datastore restoration** — Phase 4 over-reached and stubbed out the `api.datastore.*` named methods that every feature actually calls. Restored as legacy-channel routes (thin wrappers over `datastore-*` IPC in ipc.ts). The generic strict surface (`api.datastore.{get,set,query,extractPageContent}`) remains unchanged alongside it.
+  - [ ] Follow-up: build strict `tile:datastore:*` handlers for methods without them (renameTag/updateTagColor/deleteTag/queryItemVisits/getHistory/updateItemTitle/updateItemFavicon/hardDeleteItem/recordItemVisit/getItemVisits/trackNavigation/queryItemsByFrecency/addAddress-family). Then migrate callers to strict and reintroduce hard-fail stubs for the named methods.
 - [ ] Phase 5 — strict-mode env flag + generated typings (ongoing)
 
 ### Features-manager atproto plan phases (from `features/features-manager/PLAN.md`)
