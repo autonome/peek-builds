@@ -179,7 +179,7 @@ const init = async () => {
   initCommands();
 
   // Track app focus to show/hide overlay
-  api.subscribe('app:focus-changed', async (msg) => {
+  api.pubsub.subscribe('app:focus-changed', async (msg) => {
     appFocused = !!msg.focused;
     if (enabled && overlayWindowId) {
       if (appFocused) {
