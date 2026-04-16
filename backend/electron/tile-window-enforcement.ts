@@ -29,8 +29,20 @@ import type { CapabilityGrant, WindowCapability } from './tile-manifest.js';
  *   window the tile does not own.
  * - `list` — enumerate windows; gated by `query`.
  * - `info` — inspect the tile's own window; gated by `query`.
+ * - `exists` — check whether a window id is still open; gated by `manage`.
+ * - `show` — make a hidden window visible; gated by `manage`.
+ * - `hide` — hide a visible window; gated by `manage`.
+ * - `set-ignore-mouse` — toggle click-through on a window; gated by `manage`.
  */
-export type WindowOp = 'open' | 'close' | 'list' | 'info';
+export type WindowOp =
+  | 'open'
+  | 'close'
+  | 'list'
+  | 'info'
+  | 'exists'
+  | 'show'
+  | 'hide'
+  | 'set-ignore-mouse';
 
 export type WindowCheckResult =
   | { ok: true }
@@ -117,6 +129,18 @@ export function checkWindowAllowed(
     case 'info': {
       if (cap.query !== true) {
         return { ok: false, error: 'window.query capability not granted' };
+      }
+      return { ok: true };
+    }
+
+    case 'exists':
+    case 'show':
+    case 'hide':
+    case 'set-ignore-mouse': {
+      // Mutating / probing an existing window by id is treated as a
+      // management operation. Gated by `manage`.
+      if (cap.manage !== true) {
+        return { ok: false, error: `window.manage capability required for ${op}` };
       }
       return { ok: true };
     }
