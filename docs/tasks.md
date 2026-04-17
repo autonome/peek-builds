@@ -11,6 +11,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 ## Tile architecture cleanup (post-conversion)
 
 - [ ] **Single-file tiles as default model.** Most features have a background.html that's pure boilerplate (init + register commands + open home.html) and a home.html with all the real logic. Two separate renderer processes coordinating via pubsub for what could be one show/hide window. Refactor the tile model so single-file tiles (one HTML, show/hide) are the default. Background split only when needed (timers, feeds, editor multi-window). Reduces boilerplate, eliminates cross-context state sync, simplifies authoring. Hello-world tile is already nearly this pattern.
+- [ ] **Theme live-reload in open tiles.** When the user switches theme, tiles that are already open don't pick up the new `peek://theme/variables.css`. The import is resolved once at tile load. `api.theme.onChange` hook exists but nothing re-imports the stylesheet. Fix: on theme change, have tiles re-resolve `peek://theme/variables.css` (e.g. bump a cache-busting query string on a `<link>` element, or replace the adopted stylesheet). Alternatively, inject theme vars via a mutable `<style>` block that the preload updates on theme change.
 
 ---
 
