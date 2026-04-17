@@ -338,13 +338,13 @@ test.describe('Group Mode Context @desktop', () => {
     // The existing HUD test in hud.spec.ts sets mode directly via context API.
     // Here we verify it works through the actual groups navigation flow.
 
-    // Open HUD
+    // Open HUD — arm the getWindow promise before publishing so we don't miss the
+    // window-creation event if the command resolves faster than this test resumes.
+    const hudWindowPromise = sharedApp.getWindow('ext/hud/hud.html', 5000);
     await sharedBgWindow.evaluate(async () => {
       (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
     });
-    await sleep(1000);
-
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await hudWindowPromise;
     expect(hudWindow).toBeTruthy();
 
     const { groupsWindow, windowId } = await openGroupsHome(sharedBgWindow);
@@ -356,10 +356,8 @@ test.describe('Group Mode Context @desktop', () => {
       // Wait for group mode to be set
       await waitForMode(sharedBgWindow, windowId, 'group', 5000);
 
-      // Give HUD time to update via subscription
-      await sleep(500);
-
       // Verify HUD shows group mode with group name (via mode widget webview)
+      // The 10 second polling loop below handles the HUD update delay via watchMode.
       const start = Date.now();
       let modeText: string | null = null;
       while (Date.now() - start < 10000) {
@@ -406,7 +404,6 @@ test.describe('Group Mode Context @desktop', () => {
       await sharedBgWindow.evaluate(async () => {
         (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
       });
-      await sleep(500);
     }
   });
 });

@@ -1283,9 +1283,13 @@ function buildAPI(): Record<string, unknown> {
     // 'mode' key, mirroring v1 preload.js api.context.setMode / getMode
     // / watchMode / getWindowsInSpace.
 
-    setMode: (mode: unknown) => hasContextCapability()
-      ? contextStrict.set('mode', mode)
-      : contextCompat.set('mode', mode),
+    setMode: (mode: unknown, options?: { metadata?: Record<string, unknown>; windowId?: number | null }) => {
+      const metadata = options?.metadata;
+      const windowId = (options?.windowId ?? null) as number | null;
+      return hasContextCapability()
+        ? contextStrict.set('mode', mode, metadata, windowId)
+        : contextCompat.set('mode', mode, metadata, windowId);
+    },
 
     getMode: () => hasContextCapability()
       ? contextStrict.get('mode', null)
