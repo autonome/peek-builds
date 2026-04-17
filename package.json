@@ -150,7 +150,7 @@
     "test:tauri:rust": "./scripts/timed.sh sh -c 'cd backend/tauri/src-tauri && cargo test --test smoke -- --nocapture'",
     "test:visible": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=0 BACKEND=electron npx playwright test tests/desktop/ --headed'",
     "test:debug": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=0 npx playwright test --debug'",
-    "test:grep": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=1 npx playwright test tests/desktop/ --grep'",
+    "test:grep": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=1 BACKEND=electron npx playwright test tests/desktop/ --grep \"$0\"'",
     "test:electron:bg": "nohup yarn test:electron > /tmp/test-electron.log 2>&1 & disown; echo 'Tests running in background, see: /tmp/test-electron.log'",
     "test:log": "tail -f /tmp/test-electron.log",
     "//-- Misc (BACKEND=electron|tauri, defaults to electron) --//": "",
