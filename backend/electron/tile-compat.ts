@@ -125,7 +125,7 @@ export function loadV2Tile(
   const hasLazyEntries = manifest.tiles.some(t => t.lazy === true);
   const hasLazyEvents = manifest.tiles.some(t => Array.isArray(t.lazyEvents) && t.lazyEvents.length > 0);
   // Non-eager tiles with no resident entry are lazy-loaded on first use.
-  const shouldLazyLoad = !isEager && !residentEntry && (hasLazyEntries || true);
+  const shouldLazyLoad = !isEager && !residentEntry;
   const hasCommands = !!(manifest.commands && manifest.commands.length > 0);
 
   if (shouldLazyLoad && (hasCommands || hasLazyEvents)) {

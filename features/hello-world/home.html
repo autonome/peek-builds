@@ -81,6 +81,21 @@
     log('skipping — no api.initialize (legacy preload)', 'warn');
   }
 
+  // ── Register command that shows this tile ──
+  // This tile is resident (loaded at startup, hidden). The `hello` command
+  // calls showSelf() to reveal the already-loaded window instantly.
+  if (api.commands?.register) {
+    api.commands.register({
+      name: 'hello',
+      description: 'Open hello-world diagnostic window',
+      execute: async () => {
+        await api.window.showSelf();
+        return { output: 'Hello World trace window shown', mimeType: 'text/plain' };
+      }
+    });
+    log('registered `hello` command (showSelf)', 'ok');
+  }
+
   // ── Phase 3: query datastore ──
   header('datastore query (before subscribe)');
   if (api.datastore?.queryItems) {

@@ -135,9 +135,13 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
   // Generate token
   const token = generateToken(manifest.id, entry.id, grant);
 
-  // Build window options — merge windowHints (compat) with top-level fields
-  // (top-level wins if both are set), then apply any caller overrides.
-  const hints = { ...entry.windowHints, ...entry, ...windowOverrides };
+  // Build window options — merge windowHints (compat) with top-level flat
+  // window fields (top-level wins if both are set), then apply overrides.
+  const { width, height, minWidth, minHeight, alwaysOnTop, transparent,
+          focusable, frame, resizable, role, key: entryKey, title } = entry;
+  const entryFlat = { width, height, minWidth, minHeight, alwaysOnTop, transparent,
+                      focusable, frame, resizable, role, key: entryKey, title };
+  const hints = { ...entry.windowHints, ...entryFlat, ...windowOverrides };
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     width: hints?.width || 800,
     height: hints?.height || 600,
