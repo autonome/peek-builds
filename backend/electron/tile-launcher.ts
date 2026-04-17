@@ -135,14 +135,16 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
   // Generate token
   const token = generateToken(manifest.id, entry.id, grant);
 
-  // Build window options based on tile type and hints
-  const hints = { ...entry.windowHints, ...windowOverrides };
+  // Build window options — merge windowHints (compat) with top-level fields
+  // (top-level wins if both are set), then apply any caller overrides.
+  const hints = { ...entry.windowHints, ...entry, ...windowOverrides };
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     width: hints?.width || 800,
     height: hints?.height || 600,
     minWidth: hints?.minWidth,
     minHeight: hints?.minHeight,
-    show: entry.type !== 'background',
+    // All tiles start hidden. Visibility is a runtime choice (showSelf / session restore).
+    show: false,
     frame: hints?.frame !== false,
     transparent: hints?.transparent === true,
     alwaysOnTop: hints?.alwaysOnTop === true,
@@ -162,13 +164,10 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
     },
   };
 
-  // Background tiles are hidden and minimal
-  if (entry.type === 'background') {
-    windowOptions.width = 0;
-    windowOptions.height = 0;
-    windowOptions.show = false;
-    windowOptions.skipTaskbar = true;
-  }
+  // No special block for background tiles — they are resident tiles that
+  // happen to have no UI. Their dimensions come from declared fields like
+  // any other tile (defaulting to 800×600 above, but typically left at
+  // 0×0 if the manifest declares width: 0, height: 0 for legacy compat).
 
   const BrowserWindow = getBrowserWindowCtor();
   const win = new BrowserWindow(windowOptions);
@@ -411,10 +410,8 @@ export function getTileWebPreferencesForUrl(
   const manifest = getTileManifest(host) || lookupLazyManifest(host);
   if (!manifest) return null;
 
-  // Prefer a 'window' type entry whose url matches; fall back to any entry.
-  const entry =
-    manifest.tiles.find(t => t.type === 'window' && t.url === pathPart)
-    || manifest.tiles.find(t => t.url === pathPart);
+  // Find the entry whose url matches the path.
+  const entry = manifest.tiles.find(t => t.url === pathPart);
   if (!entry) return null;
 
   const grant = resolveCapabilities(

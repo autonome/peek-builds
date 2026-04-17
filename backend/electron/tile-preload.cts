@@ -686,6 +686,36 @@ function buildAPI(): Record<string, unknown> {
         options: options || {},
       });
     },
+
+    /**
+     * Show this tile's own window.
+     *
+     * No `window` capability required. The tile's token is the authority —
+     * it can only affect the window it runs in. Use for tiles that start
+     * hidden at boot (resident: true) and reveal themselves on command.
+     */
+    showSelf: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:show-self', {
+        token: tileToken,
+      });
+    },
+
+    /**
+     * Hide this tile's own window.
+     *
+     * Hides without destroying — the tile's state (DOM, JS heap, registered
+     * commands) is preserved and the window can be shown again cheaply via
+     * showSelf(). Use for "dismiss" UX where re-opening should be instant.
+     *
+     * No `window` capability required. The tile's token is the authority.
+     */
+    hideSelf: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:hide-self', {
+        token: tileToken,
+      });
+    },
   };
 
   // ── Datastore (if granted) ──

@@ -189,6 +189,26 @@ interface TileWindow {
    * Requires `window.manage` capability.
    */
   setOverlayFocusTarget(targetWindowId: number): Promise<{ success: boolean; error?: string }>;
+
+  /**
+   * Show this tile's own window.
+   *
+   * No `window` capability required. The tile's token is the authority —
+   * it can only affect the window it runs in. Primary mechanism for tiles
+   * that start hidden at boot (resident: true) and reveal on command.
+   */
+  showSelf(): Promise<{ success: boolean; error?: string }>;
+
+  /**
+   * Hide this tile's own window.
+   *
+   * Hides without destroying — all state (DOM, JS heap, registered commands)
+   * is preserved and the window can be shown again cheaply via showSelf().
+   * Use for "dismiss" UX where re-opening should be instant.
+   *
+   * No `window` capability required. The tile's token is the authority.
+   */
+  hideSelf(): Promise<{ success: boolean; error?: string }>;
 }
 
 // ─── Datastore ───────────────────────────────────────────────────────

@@ -120,10 +120,12 @@ export function loadV2Tile(
   const manifest = ext.v2Manifest;
   const isEager = config.eagerIds?.has(ext.id) ?? false;
 
-  // Check if any tile entry is marked as lazy (or if the tile isn't eager)
+  // A tile is resident if any entry declares `resident: true` OR `type: "background"` (compat).
+  const residentEntry = manifest.tiles.find(t => t.resident === true || t.type === 'background');
   const hasLazyEntries = manifest.tiles.some(t => t.lazy === true);
   const hasLazyEvents = manifest.tiles.some(t => Array.isArray(t.lazyEvents) && t.lazyEvents.length > 0);
-  const shouldLazyLoad = !isEager && (hasLazyEntries || manifest.tiles.some(t => t.type === 'background'));
+  // Non-eager tiles with no resident entry are lazy-loaded on first use.
+  const shouldLazyLoad = !isEager && !residentEntry && (hasLazyEntries || true);
   const hasCommands = !!(manifest.commands && manifest.commands.length > 0);
 
   if (shouldLazyLoad && (hasCommands || hasLazyEvents)) {
@@ -134,22 +136,21 @@ export function loadV2Tile(
     return null;
   }
 
-  // Eager load: launch background tile immediately
-  const bgTile = manifest.tiles.find(t => t.type === 'background');
-  if (bgTile) {
+  // Eager load: launch the resident entry immediately
+  if (residentEntry) {
     const result = launchTile({
       tilePath: ext.path,
       manifest,
       preloadPath: config.tilePreloadPath,
-      entryId: bgTile.id,
+      entryId: residentEntry.id,
     });
-    DEBUG && console.log(`[tile-compat] Eagerly launched ${ext.id}`);
+    DEBUG && console.log(`[tile-compat] Eagerly launched ${ext.id} (resident entry: ${residentEntry.id})`);
     return result;
   }
 
-  // No background tile — just register the protocol path
-  // Window tiles will be launched on demand via commands
-  DEBUG && console.log(`[tile-compat] Registered ${ext.id} (no background, commands only)`);
+  // No resident entry — just register the protocol path.
+  // Tiles will be launched on demand via commands.
+  DEBUG && console.log(`[tile-compat] Registered ${ext.id} (no resident entry, commands only)`);
   return null;
 }
 

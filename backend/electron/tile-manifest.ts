@@ -368,15 +368,47 @@ export interface TileWindowHints {
 
 /**
  * A tile entry point — each tile in the manifest creates one context
+ *
+ * New shape (preferred): use `resident` and flat window fields.
+ * Old shape (compat): `type` and `windowHints` are still accepted.
  */
 export interface TileEntry {
   /** Tile entry ID (unique within the manifest) */
   id: string;
-  /** Type of tile context */
-  type: 'window' | 'background' | 'panel';
+  /**
+   * Tile type — accepted for backwards compatibility only.
+   * - `"background"` is treated as an alias for `resident: true`.
+   * - `"window"` and `"panel"` are tolerated as no-ops.
+   * New manifests should omit this field and use `resident` instead.
+   */
+  type?: 'window' | 'background' | 'panel';
   /** HTML file to load (relative to extension directory) */
   url: string;
-  /** Window hints (only for type: 'window') */
+  /**
+   * If true, this tile is loaded at startup and kept live for the session.
+   * If false/absent, the tile is loaded lazily on first use.
+   * Replaces `type: "background"` as the canonical residency marker.
+   */
+  resident?: boolean;
+  // ── Flat window properties (preferred over windowHints) ──────────────
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+  alwaysOnTop?: boolean;
+  transparent?: boolean;
+  focusable?: boolean;
+  frame?: boolean;
+  resizable?: boolean;
+  /** Window role for the IZUI system */
+  role?: string;
+  /** Unique key for window deduplication */
+  key?: string;
+  title?: string;
+  /**
+   * Window hints — accepted for backwards compatibility.
+   * Top-level fields win if both are set.
+   */
   windowHints?: TileWindowHints;
   /** If true, this tile is loaded lazily on first use */
   lazy?: boolean;
@@ -583,7 +615,8 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
         tileIds.add(tile.id as string);
       }
 
-      if (!['window', 'background', 'panel'].includes(tile.type as string)) {
+      // type is optional — when present it must be one of the known values
+      if (tile.type !== undefined && !['window', 'background', 'panel'].includes(tile.type as string)) {
         errors.push({ path: `${prefix}.type`, message: 'tile type must be window, background, or panel' });
       }
 

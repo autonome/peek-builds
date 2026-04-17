@@ -2593,6 +2593,57 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── tile:window:show-self ─────────────────────────────────────────
+  //
+  // Show the tile's own BrowserWindow. No `window` capability required —
+  // the token identifies the calling tile, and the tile can only affect its
+  // own window. This is the primary mechanism for tiles that start hidden at
+  // boot (resident: true) and reveal themselves on command invocation.
+  ipcMain.handle('tile:window:show-self', async (_event, args: {
+    token: string;
+  }) => {
+    const record = validateToken(args.token);
+    if (!record) return { success: false, error: 'Invalid token' };
+
+    try {
+      const win = getTileWindow(record.tileId, record.tileEntryId);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Tile window not found' };
+      }
+      win.show();
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:hide-self ─────────────────────────────────────────
+  //
+  // Hide the tile's own BrowserWindow. No `window` capability required —
+  // the token identifies the calling tile, and the tile can only affect its
+  // own window. A hidden tile preserves all state (DOM, JS heap, registered
+  // commands) — it is not unloaded. Use for "dismiss" UX where re-opening
+  // should be instant without the cost of re-initializing a new window.
+  ipcMain.handle('tile:window:hide-self', async (_event, args: {
+    token: string;
+  }) => {
+    const record = validateToken(args.token);
+    if (!record) return { success: false, error: 'Invalid token' };
+
+    try {
+      const win = getTileWindow(record.tileId, record.tileEntryId);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Tile window not found' };
+      }
+      win.hide();
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
   // ── tile:window:set-ignore-mouse ──────────────────────────────────
   //
   // Toggle click-through on a window. Gated by `window.manage`.
