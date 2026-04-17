@@ -1,67 +1,64 @@
-# Agent Report: Single-File Tiles
+# Agent Report: hello-world tile enhancement
 
-## Plan doc
+## Theme pattern adopted
 
-`docs/tiles-single-file.md`
+**Mechanism:** `peek://theme/variables.css` is a custom protocol URL that the Electron backend resolves to the *currently active* theme's `variables.css`. It is served with no-cache headers so theme switches propagate on reload. The protocol handler (in `backend/electron/protocol.ts`) prepends the `peek` theme CSS as a base layer when any non-peek theme is requested, so all themes get the full semantic alias set.
 
-## Concept summary
+**How tiles consume it:** External CSS file with `@import url('peek://theme/variables.css')` as its first line, then use CSS custom properties throughout. Linked from HTML via `<link rel="stylesheet" href="home.css">`.
 
-A tile is a feature. There is one kind of tile. **Residency** (`resident: true`) is
-the only lifecycle flag in the manifest — it means "load at startup, stay live."
-**Visibility** is always a runtime choice; every tile starts hidden. `showSelf()` /
-`hideSelf()` are token-scoped, require no capability, and let any tile reveal or
-dismiss its own window.
+**Variables used in hello-world:**
 
-## Runtime changes
+| Variable | Role |
+|---|---|
+| `--base00` | Body background |
+| `--base01` | Secondary background (tab row, code blocks) |
+| `--base02` | Borders, separators |
+| `--base03` | Comments/muted text in syntax highlight |
+| `--base04` | Secondary/inactive text |
+| `--base05` | Default foreground |
+| `--base08` | Error/fail color (red) |
+| `--base09` | Number/constant (orange) |
+| `--base0A` | Warning (yellow) |
+| `--base0B` | Success/ok (green), strings in code |
+| `--base0C` | Tip accent (cyan) |
+| `--base0D` | Primary accent / functions / active tab underline (blue) |
+| `--base0E` | Keywords in code (purple) |
+| `--theme-font-mono` | Monospace font stack |
 
-| File | What changed |
-|------|-------------|
-| `backend/electron/tile-manifest.ts` | Added `resident?: boolean` and flat window fields (`width`, `height`, etc.) to `TileEntry`. Made `type` optional. Updated validation to accept no-`type` entries. |
-| `backend/electron/tile-launcher.ts` | Merged `windowHints` + flat entry fields (top-level wins). Dropped `type === 'background'` 0x0/skipTaskbar block. `show: false` is now the default for all tiles. Dropped `type === 'window'` URL match preference. |
-| `backend/electron/tile-compat.ts` | Residency decision: `t.resident === true || t.type === 'background'`. Eager launch reads resident entry by name instead of background-by-type. Fixed `shouldLazyLoad` logic (was `|| true`). |
-| `backend/electron/tile-ipc.ts` | Added `tile:window:show-self` and `tile:window:hide-self` handlers (token-auth, no capability). Updated feature enable/disable relaunch paths to use resident flag. |
-| `backend/electron/tile-preload.cts` | Added `api.window.showSelf()` and `api.window.hideSelf()`. |
-| `backend/electron/tile-api.d.ts` | Added `showSelf()` and `hideSelf()` type declarations to `TileWindow`. |
+## Final UI description
 
-## Tiles converted
+**Window:** 700x900, title "Hello World", resident tile.
 
-| Tile | Before | After |
-|------|--------|-------|
-| `hello-world` | background.html (stub) + home.html | home.html only; `hello` command calls `showSelf()` |
-| `widget-demo` | background.html + background.js + sheet.html/js | sheet.html + sheet.js; commands call `showSelf()` |
-| `mcp-server` | background.html + background.js | background.html inline (background.js deleted) |
+**Header:** Thin draggable strip at top, "Hello World" title left-aligned, `--base00` background with `--base02` bottom border. `-webkit-app-region: drag`.
 
-Deleted orphaned files: `hello-world/background.html`, `widget-demo/background.html`,
-`widget-demo/background.js`, `mcp-server/background.js`.
+**Tab row:** Two buttons — "Tutorial" (default active) and "Debug Info". `--base01` background. Active tab has `--base0D` bottom underline and text color. Clicking swaps the visible panel.
 
-## Auto-show audit (step 5)
+**Tutorial panel** (default, 5 sections):
+1. **What is a tile?** — one-paragraph definition: HTML renderer process, residency/visibility axes, `window.app` as the entry point.
+2. **Creating a tile** — manifest JSON snippet with inline `<span>` syntax colors, explanation of `resident: true` vs lazy.
+3. **Minimal home.html** — code snippet showing `api.initialize()` + `commands.register()` + `showSelf()`, then the `@import` pattern for theme CSS.
+4. **Debugging a tile** — DevTools via features-manager, `console.log` vs `console.error` behavior, reload instructions, tip box pointing at the Debug Info tab.
+5. **Testing a tile** — `yarn test:unit` / `yarn test:electron:bg` in `<pre>` blocks, minimal Playwright test snippet, tip about avoiding `npx playwright test`.
 
-No tiles were found that auto-showed at launch via `type: "window"`. All
-`type: "window"` entries in existing manifests are secondary tiles opened
-explicitly by commands via `tile:window:open` or declarative `action.type: "window"`.
-They were never auto-launched at startup. The behavior change (all tiles start with
-`show: false`) only affects tiles launched via `launchTile()`, and those were already
-`show: false` for background tiles.
+Code snippets use inline `<span class="kw|str|fn|cmt|num|key">` syntax coloring mapped to theme variables.
 
-## Test results
+**Debug Info panel** (hidden by default, same diagnostic trace as original):
+All 6 phases preserved: api surface inspection, initialize, command registration, pre-subscribe datastore query, pubsub subscribe/publish round-trip, post-init re-query. Colors use theme variables instead of hardcoded hex (`--base0B` for ok, `--base08` for fail, `--base0D` for info, `--base0A` for warn).
 
-- `yarn test:unit`: **565/565 pass, 0 fail** (run twice — before and after all changes)
-- `yarn test:electron:bg`: **205 passed, 30 failed, 2 skipped** (237 total)
+## Files changed
 
-All failures are pre-existing and unrelated to tiles:
-- IZUI escape: 3 (expected per brief)
-- Tag command: 7 (expected per brief)
-- Groups navigation/context/HUD: 3 (pre-existing)
-- Lists extension: 5 (pre-existing)
-- CSV command: 2 (files extension dependency, pre-existing)
-- Websearch cmd panel: 4 (pre-existing)
-- Websearch settings/URL: 3 (pre-existing)
-- IZUI parentWindowId: 1 (pre-existing)
-- Other: 2 (pre-existing)
+- `features/hello-world/home.html` — rewritten: two-panel layout, tab switcher, tutorial content, debug trace preserved
+- `features/hello-world/home.css` — new file; replaces inline `<style>` block with theme-aware CSS via `@import url('peek://theme/variables.css')`
+- `features/hello-world/manifest.json` — updated description ("Tutorial and diagnostic tile for tile authors") and tile title ("Hello World" instead of "Hello World Trace"); command description updated
 
-Tile-specific tests (Hybrid Extension Mode, `v2 background tile windows exist`) all pass.
+## Inconsistencies noticed in existing theme usage (not fixed)
 
-## Tiles not yet migrated
+1. `features/widget-demo/sheet.html` has `@import url('peek://theme/variables.css')` in its `<style>` block but then immediately overrides `background: #111` and `color: #ccc` with hardcoded hex on `html, body` — effectively defeating the import for those base properties.
+2. `features/example/gallery.html` uses a `<link rel="stylesheet" href="peek://theme/variables.css">` tag rather than `@import`. This bypasses the base-layer prepend logic in `protocol.ts` (which prepends peek theme CSS for non-peek themes when the path is `variables.css` and it is loaded as a CSS @import). Whether this is a practical issue depends on whether any non-peek theme omits semantic aliases.
+3. `theme-peek/variables.css` sets `--theme-font-sans` to ServerMono (a monospace font). Tiles using `--theme-font-sans` expecting a proportional font will get monospace under the peek theme. `theme-basic` uses `system-ui` for `--theme-font-sans`. hello-world intentionally uses `--theme-font-mono` to stay consistent across all themes.
 
-See `docs/tiles-single-file.md` "Tiles not yet migrated" table (25 tiles).
-All continue to work unchanged via the `type: "background"` compat alias.
+## Open items / risks for morning reviewer
+
+1. **No live theme reload:** If the user switches themes while the tile is open, the CSS won't update (the import is resolved at document load). `api.theme.onChange()` exists in the preload but no tile currently re-imports the stylesheet dynamically. Not a regression — all tiles have this limitation.
+2. **Syntax highlight is hand-authored HTML:** The `<span class="kw">` etc. in tutorial code blocks are written by hand, not a real highlighter. If the snippets change, spans need updating manually.
+3. **AGENT_REPORT.md overwrites a prior report:** The existing `AGENT_REPORT.md` in this worktree was from the single-file tiles conversion agent. This file replaces it. The prior content is still in git history.

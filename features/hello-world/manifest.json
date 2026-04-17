@@ -3,7 +3,7 @@
   "id": "hello-world",
   "shortname": "hello-world",
   "name": "Hello World",
-  "description": "Minimal v2 tile for diagnostic tracing",
+  "description": "Tutorial and diagnostic tile for tile authors",
   "version": "1.0.0",
   "builtin": true,
   "tiles": [
@@ -12,7 +12,7 @@
       "url": "home.html",
       "width": 700,
       "height": 900,
-      "title": "Hello World Trace",
+      "title": "Hello World",
       "resident": true
     }
   ],
@@ -29,7 +29,7 @@
   "commands": [
     {
       "name": "hello",
-      "description": "Open hello-world diagnostic window",
+      "description": "Open Hello World tile (tutorial + debug)",
       "action": { "type": "execute" }
     }
   ]

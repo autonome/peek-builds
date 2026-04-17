@@ -1,0 +1,209 @@
+/* Import theme variables — active theme from peek://theme protocol */
+@import url('peek://theme/variables.css');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--theme-font-mono);
+  -webkit-font-smoothing: antialiased;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body {
+  background: var(--base00);
+  color: var(--base05);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--base02);
+  background: var(--base00);
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+}
+
+.header-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--base05);
+}
+
+/* ── Tab row ── */
+.tab-row {
+  display: flex;
+  gap: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--base02);
+  background: var(--base01);
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.tab {
+  padding: 8px 18px;
+  font-family: var(--theme-font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--base04);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+  outline: none;
+  letter-spacing: 0.01em;
+}
+
+.tab:hover {
+  color: var(--base05);
+}
+
+.tab.active {
+  color: var(--base0D);
+  border-bottom-color: var(--base0D);
+}
+
+/* ── Content area ── */
+.content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* ── Tutorial panel ── */
+.tutorial {
+  padding: 24px 28px;
+  max-width: 640px;
+}
+
+.tutorial h2 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--base05);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 16px;
+}
+
+.section {
+  margin-bottom: 28px;
+}
+
+.section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--base0D);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.section p {
+  color: var(--base05);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.section p:last-child {
+  margin-bottom: 0;
+}
+
+.section em {
+  color: var(--base0B);
+  font-style: normal;
+}
+
+.section strong {
+  color: var(--base05);
+  font-weight: 600;
+}
+
+/* code snippet blocks */
+pre {
+  background: var(--base01);
+  border: 1px solid var(--base02);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin: 10px 0;
+  overflow-x: auto;
+  font-family: var(--theme-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--base05);
+}
+
+pre .kw  { color: var(--base0E); }   /* keyword */
+pre .str { color: var(--base0B); }   /* string */
+pre .cmt { color: var(--base03); font-style: italic; }  /* comment */
+pre .num { color: var(--base09); }   /* number / bool */
+pre .fn  { color: var(--base0D); }   /* function name */
+pre .key { color: var(--base08); }   /* json key / prop */
+
+.tip {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--base01);
+  border-left: 3px solid var(--base0C);
+  border-radius: 0 4px 4px 0;
+  margin: 10px 0;
+  font-size: 12px;
+  color: var(--base04);
+}
+
+.tip-icon {
+  color: var(--base0C);
+  flex-shrink: 0;
+}
+
+/* ── Debug panel ── */
+.debug {
+  padding: 16px 20px;
+  font-family: var(--theme-font-mono);
+  font-size: 12px;
+}
+
+.debug-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--base05);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-top: 1px solid var(--base02);
+  margin-top: 10px;
+  padding-top: 8px;
+  margin-bottom: 4px;
+}
+
+.debug-header:first-child {
+  border-top: none;
+  margin-top: 0;
+}
+
+.entry {
+  margin: 2px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.ok   { color: var(--base0B); }
+.fail { color: var(--base08); }
+.info { color: var(--base0D); }
+.warn { color: var(--base0A); }
+
+/* ── Hidden utility ── */
+.hidden {
+  display: none !important;
+}

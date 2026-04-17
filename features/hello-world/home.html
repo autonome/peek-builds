@@ -3,32 +3,122 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
-  <title>Hello World Trace</title>
-  <style>
-    body {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      margin: 0;
-      padding: 16px;
-      background: #111;
-      color: #eee;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    h1 { font-size: 14px; margin: 0 0 12px; color: #6f6; }
-    .entry { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
-    .ok { color: #6f6; }
-    .fail { color: #f66; }
-    .info { color: #99f; }
-    .warn { color: #fc6; }
-    .header { color: #ccc; border-top: 1px solid #333; margin-top: 8px; padding-top: 6px; }
-  </style>
+  <title>Hello World</title>
+  <link rel="stylesheet" href="home.css">
 </head>
 <body>
-  <h1>Hello World Trace</h1>
-  <div id="output"></div>
+
+  <!-- ── Header ── -->
+  <div class="header">
+    <span class="header-title">Hello World</span>
+  </div>
+
+  <!-- ── Tab row ── -->
+  <div class="tab-row">
+    <button class="tab active" id="tab-tutorial" onclick="switchTab('tutorial')">Tutorial</button>
+    <button class="tab"        id="tab-debug"    onclick="switchTab('debug')">Debug Info</button>
+  </div>
+
+  <!-- ── Content ── -->
+  <div class="content">
+
+    <!-- Tutorial panel -->
+    <div id="panel-tutorial" class="tutorial">
+      <div class="section">
+        <div class="section-title">What is a tile?</div>
+        <p>A tile is an HTML file that runs in a dedicated renderer process. It registers commands, can show/hide itself, subscribe to pubsub events, and read/write the datastore. Everything happens through <em>window.app</em>.</p>
+        <p>Two axes: <strong>residency</strong> (resident = loaded at startup; lazy = loaded on first use) and <strong>visibility</strong> (shown/hidden at runtime via <em>showSelf()</em>).</p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Creating a tile</div>
+        <p>Minimal manifest (<code>manifest.json</code>) for a resident tile:</p>
+        <pre><span class="str">{
+  "manifestVersion": 2,
+  "id": "my-tile",
+  "name": "My Tile",
+  "tiles": [{
+    "id": "home",
+    "url": "home.html",
+    "width": 700,
+    "height": 500,
+    "resident": true    <span class="cmt">// loaded at startup, hidden</span>
+  }],
+  "capabilities": {
+    "commands": true
+  }
+}</span></pre>
+        <p>Use <strong>resident: true</strong> when the tile needs to be instantly available (e.g. invoked by a command). Use <strong>lazy</strong> (default) when the tile is loaded on first use — saves memory for rarely-used tiles.</p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Minimal home.html</div>
+        <pre><span class="kw">const</span> api = window.app;
+<span class="kw">await</span> api.<span class="fn">initialize</span>();
+
+api.commands.<span class="fn">register</span>({
+  name: <span class="str">'my tile'</span>,
+  description: <span class="str">'Open my tile'</span>,
+  execute: <span class="kw">async</span> () =&gt; {
+    <span class="kw">await</span> api.window.<span class="fn">showSelf</span>();
+    <span class="kw">return</span> { output: <span class="str">'shown'</span>, mimeType: <span class="str">'text/plain'</span> };
+  }
+});</pre>
+        <p>Call <em>api.initialize()</em> first — it establishes the IPC token and resolves capabilities. Register commands after init. <em>showSelf()</em> reveals this tile's window instantly (no capability required).</p>
+        <p>Add theme styles by putting this at the top of your CSS:</p>
+        <pre><span class="fn">@import</span> <span class="fn">url</span>(<span class="str">'peek://theme/variables.css'</span>);</pre>
+        <p>Then use tokens like <em>var(--base00)</em> (bg), <em>var(--base05)</em> (text), <em>var(--base0D)</em> (accent). See <em>features/theme-basic/variables.css</em> for the full list.</p>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Debugging a tile</div>
+        <p><strong>Open DevTools:</strong> launch the tile, then open Features Manager (<em>manage features</em> command) and click the tile's devtools button. Or use the Debug Info tab in this tile to inspect the api surface live.</p>
+        <p><strong>console.log:</strong> output appears in the tile's DevTools console (not the main-process terminal). Use <code>console.error</code> to also surface output in the Electron main process log.</p>
+        <p><strong>Reload after changes:</strong> close and reopen the tile window, or use Cmd+R in the focused tile DevTools.</p>
+        <div class="tip">
+          <span class="tip-icon">i</span>
+          <span>The Debug Info tab (above) shows api method availability, init result, datastore shape, and pubsub round-trip — run it whenever something is unexpectedly undefined.</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Testing a tile</div>
+        <p><strong>Unit tests</strong> — pure logic, no Electron needed:</p>
+        <pre>yarn test:unit</pre>
+        <p><strong>Electron integration tests</strong> — full app, headless:</p>
+        <pre>yarn test:electron:bg   <span class="cmt"># background, logs to /tmp/test-electron.log</span>
+yarn test:electron      <span class="cmt"># foreground headless</span></pre>
+        <p><strong>Minimal Playwright test for a tile command:</strong></p>
+        <pre>test(<span class="str">'hello command shows window'</span>, <span class="kw">async</span> ({ page }) =&gt; {
+  <span class="kw">await</span> <span class="fn">runCommand</span>(page, <span class="str">'hello'</span>);
+  <span class="kw">const</span> win = <span class="kw">await</span> app.<span class="fn">waitForWindow</span>(<span class="str">'Hello World'</span>);
+  <span class="kw">await</span> expect(win).<span class="fn">toBeDefined</span>();
+});</pre>
+        <div class="tip">
+          <span class="tip-icon">i</span>
+          <span>Never use <code>npx playwright test</code> directly — it steals focus. Use <code>yarn test:electron:bg</code> or <code>yarn test:electron:x</code> to stop on first failure.</span>
+        </div>
+      </div>
+    </div><!-- /tutorial -->
+
+    <!-- Debug panel -->
+    <div id="panel-debug" class="debug hidden">
+      <div id="debug-output"></div>
+    </div>
+
+  </div><!-- /content -->
 
 <script type="module">
-  const out = document.getElementById('output');
+  // ── Tab switching ──
+  window.switchTab = function(name) {
+    document.getElementById('tab-tutorial').classList.toggle('active', name === 'tutorial');
+    document.getElementById('tab-debug').classList.toggle('active', name === 'debug');
+    document.getElementById('panel-tutorial').classList.toggle('hidden', name !== 'tutorial');
+    document.getElementById('panel-debug').classList.toggle('hidden', name !== 'debug');
+  };
+
+  // ── Debug trace helpers ──
+  const out = document.getElementById('debug-output');
 
   function log(msg, cls = 'info') {
     const div = document.createElement('div');
@@ -40,134 +130,130 @@
 
   function header(msg) {
     const div = document.createElement('div');
-    div.className = 'entry header';
-    div.textContent = '── ' + msg + ' ──';
+    div.className = 'debug-header';
+    div.textContent = msg;
     out.appendChild(div);
-    console.error('[hello-world:home] ── ' + msg + ' ──');
   }
 
   // ── Phase 1: inspect api surface ──
-  header('window.app surface inspection');
+  header('window.app surface');
 
   const api = window.app;
   log('window.app present: ' + !!api, api ? 'ok' : 'fail');
   if (!api) {
-    log('FATAL: no preload injected. Stopping.', 'fail');
-    throw new Error('no api');
-  }
-
-  log('api.initialize is function: ' + (typeof api.initialize === 'function'), typeof api.initialize === 'function' ? 'ok' : 'fail');
-  log('api.pubsub present: ' + !!api.pubsub, api.pubsub ? 'ok' : 'fail');
-  log('api.pubsub.subscribe is function: ' + (typeof api.pubsub?.subscribe === 'function'), typeof api.pubsub?.subscribe === 'function' ? 'ok' : 'fail');
-  log('api.pubsub.publish is function: ' + (typeof api.pubsub?.publish === 'function'), typeof api.pubsub?.publish === 'function' ? 'ok' : 'fail');
-  log('api.subscribe is function: ' + (typeof api.subscribe === 'function'), typeof api.subscribe === 'function' ? 'ok' : 'fail');
-  log('api.publish is function: ' + (typeof api.publish === 'function'), typeof api.publish === 'function' ? 'ok' : 'fail');
-  log('api.datastore present: ' + !!api.datastore, api.datastore ? 'ok' : 'fail');
-  log('api.datastore.queryItems is function: ' + (typeof api.datastore?.queryItems === 'function'), typeof api.datastore?.queryItems === 'function' ? 'ok' : 'fail');
-  log('api.scopes present: ' + !!api.scopes, api.scopes ? 'ok' : 'fail');
-  log('api.getTileId: ' + (api.getTileId ? api.getTileId() : 'n/a'));
-
-  // ── Phase 2: initialize ──
-  header('initialize');
-  if (typeof api.initialize === 'function') {
-    log('awaiting api.initialize()...');
-    try {
-      const initResult = await api.initialize();
-      log('initialize resolved: ' + JSON.stringify(initResult).slice(0, 200), 'ok');
-    } catch (err) {
-      log('initialize THREW: ' + (err.message || err), 'fail');
-    }
+    log('FATAL: no preload injected.', 'fail');
   } else {
-    log('skipping — no api.initialize (legacy preload)', 'warn');
-  }
+    log('api.initialize is function: ' + (typeof api.initialize === 'function'), typeof api.initialize === 'function' ? 'ok' : 'fail');
+    log('api.pubsub present: ' + !!api.pubsub, api.pubsub ? 'ok' : 'fail');
+    log('api.pubsub.subscribe is function: ' + (typeof api.pubsub?.subscribe === 'function'), typeof api.pubsub?.subscribe === 'function' ? 'ok' : 'fail');
+    log('api.pubsub.publish is function: ' + (typeof api.pubsub?.publish === 'function'), typeof api.pubsub?.publish === 'function' ? 'ok' : 'fail');
+    log('api.subscribe is function: ' + (typeof api.subscribe === 'function'), typeof api.subscribe === 'function' ? 'ok' : 'fail');
+    log('api.publish is function: ' + (typeof api.publish === 'function'), typeof api.publish === 'function' ? 'ok' : 'fail');
+    log('api.datastore present: ' + !!api.datastore, api.datastore ? 'ok' : 'fail');
+    log('api.datastore.queryItems is function: ' + (typeof api.datastore?.queryItems === 'function'), typeof api.datastore?.queryItems === 'function' ? 'ok' : 'fail');
+    log('api.scopes present: ' + !!api.scopes, api.scopes ? 'ok' : 'fail');
+    log('api.getTileId: ' + (api.getTileId ? api.getTileId() : 'n/a'));
 
-  // ── Register command that shows this tile ──
-  // This tile is resident (loaded at startup, hidden). The `hello` command
-  // calls showSelf() to reveal the already-loaded window instantly.
-  if (api.commands?.register) {
-    api.commands.register({
-      name: 'hello',
-      description: 'Open hello-world diagnostic window',
-      execute: async () => {
-        await api.window.showSelf();
-        return { output: 'Hello World trace window shown', mimeType: 'text/plain' };
+    // ── Phase 2: initialize ──
+    header('initialize');
+    if (typeof api.initialize === 'function') {
+      log('awaiting api.initialize()...');
+      try {
+        const initResult = await api.initialize();
+        log('initialize resolved: ' + JSON.stringify(initResult).slice(0, 200), 'ok');
+      } catch (err) {
+        log('initialize THREW: ' + (err.message || err), 'fail');
       }
-    });
-    log('registered `hello` command (showSelf)', 'ok');
-  }
+    } else {
+      log('skipping — no api.initialize (legacy preload)', 'warn');
+    }
 
-  // ── Phase 3: query datastore ──
-  header('datastore query (before subscribe)');
-  if (api.datastore?.queryItems) {
-    try {
-      const q = await api.datastore.queryItems({});
-      if (q && typeof q === 'object' && 'success' in q) {
-        log('queryItems shape {success,data}: success=' + q.success + ' count=' + (q.data?.length ?? 'n/a'), q.success ? 'ok' : 'fail');
-        if (q.error) log('error: ' + q.error, 'fail');
-      } else if (Array.isArray(q)) {
-        log('queryItems shape array: count=' + q.length, 'ok');
-      } else {
-        log('queryItems unknown shape: ' + JSON.stringify(q).slice(0, 200), 'warn');
+    // ── Register command ──
+    if (api.commands?.register) {
+      api.commands.register({
+        name: 'hello',
+        description: 'Open Hello World tile',
+        execute: async () => {
+          await api.window.showSelf();
+          return { output: 'Hello World shown', mimeType: 'text/plain' };
+        }
+      });
+      log('registered `hello` command (showSelf)', 'ok');
+    }
+
+    // ── Phase 3: datastore query ──
+    header('datastore query (before subscribe)');
+    if (api.datastore?.queryItems) {
+      try {
+        const q = await api.datastore.queryItems({});
+        if (q && typeof q === 'object' && 'success' in q) {
+          log('queryItems {success,data}: success=' + q.success + ' count=' + (q.data?.length ?? 'n/a'), q.success ? 'ok' : 'fail');
+          if (q.error) log('error: ' + q.error, 'fail');
+        } else if (Array.isArray(q)) {
+          log('queryItems array: count=' + q.length, 'ok');
+        } else {
+          log('queryItems unknown shape: ' + JSON.stringify(q).slice(0, 200), 'warn');
+        }
+      } catch (err) {
+        log('queryItems THREW: ' + (err.message || err), 'fail');
       }
-    } catch (err) {
-      log('queryItems THREW: ' + (err.message || err), 'fail');
+    } else {
+      log('skipping — no api.datastore.queryItems', 'fail');
     }
-  } else {
-    log('skipping — no api.datastore.queryItems', 'fail');
-  }
 
-  // ── Phase 4: subscribe ──
-  header('pubsub subscribe');
-  if (api.pubsub?.subscribe) {
-    try {
-      const unsub = api.pubsub.subscribe('item:created', (msg) => {
-        log('event item:created received: ' + JSON.stringify(msg).slice(0, 200), 'ok');
-      }, api.scopes?.GLOBAL);
-      log('pubsub.subscribe returned: ' + (typeof unsub), typeof unsub === 'function' ? 'ok' : 'warn');
-    } catch (err) {
-      log('pubsub.subscribe THREW: ' + (err.message || err), 'fail');
+    // ── Phase 4: subscribe ──
+    header('pubsub subscribe');
+    if (api.pubsub?.subscribe) {
+      try {
+        const unsub = api.pubsub.subscribe('item:created', (msg) => {
+          log('event item:created: ' + JSON.stringify(msg).slice(0, 200), 'ok');
+        }, api.scopes?.GLOBAL);
+        log('pubsub.subscribe returned: ' + (typeof unsub), typeof unsub === 'function' ? 'ok' : 'warn');
+      } catch (err) {
+        log('pubsub.subscribe THREW: ' + (err.message || err), 'fail');
+      }
+    } else {
+      log('skipping — no api.pubsub.subscribe', 'fail');
     }
-  } else {
-    log('skipping — no api.pubsub.subscribe', 'fail');
-  }
 
-  if (api.subscribe) {
-    try {
-      api.subscribe('hello:ping', (msg) => {
-        log('event hello:ping received: ' + JSON.stringify(msg).slice(0, 200), 'ok');
-      }, api.scopes?.GLOBAL);
-      log('api.subscribe(hello:ping) registered', 'ok');
-    } catch (err) {
-      log('api.subscribe THREW: ' + (err.message || err), 'fail');
+    if (api.subscribe) {
+      try {
+        api.subscribe('hello:ping', (msg) => {
+          log('event hello:ping: ' + JSON.stringify(msg).slice(0, 200), 'ok');
+        }, api.scopes?.GLOBAL);
+        log('api.subscribe(hello:ping) registered', 'ok');
+      } catch (err) {
+        log('api.subscribe THREW: ' + (err.message || err), 'fail');
+      }
     }
-  }
 
-  // ── Phase 5: publish a ping ──
-  header('pubsub publish');
-  if (api.pubsub?.publish) {
-    try {
-      api.pubsub.publish('hello:ping', { ts: Date.now() }, api.scopes?.GLOBAL);
-      log('pubsub.publish hello:ping fired (expect echo above)', 'ok');
-    } catch (err) {
-      log('pubsub.publish THREW: ' + (err.message || err), 'fail');
+    // ── Phase 5: publish ──
+    header('pubsub publish');
+    if (api.pubsub?.publish) {
+      try {
+        api.pubsub.publish('hello:ping', { ts: Date.now() }, api.scopes?.GLOBAL);
+        log('pubsub.publish hello:ping fired', 'ok');
+      } catch (err) {
+        log('pubsub.publish THREW: ' + (err.message || err), 'fail');
+      }
+    } else {
+      log('skipping — no api.pubsub.publish', 'fail');
     }
-  } else {
-    log('skipping — no api.pubsub.publish', 'fail');
-  }
 
-  // ── Phase 6: second query after init+subscribe ──
-  header('datastore query (after init+subscribe)');
-  if (api.datastore?.queryItems) {
-    try {
-      const q = await api.datastore.queryItems({});
-      log('re-query returned count=' + (q?.data?.length ?? q?.length ?? 'unknown'), 'ok');
-    } catch (err) {
-      log('re-query THREW: ' + (err.message || err), 'fail');
+    // ── Phase 6: re-query ──
+    header('datastore query (after init+subscribe)');
+    if (api.datastore?.queryItems) {
+      try {
+        const q = await api.datastore.queryItems({});
+        log('re-query count=' + (q?.data?.length ?? q?.length ?? 'unknown'), 'ok');
+      } catch (err) {
+        log('re-query THREW: ' + (err.message || err), 'fail');
+      }
     }
-  }
 
-  header('trace complete');
-  log('see console for full trace');
+    header('trace complete');
+    log('see DevTools console for full output');
+  }
 </script>
 </body>
 </html>
