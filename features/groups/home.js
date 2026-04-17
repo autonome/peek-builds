@@ -352,6 +352,10 @@ const setupCreateGroup = () => {
 const init = async () => {
   debug && console.log('Groups init');
 
+  // Validate capability token with main process — required before any
+  // token-gated api.* call (window.open, etc.) can succeed.
+  await api.initialize();
+
   // Initialize tag action rules cache for card affordances
   actionRulesCache = createActionRulesCache(api);
 
