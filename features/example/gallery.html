@@ -4,16 +4,17 @@
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;">
   <title>Image Gallery</title>
-  <link rel="stylesheet" href="peek://theme/variables.css">
   <style>
+    @import url('peek://theme/variables.css');
+
     * {
       box-sizing: border-box;
     }
 
     body {
-      font-family: var(--font-family, system-ui, -apple-system, sans-serif);
-      background: var(--background, #1e1e1e);
-      color: var(--foreground, #e0e0e0);
+      font-family: var(--theme-font-sans);
+      background: var(--base00);
+      color: var(--base05);
       margin: 0;
       padding: 20px;
       min-height: 100vh;
@@ -25,7 +26,7 @@
       align-items: center;
       margin-bottom: 20px;
       padding-bottom: 15px;
-      border-bottom: 1px solid var(--border, #333);
+      border-bottom: 1px solid var(--base02);
     }
 
     h1 {
@@ -36,11 +37,11 @@
 
     .status {
       font-size: 0.85rem;
-      color: var(--foreground-muted, #888);
+      color: var(--base03);
     }
 
     .status.connected {
-      color: var(--success, #4caf50);
+      color: var(--base0B);
     }
 
     .actions {
@@ -50,26 +51,27 @@
     }
 
     button {
-      background: var(--button-background, #333);
-      color: var(--button-foreground, #e0e0e0);
-      border: 1px solid var(--border, #444);
+      background: var(--base01);
+      color: var(--base05);
+      border: 1px solid var(--base02);
       padding: 8px 16px;
       border-radius: 6px;
       cursor: pointer;
       font-size: 0.9rem;
+      font-family: inherit;
       transition: background 0.15s;
     }
 
     button:hover {
-      background: var(--button-hover-background, #444);
+      background: var(--base02);
     }
 
     button:active {
-      background: var(--button-active-background, #555);
+      background: var(--base03);
     }
 
     .drop-zone {
-      border: 2px dashed var(--border, #444);
+      border: 2px dashed var(--base02);
       border-radius: 12px;
       padding: 40px;
       text-align: center;
@@ -78,13 +80,13 @@
     }
 
     .drop-zone.dragover {
-      border-color: var(--accent, #007acc);
-      background: var(--accent-background, rgba(0, 122, 204, 0.1));
+      border-color: var(--base0D);
+      background: var(--base01);
     }
 
     .drop-zone p {
       margin: 0 0 10px 0;
-      color: var(--foreground-muted, #888);
+      color: var(--base03);
     }
 
     .gallery {
@@ -94,10 +96,10 @@
     }
 
     .gallery-item {
-      background: var(--surface, #252525);
+      background: var(--base01);
       border-radius: 8px;
       overflow: hidden;
-      border: 1px solid var(--border, #333);
+      border: 1px solid var(--base02);
       transition: transform 0.15s, box-shadow 0.15s;
     }
 
@@ -126,14 +128,14 @@
 
     .gallery-item .meta {
       font-size: 0.75rem;
-      color: var(--foreground-muted, #888);
+      color: var(--base03);
       margin-top: 4px;
     }
 
     .empty-state {
       text-align: center;
       padding: 60px 20px;
-      color: var(--foreground-muted, #888);
+      color: var(--base03);
     }
 
     .empty-state p {
