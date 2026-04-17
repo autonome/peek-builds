@@ -168,10 +168,9 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
     },
   };
 
-  // No special block for background tiles — they are resident tiles that
-  // happen to have no UI. Their dimensions come from declared fields like
-  // any other tile (defaulting to 800×600 above, but typically left at
-  // 0×0 if the manifest declares width: 0, height: 0 for legacy compat).
+  // Tiles are resident or not, shown or not — orthogonal. No special
+  // dimensions for "background" tiles: they use declared width/height like
+  // any tile (default 800×600).
 
   const BrowserWindow = getBrowserWindowCtor();
   const win = new BrowserWindow(windowOptions);
