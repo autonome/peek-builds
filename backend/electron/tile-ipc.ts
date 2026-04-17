@@ -2381,12 +2381,11 @@ export function registerTileIpcHandlers(): void {
     }
     const activeGrant = grant as CapabilityGrant;
 
-    // Validate URL: must be peek:// or tile's own origin. Mirror the
-    // previous guard — the strict `urls` allowlist is an additional
-    // filter on top of this baseline.
-    if (!args.url.startsWith('peek://')) {
-      return { error: 'Only peek:// URLs can be opened' };
-    }
+    // URL governance is handled by checkWindowAllowed above via the
+    // tile's declared `window.urls` allowlist (if any). Tiles without
+    // a urls allowlist accept any URL — same policy as the legacy
+    // window-open channel. External http(s) URLs are rewritten to the
+    // page canvas by the window-open handler below.
 
     // Delegate to the main window-open handler (registered by registerWindowHandlers()
     // in ipc.ts). This is the single source of truth for window creation — handles
