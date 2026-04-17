@@ -46,12 +46,20 @@ They were never auto-launched at startup. The behavior change (all tiles start w
 ## Test results
 
 - `yarn test:unit`: **565/565 pass, 0 fail** (run twice — before and after all changes)
-- `yarn test:electron:bg`: running at commit time; see `/tmp/test-electron.log`
+- `yarn test:electron:bg`: **205 passed, 30 failed, 2 skipped** (237 total)
 
-## Known pre-existing failures (per brief)
+All failures are pre-existing and unrelated to tiles:
+- IZUI escape: 3 (expected per brief)
+- Tag command: 7 (expected per brief)
+- Groups navigation/context/HUD: 3 (pre-existing)
+- Lists extension: 5 (pre-existing)
+- CSV command: 2 (files extension dependency, pre-existing)
+- Websearch cmd panel: 4 (pre-existing)
+- Websearch settings/URL: 3 (pre-existing)
+- IZUI parentWindowId: 1 (pre-existing)
+- Other: 2 (pre-existing)
 
-- IZUI escape: 3 tests
-- Tag command: 7 tests
+Tile-specific tests (Hybrid Extension Mode, `v2 background tile windows exist`) all pass.
 
 ## Tiles not yet migrated
 
