@@ -1126,13 +1126,13 @@ export function registerTileIpcHandlers(): void {
           const manifestPath = path.join(entry.path, 'manifest.json');
           const parsed = parseManifestFile(manifestPath);
           if (parsed?.version === 'v2' && parsed.v2) {
-            const bgTile = parsed.v2.tiles.find(t => t.type === 'background');
-            if (bgTile && !isTileLoaded(args.id, bgTile.id)) {
+            const residentTile = parsed.v2.tiles.find(t => t.resident === true || t.type === 'background');
+            if (residentTile && !isTileLoaded(args.id, residentTile.id)) {
               launchTile({
                 tilePath: entry.path,
                 manifest: parsed.v2,
                 preloadPath: args.tilePreloadPath,
-                entryId: bgTile.id,
+                entryId: residentTile.id,
               });
             }
           }
@@ -4130,13 +4130,13 @@ export function registerTileIpcHandlers(): void {
           const manifestPath = path.join(entry.path, 'manifest.json');
           const parsed = parseManifestFile(manifestPath);
           if (parsed?.version === 'v2' && parsed.v2) {
-            const bgTile = parsed.v2.tiles.find(t => t.type === 'background');
-            if (bgTile && !isTileLoaded(args.id, bgTile.id)) {
+            const residentTile = parsed.v2.tiles.find(t => t.resident === true || t.type === 'background');
+            if (residentTile && !isTileLoaded(args.id, residentTile.id)) {
               launchTile({
                 tilePath: entry.path,
                 manifest: parsed.v2,
                 preloadPath: args.tilePreloadPath,
-                entryId: bgTile.id,
+                entryId: residentTile.id,
               });
             }
           }
