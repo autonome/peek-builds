@@ -1,15 +1,46 @@
 /**
- * Widget Demo Sheet Display Script
+ * Widget Demo Sheet Script
  *
- * Renders demo widgets in a peek-grid freeform layout.
- * Each widget is a webview pointing to an individual widget page
- * (e.g., peek://ext/widget-demo/widgets/clock.html).
+ * Single-file tile: handles both tile initialization (api.initialize,
+ * command registration) and sheet UI (widget layout, drag/resize).
  *
- * Layout config is loaded from feature_settings (created by background.js).
+ * This tile starts hidden at boot (resident: true). Commands call
+ * showSelf() to reveal it. Hiding (e.g. window close) calls hideSelf()
+ * so re-opening is instant — no re-initialization needed.
  */
 
 const api = window.app;
 const debug = api.debug;
+
+// ── Tile initialization ──
+// Must run before any user interaction. api.initialize() validates the
+// capability token and enables all api.* methods.
+await api.initialize();
+
+// Register commands that show this window
+api.commands.register({
+  name: 'widget demo',
+  description: 'Open the widget demo sheet',
+  execute: async () => {
+    await api.window.showSelf();
+    return { output: 'Opening widget demo sheet', mimeType: 'text/plain' };
+  }
+});
+
+api.commands.register({
+  name: 'demo widgets',
+  description: 'Open the widget demo sheet (alias)',
+  execute: async () => {
+    await api.window.showSelf();
+    return { output: 'Opening widget demo sheet', mimeType: 'text/plain' };
+  }
+});
+
+api.onShutdown(() => {
+  api.commands.unregister('widget demo');
+  api.commands.unregister('demo widgets');
+  console.log('[widget-demo] shutdown');
+});
 
 const DEMO_SHEET_KEY = 'demo_sheet';
 
@@ -181,17 +212,7 @@ const init = async () => {
   sheetConfig = await loadSheetConfig();
 
   if (!sheetConfig) {
-    console.warn('[widget-demo] No sheet config found — waiting for background.js');
-    // Retry after a short delay (background.js may still be initializing)
-    setTimeout(async () => {
-      sheetConfig = await loadSheetConfig();
-      if (sheetConfig) {
-        setupEvents();
-        renderWidgets();
-      } else {
-        console.error('[widget-demo] Sheet config still not found');
-      }
-    }, 1000);
+    console.error('[widget-demo] Sheet config not found after init');
     return;
   }
 

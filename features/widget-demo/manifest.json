@@ -8,18 +8,11 @@
   "builtin": true,
   "tiles": [
     {
-      "id": "background",
-      "type": "background",
-      "url": "background.html"
-    },
-    {
       "id": "sheet",
-      "type": "window",
       "url": "sheet.html",
-      "windowHints": {
-        "key": "peek://ext/widget-demo/sheet.html",
-        "title": "Widget Demo"
-      }
+      "key": "peek://ext/widget-demo/sheet.html",
+      "title": "Widget Demo",
+      "resident": true
     }
   ],
   "capabilities": {
@@ -33,9 +26,6 @@
         "cmd:execute:*"
       ]
     },
-    "window": {
-      "create": true
-    },
     "commands": true,
     "settings": true
   },
@@ -43,20 +33,12 @@
     {
       "name": "widget demo",
       "description": "Open the widget demo sheet",
-      "action": {
-        "type": "window",
-        "url": "peek://ext/widget-demo/sheet.html",
-        "options": { "key": "peek://ext/widget-demo/sheet.html", "trackingSource": "widget-demo" }
-      }
+      "action": { "type": "execute" }
     },
     {
       "name": "demo widgets",
       "description": "Open the widget demo sheet (alias)",
-      "action": {
-        "type": "window",
-        "url": "peek://ext/widget-demo/sheet.html",
-        "options": { "key": "peek://ext/widget-demo/sheet.html", "trackingSource": "widget-demo" }
-      }
+      "action": { "type": "execute" }
     }
   ]
 }
