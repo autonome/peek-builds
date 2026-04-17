@@ -3,26 +3,56 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
-  <title>MCP Server Extension</title>
+  <title>MCP Server</title>
 </head>
 <body>
 <script type="module">
-  import extension from './background.js';
-
+  /**
+   * MCP Server Tile
+   *
+   * Single-file resident tile: no UI, just command registration.
+   * Registers the "mcp server setup" command which provides instructions
+   * for configuring Claude Code to use Peek as an MCP server.
+   */
   const api = window.app;
-  const extId = extension.id;
 
-  console.log(`[ext:${extId}] background.html loaded`);
-
-  // ── V2 Tile Runtime ──
   await api.initialize();
 
-  if (extension.init) {
-    await extension.init();
-  }
+  api.commands.register({
+    name: 'mcp server setup',
+    description: 'Configure Claude Code to use Peek as an MCP server',
+    execute: async () => {
+      const serverPath = 'features/mcp-server/server.js';
+      const setupPath = 'features/mcp-server/setup.js';
+
+      return {
+        success: true,
+        output: [
+          'Peek MCP Server Setup',
+          '',
+          'Run the setup script to configure Claude Code:',
+          `  node ${setupPath}`,
+          '',
+          'Or add manually to ~/.claude/settings.json:',
+          '',
+          '  "mcpServers": {',
+          '    "peek": {',
+          '      "command": "node",',
+          `      "args": ["<path-to-peek>/${serverPath}"],`,
+          '      "env": {',
+          '        "PEEK_DB_PATH": "~/Library/Application Support/Peek/default/datastore.sqlite"',
+          '      }',
+          '    }',
+          '  }',
+          '',
+          'Then restart Claude Code.',
+        ].join('\n'),
+      };
+    },
+  });
 
   api.onShutdown(() => {
-    if (extension.uninit) extension.uninit();
+    api.commands.unregister('mcp server setup');
   });
 </script>
 </body>
