@@ -537,8 +537,9 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     });
     expect(escResult1.handled).toBe(true);
 
-    // Wait for navigation to complete
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Wait for navigation to complete — waitForSelector is the deterministic signal
+    // that showGroups() has rendered (the setTimeout(0) in handleEscape fires and
+    // DOM updates before group-card is inserted into the DOM).
     await groupsWindow.waitForSelector('peek-card.group-card', { timeout: 5000 });
 
     // Verify we're back in groups view
