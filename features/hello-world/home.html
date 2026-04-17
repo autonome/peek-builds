@@ -15,8 +15,8 @@
 
   <!-- ── Tab row ── -->
   <div class="tab-row">
-    <button class="tab active" id="tab-tutorial" onclick="switchTab('tutorial')">Tutorial</button>
-    <button class="tab"        id="tab-debug"    onclick="switchTab('debug')">Debug Info</button>
+    <button class="tab active" id="tab-tutorial" data-tab="tutorial">Tutorial</button>
+    <button class="tab"        id="tab-debug"    data-tab="debug">Debug Info</button>
   </div>
 
   <!-- ── Content ── -->
@@ -110,12 +110,15 @@ yarn test:electron      <span class="cmt"># foreground headless</span></pre>
 
 <script type="module">
   // ── Tab switching ──
-  window.switchTab = function(name) {
+  function switchTab(name) {
     document.getElementById('tab-tutorial').classList.toggle('active', name === 'tutorial');
     document.getElementById('tab-debug').classList.toggle('active', name === 'debug');
     document.getElementById('panel-tutorial').classList.toggle('hidden', name !== 'tutorial');
     document.getElementById('panel-debug').classList.toggle('hidden', name !== 'debug');
-  };
+  }
+  for (const btn of document.querySelectorAll('.tab[data-tab]')) {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  }
 
   // ── Debug trace helpers ──
   const out = document.getElementById('debug-output');
