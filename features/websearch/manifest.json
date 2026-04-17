@@ -36,7 +36,8 @@
         "app:shutdown",
         "page:loaded",
         "window:closed",
-        "websearch:*"
+        "websearch:*",
+        "cmd:execute:*"
       ]
     },
     "network": {
