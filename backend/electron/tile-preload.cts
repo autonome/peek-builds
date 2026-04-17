@@ -1778,6 +1778,24 @@ function buildAPI(): Record<string, unknown> {
         }
       });
     },
+    // trigger() — test helper: directly invoke the registered escape callback
+    // without going through the main-process IPC path. Returns the handler
+    // result ({ handled: boolean }) or { handled: false } if no callback is
+    // registered. Used by Playwright tests that need to assert on internal
+    // navigation state without the timing uncertainty of keyboard.press('Escape').
+    trigger: async (): Promise<{ handled: boolean }> => {
+      if (!tileEscapeCallback) return { handled: false };
+      try {
+        const result = await tileEscapeCallback();
+        if (result == null || typeof result !== 'object') {
+          return { handled: false };
+        }
+        return result as { handled: boolean };
+      } catch (err) {
+        console.error('[tile-preload] escape trigger threw:', err);
+        return { handled: false };
+      }
+    },
   };
 
   // ── Log (always available) ──
