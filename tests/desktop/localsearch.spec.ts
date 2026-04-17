@@ -108,13 +108,21 @@ test.describe('Lists Extension @desktop', () => {
       });
     });
 
+    // Ensure the lists command is registered before executing it.
+    await waitForCommand(sharedBgWindow, 'lists', 15000);
+
+    // Start waiting for the window BEFORE publishing the command so we don't
+    // miss a fast creation (getWindow polls every 200ms).
+    const windowPromise = sharedApp.getWindow('ext/lists/home.html', 15000);
+
     // Open search window
     await sharedBgWindow.evaluate(async () => {
       (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
     });
 
-    const searchWindow = await sharedApp.getWindow('ext/lists/home.html', 5000);
-    await searchWindow.waitForSelector('#search-input', { timeout: 5000 });
+    const searchWindow = await windowPromise;
+    expect(searchWindow).toBeTruthy();
+    await searchWindow.waitForSelector('#search-input', { timeout: 10000 });
 
     // Type a search query that should match our seeded data
     // Use dispatchEvent to trigger input on the peek-input's internal input
@@ -142,25 +150,45 @@ test.describe('Lists Extension @desktop', () => {
   });
 
   test('search results are grouped by type', async () => {
+    // Seed data so there are results to group (url + text for two distinct types)
+    await sharedBgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      await api.datastore.addItem('url', {
+        content: 'https://example.com/group-test',
+        metadata: JSON.stringify({ title: 'Group Test Page' })
+      });
+      await api.datastore.addItem('text', {
+        content: 'This is a group test note with unique content'
+      });
+    });
+
+    // Ensure the lists command is registered before executing it.
+    await waitForCommand(sharedBgWindow, 'lists', 15000);
+
+    // Start waiting for the window BEFORE publishing the command so we don't
+    // miss a fast creation (getWindow polls every 200ms).
+    const windowPromise = sharedApp.getWindow('ext/lists/home.html', 15000);
+
     // Open search window
     await sharedBgWindow.evaluate(async () => {
       (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
     });
 
-    const searchWindow = await sharedApp.getWindow('ext/lists/home.html', 5000);
-    await searchWindow.waitForSelector('#search-input', { timeout: 5000 });
+    const searchWindow = await windowPromise;
+    expect(searchWindow).toBeTruthy();
+    await searchWindow.waitForSelector('#search-input', { timeout: 10000 });
 
-    // Type a search query
+    // Type a search query that matches the seeded data
     await searchWindow.evaluate(() => {
       const input = document.getElementById('search-input') as any;
-      input.value = 'search test';
+      input.value = 'group test';
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
 
     // Wait for results
     await searchWindow.waitForFunction(
       () => document.querySelectorAll('.result-group').length > 0,
-      { timeout: 5000 }
+      { timeout: 10000 }
     );
 
     // Verify groups have headers
@@ -175,13 +203,21 @@ test.describe('Lists Extension @desktop', () => {
   });
 
   test('empty search shows empty state', async () => {
+    // Ensure the lists command is registered before executing it.
+    await waitForCommand(sharedBgWindow, 'lists', 15000);
+
+    // Start waiting for the window BEFORE publishing the command so we don't
+    // miss a fast creation (getWindow polls every 200ms).
+    const windowPromise = sharedApp.getWindow('ext/lists/home.html', 15000);
+
     // Open search window
     await sharedBgWindow.evaluate(async () => {
       (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
     });
 
-    const searchWindow = await sharedApp.getWindow('ext/lists/home.html', 5000);
-    await searchWindow.waitForSelector('#search-input', { timeout: 5000 });
+    const searchWindow = await windowPromise;
+    expect(searchWindow).toBeTruthy();
+    await searchWindow.waitForSelector('#search-input', { timeout: 10000 });
 
     // Clear any previous search (window may be reused from earlier tests)
     await searchWindow.evaluate(() => {
