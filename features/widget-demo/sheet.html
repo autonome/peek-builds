@@ -41,8 +41,9 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #111;
-      font-family: var(--theme-font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
+      background: var(--base00);
+      color: var(--base05);
+      font-family: var(--theme-font-sans);
       -webkit-font-smoothing: antialiased;
     }
 
@@ -63,12 +64,12 @@
     .sheet-title {
       font-size: 14px;
       font-weight: 600;
-      color: #ccc;
+      color: var(--base05);
     }
 
     .sheet-subtitle {
       font-size: 11px;
-      color: #666;
+      color: var(--base04);
       margin-left: 8px;
     }
 
@@ -78,9 +79,9 @@
     }
 
     .sheet-actions button {
-      background: #2a2a2a;
-      color: #aaa;
-      border: 1px solid #333;
+      background: var(--base01);
+      color: var(--base04);
+      border: 1px solid var(--base02);
       border-radius: 4px;
       padding: 4px 10px;
       font-size: 11px;
@@ -89,14 +90,14 @@
     }
 
     .sheet-actions button:hover {
-      background: #333;
-      color: #ccc;
+      background: var(--base02);
+      color: var(--base05);
     }
 
     .sheet-actions button.active {
-      background: #335;
-      border-color: #558;
-      color: #aaf;
+      background: var(--base01);
+      border-color: var(--base0D);
+      color: var(--base0D);
     }
 
     peek-grid {
