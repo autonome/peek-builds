@@ -93,6 +93,18 @@ Recommend Option A1 next. The unit-test reproducer is a 1-day investment that ei
 
 Acceptance (when ready to retry): every existing test passes against the new fixture. No `IPC_CHANNELS.SUBSCRIBE` callers in tests.
 
+### Phase 2.5 — Migrate the OTHER v1 surface (added 2026-04-18)
+
+Phase 3 attempt revealed the original plan didn't enumerate a second always-on v1 path. Before Phase 3 destructive cleanup can proceed, these need migration:
+
+1. **`createBackgroundWindow()` → `WEB_CORE_ADDRESS` → `app/background.html` → `app/index.js`** — this is the *core background renderer*, not a test fixture. Always created at startup. Runs `app/index.js` (session manager, pubsub hub). Migrate to a v2 resident renderer with a `createTrustedBuiltinGrant('core')` token (same shape as cmd/hud/page/test).
+2. **Webview preload injection in `entry.ts:179`** — every `peek://` webview (widget panes, HUD children, page canvas children) gets the v1 `preload.js` injected via `will-attach-webview`. Switch to `tile-preload.cjs` (or remove if widgets don't need the API).
+3. **`createExtensionWindow()`** — used for external builtins (e.g. `example`) and chrome extensions. Migrate to the v2 tile launcher path or document why it stays.
+4. **Dead-code cleanup that's safe today:** `CONSOLIDATED_EXTENSION_IDS` list (always empty after v2 migration), the `if (consolidatedIds.length > 0)` block in `loadExtensions()`, the `loadExtInHost` helper. Safe to delete now since no v2 feature uses them — preserved only because their removal interacts with smoke tests asserting on `peek://app/extension-host.html` existence.
+5. **Tauri mobile** uses `preload.js` via `include_str!`. That bridge needs its own equivalent before the Electron file can go.
+
+After Phase 2.5: Phase 3 (destructive cleanup) can proceed cleanly.
+
 ### Phase 3 — Delete v1 plumbing
 
 Once Phases 1–2 are done, no live caller of v1 paths exists. Delete:
