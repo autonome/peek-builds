@@ -7,7 +7,10 @@
  * - Owns the command registry
  * - Subscribes to cmd:register, cmd:unregister for command management
  *
- * Runs in isolated extension process (peek://ext/cmd/background.html)
+ * Runs inside the resident cmd renderer (`peek://cmd/index.html`) — a
+ * standalone BrowserWindow created by cmd-glue.ts with tile-preload.cjs
+ * and a trustedBuiltin capability grant, so every `tile:*` IPC call
+ * bypasses capability enforcement.
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
@@ -131,22 +134,34 @@ const saveCommandCache = async (appVersion, extensionVersions) => {
 };
 
 /**
- * Get current app and extension versions
+ * Get current app and extension versions.
+ *
+ * Under the v2 resident-renderer flow, `api.app` / `api.extensions`
+ * (v1 preload) are no longer present. Use `api.features.list()` — its
+ * `{ entries }` response carries per-feature manifest versions. The app
+ * version is resolved via the injected build-number constant so we
+ * don't need a separate app-info IPC.
+ *
  * @returns {Promise<{appVersion: string, extensionVersions: Object}>}
  */
 const getCurrentVersions = async () => {
-  const appInfo = await api.app.getInfo();
-  const appVersion = appInfo.success ? appInfo.data.version : '0.0.0';
+  // Prefer a compile-time app version if present; fall back to 0.0.0.
+  // Neither tile-preload nor the app exposes an un-gated `getInfo` yet;
+  // the cache validation still bites on extension version drift which
+  // is the common case.
+  const appVersion = (typeof window !== 'undefined' && window.__APP_VERSION__) || '0.0.0';
 
-  const extList = await api.extensions.list();
   const extensionVersions = {};
-
-  if (extList.success && extList.data) {
-    for (const ext of extList.data) {
+  try {
+    const listResult = await api.features.list();
+    const entries = listResult?.entries || listResult?.data || [];
+    for (const ext of entries) {
       if (ext.manifest?.version) {
         extensionVersions[ext.id] = ext.manifest.version;
       }
     }
+  } catch (err) {
+    log.error('ext:cmd', 'features.list failed:', err);
   }
 
   return { appVersion, extensionVersions };
@@ -197,7 +212,7 @@ const isCacheValid = (cache, appVersion, extensionVersions) => {
  */
 const initCommandRegistry = () => {
   // Handle batch command registrations (from preload batching)
-  api.subscribe('cmd:register-batch', (msg) => {
+  api.pubsub.subscribe('cmd:register-batch', (msg) => {
     if (!msg.commands || !Array.isArray(msg.commands)) return;
 
     log('ext:cmd', 'cmd:register-batch received:', msg.commands.length, 'commands');
@@ -228,7 +243,7 @@ const initCommandRegistry = () => {
   }, api.scopes.GLOBAL);
 
   // Handle individual command registrations from extensions
-  api.subscribe('cmd:register', (msg) => {
+  api.pubsub.subscribe('cmd:register', (msg) => {
     log('ext:cmd', 'cmd:register received:', msg.name);
     const entry = {
       name: msg.name,
@@ -254,7 +269,7 @@ const initCommandRegistry = () => {
   }, api.scopes.GLOBAL);
 
   // Handle command unregistrations
-  api.subscribe('cmd:unregister', (msg) => {
+  api.pubsub.subscribe('cmd:unregister', (msg) => {
     log('ext:cmd', 'cmd:unregister received:', msg.name);
     commandRegistry.delete(msg.name);
   }, api.scopes.GLOBAL);
@@ -262,7 +277,7 @@ const initCommandRegistry = () => {
   // ===== Noun Registration Handlers =====
 
   // Handle batch noun registrations from extensions
-  api.subscribe('noun:register-batch', (msg) => {
+  api.pubsub.subscribe('noun:register-batch', (msg) => {
     if (!msg.nouns || !Array.isArray(msg.nouns)) return;
 
     log('ext:cmd', 'noun:register-batch received:', msg.nouns.length, 'nouns');
@@ -292,12 +307,12 @@ const initCommandRegistry = () => {
 
     // Broadcast generated commands to panel via existing cmd:register-batch flow
     if (generatedCommands.length > 0) {
-      api.publish('cmd:register-batch', { commands: generatedCommands }, api.scopes.GLOBAL);
+      api.pubsub.publish('cmd:register-batch', { commands: generatedCommands }, api.scopes.GLOBAL);
     }
   }, api.scopes.GLOBAL);
 
   // Handle noun unregistrations
-  api.subscribe('noun:unregister', (msg) => {
+  api.pubsub.subscribe('noun:unregister', (msg) => {
     if (!msg.name) return;
 
     const nounDef = nounRegistry.get(msg.name);
@@ -310,17 +325,17 @@ const initCommandRegistry = () => {
     for (const cmd of commands) {
       commandRegistry.delete(cmd.name);
       liveRegisteredCommands.delete(cmd.name);
-      api.publish('cmd:unregister', { name: cmd.name }, api.scopes.GLOBAL);
+      api.pubsub.publish('cmd:unregister', { name: cmd.name }, api.scopes.GLOBAL);
     }
 
     nounRegistry.delete(msg.name);
   }, api.scopes.GLOBAL);
 
   // Handle command list queries from the panel
-  api.subscribe('cmd:query-commands', () => {
+  api.pubsub.subscribe('cmd:query-commands', () => {
     const commands = Array.from(commandRegistry.values());
     log('ext:cmd', 'cmd:query-commands received');
-    api.publish('cmd:query-commands-response', { commands }, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:query-commands-response', { commands }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
   log('ext:cmd', 'Command registry initialized');
@@ -422,7 +437,7 @@ const initShortcut = (prefs) => {
   // main.ts skips local shortcut dispatch for Cmd+L on page host windows,
   // so this only fires from non-page windows.
   api.shortcuts.register(URL_MODE_SHORTCUT, () => {
-    api.publish('cmd:url-mode', {}, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:url-mode', {}, api.scopes.GLOBAL);
     openPanelWindow(prefs);
   });
 
@@ -482,8 +497,7 @@ const init = async () => {
   // extension versions are available. Here we do a quick app-version check to
   // reject clearly stale caches without blocking startup.
   const cache = await loadCommandCache();
-  const appInfo = await api.app.getInfo();
-  const currentAppVersion = appInfo.success ? appInfo.data.version : '0.0.0';
+  const currentAppVersion = (typeof window !== 'undefined' && window.__APP_VERSION__) || '0.0.0';
   const cacheAppVersionMatch = cache && cache.appVersion === currentAppVersion;
   if (cache && cache.commands && cacheAppVersionMatch) {
     // Pre-populate from cache (will be updated by fresh registrations)
@@ -543,13 +557,13 @@ const init = async () => {
   });
 
   // 4. Listen for settings changes to hot-reload
-  api.subscribe('cmd:settings-changed', () => {
+  api.pubsub.subscribe('cmd:settings-changed', () => {
     log('ext:cmd', 'settings changed, reinitializing');
     reinit();
   }, api.scopes.GLOBAL);
 
   // 4b. Save command cache after all extensions have loaded
-  api.subscribe('ext:all-loaded', async () => {
+  api.pubsub.subscribe('ext:all-loaded', async () => {
     log('ext:cmd', 'ext:all-loaded - saving command cache');
     // Small delay to ensure all commands are registered
     setTimeout(async () => {
@@ -564,7 +578,7 @@ const init = async () => {
         log('ext:cmd', 'Purging stale cached command:', name);
         commandRegistry.delete(name);
         // Notify panel so it removes the command from its local registry
-        api.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+        api.pubsub.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
       }
 
       const { appVersion, extensionVersions } = await getCurrentVersions();
@@ -573,7 +587,7 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 
   // Listen for settings updates from Settings UI
-  api.subscribe('cmd:settings-update', async (msg) => {
+  api.pubsub.subscribe('cmd:settings-update', async (msg) => {
     log('ext:cmd', 'settings-update received:', msg);
 
     try {
@@ -591,7 +605,7 @@ const init = async () => {
       await saveSettings(currentSettings);
       await reinit();
 
-      api.publish('cmd:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('cmd:settings-changed', currentSettings, api.scopes.GLOBAL);
     } catch (err) {
       log.error('ext:cmd', 'settings-update error:', err);
     }
