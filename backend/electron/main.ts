@@ -70,9 +70,6 @@ let _sessionRestoreDoneResolve: (() => void) | null = null;
 const _sessionRestoreDonePromise = new Promise<void>(resolve => { _sessionRestoreDoneResolve = resolve; });
 let _sessionRestoreDone = false;
 
-// Extension host window for built-in extensions (consolidated mode)
-let extensionHostWindow: BrowserWindow | null = null;
-
 // Built-in extensions that load in consolidated mode (iframes)
 // External extensions (including 'example') load in separate windows
 //
@@ -214,31 +211,9 @@ export async function initialize(): Promise<void> {
   setExtensionBroadcaster((topic, msg, source) => {
     const sourceOrigin = peekHost(source);
 
-    // Broadcast to consolidated extension iframes (built-in extensions)
-    if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
-      try {
-        const mainFrame = extensionHostWindow.webContents.mainFrame;
-        for (const frame of mainFrame.framesInSubtree) {
-          if (frame !== mainFrame && frame.url) {
-            const frameHost = peekHost(frame.url);
-            // Don't echo back to sender
-            if (frameHost !== sourceOrigin) {
-              frame.send(`pubsub:${topic}`, {
-                ...(msg as object),
-                source
-              });
-            }
-          }
-        }
-      } catch {
-        // Window may have been destroyed between check and send (during shutdown)
-      }
-    }
-
     // Broadcast to v2 tile BrowserWindows (launched by tile-launcher).
     // Without this, v2 tiles that subscribe to global pubsub events (editor:open,
-    // item:created, etc.) never receive them, because they're not in
-    // extensionWindows or the consolidated extension host.
+    // item:created, etc.) never receive them.
     for (const tileWin of getAllTileWindows()) {
       try {
         const winHost = peekHost(tileWin.webContents.getURL());
@@ -714,57 +689,19 @@ function executeDeclarativeAction(cmd: ManifestCommand, ctx: Record<string, unkn
 
 /**
  * Load a lazy extension on demand.
- * Sends ext:lazy-load to the extension host and waits for ext:lazy-ready.
- * Returns a promise that resolves when the extension is loaded and ready.
+ * Phase 3.10: extensionHostWindow deleted — all consolidated extensions are
+ * now v2 tiles launched eagerly. The lazy-load path is a no-op; it resolves
+ * immediately so callers don't hang. If a true lazy-load mechanism is needed
+ * in future it should target the v2 tile launcher, not the v1 iframe host.
  */
-const LAZY_LOAD_TIMEOUT_MS = 10000;
-
 function loadLazyExtension(extId: string): Promise<void> {
   if (lazyExtensionLoaded.has(extId)) {
     return Promise.resolve();
   }
-
-  return new Promise<void>((resolve) => {
-    // Queue the callback
-    if (!lazyLoadCallbacks.has(extId)) {
-      lazyLoadCallbacks.set(extId, []);
-    }
-    lazyLoadCallbacks.get(extId)!.push(resolve);
-
-    // Only send load request once (first callback triggers it)
-    if (lazyLoadCallbacks.get(extId)!.length === 1) {
-      // Safety timeout: if ext:ready never arrives, resolve all callbacks
-      setTimeout(() => {
-        if (lazyExtensionLoaded.has(extId)) return; // Already resolved normally
-        console.error(`[ext:lazy] Timeout waiting for ext:ready from ${extId} (${LAZY_LOAD_TIMEOUT_MS}ms)`);
-        lazyExtensionLoaded.add(extId);
-        const callbacks = lazyLoadCallbacks.get(extId) || [];
-        lazyLoadCallbacks.delete(extId);
-        for (const cb of callbacks) {
-          cb();
-        }
-      }, LAZY_LOAD_TIMEOUT_MS);
-
-      if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
-        DEBUG && console.log(`[ext:lazy] Loading lazy extension: ${extId}`);
-        // Create iframe directly via executeJavaScript (bypasses IPC/contextBridge)
-        extensionHostWindow.webContents.executeJavaScript(`
-          (function() {
-            if (document.getElementById('ext-${extId}')) return;
-            var iframe = document.createElement('iframe');
-            iframe.src = 'peek://${extId}/background.html';
-            iframe.id = 'ext-${extId}';
-            document.getElementById('extensions').appendChild(iframe);
-          })();
-        `).catch((err) => {
-          console.error(`[ext:lazy] Failed to create iframe for ${extId}:`, err);
-        });
-      } else {
-        console.error(`[ext:lazy] Extension host not available for lazy loading: ${extId}`);
-        resolve(); // Resolve anyway to avoid hanging
-      }
-    }
-  });
+  // No extension host window — resolve immediately (v2 tiles load eagerly).
+  console.warn(`[ext:lazy] loadLazyExtension('${extId}') called but extensionHostWindow has been removed. If this extension needs lazy loading, migrate it to a v2 tile.`);
+  lazyExtensionLoaded.add(extId);
+  return Promise.resolve();
 }
 
 /**
@@ -1080,73 +1017,6 @@ export function discoverBuiltinThemes(extensionsDir: string, legacyThemesDir?: s
   }
 }
 
-/**
- * Create the consolidated extension host window
- * All extensions load as iframes within this single window
- */
-async function createExtensionHostWindow(): Promise<BrowserWindow> {
-  DEBUG && console.log('[ext:host] Creating consolidated extension host window');
-
-  // Use profile-specific session for isolation
-  const profileSession = getProfileSession();
-
-  const win = new BrowserWindow({
-    show: false,
-    backgroundColor: getSystemThemeBackgroundColor(),
-    webPreferences: {
-      preload: config.preloadPath,
-      session: profileSession,
-      nodeIntegrationInSubFrames: true,  // Preload runs in iframes too
-      // Disable same-origin policy so extension iframes can fetch() cross-origin.
-      // Required by entities extension which fetches page content for extraction.
-      // All iframes only load trusted extension code (peek://ext/{id}/...).
-      webSecurity: false,
-    }
-  });
-
-  // Forward console logs from extension host
-  win.webContents.on('console-message', (event) => {
-    DEBUG && console.log(`[ext:host] ${event.message}`);
-  });
-
-  // Log load errors
-  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-    console.error(`[ext:host] Failed to load: ${errorCode} ${errorDescription}`);
-  });
-
-  // Track iframe loading via did-frame-finish-load events
-  // This fires for each sub-frame (iframe) when it finishes loading
-  win.webContents.on('did-frame-finish-load', (_event, isMainFrame) => {
-    if (isMainFrame) return; // Skip the extension host page itself
-    // Check all frames to see which extensions have loaded
-    try {
-      const frames = win.webContents.mainFrame.frames;
-      for (const frame of frames) {
-        const url = frame.url;
-        // Extract extension ID from peek://{extId}/background.html
-        const match = url.match(/^peek:\/\/([^/]+)\/background\.html/);
-        if (match) {
-          const extId = match[1];
-          DEBUG && console.log(`[ext:host] Frame loaded: ${extId}`);
-        }
-      }
-    } catch (err) {
-      // Frame enumeration can fail if window is being destroyed
-      DEBUG && console.log('[ext:host] Frame enumeration error:', err);
-    }
-  });
-
-  await win.loadURL('peek://app/extension-host.html');
-
-  extensionHostWindow = win;
-
-  // Open devtools for extension host in debug mode (not in tests or headless)
-  if (config.isDev && !isTestProfile() && !isHeadless()) {
-    win.webContents.openDevTools({ mode: 'detach', activate: false });
-  }
-
-  return win;
-}
 
 /**
  * Load all enabled extensions (hybrid mode)
@@ -1173,12 +1043,10 @@ export async function loadExtensions(): Promise<number> {
     }
   });
 
-  // Load the extension host and cmd FIRST — cmd owns the command registry.
+  // Load cmd FIRST — cmd owns the command registry.
   // Any feature that publishes cmd:register or cmd:register-batch must find
   // cmd already subscribed, otherwise registration is lost.
-  // cmd now runs as a standalone tile renderer (tile-preload + trustedBuiltin
-  // grant) — no longer loaded as an iframe in the consolidated extension host.
-  await createExtensionHostWindow();
+  // cmd runs as a standalone tile renderer (tile-preload + trustedBuiltin grant).
   await initCmd({ tilePreloadPath });
 
   // Load HUD right after cmd — it's core app infrastructure like cmd, and
@@ -1346,14 +1214,6 @@ export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unkn
   }
 
   return result;
-}
-
-
-/**
- * Get the extension host window (for consolidated/builtin extensions)
- */
-export function getExtensionHostWindow(): BrowserWindow | null {
-  return extensionHostWindow;
 }
 
 

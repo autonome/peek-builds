@@ -217,36 +217,11 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
   const bgWindow = await waitForWindowHelper(() => electronApp.windows(), 'peek://test/', 30000);
   await waitForAppReady(bgWindow, 15000);
 
-  // Wait for extensions to be ready via the API (checks actual extension system state)
-  // This replaces window-counting which was unreliable with lazy loading
+  // Wait for extensions to be ready via the API (checks actual extension system state).
+  // Gates on v2 tile readiness via the extensions API — no host window dependency.
   const waitForHybridExtensions = async (timeout: number): Promise<void> => {
     const start = Date.now();
     while (Date.now() - start < timeout) {
-      // Check for extension host window (consolidated built-ins)
-      const hostWindow = electronApp.windows().find(w =>
-        w.url().includes('peek://app/extension-host.html')
-      );
-
-      if (!hostWindow) {
-        await sleep(100);
-        continue;
-      }
-
-      // Verify host window's DOM is actually ready
-      try {
-        const hostReady = await hostWindow.evaluate(() => {
-          return document.readyState === 'complete' &&
-                 document.getElementById('extensions') !== null;
-        });
-        if (!hostReady) {
-          await sleep(100);
-          continue;
-        }
-      } catch {
-        await sleep(100);
-        continue;
-      }
-
       // Check via API that critical extensions are loaded
       try {
         const ready = await bgWindow.evaluate(async () => {
@@ -271,7 +246,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
     // Timeout reached - throw error with diagnostic info
     const windows = electronApp.windows();
     const urls = windows.map(w => w.url());
-    throw new Error(`Hybrid extensions failed to load within ${timeout}ms. Windows: ${JSON.stringify(urls)}`);
+    throw new Error(`Extensions failed to load within ${timeout}ms. Windows: ${JSON.stringify(urls)}`);
   };
   await waitForHybridExtensions(15000);
 

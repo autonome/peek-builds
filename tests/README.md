@@ -137,16 +137,15 @@ The test suite includes specific tests for the hybrid extension architecture in 
 
 | Test | What it verifies |
 |------|-----------------|
-| `extension host window exists` | Extension host window loads at `peek://app/extension-host.html` |
-| `built-in extensions load as iframes` | `cmd`, `groups`, `peeks`, `slides` are iframes in extension host |
+| `v2 background tile windows exist` | v2 tile background windows launch at `peek://{id}/background.html` |
 | `example extension loads as separate window` | External extensions get separate BrowserWindows |
 | `commands work from both consolidated and external` | Commands from both loading modes are accessible |
 | `pubsub works between consolidated and external` | Cross-extension messaging works across loading modes |
-| `correct window count for hybrid mode` | Expected window count: 1 core + 1 host + 1 external |
+| `correct window count for hybrid mode` | Expected window count: 1 core bg + N v2 tile windows + 1 external |
 
-The test fixture (`tests/fixtures/desktop-app.ts`) handles hybrid mode by:
-1. Waiting for the extension host window to load
-2. Waiting for at least one external extension window (e.g., `example`)
+The test fixture (`tests/fixtures/desktop-app.ts`) handles v2-tile mode by:
+1. Waiting for the test-fixture renderer window (`peek://test/`) to load
+2. Polling the extensions API until cmd is running and at least 3 extensions are loaded
 3. Providing `getExtensionWindows()` that returns separate window extensions only
 
 ## Coverage Matrix

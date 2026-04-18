@@ -93,7 +93,6 @@ import {
 } from './protocol.js';
 
 import {
-  getExtensionHostWindow,
   getRunningExtensions,
   getAllRegisteredExtensions,
   reloadExtension,
@@ -250,7 +249,7 @@ function trackContentWindowFocus(win: BrowserWindow): void {
 function trackVisibleWindowFocus(win: BrowserWindow): void {
   const url = win.webContents.getURL();
   // Exclude internal background windows
-  if (url === 'peek://app/background.html' || url === 'peek://app/extension-host.html') {
+  if (url === 'peek://app/background.html') {
     return;
   }
   // Exclude non-focusable windows (e.g., HUD overlay)
@@ -1794,11 +1793,11 @@ export function registerWindowHandlers(): void {
     }
 
     // Determine opener window and whether it's a real content parent
-    // Background/infrastructure windows (background.html, extension-host.html) are
-    // not real parents — they're just the IPC sender. Only content windows count
-    // as parents for IZUI child-window semantics (ESC closes child, focuses parent).
+    // Background/infrastructure windows (background.html) are not real parents —
+    // they're just the IPC sender. Only content windows count as parents for
+    // IZUI child-window semantics (ESC closes child, focuses parent).
     const openerWindow = BrowserWindow.fromWebContents(ev.sender);
-    const INTERNAL_URLS = ['peek://app/background.html', 'peek://app/extension-host.html'];
+    const INTERNAL_URLS = ['peek://app/background.html'];
     const openerUrl = openerWindow && !openerWindow.isDestroyed() ? openerWindow.webContents?.getURL() ?? '' : '';
     const isRealParent = openerWindow && !openerWindow.isDestroyed() && !INTERNAL_URLS.some(u => openerUrl === u);
 
@@ -2891,7 +2890,6 @@ export function registerWindowHandlers(): void {
           const otherInfo = getWindowInfo(otherWin.id);
           const otherAddress = otherInfo?.params?.address as string | undefined;
           if (otherAddress?.includes('background.html')) continue;
-          if (otherAddress?.includes('extension-host.html')) continue;
           // Hide and track
           otherWin.hide();
           hiddenWindowIds.push(otherWin.id);
@@ -3687,9 +3685,9 @@ export function registerMiscHandlers(onQuit: () => void): void {
   // ev.reply() internally uses sender.sendToFrame(frameId, ...) which correctly
   // handles both:
   //   - Normal BrowserWindow senders (main frame)
-  //   - Iframe sub-frame senders (consolidated extensions in extension-host.html)
+  //   - Sub-frame senders (for forward compatibility)
   //
-  // We guard against destroyed senders (extension reload, iframe removed from DOM)
+  // We guard against destroyed senders (extension reload)
   // to prevent uncaught exceptions. The previous approaches that failed:
   //   - BrowserWindow.fromId(ev.sender.id): wrong ID space (WebContents vs Window)
   //   - BrowserWindow.fromWebContents(ev.sender): returns null for iframe senders

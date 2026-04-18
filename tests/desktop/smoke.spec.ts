@@ -1372,18 +1372,9 @@ test.describe('Data Persistence @desktop', () => {
 test.describe('Core Functionality @desktop', () => {
   test('app launches and extensions load', async () => {
     // After v2 tile migration:
-    // - Legacy v1 extensions (cmd, hud, page) load as iframes in extension-host
     // - V2 features load as separate background BrowserWindows (peek://{id}/background.html)
     // - Eager v2 features (e.g. entities, peeks, slides) launch at startup;
     //   lazy v2 features (e.g. example) launch on first command/event
-
-    // Check extension host exists (still used for legacy v1 iframes including cmd)
-    const hostWindow = await waitForWindow(
-      () => sharedApp.windows(),
-      'peek://app/extension-host.html',
-      15000
-    );
-    expect(hostWindow).toBeDefined();
 
     // Check that at least one eager v2 background tile window exists.
     // peeks and slides are eager v2 background tiles that launch at startup.
@@ -4171,51 +4162,6 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     bgWindow = sharedBgWindow;
   });
 
-  test('extension host window exists for built-in extensions', async () => {
-    // Extension host should exist for consolidated built-in extensions
-    const windows = sharedApp.windows();
-    const hostWindow = windows.find(w => w.url().includes('peek://app/extension-host.html'));
-    expect(hostWindow).toBeDefined();
-  });
-
-  test('built-in extensions load as iframes in extension host', async () => {
-    // After v2 tile migration:
-    // - Only legacy v1 consolidated extensions (cmd, hud, page) load as iframes
-    //   inside the extension-host window. cmd is loaded by cmd-glue.ts.
-    // - V2 features (peeks, slides, groups, editor, etc.) now launch as
-    //   separate background BrowserWindows at peek://{id}/background.html and
-    //   are NOT iframes in the host. See "v2 background tile windows" test below.
-    const windows = sharedApp.windows();
-    const hostWindow = windows.find(w => w.url().includes('peek://app/extension-host.html'));
-    expect(hostWindow).toBeDefined();
-
-    // Wait for #extensions container to exist (it may be hidden, so use 'attached' state)
-    await hostWindow!.waitForSelector('#extensions', { timeout: 15000, state: 'attached' });
-
-    // Wait for at least the cmd iframe to load
-    await hostWindow!.waitForFunction(
-      () => {
-        const container = document.getElementById('extensions');
-        const iframes = container ? container.querySelectorAll('iframe') : [];
-        return Array.from(iframes).some(f => (f as HTMLIFrameElement).src.includes('peek://cmd/'));
-      },
-      { timeout: 15000 }
-    );
-
-    const iframeData = await hostWindow!.evaluate(() => {
-      const container = document.getElementById('extensions');
-      const iframes = container ? Array.from(container.querySelectorAll('iframe')) : [];
-      return {
-        count: iframes.length,
-        srcs: iframes.map(f => f.src)
-      };
-    });
-
-    // cmd is always loaded as an iframe in the extension host (via cmd-glue.ts)
-    expect(iframeData.count).toBeGreaterThanOrEqual(1);
-    expect(iframeData.srcs.some(s => s.includes('peek://cmd/'))).toBe(true);
-  });
-
   test('v2 background tile windows exist as separate BrowserWindows', async () => {
     // V2 background tiles (peeks, slides) launch as separate hidden BrowserWindows
     // at peek://{id}/background.html — NOT as iframes in the extension host.
@@ -4340,9 +4286,9 @@ test.describe('Hybrid Extension Mode @desktop', () => {
   });
 
   test('correct window count for hybrid mode', async () => {
-    // In hybrid mode we should have:
+    // In v2-tile mode we should have:
     // - 1 background window (core)
-    // - 1 extension host window (consolidated built-ins)
+    // - v2 tile background windows (one per feature)
     // - 1 separate window for 'example' extension
     // - Plus any UI windows (settings, etc.)
 
@@ -4356,14 +4302,12 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     const windows = sharedApp.windows();
 
     const bgWindows = windows.filter(w => w.url().includes('app/background.html'));
-    const hostWindows = windows.filter(w => w.url().includes('extension-host.html'));
     // Filter to only count 'example' extension windows (the only external extension)
     const exampleExtWindows = windows.filter(w =>
       w.url().includes('peek://ext/example/') && w.url().includes('background.html')
     );
 
     expect(bgWindows.length).toBe(1);
-    expect(hostWindows.length).toBe(1);
     // Only example should be in separate window
     expect(exampleExtWindows.length).toBe(1);
     expect(exampleExtWindows[0].url()).toContain('example');
@@ -5285,150 +5229,6 @@ test.describe('Shortcut Roundtrip @desktop', () => {
     await bgWindow.evaluate(() => {
       (window as any).app.shortcuts.unregister('Alt+F7');
       delete (window as any).__shortcutFired;
-    });
-  });
-
-  test('local shortcut from extension-host iframe roundtrip', async () => {
-    // Register a local shortcut from a consolidated extension iframe (in extension-host.html),
-    // trigger it via handleLocalShortcut in the main process, verify callback fires
-    // in the iframe. This tests ev.reply for iframe WebContents where
-    // BrowserWindow.fromWebContents() returns null.
-    const bgWindow = sharedBgWindow;
-
-    // Find the extension host window
-    const hostWindow = sharedApp.windows().find(w => w.url().includes('extension-host.html'));
-    expect(hostWindow).toBeDefined();
-
-    // Wait for iframes to load
-    await hostWindow!.waitForFunction(
-      () => {
-        const container = document.getElementById('extensions');
-        const iframes = container ? container.querySelectorAll('iframe') : [];
-        return iframes.length >= 1;
-      },
-      { timeout: 10000 }
-    );
-
-    // After v2 tile migration, slides/groups/peeks are now separate v2 background
-    // BrowserWindows — not iframes in the host. The remaining v1 iframes in the
-    // extension host are cmd (loaded by cmd-glue.ts) and hud (eager v1 consolidated).
-    // Use the cmd iframe since it is always loaded.
-    const frames = hostWindow!.frames();
-    const extFrame = frames.find(f =>
-      f.url().includes('peek://cmd/') || f.url().includes('peek://hud/')
-    );
-    expect(extFrame).toBeDefined();
-
-    // Register a local shortcut from the iframe context
-    await extFrame!.evaluate(() => {
-      (window as any).__iframeShortcutFired = false;
-      (window as any).app.shortcuts.register('Alt+F8', () => {
-        (window as any).__iframeShortcutFired = true;
-      });
-    });
-
-    // Wait for IPC registration to reach main process
-    await sleep(300);
-
-    // Trigger the shortcut from the main process.
-    // See local-shortcut test above for rationale on the catch-destroyed shim.
-    const handled = await sharedApp.evaluateMain!(({ app }) => {
-      try {
-        const { handleLocalShortcut } = (globalThis as any).__peek_test;
-        const result = handleLocalShortcut({
-          type: 'keyDown',
-          alt: true,
-          shift: false,
-          meta: false,
-          control: false,
-          code: 'F8'
-        });
-        return !!result;
-      } catch (e: any) {
-        return 'peek_test-failed: ' + e.message;
-      }
-    }).catch((err: any) => {
-      if (/context was destroyed/i.test(err?.message || '')) return true;
-      throw err;
-    });
-
-    expect(handled).toBe(true);
-
-    // Wait for the reply to reach the iframe and trigger the callback
-    await extFrame!.waitForFunction(
-      () => (window as any).__iframeShortcutFired === true,
-      { timeout: 5000 }
-    );
-
-    const fired = await extFrame!.evaluate(() => (window as any).__iframeShortcutFired);
-    expect(fired).toBe(true);
-
-    // Clean up
-    await extFrame!.evaluate(() => {
-      (window as any).app.shortcuts.unregister('Alt+F8');
-      delete (window as any).__iframeShortcutFired;
-    });
-  });
-
-  test('global shortcut from extension-host iframe roundtrip', async () => {
-    // Register a global shortcut from a consolidated extension iframe,
-    // trigger it from the main process, verify callback fires in the iframe.
-    // This is the exact scenario that breaks slides extension hotkeys.
-
-    // Find the extension host window
-    const hostWindow = sharedApp.windows().find(w => w.url().includes('extension-host.html'));
-    expect(hostWindow).toBeDefined();
-
-    // After v2 tile migration, slides/groups/peeks are now separate v2 background
-    // BrowserWindows — not iframes in the host. Use a remaining v1 iframe (cmd or hud).
-    const frames = hostWindow!.frames();
-    const extFrame = frames.find(f =>
-      f.url().includes('peek://cmd/') || f.url().includes('peek://hud/')
-    );
-    expect(extFrame).toBeDefined();
-
-    // Register a GLOBAL shortcut from the iframe context
-    await extFrame!.evaluate(() => {
-      (window as any).__globalIframeShortcutFired = false;
-      (window as any).app.shortcuts.register('CommandOrControl+Shift+F11', () => {
-        (window as any).__globalIframeShortcutFired = true;
-      }, { global: true });
-    });
-
-    // Wait for IPC registration to propagate
-    await sleep(300);
-
-    // Verify the shortcut was registered in the main process.
-    // Wrap in catch-destroyed shim (same rationale as local shortcut tests).
-    const isRegistered = await sharedApp.evaluateMain!(({ app: electronApp }) => {
-      // Access globalShortcut from the electron app module context
-      const electron = (globalThis as any).__peek_electron || {};
-      if (electron.globalShortcut) {
-        return electron.globalShortcut.isRegistered('CommandOrControl+Shift+F11');
-      }
-      // Fallback: check via the imported shortcuts module
-      return 'no-globalShortcut-access';
-    }).catch((err: any) => {
-      // If we can't verify due to context destruction, assume registered —
-      // register flow is covered by the local shortcut tests.
-      if (/context was destroyed/i.test(err?.message || '')) return true;
-      throw err;
-    });
-    expect(isRegistered).toBe(true);
-
-    // Trigger the global shortcut callback. Electron's globalShortcut.register stores
-    // a callback. We simulate the OS-level trigger by emitting the accelerator.
-    // Since we can't trigger OS-level shortcuts from Playwright, we use a workaround:
-    // call the internal shortcut callback via the electron module.
-    // Unfortunately globalShortcut has no programmatic trigger API.
-    // The real test is that the global shortcut was registered (above) and that the
-    // ev.reply mechanism works (tested in the local shortcut tests with same sender).
-    // Here we verify the registration path works for iframe senders.
-
-    // Clean up
-    await extFrame!.evaluate(() => {
-      (window as any).app.shortcuts.unregister('CommandOrControl+Shift+F11', { global: true });
-      delete (window as any).__globalIframeShortcutFired;
     });
   });
 
