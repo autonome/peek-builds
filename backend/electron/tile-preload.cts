@@ -1077,15 +1077,12 @@ function buildAPI(): Record<string, unknown> {
       });
     },
 
-    // ── tile:theme:* strict shims (Phase 3.5b) ──────────────────────────
-    // These route through the new tile:theme:* strict channels which enforce
+    // ── tile:theme:* strict shims ────────────────────────────────────────
+    // These route through the tile:theme:* strict channels which enforce
     // trustedBuiltin gating on the main-process side. Non-trusted callers
     // will receive { success: false, error: 'trustedBuiltin required' }.
-    //
-    // NOTE: the trustedBuiltin block below OVERRIDES get/list/getAll/setTheme/
-    // setColorScheme/setWindowColorScheme with legacy theme:* routes for now.
-    // Wave 3.6b will flip that block to call tile:theme:* and remove the
-    // override, at which point these base implementations become the sole path.
+    // setWindowColorScheme has a thin trustedBuiltin wrapper below that
+    // resolves the target windowId before forwarding to the strict channel.
 
     /**
      * Get current theme settings (id, colorScheme, isDark, effectiveScheme).
@@ -2148,21 +2145,14 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Theme (trustedBuiltin extensions) ────────────────────────────────
   //
-  // The strict tile:theme surface only exposes `getInfo` and `onChange`.
-  // Core renderers (app/index.js in particular) need the full v1 theme
-  // surface for the cmd palette theme commands (`theme light`, `theme`,
-  // `theme light here`, etc.). The channels are plain `ipcMain.handle`
-  // entries in `ipc.ts`, so we can expose them here under trustedBuiltin
-  // as thin wrappers. Non-trustedBuiltin tiles continue to use the
-  // strict tile:theme:* surface declared above.
+  // Core renderers (app/index.js in particular) call setWindowColorScheme
+  // with only a colorScheme argument (no windowId), relying on window-ID
+  // resolution via `get-focused-visible-window-id`. The strict
+  // tile:theme:setWindowColorScheme channel requires an explicit windowId,
+  // so we keep a thin trustedBuiltin wrapper here that resolves the ID
+  // before forwarding to the strict channel. All other theme methods route
+  // through the base api.theme.* implementations above (tile:theme:*).
   if (trustedBuiltin) {
-    (api.theme as Record<string, unknown>).get = () => ipcRenderer.invoke('theme:get');
-    (api.theme as Record<string, unknown>).list = () => ipcRenderer.invoke('theme:list');
-    (api.theme as Record<string, unknown>).getAll = () => ipcRenderer.invoke('theme:getAll');
-    (api.theme as Record<string, unknown>).setTheme = (themeId: string) =>
-      ipcRenderer.invoke('theme:setTheme', themeId);
-    (api.theme as Record<string, unknown>).setColorScheme = (colorScheme: string) =>
-      ipcRenderer.invoke('theme:setColorScheme', colorScheme);
     (api.theme as Record<string, unknown>).setWindowColorScheme = async (colorScheme: string) => {
       // Core/test renderers target the "last focused visible window" via
       // `get-focused-visible-window-id`, not their own hidden
@@ -2175,7 +2165,7 @@ function buildAPI(): Record<string, unknown> {
       if (!windowId) {
         return { success: false, error: 'No visible window to target' };
       }
-      return ipcRenderer.invoke('theme:setWindowColorScheme', { windowId, colorScheme });
+      return ipcRenderer.invoke('tile:theme:setWindowColorScheme', { token: tileToken, windowId, colorScheme });
     };
   }
 
