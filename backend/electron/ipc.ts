@@ -215,7 +215,6 @@ import {
 //   - lastFocusedVisibleWindowId: Last focused visible window (for per-window cmds)
 //
 // IPC handlers:
-//   - get-window-id: Returns the calling window's ID
 //   - get-focused-visible-window-id: Returns lastFocusedVisibleWindowId
 // ============================================================================
 
@@ -1178,32 +1177,8 @@ export function registerExtensionHandlers(): void {
     }
   });
 
-  ipcMain.handle('feature-settings-schema', async (ev, data) => {
-    try {
-      const extPath = getExtensionPath(data.id);
-      if (!extPath) {
-        return { success: false, error: `Extension ${data.id} not found` };
-      }
-
-      const manifest = loadExtensionManifest(extPath);
-      if (!manifest || !manifest.settingsSchema) {
-        return { success: true, data: null };
-      }
-
-      const schemaPath = path.join(extPath, manifest.settingsSchema);
-      if (!fs.existsSync(schemaPath)) {
-        return { success: true, data: null };
-      }
-
-      const schemaContent = fs.readFileSync(schemaPath, 'utf-8');
-      const schema = JSON.parse(schemaContent);
-      return { success: true, data: schema };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
 }
+
 
 /**
  * Theme settings storage keys
@@ -3528,12 +3503,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
   ipcMain.on(IPC_CHANNELS.RENDERER_LOG, (_ev, msg) => {
     const shortSource = msg.source?.replace('peek://app/', '').replace('peek://ext/', 'ext/') || 'unknown';
     console.log(`[${shortSource}]`, ...(msg.args || []));
-  });
-
-  // Get current window ID (the window that sent the IPC message)
-  ipcMain.handle('get-window-id', (ev) => {
-    const win = BrowserWindow.fromWebContents(ev.sender);
-    return win ? win.id : null;
   });
 
   // Get app-level preferences

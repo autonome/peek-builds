@@ -828,16 +828,13 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Get the Electron BrowserWindow id for the calling renderer.
      *
-     * No `window` capability required — the tile's token is the
-     * authority (a tile always knows its own window). Falls back to
-     * the un-gated legacy `get-window-id` channel for v1-compat tiles.
+     * Routes strictly through `tile:window:get-id`. No `window`
+     * capability required — the tile's token is the authority
+     * (a tile always knows its own window).
      */
     getId: () => {
       if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
-      }
-      return ipcRenderer.invoke('get-window-id');
+      return ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
     },
   };
 
@@ -1612,9 +1609,7 @@ function buildAPI(): Record<string, unknown> {
         : featuresCompat.resolvePublisher(query as string);
     },
     settingsSchema: (id: unknown) => {
-      return hasFeaturesCapability()
-        ? featuresStrict.settingsSchema(id as string)
-        : ipcRenderer.invoke('feature-settings-schema', { token: tileToken, id });
+      return featuresStrict.settingsSchema(id as string);
     },
 
     // ── Admin surfaces (strict-only) ─────────────────────────────────
