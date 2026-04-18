@@ -824,6 +824,21 @@ function buildAPI(): Record<string, unknown> {
         token: tileToken,
       });
     },
+
+    /**
+     * Get the Electron BrowserWindow id for the calling renderer.
+     *
+     * No `window` capability required — the tile's token is the
+     * authority (a tile always knows its own window). Falls back to
+     * the un-gated legacy `get-window-id` channel for v1-compat tiles.
+     */
+    getId: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
+      }
+      return ipcRenderer.invoke('get-window-id');
+    },
   };
 
   // ── Datastore (if granted) ──
@@ -1544,6 +1559,8 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.invoke('tile:features:install', { token: tileToken, atUri, userApproved }),
     resolvePublisher: (query: string) =>
       ipcRenderer.invoke('tile:features:browse-resolve-publisher', { token: tileToken, query }),
+    settingsSchema: (id: string) =>
+      ipcRenderer.invoke('tile:features:settings-schema', { token: tileToken, id }),
   };
 
   api.features = {
@@ -1596,6 +1613,11 @@ function buildAPI(): Record<string, unknown> {
       return hasFeaturesCapability()
         ? featuresStrict.resolvePublisher(query as string)
         : featuresCompat.resolvePublisher(query as string);
+    },
+    settingsSchema: (id: unknown) => {
+      return hasFeaturesCapability()
+        ? featuresStrict.settingsSchema(id as string)
+        : ipcRenderer.invoke('feature-settings-schema', { token: tileToken, id });
     },
 
     // ── Admin surfaces (strict-only) ─────────────────────────────────

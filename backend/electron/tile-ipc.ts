@@ -2185,6 +2185,52 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── tile:features:settings-schema ────────────────────────────────
+  //
+  // Read the JSON settings schema file declared in a feature's manifest.
+  // Gated by `features` read capability — mirrors the legacy
+  // `feature-settings-schema` channel in ipc.ts but enforces the
+  // token + `features` capability before reading from disk.
+  //
+  // `args.id` — the feature/extension id whose schema to fetch.
+  // Returns `{ success: true, data: schema }` (data may be null when
+  // the feature declares no settingsSchema or the file is absent).
+  ipcMain.handle('tile:features:settings-schema', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    const check = checkFeaturesAllowed(grant, 'read');
+    if (!check.ok) {
+      handleViolation(grant, 'features', 'features:settings-schema', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    const registry = getFeatureRegistry();
+    if (!registry) return { success: false, error: 'Feature registry not initialized' };
+
+    const entry = registry.getFeature(args.id);
+    if (!entry) return { success: false, error: `Feature not found: ${args.id}` };
+
+    try {
+      const manifest = entry.path ? parseManifestFile(path.join(entry.path, 'manifest.json')) : null;
+      // settingsSchema lives under v2 for tile manifests; fall back to raw for v1 extensions.
+      const settingsSchema: string | undefined =
+        manifest?.v2?.settingsSchema ?? (manifest?.raw?.settingsSchema as string | undefined);
+      if (!settingsSchema) return { success: true, data: null };
+
+      const schemaPath = path.join(entry.path, settingsSchema);
+      if (!fs.existsSync(schemaPath)) return { success: true, data: null };
+
+      const schemaContent = fs.readFileSync(schemaPath, 'utf-8');
+      const schema = JSON.parse(schemaContent);
+      return { success: true, data: schema };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
   // ── IZUI (strict) ─────────────────────────────────────────────────
   //
   // Strict mirrors of the legacy `izui-*` IPC channels. The original
@@ -3071,6 +3117,23 @@ export function registerTileIpcHandlers(): void {
     openerWin.show();
     openerWin.focus();
     return { success: true };
+  });
+
+  // ── tile:window:get-id ────────────────────────────────────────────
+  //
+  // Return the Electron BrowserWindow id for the calling renderer.
+  // No `window` capability required — every tile has an inherent right
+  // to know its own window id (mirrors the un-gated legacy `get-window-id`
+  // channel). Token validity is still enforced so un-initialised callers
+  // cannot probe the id.
+  ipcMain.handle('tile:window:get-id', (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    return win ? { success: true, id: win.id } : { success: false, error: 'Window not found' };
   });
 
   // ── tile:screen:get-primary-display ───────────────────────────────
