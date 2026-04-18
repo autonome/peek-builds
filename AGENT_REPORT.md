@@ -75,16 +75,22 @@ Net LOC delta: −110 / +20. Public exports shrink by 2.
 - `yarn test:grep "HUD"` — 11/11.
 - `yarn test:grep "example"` — 1 test, skipped (not a regression; pre-existing).
 
+## Phase 2.5 #3c — Delete loops + createExtensionWindow (this pass)
+
+Both startup loops confirmed dead (consistent with Phase A audit):
+- `externalBuiltinIds` loop: `v2FeatureIds` contains all features since `onV1Feature` returns `loaded: true` for v1 features too, so the `!v2FeatureIds.has(id)` filter yields nothing.
+- `enabledExternalExts` loop: `extensions` DB table only written by legacy `extension-install` IPC (sideloading path superseded by features-manager); empty in practice.
+- `reloadExtension()` and `loadDevExtension()` now use `relaunchTile()` (Phase 2.5 #3b) — zero callers remain for `createExtensionWindow`.
+
+Deleted in commit `fa2e35fb`:
+- `backend/electron/main.ts`: removed `externalBuiltinIds` collection + filter (~9 lines), `enabledExternalExts` collection + filter (~3 lines), both startup `for` loops (~16 lines), `totalCount` variable, `createExtensionWindow()` function + doc-comment (~92 lines). Removed `getExternalExtensions` from import.
+- `backend/electron/tile-launcher.ts`: updated stale `relaunchTile` doc-comment.
+- Net: ~−120 LOC, zero `createExtensionWindow` references remain.
+
+Validation: `tsc --noEmit` clean. Playwright tests blocked by Bash hook (env restriction); tsc is the reliable gate in this workspace.
+
 ## Open items for Phase 3 / follow-up
 
-- **Phase 2.5 #3b** — add `relaunchTile(tileId)` in `tile-launcher.ts`
-  (re-read manifest, revoke old token via `revokeTokensForTile`, close window
-  via `tileWindows` map, call `launchTile` with the resident/launch entry).
-  Rewrite `reloadExtension()` and `loadDevExtension()` on top of it. Then
-  delete `createExtensionWindow`, the remaining dead branches in
-  `loadExtensions()` (`externalBuiltinIds` + `enabledExternalExts` loops),
-  and the `extensionWindows` map.
-- **Chrome extensions** stay on `session.loadExtension()` — documented in
-  `docs/v1-removal-plan.md` and not part of v1 removal.
-- `extension-window-unload` IPC handler is probably also dead but intentionally
-  left in this pass — scoped audit confirmed `-load` / `-reload` only.
+- `extensionWindows` map still used by broadcast, `getRunningExtensions`, `getAllRegisteredExtensions`, `destroyExtensionWindow`, `getExtensionWindow` — cannot delete yet. Remove when those callers are cleaned up.
+- **Chrome extensions** stay on `session.loadExtension()` — documented in `docs/v1-removal-plan.md` and not part of v1 removal.
+- `extension-window-unload` IPC handler is probably also dead but intentionally left in prior pass — scoped audit confirmed `-load` / `-reload` only.
