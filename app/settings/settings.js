@@ -3211,6 +3211,14 @@ const renderDiagnosticsSettings = async () => {
 
 // Initialize
 const init = async () => {
+  // Initialize the tile-preload surface before any API calls. Without this,
+  // `tokenValid` is false and api.datastore/api.theme/api.subscribe all silently
+  // no-op or reject — createDatastoreStore returns empty, theme CSS is never
+  // injected, and --theme-font-sans is absent (see docs/v1-removal-smoke-regressions.md §7).
+  if (api.initialize) {
+    await api.initialize();
+  }
+
   const sidebarNav = document.getElementById('sidebarNav');
   const contentArea = document.getElementById('settingsContent');
 
@@ -3480,12 +3488,19 @@ window.addEventListener('load', init);
 
 // No IZUI init needed — backend handles focus restoration and ESC policy via roles.
 
-// Listen for navigation requests from commands
-api.subscribe('settings:navigate', (msg) => {
-  if (msg.section) {
-    showSection(msg.section);
+// Listen for navigation requests from commands. Wrap in an async IIFE so
+// `api.initialize()` completes before `api.subscribe` runs — otherwise the
+// subscribe silently no-ops when `tokenValid=false`.
+(async () => {
+  if (api.initialize) {
+    await api.initialize();
   }
-}, api.scopes.GLOBAL);
+  api.subscribe('settings:navigate', (msg) => {
+    if (msg.section) {
+      showSection(msg.section);
+    }
+  }, api.scopes.GLOBAL);
+})();
 
 // Expose showSection for external navigation
 window.showSettingsSection = showSection;
