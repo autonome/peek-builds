@@ -17,7 +17,7 @@
  * Every handler validates the capability token before executing.
  */
 
-import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen } from 'electron';
+import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -6463,6 +6463,74 @@ body {
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // ── tile:log:write ────────────────────────────────────────────────
+  //
+  // Strict shim for the legacy `renderer-log` fire-and-forget channel.
+  // Any tile with a valid token may log — no capability check beyond a
+  // valid token (all tiles can log). Prints forwarded renderer output to
+  // the main-process terminal, matching the legacy shortSource format.
+  ipcMain.on('tile:log:write', (_event, args: {
+    token: string;
+    args?: unknown[];
+    source?: string;
+  }) => {
+    if (!args?.token) return;
+    const grant = getGrantForToken(args.token);
+    if (!grant) {
+      handleViolation(null, 'log', 'tile:log:write', 'invalid token', args.token);
+      return;
+    }
+    const shortSource = (args.source ?? grant.tileId)
+      .replace('peek://app/', '')
+      .replace('peek://ext/', 'ext/');
+    console.log(`[${shortSource}]`, ...(args.args ?? []));
+  });
+
+  // ── tile:app:quit ─────────────────────────────────────────────────
+  //
+  // Strict shim for the legacy `app-quit` channel. Requires trustedBuiltin
+  // (only core tiles — cmd, hud, page — may quit the application).
+  ipcMain.on('tile:app:quit', (_event, args: {
+    token: string;
+    source?: string;
+  }) => {
+    if (!args?.token) return;
+    const grant = getGrantForToken(args.token);
+    if (!grant) {
+      handleViolation(null, 'app', 'tile:app:quit', 'invalid token', args.token);
+      return;
+    }
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'app', 'tile:app:quit', 'trustedBuiltin required', args.token);
+      return;
+    }
+    DEBUG && console.log('[tile-ipc] app:quit requested from:', args.source ?? grant.tileId);
+    app.quit();
+  });
+
+  // ── tile:app:restart ──────────────────────────────────────────────
+  //
+  // Strict shim for the legacy `app-restart` channel. Requires trustedBuiltin.
+  // Calls app.relaunch() then app.quit() matching the legacy ipc.ts pattern.
+  ipcMain.on('tile:app:restart', (_event, args: {
+    token: string;
+    source?: string;
+  }) => {
+    if (!args?.token) return;
+    const grant = getGrantForToken(args.token);
+    if (!grant) {
+      handleViolation(null, 'app', 'tile:app:restart', 'invalid token', args.token);
+      return;
+    }
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'app', 'tile:app:restart', 'trustedBuiltin required', args.token);
+      return;
+    }
+    DEBUG && console.log('[tile-ipc] app:restart requested from:', args.source ?? grant.tileId);
+    app.relaunch();
+    app.quit();
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');
