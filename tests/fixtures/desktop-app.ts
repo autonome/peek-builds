@@ -195,14 +195,26 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
       ...process.env,
       PROFILE: profile,
       DEBUG: process.env.DEBUG || '1',
+      // E2E_TEST triggers the privileged test-fixture renderer in
+      // `backend/electron/test-fixture-glue.ts`. Always set it for
+      // Playwright-driven Electron launches — the fixture is cheap when
+      // unused and required for the v2 bgWindow path.
+      E2E_TEST: 'true',
       // Electron uses PEEK_HEADLESS for headless mode
       ...(headless ? { PEEK_HEADLESS: '1' } : {})
     }
   });
 
-  // Wait for background window to be ready (API loaded)
-  // Use 30s timeout to handle slow launches after previous test cleanup
-  const bgWindow = await waitForWindowHelper(() => electronApp.windows(), 'app/background.html', 30000);
+  // Wait for background window to be ready (API loaded).
+  //
+  // The privileged test-fixture renderer (peek://test/index.html) is the
+  // v2 replacement for the v1 bgWindow iframe. It uses tile-preload.cjs
+  // with a `createTrustedBuiltinGrant('test')` token and exposes the same
+  // `window.app.*` surface tests expect (api.publish/subscribe,
+  // api.datastore, api.window, api.invoke, api.extensions, etc.).
+  //
+  // Use 30s timeout to handle slow launches after previous test cleanup.
+  const bgWindow = await waitForWindowHelper(() => electronApp.windows(), 'peek://test/', 30000);
   await waitForAppReady(bgWindow, 15000);
 
   // Wait for extensions to be ready via the API (checks actual extension system state)
@@ -275,7 +287,10 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
     },
 
     getBackgroundWindow: async () => {
-      return waitForWindowHelper(() => electronApp.windows(), 'app/background.html');
+      // Privileged test fixture renderer (single v2 path).
+      // Backed by app/_test/index.html, launched by test-fixture-glue.ts
+      // when E2E_TEST=true. Uses tile-preload + trustedBuiltin grant.
+      return waitForWindowHelper(() => electronApp.windows(), 'peek://test/');
     },
 
     evaluateMain: (fn: any) => electronApp.evaluate(fn as any),
