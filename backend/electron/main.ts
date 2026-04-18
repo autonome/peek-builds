@@ -1336,41 +1336,6 @@ export async function loadExtensions(): Promise<number> {
   const v1FeatureIds = new Set<string>();
   const v2FeatureIds = new Set<string>();
 
-  // Helper: wait for an extension to appear in loadedConsolidatedExtensions.
-  const waitForExtLoaded = (extId: string, timeoutMs: number): Promise<void> => {
-    return new Promise<void>((resolve) => {
-      if (loadedConsolidatedExtensions.has(extId)) { resolve(); return; }
-      const interval = setInterval(() => {
-        if (loadedConsolidatedExtensions.has(extId)) {
-          clearInterval(interval);
-          clearTimeout(timeout);
-          resolve();
-        }
-      }, 10);
-      const timeout = setTimeout(() => {
-        clearInterval(interval);
-        loadedConsolidatedExtensions.add(extId); // Fallback
-        DEBUG && console.log(`[ext] Timeout waiting for ${extId}, marking as loaded (fallback)`);
-        resolve();
-      }, timeoutMs);
-    });
-  };
-
-  // Helper: create iframe in extension host via executeJavaScript.
-  const loadExtInHost = (host: BrowserWindow, id: string, url: string): void => {
-    host.webContents.executeJavaScript(`
-      (function() {
-        if (document.getElementById('ext-${id}')) return;
-        var iframe = document.createElement('iframe');
-        iframe.src = '${url}';
-        iframe.id = 'ext-${id}';
-        document.getElementById('extensions').appendChild(iframe);
-      })();
-    `).catch((err: Error) => {
-      console.error('[ext:host] Failed to create iframe for', id, err);
-    });
-  };
-
   // Subscribe to ext:ready — extensions publish this after registering their handlers.
   subscribe(getSystemAddress(), scopes.SYSTEM, 'ext:ready', (data: unknown) => {
     const extId = (data as { id?: string })?.id;
@@ -1385,7 +1350,7 @@ export async function loadExtensions(): Promise<number> {
   // cmd already subscribed, otherwise registration is lost.
   // cmd now runs as a standalone tile renderer (tile-preload + trustedBuiltin
   // grant) — no longer loaded as an iframe in the consolidated extension host.
-  const host = await createExtensionHostWindow();
+  await createExtensionHostWindow();
   await initCmd({ tilePreloadPath });
   // Keep cmd visible to getRunningExtensions(): the set is documented as
   // "consolidated iframe extensions" but is the logical "core renderer is up"
@@ -1459,10 +1424,9 @@ export async function loadExtensions(): Promise<number> {
   // Get all registered extension IDs
   const registeredExtIds = getRegisteredExtensionIds();
 
-  // Split into consolidated (built-in) and external — exclude v2 features already loaded by tile system
-  const consolidatedIds = registeredExtIds.filter(id =>
-    CONSOLIDATED_EXTENSION_IDS.includes(id) && isBuiltinExtensionEnabled(id) && !v2FeatureIds.has(id)
-  );
+  // External built-in extensions: registered IDs not in the consolidated list and not loaded by
+  // the v2 tile system. All CONSOLIDATED_EXTENSION_IDS features are v2, so this only catches
+  // any remaining v1 external extensions (e.g. 'example') that aren't in v2FeatureIds.
   const externalBuiltinIds = registeredExtIds.filter(id =>
     !CONSOLIDATED_EXTENSION_IDS.includes(id) && isBuiltinExtensionEnabled(id) && !v2FeatureIds.has(id)
   );
@@ -1471,7 +1435,7 @@ export async function loadExtensions(): Promise<number> {
   const externalExts = getExternalExtensions();
   const enabledExternalExts = externalExts.filter(ext => ext.enabled && ext.path);
 
-  DEBUG && console.log(`[ext] Hybrid mode: ${consolidatedIds.length} consolidated, ${externalBuiltinIds.length + enabledExternalExts.length} external`);
+  DEBUG && console.log(`[ext] Startup: ${externalBuiltinIds.length + enabledExternalExts.length} external`);
 
   // Phase 1: Early
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
@@ -1490,37 +1454,6 @@ export async function loadExtensions(): Promise<number> {
   // `lazyEvents`), so skip them here to avoid duplicate registration that
   // would try to load the v2 tile through the v1 iframe path.
   registerLazyEventInterceptors({ skipExtensions: v2FeatureIds });
-
-  if (consolidatedIds.length > 0) {
-    // Load remaining consolidated extensions — skip declarative-only and lazy ones
-    const otherConsolidatedIds = consolidatedIds.filter(id =>
-      !isDeclarativeOnly(id) && EAGER_EXTENSION_IDS.has(id)
-    );
-    for (const extId of otherConsolidatedIds) {
-      loadExtInHost(host, extId, `peek://${extId}/background.html`);
-    }
-
-    // Also load non-eager consolidated extensions that don't have manifest commands
-    // (they need their background page to register commands at runtime)
-    const nonEagerWithoutManifestCmds = consolidatedIds.filter(id => {
-      if (isDeclarativeOnly(id) || EAGER_EXTENSION_IDS.has(id)) return false;
-      const extPath = getExtensionPath(id);
-      if (!extPath) return false;
-      const manifest = loadExtensionManifest(extPath);
-      if (!manifest) return false;
-      // If no commands declared in manifest, must load eagerly to register its own commands
-      return !manifest.commands || manifest.commands.length === 0;
-    });
-    for (const extId of nonEagerWithoutManifestCmds) {
-      loadExtInHost(host, extId, `peek://${extId}/background.html`);
-    }
-
-    // Wait for all eager consolidated extensions to load via did-frame-finish-load
-    const allEagerIds = [...otherConsolidatedIds, ...nonEagerWithoutManifestCmds];
-    if (allEagerIds.length > 0) {
-      await Promise.all(allEagerIds.map(id => waitForExtLoaded(id, 10000)));
-    }
-  }
 
   // Load external built-in extensions (like 'example') as separate windows
   // Skip declarative-only extensions — they don't need background pages
@@ -1541,7 +1474,7 @@ export async function loadExtensions(): Promise<number> {
     }
   }
 
-  const totalCount = consolidatedIds.length + externalBuiltinIds.length + enabledExternalExts.length;
+  const totalCount = externalBuiltinIds.length + enabledExternalExts.length;
   DEBUG && console.log(`[ext:timing] hybrid total: ${Date.now() - extStart}ms`);
 
   // Phase 3: UI
