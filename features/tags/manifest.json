@@ -33,6 +33,7 @@
         "tag:*",
         "item:*",
         "editor:*",
+        "cmd:execute:*",
         "sync:pull-completed",
         "entities:extracted",
         "ext:ready",

@@ -201,8 +201,19 @@ export async function initialize(): Promise<void> {
   // Hybrid mode: broadcast to BOTH consolidated (iframes) AND separate windows
   // All send() calls are wrapped in try-catch to prevent errors during shutdown
   // when windows are being destroyed concurrently (race between isDestroyed check and send).
+  // Extract the host (tile id) from a peek://host/path source string.
+  // Node's URL.origin returns "null" for non-standard schemes regardless of
+  // Electron's standard:true registration, which would make every peek://
+  // window appear to share an origin with every other — silently dropping
+  // every cross-tile pubsub message. Parse the host manually instead.
+  function peekHost(s: string): string {
+    if (!s.startsWith('peek://')) return s;
+    const rest = s.slice('peek://'.length);
+    const slash = rest.indexOf('/');
+    return slash === -1 ? rest : rest.slice(0, slash);
+  }
   setExtensionBroadcaster((topic, msg, source) => {
-    const sourceOrigin = source.startsWith('peek://') ? new URL(source).origin : source;
+    const sourceOrigin = peekHost(source);
 
     // Broadcast to consolidated extension iframes (built-in extensions)
     if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
@@ -210,9 +221,9 @@ export async function initialize(): Promise<void> {
         const mainFrame = extensionHostWindow.webContents.mainFrame;
         for (const frame of mainFrame.framesInSubtree) {
           if (frame !== mainFrame && frame.url) {
-            const frameOrigin = new URL(frame.url).origin;
+            const frameHost = peekHost(frame.url);
             // Don't echo back to sender
-            if (frameOrigin !== sourceOrigin) {
+            if (frameHost !== sourceOrigin) {
               frame.send(`pubsub:${topic}`, {
                 ...(msg as object),
                 source
@@ -245,12 +256,10 @@ export async function initialize(): Promise<void> {
     // extensionWindows or the consolidated extension host.
     for (const tileWin of getAllTileWindows()) {
       try {
-        const winOrigin = tileWin.webContents.getURL();
-        const winOriginPrefix = winOrigin.startsWith('peek://')
-          ? new URL(winOrigin).origin
-          : winOrigin;
-        // Don't echo back to sender
-        if (winOriginPrefix !== sourceOrigin) {
+        const winHost = peekHost(tileWin.webContents.getURL());
+        // Don't echo back to sender (matched by tile host, not URL.origin —
+        // see peekHost comment above).
+        if (winHost !== sourceOrigin) {
           tileWin.webContents.send(`pubsub:${topic}`, {
             ...(msg as object),
             source
