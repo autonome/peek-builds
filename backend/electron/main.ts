@@ -1618,26 +1618,26 @@ export function registerDevExtension(extId: string, extPath: string): void {
 /**
  * Load a dev extension with devtools always open
  */
-export async function loadDevExtension(extId: string): Promise<BrowserWindow | null> {
+export async function loadDevExtension(extId: string): Promise<object | null> {
   const devExt = devExtensions.get(extId);
   if (!devExt) {
     console.error(`[ext:dev] Dev extension not registered: ${extId}`);
     return null;
   }
 
-  // Create the extension window
-  const win = await createExtensionWindow(extId);
-  if (!win) {
+  // Relaunch as v2 tile: re-read manifest, revoke old token, close old window, launch fresh.
+  const result = await relaunchTile(extId);
+  if (!result) {
     return null;
   }
 
   // Always open devtools for dev extensions (regardless of debug mode)
   if (!isHeadless()) {
-    win.webContents.openDevTools({ mode: 'detach', activate: false });
+    result.window.webContents.openDevTools({ mode: 'detach', activate: false });
   }
 
   DEBUG && console.log(`[ext:dev] Loaded dev extension: ${extId}`);
-  return win;
+  return result;
 }
 
 /**
