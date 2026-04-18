@@ -87,6 +87,8 @@ import {
 
 import { getTileWebPreferencesForUrl } from './tile-launcher.js';
 import { getLazyTileManifest } from './tile-lazy.js';
+import { createTrustedBuiltinGrant } from './tile-manifest.js';
+import { generateToken } from './tile-tokens.js';
 
 import {
   captureThumbnail,
@@ -1032,11 +1034,31 @@ export function registerWindowHandlers(): void {
     //
     // Non-tile URLs (web pages, legacy extension content, new-tab, etc.)
     // fall back to the legacy preload.js.
-    const tileWebPrefs = getTileWebPreferencesForUrl(
+    let tileWebPrefs = getTileWebPreferencesForUrl(
       url,
       getTilePreloadPath(),
       getLazyTileManifest,
     );
+
+    // Diagnostic is a developer-only utility; not a registered v2 tile but
+    // needs tile-preload so api.backup.* / api.shell.openPath strict shims work.
+    // Mint a trustedBuiltin token on-the-fly (same pattern as hud-glue / cmd-glue).
+    if (!tileWebPrefs && url === 'peek://app/diagnostic.html') {
+      const DIAG_ID = 'diagnostic';
+      const DIAG_ENTRY = 'main';
+      const diagGrant = createTrustedBuiltinGrant(DIAG_ID);
+      const diagToken = generateToken(DIAG_ID, DIAG_ENTRY, diagGrant);
+      tileWebPrefs = {
+        preload: getTilePreloadPath(),
+        additionalArguments: [
+          `--tile-id=${DIAG_ID}`,
+          `--tile-entry=${DIAG_ENTRY}`,
+          `--tile-token=${diagToken}`,
+        ],
+        tileId: DIAG_ID,
+        entryId: DIAG_ENTRY,
+      };
+    }
 
     // Prepare browser window options
     const winOptions: Electron.BrowserWindowConstructorOptions = {

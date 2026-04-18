@@ -152,7 +152,7 @@
     window.createBackup = async function() {
       logBackup('Creating Backup', 'Please wait...');
       try {
-        const result = await api.invoke('backup-create');
+        const result = await api.backup.create();
         if (result.success) {
           logBackup('Backup Created', `Successfully created backup:\n${result.path}`);
         } else {
@@ -166,7 +166,7 @@
     window.listBackups = async function() {
       logBackup('Loading', 'Fetching backup list...');
       try {
-        const result = await api.invoke('backup-list');
+        const result = await api.backup.list();
         if (result.success) {
           const { backups, backupDir } = result.data;
 
@@ -202,7 +202,7 @@
 
     window.openBackupFolder = async function() {
       try {
-        const configResult = await api.invoke('backup-get-config');
+        const configResult = await api.backup.getConfig();
         if (!configResult.success) {
           logBackup('Error', 'Failed to get backup config: ' + configResult.error, true);
           return;
@@ -214,7 +214,7 @@
           return;
         }
 
-        const result = await api.invoke('shell-open-path', { path: backupDir });
+        const result = await api.shell.openPath(backupDir);
         if (result.success) {
           logBackup('Opened', `Opened backup folder:\n${backupDir}`);
         } else {
