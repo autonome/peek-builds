@@ -15,6 +15,7 @@ import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, 
 import { initCmd } from './cmd-glue.js';
 import { initHud } from './hud-glue.js';
 import { initPage } from './page-glue.js';
+import { initTestFixture } from './test-fixture-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
@@ -1473,6 +1474,19 @@ export async function loadExtensions(): Promise<number> {
   // tracker used by the Features pane. Adding page here preserves that
   // surfacing now that the renderer is a standalone BrowserWindow.
   loadedConsolidatedExtensions.add('page');
+
+  // Launch the privileged test-fixture renderer when running under
+  // Playwright (E2E_TEST=true). This is the v2 replacement for the v1
+  // `bgWindow` iframe inside `extensionHostWindow`; tests access it via
+  // `getBackgroundWindow()` in `tests/fixtures/desktop-app.ts`. A no-op
+  // in production. See docs/v1-removal-plan.md — Phase 2.
+  if (process.env.E2E_TEST === 'true') {
+    try {
+      await initTestFixture({ tilePreloadPath });
+    } catch (err) {
+      console.error('[main] initTestFixture failed (continuing anyway):', err);
+    }
+  }
 
   // ── V2 Feature Startup ──
   // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
