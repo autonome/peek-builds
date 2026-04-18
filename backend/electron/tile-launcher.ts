@@ -475,6 +475,81 @@ export function getTileWebPreferencesForUrl(
 }
 
 /**
+ * Resolve a peek:// URL to v2 tile web preferences for a `<webview>` child.
+ *
+ * Like `getTileWebPreferencesForUrl`, but treats child URLs that don't
+ * correspond to a declared tile entry as belonging to the parent tile's
+ * grant. This is the loader path for HTML assets a tile loads inside a
+ * `<webview>` element (e.g. `widget-demo`'s widget cards loading
+ * `peek://ext/widget-demo/widgets/clock.html` — `widgets/clock.html` is
+ * not declared as its own tile entry, but logically belongs to
+ * `widget-demo`).
+ *
+ * Resolution rules:
+ *  - URL must be peek://
+ *  - Tile-id (URL host or first path segment under `peek://ext/`) must
+ *    match a registered v2 manifest
+ *  - If a tile entry's `url` matches the path, mint a token for that
+ *    specific entry (same as `getTileWebPreferencesForUrl`)
+ *  - Otherwise, fall back to the manifest's first tile entry — webview
+ *    children inherit the parent tile's full capability grant
+ *
+ * Returns null when the URL isn't peek:// or the tile-id isn't a v2
+ * tile. Callers should fall back to the legacy preload in that case
+ * (e.g. for v1 extensions like HUD).
+ */
+export function getTileWebPreferencesForWebviewUrl(
+  url: string,
+  tilePreloadPath: string,
+  lookupLazyManifest: (tileId: string) => TileManifestV2 | null,
+): { preload: string; additionalArguments: string[]; tileId: string; entryId: string } | null {
+  let host: string;
+  let pathPart: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'peek:') return null;
+    const cleanPath = parsed.pathname.replace(/^\//, '');
+    if (parsed.host === 'ext') {
+      const segments = cleanPath.split('/');
+      if (segments.length < 2) return null;
+      host = segments[0];
+      pathPart = segments.slice(1).join('/');
+    } else {
+      host = parsed.host;
+      pathPart = cleanPath;
+    }
+  } catch {
+    return null;
+  }
+
+  const manifest = getTileManifest(host) || lookupLazyManifest(host);
+  if (!manifest) return null;
+  if (!manifest.tiles || manifest.tiles.length === 0) return null;
+
+  // Prefer an exact entry match, fall back to the first entry for
+  // webview children that aren't declared as standalone tile entries.
+  const entry = manifest.tiles.find(t => t.url === pathPart) || manifest.tiles[0];
+
+  const grant = resolveCapabilities(
+    manifest.id,
+    manifest.capabilities,
+    manifest.builtin === true,
+  );
+  const token = generateToken(manifest.id, entry.id, grant);
+
+  return {
+    preload: tilePreloadPath,
+    additionalArguments: [
+      `--tile-id=${manifest.id}`,
+      `--tile-entry=${entry.id}`,
+      `--tile-token=${token}`,
+    ],
+    tileId: manifest.id,
+    entryId: entry.id,
+  };
+}
+
+/**
  * Send the `tile:shutdown` IPC to a single tile window, wait a short grace
  * period for its `api.onShutdown()` callbacks to run, and then close the
  * BrowserWindow.

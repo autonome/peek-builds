@@ -101,6 +101,9 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval } from './session.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
+import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
+import { getLazyTileManifest } from './tile-lazy.js';
+import { getTilePreloadPath } from './config.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -168,16 +171,42 @@ try {
 }
 
 // Inject preload into <webview> elements that load peek:// URLs.
-// This gives internal widget pages (e.g., HUD widgets) access to window.app API
-// while leaving external web content webviews untouched.
+// This gives internal widget pages (e.g., HUD widgets, widget-demo cards)
+// access to window.app API while leaving external web content webviews untouched.
+//
+// Two paths (Phase 2.5 #2 — webview preload migration):
+//   1. v2 tiles: if the URL resolves to a registered v2 tile manifest,
+//      use tile-preload.cjs with capability-token argv (the same shape
+//      v2 BrowserWindows get via webPreferences.additionalArguments).
+//      Webview children inherit the parent tile's grant via
+//      `getTileWebPreferencesForWebviewUrl`.
+//   2. v1 fallback: any peek:// URL whose tile-id isn't a v2 tile (e.g.
+//      `peek://ext/hud/widgets/...` while HUD is still v1) keeps the
+//      legacy preload.js. This will go away when HUD is migrated.
 //
 // Also inject Proton Pass webauthn.js into http/https webviews for passkey support.
 // The script overrides navigator.credentials.create/get in the main world.
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (_wvEvent, webPreferences, params) => {
     if (params.src && params.src.startsWith('peek://')) {
-      webPreferences.preload = preloadPath;
-      DEBUG && console.log(`[webview] Injecting preload for peek:// webview: ${params.src}`);
+      const tilePreloadPath = getTilePreloadPath();
+      const tileWebPrefs = tilePreloadPath
+        ? getTileWebPreferencesForWebviewUrl(params.src, tilePreloadPath, getLazyTileManifest)
+        : null;
+      if (tileWebPrefs) {
+        webPreferences.preload = tileWebPrefs.preload;
+        // Cast: Electron's WebPreferences type for webviews omits
+        // additionalArguments in some versions, but the runtime accepts
+        // it (set in BrowserWindow webPrefs the same way).
+        (webPreferences as { additionalArguments?: string[] }).additionalArguments =
+          tileWebPrefs.additionalArguments;
+        DEBUG && console.log(
+          `[webview] Injecting v2 tile-preload for ${params.src} (tile=${tileWebPrefs.tileId}, entry=${tileWebPrefs.entryId})`
+        );
+      } else {
+        webPreferences.preload = preloadPath;
+        DEBUG && console.log(`[webview] Injecting v1 preload for peek:// webview: ${params.src}`);
+      }
     }
   });
 
