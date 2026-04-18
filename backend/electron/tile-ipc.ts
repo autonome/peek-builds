@@ -86,6 +86,11 @@ import { resolveCapabilities, validateTileManifest, detectManifestVersion } from
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 import { invokeWindowOpen, popupToOpener } from './ipc.js';
 import {
+  getRunningExtensions,
+  getAllRegisteredExtensions,
+  reloadExtension,
+} from './main.js';
+import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
   registerLocalShortcut,
@@ -6035,6 +6040,299 @@ body {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { valid: false, errors: [`Validation failed: ${message}`], warnings: [] };
+    }
+  });
+
+  // ── tile:extensions:* strict shims (Phase 3.5c) ────────────────────
+  //
+  // Strict counterparts of the legacy `extension-*` channels in ipc.ts.
+  // All handlers require trustedBuiltin — feature tiles must not be able
+  // to manage other extensions through the tile surface.
+  // Wave 3.6c will flip tile-preload.cts to call these channels and
+  // remove the legacy `extension-*` invocations.
+
+  ipcMain.handle('tile:extensions:pickFolder', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:pickFolder', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:pickFolder' };
+    }
+    try {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, error: 'No folder selected' };
+      }
+      return { success: true, data: { path: result.filePaths[0] } };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:validateFolder', async (_event, args: {
+    token: string;
+    folderPath: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:validateFolder', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:validateFolder' };
+    }
+    try {
+      const extPath = args.folderPath;
+      const manifestPath = path.join(extPath, 'manifest.json');
+      if (!fs.existsSync(manifestPath)) {
+        return { success: false, error: 'No manifest.json found in folder' };
+      }
+      const manifestContent = fs.readFileSync(manifestPath, 'utf-8');
+      const manifest = JSON.parse(manifestContent);
+      if (!manifest.id && !manifest.shortname && !manifest.name) {
+        return { success: false, error: 'Manifest must have id, shortname, or name' };
+      }
+      const backgroundPath = path.join(extPath, 'background.html');
+      if (!fs.existsSync(backgroundPath)) {
+        return { success: false, error: 'No background.html found in folder' };
+      }
+      return { success: true, data: { manifest, path: extPath } };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:add', async (_event, args: {
+    token: string;
+    folderPath: string;
+    manifest?: unknown;
+    enabled?: boolean;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:add', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:add' };
+    }
+    try {
+      const db = getDb();
+      const extPath = args.folderPath;
+      const manifestPath = path.join(extPath, 'manifest.json');
+      if (!fs.existsSync(manifestPath)) {
+        return { success: false, error: 'No manifest.json found' };
+      }
+      const manifestContent = fs.readFileSync(manifestPath, 'utf-8');
+      const manifest = JSON.parse(manifestContent);
+      const id = manifest.id || manifest.shortname || manifest.name || `ext_${Date.now()}`;
+      const existing = db.prepare('SELECT * FROM extensions WHERE id = ?').get(id);
+      if (existing) {
+        return { success: false, error: `Extension ${id} already installed` };
+      }
+      db.prepare(`
+        INSERT INTO extensions (id, name, description, version, path, enabled, builtin, status, installedAt, updatedAt, metadata, lastError, lastErrorAt)
+        VALUES (?, ?, ?, ?, ?, 1, 0, 'installed', ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        manifest.name || id,
+        manifest.description || '',
+        manifest.version || '0.0.0',
+        extPath,
+        Date.now(),
+        Date.now(),
+        JSON.stringify(manifest),
+        '',
+        0,
+      );
+      return { success: true, data: { id, manifest, path: extPath } };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:remove', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:remove', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:remove' };
+    }
+    try {
+      const db = getDb();
+      const extId = args.id;
+      const existing = db.prepare('SELECT * FROM extensions WHERE id = ?').get(extId);
+      if (!existing) {
+        return { success: false, error: `Extension ${extId} not found` };
+      }
+      db.prepare('DELETE FROM extensions WHERE id = ?').run(extId);
+      db.prepare('DELETE FROM feature_settings WHERE featureId = ?').run(extId);
+      return { success: true, data: { id: extId } };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:update', async (_event, args: {
+    token: string;
+    id: string;
+    updates: Record<string, unknown>;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:update', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:update' };
+    }
+    try {
+      const db = getDb();
+      const extId = args.id;
+      const updates = args.updates || {};
+      const existing = db.prepare('SELECT * FROM extensions WHERE id = ?').get(extId);
+      if (!existing) {
+        return { success: false, error: `Extension ${extId} not found` };
+      }
+      const fields: string[] = [];
+      const values: unknown[] = [];
+      if (updates.enabled !== undefined) { fields.push('enabled = ?'); values.push(updates.enabled ? 1 : 0); }
+      if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status); }
+      if (updates.lastError !== undefined) { fields.push('lastError = ?'); values.push(updates.lastError); }
+      if (updates.lastErrorAt !== undefined) { fields.push('lastErrorAt = ?'); values.push(updates.lastErrorAt); }
+      if (fields.length > 0) {
+        fields.push('updatedAt = ?');
+        values.push(Date.now());
+        values.push(extId);
+        db.prepare(`UPDATE extensions SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+      }
+      const updated = db.prepare('SELECT * FROM extensions WHERE id = ?').get(extId);
+      return { success: true, data: updated };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:getAll', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:getAll', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:getAll' };
+    }
+    try {
+      const db = getDb();
+      const extensions = db.prepare('SELECT * FROM extensions').all();
+      return { success: true, data: extensions };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:get', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:get', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:get' };
+    }
+    try {
+      const db = getDb();
+      const ext = db.prepare('SELECT * FROM extensions WHERE id = ?').get(args.id);
+      if (!ext) {
+        return { success: false, error: `Extension ${args.id} not found` };
+      }
+      return { success: true, data: ext };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:windowList', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:windowList', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:windowList' };
+    }
+    try {
+      const running = getRunningExtensions();
+      return { success: true, data: running };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:listAllRegistered', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:listAllRegistered', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:listAllRegistered' };
+    }
+    try {
+      const all = getAllRegisteredExtensions();
+      return { success: true, data: all };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:extensions:windowDevtools', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:windowDevtools', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:windowDevtools' };
+    }
+    // extensionWindows map was removed in Phase 3.2; v2 tiles have their own devtools path.
+    return { success: false, error: `Extension ${args.id} is not running as a legacy window` };
+  });
+
+  ipcMain.handle('tile:extensions:reload', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'extensions', 'tile:extensions:reload', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:extensions:reload' };
+    }
+    try {
+      const extId = args.id;
+      if (!extId) {
+        return { success: false, error: 'Missing extension id' };
+      }
+      const win = await reloadExtension(extId);
+      if (!win) {
+        return { success: false, error: `Failed to reload extension: ${extId}` };
+      }
+      return { success: true, data: { id: extId } };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
