@@ -1567,3 +1567,102 @@ otherwise delete here).
 Each agent follows the 25-min ceiling; if any package overruns,
 commit-what-you-have + report blocker. Splits noted inline (3.6g, 3.8b,
 3.10, 3.11b) are pre-authorised.
+
+---
+
+### phase3.8a — context audit (2026-04-18)
+
+#### Channel inventory in `app/context/*.js`
+
+| File | IPC channel(s) invoked | Where called |
+|------|------------------------|--------------|
+| `app/context/index.js` | `context-set` (in `set()`, line 80) | indirectly via `history.js` import; `set()` is the only IPC path |
+| `app/context/history.js` | `context-set` (in `save()`, line 56) | called by `index.js::set()` when `persist=true` |
+| `app/context/history.js` | `context-history` (in `query()`, line 77) | called by `index.js::getHistory()` |
+| `app/context/history.js` | `context-snapshot` (in `getSnapshot()`, line 110) | called by `index.js::getSnapshot()` |
+| `app/context/store.js` | _none_ — pure in-memory; no IPC | internal only |
+
+Channels **not** present in `app/context/*.js`: `context-get`,
+`context-windows-with-value`, `context-windows-in-space`.  Those are
+exposed by `preload.js::api.context` but are not called directly inside
+these modules.
+
+#### Who actually calls `app/context/*.js`?
+
+**Nobody.** A full-codebase grep finds zero `import … from
+'peek://app/context/…'`, zero `import … from './context/…'` or similar
+in any `.js`, `.ts`, `.cts`, or `.html` file outside the three
+`app/context/` files themselves. The JSDoc comment at the top of
+`index.js` advertises a `peek://app/context/index.js` URL but no
+renderer has ever wired it up. `context.init(renderer)` is never called
+from anywhere — `ipcRenderer` stays `null` in every live session, so
+the three IPC invocations are dead code today.
+
+#### Who calls `api.context.*` (tile-preload surface)?
+
+All live context consumers go through `api.context` on `window.app`,
+which tile-preload provides. Confirmed callers:
+
+| File | Methods used |
+|------|--------------|
+| `app/cmd/panel.js` | `get`, `setMode`, `watchMode` |
+| `app/page/page.js` | `get`, `setMode`, `watchMode` |
+| `app/hud/widgets/mode.js` | `get`, `watchMode` |
+| `features/spaces/background.js` | `get`, `setMode`, `getWindowsInSpace` |
+| `features/groups/background.js` | `get`, `setMode`, `getWindowsInSpace` |
+| `features/groups/home.js` | `setMode` |
+| `features/editor/home.js` | `setMode` |
+| `features/entities/background.js` | `set` |
+
+All renderers listed above load `tile-preload.cjs` (cmd, hud, page via
+their glue files; spaces, groups, editor, entities as v2 tiles). Every
+feature tile has a `context` capability declared in its manifest, so
+they already use `contextStrict` (`tile:context:*` channels). The core
+builtins (cmd, hud, page) are `trustedBuiltin` grants with no `context`
+capability key, so they fall through to `contextCompat` (`context-get /
+context-set / …`) — those six compat branches in tile-preload are the
+ones that still depend on `preload.js`.
+
+#### Six `contextCompat` fallback branches in tile-preload
+
+```
+contextCompat.get      → ipcRenderer.invoke('context-get', …)
+contextCompat.set      → ipcRenderer.invoke('context-set', …)
+contextCompat.history  → ipcRenderer.invoke('context-history', …)
+contextCompat.snapshot → ipcRenderer.invoke('context-snapshot', …)
+contextCompat.windowsWithValue → ipcRenderer.invoke('context-windows-with-value', …)
+contextCompat.windowsInSpace   → ipcRenderer.invoke('context-windows-in-space', …)
+```
+
+The compat path is taken when `grantedCapabilities.context` is falsy.
+For cmd/hud/page, the token grant carries `trustedBuiltin: true` but no
+`context` key, so `hasContextCapability()` returns `false` and every
+`api.context.*` call in those three renderers hits the compat channels.
+
+#### Migration path recommendation
+
+**Option (ii) — add `context` capability to the trustedBuiltin grant
+for cmd, hud, and page** is the correct migration path.
+
+`app/context/*.js` is dead code and does not need to be ported or moved;
+it can be deleted as part of 3.8b. The real migration work is entirely
+in the backend: `cmd-glue.ts`, `hud-glue.ts`, and `page-glue.ts` (or
+wherever the trustedBuiltin capability set is assembled) need `context:
+true` added to the grant so `hasContextCapability()` returns `true` for
+those windows. Once that is done, the six `contextCompat` fallback
+branches in `tile-preload.cts` are unreachable and can be deleted along
+with the matching `ipc.ts` legacy `context-get / context-set /
+context-history / context-snapshot / context-windows-*` handlers. No
+consumer renderer needs code changes — they already call `api.context.*`
+and tile-preload's `api.context` will silently switch to strict channels
+once the capability is present. Option (i) (a new tile) introduces
+unnecessary indirection; option (iii) (inline per-renderer) is the same
+work as option (ii) but harder to validate. Option (ii) is a two-line
+change to the grant payload and unblocks both the compat-branch delete
+and the eventual `preload.js` delete.
+
+**Suggested 3.8b scope update:** delete `app/context/*.js` (three files,
+currently unreferenced dead code), add `context: true` to the cmd/hud/
+page trustedBuiltin capability grant in the relevant glue files, delete
+the six `contextCompat` compat branches from `tile-preload.cts`, and
+delete the five legacy `context-*` handlers from `ipc.ts`.
