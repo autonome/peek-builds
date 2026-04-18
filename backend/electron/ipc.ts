@@ -146,12 +146,6 @@ import {
 } from './session-partition.js';
 
 import {
-  saveSessionSnapshot,
-  restoreSessionSnapshot,
-  getSessionSnapshotInfo,
-} from './session.js';
-
-import {
   getIzuiCoordinator,
 } from './izui-state.js';
 
@@ -191,6 +185,11 @@ let lastContentWindowId: number | null = null;
 // This includes extension windows (peek://{extId}/...) and web pages,
 // but excludes internal background windows and modal windows
 let lastFocusedVisibleWindowId: number | null = null;
+
+/** Returns the last focused visible window ID, for use by tile-ipc.ts nav shims. */
+export function getLastFocusedVisibleWindowId(): number | null {
+  return lastFocusedVisibleWindowId;
+}
 
 /**
  * Update tracking when a content window (http/https) gains focus.
@@ -2377,11 +2376,6 @@ export function registerWindowHandlers(): void {
     }
   });
 
-  // Reopen last closed window
-  ipcMain.handle('window-reopen-last-closed', async () => {
-    return reopenLastClosedWindow();
-  });
-
   ipcMain.handle('window-hide', async (_ev, msg) => {
     DEBUG && console.log('window-hide', msg);
 
@@ -2968,61 +2962,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
     }
-  });
-
-  // Web navigation handlers - operate on the target http/https window
-  const resolveWebWindow = (windowId?: number): BrowserWindow | null => {
-    const id = windowId || lastFocusedVisibleWindowId;
-    if (!id) return null;
-    const win = BrowserWindow.fromId(id);
-    if (!win || win.isDestroyed()) return null;
-    const winUrl = win.webContents.getURL();
-    if (!winUrl.startsWith('http://') && !winUrl.startsWith('https://')) return null;
-    return win;
-  };
-
-  ipcMain.handle('web-nav-back', async (_ev, data?: { windowId?: number }) => {
-    const win = resolveWebWindow(data?.windowId);
-    if (!win) return { success: false, error: 'No web page window' };
-    const nav = win.webContents.navigationHistory;
-    if (nav.canGoBack()) {
-      nav.goBack();
-      return { success: true };
-    }
-    return { success: false, error: 'Cannot go back' };
-  });
-
-  ipcMain.handle('web-nav-forward', async (_ev, data?: { windowId?: number }) => {
-    const win = resolveWebWindow(data?.windowId);
-    if (!win) return { success: false, error: 'No web page window' };
-    const nav = win.webContents.navigationHistory;
-    if (nav.canGoForward()) {
-      nav.goForward();
-      return { success: true };
-    }
-    return { success: false, error: 'Cannot go forward' };
-  });
-
-  ipcMain.handle('web-nav-reload', async (_ev, data?: { windowId?: number }) => {
-    const win = resolveWebWindow(data?.windowId);
-    if (!win) return { success: false, error: 'No web page window' };
-    win.webContents.reload();
-    return { success: true };
-  });
-
-  ipcMain.handle('web-nav-state', async (_ev, data?: { windowId?: number }) => {
-    const win = resolveWebWindow(data?.windowId);
-    if (!win) return { success: false, error: 'No web page window' };
-    const nav = win.webContents.navigationHistory;
-    return {
-      success: true,
-      data: {
-        url: win.webContents.getURL(),
-        canGoBack: nav.canGoBack(),
-        canGoForward: nav.canGoForward(),
-        title: win.getTitle() || '',
-      }
-    };
   });
 
   // Get last focused visible window ID (for per-window commands)
@@ -4038,61 +3977,6 @@ export function registerWebExtensionHandlers(): void {
   DEBUG && console.log('[ipc] Web extension handlers registered');
 }
 
-// ============================================================================
-// Session Handlers (manual save/restore from renderer)
-// ============================================================================
-
-function registerSessionHandlers(): void {
-  // Manual session save
-  ipcMain.handle('session-save', async () => {
-    try {
-      saveSessionSnapshot('manual');
-      return { success: true, message: 'Session saved' };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Interactive session restore — shows confirmation dialog before restoring
-  // Skip crash dialog — this handler shows its own confirmation dialog
-  ipcMain.handle('session-restore-interactive', async () => {
-    try {
-      const info = getSessionSnapshotInfo();
-      if (!info) {
-        return { success: true, message: 'No saved session to restore', cancelled: false, restored: 0 };
-      }
-
-      const { response } = await dialog.showMessageBox({
-        type: 'question',
-        title: 'Restore Previous Session',
-        message: `Restore ${info.windowCount} window${info.windowCount === 1 ? '' : 's'} from your previous session?\n\nThese will open alongside your current windows.`,
-        buttons: ['Restore', 'Cancel'],
-        defaultId: 0,
-        cancelId: 1,
-      });
-
-      if (response !== 0) {
-        return { success: true, message: 'Restore cancelled', cancelled: true, restored: 0 };
-      }
-
-      const prefs = getPrefs();
-      const result = await restoreSessionSnapshot(prefs, { cleanShutdown: true, crashCount: 0 });
-      return {
-        success: true,
-        message: `Restored ${result.restored} of ${result.total} window(s)`,
-        cancelled: false,
-        ...result,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  DEBUG && console.log('[ipc] Session handlers registered');
-}
-
 /**
  * Register all IPC handlers
  */
@@ -4106,6 +3990,5 @@ export function registerAllHandlers(onQuit: () => void): void {
   registerProfileHandlers();
   registerModesHandlers();
   registerWebExtensionHandlers();
-  registerSessionHandlers();
   registerMiscHandlers(onQuit);
 }

@@ -87,7 +87,7 @@ import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
-import { invokeWindowOpen, popupToOpener } from './ipc.js';
+import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId } from './ipc.js';
 import {
   getRunningExtensions,
   getAllRegisteredExtensions,
@@ -121,6 +121,11 @@ import {
   listBackups,
 } from './backup.js';
 import { getPrefs } from './windows.js';
+import {
+  saveSessionSnapshot,
+  restoreSessionSnapshot,
+  getSessionSnapshotInfo,
+} from './session.js';
 
 // Re-export for test access — keeps the public enforcement API on tile-ipc.
 export { validateTileDatastoreRequest } from './tile-datastore-scope.js';
@@ -6625,6 +6630,159 @@ body {
       return { success: false, error: 'trustedBuiltin required for tile:app:get-prefs' };
     }
     return getPrefs();
+  });
+
+  // ── tile:nav:* strict shims (Phase 3.11b-nav-session) ────────────────
+  //
+  // Strict counterparts of the legacy `web-nav-*` channels in ipc.ts.
+  // All require trustedBuiltin — only the core background renderer uses these.
+
+  const tileResolveWebWindow = (windowId?: number): BrowserWindow | null => {
+    const id = windowId ?? getLastFocusedVisibleWindowId();
+    if (!id) return null;
+    const win = BrowserWindow.fromId(id);
+    if (!win || win.isDestroyed()) return null;
+    const winUrl = win.webContents.getURL();
+    if (!winUrl.startsWith('http://') && !winUrl.startsWith('https://')) return null;
+    return win;
+  };
+
+  ipcMain.handle('tile:nav:back', (_event, args: { token: string; windowId?: number }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'nav', 'tile:nav:back', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:nav:back' };
+    }
+    const win = tileResolveWebWindow(args.windowId);
+    if (!win) return { success: false, error: 'No web page window' };
+    const nav = win.webContents.navigationHistory;
+    if (nav.canGoBack()) { nav.goBack(); return { success: true }; }
+    return { success: false, error: 'Cannot go back' };
+  });
+
+  ipcMain.handle('tile:nav:forward', (_event, args: { token: string; windowId?: number }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'nav', 'tile:nav:forward', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:nav:forward' };
+    }
+    const win = tileResolveWebWindow(args.windowId);
+    if (!win) return { success: false, error: 'No web page window' };
+    const nav = win.webContents.navigationHistory;
+    if (nav.canGoForward()) { nav.goForward(); return { success: true }; }
+    return { success: false, error: 'Cannot go forward' };
+  });
+
+  ipcMain.handle('tile:nav:reload', (_event, args: { token: string; windowId?: number }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'nav', 'tile:nav:reload', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:nav:reload' };
+    }
+    const win = tileResolveWebWindow(args.windowId);
+    if (!win) return { success: false, error: 'No web page window' };
+    win.webContents.reload();
+    return { success: true };
+  });
+
+  ipcMain.handle('tile:nav:state', (_event, args: { token: string; windowId?: number }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'nav', 'tile:nav:state', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:nav:state' };
+    }
+    const win = tileResolveWebWindow(args.windowId);
+    if (!win) return { success: false, error: 'No web page window' };
+    const nav = win.webContents.navigationHistory;
+    return {
+      success: true,
+      data: {
+        url: win.webContents.getURL(),
+        canGoBack: nav.canGoBack(),
+        canGoForward: nav.canGoForward(),
+        title: win.getTitle() || '',
+      }
+    };
+  });
+
+  // ── tile:session:* strict shims (Phase 3.11b-nav-session) ─────────────
+  //
+  // Strict counterparts of the legacy `session-save`,
+  // `session-restore-interactive`, and `window-reopen-last-closed` channels.
+  // All require trustedBuiltin.
+
+  ipcMain.handle('tile:session:save', async (_event, args: { token: string }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'session', 'tile:session:save', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:session:save' };
+    }
+    try {
+      saveSessionSnapshot('manual');
+      return { success: true, message: 'Session saved' };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:session:restore-interactive', async (_event, args: { token: string }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'session', 'tile:session:restore-interactive', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:session:restore-interactive' };
+    }
+    try {
+      const info = getSessionSnapshotInfo();
+      if (!info) {
+        return { success: true, message: 'No saved session to restore', cancelled: false, restored: 0 };
+      }
+      const { response } = await dialog.showMessageBox({
+        type: 'question',
+        title: 'Restore Previous Session',
+        message: `Restore ${info.windowCount} window${info.windowCount === 1 ? '' : 's'} from your previous session?\n\nThese will open alongside your current windows.`,
+        buttons: ['Restore', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response !== 0) {
+        return { success: true, message: 'Restore cancelled', cancelled: true, restored: 0 };
+      }
+      const prefs = getPrefs();
+      const result = await restoreSessionSnapshot(prefs, { cleanShutdown: true, crashCount: 0 });
+      return {
+        success: true,
+        message: `Restored ${result.restored} of ${result.total} window(s)`,
+        cancelled: false,
+        ...result,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle('tile:session:reopen-last-closed', (_event, args: { token: string }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'session', 'tile:session:reopen-last-closed', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:session:reopen-last-closed' };
+    }
+    return reopenLastClosedWindow();
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');

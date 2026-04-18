@@ -486,7 +486,7 @@ const registerExtensionCommands = () => {
     name: 'save session',
     description: 'Save current session snapshot',
     execute: async () => {
-      const result = await api.invoke('session-save');
+      const result = await api.session.save();
       if (result && result.success) {
         return { output: result.message, mimeType: 'text/plain' };
       }
@@ -498,7 +498,7 @@ const registerExtensionCommands = () => {
     name: 'restore previous session',
     description: 'Restore windows from the last saved session',
     execute: async () => {
-      const result = await api.invoke('session-restore-interactive');
+      const result = await api.session.restoreInteractive();
       if (result && result.success) {
         return { output: result.message, mimeType: 'text/plain' };
       }
@@ -525,26 +525,26 @@ const registerExtensionCommands = () => {
   api.commands.register({
     name: 'back',
     description: 'Go back in web page history',
-    execute: () => api.invoke('web-nav-back')
+    execute: () => api.nav.back()
   });
 
   api.commands.register({
     name: 'forward',
     description: 'Go forward in web page history',
-    execute: () => api.invoke('web-nav-forward')
+    execute: () => api.nav.forward()
   });
 
   api.commands.register({
     name: 'reload',
     description: 'Reload the current web page',
-    execute: () => api.invoke('web-nav-reload')
+    execute: () => api.nav.reload()
   });
 
   api.commands.register({
     name: 'copy url',
     description: 'Copy the current web page URL to clipboard',
     execute: async () => {
-      const result = await api.invoke('web-nav-state');
+      const result = await api.nav.state();
       if (result && result.success && result.data && result.data.url) {
         await navigator.clipboard.writeText(result.data.url);
       }
@@ -681,7 +681,7 @@ export const init = async () => {
 
   // Register "reopen closed window" command for the command palette
   api.subscribe('cmd:execute:reopen closed window', async (msg) => {
-    const result = await api.invoke('window-reopen-last-closed');
+    const result = await api.session.reopenLastClosed();
     if (msg.expectResult && msg.resultTopic) {
       api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
     }

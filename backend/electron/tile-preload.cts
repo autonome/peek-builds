@@ -2108,6 +2108,65 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
+  // ── Nav (trustedBuiltin only) ─────────────────────────────────────────
+  //
+  // Strict counterparts of the legacy `web-nav-*` channels. Consumed by the
+  // core background renderer (app/index.js) for the back/forward/reload/copy-url
+  // cmd palette commands (Phase 3.11b-nav-session).
+  api.nav = {
+    back: (windowId?: number) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.nav requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:nav:back', { token: tileToken, windowId });
+    },
+    forward: (windowId?: number) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.nav requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:nav:forward', { token: tileToken, windowId });
+    },
+    reload: (windowId?: number) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.nav requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:nav:reload', { token: tileToken, windowId });
+    },
+    state: (windowId?: number) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.nav requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:nav:state', { token: tileToken, windowId });
+    },
+  };
+
+  // ── Session (trustedBuiltin only) ─────────────────────────────────────
+  //
+  // Strict counterparts of the legacy `session-save`,
+  // `session-restore-interactive`, and `window-reopen-last-closed` channels.
+  // Consumed by the core background renderer (app/index.js)
+  // (Phase 3.11b-nav-session).
+  api.session = {
+    save: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:session:save', { token: tileToken });
+    },
+    restoreInteractive: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:session:restore-interactive', { token: tileToken });
+    },
+    reopenLastClosed: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:session:reopen-last-closed', { token: tileToken });
+    },
+  };
+
   return api;
 }
 
