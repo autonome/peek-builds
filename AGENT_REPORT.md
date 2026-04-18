@@ -1,84 +1,96 @@
-# Phase 2 Retry — v1-removal test fixture migration
+# Phase 3 — v1-removal destructive cleanup
 
 ## Status
 
-In progress. Retry of Phase 2 after commits `ce382a0b`..`ee0379be` were
-rolled back 2026-04-18 due to a v2-pubsub routing regression (the
-broadcaster's self-echo filter used `new URL('peek://…').origin` which
-returns the literal string `"null"` for non-standard schemes in Node).
+Starting Phase 3. Phase 1 and Phase 2 are landed:
+- cmd/hud/page run on `tile-preload.cts` + `createTrustedBuiltinGrant()` (Phase 1).
+- Playwright test fixture `bgWindow` is `peek://test/index.html` (v2 BrowserWindow via `test-fixture-glue.ts`). `getBackgroundWindow()` returns the v2 renderer. (Phase 2.)
+- URL.origin-for-peek:// broadcast-filter bug fixed in `b8dbc1b8`.
 
-That routing bug is now fixed on the current worktree HEAD `b8dbc1b8`
-(`peekHost()` helper parses the host manually). With routing fixed, the
-v1-removal reproducer test passes and the ~10 tag/kagi/hud flakies pass.
+## Pre-deletion audit — key findings
 
-Phase 1 is fully landed (cmd, hud, page on tile-preload + trustedBuiltin).
-`ensureTileIpcHandlers()` is called centrally at top of
-`main.ts::initialize()` (commit `745af1f5`), so per-glue calls are
-redundant and will NOT be re-introduced.
+### Files already absent (no work needed)
 
-## Scope — re-apply orphaned Phase 2 commits
+- `app/background.js` — does not exist.
+- `backend/electron/preload.js` — does not exist. v1 preload lives at
+  repo root: `/Users/dietrich/misc/mpeek/preload.js`.
 
-Identified via `git reflog` (still findable):
+### v1 preload.js (root) — STILL LIVE
 
-- `5797a148` — `app/_test/index.html` privileged renderer, `protocol.ts`
-  peek://test/ host route, `tile-ipc.ts` trustedBuiltin in validate-token
-  response, `tile-preload.cts` api.invoke (trustedBuiltin-gated).
-- `7bf2f15f` — `backend/electron/test-fixture-glue.ts` (new) + hook in
-  `main.ts::loadExtensions()` to launch it when `E2E_TEST=true`.
-- `28e248ab` — `tests/fixtures/desktop-app.ts` getBackgroundWindow()
-  returns v2 renderer. (The USE_V1_TEST_FIXTURE flag was later dropped.)
-- `a5c98bc4` — `tile-preload.cts` `api.extensions.*` + `api.commands.list`
-  (trustedBuiltin-gated). Also added per-glue `ensureTileIpcHandlers()`
-  calls in cmd/hud/page/test-fixture glue. **The per-glue calls will NOT
-  be re-applied** — central one at top of `initialize()` is authoritative.
-- `ee0379be` — drop USE_V1_TEST_FIXTURE — single v2 path.
+Referenced from:
+- `backend/electron/entry.ts:149` — `getPreloadPath()` consumer;
+  assigned as preload for background window (main.ts:2109), webviews
+  loading `peek://` URLs (entry.ts:179), and window.open callbacks
+  (ipc.ts:2296, ipc.ts:2698).
+- `backend/tauri/src-tauri/src/lib.rs:30` — `include_str!` for Tauri
+  (mobile) backend to inject as main-world script.
+- Cross-cutting: v1 tiles (remaining consolidated features, external
+  extensions, `app/background.html` / `WEB_CORE_ADDRESS`) depend on
+  the v1 `window.app` surface.
 
-## Re-apply commit order
+**Cannot delete in Phase 3.** Requires migrating:
+- `WEB_CORE_ADDRESS` background window to a v2 renderer.
+- All remaining consolidated v1 feature extensions (there is still a
+  `CONSOLIDATED_EXTENSION_IDS` list with ~20 features that load via
+  `loadExtInHost` into `extensionHostWindow` with `preload.js`).
+- External chrome-style extensions loaded via `createExtensionWindow`.
 
-1. `chore: triage stub for Phase 2 retry` (this file)
-2. `feat(_test): privileged test renderer` — app/_test/index.html (final
-   shape from a5c98bc4 — thin, relies on tile-preload surface)
-3. `feat(protocol): peek://test/ host route` — backend/electron/protocol.ts
-4. `feat(test-fixture-glue): launch test renderer when E2E_TEST=true` —
-   new file + initTestFixture import/call in main.ts loadExtensions().
-   `ensureTileIpcHandlers()` inside test-fixture-glue is safe (idempotent)
-   — keeping that one. Not adding the per-glue ones.
-5. `feat(tile-preload): api.invoke + api.extensions + api.commands.list
-   trustedBuiltin-gated; trustedBuiltin in validate-token response` —
-   tile-preload.cts + tile-ipc.ts
-6. `feat(fixtures,main): getBackgroundWindow returns v2 renderer` —
-   tests/fixtures/desktop-app.ts (single v2 path — no flag)
+### `app/background.html` — STILL LIVE (as WEB_CORE_ADDRESS)
 
-## What was REMOVED from the original Phase 2
+Referenced from `backend/config.ts:12` as `WEB_CORE_ADDRESS`. Loaded
+by `createBackgroundWindow()` in `main.ts:2116`. Plus session.ts and
+ipc.ts special-case it as an internal URL never saved/restored.
 
-- Per-glue `ensureTileIpcHandlers()` calls from `a5c98bc4`
-  (cmd-glue.ts, hud-glue.ts, page-glue.ts). The central call in
-  `main.ts::initialize()` handles it for all core renderers.
-- `USE_V1_TEST_FIXTURE` feature flag from `28e248ab`. Went straight to
-  single v2 path (equivalent to `28e248ab` + `ee0379be` combined).
+Plan's Part A says this was replaced by `app/_test/index.html` for the
+test fixture, and implies it's deletable. But `createBackgroundWindow`
+is a separate code path (the core app's persistent window) still
+pointed at it. This is OUT of Phase 3's safe scope.
 
-## Validation results
+### `extensionHostWindow` / `loadExtInHost` / `extensionWindows` — STILL LIVE
 
-Will populate after each test run.
+Used to load ~20 remaining v1 feature extensions (CONSOLIDATED_EXTENSION_IDS)
+as iframes in a single shared host window. Features not yet migrated
+to v2 include: editor, groups, lex, lists, peeks, search, slides,
+spaces, websearch, windows, files, pagestream, sheets, tags, feeds,
+helpdocs, entities, scripts, timers, wonderwall.
 
-| Test | Status |
-| --- | --- |
-| v2 trustedBuiltin tile | pending |
-| direct pubsub kagi execution works | pending |
-| tag command with # prefixed tags stores tags without prefix | pending |
-| open and close settings | pending |
-| Group Mode Context (5 tests) | pending |
+**Cannot delete in Phase 3.** This was the understanding stated in
+v1-removal-plan.md's Option A2 ("keep test fixture out of v1 cleanup"
+— but also applies to v1 features).
 
-## Open items / risks for Phase 3
+### tile-preload.cts legacy fallback branches — CONDITIONAL
 
-- Once validation is green, Phase 3 can delete `extensionHostWindow`,
-  `loadExtInHost`, `extensionWindows`, v1 portion of
-  `extensionBroadcaster`, legacy IPC channels
-  (`IPC_CHANNELS.SUBSCRIBE/PUBLISH`, `window-open`, `window-close`,
-  `cmd-result`), and `preload.js`. Audit for any chrome-extensions content
-  script that still depends on `IPC_CHANNELS`.
-- The 10 fallback branches inside `tile-preload.cts` (each gated
-  `if (!hasXxxCapability()) return ipcRenderer.invoke('legacy-channel',
-  ...)`) can become unconditional strict paths once v1 is deleted.
-- `app/background.html` + `app/background.js` — last v1 consumers.
-  Delete after Phase 3.
+The plan's idea is "these become unconditional strict paths once v1 is
+deleted". But v1 isn't deleted (see above). Converting these to strict
+would break any v2 tile that doesn't declare the relevant capability —
+unclear if any exist, but audit cost exceeds budget.
+
+## What is actually doable in Phase 3
+
+Given the above, the ONLY deletions that are safe within the 90-minute
+budget without scope creep are very small or none. The plan's Phase 3
+preconditions (Phase 1 AND Phase 2 AND all v1 features migrated) are
+not all met — only Phase 1 + Phase 2 are complete, with ~20 v1 features
+still loading via `extensionHostWindow` + `preload.js`.
+
+Plan for this run:
+
+1. Commit this triage stub (documents the blocker).
+2. Investigate tile-preload.cts fallback conversions that are proven
+   dead (no v2 tile could hit the fallback) — this is the one slice
+   that might be safely unwound without touching shared plumbing.
+3. If no safe slices, commit a follow-up doc note to `v1-removal-plan.md`
+   explaining that Phase 3 requires Phase 2.5 — "migrate remaining v1
+   features to v2" — and exit.
+
+## Open items for Phase 4 / a future "Phase 2.5"
+
+- Migrate `CONSOLIDATED_EXTENSION_IDS` features off `loadExtInHost` to
+  v2 tile launcher (each one: manifest capabilities, tile-preload).
+- Migrate `createBackgroundWindow()` / `WEB_CORE_ADDRESS` to v2.
+- Migrate `createExtensionWindow()` (external extensions).
+- Audit `session.ts`, `ipc.ts` INTERNAL_URLS, `session.test.ts`,
+  `closed-window.test.ts` for `peek://app/background.html` references
+  after migration.
+- Tauri `lib.rs` reads `preload.js` via `include_str!` — ensure parity
+  of any replacement for mobile backend.
