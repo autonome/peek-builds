@@ -29,6 +29,7 @@ import { createRequire } from 'node:module';
 import { DEBUG } from './config.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
+import { registerTrustedBuiltinWindow } from './tile-launcher.js';
 
 const requireElectron = createRequire(import.meta.url);
 
@@ -141,6 +142,11 @@ export async function initHud(opts: InitHudOptions): Promise<void> {
   });
 
   hudResidentWindow = win;
+
+  // Register with the tile launcher so the main-process extensionBroadcaster
+  // forwards pubsub messages to this window (same path as feature tiles).
+  // The registration also wires the close/revoke cleanup.
+  registerTrustedBuiltinWindow(HUD_ID, HUD_ENTRY_ID, win, token);
 
   win.webContents.on('console-message', (event) => {
     try {

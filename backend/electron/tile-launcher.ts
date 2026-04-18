@@ -367,6 +367,44 @@ export function getAllTileWindows(): BrowserWindow[] {
 }
 
 /**
+ * Register a BrowserWindow as a trusted-builtin core renderer.
+ *
+ * Core renderers (cmd, hud, page, test fixtures) run with the same tile
+ * mechanics as feature tiles — `tile-preload.cjs` + a capability token —
+ * but the token's grant is minted by `createTrustedBuiltinGrant(...)` so
+ * capability enforcement is bypassed. They are NOT launched by
+ * `launchTile()` (no manifest file on disk), so hud-glue / cmd-glue /
+ * page-glue call this helper after creating their BrowserWindow to:
+ *
+ *  - Add the window to the `tileWindows` registry so the pubsub
+ *    extensionBroadcaster in main.ts forwards messages to it.
+ *  - Wire the same close/revoke cleanup the regular launcher uses.
+ *
+ * See docs/v1-removal-plan.md — Phase 1a/1b.
+ */
+export function registerTrustedBuiltinWindow(
+  tileId: string,
+  entryId: string,
+  win: BrowserWindow,
+  token: string,
+): void {
+  const key = `${tileId}:${entryId}`;
+  tileWindows.set(key, win);
+
+  win.on('closed', () => {
+    tileWindows.delete(key);
+    readyTiles.delete(key);
+    revokeToken(token);
+    try {
+      unsubscribeAllByPrefix(`peek://${tileId}/`);
+    } catch (err) {
+      console.error(`[tile-launcher:${tileId}:${entryId}] Failed to unsubscribe on close:`, err);
+    }
+    DEBUG && console.log(`[tile-launcher:${tileId}:${entryId}] Trusted-builtin window closed`);
+  });
+}
+
+/**
  * Resolve a peek:// URL to v2 tile web preferences (preload + token).
  *
  * Used by the `window-open` IPC handler so that windows opened via
