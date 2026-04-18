@@ -601,6 +601,21 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       return fetchFile(absolutePath, req.url);
     }
 
+    // peek://test/{path} resolves to app/_test/ — the privileged test
+    // fixture renderer used by the Playwright suite (v1-removal Phase 2).
+    // Only launched when E2E_TEST=true, via test-fixture-glue.ts.
+    if (host === 'test') {
+      const testPath = pathname || 'index.html';
+      const absolutePath = path.resolve(rootDir, 'app', '_test', testPath);
+      const testBase = path.resolve(rootDir, 'app', '_test');
+      if (!absolutePath.startsWith(testBase)) {
+        console.error('Path traversal attempt blocked:', absolutePath);
+        return new Response('Forbidden', { status: 403 });
+      }
+      DEBUG && console.log(`[protocol] test/${testPath} -> ${absolutePath}`);
+      return fetchFile(absolutePath, req.url);
+    }
+
     // Handle per-extension hosts: peek://{ext-id}/{path}
     // This gives each extension a unique origin for iframe isolation
     // Check if host matches a registered extension
