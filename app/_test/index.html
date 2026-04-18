@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+  <title>Peek Test Fixture (resident)</title>
+</head>
+<body>
+<!--
+  Privileged test renderer (v1-removal Phase 2).
+
+  This is a hidden resident BrowserWindow launched by
+  `backend/electron/test-fixture-glue.ts` only when `E2E_TEST=true`. It
+  replaces the v1 `peek://app/background.html` iframe that Playwright
+  tests previously used as `bgWindow` for pub/sub + datastore calls.
+
+  Mechanics are identical to cmd/hud/page core renderers:
+    - Loaded with `tile-preload.cjs` + a `createTrustedBuiltinGrant('test')`
+      token, so every `tile:*` IPC bypasses capability enforcement.
+    - Registered via `registerTrustedBuiltinWindow()` so the pubsub
+      broadcaster forwards messages to this window.
+
+  Tests written against the v1 `window.app.*` surface keep working because
+  tile-preload now exposes everything they need (trustedBuiltin-gated):
+    - `app.publish` / `app.subscribe` / `app.scopes`
+    - `app.window.{open, close, list, getBounds, exists, show, hide, getInfo}`
+    - `app.datastore.*`
+    - `app.commands.{register, unregister, list}`
+    - `app.theme.{get, getAll, setTheme, setColorScheme}`
+    - `app.context.{get, setMode, getMode, watchMode, getWindowsInSpace}`
+    - `app.shortcuts.{register, unregister}`
+    - `app.escape.{trigger, onEscape}`
+    - `app.izui.getState`
+    - `app.features.*`
+    - `app.invoke(channel, data)` — trustedBuiltin escape hatch
+    - `app.extensions.*` — thin wrappers over legacy IPC channels,
+      trustedBuiltin-gated.
+
+  The `contextBridge.exposeInMainWorld('app', api)` object is frozen on
+  the renderer side, so this module cannot add aliases to `window.app`
+  directly — every method the tests need must live on the preload's
+  `api` object. If a test needs a method that isn't there yet, extend
+  `backend/electron/tile-preload.cts` (trustedBuiltin-gated as needed).
+
+  After `api.initialize()` resolves, the renderer sets `window.__testReady`
+  so the launch-time wait in `test-fixture-glue.ts` can block
+  deterministically — avoiding a race where tests start issuing pubsub
+  calls before the capability token has been validated.
+-->
+<script type="module">
+  const api = window.app;
+
+  if (!api || !api.initialize) {
+    console.error('[_test] tile-preload did not expose api.initialize — fixture cannot start');
+    window.__testReady = false;
+    throw new Error('[_test] missing api.initialize');
+  }
+
+  // Validate the trustedBuiltin token and block further setup until the
+  // preload has confirmed capabilities. Matches the pattern in cmd/hud/
+  // page single-file renderers.
+  await api.initialize();
+
+  // Signal to the test fixture glue that this renderer is fully
+  // initialized. `getBackgroundWindow()` in `tests/fixtures/desktop-app.ts`
+  // awaits this flag before returning, so a test never observes a
+  // partially-constructed app surface.
+  window.__testReady = true;
+  console.log('[_test] test fixture renderer ready');
+</script>
+</body>
+</html>
