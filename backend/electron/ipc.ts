@@ -1113,6 +1113,28 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log('[window-open] datastore-viewer window: assigned trustedBuiltin tile-preload token');
     }
 
+    // Special-case: peek://ext/cmd/panel.html is the cmd palette UI, opened
+    // on-demand from the cmd resident renderer. peek://ext/cmd/chain-editor.html
+    // is the chain editor opened from the panel. Both need tile-preload to call
+    // api.window.*, api.context.*, api.datastore.*, api.publish/subscribe, etc.
+    if (!tileWebPrefs && (url === 'peek://ext/cmd/panel.html' || url === 'peek://ext/cmd/chain-editor.html')) {
+      const CMD_UI_ID = 'cmd-ui';
+      const cmdUiEntry = url.endsWith('panel.html') ? 'panel' : 'chain-editor';
+      const cmdUiGrant = createTrustedBuiltinGrant(CMD_UI_ID);
+      const cmdUiToken = generateToken(CMD_UI_ID, cmdUiEntry, cmdUiGrant);
+      tileWebPrefs = {
+        preload: getTilePreloadPath(),
+        additionalArguments: [
+          `--tile-id=${CMD_UI_ID}`,
+          `--tile-entry=${cmdUiEntry}`,
+          `--tile-token=${cmdUiToken}`,
+        ],
+        tileId: CMD_UI_ID,
+        entryId: cmdUiEntry,
+      };
+      DEBUG && console.log(`[window-open] cmd-ui window (${cmdUiEntry}): assigned trustedBuiltin tile-preload token`);
+    }
+
     // Canvas page host windows use tile-preload with a trustedBuiltin grant so
     // page.js can use api.window.*, api.datastore.*, api.context.*, api.profiles.*,
     // api.chromeExtensions.*, api.app.*, api.subscribe/publish, etc. The token is
