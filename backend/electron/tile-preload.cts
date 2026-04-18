@@ -2052,7 +2052,7 @@ function buildAPI(): Record<string, unknown> {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('feature-settings-schema', { extId });
+      return ipcRenderer.invoke('tile:features:settings-schema', { token: tileToken, id: extId });
     },
   };
 
@@ -2096,7 +2096,10 @@ function buildAPI(): Record<string, unknown> {
       // iframe ran the theme command on behalf of the user-facing window.
       let windowId = await ipcRenderer.invoke('get-focused-visible-window-id');
       if (!windowId) {
-        windowId = await ipcRenderer.invoke('get-window-id');
+        windowId = await ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
+        if (windowId && typeof windowId === 'object' && 'id' in windowId) {
+          windowId = (windowId as { id: number }).id;
+        }
       }
       if (!windowId) {
         return { success: false, error: 'No visible window to target' };
