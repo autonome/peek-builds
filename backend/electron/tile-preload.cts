@@ -2115,42 +2115,47 @@ function buildAPI(): Record<string, unknown> {
   // points (popup, options, new-tab, etc.) and register cmd palette
   // commands for each openable entry. Gated on trustedBuiltin — feature
   // tiles must not enumerate or launch chrome extensions.
+  //
+  // Phase 3.5d: strict shims added as tile:chrome-extensions:* channels in
+  // tile-ipc.ts (trustedBuiltin enforcement + capability-token validation).
+  // The legacy chrome-ext:* invocations below are preserved; Wave 3.6d
+  // will flip these to tile:chrome-extensions:* and delete the legacy handlers.
   api.chromeExtensions = {
     list: () => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('chrome-ext:list');
+      return ipcRenderer.invoke('tile:chrome-extensions:list', { token: tileToken });
     },
     enable: (id: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('chrome-ext:enable', { id });
+      return ipcRenderer.invoke('tile:chrome-extensions:enable', { token: tileToken, id });
     },
     disable: (id: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('chrome-ext:disable', { id });
+      return ipcRenderer.invoke('tile:chrome-extensions:disable', { token: tileToken, id });
     },
     getStatus: () => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('chrome-ext:getStatus');
+      return ipcRenderer.invoke('tile:chrome-extensions:getStatus', { token: tileToken });
     },
     getUiEntries: () => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('chrome-ext:getUiEntries');
+      return ipcRenderer.invoke('tile:chrome-extensions:getUiEntries', { token: tileToken });
     },
     openPage: (id: string, type: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('chrome-ext:openPage', { id, type });
+      return ipcRenderer.invoke('tile:chrome-extensions:openPage', { token: tileToken, id, type });
     },
   };
 

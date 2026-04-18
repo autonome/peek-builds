@@ -6336,6 +6336,135 @@ body {
     }
   });
 
+  // ── tile:chrome-extensions:* strict shims (Phase 3.5d) ──────────────
+  //
+  // Strict counterparts of the legacy `chrome-ext:*` channels in ipc.ts.
+  // All handlers require trustedBuiltin — feature tiles must not be able
+  // to enumerate or launch chrome extensions through the tile surface.
+  // Wave 3.6d will flip tile-preload.cts to call these channels and
+  // remove the legacy `chrome-ext:*` invocations.
+
+  ipcMain.handle('tile:chrome-extensions:list', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:list', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:list' };
+    }
+    try {
+      const { getChromeExtensions } = await import('./chrome-extensions.js');
+      const extensions = getChromeExtensions();
+      return { success: true, data: extensions };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:chrome-extensions:enable', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:enable', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:enable' };
+    }
+    try {
+      const { enableChromeExtension } = await import('./chrome-extensions.js');
+      const result = await enableChromeExtension(args.id);
+      return { success: result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:chrome-extensions:disable', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:disable', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:disable' };
+    }
+    try {
+      const { disableChromeExtension } = await import('./chrome-extensions.js');
+      const result = await disableChromeExtension(args.id);
+      return { success: result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:chrome-extensions:getStatus', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:getStatus', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:getStatus' };
+    }
+    try {
+      const { getChromeExtensionStatus } = await import('./chrome-extensions.js');
+      const status = getChromeExtensionStatus();
+      return { success: true, data: status };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:chrome-extensions:getUiEntries', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:getUiEntries', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:getUiEntries' };
+    }
+    try {
+      const { getChromeExtensionUiEntries } = await import('./chrome-extensions.js');
+      const entries = getChromeExtensionUiEntries();
+      return { success: true, data: entries };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:chrome-extensions:openPage', async (_event, args: {
+    token: string;
+    id: string;
+    type: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:openPage', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:openPage' };
+    }
+    try {
+      const { openChromeExtensionPage } = await import('./chrome-extensions.js');
+      const win = openChromeExtensionPage(args.id, args.type as import('./chrome-extensions.js').ChromeExtensionUiEntryType);
+      if (win) {
+        return { success: true, data: { windowId: win.id } };
+      }
+      return { success: false, error: `No ${args.type} page available for extension: ${args.id}` };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');
 }
 
