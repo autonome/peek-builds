@@ -522,7 +522,19 @@ export interface ParsedManifest {
 // ─── Capability Grant ────────────────────────────────────────────────
 
 /**
- * A resolved capability grant — what the runtime actually gives the tile
+ * A resolved capability grant — what the runtime actually gives the tile.
+ *
+ * When `trustedBuiltin` is true, capability checks are expected to
+ * short-circuit to "allowed" at every enforcement site. This is reserved
+ * for CORE renderers bundled with the app (cmd, hud, page, and test
+ * fixtures) — NOT for external feature tiles. See
+ * `createTrustedBuiltinGrant` and the bypass calls in the `check*Allowed`
+ * pure modules + inline checks in `tile-ipc.ts`.
+ *
+ * Name rationale: "core" is too vague, "system" is overloaded (pubsub
+ * already has a `system` scope), "privileged" is too generic. The
+ * explicit phrase `trustedBuiltin` makes the intent unmistakable in
+ * code review — every grep hit is a known bypass site.
  */
 export interface CapabilityGrant {
   tileId: string;
@@ -530,6 +542,12 @@ export interface CapabilityGrant {
   capabilities: TileCapabilities;
   /** Capabilities that were requested but denied */
   denied: string[];
+  /**
+   * If true, every capability check at runtime returns `ok` without
+   * consulting the granted capabilities. Reserved for bundled core
+   * renderers. Default: omitted/false.
+   */
+  trustedBuiltin?: boolean;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────
@@ -1143,6 +1161,86 @@ export function resolveCapabilities(
   }
 
   return { tileId, capabilities: granted, denied };
+}
+
+// ─── Trusted Builtin Grant ──────────────────────────────────────────
+
+/**
+ * Build a capability grant that short-circuits every check with "allowed".
+ *
+ * This is used by the Electron glue that launches bundled CORE renderers
+ * (cmd, hud, page, test fixtures) — the tile mechanics are identical to
+ * any other tile, but capability enforcement is skipped because the
+ * renderer ships with the app and is part of the trusted codebase.
+ *
+ * The returned grant carries `trustedBuiltin: true`. Every `check*Allowed`
+ * pure-module helper AND every inline capability gate in `tile-ipc.ts`
+ * checks this flag FIRST and returns `ok: true` when it is set — the
+ * bypass is explicit at every site (grep for `trustedBuiltin` to audit).
+ *
+ * The `capabilities` object is populated with broad, permissive defaults
+ * so that any code path that reads the shape directly (e.g. listing the
+ * granted tables, topics) still sees reasonable values. Any allowlist
+ * that could be non-exhaustive is omitted — when the bypass is
+ * respected, the allowlist is never consulted.
+ *
+ * See `docs/v1-removal-plan.md` for the rationale: core renderers
+ * participate in the same tile mechanics as feature tiles, but do not
+ * require capability gating because they are trusted code.
+ */
+export function createTrustedBuiltinGrant(rendererId: string): CapabilityGrant {
+  const capabilities: TileCapabilities = {
+    // Pubsub — all scopes, no topic allowlist (every topic is allowed).
+    pubsub: { scopes: ['self', 'global', 'system'] },
+    // Datastore — `tables: []` with no allowlist consulted at enforcement
+    // (bypass returns ok before the allowlist is checked). Kept as empty
+    // array to satisfy the shape.
+    datastore: { tables: [], createTables: true },
+    // Network — no domain allowlist consulted.
+    network: { domains: [] },
+    // Window — all actions.
+    window: { create: true, query: true, manage: true },
+    // Filesystem — reserved permissive; in practice no trusted builtin
+    // uses the tile filesystem IPC (they use Node fs directly via the
+    // main process). Kept for shape consistency.
+    filesystem: { read: ['/'], write: ['/'] },
+    commands: true,
+    // Shortcuts — no keys allowlist consulted.
+    shortcuts: true,
+    sync: true,
+    theme: true,
+    // Settings — no readForeign allowlist (but settingsForeign: ['*']
+    // granted as well for defence-in-depth if foreign-read bypass is
+    // ever reached through non-trustedBuiltin path).
+    settings: { readForeign: ['*'] },
+    settingsForeign: ['*'],
+    // Context — all actions, no key allowlists.
+    context: { modes: true, queryWindows: true },
+    // Dialogs — all types.
+    dialogs: { types: ['save', 'open'] },
+    // OAuth — any provider.
+    oauth: { providers: ['*'] },
+    // Features — every action + every source type.
+    features: {
+      read: true,
+      install: true,
+      manage: true,
+      update: true,
+      dev: true,
+      publish: true,
+      devtools: true,
+      browse: true,
+    },
+    session: true,
+    izui: true,
+  };
+
+  return {
+    tileId: rendererId,
+    capabilities,
+    denied: [],
+    trustedBuiltin: true,
+  };
 }
 
 // ─── V1 to V2 Conversion Helper ─────────────────────────────────────
