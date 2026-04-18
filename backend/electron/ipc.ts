@@ -1060,6 +1060,24 @@ export function registerWindowHandlers(): void {
       };
     }
 
+    // Special-case: peek://app/settings/settings.html is not a registered v2
+    // tile (no manifest), but it must load via tile-preload so its api.<ns>.*
+    // calls reach the strict tile:* IPC handlers.
+    if (!tileWebPrefs && url === 'peek://app/settings/settings.html') {
+      const settingsGrant = createTrustedBuiltinGrant('settings');
+      const settingsToken = generateToken('settings', 'main', settingsGrant);
+      tileWebPrefs = {
+        preload: getTilePreloadPath(),
+        additionalArguments: [
+          '--tile-id=settings',
+          '--tile-entry=main',
+          `--tile-token=${settingsToken}`,
+        ],
+        tileId: 'settings',
+        entryId: 'main',
+      };
+      DEBUG && console.log('[window-open] settings window: assigned trustedBuiltin tile-preload token');
+    }
     // Prepare browser window options
     const winOptions: Electron.BrowserWindowConstructorOptions = {
       frame: isWebPage ? false : frameDefault, // Web pages are always frameless

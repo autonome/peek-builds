@@ -278,7 +278,7 @@ const renderCoreSettings = async () => {
   // Check current status
   (async () => {
     try {
-      const result = await api.invoke('default-browser-status');
+      const result = await api.app.getDefaultBrowserStatus();
       if (result.isDefault) {
         defaultBrowserBtn.textContent = 'Already the default handler';
         defaultBrowserBtn.disabled = true;
@@ -293,7 +293,7 @@ const renderCoreSettings = async () => {
     defaultBrowserBtn.disabled = true;
     defaultBrowserBtn.textContent = 'Setting...';
     try {
-      const result = await api.invoke('set-default-browser');
+      const result = await api.app.setDefaultBrowser();
       if (result.success) {
         defaultBrowserBtn.textContent = 'Already the default handler';
         defaultBrowserBtn.style.opacity = '0.6';
@@ -3144,7 +3144,7 @@ const renderDiagnosticsSettings = async () => {
   backupBtnRow.appendChild(makeBtn('Backup Now', async () => {
     backupOutput.textContent = 'Creating backup...';
     try {
-      const result = await api.invoke('backup-create');
+      const result = await api.backup.create();
       backupOutput.textContent = result.success
         ? `Backup created:\n${result.path}`
         : `Failed: ${result.error}`;
@@ -3156,7 +3156,7 @@ const renderDiagnosticsSettings = async () => {
   backupBtnRow.appendChild(makeBtn('List Backups', async () => {
     backupOutput.textContent = 'Loading...';
     try {
-      const result = await api.invoke('backup-list');
+      const result = await api.backup.list();
       if (result.success) {
         const { backups, backupDir } = result.data;
         if (!backupDir) {
@@ -3183,7 +3183,7 @@ const renderDiagnosticsSettings = async () => {
 
   backupBtnRow.appendChild(makeBtn('Open Backup Folder', async () => {
     try {
-      const configResult = await api.invoke('backup-get-config');
+      const configResult = await api.backup.getConfig();
       if (!configResult.success) {
         backupOutput.textContent = `Error: ${configResult.error}`;
         return;
@@ -3193,7 +3193,7 @@ const renderDiagnosticsSettings = async () => {
         backupOutput.textContent = 'Backup directory not configured.\nSet it in Core settings.';
         return;
       }
-      await api.invoke('shell-open-path', { path: backupDir });
+      await api.shell.openPath(backupDir);
       backupOutput.textContent = `Opened: ${backupDir}`;
     } catch (err) {
       backupOutput.textContent = `Error: ${err.message}`;
