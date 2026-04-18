@@ -1,80 +1,90 @@
-# Phase 2.5 #3 Agent Report — createExtensionWindow migration audit
+# Phase 2.5 #3 Agent Report — createExtensionWindow migration audit + dead-code cleanup
 
-## Audit (Phase A)
+## Audit findings (Phase A)
 
-Target: `createExtensionWindow()` in `backend/electron/main.ts` (line 1106).
-Still uses v1 `preload.js` (`config.preloadPath`). Function creates a
-BrowserWindow per extension and loads `peek://ext/{id}/background.html`.
+Target: `createExtensionWindow()` in `backend/electron/main.ts`. Still uses v1
+`preload.js`. All 8 call sites classified:
 
-### Call sites (6 inside main.ts, 2 inside ipc.ts)
+| Site | Caller | Reachability | Bucket |
+|------|--------|--------------|--------|
+| main.ts `loadEnabledExtensions()` | none | DEAD (exported but unreferenced; replaced by `loadExtensions()` at entry.ts:741) | dead code |
+| main.ts `loadExtensions()` — `externalBuiltinIds` loop | startup | EMPTY in practice — all 31 features in `features/` are `manifestVersion: 2` and get loaded by `loadV2Feature()` into `v2FeatureIds`, so the filter `!CONSOLIDATED ∩ !v2FeatureIds` yields nothing | dead in practice |
+| main.ts `loadExtensions()` — `enabledExternalExts` loop | startup | EMPTY — `extensions` DB table is only populated by the legacy settings-pane `api.extensions.add()` flow, superseded by features-manager (which writes to the v2 feature registry) | dead in practice |
+| main.ts `loadDevExtension()` | CLI `--load-extension` | LIVE (dev-only) | v1 path, live |
+| main.ts `reloadExtension()` | features-manager UI via `api.extensions.reload()` | LIVE | v1 path, live |
+| ipc.ts `extension-window-load` handler | none | DEAD | dead code |
+| ipc.ts `extension-window-reload` handler | none | DEAD | dead code |
 
-| Site | Caller | Runtime reachability | Bucket |
-|------|--------|----------------------|--------|
-| main.ts:1213 | `loadEnabledExtensions()` | **DEAD** — exported but never invoked. Replaced by `loadExtensions()` (entry.ts:741). | dead code |
-| main.ts:1458 | `loadExtensions()` — `externalBuiltinIds` loop | **EMPTY in practice.** Filter = `registered ∩ !CONSOLIDATED_EXTENSION_IDS ∩ enabled ∩ !v2FeatureIds`. All 35 features in `features/` are v2 (`manifestVersion: 2`) and get loaded by `loadV2Feature()` into `v2FeatureIds`, so this set is empty. | dead in practice |
-| main.ts:1467 | `loadExtensions()` — `enabledExternalExts` from `extensions` DB table | Empty under normal test / dev. The `extensions` table is populated by the legacy settings UI `api.extensions.add()` — superseded by features-manager (which installs into the v2 feature registry, not this table). | dead in practice |
-| main.ts:1672 | `loadDevExtension()` | Live when user passes `--load-extension` CLI flag. Dev-only. | v1 path, dev-only |
-| main.ts:1747 | `reloadExtension()` | **LIVE.** Called by `ipcMain.handle('extension-reload')` (ipc.ts:1374), which is invoked by `api.extensions.reload(id)` on trustedBuiltin tiles (features-manager, test fixtures). | v1 path, live |
-| ipc.ts:1287 | `ipcMain.handle('extension-window-load')` | **DEAD** — no renderer invokes this channel (grep). | dead code |
-| ipc.ts:1315 | `ipcMain.handle('extension-window-reload')` | **DEAD** — no renderer invokes this channel (grep). | dead code |
+Bucket counts: **0** v2-migratable (already migrated via `loadV2Tile`), **0**
+chrome extensions (those use `session.loadExtension` in
+`chrome-extensions.ts`, not `createExtensionWindow`), **2** live v1 callers
+that need a `relaunchTile(tileId)` helper that doesn't exist yet, **4** dead
+call sites safe to remove.
 
-### Bucket summary
+## Implementation choice + rationale
 
-- **v2-migratable builtin externals:** 0. All features are already loaded through
-  `loadV2Tile()` / `launchTile()` today — `createExtensionWindow` is never
-  invoked for them at runtime.
-- **Chrome extensions:** 0 — Chrome extensions use a separate path
-  (`backend/electron/chrome-extensions.ts` + `session.loadExtension()`), not
-  `createExtensionWindow`. Out of scope as planned.
-- **v1-only live callers:** 2 — `reloadExtension` (features-manager) and
-  `loadDevExtension` (CLI). Both need a v2 "launch/relaunch a tile by id"
-  helper that doesn't exist yet (tile-launcher has `launchTile(opts)` but no
-  "find the manifest, revoke the old token, close the old window, relaunch"
-  convenience).
-- **Dead code:** 4 call sites (`loadEnabledExtensions`, two IPC handlers,
-  + the two startup branches that are empty in practice). Safe to drop.
+The common assumption in the v1-removal plan — "`createExtensionWindow` exists
+for external builtins like `example`" — is outdated. `example` is already a v2
+tile (eagerly launched via its `type: "background"` entry), and
+`createExtensionWindow` is dead on the startup path.
 
-### Implementation choice
+The two remaining LIVE callers (`reloadExtension`, `loadDevExtension`) each
+need a v2 "launch a tile by id, revoking any existing window/token" helper —
+tile-launcher currently exposes `launchTile(opts)` that takes a parsed
+manifest, not an id + reload-aware-by-default. Building that is a dedicated
+Phase 2.5 #3b (est. 1–2h).
 
-**Exit at audit boundary.** Migrating `reloadExtension` and `loadDevExtension`
-requires:
+For this pass: **commit the audit**, then **remove the dead code** so Phase 3
+destructive cleanup has a smaller surface when the remaining two live callers
+are migrated.
 
-1. A `relaunchTile(tileId)` helper in `tile-launcher.ts` that re-reads the
-   manifest from disk, revokes the old token, closes the old window, and
-   calls `launchTile` again.
-2. A "find the tile's resident/launch entry from manifest" utility (currently
-   only `loadV2Tile` does this, and it's tangled with eager/lazy branching).
-3. Handling the dev-extension case where the path is registered
-   transiently via `registerDevExtension` and not in the feature registry.
+## What landed
 
-That's 1–2 commits of new infrastructure, not a "remove v1 call site" swap.
-Given the 60-minute budget and the audit finding that `createExtensionWindow`
-is effectively already replaced for the common path (startup loading), the
-correct move is to (a) remove the dead-code call sites cleanly in a follow-up
-and (b) defer the remaining two live v1 call sites to a dedicated Phase 2.5 #3b.
+Three commits on top of `28d07a05`:
 
-### Open items for Phase 3 / follow-up
+1. `cb7b2778` — `chore: triage stub for Phase 2.5 #3`
+2. (merged into audit commit) `chore: audit createExtensionWindow callers`
+3. `25c154ea` — `refactor(electron): remove dead createExtensionWindow callers`
 
-- **Phase 2.5 #3b** — implement `relaunchTile(tileId)` in tile-launcher.ts;
-  rewrite `reloadExtension()` and `loadDevExtension()` to use it; delete
-  `createExtensionWindow`, `loadEnabledExtensions`, the dead IPC handlers,
-  and the dead `externalBuiltinIds` / `enabledExternalExts` branches.
-- Phase 3 can proceed for everything not behind `createExtensionWindow` —
-  features-manager reload and CLI dev extensions are the only surfaces
-  that still need v1 `preload.js`.
+Files changed in the refactor commit:
 
-### Files read during audit
+- `backend/electron/main.ts`:
+  - Deleted `loadEnabledExtensions()` function (51 lines, dead).
+  - Demoted `createExtensionWindow()` from `export` to module-private and
+    added a doc-comment explaining its remaining live callers + pointing to
+    Phase 2.5 #3b for the full removal.
+- `backend/electron/ipc.ts`:
+  - Deleted `ipcMain.handle('extension-window-load')` (14 lines).
+  - Deleted `ipcMain.handle('extension-window-reload')` (16 lines).
+  - Removed the now-unused `createExtensionWindow` import.
+- `backend/electron/index.ts`: dropped `createExtensionWindow` and
+  `loadEnabledExtensions` from the public surface.
+- `app/index.js`: updated stale "calls loadEnabledExtensions()" comment to
+  point at the real startup path.
 
-- `backend/electron/main.ts` — createExtensionWindow, loadExtensions, loadEnabledExtensions, reloadExtension, loadDevExtension, discoverBuiltinExtensions
-- `backend/electron/ipc.ts` — extension-window-* handlers, extension-reload
-- `backend/electron/tile-compat.ts` — loadV2Tile, ensureTileIpcHandlers
-- `backend/electron/tile-loader.ts` — loadV2Feature, loadFeaturesFromRegistry
-- `backend/electron/feature-startup.ts` — initializeFeatures
-- `backend/electron/feature-installer.ts` — syncBuiltinFeatures
-- `backend/electron/tile-launcher.ts` — launchTile
-- `backend/electron/extensions.ts` — getExternalExtensions (reads `extensions` DB table)
-- All `features/*/manifest.json` — confirmed 31 of 31 are `manifestVersion: 2`
+Net LOC delta: −110 / +20. Public exports shrink by 2.
 
 ## Validation
 
-N/A at audit-commit. No code changes landed.
+- `npx tsc -p backend/tsconfig.json --noEmit` — clean.
+- `yarn test:unit` — 565/565 pass.
+- `yarn test:grep "v2 trustedBuiltin tile"` — 1/1.
+- `yarn test:grep "direct pubsub kagi execution works"` — 1/1.
+- `yarn test:grep "open and close settings"` — 1/1.
+- `yarn test:grep "Group Mode Context"` — 5/5.
+- `yarn test:grep "HUD"` — 11/11.
+- `yarn test:grep "example"` — 1 test, skipped (not a regression; pre-existing).
+
+## Open items for Phase 3 / follow-up
+
+- **Phase 2.5 #3b** — add `relaunchTile(tileId)` in `tile-launcher.ts`
+  (re-read manifest, revoke old token via `revokeTokensForTile`, close window
+  via `tileWindows` map, call `launchTile` with the resident/launch entry).
+  Rewrite `reloadExtension()` and `loadDevExtension()` on top of it. Then
+  delete `createExtensionWindow`, the remaining dead branches in
+  `loadExtensions()` (`externalBuiltinIds` + `enabledExternalExts` loops),
+  and the `extensionWindows` map.
+- **Chrome extensions** stay on `session.loadExtension()` — documented in
+  `docs/v1-removal-plan.md` and not part of v1 removal.
+- `extension-window-unload` IPC handler is probably also dead but intentionally
+  left in this pass — scoped audit confirmed `-load` / `-reload` only.
