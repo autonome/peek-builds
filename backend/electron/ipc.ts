@@ -1135,6 +1135,30 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log(`[window-open] cmd-ui window (${cmdUiEntry}): assigned trustedBuiltin tile-preload token`);
     }
 
+    // Special-case: about:blank is opened by IZUI tests (and potentially other
+    // callers) as an empty child window. Under v1 preload.js, all windows
+    // received a preload unconditionally. Now that preload.js is deleted,
+    // about:blank gets nothing — window.app is undefined in the renderer.
+    // Mint a trustedBuiltin token so tile-preload is injected and window.app
+    // is available (matches the same pattern as diagnostic, settings, hud-overlay, cmd-ui).
+    if (!tileWebPrefs && url === 'about:blank') {
+      const BLANK_ID = 'about-blank';
+      const BLANK_ENTRY = 'main';
+      const blankGrant = createTrustedBuiltinGrant(BLANK_ID);
+      const blankToken = generateToken(BLANK_ID, BLANK_ENTRY, blankGrant);
+      tileWebPrefs = {
+        preload: getTilePreloadPath(),
+        additionalArguments: [
+          `--tile-id=${BLANK_ID}`,
+          `--tile-entry=${BLANK_ENTRY}`,
+          `--tile-token=${blankToken}`,
+        ],
+        tileId: BLANK_ID,
+        entryId: BLANK_ENTRY,
+      };
+      DEBUG && console.log('[window-open] about:blank window: assigned trustedBuiltin tile-preload token');
+    }
+
     // Canvas page host windows use tile-preload with a trustedBuiltin grant so
     // page.js can use api.window.*, api.datastore.*, api.context.*, api.profiles.*,
     // api.chromeExtensions.*, api.app.*, api.subscribe/publish, etc. The token is
@@ -1212,9 +1236,14 @@ export function registerWindowHandlers(): void {
     // they're just the IPC sender. Only content windows count as parents for
     // IZUI child-window semantics (ESC closes child, focuses parent).
     const openerWindow = BrowserWindow.fromWebContents(ev.sender);
+    // Internal/infrastructure windows are not real parents for IZUI child-window semantics.
+    // The test-fixture window (peek://test/) is also internal — it acts as bgWindow in tests.
     const INTERNAL_URLS = ['peek://app/background.html'];
+    const INTERNAL_URL_PREFIXES = ['peek://test/'];
     const openerUrl = openerWindow && !openerWindow.isDestroyed() ? openerWindow.webContents?.getURL() ?? '' : '';
-    const isRealParent = openerWindow && !openerWindow.isDestroyed() && !INTERNAL_URLS.some(u => openerUrl === u);
+    const isRealParent = openerWindow && !openerWindow.isDestroyed() &&
+      !INTERNAL_URLS.some(u => openerUrl === u) &&
+      !INTERNAL_URL_PREFIXES.some(p => openerUrl.startsWith(p));
 
     // Center window on parent if opener exists and no explicit position
     // Priority: explicit x/y > center on parent > center on screen

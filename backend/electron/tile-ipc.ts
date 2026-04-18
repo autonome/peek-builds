@@ -92,6 +92,7 @@ import {
   getRunningExtensions,
   getAllRegisteredExtensions,
   reloadExtension,
+  getWindowInfo,
 } from './main.js';
 import {
   registerGlobalShortcut,
@@ -2575,6 +2576,7 @@ export function registerTileIpcHandlers(): void {
 
   ipcMain.handle('tile:window:list', async (_event, args: {
     token: string;
+    includeInternal?: boolean;
   }) => {
     const grant = getGrantForToken(args.token);
     const check = checkWindowAllowed(grant, 'list');
@@ -2590,15 +2592,21 @@ export function registerTileIpcHandlers(): void {
         title: string;
         focused: boolean;
         visible: boolean;
+        params: Record<string, unknown>;
       }> = [];
       for (const win of BrowserWindow.getAllWindows()) {
         if (win.isDestroyed()) continue;
+        const info = getWindowInfo(win.id);
+        // When includeInternal is false/absent, skip windows without registry
+        // entries (e.g. purely internal Electron windows). When true, include all.
+        if (!args.includeInternal && !info) continue;
         windows.push({
           id: win.id,
           url: win.webContents.getURL(),
           title: win.getTitle(),
           focused: win.isFocused(),
           visible: win.isVisible(),
+          params: info ? info.params : {},
         });
       }
       return { success: true, windows };

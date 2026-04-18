@@ -565,10 +565,11 @@ function buildAPI(): Record<string, unknown> {
      * List open windows. Strict-only — requires `window.query`. In
      * v1-compat mode this falls back to `window-list` for parity.
      */
-    list: () => {
+    list: (opts?: { includeInternal?: boolean }) => {
       if (hasWindowCapability()) {
         return ipcRenderer.invoke('tile:window:list', {
           token: tileToken,
+          includeInternal: opts?.includeInternal,
         });
       }
       return ipcRenderer.invoke('window-list', {});
