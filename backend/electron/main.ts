@@ -87,8 +87,6 @@ const EAGER_EXTENSION_IDS = new Set(['entities']);
 
 // Track which lazy extensions have been loaded
 const lazyExtensionLoaded = new Set<string>();
-// Track which consolidated extensions have actually loaded (eager or lazy)
-const loadedConsolidatedExtensions = new Set<string>();
 // Pending lazy load callbacks (extId -> resolve[])
 const lazyLoadCallbacks = new Map<string, Array<() => void>>();
 
@@ -740,7 +738,6 @@ function loadLazyExtension(extId: string): Promise<void> {
         if (lazyExtensionLoaded.has(extId)) return; // Already resolved normally
         console.error(`[ext:lazy] Timeout waiting for ext:ready from ${extId} (${LAZY_LOAD_TIMEOUT_MS}ms)`);
         lazyExtensionLoaded.add(extId);
-        loadedConsolidatedExtensions.add(extId);
         const callbacks = lazyLoadCallbacks.get(extId) || [];
         lazyLoadCallbacks.delete(extId);
         for (const cb of callbacks) {
@@ -785,7 +782,6 @@ function getExpectedCommandTopics(extId: string): string[] {
 
 function handleLazyExtensionReady(extId: string, registeredTopics?: string[]): void {
   lazyExtensionLoaded.add(extId);
-  loadedConsolidatedExtensions.add(extId);
 
   const callbacks = lazyLoadCallbacks.get(extId) || [];
   lazyLoadCallbacks.delete(extId);
@@ -1131,14 +1127,7 @@ async function createExtensionHostWindow(): Promise<BrowserWindow> {
         const match = url.match(/^peek:\/\/([^/]+)\/background\.html/);
         if (match) {
           const extId = match[1];
-          if (!loadedConsolidatedExtensions.has(extId)) {
-            loadedConsolidatedExtensions.add(extId);
-            DEBUG && console.log(`[ext:host] Frame loaded: ${extId} (${loadedConsolidatedExtensions.size} total)`);
-
-            // Note: lazy extension ready callbacks are resolved via ext:ready pubsub
-            // (see subscribe('ext:ready', ...) below), not here — did-frame-finish-load
-            // fires before the extension's JS modules have executed and registered handlers.
-          }
+          DEBUG && console.log(`[ext:host] Frame loaded: ${extId}`);
         }
       }
     } catch (err) {
@@ -1191,22 +1180,12 @@ export async function loadExtensions(): Promise<number> {
   // grant) — no longer loaded as an iframe in the consolidated extension host.
   await createExtensionHostWindow();
   await initCmd({ tilePreloadPath });
-  // Keep cmd visible to getRunningExtensions(): the set is documented as
-  // "consolidated iframe extensions" but is the logical "core renderer is up"
-  // tracker used by the Features pane. Adding cmd here preserves that
-  // surfacing now that the renderer is a standalone BrowserWindow.
-  loadedConsolidatedExtensions.add('cmd');
 
   // Load HUD right after cmd — it's core app infrastructure like cmd, and
   // registers the `hud` command + CmdOrCtrl+H shortcut via the portable api.
   // HUD now runs as a standalone tile renderer (tile-preload + trustedBuiltin
   // grant) — no longer loaded as an iframe in the consolidated extension host.
   await initHud({ tilePreloadPath });
-  // Keep hud visible to getRunningExtensions(): the set is documented as
-  // "consolidated iframe extensions" but is the logical "core renderer is up"
-  // tracker used by the Features pane. Adding hud here preserves that
-  // surfacing now that the renderer is a standalone BrowserWindow.
-  loadedConsolidatedExtensions.add('hud');
 
   // Load page background right after hud — registers the `open` and `modal`
   // commands. Page is core infrastructure (the canvas architecture in
@@ -1214,11 +1193,6 @@ export async function loadExtensions(): Promise<number> {
   // page now runs as a standalone tile renderer (tile-preload + trustedBuiltin
   // grant) — no longer loaded as an iframe in the consolidated extension host.
   await initPage({ tilePreloadPath });
-  // Keep page visible to getRunningExtensions(): the set is documented as
-  // "consolidated iframe extensions" but is the logical "core renderer is up"
-  // tracker used by the Features pane. Adding page here preserves that
-  // surfacing now that the renderer is a standalone BrowserWindow.
-  loadedConsolidatedExtensions.add('page');
 
   // Launch the privileged test-fixture renderer when running under
   // Playwright (E2E_TEST=true). This is the v2 replacement for the v1
@@ -1290,29 +1264,28 @@ export async function loadExtensions(): Promise<number> {
   return 0;
 }
 
+// Core renderers that are always considered "running" once the app has started.
+// These are not v2 tiles (no tile manifest) and not v1 iframe extensions, but
+// the Features pane should always show them as running.
+const CORE_RENDERER_IDS = ['cmd', 'hud', 'page'];
+
 /**
  * Get running extensions info
- * Includes both consolidated (iframe) and separate window extensions
+ * Includes core renderers, declarative extensions, and v2 tiles
  */
 export function getRunningExtensions(): Array<{ id: string; manifest: unknown; status: string }> {
   const running: Array<{ id: string; manifest: unknown; status: string }> = [];
 
-  // Add consolidated extensions that have actually loaded (in extension host iframes).
-  // Iterates loadedConsolidatedExtensions (populated by did-frame-finish-load), which
-  // includes both CONSOLIDATED_EXTENSION_IDS features AND core pseudo-extensions like
-  // cmd and hud that are loaded by core glue (cmd-glue.ts, hud-glue.ts) rather than
-  // by the feature system.
-  if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
-    for (const extId of loadedConsolidatedExtensions) {
-      if (!isBuiltinExtensionEnabled(extId)) continue;
-      const extPath = getExtensionPath(extId);
-      const manifest = extPath ? loadExtensionManifest(extPath) : null;
-      running.push({
-        id: extId,
-        manifest: manifest || { id: extId },
-        status: 'running'
-      });
-    }
+  // Add core renderers (cmd, hud, page) — always running once app is up
+  for (const extId of CORE_RENDERER_IDS) {
+    if (!isBuiltinExtensionEnabled(extId)) continue;
+    const extPath = getExtensionPath(extId);
+    const manifest = extPath ? loadExtensionManifest(extPath) : null;
+    running.push({
+      id: extId,
+      manifest: manifest || { id: extId },
+      status: 'running'
+    });
   }
 
   // Add declarative-only extensions (no background page, but still active)
@@ -1330,7 +1303,6 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
   }
 
   // Add v2 tiles launched by the tile-launcher as separate BrowserWindows.
-  // These aren't in loadedConsolidatedExtensions (that's for iframes in the host).
   for (const tileId of getLoadedTileIds()) {
     if (running.some(r => r.id === tileId)) continue;
     if (!isBuiltinExtensionEnabled(tileId)) continue;
@@ -1353,17 +1325,14 @@ export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unkn
   const registeredIds = getRegisteredExtensionIds();
   const result: Array<{ id: string; manifest: unknown; status: string }> = [];
 
-  // Build a set of running extension IDs for status info
-  const runningSet = new Set<string>();
-  if (extensionHostWindow && !extensionHostWindow.isDestroyed()) {
-    for (const extId of CONSOLIDATED_EXTENSION_IDS) {
-      if (loadedConsolidatedExtensions.has(extId)) {
-        runningSet.add(extId);
-      }
-    }
-  }
+  // Build a set of running extension IDs for status info.
+  // Sources: core renderers (always up), declarative extensions, and loaded v2 tiles.
+  const runningSet = new Set<string>(CORE_RENDERER_IDS);
   for (const extId of declarativeExtensions) {
     runningSet.add(extId);
+  }
+  for (const tileId of getLoadedTileIds()) {
+    runningSet.add(tileId);
   }
 
   for (const extId of registeredIds) {
@@ -1387,12 +1356,6 @@ export function getExtensionHostWindow(): BrowserWindow | null {
   return extensionHostWindow;
 }
 
-/**
- * Check if an extension runs in consolidated mode (iframe in host)
- */
-export function isConsolidatedExtension(extId: string): boolean {
-  return CONSOLIDATED_EXTENSION_IDS.includes(extId);
-}
 
 /**
  * Check if an extension is a dev extension (loaded via CLI)
@@ -1473,9 +1436,9 @@ export function getDevExtensionIds(): string[] {
 export async function reloadExtension(extId: string): Promise<object | null> {
   DEBUG && console.log(`[ext:reload] Reloading extension: ${extId}`);
 
-  // Check if it's a consolidated extension (not supported for reload)
-  if (isConsolidatedExtension(extId)) {
-    console.error(`[ext:reload] Cannot reload consolidated extension: ${extId} (reload the app instead)`);
+  // Check if it's a core renderer (cmd/hud/page) — not reloadable without a full app restart
+  if (CORE_RENDERER_IDS.includes(extId)) {
+    console.error(`[ext:reload] Cannot reload core renderer: ${extId} (reload the app instead)`);
     return null;
   }
 

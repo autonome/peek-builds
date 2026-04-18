@@ -94,7 +94,6 @@ import {
 
 import {
   getExtensionHostWindow,
-  isConsolidatedExtension,
   getRunningExtensions,
   getAllRegisteredExtensions,
   reloadExtension,
@@ -1304,16 +1303,6 @@ export function registerExtensionHandlers(): void {
   ipcMain.handle('extension-window-devtools', async (ev, data) => {
     try {
       const extId = data.id;
-
-      // Consolidated extensions run in the extension host window
-      if (isConsolidatedExtension(extId)) {
-        const hostWin = getExtensionHostWindow();
-        if (!hostWin || hostWin.isDestroyed()) {
-          return { success: false, error: 'Extension host is not running' };
-        }
-        hostWin.webContents.openDevTools({ mode: 'detach' });
-        return { success: true, data: { id: extId, isConsolidated: true } };
-      }
 
       // v2 tile or unknown — extensionWindows map removed in Phase 3.2
       return { success: false, error: `Extension ${extId} is not running as a legacy window` };
