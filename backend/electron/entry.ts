@@ -60,7 +60,6 @@ import {
   // Config
   WEB_CORE_ADDRESS,
   SETTINGS_ADDRESS,
-  setPreloadPath,
   setProfile,
   isTestProfile,
   isHeadless,
@@ -104,6 +103,8 @@ import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js'
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
 import { getLazyTileManifest } from './tile-lazy.js';
 import { getTilePreloadPath } from './config.js';
+import { createTrustedBuiltinGrant } from './tile-manifest.js';
+import { generateToken } from './tile-tokens.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -148,13 +149,7 @@ for (const arg of process.argv) {
   }
 }
 
-// script loaded into every app window
-const preloadPath = path.join(ROOT_DIR, 'preload.js');
-
 const systemAddress = getSystemAddress();
-
-// Initialize backend config with runtime values
-setPreloadPath(preloadPath);
 
 // Read Proton Pass webauthn.js for main-world injection into web content webviews.
 // Electron ignores "world": "MAIN" in Chrome extension manifest content_scripts,
@@ -170,19 +165,19 @@ try {
   console.error('[webauthn] Failed to read webauthn.js:', err);
 }
 
-// Inject preload into <webview> elements that load peek:// URLs.
+// Inject tile-preload into <webview> elements that load peek:// URLs.
 // This gives internal widget pages (e.g., HUD widgets, widget-demo cards)
 // access to window.app API while leaving external web content webviews untouched.
 //
-// Two paths (Phase 2.5 #2 — webview preload migration):
-//   1. v2 tiles: if the URL resolves to a registered v2 tile manifest,
-//      use tile-preload.cjs with capability-token argv (the same shape
-//      v2 BrowserWindows get via webPreferences.additionalArguments).
-//      Webview children inherit the parent tile's grant via
-//      `getTileWebPreferencesForWebviewUrl`.
-//   2. v1 fallback: any peek:// URL whose tile-id isn't a v2 tile (e.g.
-//      `peek://ext/hud/widgets/...` while HUD is still v1) keeps the
-//      legacy preload.js. This will go away when HUD is migrated.
+// Resolution order (Phase 3.11b-hud — v1 preload.js removed):
+//   1. HUD widget webviews: peek://ext/hud/widgets/*.html get a dedicated
+//      trustedBuiltin token (hud-widget). HUD has no v2 manifest but
+//      widgets use api.window/context/izui/pubsub — all covered by
+//      trustedBuiltin grant.
+//   2. v2 tiles: URL resolves to a registered v2 tile manifest — use
+//      tile-preload.cjs with manifest-derived capability token.
+//   3. Unrecognised peek:// URL: log a warning and skip preload injection
+//      (no v1 fallback — preload.js has been deleted).
 //
 // Also inject Proton Pass webauthn.js into http/https webviews for passkey support.
 // The script overrides navigator.credentials.create/get in the main world.
@@ -190,9 +185,28 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (_wvEvent, webPreferences, params) => {
     if (params.src && params.src.startsWith('peek://')) {
       const tilePreloadPath = getTilePreloadPath();
-      const tileWebPrefs = tilePreloadPath
-        ? getTileWebPreferencesForWebviewUrl(params.src, tilePreloadPath, getLazyTileManifest)
-        : null;
+      if (!tilePreloadPath) return;
+
+      // Special-case: HUD widget webviews (peek://ext/hud/widgets/*.html).
+      // HUD has no v2 manifest; mint a trustedBuiltin token for all widgets
+      // under a unified hud-widget tile id so they can use api.window.*,
+      // api.context.*, api.izui.*, api.pubsub.*, etc.
+      if (params.src.startsWith('peek://ext/hud/widgets/')) {
+        const HUD_WIDGET_ID = 'hud-widget';
+        const HUD_WIDGET_ENTRY = 'main';
+        const hudWidgetGrant = createTrustedBuiltinGrant(HUD_WIDGET_ID);
+        const hudWidgetToken = generateToken(HUD_WIDGET_ID, HUD_WIDGET_ENTRY, hudWidgetGrant);
+        webPreferences.preload = tilePreloadPath;
+        (webPreferences as { additionalArguments?: string[] }).additionalArguments = [
+          `--tile-id=${HUD_WIDGET_ID}`,
+          `--tile-entry=${HUD_WIDGET_ENTRY}`,
+          `--tile-token=${hudWidgetToken}`,
+        ];
+        DEBUG && console.log(`[webview] Injecting trustedBuiltin tile-preload for HUD widget: ${params.src}`);
+        return;
+      }
+
+      const tileWebPrefs = getTileWebPreferencesForWebviewUrl(params.src, tilePreloadPath, getLazyTileManifest);
       if (tileWebPrefs) {
         webPreferences.preload = tileWebPrefs.preload;
         // Cast: Electron's WebPreferences type for webviews omits
@@ -204,8 +218,10 @@ app.on('web-contents-created', (_event, contents) => {
           `[webview] Injecting v2 tile-preload for ${params.src} (tile=${tileWebPrefs.tileId}, entry=${tileWebPrefs.entryId})`
         );
       } else {
-        webPreferences.preload = preloadPath;
-        DEBUG && console.log(`[webview] Injecting v1 preload for peek:// webview: ${params.src}`);
+        // No v1 preload fallback — preload.js has been deleted. Any peek://
+        // URL that reaches here is either a developer-extension webview that
+        // needs a v2 manifest, or a bug. Log a warning so it surfaces.
+        console.warn(`[webview] No tile-preload found for peek:// webview ${params.src} — no preload injected (v1 preload.js removed)`);
       }
     }
   });
@@ -879,7 +895,6 @@ if (_darkModeSetting === 'force') {
 // Configure app before ready (registers protocol scheme, sets theme)
 configure({
   rootDir: ROOT_DIR,
-  preloadPath: preloadPath,
   userDataPath: defaultUserDataPath,
   profile: PROFILE,
   isDev: DEBUG,

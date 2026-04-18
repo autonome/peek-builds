@@ -210,6 +210,10 @@ function buildAPI(): Record<string, unknown> {
   api.pubsub = {
     publish: publishImpl,
     subscribe: subscribeImpl,
+    // stats() is unrestricted — returns pubsub telemetry for the HUD stats
+    // widget and developer diagnostics. Delegates to the legacy pubsub-stats
+    // channel (already registered in ipc.ts registerMiscHandlers).
+    stats: () => ipcRenderer.invoke('pubsub-stats'),
   };
 
   // ── Commands (if granted) ──

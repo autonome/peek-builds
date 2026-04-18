@@ -19,7 +19,7 @@ let sheetConfig = null;
  * Load HUD sheet config from feature_settings
  */
 const loadSheetConfig = async () => {
-  const result = await api.settings.getKey(HUD_SHEET_KEY);
+  const result = await api.settings.get(HUD_SHEET_KEY);
   if (result.success && result.data) {
     return result.data;
   }

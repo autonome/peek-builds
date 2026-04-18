@@ -77,7 +77,6 @@ import {
   APP_DEF_WIDTH,
   APP_DEF_HEIGHT,
   WEB_CORE_ADDRESS,
-  getPreloadPath,
   getTilePreloadPath,
   IPC_CHANNELS,
   isHeadless,
@@ -1072,6 +1071,28 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log('[window-open] settings window: assigned trustedBuiltin tile-preload token');
     }
 
+    // Special-case: peek://ext/hud/hud.html is the HUD overlay BrowserWindow
+    // opened on-demand by app/hud/background.js via api.window.open(). It
+    // hosts webview widget cards (app/hud/hud.js) and needs tile-preload for
+    // api.settings.get / api.window.resize. No v2 manifest — trustedBuiltin.
+    if (!tileWebPrefs && url === 'peek://ext/hud/hud.html') {
+      const HUD_OVERLAY_ID = 'hud-overlay';
+      const HUD_OVERLAY_ENTRY = 'main';
+      const hudOverlayGrant = createTrustedBuiltinGrant(HUD_OVERLAY_ID);
+      const hudOverlayToken = generateToken(HUD_OVERLAY_ID, HUD_OVERLAY_ENTRY, hudOverlayGrant);
+      tileWebPrefs = {
+        preload: getTilePreloadPath(),
+        additionalArguments: [
+          `--tile-id=${HUD_OVERLAY_ID}`,
+          `--tile-entry=${HUD_OVERLAY_ENTRY}`,
+          `--tile-token=${hudOverlayToken}`,
+        ],
+        tileId: HUD_OVERLAY_ID,
+        entryId: HUD_OVERLAY_ENTRY,
+      };
+      DEBUG && console.log('[window-open] hud-overlay window: assigned trustedBuiltin tile-preload token');
+    }
+
     // Special-case: peek://app/datastore/viewer.html uses api.datastore.* to
     // display raw DB tables — not a registered v2 tile but needs tile-preload.
     if (!tileWebPrefs && url === 'peek://app/datastore/viewer.html') {
@@ -1122,10 +1143,10 @@ export function registerWindowHandlers(): void {
         ...options.webPreferences,
         // Canvas page host windows get tile-preload with a trustedBuiltin grant;
         // other v2 tile URLs get their manifest-derived preload; everything else
-        // falls back to the legacy preload.js.
+        // gets no preload (v1 preload.js has been deleted — Phase 3.11b-hud).
         preload: useCanvas
           ? getTilePreloadPath()
-          : tileWebPrefs ? tileWebPrefs.preload : getPreloadPath(),
+          : tileWebPrefs ? tileWebPrefs.preload : undefined,
         additionalArguments: useCanvas
           ? [
               `--tile-id=${PAGE_HOST_TILE_ID}`,

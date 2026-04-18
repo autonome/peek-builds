@@ -23,7 +23,6 @@ export const DEBUG = !!process.env.DEBUG;
 export const TILE_STRICT = process.env.TILE_STRICT === 'true';
 
 // Runtime configuration (set during app initialization)
-let _preloadPath: string = '';
 let _tilePreloadPath: string = '';
 let _profile: string = '';
 
@@ -36,24 +35,10 @@ export function isHeadless(): boolean {
 }
 
 /**
- * Set runtime paths (called during app initialization)
- */
-export function setPreloadPath(preloadPath: string): void {
-  _preloadPath = preloadPath;
-}
-
-/**
  * Set profile (called during app initialization)
  */
 export function setProfile(profile: string): void {
   _profile = profile;
-}
-
-/**
- * Get the preload script path
- */
-export function getPreloadPath(): string {
-  return _preloadPath;
 }
 
 /**

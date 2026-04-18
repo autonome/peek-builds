@@ -12,9 +12,7 @@ export {
   SETTINGS_ADDRESS,
   IPC_CHANNELS,
   TOPICS,
-  setPreloadPath,
   setProfile,
-  getPreloadPath,
   getProfile,
   isTestProfile,
   isDevProfile,
@@ -227,7 +225,7 @@ export {
   listBackups,
 } from './backup.js';
 
-// Re-export frontend API types (the contract that preload.js implements)
+// Re-export frontend API types (the contract that tile-preload.cjs implements)
 export type {
   IPeekApi,
   ApiResult,

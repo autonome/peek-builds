@@ -33,7 +33,6 @@ import { clearLastFocusedVisibleWindowId } from './ipc.js';
 // Configuration
 export interface AppConfig {
   rootDir: string;
-  preloadPath: string;
   userDataPath: string;
   profile: string;
   isDev: boolean;
