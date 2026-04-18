@@ -1429,9 +1429,14 @@ export async function loadExtensions(): Promise<number> {
 
   // Load HUD right after cmd — it's core app infrastructure like cmd, and
   // registers the `hud` command + CmdOrCtrl+H shortcut via the portable api.
-  // loadExtInHost/waitForExtLoaded populates loadedConsolidatedExtensions so
-  // getRunningExtensions() still reports hud.
-  await initHud({ host, loadExtInHost, waitForExtLoaded });
+  // HUD now runs as a standalone tile renderer (tile-preload + trustedBuiltin
+  // grant) — no longer loaded as an iframe in the consolidated extension host.
+  await initHud({ tilePreloadPath });
+  // Keep hud visible to getRunningExtensions(): the set is documented as
+  // "consolidated iframe extensions" but is the logical "core renderer is up"
+  // tracker used by the Features pane. Adding hud here preserves that
+  // surfacing now that the renderer is a standalone BrowserWindow.
+  loadedConsolidatedExtensions.add('hud');
 
   // Load page background right after hud — registers the `open` and `modal`
   // commands. Page is core infrastructure (the canvas architecture in
