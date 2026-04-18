@@ -844,7 +844,7 @@ let holdDragStartScreenY = 0;
 // Read drag hold delay from prefs
 (async () => {
   try {
-    const prefs = await api.invoke('get-app-prefs');
+    const prefs = await api.app.getPrefs();
     if (prefs && typeof prefs.dragHoldDelay === 'number') {
       DRAG_HOLD_THRESHOLD = Math.max(0, prefs.dragHoldDelay * 1000);
     }

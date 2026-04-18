@@ -85,7 +85,7 @@ import {
   DEBUG,
 } from './config.js';
 
-import { getTileWebPreferencesForUrl } from './tile-launcher.js';
+import { getTileWebPreferencesForUrl, registerTrustedBuiltinWindow } from './tile-launcher.js';
 import { getLazyTileManifest } from './tile-lazy.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
@@ -1078,6 +1078,22 @@ export function registerWindowHandlers(): void {
       };
       DEBUG && console.log('[window-open] settings window: assigned trustedBuiltin tile-preload token');
     }
+
+    // Canvas page host windows use tile-preload with a trustedBuiltin grant so
+    // page.js can use api.window.*, api.datastore.*, api.context.*, api.profiles.*,
+    // api.chromeExtensions.*, api.app.*, api.subscribe/publish, etc. The token is
+    // minted here (before BrowserWindow creation) so it can be injected into
+    // additionalArguments. A unique entry-id prevents Map collisions when multiple
+    // canvas windows are open simultaneously.
+    const PAGE_HOST_TILE_ID = 'page-host';
+    let pageHostToken: string | null = null;
+    let pageHostEntryId: string | null = null;
+    if (useCanvas) {
+      pageHostEntryId = `canvas-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const pageHostGrant = createTrustedBuiltinGrant(PAGE_HOST_TILE_ID);
+      pageHostToken = generateToken(PAGE_HOST_TILE_ID, pageHostEntryId, pageHostGrant);
+    }
+
     // Prepare browser window options
     const winOptions: Electron.BrowserWindowConstructorOptions = {
       frame: isWebPage ? false : frameDefault, // Web pages are always frameless
@@ -1091,8 +1107,19 @@ export function registerWindowHandlers(): void {
       ...(useCanvas ? { hasShadow: false, resizable: false } : {}),
       webPreferences: {
         ...options.webPreferences,
-        preload: tileWebPrefs ? tileWebPrefs.preload : getPreloadPath(),
-        additionalArguments: tileWebPrefs ? tileWebPrefs.additionalArguments : options.webPreferences?.additionalArguments,
+        // Canvas page host windows get tile-preload with a trustedBuiltin grant;
+        // other v2 tile URLs get their manifest-derived preload; everything else
+        // falls back to the legacy preload.js.
+        preload: useCanvas
+          ? getTilePreloadPath()
+          : tileWebPrefs ? tileWebPrefs.preload : getPreloadPath(),
+        additionalArguments: useCanvas
+          ? [
+              `--tile-id=${PAGE_HOST_TILE_ID}`,
+              `--tile-entry=${pageHostEntryId!}`,
+              `--tile-token=${pageHostToken!}`,
+            ]
+          : tileWebPrefs ? tileWebPrefs.additionalArguments : options.webPreferences?.additionalArguments,
         session: profileSession,
         webviewTag: useCanvas ? true : (options.webPreferences?.webviewTag || false),
       }
@@ -1232,6 +1259,15 @@ export function registerWindowHandlers(): void {
 
     if (options.visibleOnAllWorkspaces) {
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+
+    // Register canvas page host windows with the tile broadcaster so pubsub
+    // messages (tag:item-added, sync:pull-completed, etc.) are forwarded to
+    // page.js via the same extensionBroadcaster path used by feature tiles.
+    // Token cleanup (revokeToken) happens automatically on 'closed'.
+    if (useCanvas && pageHostToken && pageHostEntryId) {
+      registerTrustedBuiltinWindow(PAGE_HOST_TILE_ID, pageHostEntryId, win, pageHostToken);
+      DEBUG && console.log(`[page-host] Registered canvas window ${win.id} as tile ${PAGE_HOST_TILE_ID}:${pageHostEntryId}`);
     }
 
     // Track window position for display-watcher home display restoration
@@ -1483,6 +1519,11 @@ export function registerWindowHandlers(): void {
         // Use profile-specific session for isolation
         const profileSession = getProfileSession();
 
+        // Mint a trustedBuiltin token for this popup canvas page host window.
+        const popupEntryId = `canvas-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const popupGrant = createTrustedBuiltinGrant(PAGE_HOST_TILE_ID);
+        const popupToken = generateToken(PAGE_HOST_TILE_ID, popupEntryId, popupGrant);
+
         // Create the new BrowserWindow (page container) with fullscreen canvas
         const popupWin = new BrowserWindow({
           frame: false,
@@ -1493,11 +1534,19 @@ export function registerWindowHandlers(): void {
           show: isHeadless() ? false : true,
           transparent: true,
           webPreferences: {
-            preload: getPreloadPath(),
+            preload: getTilePreloadPath(),
+            additionalArguments: [
+              `--tile-id=${PAGE_HOST_TILE_ID}`,
+              `--tile-entry=${popupEntryId}`,
+              `--tile-token=${popupToken}`,
+            ],
             session: profileSession,
             webviewTag: true,
           },
         });
+
+        // Register popup with the tile broadcaster for pubsub forwarding.
+        registerTrustedBuiltinWindow(PAGE_HOST_TILE_ID, popupEntryId, popupWin, popupToken);
 
         // Set up fullscreen transparent canvas for the popup
         if (!isHeadless()) {
