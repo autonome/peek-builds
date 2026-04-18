@@ -17,6 +17,7 @@ import { initHud } from './hud-glue.js';
 import { initPage } from './page-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
+import { ensureTileIpcHandlers } from './tile-compat.js';
 import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles } from './tile-launcher.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
@@ -184,6 +185,13 @@ export async function initialize(): Promise<void> {
 
   // Initialize protocol handler
   initProtocol(config.rootDir);
+
+  // Register tile:* IPC handlers BEFORE any BrowserWindow is created.
+  // Without this, core renderers (cmd, hud, page) launching with
+  // tile-preload would silently drop their `tile:validate-token` and
+  // `tile:pubsub:*` IPC sends — handlers were historically registered
+  // lazily from `loadV2Tile()` which runs after core glue.
+  ensureTileIpcHandlers();
 
   // Initialize database
   const dbPath = path.join(config.userDataPath, config.profile, 'datastore.sqlite');

@@ -38,6 +38,23 @@ export interface AnnotatedExtension {
 
 let ipcHandlersRegistered = false;
 
+/**
+ * Ensure the `tile:*` ipcMain handlers are registered. Idempotent.
+ *
+ * Historically called lazily from `loadV2Tile()`, so when trustedBuiltin
+ * core renderers (cmd, hud, page) launched before any v2 feature tile,
+ * the handlers weren't yet registered and every
+ * `ipcRenderer.send('tile:pubsub:publish', …)` silently dropped. Core
+ * renderers and any other caller that needs tile IPC up front should
+ * call this helper directly — typically from `main.ts::initialize()`
+ * before any BrowserWindow is created.
+ */
+export function ensureTileIpcHandlers(): void {
+  if (ipcHandlersRegistered) return;
+  registerTileIpcHandlers();
+  ipcHandlersRegistered = true;
+}
+
 // ─── Discovery ───────────────────────────────────────────────────────
 
 /**
