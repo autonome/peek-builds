@@ -1315,65 +1315,6 @@ async function createExtensionHostWindow(): Promise<BrowserWindow> {
 }
 
 /**
- * Load extensions in consolidated mode (single window with iframes)
- */
-async function loadExtensionsConsolidated(): Promise<number> {
-  const extStart = Date.now();
-
-  // Create the extension host window
-  const host = await createExtensionHostWindow();
-
-  // Get all extension IDs to load
-  const builtinExtIds = getRegisteredExtensionIds();
-  const enabledBuiltinIds = builtinExtIds.filter(id => isBuiltinExtensionEnabled(id));
-
-  // Get external extensions
-  const externalExts = getExternalExtensions();
-  const enabledExternalIds = externalExts
-    .filter(ext => ext.enabled && ext.path)
-    .map(ext => ext.id);
-
-  const allExtIds = [...enabledBuiltinIds, ...enabledExternalIds];
-
-  DEBUG && console.log(`[ext:host] Loading ${allExtIds.length} extensions as iframes`);
-
-  // Phase 1: Early
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
-
-  // Send load commands to extension host
-  // Note: cmd (command registry) is no longer loaded here — it's loaded via
-  // initCmd() from cmd-glue.ts in the main loadExtensions() path. This
-  // alternate loader is kept for compatibility but should NOT be used alongside
-  // the main loader without coordinating the cmd init phase.
-
-  // Phase 2: Commands
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
-
-  // Register declarative commands/shortcuts from manifests (after cmd is ready)
-  registerDeclarativeCommands();
-
-  // Load extensions (skip declarative-only)
-  const otherIds = allExtIds.filter(id => !isDeclarativeOnly(id));
-  for (const extId of otherIds) {
-    host.webContents.send('ext:load', { id: extId, url: `peek://${extId}/background.html` });
-  }
-
-  // Wait for iframes to load
-  await new Promise(resolve => setTimeout(resolve, 200));
-
-  DEBUG && console.log(`[ext:timing] consolidated total: ${Date.now() - extStart}ms`);
-
-  // Phase 3: UI
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'ui' });
-
-  // Phase 4: Complete
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'complete' });
-  publish('system', scopes.GLOBAL, 'ext:all-loaded', { count: allExtIds.length });
-
-  return allExtIds.length;
-}
-
-/**
  * Load all enabled extensions (hybrid mode)
  * - Built-in extensions (cmd, groups, peeks, slides) → consolidated (iframes)
  * - External extensions (including example) → separate windows
