@@ -1888,7 +1888,7 @@ function buildAPI(): Record<string, unknown> {
   // ── Log (always available) ──
 
   api.log = (...args: unknown[]) => {
-    ipcRenderer.send('renderer-log', { source: sourceAddress, args });
+    ipcRenderer.send('tile:log:write', { token: tileToken, source: sourceAddress, args });
   };
 
   // ── Privileged escape hatch (trustedBuiltin only) ────────────────────
@@ -2028,7 +2028,7 @@ function buildAPI(): Record<string, unknown> {
       console.warn('[tile-preload] api.quit requires trustedBuiltin — ignored');
       return;
     }
-    ipcRenderer.send('app-quit', { source: sourceAddress });
+    ipcRenderer.send('tile:app:quit', { token: tileToken, source: sourceAddress });
   };
 
   api.restart = () => {
@@ -2036,43 +2036,7 @@ function buildAPI(): Record<string, unknown> {
       console.warn('[tile-preload] api.restart requires trustedBuiltin — ignored');
       return;
     }
-    ipcRenderer.send('app-restart', { source: sourceAddress });
-  };
-
-  // ── tile:app:quit / tile:app:restart strict shims (Phase 3.5f) ──────
-  //
-  // New strict-channel counterparts to api.quit / api.restart above.
-  // Route through tile:app:* channels which enforce trustedBuiltin gating
-  // on the main-process side (tile-ipc.ts). The token is passed so the
-  // handler can validate the grant without relying on the sender's origin.
-  //
-  // Wave 3.6f will flip api.quit / api.restart to call these methods and
-  // delete the legacy app-quit / app-restart ipcMain.on handlers from ipc.ts.
-  api.tileQuit = () => {
-    if (!trustedBuiltin) {
-      console.warn('[tile-preload] api.tileQuit requires trustedBuiltin — ignored');
-      return;
-    }
-    ipcRenderer.send('tile:app:quit', { token: tileToken, source: sourceAddress });
-  };
-
-  api.tileRestart = () => {
-    if (!trustedBuiltin) {
-      console.warn('[tile-preload] api.tileRestart requires trustedBuiltin — ignored');
-      return;
-    }
     ipcRenderer.send('tile:app:restart', { token: tileToken, source: sourceAddress });
-  };
-
-  // ── tile:log:write strict shim (Phase 3.5f) ──────────────────────────
-  //
-  // New strict-channel counterpart to api.log above (which still sends to
-  // the legacy `renderer-log` channel). Routes through tile:log:write with
-  // token validation on the main-process side. Any tile with a valid token
-  // may log — no additional capability check. Wave 3.6f will flip api.log
-  // to use this channel and delete the legacy renderer-log handler.
-  api.tileLog = (...args: unknown[]) => {
-    ipcRenderer.send('tile:log:write', { token: tileToken, source: sourceAddress, args });
   };
 
   // ── Theme (trustedBuiltin extensions) ────────────────────────────────

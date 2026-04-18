@@ -3475,12 +3475,6 @@ export function registerWindowHandlers(): void {
  * Register miscellaneous IPC handlers (shortcuts, pubsub, commands, etc.)
  */
 export function registerMiscHandlers(onQuit: () => void): void {
-  // Renderer log forwarding - prints renderer console.log to terminal
-  ipcMain.on(IPC_CHANNELS.RENDERER_LOG, (_ev, msg) => {
-    const shortSource = msg.source?.replace('peek://app/', '').replace('peek://ext/', 'ext/') || 'unknown';
-    console.log(`[${shortSource}]`, ...(msg.args || []));
-  });
-
   // Get app-level preferences
   ipcMain.handle('get-app-prefs', () => {
     return getPrefs();
@@ -3740,19 +3734,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
       DEBUG && console.log('ipc:subscribe:notification', msg);
       ev.reply(msg.replyTopic, data);
     });
-  });
-
-  // App quit request
-  ipcMain.on(IPC_CHANNELS.APP_QUIT, (_ev, msg) => {
-    DEBUG && console.log('app-quit requested from:', msg?.source);
-    onQuit();
-  });
-
-  // App restart request
-  ipcMain.on(IPC_CHANNELS.APP_RESTART, (_ev, msg) => {
-    DEBUG && console.log('app-restart requested from:', msg?.source);
-    app.relaunch();
-    onQuit();
   });
 
   // Modify window
