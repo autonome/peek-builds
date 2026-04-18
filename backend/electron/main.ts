@@ -20,7 +20,7 @@ import { initTestFixture } from './test-fixture-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
-import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles } from './tile-launcher.js';
+import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile } from './tile-launcher.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
@@ -1671,10 +1671,10 @@ export function getDevExtensionIds(): string[] {
 }
 
 /**
- * Reload an extension by destroying and recreating its window
- * Returns the new window on success, null on failure
+ * Reload an extension by closing and relaunching its tile window.
+ * Returns a truthy result on success, null on failure.
  */
-export async function reloadExtension(extId: string): Promise<BrowserWindow | null> {
+export async function reloadExtension(extId: string): Promise<object | null> {
   DEBUG && console.log(`[ext:reload] Reloading extension: ${extId}`);
 
   // Check if it's a consolidated extension (not supported for reload)
@@ -1683,25 +1683,13 @@ export async function reloadExtension(extId: string): Promise<BrowserWindow | nu
     return null;
   }
 
-  // Destroy existing window if any
-  const existingEntry = extensionWindows.get(extId);
-  if (existingEntry) {
-    if (existingEntry.win && !existingEntry.win.isDestroyed()) {
-      existingEntry.win.destroy();
-    }
-    extensionWindows.delete(extId);
-  }
-
-  // Small delay to ensure cleanup
-  await new Promise(resolve => setTimeout(resolve, 100));
-
-  // For dev extensions, use loadDevExtension to ensure devtools opens
+  // For dev extensions, open devtools after relaunch
   if (isDevExtension(extId)) {
     return loadDevExtension(extId);
   }
 
-  // For normal extensions, use createExtensionWindow
-  return createExtensionWindow(extId);
+  // Relaunch as v2 tile: re-read manifest, revoke old token, close old window, launch fresh.
+  return relaunchTile(extId);
 }
 
 /**
