@@ -403,6 +403,428 @@ Prefer shipping 5 validated packages over 10 sketchy ones.
 
 ---
 
+### phase3.4 — IPC channel audit (2026-04-18)
+
+Audited every `ipcMain.handle(...)` and `ipcMain.on(...)` registration
+in `backend/electron/ipc.ts`, then grepped every call site across
+`preload.js`, `backend/electron/tile-preload.cts`, `app/**`,
+`chrome-extensions/**`, and `backend/electron/**` (excluding test files
+and Tauri).
+
+**Total channel count: 193** (183 `.handle` + 10 `.on`).
+
+#### Bucket totals
+
+| Bucket | Count | Meaning |
+|---|---|---|
+| `preload-only` | 79 | Called only from `preload.js`. Falls when preload.js is deleted in 3.7a/3.8. |
+| `tile-preload-fallback` | 33 | Called from `tile-preload.cts` only inside an `if (!hasXxxCapability())` branch. Gated; can be deleted once we audit that every deployed tile declares the relevant capability. |
+| `tile-preload-strict-shadow` | 71 | Called UNCONDITIONALLY from `tile-preload.cts` (no strict `tile:*` equivalent OR strict equivalent only for some methods). Need a strict shim built first. |
+| `live-other` | 10 | `IPC_CHANNELS.*` set — used by both preload.js and the `tile-preload.cts` pubsub send/subscribe and core glue. Treated as their own batch (3.7e). |
+
+Sum: 79 + 33 + 71 + 10 = 193 ✔
+
+`live-other` here is NOT "external content scripts" — there are zero
+`ipcRenderer.*` calls in `chrome-extensions/**`. The chrome polyfills
+generate IPC code at runtime via `_ipc-bridge.js` but those target
+`chrome-ext-api:*` channels in `tile-ipc.ts`, not legacy channels in
+`ipc.ts`. The only true "non-preload" surface in scope here is the
+`IPC_CHANNELS.*` family.
+
+#### Channel table
+
+Format: `channel | bucket | callers (file:line, abbreviated)`. `pl` =
+`preload.js`, `tp` = `backend/electron/tile-preload.cts`,
+`pg` = `app/page/page.js`, `ctx` = `app/context/*.js`.
+
+##### `datastore-*` (47 channels) — batch 3.7c
+
+| channel | bucket | callers |
+|---|---|---|
+| `datastore-add-address` | strict-shadow | pl:518, tp:861 |
+| `datastore-get-address` | strict-shadow | pl:521, tp:863 |
+| `datastore-update-address` | strict-shadow | pl:524, tp:865 |
+| `datastore-query-addresses` | strict-shadow | pl:527,1227, tp:867 |
+| `datastore-add-visit` | strict-shadow | pl:530, tp:869 |
+| `datastore-query-visits` | strict-shadow | pl:533, tp:871 |
+| `datastore-add-content` | strict-shadow | pl:536, tp:873 |
+| `datastore-query-content` | strict-shadow | pl:539, tp:875 |
+| `datastore-get-table` | strict-shadow | pl:542, tp:877 |
+| `datastore-set-row` | strict-shadow | pl:545, tp:879 |
+| `datastore-get-row` | strict-shadow | pl:548, tp:881 |
+| `datastore-get-stats` | preload-only | pl:551 (tp uses `tile:datastore:get-stats`) |
+| `datastore-get-or-create-tag` | strict-shadow | pl:555, tp:885 |
+| `datastore-tag-address` | strict-shadow | pl:558, tp:887 |
+| `datastore-untag-address` | strict-shadow | pl:561, tp:889 |
+| `datastore-get-tags-by-frecency` | strict-shadow | pl:564, tp:891 |
+| `datastore-rename-tag` | preload-only | pl:608 (tp uses `tile:datastore:rename-tag`) |
+| `datastore-update-tag-color` | preload-only | pl:611 (tp uses `tile:datastore:update-tag-color`) |
+| `datastore-delete-tag` | preload-only | pl:614 (tp uses `tile:datastore:delete-tag`) |
+| `datastore-get-address-tags` | strict-shadow | pl:567, tp:899 |
+| `datastore-get-addresses-by-tag` | strict-shadow | pl:570, tp:901 |
+| `datastore-get-untagged-addresses` | strict-shadow | pl:573, tp:903 |
+| `datastore-add-item` | strict-shadow | pl:578, tp:906 |
+| `datastore-get-item` | strict-shadow | pl:581, tp:908 |
+| `datastore-update-item` | strict-shadow | pl:584, tp:910 |
+| `datastore-delete-item` | strict-shadow | pl:587, tp:912 |
+| `datastore-hard-delete-item` | preload-only | pl:590 (tp uses `tile:datastore:hard-delete-item`) |
+| `datastore-update-item-title` | preload-only | pl:640 (tp uses `tile:datastore:update-item-title`) |
+| `datastore-update-item-favicon` | preload-only | pl:645 (tp uses `tile:datastore:update-item-favicon`) |
+| `datastore-query-items` | strict-shadow | pl:593, tp:920 |
+| `datastore-tag-item` | strict-shadow | pl:596, tp:922 |
+| `datastore-untag-item` | strict-shadow | pl:599, tp:924 |
+| `datastore-get-item-tags` | strict-shadow | pl:602, tp:926 |
+| `datastore-get-items-by-tag` | strict-shadow | pl:605, tp:928 |
+| `datastore-get-history` | preload-only | pl:619 (tp uses `tile:datastore:get-history`) |
+| `datastore-record-item-visit` | preload-only | pl:630 (tp uses `tile:datastore:record-item-visit`) |
+| `datastore-get-item-visits` | preload-only | pl:627 (tp uses `tile:datastore:get-item-visits`) |
+| `datastore-query-item-visits` | preload-only | pl:624 (tp uses `tile:datastore:query-item-visits`) |
+| `datastore-track-navigation` | preload-only | pl:635 (tp uses `tile:datastore:track-navigation`) |
+| `datastore-query-items-by-frecency` | preload-only | (tp uses `tile:datastore:query-items-by-frecency`; no preload caller — actually unused) |
+| `datastore-add-item-event` | strict-shadow | pl:655, tp:943 |
+| `datastore-get-item-event` | strict-shadow | pl:658, tp:945 |
+| `datastore-query-item-events` | strict-shadow | pl:661, tp:947 |
+| `datastore-delete-item-event` | strict-shadow | pl:664, tp:949 |
+| `datastore-delete-item-events` | strict-shadow | pl:667, tp:951 |
+| `datastore-get-latest-item-event` | strict-shadow | pl:670, tp:953 |
+| `datastore-count-item-events` | strict-shadow | pl:673, tp:955 |
+| `extract-page-content` | preload-only | pl:650 (tp uses `tile:datastore:extract-page-content`) |
+
+##### `window-*` (~24 channels) — batch 3.7b
+
+| channel | bucket | callers |
+|---|---|---|
+| `window-open` | fallback | pl:283, tp:514 (else of `hasWindowCapability`) |
+| `window-close` | fallback | pl:295, tp:541 (else of cap check) |
+| `window-hide` | fallback | pl:302, tp:615 |
+| `window-show` | fallback | pl:309, tp:600 |
+| `window-exists` | fallback | pl:316, tp:585 |
+| `window-move` | preload-only | pl:323,2585 |
+| `window-resize` | preload-only | pl:332 |
+| `window-get-position` | preload-only | pl:341,2491 |
+| `window-focus` | preload-only | pl:348 |
+| `window-set-overlay-focus-target` | fallback | pl:355, tp:726 |
+| `window-blur` | preload-only | pl:362 |
+| `window-list` | fallback | pl:369, tp:570 |
+| `window-devtools` | preload-only | pl:376 |
+| `window-get-bounds` | preload-only | pl:383 |
+| `window-set-bounds` | preload-only | pl:389 |
+| `get-display-info` | preload-only | pl:392 |
+| `window-set-ignore-mouse-events` | fallback | pl:396, tp:636 |
+| `get-focused-visible-window-id` | fallback | pl:409,794, tp:710,2048 |
+| `get-window-id` | fallback | pl:416,797,2625, tp:2050 (always-on, no cap gate) |
+| `window-is-transient` | preload-only | pl:424 |
+| `window-set-scroll-position` | preload-only | pl:431 |
+| `window-center` | fallback | pl:435, tp:654 |
+| `window-center-all` | fallback | pl:439, tp:668 |
+| `window-maximize` | fallback | pl:443, tp:682 |
+| `window-fullscreen` | fallback | pl:447, tp:696 |
+| `window-set-visible-on-all-workspaces` | fallback | tp:749 (else of cap), no pl call |
+| `window-reopen-last-closed` | preload-only | (no caller found in pl/tp; check core-glue/cmd) — likely dead |
+| `window-animate` | preload-only | (only docs/api.md reference; no live caller) — likely dead |
+| `window-is-draggable` | preload-only | (only `.agent-plan.md` reference; no live caller) — likely dead |
+| `get-app-prefs` | preload-only | pl:2632 |
+| `pubsub-stats` | preload-only | pl:276 |
+| `opener-postmessage` | strict-shadow | pg:1112 (via `api.invoke('opener-postmessage')` passthrough) |
+| `opener-close` | strict-shadow | pg:1122 (via `api.invoke('opener-close')` passthrough) |
+| `opener-focus` | strict-shadow | pg:1129 (via `api.invoke('opener-focus')` passthrough) |
+| `screen-get-primary-display` | fallback | tp:1769 (else of `hasScreenCapability` at 1764); no pl |
+
+##### `extension-*` + `feature-*` (15 channels) — batch 3.7d
+
+| channel | bucket | callers |
+|---|---|---|
+| `extension-pick-folder` | strict-shadow | pl:1755, tp:1957 (trustedBuiltin gate, not capability) |
+| `extension-validate-folder` | strict-shadow | pl:1764, tp:1963 |
+| `extension-add` | strict-shadow | pl:1778, tp:1969 |
+| `extension-remove` | strict-shadow | pl:1790, tp:1975 |
+| `extension-update` | strict-shadow | pl:1803, tp:1981 |
+| `extension-get-all` | strict-shadow | pl:1811, tp:1987 |
+| `extension-get` | strict-shadow | pl:1820, tp:1993 |
+| `extension-window-unload` | preload-only | (no live caller — likely dead) |
+| `extension-window-list` | strict-shadow | pl:1598, tp:1933 |
+| `extension-list-all-registered` | strict-shadow | pl:1606, tp:1939 |
+| `extension-window-devtools` | strict-shadow | pl:1709, tp:1951 |
+| `extension-reload` | strict-shadow | pl:1697, tp:1945 |
+| `extension-manifest-get` | preload-only | (no caller in pl or tp — likely dead) |
+| `feature-settings-get` | preload-only | pl:1847 |
+| `feature-settings-set` | preload-only | pl:1861 |
+| `feature-settings-get-key` | preload-only | pl:1874,1902 |
+| `feature-settings-set-key` | preload-only | pl:1888 |
+| `feature-settings-schema` | strict-shadow | pl:1830, tp:1999 |
+
+##### `feature-registry:*` / `feature-install:*` / `feature-browse:*` (9 channels) — batch 3.7d
+
+| channel | bucket | callers |
+|---|---|---|
+| `feature-registry:list` | fallback | tp:1448 (else of `hasFeaturesCapability`) |
+| `feature-registry:get` | fallback | tp:1450 |
+| `feature-registry:history` | fallback | tp:1452 |
+| `feature-registry:enable` | fallback | tp:1454 |
+| `feature-registry:disable` | fallback | tp:1456 |
+| `feature-registry:remove` | fallback | tp:1458 |
+| `feature-install:resolve` | fallback | tp:1460 |
+| `feature-install:preview-capabilities` | fallback | tp:1462 |
+| `feature-install:install` | fallback | tp:1468 |
+| `feature-browse:resolve-publisher` | fallback | tp:1470 |
+
+##### `context-*` (6 channels) — batch 3.7d
+
+| channel | bucket | callers |
+|---|---|---|
+| `context-get` | fallback | pl:2107,2210, tp:1287, ctx — but ctx is in core renderer (preload-loaded) |
+| `context-set` | fallback | pl:2120,2223, tp:1289, ctx (idx:80, history:56) |
+| `context-history` | fallback | pl:2170, tp:1291, ctx (history:77) |
+| `context-snapshot` | fallback | pl:2180, tp:1293, ctx (history:110) |
+| `context-windows-with-value` | fallback | pl:2190,2249, tp:1295 |
+| `context-windows-in-space` | fallback | pl:2199, tp:1297 |
+
+Note: `app/context/*.js` modules import via the v1 preload's
+`window.app.invoke` → still classified as preload-only consumers from
+the channel's perspective. Once preload.js dies, those modules will
+need to either move into a tile that has the `context` capability or
+be loaded from a context that uses tile-preload.
+
+##### `theme:*` + `darkMode:*` (12 channels) — batch 3.7a
+
+| channel | bucket | callers |
+|---|---|---|
+| `theme:get` | strict-shadow | pl:684,1129,1155, tp:2036 (trustedBuiltin only) |
+| `theme:setColorScheme` | strict-shadow | pl:693, tp:2042 |
+| `theme:setWindowColorScheme` | strict-shadow | pl:802, tp:2055 |
+| `theme:setTheme` | strict-shadow | pl:702, tp:2040 |
+| `theme:list` | strict-shadow | pl:710, tp:2037 |
+| `theme:pickFolder` | preload-only | pl:726 |
+| `theme:validateFolder` | preload-only | pl:735 |
+| `theme:add` | preload-only | pl:744 |
+| `theme:remove` | preload-only | pl:753 |
+| `theme:getAll` | strict-shadow | pl:718, tp:2038 |
+| `theme:reload` | preload-only | pl:762 (also `pl:780` listener for `theme:reload` event) |
+| `darkMode:get` | preload-only | pl:968 |
+| `darkMode:set` | preload-only | pl:977 |
+
+##### `chrome-ext:*` + `adblocker:*` (12 channels) — batch 3.7d
+
+| channel | bucket | callers |
+|---|---|---|
+| `chrome-ext:list` | strict-shadow | pl:1075, tp:2071 (trustedBuiltin) |
+| `chrome-ext:enable` | strict-shadow | pl:1084, tp:2077 |
+| `chrome-ext:disable` | strict-shadow | pl:1093, tp:2083 |
+| `chrome-ext:getStatus` | strict-shadow | pl:1101, tp:2089 |
+| `chrome-ext:getUiEntries` | strict-shadow | pl:1109, tp:2095 |
+| `chrome-ext:openPage` | strict-shadow | pl:1119, tp:2101 |
+| `adblocker:getStatus` | preload-only | pl:1003 |
+| `adblocker:enable` | preload-only | pl:1011 |
+| `adblocker:disable` | preload-only | pl:1019 |
+| `adblocker:getBlockedCount` | preload-only | pl:1027 |
+| `adblocker:getAllowlist` | preload-only | pl:1035 |
+| `adblocker:isSiteAllowed` | preload-only | pl:1044 |
+| `adblocker:allowSite` | preload-only | pl:1053 |
+| `adblocker:disallowSite` | preload-only | pl:1062 |
+
+##### `web-nav-*` (4 channels) — batch 3.7a
+
+| channel | bucket | callers |
+|---|---|---|
+| `web-nav-back` | preload-only | (no caller in pl/tp — likely dead) |
+| `web-nav-forward` | preload-only | (no caller in pl/tp — likely dead) |
+| `web-nav-reload` | preload-only | (no caller in pl/tp — likely dead) |
+| `web-nav-state` | preload-only | (no caller in pl/tp — likely dead) |
+
+##### `izui-*` (5 channels) — batch 3.3 (separate package)
+
+| channel | bucket | callers |
+|---|---|---|
+| `izui-is-transient` | fallback | pl:464, tp:1624 (else of izui cap check) |
+| `izui-get-effective-mode` | fallback | pl:473, tp:1636 |
+| `izui-get-state` | fallback | pl:481, tp:1644 |
+| `izui-get-pre-overlay-focus-target` | fallback | pl:490, tp:1652 |
+| `izui-close-self` | fallback | pl:500, tp:1660 |
+
+##### `oauth-*` (2 channels) — batch 3.7d
+
+| channel | bucket | callers |
+|---|---|---|
+| `oauth-start-loopback` | fallback | pl:1962, tp:1690 (else of `hasOauthCapability` check at 1697) |
+| `oauth-await-callback` | fallback | pl:1963, tp:1692 |
+
+##### `sync-*` (6 channels) — batch 3.7d
+
+| channel | bucket | callers |
+|---|---|---|
+| `sync-get-config` | preload-only | pl:813 |
+| `sync-set-config` | preload-only | pl:822 |
+| `sync-pull` | preload-only | pl:831 |
+| `sync-push` | preload-only | pl:840 |
+| `sync-full` | fallback | pl:848, tp:1744 (else of `hasSyncCapability` check at 1743) |
+| `sync-status` | preload-only | pl:856 |
+
+##### `backup-*` + `session-*` + `save-space-workspaces` + `profiles:*` + `modes:*` (17 channels) — batch 3.7a/3.7d
+
+| channel | bucket | callers |
+|---|---|---|
+| `backup-get-config` | preload-only | (no caller in pl/tp — likely dead) |
+| `backup-set-config` | preload-only | (no caller — likely dead) |
+| `backup-create` | preload-only | (no caller — likely dead) |
+| `backup-list` | preload-only | (no caller — likely dead) |
+| `session-save` | preload-only | (no caller — likely dead) |
+| `session-get-snapshot-info` | preload-only | (no caller — likely dead) |
+| `session-restore` | preload-only | (no caller — likely dead) |
+| `session-restore-interactive` | preload-only | (no caller — likely dead) |
+| `save-space-workspaces` | fallback | pl:1913, tp:1791 (else of `hasSessionCapability` at 1786) |
+| `profiles:list` | preload-only | pl:867 |
+| `profiles:create` | preload-only | pl:876 |
+| `profiles:get` | preload-only | pl:885 |
+| `profiles:delete` | preload-only | pl:894 |
+| `profiles:getCurrent` | preload-only | pl:902 |
+| `profiles:switch` | preload-only | pl:911 |
+| `profiles:enableSync` | preload-only | pl:922 |
+| `profiles:disableSync` | preload-only | pl:931 |
+| `profiles:getSyncConfig` | preload-only | pl:940 |
+| `profiles:getPartition` | preload-only | pl:949 |
+| `modes:getWindowMode` | preload-only | pl:2055 |
+| `modes:setMajorMode` | preload-only | pl:2065 |
+| `modes:listModes` | preload-only | pl:2073 |
+| `modes:getCommandContext` | preload-only | pl:1520,1530,2082 |
+
+##### `file-*` + `app-info` + `shell-open-path` + `default-browser-*` + `set-default-browser` + `net-fetch` (8 channels) — batch 3.7a
+
+| channel | bucket | callers |
+|---|---|---|
+| `file-save-dialog` | preload-only | pl:2264 (tp uses `tile:dialogs:save`) |
+| `file-open-dialog` | preload-only | pl:2276 (tp uses `tile:dialogs:open`) |
+| `file-read-from-path` | preload-only | pl:2285 (tp uses `tile:filesystem:read`) |
+| `file-write-to-path` | preload-only | pl:2295 (tp uses `tile:filesystem:write`) |
+| `app-info` | preload-only | pl:143 |
+| `shell-open-path` | preload-only | (no caller in pl/tp — likely dead) |
+| `default-browser-status` | preload-only | (no caller — likely dead) |
+| `set-default-browser` | preload-only | (no caller — likely dead) |
+| `net-fetch` | preload-only | pl:1927 (tp uses `tile:network:fetch`) |
+
+##### `IPC_CHANNELS.*` (10 `ipcMain.on` channels) — batch 3.7e
+
+| channel | const value | bucket | callers |
+|---|---|---|---|
+| `RENDERER_LOG` | `renderer-log` | live-other | pl:128, tp:1868 (always-on) |
+| `REGISTER_SHORTCUT` | `registershortcut` | live-other | pl:163 (tp uses `tile:shortcuts:register`) |
+| `UNREGISTER_SHORTCUT` | `unregistershortcut` | live-other | pl:187 (tp uses `tile:shortcuts:unregister`) |
+| `CLOSE_WINDOW` | `closewindow` | live-other | pl:206 |
+| `PUBLISH` | `publish` | live-other | pl:50,82,233,1346,1357,1396,1452,1487,1555,1634,1673,1734 (tp uses `tile:pubsub:publish`) |
+| `SUBSCRIBE` | `subscribe` | live-other | pl:68,251,1331,1374,1478,1546,1621,1660,1721 (tp uses `tile:pubsub:subscribe`) |
+| `CONSOLE` | `console` | live-other | (no caller in pl/tp — likely dead) |
+| `APP_QUIT` | `app-quit` | live-other | pl:1288, tp:2015 (always-on) |
+| `APP_RESTART` | `app-restart` | live-other | pl:1292, tp:2023 (always-on) |
+| `MODIFY_WINDOW` | `modifywindow` | live-other | pl:508 |
+
+#### Deletion order recommendation
+
+Recommended sequencing aligns with the plan's 3.7a–e split, ordered by
+risk (low → high). Each batch can ship as one PR with `tsc --noEmit`
++ `test:unit` + `test:electron:bg` validation.
+
+1. **3.7a — `preload-only` (79 channels) + truly dead channels.**
+   First subdivision: delete the **31 channels** that have NO callers
+   in either `preload.js` or `tile-preload.cts` (suspected dead). Risk:
+   low — verifiable by grep + `tsc`. Channels: `extension-window-unload`,
+   `extension-manifest-get`, `web-nav-back/forward/reload/state`,
+   `backup-get-config/set-config/create/list`, `session-save/get-snapshot-info/restore/restore-interactive`,
+   `shell-open-path`, `default-browser-status`, `set-default-browser`,
+   `window-reopen-last-closed`, `window-animate`, `window-is-draggable`,
+   `datastore-query-items-by-frecency`, `IPC_CHANNELS.CONSOLE`. (Pre-3.7
+   verify they really are dead — could be invoked via `api.invoke()`
+   passthrough in a feature tile.)
+   Second subdivision (after preload.js is deleted in 3.8): the
+   remaining 48 preload-only channels can be deleted in lockstep with
+   the file. Until then, they have a live consumer.
+
+2. **3.7b — `window-*` (~24 channels).** Mixed: 11 `fallback` channels
+   that fall when tile-preload's else branches collapse, 9 preload-only,
+   3 `strict-shadow` (`opener-postmessage/close/focus`). Action: build
+   strict shims for the 3 opener-* channels (currently `pg` calls them
+   via `api.invoke()` passthrough), then delete the fallback else
+   branches in `tile-preload.cts` per 3.3 pattern, then delete the
+   `window-*` handlers in `ipc.ts`.
+
+3. **3.7c — `datastore-*` (47 channels).** Mostly `strict-shadow` (28)
+   — these need strict `tile:datastore:*` equivalents built first.
+   The remaining ~12 strict equivalents already exist (rename-tag,
+   update-tag-color, delete-tag, hard-delete-item, update-item-title,
+   update-item-favicon, get-history, record-item-visit, get-item-visits,
+   query-item-visits, track-navigation, query-items-by-frecency,
+   extract-page-content, get-stats — last 3 commits already added
+   shims). Build the missing strict shims before deleting any
+   handler. **Trickiest batch — recommend its own pre-package.**
+
+4. **3.7d — `extension-*` + `feature-*` + `chrome-ext:*` + `oauth-*` +
+   `sync-*` + `context-*` + `feature-registry/install/browse:*` +
+   `save-space-workspaces` (~50 channels).** Mix of fallbacks (clean
+   delete after collapsing else branches) and `strict-shadow` for the
+   trustedBuiltin-only surfaces (extensions/chromeExtensions/themes).
+   For trustedBuiltin paths the simplest move is to add a `tile:*`
+   alias and a trustedBuiltin enforcement check, then delete the legacy
+   handler — same pattern used in recent `tile:datastore:*` strict
+   commits.
+
+5. **3.7e — `IPC_CHANNELS.*` (10 channels).** All `live-other` because
+   pubsub/shortcut/quit are pervasively used. tile-preload already
+   uses `tile:pubsub:*` and `tile:shortcuts:*`. The 3 channels still
+   needed unconditionally are `RENDERER_LOG`, `APP_QUIT`, `APP_RESTART`
+   (tile-preload calls them directly with no strict equivalent). Build
+   `tile:app:quit` + `tile:app:restart` + `tile:log:write` shims (or
+   just keep these 3 as the only legacy survivors, since they're tiny
+   write-only sends that don't need capability gating). Then delete
+   the rest of the const + handler block at `ipc.ts:4158–4476`.
+
+#### Trickier channels (need strict shim built first)
+
+These are the `tile-preload-strict-shadow` calls — tile-preload calls
+them unconditionally and there is no strict `tile:*` alias yet:
+
+- **`opener-postmessage` / `opener-close` / `opener-focus`** — called
+  from `app/page/page.js` via `api.invoke()` passthrough. Strict
+  equivalents: `tile:window:opener-postmessage` etc., gated on
+  `window.manage` capability or a new `opener` capability.
+- **`extension-*` (10 channels)** — tile-preload exposes them under
+  `api.extensions.*` for trustedBuiltin only. Need
+  `tile:extensions:*` shims with a trustedBuiltin enforcement layer
+  in `tile-ipc.ts`.
+- **`chrome-ext:*` (6 channels)** — same pattern as `extension-*`,
+  trustedBuiltin only. Need `tile:chrome-extensions:*` shims.
+- **`feature-settings-schema`** — called unconditionally from both
+  preload and tile-preload (`api.extensions.getSettingsSchema`).
+  Could fold into `tile:features:*` namespace.
+- **`theme:get/setColorScheme/setWindowColorScheme/setTheme/list/getAll`**
+  (6 channels) — tile-preload exposes them under `api.theme.*` for
+  trustedBuiltin only. Need `tile:theme:*` strict equivalents (a
+  `tile:theme:info` already exists, but only returns minimal data).
+- **`get-window-id`** — called from tile-preload at line 2050 inside
+  the theme block. Has no strict equivalent. Either add
+  `tile:window:get-id` or refactor the caller to use the existing
+  `tile:window:get-focused-visible-id` flow.
+- **`renderer-log`, `app-quit`, `app-restart`** — see 3.7e above.
+
+The remaining ~50 strict-shadow channels (mostly `datastore-*`) are
+already partially shimmed (per recent commits b820dafc, 06eaacb6,
+48d15aca); just need the shim-completion pass before flipping
+tile-preload from legacy to strict.
+
+#### Open gaps in this audit
+
+- **`api.invoke()` passthrough surface** (tile-preload.cts:1910 +
+  preload.js:2335) lets any channel name be invoked from a renderer
+  with `trustedBuiltin`. The "no-caller" verdict on the 31 suspected
+  dead channels was based on grep for `'channel-name'` strings; an
+  inline `api.invoke('window-animate', …)` from a tile would not show
+  up. Phase 3.7a's first subdivision should re-verify by running the
+  full electron test suite after deletion (a missing handler will
+  surface as a runtime invoke failure).
+- Did not audit how tests exercise these channels — `datastore.test.ts`,
+  `feature-registry.test.ts`, etc. all import handlers directly. Test
+  failures during 3.7c deletion are expected and should be migrated
+  to use the `tile:*` equivalents.
+
+---
+
 ### phase3.1 — Audit findings (2026-04-18)
 
 **Conclusion: GO** — `extensionHostWindow` can be deleted in phase3.6 with
