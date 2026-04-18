@@ -729,27 +729,21 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * Pin a window across macOS Spaces. Strict path requires
-     * `window.manage`; otherwise falls back to legacy
-     * `window-set-visible-on-all-workspaces`.
+     * Pin a window across macOS Spaces. Requires the `window` capability.
      */
     setVisibleOnAllWorkspaces: (
       id: number | null | undefined,
       visible: boolean,
       options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
     ) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:set-visible-on-all-workspaces', {
-          token: tileToken,
-          id: typeof id === 'number' ? id : undefined,
-          visible,
-          options,
-        });
+      if (!hasWindowCapability()) {
+        return Promise.reject(new Error('[tile-preload] setVisibleOnAllWorkspaces requires the window capability'));
       }
-      return ipcRenderer.invoke('window-set-visible-on-all-workspaces', {
+      return ipcRenderer.invoke('tile:window:set-visible-on-all-workspaces', {
+        token: tileToken,
         id: typeof id === 'number' ? id : undefined,
         visible,
-        options: options || {},
+        options,
       });
     },
 
@@ -1725,21 +1719,9 @@ function buildAPI(): Record<string, unknown> {
 
   // ── OAuth ─────────────────────────────────────────────────────────
   //
-  // Dual-path implementation mirroring api.shortcuts / api.context:
-  //
-  //   - STRICT: when the tile's manifest declared an `oauth` capability
-  //     (`true` or `{ providers: [...] }`), route through
-  //     `tile:oauth:*`. Main-process handlers validate the token +
-  //     capability shape + optional per-provider allowlist.
-  //
-  //   - V1-COMPAT: when no oauth capability was declared, fall back to
-  //     the legacy `oauth-start-loopback` / `oauth-await-callback`
-  //     channels. Those remain available through the Phase 3/4
-  //     migration window and continue to back wonderwall / lex until
-  //     they opt in.
-  //
-  // The decision is made per-call because `grantedCapabilities` is
-  // populated asynchronously by `initialize()`.
+  // Strict-only: tiles must declare an `oauth` capability in their
+  // manifest. Routes through `tile:oauth:*`; main-process handlers
+  // validate token + capability shape + optional per-provider allowlist.
 
   function hasOAuthCapability(): boolean {
     const oc = grantedCapabilities?.oauth;
@@ -1748,53 +1730,35 @@ function buildAPI(): Record<string, unknown> {
     return false;
   }
 
-  const oauthCompat = {
-    startLoopback: (options?: { callbackPath?: string; timeoutMs?: number }) =>
-      ipcRenderer.invoke('oauth-start-loopback', options),
-    awaitCallback: (port: number) =>
-      ipcRenderer.invoke('oauth-await-callback', { port }),
-  };
-
-  const oauthStrict = {
-    startLoopback: (options?: { callbackPath?: string; timeoutMs?: number; provider?: string }) =>
-      ipcRenderer.invoke('tile:oauth:start-loopback', {
-        token: tileToken,
-        callbackPath: options?.callbackPath,
-        timeoutMs: options?.timeoutMs,
-        provider: options?.provider,
-      }),
-    awaitCallback: (port: number) =>
-      ipcRenderer.invoke('tile:oauth:await-callback', {
-        token: tileToken,
-        port,
-      }),
-  };
-
   api.oauth = {
     startLoopback: (options: unknown) => {
+      if (!hasOAuthCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.oauth.startLoopback requires the oauth capability'));
+      }
       const opts = (options || {}) as { callbackPath?: string; timeoutMs?: number; provider?: string };
-      return hasOAuthCapability()
-        ? oauthStrict.startLoopback(opts)
-        : oauthCompat.startLoopback(opts);
+      return ipcRenderer.invoke('tile:oauth:start-loopback', {
+        token: tileToken,
+        callbackPath: opts.callbackPath,
+        timeoutMs: opts.timeoutMs,
+        provider: opts.provider,
+      });
     },
     awaitCallback: (port: unknown) => {
-      return hasOAuthCapability()
-        ? oauthStrict.awaitCallback(port as number)
-        : oauthCompat.awaitCallback(port as number);
+      if (!hasOAuthCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.oauth.awaitCallback requires the oauth capability'));
+      }
+      return ipcRenderer.invoke('tile:oauth:await-callback', {
+        token: tileToken,
+        port: port as number,
+      });
     },
   };
 
   // ── Sync ──────────────────────────────────────────────────────────
   //
-  // Dual-path implementation mirroring api.shortcuts:
-  //
-  //   - STRICT: when the tile's manifest declared `sync: true`, route
-  //     through `tile:sync:sync-all`. Main-process handler validates
-  //     the token + capability (and `sync` is builtin-only at manifest
-  //     resolution).
-  //
-  //   - V1-COMPAT: when no sync capability was declared, fall back to
-  //     the legacy `sync-full` channel.
+  // Strict-only: tiles must declare `sync: true` (builtin-only capability).
+  // Routes through `tile:sync:sync-all`; main-process handler validates
+  // the token + capability.
 
   function hasSyncCapability(): boolean {
     return grantedCapabilities?.sync === true;
@@ -1802,9 +1766,10 @@ function buildAPI(): Record<string, unknown> {
 
   api.sync = {
     syncAll: () => {
-      return hasSyncCapability()
-        ? ipcRenderer.invoke('tile:sync:sync-all', { token: tileToken })
-        : ipcRenderer.invoke('sync-full');
+      if (!hasSyncCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.sync.syncAll requires the sync capability'));
+      }
+      return ipcRenderer.invoke('tile:sync:sync-all', { token: tileToken });
     },
   };
 
@@ -1823,13 +1788,9 @@ function buildAPI(): Record<string, unknown> {
   // callers that read `result.success && result.data` work unchanged.
   api.screen = {
     getPrimaryDisplay: () => {
-      if (tokenValid) {
-        return ipcRenderer.invoke('tile:screen:get-primary-display', {
-          token: tileToken,
-        });
-      }
-      // Fallback if called before initialize() — use legacy channel.
-      return ipcRenderer.invoke('screen-get-primary-display');
+      return ipcRenderer.invoke('tile:screen:get-primary-display', {
+        token: tileToken,
+      });
     },
   };
 
@@ -1845,13 +1806,12 @@ function buildAPI(): Record<string, unknown> {
 
   api.session = {
     saveSpaceWorkspaces: () => {
-      if (hasSessionCapability() && tokenValid) {
-        return ipcRenderer.invoke('tile:session:save-space-workspaces', {
-          token: tileToken,
-        });
+      if (!hasSessionCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.session.saveSpaceWorkspaces requires the session capability'));
       }
-      // V1-compat fallback: legacy ungated channel.
-      return ipcRenderer.invoke('save-space-workspaces');
+      return ipcRenderer.invoke('tile:session:save-space-workspaces', {
+        token: tileToken,
+      });
     },
   };
 

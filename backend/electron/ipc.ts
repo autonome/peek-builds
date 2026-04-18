@@ -8,7 +8,6 @@
 import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell, webContents, net, Menu, clipboard } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createLoopbackServer } from './oauth-loopback.js';
 
 import {
   // Datastore operations
@@ -2939,27 +2938,6 @@ export function registerWindowHandlers(): void {
     return { success: true };
   });
 
-  // Set visible on all workspaces (macOS Spaces)
-  ipcMain.handle('window-set-visible-on-all-workspaces', (ev, msg) => {
-    const win = msg?.id ? BrowserWindow.fromId(msg.id) : BrowserWindow.fromWebContents(ev.sender);
-    if (!win || win.isDestroyed()) return { success: false };
-    win.setVisibleOnAllWorkspaces(msg.visible, msg.options || {});
-    return { success: true };
-  });
-
-  // Get primary display info
-  ipcMain.handle('screen-get-primary-display', () => {
-    const display = screen.getPrimaryDisplay();
-    return {
-      success: true,
-      data: {
-        bounds: display.bounds,
-        workArea: display.workArea,
-        scaleFactor: display.scaleFactor,
-        size: display.size,
-      }
-    };
-  });
 
   // Return full bounds (position + size) for any window
   ipcMain.handle('window-get-bounds', (ev, msg) => {
@@ -4095,38 +4073,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
     }
   });
 
-  // ============================================================================
-  // OAuth Loopback Server
-  // ============================================================================
-
-  const pendingOAuthFlows = new Map<number, { waitForCallback: () => Promise<{ params: Record<string, string> }>; cancel: () => void }>();
-
-  ipcMain.handle('oauth-start-loopback', async (_ev, options?: { callbackPath?: string; timeoutMs?: number }) => {
-    try {
-      const server = await createLoopbackServer(options);
-      pendingOAuthFlows.set(server.port, { waitForCallback: server.waitForCallback, cancel: server.cancel });
-      return { success: true, port: server.port };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  ipcMain.handle('oauth-await-callback', async (_ev, data: { port: number }) => {
-    try {
-      const flow = pendingOAuthFlows.get(data.port);
-      if (!flow) {
-        return { success: false, error: 'No pending OAuth flow for this port' };
-      }
-      const result = await flow.waitForCallback();
-      pendingOAuthFlows.delete(data.port);
-      return { success: true, params: result.params };
-    } catch (error) {
-      pendingOAuthFlows.delete(data.port);
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
 }
 
 /**
@@ -4229,32 +4175,6 @@ export function registerSyncHandlers(): void {
       // Update lastSyncTime after successful push
       const activeProfile = getActiveProfile();
       updateLastSyncTime(activeProfile.id, syncTime);
-
-      return { success: true, data: result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Full bidirectional sync
-  ipcMain.handle('sync-full', async () => {
-    try {
-      const config = getSyncConfig();
-      if (!config.serverUrl || !config.apiKey) {
-        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
-      }
-
-      const result = await syncAll(config.serverUrl, config.apiKey);
-
-      // Notify all windows that sync pulled new data so they can refresh
-      if (result.pulled > 0) {
-        publish('system', PubSubScopes.GLOBAL, 'sync:pull-completed', {
-          pulled: result.pulled,
-          pushed: result.pushed,
-          conflicts: result.conflicts
-        });
-      }
 
       return { success: true, data: result };
     } catch (error) {
@@ -4878,18 +4798,6 @@ function registerSessionHandlers(): void {
         cancelled: false,
         ...result,
       };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Save space workspace layouts on demand (called from groups extension)
-  ipcMain.handle('save-space-workspaces', async () => {
-    try {
-      const { saveSpaceWorkspaces } = await import('./session.js');
-      saveSpaceWorkspaces();
-      return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
