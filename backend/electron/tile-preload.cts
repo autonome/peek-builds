@@ -1978,17 +1978,11 @@ function buildAPI(): Record<string, unknown> {
     return ipcRenderer.invoke(channel, data);
   };
 
-  // ── Extensions management (test-fixture bgWindow compat) ─────────────
+  // ── Extensions management (Phase 3.6c) ────────────────────────────────
   //
-  // The v1 preload.js exposed an `api.extensions` surface used by:
-  //   - The test fixture (Playwright tests call `api.extensions.list()`,
-  //     `api.extensions.reload()`, `api.extensions.add()`, etc.)
-  //   - Core admin UIs (features-manager, etc.)
-  //
-  // Each method is a thin wrapper over a named IPC channel in ipc.ts
-  // (`extension-window-list`, `extension-reload`, ...). Strict `tile:*`
-  // equivalents are available via `api.extensions._strict` (Phase 3.5c).
-  // Wave 3.6c will flip each method here to call those strict channels.
+  // All methods now route through tile:extensions:* strict channels in
+  // tile-ipc.ts (trustedBuiltin enforcement + capability-token validation).
+  // Legacy extension-* IPC handlers deleted from ipc.ts in this phase.
   //
   // Gated on trustedBuiltin — feature tiles must not be able to manage
   // other extensions through the tile surface.
@@ -1997,126 +1991,73 @@ function buildAPI(): Record<string, unknown> {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-window-list');
+      return ipcRenderer.invoke('tile:extensions:windowList', { token: tileToken });
     },
     listAllRegistered: () => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-list-all-registered');
+      return ipcRenderer.invoke('tile:extensions:listAllRegistered', { token: tileToken });
     },
     reload: (id: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-reload', { id });
+      return ipcRenderer.invoke('tile:extensions:reload', { token: tileToken, id });
     },
     devtools: (id: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-window-devtools', { id });
+      return ipcRenderer.invoke('tile:extensions:windowDevtools', { token: tileToken, id });
     },
     pickFolder: () => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-pick-folder');
+      return ipcRenderer.invoke('tile:extensions:pickFolder', { token: tileToken });
     },
     validateFolder: (folderPath: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-validate-folder', { folderPath });
+      return ipcRenderer.invoke('tile:extensions:validateFolder', { token: tileToken, folderPath });
     },
     add: (folderPath: string, manifest: unknown, enabled: boolean = false) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-add', { folderPath, manifest, enabled });
+      return ipcRenderer.invoke('tile:extensions:add', { token: tileToken, folderPath, manifest, enabled });
     },
     remove: (id: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-remove', { id });
+      return ipcRenderer.invoke('tile:extensions:remove', { token: tileToken, id });
     },
     update: (id: string, updates: unknown) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-update', { id, updates });
+      return ipcRenderer.invoke('tile:extensions:update', { token: tileToken, id, updates });
     },
     getAll: () => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-get-all');
+      return ipcRenderer.invoke('tile:extensions:getAll', { token: tileToken });
     },
     get: (id: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
-      return ipcRenderer.invoke('extension-get', { id });
+      return ipcRenderer.invoke('tile:extensions:get', { token: tileToken, id });
     },
     getSettingsSchema: (extId: string) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
       }
       return ipcRenderer.invoke('feature-settings-schema', { extId });
-    },
-  };
-
-  // ── Extensions strict shims (Phase 3.5c) ─────────────────────────────
-  //
-  // Strict counterparts that route through the `tile:extensions:*` channels
-  // in tile-ipc.ts with trustedBuiltin enforcement and capability-token
-  // validation. Wave 3.6c will flip `api.extensions.*` above to call these
-  // and remove the legacy `extension-*` invocations.
-  (api.extensions as Record<string, unknown>)._strict = {
-    pickFolder: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:pickFolder', { token: tileToken });
-    },
-    validateFolder: (folderPath: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:validateFolder', { token: tileToken, folderPath });
-    },
-    add: (folderPath: string, manifest: unknown, enabled: boolean = false) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:add', { token: tileToken, folderPath, manifest, enabled });
-    },
-    remove: (id: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:remove', { token: tileToken, id });
-    },
-    update: (id: string, updates: unknown) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:update', { token: tileToken, id, updates });
-    },
-    getAll: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:getAll', { token: tileToken });
-    },
-    get: (id: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:get', { token: tileToken, id });
-    },
-    windowList: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:windowList', { token: tileToken });
-    },
-    listAllRegistered: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:listAllRegistered', { token: tileToken });
-    },
-    windowDevtools: (id: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:windowDevtools', { token: tileToken, id });
-    },
-    reload: (id: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:extensions:reload', { token: tileToken, id });
     },
   };
 
