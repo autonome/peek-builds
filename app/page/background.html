@@ -3,52 +3,205 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
-  <title>Page</title>
+  <title>Page (resident)</title>
 </head>
 <body>
+<!--
+  Page resident renderer.
+
+  This is the single-file core renderer for the page subsystem. It
+  replaces the v1 pair of `background.html` + `background.js` (iframe
+  inside the consolidated extension host) with a standalone, hidden,
+  resident BrowserWindow loaded by `backend/electron/page-glue.ts` with
+  `tile-preload.cjs` and a trusted-builtin capability grant.
+
+  The window has no visible UI — the page canvas itself (the fullscreen
+  transparent BrowserWindow that hosts the webview) is created on demand
+  per URL at `peek://app/page/index.html?url=...`. That canvas
+  architecture is FROZEN (see DEVELOPMENT.md) and is unchanged.
+
+  This resident renderer exists solely to register the `open` and `modal`
+  commands against the cmd registry via the portable
+  `api.commands.register()` surface.
+-->
 <script type="module">
-  import extension from './background.js';
-
   const api = window.app;
-  const extId = extension.id;
 
-  console.log(`[page] background.html loaded`);
+  const id = 'page';
+  const labels = {
+    name: 'Page',
+    description: 'Page and window commands'
+  };
 
-  // Initialize extension BEFORE publishing ext:ready
-  // (commands must be registered before lazy stub re-publishes)
-  if (extension.init) {
-    console.log(`[page] calling init()`);
-    await extension.init();
+  // ── V2 Tile Runtime ──
+  // Initialize the tile preload surface before any handler registration.
+  // With the trustedBuiltin grant every IPC call is un-gated, but the
+  // preload still needs its async token validation to complete before
+  // `api.pubsub.*` / `api.commands.*` can dispatch.
+  if (api.initialize) {
+    await api.initialize();
+  }
+
+  // ===== URL Validation =====
+
+  /**
+   * Validates and normalizes a URL string
+   * @param {string} str - The string to check
+   * @returns {Object} - Object with valid flag and normalized URL
+   */
+  function getValidURL(str) {
+    // Quick check for empty string
+    if (!str) return { valid: false };
+
+    // Check if it starts with a valid protocol
+    const hasValidProtocol = /^(https?|ftp|file|peek):\/\//.test(str);
+
+    if (!hasValidProtocol) {
+      // Check if it looks like a domain (e.g., "example.com", "example.com/path", "localhost")
+      // Pattern: domain.tld or domain.tld/path (with optional port for localhost)
+      const isDomainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/.*)?$/.test(str);
+      const isLocalhost = /^localhost(:\d+)?(\/.*)?$/.test(str);
+
+      if (isDomainPattern || isLocalhost) {
+        // It's a domain without protocol, add https://
+        const urlWithProtocol = 'https://' + str;
+        try {
+          // Validate the URL with added protocol
+          new URL(urlWithProtocol);
+          return { valid: true, url: urlWithProtocol };
+        } catch (e) {
+          return { valid: false };
+        }
+      }
+      return { valid: false };
+    }
+
+    try {
+      // Already has protocol, just validate
+      new URL(str);
+      return { valid: true, url: str };
+    } catch (e) {
+      return { valid: false };
+    }
+  }
+
+  // ===== Command definitions =====
+
+  const commandDefinitions = [
+    {
+      name: 'open',
+      description: 'Open a URL in a new window',
+      execute: async (ctx) => {
+        const parts = ctx.typed.split(' ');
+        parts.shift();
+
+        const address = parts.shift();
+
+        if (!address) {
+          return { error: 'No address provided' };
+        }
+
+        // Check if the input is a valid URL and get the normalized version
+        const urlResult = getValidURL(address);
+        if (!urlResult.valid) {
+          return { error: 'Invalid URL. Must be a valid URL starting with http://, https://, or other valid protocol.' };
+        }
+
+        // Use the normalized URL (with protocol added if needed)
+        const normalizedAddress = urlResult.url;
+
+        try {
+          await api.window.open(normalizedAddress, {
+            width: 1024,
+            height: 768,
+            trackingSource: 'cmd',
+            trackingSourceId: 'open'
+          });
+
+          return {
+            command: 'open',
+            address: normalizedAddress,
+            success: true
+          };
+        } catch (error) {
+          console.error('[page] Failed to open window:', error);
+          return {
+            error: 'Failed to open window: ' + error.message,
+            address: normalizedAddress
+          };
+        }
+      }
+    },
+    {
+      name: 'modal',
+      description: 'Open a URL in a modal window that hides on blur or escape',
+      execute: async (ctx) => {
+        const parts = ctx.typed.split(' ');
+        parts.shift();
+
+        const address = parts.shift();
+
+        if (!address) {
+          return { error: 'No address provided' };
+        }
+
+        try {
+          await api.window.openModal(address, {
+            width: 700,
+            height: 500
+          });
+        } catch (error) {
+          console.error('[page] Failed to open modal window:', error);
+          return { error: 'Failed to open modal window: ' + error.message };
+        }
+
+        return {
+          command: 'modal',
+          address
+        };
+      }
+    }
+  ];
+
+  // ===== Registration =====
+
+  const registeredCommands = [];
+
+  for (const cmd of commandDefinitions) {
+    api.commands.register(cmd);
+    registeredCommands.push(cmd.name);
   }
 
   // Collect registered command topics for assertion verification
-  const registeredTopics = Object.keys(window._cmdHandlers || {})
-    .map(name => `cmd:execute:${name}`);
+  const registeredTopics = registeredCommands.map(name => `cmd:execute:${name}`);
 
-  // Signal ready to main process
-  api.publish('ext:ready', {
-    id: extId,
+  // Signal ready to main process — only after commands are registered.
+  // The v2 surface routes api.pubsub.publish through tile:pubsub:publish,
+  // which in turn feeds the same main-process `publish()` that the v1
+  // iframe path fed.
+  api.pubsub.publish('ext:ready', {
+    id,
     registeredTopics,
     manifest: {
-      id: extension.id,
-      labels: extension.labels,
+      id,
+      labels,
       version: '1.0.0'
     }
   }, api.scopes.SYSTEM);
 
   // Handle shutdown request from main process
-  api.subscribe('app:shutdown', () => {
+  api.pubsub.subscribe('app:shutdown', () => {
     console.log(`[page] received shutdown`);
-    if (extension.uninit) {
-      extension.uninit();
+    for (const name of registeredCommands) {
+      api.commands.unregister(name);
     }
   }, api.scopes.SYSTEM);
 
   // Handle extension-specific shutdown
-  api.subscribe(`ext:${extId}:shutdown`, () => {
+  api.pubsub.subscribe(`ext:${id}:shutdown`, () => {
     console.log(`[page] received extension shutdown`);
-    if (extension.uninit) {
-      extension.uninit();
+    for (const name of registeredCommands) {
+      api.commands.unregister(name);
     }
   }, api.scopes.SYSTEM);
 </script>
