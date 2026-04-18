@@ -582,7 +582,7 @@ const registerExtensionCommands = () => {
   log('core', 'Core commands registered');
 };
 
-const init = async () => {
+export const init = async () => {
   const initStart = Date.now();
 
   // Run migrations first (moves localStorage -> datastore)
@@ -817,8 +817,12 @@ const init = async () => {
   }, api.scopes.GLOBAL);
 };
 
-window.addEventListener('load', () => {
-  init().catch(error => {
-    log.error('core', 'Error during application initialization:', error);
-  });
-});
+// Note: init() is now called explicitly by app/background.html AFTER
+// `await api.initialize()` resolves, so the v2 tile-preload capability
+// token is validated before any subscribers / datastore / window calls
+// fire. Previously this ran on `window.load`, which raced the async
+// `tile:validate-token` IPC round-trip under tile-preload.cjs.
+//
+// Keeping the export so Electron / Tauri / mobile backends can await
+// init() completion before signalling their own startup readiness.
+export default { init };

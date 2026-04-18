@@ -3,10 +3,64 @@
   <head>
     <meta charset="UTF-8">
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self'; worker-src blob:;">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'; worker-src blob:;">
     <title>peek:core:background</title>
   </head>
   <body>
-    <script type=module src="./index.js"></script>
+    <!--
+      Core background renderer (v1-removal Phase 2.5 #1).
+
+      Hidden resident BrowserWindow created by
+      `backend/electron/core-glue.ts::initCore()`. Uses the same tile
+      mechanics as cmd / hud / page / _test:
+
+        - Loaded with `tile-preload.cjs` + a
+          `createTrustedBuiltinGrant('core')` token, so every `tile:*`
+          IPC bypasses capability enforcement.
+        - Registered via `registerTrustedBuiltinWindow()` so the pubsub
+          broadcaster forwards messages to this window.
+
+      The module below validates the trustedBuiltin token via
+      `await api.initialize()` BEFORE importing `./index.js` — if the
+      import is evaluated first, the subscribers registered inside
+      `init()` would race the `tile:validate-token` round-trip and
+      some early `api.invoke(...)` calls would return
+      `{ success: false, error: 'tile not initialized' }`.
+
+      After both `api.initialize()` and `init()` have completed,
+      `window.__coreReady = true` is set so `initCore()` in
+      `core-glue.ts` can unblock. Startup code that publishes topics
+      the core renderer subscribes to (`external:open-url`,
+      `window:new-page-request`, `session:open-startup`, etc.) then
+      fires against a fully-registered subscriber set.
+    -->
+    <script type="module">
+      const api = window.app;
+
+      if (!api || !api.initialize) {
+        console.error('[core] tile-preload did not expose api.initialize — core cannot start');
+        window.__coreReady = false;
+        throw new Error('[core] missing api.initialize');
+      }
+
+      // Validate the trustedBuiltin token and block until capabilities
+      // are in place.
+      await api.initialize();
+
+      // Import the core logic. `index.js` exports `init()` so we can
+      // await its completion before flipping `__coreReady` — this lets
+      // `initCore()` in `core-glue.ts` block on a flag that genuinely
+      // means "all subscribers registered + initial prefs published".
+      const mod = await import('./index.js');
+
+      try {
+        await mod.init();
+      } catch (err) {
+        console.error('[core] init() threw:', err);
+      }
+
+      window.__coreReady = true;
+      console.log('[core] background renderer ready');
+    </script>
   </body>
 </html>

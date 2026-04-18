@@ -2002,6 +2002,108 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
+  // ── App control (trustedBuiltin only) ────────────────────────────────
+  //
+  // v1 preload exposed `api.quit` / `api.restart` (fire-and-forget IPC
+  // sends). The core background renderer (app/index.js) registers
+  // `quit` / `restart` cmd palette commands that invoke these. The
+  // channels are `ipcMain.on` (not .handle), so `api.invoke` cannot
+  // replace them — a dedicated `.send` wrapper is required.
+  api.quit = () => {
+    if (!trustedBuiltin) {
+      console.warn('[tile-preload] api.quit requires trustedBuiltin — ignored');
+      return;
+    }
+    ipcRenderer.send('app-quit', { source: sourceAddress });
+  };
+
+  api.restart = () => {
+    if (!trustedBuiltin) {
+      console.warn('[tile-preload] api.restart requires trustedBuiltin — ignored');
+      return;
+    }
+    ipcRenderer.send('app-restart', { source: sourceAddress });
+  };
+
+  // ── Theme (trustedBuiltin extensions) ────────────────────────────────
+  //
+  // The strict tile:theme surface only exposes `getInfo` and `onChange`.
+  // Core renderers (app/index.js in particular) need the full v1 theme
+  // surface for the cmd palette theme commands (`theme light`, `theme`,
+  // `theme light here`, etc.). The channels are plain `ipcMain.handle`
+  // entries in `ipc.ts`, so we can expose them here under trustedBuiltin
+  // as thin wrappers. Non-trustedBuiltin tiles continue to use the
+  // strict tile:theme:* surface declared above.
+  if (trustedBuiltin) {
+    (api.theme as Record<string, unknown>).get = () => ipcRenderer.invoke('theme:get');
+    (api.theme as Record<string, unknown>).list = () => ipcRenderer.invoke('theme:list');
+    (api.theme as Record<string, unknown>).getAll = () => ipcRenderer.invoke('theme:getAll');
+    (api.theme as Record<string, unknown>).setTheme = (themeId: string) =>
+      ipcRenderer.invoke('theme:setTheme', themeId);
+    (api.theme as Record<string, unknown>).setColorScheme = (colorScheme: string) =>
+      ipcRenderer.invoke('theme:setColorScheme', colorScheme);
+    (api.theme as Record<string, unknown>).setWindowColorScheme = async (colorScheme: string) => {
+      // Core/test renderers target the "last focused visible window" via
+      // `get-focused-visible-window-id`, not their own hidden
+      // BrowserWindow. Preserves v1 behaviour where the background
+      // iframe ran the theme command on behalf of the user-facing window.
+      let windowId = await ipcRenderer.invoke('get-focused-visible-window-id');
+      if (!windowId) {
+        windowId = await ipcRenderer.invoke('get-window-id');
+      }
+      if (!windowId) {
+        return { success: false, error: 'No visible window to target' };
+      }
+      return ipcRenderer.invoke('theme:setWindowColorScheme', { windowId, colorScheme });
+    };
+  }
+
+  // ── Chrome Extensions (trustedBuiltin only) ──────────────────────────
+  //
+  // v1 preload exposed `api.chromeExtensions.*` for the core background
+  // renderer to enumerate bundled chrome extensions + their UI entry
+  // points (popup, options, new-tab, etc.) and register cmd palette
+  // commands for each openable entry. Gated on trustedBuiltin — feature
+  // tiles must not enumerate or launch chrome extensions.
+  api.chromeExtensions = {
+    list: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('chrome-ext:list');
+    },
+    enable: (id: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('chrome-ext:enable', { id });
+    },
+    disable: (id: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('chrome-ext:disable', { id });
+    },
+    getStatus: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('chrome-ext:getStatus');
+    },
+    getUiEntries: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('chrome-ext:getUiEntries');
+    },
+    openPage: (id: string, type: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.chromeExtensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('chrome-ext:openPage', { id, type });
+    },
+  };
+
   return api;
 }
 

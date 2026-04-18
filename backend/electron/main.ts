@@ -10,11 +10,12 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { initDatabase, closeDatabase, getDb, trackWindowLoad, updateItemTitle, updateItemFavicon, updateModeForNavigation, getContextEntry } from './datastore.js';
+import { initDatabase, closeDatabase, getDb, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCmd } from './cmd-glue.js';
 import { initHud } from './hud-glue.js';
 import { initPage } from './page-glue.js';
+import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
@@ -23,9 +24,8 @@ import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles } 
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
-import { APP_DEF_WIDTH, APP_DEF_HEIGHT, WEB_CORE_ADDRESS, getPreloadPath, isTestProfile, isDevProfile, isHeadless, getProfile, setTilePreloadPath, DEBUG } from './config.js';
-import { trackWindow } from './display-watcher.js';
-import { addEscHandler, winDevtoolsConfig, closeOrHideWindow, getSystemThemeBackgroundColor, getPrefs } from './windows.js';
+import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
+import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { clearLastFocusedVisibleWindowId } from './ipc.js';
@@ -193,6 +193,13 @@ export async function initialize(): Promise<void> {
   // `tile:pubsub:*` IPC sends — handlers were historically registered
   // lazily from `loadV2Tile()` which runs after core glue.
   ensureTileIpcHandlers();
+
+  // Resolve & cache the tile-preload path early (also used by `initCore`
+  // from entry.ts before `loadExtensions` runs). Preload source is
+  // `tile-preload.cts` (CommonJS) so tsc emits `tile-preload.cjs` —
+  // Electron preload scripts must be CommonJS under `sandbox: true`.
+  const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.cjs');
+  setTilePreloadPath(tilePreloadPath);
 
   // Initialize database
   const dbPath = path.join(config.userDataPath, config.profile, 'datastore.sqlite');
@@ -1323,16 +1330,10 @@ export async function loadExtensions(): Promise<number> {
   const extStart = Date.now();
 
   const featuresDir = path.join(config.rootDir, 'features');
-  // Preload source is tile-preload.cts (CommonJS TypeScript) so tsc emits
-  // tile-preload.cjs — Electron preload scripts must be CommonJS under
-  // sandbox: true. A plain .ts source with `module: NodeNext` would emit
-  // `export {};` at the end, which Electron rejects ("Unable to load
-  // preload script") and silently falls back to no preload — every v2
-  // tile API (api.initialize, api.pubsub.subscribe, etc.) would be absent.
-  const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.cjs');
-  // Expose to config so other code paths (window-open IPC handler in particular)
-  // can use the tile preload for v2 tile URLs.
-  setTilePreloadPath(tilePreloadPath);
+  // `tilePreloadPath` is now resolved + cached in `initialize()`. Read
+  // it via the config getter so the value stays consistent whether we
+  // were reached from `initialize()` or directly from a test harness.
+  const tilePreloadPath = getTilePreloadPath();
   const v1FeatureIds = new Set<string>();
   const v2FeatureIds = new Set<string>();
 
@@ -1971,235 +1972,74 @@ export async function shutdown(): Promise<void> {
 let backgroundWindow: BrowserWindow | null = null;
 
 /**
- * Create the core background window
+ * Launch the core background renderer via v2 tile mechanics.
+ *
+ * Post-Phase-2.5-#1, the core background window uses `tile-preload.cjs`
+ * with a `createTrustedBuiltinGrant('core')` token — same shape as cmd,
+ * hud, page, and the privileged test fixture. The heavy lifting lives
+ * in `core-glue.ts::initCore()`; this wrapper keeps the existing
+ * `createBackgroundWindow()` call site in `entry.ts` working and
+ * registers the window in the session registry with `WEB_CORE_ADDRESS`
+ * (other code paths identify the core window by address match, e.g.
+ * `closeOrHideWindow` refuses to close it, `countVisibleWindows`
+ * excludes it).
+ *
+ * Returns the BrowserWindow so callers that used to do
+ * `const bg = createBackgroundWindow()` still get a reference — though
+ * nothing in the current tree reads the return value.
  */
-export function createBackgroundWindow(): BrowserWindow {
-  const preloadPath = getPreloadPath();
+export async function createBackgroundWindow(): Promise<BrowserWindow> {
+  const tilePreloadPath = getTilePreloadPath();
+  if (!tilePreloadPath) {
+    throw new Error('[main] tile preload path not configured — call initialize() first');
+  }
+
+  const win = await initCore({ tilePreloadPath });
+
+  // Keep the local handle in sync so `getBackgroundWindow()` returns
+  // the same reference even while test code that reads it early hasn't
+  // yet switched to the core-glue accessor.
+  backgroundWindow = win;
+
+  // Register in the session registry with the legacy address — other
+  // code paths use `WEB_CORE_ADDRESS` to identify the core window
+  // (e.g. `closeOrHideWindow` refuses to close it, `countVisibleWindows`
+  // excludes it). `key: 'background-core'` preserves the v1 winPrefs.key
+  // so any `findWindowByKey(WEB_CORE_ADDRESS, 'background-core')`
+  // lookups continue to work.
   const systemAddress = getSystemAddress();
-
-  // Use profile-specific session for isolation
-  const profileSession = getProfileSession();
-
-  const winPrefs = {
-    show: false,
-    backgroundColor: getSystemThemeBackgroundColor(),
+  registerWindow(win.id, systemAddress, {
     key: 'background-core',
-    webPreferences: {
-      preload: preloadPath,
-      session: profileSession,
-    }
-  };
-
-  // Create the background window
-  const win = new BrowserWindow(winPrefs);
-  win.loadURL(WEB_CORE_ADDRESS);
-
-  // Forward console logs from background window
-  win.webContents.on('console-message', (event) => {
-    DEBUG && console.log(`[core] ${event.message}`);
+    address: WEB_CORE_ADDRESS,
   });
 
-  // Setup devtools for the background window (debug mode, but not in tests or headless)
+  // Devtools for the background window (dev-profile only, not tests /
+  // headless). The core renderer was traditionally helpful to inspect
+  // for command registration + pubsub traffic while debugging; keeping
+  // the same affordance post-v2.
   if (config.isDev && !isTestProfile() && !isHeadless()) {
     win.webContents.openDevTools({ mode: 'detach', activate: false });
   }
 
-  // Add to window manager
-  registerWindow(win.id, systemAddress, { ...winPrefs, address: WEB_CORE_ADDRESS });
-
-  // NOTE: No ESC handler for background window - it should never be closed
-
-  // Set up handlers for windows opened from the background window
-  win.webContents.setWindowOpenHandler((details) => {
-    DEBUG && console.log('Background window opening child window:', details.url);
-
-    // Parse window features into options
-    const featuresMap: Record<string, unknown> = {};
-    if (details.features) {
-      details.features.split(',')
-        .map(entry => entry.split('='))
-        .forEach(([key, value]) => {
-          let parsedValue: unknown = value;
-          // Convert string booleans to actual booleans
-          if (value === 'true') parsedValue = true;
-          else if (value === 'false') parsedValue = false;
-          // Convert numeric values to numbers
-          else if (!isNaN(Number(value)) && value.trim() !== '') {
-            parsedValue = parseInt(value, 10);
-          }
-          featuresMap[key] = parsedValue;
-        });
-    }
-
-    DEBUG && console.log('Parsed features map:', featuresMap);
-
-    // Check if window with this key already exists
-    if (featuresMap.key) {
-      const existingWindow = findWindowByKey(WEB_CORE_ADDRESS, featuresMap.key as string);
-      if (existingWindow) {
-        DEBUG && console.log('Reusing existing window with key:', featuresMap.key);
-        if (!isHeadless()) {
-          existingWindow.window.show();
-        }
-        return { action: 'deny' as const };
-      }
-    }
-
-    // Determine frame setting based on explicit option or preference
-    let frameDefault = false; // Default to frameless if pref not available
-    if (featuresMap.frame === undefined) {
-      const prefs = getPrefs();
-      // hideTitleBar: true means frame: false (no titlebar)
-      // hideTitleBar: false means frame: true (show titlebar)
-      frameDefault = prefs.hideTitleBar === false;
-    }
-
-    // Prepare browser window options
-    // Use profile-specific session for isolation
-    const winOptions: Electron.BrowserWindowConstructorOptions = {
-      frame: frameDefault, // Default based on hideTitleBar pref
-      ...(featuresMap as Electron.BrowserWindowConstructorOptions),
-      width: parseInt(String(featuresMap.width)) || APP_DEF_WIDTH,
-      height: parseInt(String(featuresMap.height)) || APP_DEF_HEIGHT,
-      show: isHeadless() ? false : featuresMap.show !== false,
-      // Don't set backgroundColor for transparent windows - it would show through
-      backgroundColor: featuresMap.transparent ? undefined : getSystemThemeBackgroundColor(),
-      webPreferences: {
-        preload: preloadPath,
-        session: getProfileSession(),
-      }
-    };
-
-    // Make sure position parameters are correctly handled
-    if (featuresMap.x !== undefined) {
-      winOptions.x = parseInt(String(featuresMap.x));
-    }
-    if (featuresMap.y !== undefined) {
-      winOptions.y = parseInt(String(featuresMap.y));
-    }
-
-    DEBUG && console.log('Background window creating child with options:', winOptions);
-
-    // Make sure we register browser window created handler to track the new window
-    const onCreated = (_e: Electron.Event, newWin: BrowserWindow) => {
-      // Check if this is the window we just created
-      newWin.webContents.once('did-finish-load', () => {
-        const loadedUrl = newWin.webContents.getURL();
-        if (loadedUrl === details.url) {
-          // Remove the listener
-          app.removeListener('browser-window-created', onCreated);
-
-          // Add the window to our manager with necessary parameters
-          registerWindow(newWin.id, WEB_CORE_ADDRESS, {
-            ...featuresMap,
-            address: details.url,
-            modal: featuresMap.modal
-          });
-
-          // Track this load in history
-          try {
-            trackWindowLoad(details.url, {
-              source: (featuresMap.trackingSource as string) || 'background',
-              sourceId: (featuresMap.trackingSourceId as string) || '',
-              windowType: featuresMap.modal ? 'modal' : 'main',
-              title: (newWin.getTitle() !== 'Loading...' ? newWin.getTitle() : '') || '',
-            });
-          } catch (e) {
-            DEBUG && console.log('Failed to track background child window load:', e);
-          }
-
-          // Set initial mode based on URL
-          updateModeForNavigation(newWin.id, details.url);
-
-          // Update item title when page finishes loading (background child windows).
-          // Without this, titles stay empty or "Loading..." in history.
-          if (details.url.startsWith('http://') || details.url.startsWith('https://')) {
-            newWin.webContents.on('page-title-updated', (_event: Electron.Event, title: string) => {
-              if (title && title !== 'Loading...') {
-                try {
-                  updateItemTitle(newWin.webContents.getURL() || details.url, title);
-                } catch (e) {
-                  DEBUG && console.log('Failed to update title from page-title-updated:', e);
-                }
-              }
-            });
-
-            // Capture favicon for background child windows
-            newWin.webContents.on('page-favicon-updated', (_event: Electron.Event, favicons: string[]) => {
-              const pageUrl = newWin.webContents.getURL() || details.url;
-              if (pageUrl && favicons.length > 0) {
-                const best = favicons.find(f => f.endsWith('.svg')) ||
-                             favicons.find(f => f.endsWith('.png')) ||
-                             favicons[favicons.length - 1];
-                try {
-                  updateItemFavicon(pageUrl, best);
-                } catch (e) {
-                  DEBUG && console.log('Failed to update favicon from page-favicon-updated:', e);
-                }
-              }
-            });
-          }
-
-          // Track in-page navigation within this window
-          newWin.webContents.on('did-navigate', (_event: Electron.Event, navUrl: string) => {
-            if (navUrl === details.url) return;
-            // Update mode for the new URL
-            updateModeForNavigation(newWin.id, navUrl);
-            try {
-              trackWindowLoad(navUrl, {
-                source: 'navigation',
-                sourceId: '',
-                windowType: featuresMap.modal ? 'modal' : 'main',
-                title: (newWin.getTitle() !== 'Loading...' ? newWin.getTitle() : '') || '',
-              });
-            } catch (e) {
-              DEBUG && console.log('Failed to track did-navigate:', e);
-            }
-          });
-
-          // Add escape key handler
-          addEscHandler(newWin);
-
-          // Track window for display change handling
-          trackWindow(newWin);
-
-          // Set up DevTools if requested
-          winDevtoolsConfig(newWin);
-
-          // Set up modal behavior with delay to avoid focus race condition
-          if (featuresMap.modal === true) {
-            setTimeout(() => {
-              if (!newWin.isDestroyed()) {
-                newWin.on('blur', () => {
-                  DEBUG && console.log('Modal window lost focus:', details.url);
-                  closeOrHideWindow(newWin.id);
-                });
-              }
-            }, 100);
-          }
-        }
-      });
-    };
-
-    // Start listening for the window creation
-    app.on('browser-window-created', onCreated);
-
-    // Return allow with overridden options
-    return {
-      action: 'allow' as const,
-      overrideBrowserWindowOptions: winOptions
-    };
-  });
-
-  backgroundWindow = win;
   return win;
 }
+
+// Legacy `setWindowOpenHandler` child-window path removed in Phase 2.5
+// #1. Under v2, `api.window.open(...)` routes through `tile:window:open`
+// (handled in tile-ipc.ts) and delegates to the centralised window-open
+// IPC handler. Native `window.open()` calls from the core background
+// HTML never happen — the renderer has no `<a target="_blank">` or
+// equivalent. The ~150 lines of `setWindowOpenHandler` logic were dead
+// in practice and are deleted.
 
 /**
  * Get the background window
  */
 export function getBackgroundWindow(): BrowserWindow | null {
-  return backgroundWindow;
+  // Prefer the core-glue accessor so callers get a live reference even
+  // if `createBackgroundWindow()` hasn't been called yet in this boot
+  // (e.g. during mid-startup IPC that runs before entry.ts's call).
+  return getCoreBackgroundWindow() ?? backgroundWindow;
 }
 
 // ***** External URL Handling *****

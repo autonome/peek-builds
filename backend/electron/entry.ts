@@ -776,8 +776,11 @@ const onReady = async () => {
     }
   });
 
-  // Create the core background window
-  createBackgroundWindow();
+  // Create the core background window (v2 tile mechanics — see
+  // backend/electron/core-glue.ts::initCore). Awaited so startup code
+  // downstream sees a fully-initialised renderer with all subscribers
+  // registered before e.g. CLI URLs get replayed.
+  await createBackgroundWindow();
 
   // Start hot reload in dev mode
   if (DEBUG) {
