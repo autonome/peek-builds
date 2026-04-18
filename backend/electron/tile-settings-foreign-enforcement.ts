@@ -94,6 +94,9 @@ export function checkSettingsForeignAllowed(
     return { ok: false, error: 'foreignExtId is required' };
   }
 
+  // Trusted-builtin core renderers bypass the foreign-read allowlist.
+  if (grant.trustedBuiltin) return { ok: true };
+
   // Self-read always permitted — equivalent to `tile:settings:get`.
   if (foreignExtId === grant.tileId) return { ok: true };
 

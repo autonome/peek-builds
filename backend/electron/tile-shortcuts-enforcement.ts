@@ -46,6 +46,8 @@ export function checkShortcutAllowed(
   shortcut: string,
 ): ShortcutCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass every shortcut gate.
+  if (grant.trustedBuiltin) return { ok: true };
 
   const scCap = grant.capabilities.shortcuts;
   if (!scCap) return { ok: false, error: 'shortcuts capability not granted' };

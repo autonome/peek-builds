@@ -126,6 +126,8 @@ export function checkFeaturesAllowed(
   sourceType?: FeatureSourceType,
 ): FeaturesCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass every features gate.
+  if (grant.trustedBuiltin) return { ok: true };
 
   const cap = normaliseGrant(grant);
   if (!cap) return { ok: false, error: 'features capability not granted' };
@@ -154,6 +156,8 @@ export function sourceTypeAllowed(
   grant: CapabilityGrant | null,
   sourceType: FeatureSourceType,
 ): boolean {
+  // Trusted-builtin core renderers bypass the source-type filter.
+  if (grant?.trustedBuiltin) return true;
   const cap = normaliseGrant(grant);
   if (!cap) return false;
   if (!cap.sources) return true;

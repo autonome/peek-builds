@@ -37,6 +37,8 @@ export type IzuiCheckResult =
  */
 export function checkIzuiAllowed(grant: CapabilityGrant | null): IzuiCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass the izui gate.
+  if (grant.trustedBuiltin) return { ok: true };
   const ic = grant.capabilities.izui;
   if (!ic) return { ok: false, error: 'izui capability not granted' };
   return { ok: true };

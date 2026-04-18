@@ -101,6 +101,8 @@ export function checkWindowAllowed(
   args?: { url?: string; ownWindow?: boolean },
 ): WindowCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass every window gate.
+  if (grant.trustedBuiltin) return { ok: true };
 
   const cap = normaliseGrant(grant);
   if (!cap) return { ok: false, error: 'window capability not granted' };

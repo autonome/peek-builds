@@ -64,6 +64,18 @@ export function validateTileDatastoreRequest(
   if (!grant) {
     return { error: 'Invalid token' };
   }
+  // Trusted-builtin core renderers bypass the table allowlist AND the
+  // datastore capability gate. They still have to pass the core table
+  // name validity check below (`isValidTable`) — that guards against
+  // SQL-injection-shaped inputs and is not a capability decision.
+  if (grant.trustedBuiltin) {
+    for (const table of requiredTables) {
+      if (!isValidTable(table)) {
+        return { error: `Invalid table: ${table}` };
+      }
+    }
+    return { grant };
+  }
   if (!hasCapability(grant, 'datastore')) {
     return { error: 'Datastore capability not granted' };
   }

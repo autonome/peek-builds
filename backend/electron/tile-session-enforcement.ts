@@ -46,6 +46,8 @@ export function checkSessionAllowed(
   op: SessionOp,
 ): SessionCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass the session gate.
+  if (grant.trustedBuiltin) return { ok: true };
 
   const sc = grant.capabilities.session;
   if (!sc) return { ok: false, error: 'session capability not granted' };

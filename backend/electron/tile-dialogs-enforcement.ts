@@ -57,6 +57,8 @@ export function checkDialogAllowed(
   type: DialogType,
 ): DialogsCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass every dialog gate.
+  if (grant.trustedBuiltin) return { ok: true };
 
   const cap = normaliseGrant(grant);
   if (!cap) return { ok: false, error: 'dialogs capability not granted' };

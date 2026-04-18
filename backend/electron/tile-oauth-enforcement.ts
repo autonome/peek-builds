@@ -70,6 +70,8 @@ export function checkOAuthAllowed(
   provider?: string,
 ): OAuthCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass every oauth gate.
+  if (grant.trustedBuiltin) return { ok: true };
 
   const cap = normaliseGrant(grant);
   if (!cap) return { ok: false, error: 'oauth capability not granted' };

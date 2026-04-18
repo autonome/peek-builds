@@ -83,6 +83,8 @@ export function checkContextAllowed(
   key?: string,
 ): ContextCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass every context gate.
+  if (grant.trustedBuiltin) return { ok: true };
 
   const cap = normaliseGrant(grant);
   if (!cap) return { ok: false, error: 'context capability not granted' };

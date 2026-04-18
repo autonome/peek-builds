@@ -43,6 +43,8 @@ export function checkSyncAllowed(
   grant: CapabilityGrant | null,
 ): SyncCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers bypass the sync gate.
+  if (grant.trustedBuiltin) return { ok: true };
 
   if (!grant.capabilities.sync) {
     return { ok: false, error: 'sync capability not granted' };

@@ -158,25 +158,35 @@ function handleDatastoreViolation(token: string | undefined, op: string, reason:
 }
 
 /**
- * Check if a capability is granted
+ * Check if a capability is granted. Trusted-builtin core renderers
+ * bypass every capability-presence check here (the higher-level inline
+ * gates at each call site also short-circuit on `grant.trustedBuiltin`
+ * before consulting this helper — this duplicate check is belt-and-braces
+ * so `hasCapability()` can't accidentally be used as a lone gate on
+ * new code paths).
  */
 function hasCapability(grant: CapabilityGrant, capability: keyof TileCapabilities): boolean {
+  if (grant.trustedBuiltin) return true;
   return grant.capabilities[capability] !== undefined && grant.capabilities[capability] !== false;
 }
 
 /**
- * Check if a pubsub scope level is granted
+ * Check if a pubsub scope level is granted. Trusted-builtin core
+ * renderers bypass the scope allowlist.
  */
 function hasPubSubScope(grant: CapabilityGrant, scope: 'self' | 'global' | 'system'): boolean {
+  if (grant.trustedBuiltin) return true;
   if (!grant.capabilities.pubsub) return false;
   return grant.capabilities.pubsub.scopes.includes(scope);
 }
 
 /**
  * Check if a network domain is allowed
- * Supports wildcard matching (e.g., '*.example.com' matches 'api.example.com')
+ * Supports wildcard matching (e.g., '*.example.com' matches 'api.example.com').
+ * Trusted-builtin core renderers bypass the domain allowlist.
  */
 function isNetworkDomainAllowed(grant: CapabilityGrant, domain: string): boolean {
+  if (grant.trustedBuiltin) return true;
   if (!grant.capabilities.network) return false;
 
   for (const allowed of grant.capabilities.network.domains) {
@@ -194,13 +204,15 @@ function isNetworkDomainAllowed(grant: CapabilityGrant, domain: string): boolean
 
 /**
  * Check if a filesystem path is allowed
- * Supports glob-style patterns with basic matching
+ * Supports glob-style patterns with basic matching. Trusted-builtin
+ * core renderers bypass the path allowlist.
  */
 function isFilesystemPathAllowed(
   grant: CapabilityGrant,
   filePath: string,
   mode: 'read' | 'write'
 ): boolean {
+  if (grant.trustedBuiltin) return true;
   if (!grant.capabilities.filesystem) return false;
 
   const patterns = mode === 'read'
@@ -424,8 +436,9 @@ export function registerTileIpcHandlers(): void {
       return;
     }
 
-    // Topic enforcement: if topics allowlist is set, check it
-    if (grant.capabilities.pubsub?.topics) {
+    // Topic enforcement: if topics allowlist is set, check it.
+    // Trusted-builtin core renderers bypass the topic allowlist.
+    if (!grant.trustedBuiltin && grant.capabilities.pubsub?.topics) {
       const allowed = grant.capabilities.pubsub.topics.some(pattern => {
         if (pattern === args.topic) return true;
         // Simple glob: pattern:* matches pattern:anything
@@ -2280,7 +2293,8 @@ export function registerTileIpcHandlers(): void {
     if (!args?.token) return { success: false, error: 'Invalid token' };
     const grant = getGrantForToken(args.token);
     if (!grant) return { success: false, error: 'Invalid token' };
-    if (!grant.capabilities.datastore) {
+    // Trusted-builtin core renderers bypass the datastore gate.
+    if (!grant.trustedBuiltin && !grant.capabilities.datastore) {
       return { success: false, error: 'Datastore capability not granted' };
     }
 

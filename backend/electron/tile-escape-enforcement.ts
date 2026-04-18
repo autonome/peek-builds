@@ -36,5 +36,8 @@ export function checkEscapeAllowed(
   grant: CapabilityGrant | null,
 ): EscapeCheckResult {
   if (!grant) return { ok: false, error: 'Invalid token' };
+  // Trusted-builtin core renderers — same result, but explicit for the
+  // audit pattern shared across enforcement helpers.
+  if (grant.trustedBuiltin) return { ok: true };
   return { ok: true };
 }
