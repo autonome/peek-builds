@@ -5,7 +5,7 @@
  * Handlers are thin wrappers that delegate to backend functions.
  */
 
-import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, shell, webContents, net, Menu, clipboard } from 'electron';
+import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, webContents, net, Menu, clipboard } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -129,12 +129,6 @@ import {
   syncAll,
   getSyncStatus,
 } from './sync.js';
-
-import {
-  getBackupConfig,
-  createBackup,
-  listBackups,
-} from './backup.js';
 
 import {
   detectModeFromUrl,
@@ -1076,6 +1070,26 @@ export function registerWindowHandlers(): void {
         entryId: 'main',
       };
       DEBUG && console.log('[window-open] settings window: assigned trustedBuiltin tile-preload token');
+    }
+
+    // Special-case: peek://app/datastore/viewer.html uses api.datastore.* to
+    // display raw DB tables — not a registered v2 tile but needs tile-preload.
+    if (!tileWebPrefs && url === 'peek://app/datastore/viewer.html') {
+      const VIEWER_ID = 'datastore-viewer';
+      const VIEWER_ENTRY = 'main';
+      const viewerGrant = createTrustedBuiltinGrant(VIEWER_ID);
+      const viewerToken = generateToken(VIEWER_ID, VIEWER_ENTRY, viewerGrant);
+      tileWebPrefs = {
+        preload: getTilePreloadPath(),
+        additionalArguments: [
+          `--tile-id=${VIEWER_ID}`,
+          `--tile-entry=${VIEWER_ENTRY}`,
+          `--tile-token=${viewerToken}`,
+        ],
+        tileId: VIEWER_ID,
+        entryId: VIEWER_ENTRY,
+      };
+      DEBUG && console.log('[window-open] datastore-viewer window: assigned trustedBuiltin tile-preload token');
     }
 
     // Canvas page host windows use tile-preload with a trustedBuiltin grant so
@@ -2851,11 +2865,6 @@ export function registerWindowHandlers(): void {
  * Register miscellaneous IPC handlers (shortcuts, pubsub, commands, etc.)
  */
 export function registerMiscHandlers(onQuit: () => void): void {
-  // Get app-level preferences
-  ipcMain.handle('get-app-prefs', () => {
-    return getPrefs();
-  });
-
   // Check if current window is transient (opened when app wasn't focused)
   // Used for IZUI policy: transient windows have different escape/mode behavior
   ipcMain.handle('window-is-transient', (ev) => {
@@ -3287,53 +3296,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
     };
   });
 
-  // Open a path in the system file manager (Finder on macOS)
-  ipcMain.handle('shell-open-path', async (_ev, data) => {
-    try {
-      const pathToOpen = data.path || data;
-      // Ensure directory exists before opening
-      if (!fs.existsSync(pathToOpen)) {
-        fs.mkdirSync(pathToOpen, { recursive: true });
-      }
-      await shell.openPath(pathToOpen);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Check if app is the default browser for http/https
-  ipcMain.handle('default-browser-status', async () => {
-    try {
-      const isDefaultHttp = app.isDefaultProtocolClient('http');
-      const isDefaultHttps = app.isDefaultProtocolClient('https');
-      return { isDefault: isDefaultHttp && isDefaultHttps };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { isDefault: false, error: message };
-    }
-  });
-
-  // Set app as the default browser for http/https
-  ipcMain.handle('set-default-browser', async () => {
-    try {
-      app.setAsDefaultProtocolClient('http');
-      app.setAsDefaultProtocolClient('https');
-      // Check if it actually worked
-      const isDefaultHttp = app.isDefaultProtocolClient('http');
-      const isDefaultHttps = app.isDefaultProtocolClient('https');
-      if (isDefaultHttp && isDefaultHttps) {
-        return { success: true };
-      } else {
-        return { success: false, error: 'System did not accept the change. You may need to set the default browser in System Settings.' };
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
   // Net fetch handler - proxies HTTP requests through main process to bypass CORS
   // Used by extensions that need to fetch from external APIs (e.g., search suggestions)
   ipcMain.handle('net-fetch', async (_ev, data: { url: string; options?: { method?: string; headers?: Record<string, string>; timeout?: number } }) => {
@@ -3490,51 +3452,6 @@ export function registerSyncHandlers(): void {
     try {
       const status = getSyncStatus();
       return { success: true, data: status };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-}
-
-/**
- * Register backup-related IPC handlers
- */
-export function registerBackupHandlers(): void {
-  // Get backup configuration
-  ipcMain.handle('backup-get-config', async () => {
-    try {
-      const config = getBackupConfig();
-      return { success: true, data: config };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Create a backup manually
-  ipcMain.handle('backup-create', async () => {
-    try {
-      const result = await createBackup();
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // List existing backups
-  ipcMain.handle('backup-list', async () => {
-    try {
-      const backups = listBackups();
-      const config = getBackupConfig();
-      return {
-        success: true,
-        data: {
-          backups,
-          backupDir: config.backupDir,
-        }
-      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -3986,7 +3903,6 @@ export function registerAllHandlers(onQuit: () => void): void {
   registerExtensionHandlers();
   registerWindowHandlers();
   registerSyncHandlers();
-  registerBackupHandlers();
   registerProfileHandlers();
   registerModesHandlers();
   registerWebExtensionHandlers();

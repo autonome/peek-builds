@@ -4701,7 +4701,7 @@ test.describe('Backup @desktop', () => {
 
   test('backup-get-config returns config object', async () => {
     const result = await bgWindow.evaluate(async () => {
-      return await (window as any).app.invoke('backup-get-config');
+      return await (window as any).app.backup.getConfig();
     });
 
     expect(result.success).toBe(true);
@@ -4714,7 +4714,7 @@ test.describe('Backup @desktop', () => {
 
   test('backup is disabled when backupDir is not configured', async () => {
     const result = await bgWindow.evaluate(async () => {
-      return await (window as any).app.invoke('backup-get-config');
+      return await (window as any).app.backup.getConfig();
     });
 
     expect(result.success).toBe(true);
@@ -4725,7 +4725,7 @@ test.describe('Backup @desktop', () => {
 
   test('backup-create returns error when not configured', async () => {
     const result = await bgWindow.evaluate(async () => {
-      return await (window as any).app.invoke('backup-create');
+      return await (window as any).app.backup.create();
     });
 
     expect(result.success).toBe(false);
@@ -4734,7 +4734,7 @@ test.describe('Backup @desktop', () => {
 
   test('backup-list returns empty when not configured', async () => {
     const result = await bgWindow.evaluate(async () => {
-      return await (window as any).app.invoke('backup-list');
+      return await (window as any).app.backup.list();
     });
 
     expect(result.success).toBe(true);
@@ -4777,7 +4777,7 @@ test.describe('Backup @desktop', () => {
 
       // Verify config reflects the change
       const configResult = await bgWindow.evaluate(async () => {
-        return await (window as any).app.invoke('backup-get-config');
+        return await (window as any).app.backup.getConfig();
       });
       expect(configResult.success).toBe(true);
       expect(configResult.data.backupDir).toBe(tempBackupDir);
@@ -4785,7 +4785,7 @@ test.describe('Backup @desktop', () => {
 
       // Create a backup
       const backupResult = await bgWindow.evaluate(async () => {
-        return await (window as any).app.invoke('backup-create');
+        return await (window as any).app.backup.create();
       });
       expect(backupResult.success).toBe(true);
       expect(backupResult.path).toBeTruthy();
@@ -4796,7 +4796,7 @@ test.describe('Backup @desktop', () => {
 
       // List backups - should have one
       const listResult = await bgWindow.evaluate(async () => {
-        return await (window as any).app.invoke('backup-list');
+        return await (window as any).app.backup.list();
       });
       expect(listResult.success).toBe(true);
       expect(listResult.data.backups.length).toBe(1);
