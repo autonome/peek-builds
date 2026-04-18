@@ -892,3 +892,678 @@ signal instead of the host DOM; trim README.md:140-141 + 148.
 **Net test deletion:** 4 full tests + 2 partial assertions + 1 fixture
 rewrite + 3 README rows. No production code coverage is lost — every
 remaining behaviour is exercised by tests on the v2 tile path.
+
+---
+
+### Wave 2 — re-planned (2026-04-18 after 3.4 audit)
+
+The 3.4 audit revealed 193 channels (vs. 103 estimated), with **71
+strict-shadow channels** that need `tile:*` equivalents BEFORE the
+legacy handler can be deleted, plus a hidden dependency: `app/context/
+*.js` calls `context-*` directly via the v1 preload, blocking
+`preload.js` deletion until those modules migrate.
+
+This re-plan replaces the original 3.5–3.8 packages with smaller,
+strictly-sized (15–25 min) work items. Every package is shippable by a
+Sonnet agent in one spawn.
+
+#### Re-planned dependency graph
+
+```
+Wave 2a — strict shim builders (parallel, no inter-deps)
+    3.5a  opener-* shims              (3 ch)
+    3.5b  theme:* shims               (6 ch)
+    3.5c  extension-* shims           (10 ch)
+    3.5d  chrome-ext:* shims          (6 ch)
+    3.5e  feature-settings-schema +
+          get-window-id shims         (2 ch)
+    3.5f  app-control shims
+          (renderer-log, app-quit,
+           app-restart)               (3 ch)
+    3.5g  datastore-* shim completion
+          (28 ch verify + fill)
+        |
+        +-- (each above unblocks one tile-preload route flip)
+
+Wave 2b — flip tile-preload to strict (after matching 2a shim)
+    3.6a  flip opener-*               (after 3.5a)
+    3.6b  flip theme:*                (after 3.5b)
+    3.6c  flip extension-*            (after 3.5c)
+    3.6d  flip chrome-ext:*           (after 3.5d)
+    3.6e  flip feature-settings-schema
+          + get-window-id             (after 3.5e)
+    3.6f  flip renderer-log/quit/
+          restart                     (after 3.5f)
+    3.6g  flip datastore-* (28 ch)    (after 3.5g)
+
+Wave 2c — collapse fallback else-branches (after corresponding flip)
+    3.7a  collapse window-* fallbacks (11 ch, no deps)
+    3.7b  collapse feature-registry/
+          install/browse fallbacks    (10 ch, after 3.6e)
+    3.7c  collapse context-* fallbacks
+          (6 ch, after Wave 2d-context)
+    3.7d  collapse oauth + sync-full
+          + screen + save-space-ws +
+          window-set-visible-on-all-
+          workspaces                  (5 ch)
+
+Wave 2d — context module migration (gates 3.7c + preload.js delete)
+    3.8a  audit app/context/*.js call
+          surface
+    3.8b  port context modules to use
+          tile-preload api.context.*
+          (or wrap as a tile)
+
+Wave 2e — getRunning/getAllRegistered rewrite (was 3.5)
+    3.9   rewrite for v2 tiles        (after 3.1 → already GO)
+
+Wave 2f — extensionHostWindow delete (was 3.6)
+    3.10  delete host window + iframe
+          loader + INTERNAL_URLS +
+          smoke tests + fixture
+                                      (after 3.9)
+
+Wave 2g — preload.js + IPC_CHANNELS deletion (was 3.7e/3.8)
+    3.11a delete suspected-dead
+          channels (~31 ch, no
+          callers grep'd)
+    3.11b delete remaining preload-
+          only handlers (~48 ch) +
+          delete preload.js file
+                                      (after Wave 2b + 2c + 2d + 2f)
+    3.11c delete IPC_CHANNELS const +
+          remaining .on handlers
+                                      (after 3.11b)
+```
+
+#### Parallelism summary
+
+- **Wave 2a (3.5a–g):** all 7 packages independent. Run in parallel
+  with isolated workspaces.
+- **Wave 2b (3.6a–g):** each gated on its 2a sibling. Within 2b the
+  flips are independent (different domains in tile-preload.cts).
+- **Wave 2c (3.7a–d):** mostly independent of each other; 3.7b waits
+  on 3.6e, 3.7c waits on Wave 2d.
+- **Wave 2d (3.8a–b):** sequential (audit → port).
+- **Wave 2e (3.9):** independent of everything in Wave 2 — can run
+  alongside any other wave. Already cleared by 3.1 audit.
+- **Wave 2f (3.10):** depends on 3.9.
+- **Wave 2g (3.11):** the final lockstep deletion. 3.11a can run
+  earlier as a low-risk isolated package.
+
+---
+
+#### 3.5a — Build `tile:window:opener-*` strict shims
+
+**Scope:** Add `tile:window:opener-postmessage`, `tile:window:opener-
+close`, `tile:window:opener-focus` handlers in `tile-ipc.ts`. Mirror
+existing `opener-*` semantics from `ipc.ts`. Gate on `window.manage`
+capability (or new `opener` cap if more appropriate — pick the simpler
+one).
+
+**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+preload.cts` (add wrapper methods only — DO NOT remove legacy invoke
+yet; that's 3.6a).
+
+**Dependencies:** none
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "page"` (page widget exercises opener-*).
+
+**Risk:** low — additive only.
+
+---
+
+#### 3.5b — Build `tile:theme:*` strict shims (6 channels)
+
+**Scope:** Add `tile:theme:get`, `tile:theme:setColorScheme`,
+`tile:theme:setWindowColorScheme`, `tile:theme:setTheme`,
+`tile:theme:list`, `tile:theme:getAll` handlers in `tile-ipc.ts`. All
+require trustedBuiltin enforcement (theme handlers should refuse
+non-trusted callers — pattern from existing `tile:datastore:*`
+trustedBuiltin sites in recent commits).
+
+**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+preload.cts` (add wrappers, additive).
+
+**Dependencies:** none
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "theme"`.
+
+**Risk:** low — additive; trustedBuiltin gating is well-tested.
+
+---
+
+#### 3.5c — Build `tile:extensions:*` strict shims (10 channels)
+
+**Scope:** Add `tile:extensions:pickFolder`, `validateFolder`, `add`,
+`remove`, `update`, `getAll`, `get`, `windowList`,
+`listAllRegistered`, `windowDevtools`, `reload` (10 total).
+TrustedBuiltin enforcement.
+
+**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+preload.cts` (add wrappers).
+
+**Dependencies:** none
+
+**Budget:** 25 min (10 channels — split if it overruns 25)
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "extension"` (or features pane).
+
+**Risk:** low — additive.
+
+---
+
+#### 3.5d — Build `tile:chrome-extensions:*` strict shims (6 channels)
+
+**Scope:** Add `tile:chrome-extensions:list`, `enable`, `disable`,
+`getStatus`, `getUiEntries`, `openPage`. TrustedBuiltin enforcement.
+
+**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+preload.cts`.
+
+**Dependencies:** none
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "chrome-ext"`.
+
+**Risk:** low — additive.
+
+---
+
+#### 3.5e — Build `tile:features:settings-schema` + `tile:window:get-id` shims
+
+**Scope:** Two unrelated small shims grouped because each is too small
+for its own package. Add `tile:features:settings-schema` (mirror of
+`feature-settings-schema`) and `tile:window:get-id` (mirror of
+`get-window-id`). Both used unconditionally in tile-preload.
+
+**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+preload.cts`.
+
+**Dependencies:** none
+
+**Budget:** 15 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg`.
+
+**Risk:** low — additive.
+
+---
+
+#### 3.5f — Build `tile:app:*` shims (renderer-log, quit, restart)
+
+**Scope:** Add `tile:log:write` (= renderer-log), `tile:app:quit`,
+`tile:app:restart` shims. These are write-only sends (no return). May
+opt to keep the legacy `ipcMain.on` handlers permanently as the only
+survivors instead — decide based on capability story (per 3.7e
+recommendation in audit).
+
+**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+preload.cts`.
+
+**Dependencies:** none
+
+**Budget:** 15 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "smoke"`.
+
+**Risk:** low — additive.
+
+---
+
+#### 3.5g — Datastore strict-shim completion sweep (28 channels)
+
+**Scope:** Verify every `datastore-*` strict-shadow channel listed in
+the 3.4 audit table has a working `tile:datastore:*` equivalent. The
+last 3 commits (b820dafc, 06eaacb6, 48d15aca) added many; this package
+is the "fill the gaps" pass. For each missing, add a strict shim with
+permissive datastore-capability gating (existing pattern).
+
+**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+preload.cts`. Reference: 3.4 audit table for the 28 strict-shadow
+datastore channels.
+
+**Dependencies:** none
+
+**Budget:** 25 min (split into 3.5g1/g2 by channel count if over)
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "datastore"`.
+
+**Risk:** low–medium — additive but high channel count = high test
+surface.
+
+---
+
+#### 3.6a — Flip tile-preload `opener-*` to strict + delete legacy handlers
+
+**Scope:** Replace the 3 `ipcRenderer.invoke('opener-*', …)` calls in
+tile-preload with `tile:window:opener-*`. Then delete the 3
+`ipcMain.handle('opener-*')` blocks in `ipc.ts`.
+
+**Files:** `backend/electron/tile-preload.cts` (lines around 1112,
+1122, 1129 in `app/page/page.js` consumer paths), `backend/electron/
+ipc.ts`.
+
+**Dependencies:** 3.5a
+
+**Budget:** 15 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "page"`.
+
+**Risk:** low.
+
+---
+
+#### 3.6b — Flip tile-preload `theme:*` to strict + delete legacy handlers
+
+**Scope:** Replace 6 unconditional `ipcRenderer.invoke('theme:*', …)`
+sites in tile-preload with strict equivalents. Delete the 6 legacy
+handlers.
+
+**Files:** `backend/electron/tile-preload.cts` (lines 2036–2055),
+`backend/electron/ipc.ts`.
+
+**Dependencies:** 3.5b
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg -g "theme"`.
+
+**Risk:** low — straight rename of channel string + handler delete.
+
+---
+
+#### 3.6c — Flip tile-preload `extension-*` to strict + delete legacy handlers
+
+**Scope:** Replace 10 `ipcRenderer.invoke('extension-*', …)` sites
+(1933–1993). Delete legacy handlers in `ipc.ts`.
+
+**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+ipc.ts`.
+
+**Dependencies:** 3.5c
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg
+-g "extension"`.
+
+**Risk:** medium — extension management touches Features pane.
+
+---
+
+#### 3.6d — Flip tile-preload `chrome-ext:*` to strict + delete legacy handlers
+
+**Scope:** Replace 6 sites (2071–2101). Delete legacy handlers.
+
+**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+ipc.ts`.
+
+**Dependencies:** 3.5d
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg
+-g "chrome-ext"`.
+
+**Risk:** low.
+
+---
+
+#### 3.6e — Flip `feature-settings-schema` + `get-window-id` to strict + delete
+
+**Scope:** Replace tile-preload calls + delete handlers.
+
+**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+ipc.ts`.
+
+**Dependencies:** 3.5e
+
+**Budget:** 15 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg`.
+
+**Risk:** low.
+
+---
+
+#### 3.6f — Flip `renderer-log`/`app-quit`/`app-restart` to strict (or keep as survivors)
+
+**Scope:** Either flip to `tile:*` (per 3.5f shims) and delete legacy
+`.on` handlers, OR explicitly choose to keep the 3 as legacy-permanent
+survivors. Document the decision inline in `ipc.ts`.
+
+**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+ipc.ts`.
+
+**Dependencies:** 3.5f
+
+**Budget:** 15 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg -g "smoke"`.
+
+**Risk:** low.
+
+---
+
+#### 3.6g — Flip tile-preload `datastore-*` to strict + delete legacy handlers
+
+**Scope:** Replace 28 unconditional `ipcRenderer.invoke('datastore-*',
+…)` sites in tile-preload (lines 861–955) with `tile:datastore:*`
+equivalents. Delete the matching 28 legacy handlers in `ipc.ts`.
+
+**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+ipc.ts`.
+
+**Dependencies:** 3.5g (shims must exist first)
+
+**Budget:** 25 min — split into 3.6g1 (first 14) + 3.6g2 (last 14)
+if it overruns.
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "datastore"`,
+`yarn test:electron:bg -g "items"`,
+`yarn test:electron:bg -g "tags"`.
+
+**Risk:** medium-high — datastore is product-critical. Split if
+unsure.
+
+---
+
+#### 3.7a — Collapse `window-*` fallback else-branches (11 channels)
+
+**Scope:** Convert the 11 `window-*` `if (!hasWindowCapability())
+return ipcRenderer.invoke('window-*', …)` else branches in tile-preload
+to throw + delete. Mirror the 3.3 izui pattern. Delete the legacy
+`window-*` handlers in `ipc.ts` for the 11 affected channels.
+
+**Files:** `backend/electron/tile-preload.cts` (lines 514, 541, 570,
+585, 600, 615, 636, 654, 668, 682, 696, 710, 726, 749), `backend/
+electron/ipc.ts`.
+
+**Dependencies:** none
+
+**Budget:** 25 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "window"`.
+
+**Risk:** medium — many call sites; if any v2 tile is silently relying
+on the fallback (cap not declared), it'll throw. Pre-audit by grep
+through all tile manifests for `window` capability.
+
+---
+
+#### 3.7b — Collapse `feature-registry/install/browse:*` fallbacks (10 channels)
+
+**Scope:** Convert the 10 `feature-*` else branches in tile-preload
+(lines 1448–1470) to throw + delete fallback. Delete the 10 legacy
+handlers in `ipc.ts`.
+
+**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+ipc.ts`.
+
+**Dependencies:** 3.6e (clears related surfaces)
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg
+-g "feature"`.
+
+**Risk:** medium — features pane.
+
+---
+
+#### 3.7c — Collapse `context-*` fallbacks (6 channels)
+
+**Scope:** Convert the 6 `context-*` else branches in tile-preload
+(lines 1287–1297) to throw + delete fallback. Delete the 6 legacy
+handlers in `ipc.ts`.
+
+**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+ipc.ts`.
+
+**Dependencies:** 3.8b (`app/context/*.js` must already use
+tile-preload — otherwise they break).
+
+**Budget:** 15 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg
+-g "context"`, `yarn test:electron:bg -g "history"`.
+
+**Risk:** medium — context is used by cmd, history, idx.
+
+---
+
+#### 3.7d — Collapse misc fallbacks (oauth, sync-full, screen, save-space-workspaces, set-visible-on-all-workspaces) — 5 channels
+
+**Scope:** Convert 5 misc fallback branches and delete the 5 legacy
+handlers. Per-channel sites:
+- `oauth-start-loopback`/`oauth-await-callback`: tp:1690, 1692
+- `sync-full`: tp:1744
+- `screen-get-primary-display`: tp:1769
+- `save-space-workspaces`: tp:1791
+- `window-set-visible-on-all-workspaces`: tp:749
+
+**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+ipc.ts`.
+
+**Dependencies:** none
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg`.
+
+**Risk:** medium — oauth flows are infrequently exercised in tests.
+
+---
+
+#### 3.8a — Audit `app/context/*.js` call surface
+
+**Scope:** Read-only. Enumerate every direct `window.app.invoke(
+'context-*')` (or equivalent) call in `app/context/*.js`. List the
+modules' entry points and which renderers load them. Determine the
+migration path: (i) move into a tile with `context` capability, (ii)
+load via tile-preload across the board, or (iii) inline the calls into
+each consumer renderer that already has a tile-preload. Output a short
+recommendation appended to this doc.
+
+**Files (read-only):** `app/context/*.js`, plus grep for
+`context-get`, `context-set`, `context-history`, `context-snapshot`,
+`context-windows-*` across `app/**`.
+
+**Dependencies:** none
+
+**Budget:** 20 min
+
+**Validation:** none (audit). Commit the audit append.
+
+**Risk:** low — read-only.
+
+---
+
+#### 3.8b — Port `app/context/*.js` to use tile-preload `api.context.*`
+
+**Scope:** Per 3.8a recommendation, refactor every direct `context-*`
+invoke in `app/context/*.js` to use `api.context.*` (tile-preload's
+strict surface). Verify load contexts already use tile-preload (cmd,
+hud, page glue all do). For any consumer still on v1 preload, defer to
+3.11b.
+
+**Files:** `app/context/*.js` (all), plus consumers per 3.8a output.
+
+**Dependencies:** 3.8a
+
+**Budget:** 25 min — split into 3.8b1/b2 by file count if over.
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg -g "context"`,
+`yarn test:electron:bg -g "history"`.
+
+**Risk:** medium — context drives history widget + cmd context.
+
+---
+
+#### 3.9 — Rewrite `getRunningExtensions` / `getAllRegisteredExtensions` for v2
+
+**Scope:** (Was 3.5 in original plan.) Rewrite both functions to use
+`getLoadedTileIds()` + `declarativeExtensions` + a hardcoded core-
+renderer ids list (cmd/hud/page). Delete `isConsolidatedExtension()`
+and the `loadedConsolidatedExtensions.add(...)` calls. Verify Features
+pane.
+
+**Files:** `backend/electron/main.ts` (lines 89, 97, 1214, 1225, 1237,
+1313–1373, 1380–1413, 1462–1464), `backend/electron/ipc.ts:100, 1300,
+1310, 1323`, `backend/electron/index.ts` (if exported).
+
+**Dependencies:** 3.1 (cleared — GO).
+
+**Budget:** 25 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg
+-g "features"`, manual smoke of Settings > Features.
+
+**Risk:** medium — Features pane is user-facing.
+
+---
+
+#### 3.10 — Delete `extensionHostWindow` + host HTML + broadcaster v1 branch
+
+**Scope:** (Was 3.6 in original plan.) Per 3.1 audit's option (a):
+delete the host window, the iframe loader, INTERNAL_URLS reference,
+the broadcaster v1 branch in main.ts:226–244, the `app/extension-
+host.html` file. Update smoke tests per 3.1's per-site recommendations
+(delete tests 4174-4179, 4181-4217, 5291-5371, 5373-5433; trim
+1380-1386 and 4359-4366; rewrite fixture helper at desktop-app.ts:
+222-244; trim README.md:140-141 + 148).
+
+**Files:** `backend/electron/main.ts`, `backend/electron/ipc.ts:2306`,
+`app/extension-host.html` (delete), smoke.spec.ts, fixtures, README.
+
+**Dependencies:** 3.9
+
+**Budget:** 25 min — split into 3.10a (source delete) + 3.10b (test +
+fixture rewrite) if over.
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:electron:bg -g "smoke"`,
+`yarn test:electron:bg` (full).
+
+**Risk:** high — biggest single delete. 3.1 audit is the safety net.
+
+---
+
+#### 3.11a — Delete suspected-dead channels (~31 channels)
+
+**Scope:** Delete the 31 channels with NO callers in `preload.js` or
+`tile-preload.cts` (per 3.4 audit). List: `extension-window-unload`,
+`extension-manifest-get`, `web-nav-back/forward/reload/state`,
+`backup-get-config/set-config/create/list`, `session-save/get-snapshot
+-info/restore/restore-interactive`, `shell-open-path`, `default-
+browser-status`, `set-default-browser`, `window-reopen-last-closed`,
+`window-animate`, `window-is-draggable`, `datastore-query-items-by-
+frecency`, `IPC_CHANNELS.CONSOLE`. Pre-delete: re-verify via grep for
+`api.invoke('<name>')` passthrough usage.
+
+**Files:** `backend/electron/ipc.ts`, `backend/config.ts` (CONSOLE).
+
+**Dependencies:** none — independent low-risk package, runnable any
+time after 3.4.
+
+**Budget:** 20 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg`.
+
+**Risk:** low–medium. Risk hinges on the `api.invoke()` passthrough
+gap (per 3.4 "Open gaps"). Full electron suite catches any runtime
+miss.
+
+---
+
+#### 3.11b — Delete remaining preload-only handlers + delete `preload.js` file
+
+**Scope:** With Wave 2b + 2c + 2d complete, the remaining ~48 preload-
+only handlers in `ipc.ts` have no live consumers. Delete them all.
+Then delete `preload.js`. Remove `setPreloadPath`/`getPreloadPath`
+from `backend/electron/config.ts`, `entry.ts`, `index.ts`, and the
+window-open fallback at `ipc.ts:2268,2670`. Update `will-attach-
+webview` in `entry.ts:189-211` to drop the v1 fallback branch.
+
+**Files:** `backend/electron/ipc.ts` (~48 handler blocks), `preload.js`
+(delete 2693 LOC), `backend/electron/entry.ts` (lines 63, 152, 157,
+189–211), `backend/electron/config.ts`, `backend/electron/index.ts`.
+
+**Dependencies:** Wave 2b (3.6a–g) + Wave 2c (3.7a–d) + Wave 2d
+(3.8b) + Wave 2f (3.10) all complete.
+
+**Budget:** 25 min — if it overruns, split into 3.11b1 (delete handler
+blocks only) + 3.11b2 (delete preload.js + update glue).
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg` (full),
+`git grep preload.js` → only Tauri-local + docs,
+`git grep "preload-only"` → zero in source.
+
+**Risk:** high — final delete. Mitigations: 2b/2c/2d should have
+caught all live consumers; tsc + full electron suite is the final net.
+
+---
+
+#### 3.11c — Delete `IPC_CHANNELS` const + remaining `.on` handlers
+
+**Scope:** Delete `IPC_CHANNELS` const from `backend/config.ts:16-27`.
+Update imports in `backend/electron/ipc.ts:121`, `backend/electron/
+index.ts:13`, `backend/electron/config.ts:14`. Delete the
+`IPC_CHANNELS.SUBSCRIBE/PUBLISH/CLOSE_WINDOW/REGISTER_SHORTCUT/
+UNREGISTER_SHORTCUT/MODIFY_WINDOW/RENDERER_LOG/APP_QUIT/APP_RESTART/
+CONSOLE` handler blocks at `ipc.ts:4158-4476`.
+
+**Files:** `backend/config.ts`, `backend/electron/config.ts`, `backend/
+electron/index.ts`, `backend/electron/ipc.ts`.
+
+**Dependencies:** 3.11b. Also requires 3.6f decision (if `renderer-
+log`/`app-quit`/`app-restart` are kept as legacy survivors, they stay;
+otherwise delete here).
+
+**Budget:** 15 min
+
+**Validation:** `yarn tsc --noEmit`, `yarn test:unit`,
+`yarn test:electron:bg` (full),
+`git grep "IPC_CHANNELS\b"` → zero matches.
+
+**Risk:** medium. Final cleanup.
+
+---
+
+#### Risk-aware execution order (TL;DR for dispatchers)
+
+1. Spawn 3.5a–g and 3.11a in parallel (8 packages, all low-risk
+   additive or deletion-of-truly-dead).
+2. Spawn 3.8a (audit) in parallel with the above.
+3. As each 3.5x lands, spawn matching 3.6x.
+4. Spawn 3.9 anytime in parallel.
+5. After 3.5g + 3.6g land: spawn 3.7a (window cleanup).
+6. After 3.8a lands: spawn 3.8b.
+7. After 3.6e lands: spawn 3.7b.
+8. After 3.8b lands: spawn 3.7c.
+9. Spawn 3.7d anytime (independent).
+10. After 3.9 lands: spawn 3.10.
+11. After Wave 2b + 2c + 2d + 2f all complete: spawn 3.11b.
+12. After 3.11b lands: spawn 3.11c.
+
+Each agent follows the 25-min ceiling; if any package overruns,
+commit-what-you-have + report blocker. Splits noted inline (3.6g, 3.8b,
+3.10, 3.11b) are pre-authorised.

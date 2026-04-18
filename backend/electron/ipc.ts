@@ -43,7 +43,6 @@ import {
   getItemVisits,
   queryItemVisits,
   trackNavigation,
-  queryItemsByFrecency,
   // Item event operations (series & feeds)
   addItemEvent,
   getItemEvent,
@@ -169,7 +168,6 @@ import { tagItemAndPublish } from './tag-events.js';
 
 import {
   getBackupConfig,
-  setBackupConfig,
   createBackup,
   listBackups,
 } from './backup.js';
@@ -935,16 +933,6 @@ export function registerDatastoreHandlers(): void {
     }
   });
 
-  ipcMain.handle('datastore-query-items-by-frecency', async (ev, data = {}) => {
-    try {
-      const result = queryItemsByFrecency(data.filter);
-      return { success: true, data: result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
   // Item event operations (series & feeds)
   ipcMain.handle('datastore-add-item-event', async (ev, data) => {
     try {
@@ -1435,27 +1423,6 @@ export function registerExtensionHandlers(): void {
       `).run(`${extId}_${data.key}`, extId, data.key, jsonValue, Date.now());
 
       return { success: true, data: { key: data.key, value: data.value } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  ipcMain.handle('extension-manifest-get', async (ev, data) => {
-    try {
-      const extPath = getExtensionPath(data.id);
-      if (!extPath) {
-        // Check database for external extensions
-        const db = getDb();
-        const ext = db.prepare('SELECT * FROM extensions WHERE id = ?').get(data.id) as { path?: string } | undefined;
-        if (!ext || !ext.path) {
-          return { success: false, error: `Extension ${data.id} not found` };
-        }
-        const manifest = loadExtensionManifest(ext.path);
-        return { success: true, data: manifest };
-      }
-      const manifest = loadExtensionManifest(extPath);
-      return { success: true, data: manifest };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -3858,82 +3825,6 @@ export function registerWindowHandlers(): void {
     }
   });
 
-  // Animate window bounds (position and/or size)
-  // Animates from current bounds (or specified 'from') to target bounds over duration
-  ipcMain.handle('window-animate', async (ev, msg) => {
-    DEBUG && console.log('window-animate', msg);
-
-    try {
-      let win: BrowserWindow | null = null;
-      if (msg?.id) {
-        win = BrowserWindow.fromId(msg.id);
-      } else {
-        win = BrowserWindow.fromWebContents(ev.sender);
-      }
-
-      if (!win) {
-        return { success: false, error: 'Window not found' };
-      }
-
-      const currentBounds = win.getBounds();
-      const from = msg.from || currentBounds;
-      const to = msg.to;
-      const duration = msg.duration || 150; // ms
-
-      if (!to) {
-        return { success: false, error: 'Target bounds (to) are required' };
-      }
-
-      // Calculate animation parameters
-      const startX = from.x ?? currentBounds.x;
-      const startY = from.y ?? currentBounds.y;
-      const startW = from.width ?? currentBounds.width;
-      const startH = from.height ?? currentBounds.height;
-
-      const endX = to.x ?? startX;
-      const endY = to.y ?? startY;
-      const endW = to.width ?? startW;
-      const endH = to.height ?? startH;
-
-      // Animation timing
-      const timerInterval = 10; // ms
-      const numTicks = Math.max(1, Math.floor(duration / timerInterval));
-      let tick = 0;
-
-      return new Promise((resolve) => {
-        const timer = setInterval(() => {
-          tick++;
-
-          if (tick >= numTicks || win!.isDestroyed()) {
-            clearInterval(timer);
-            // Set final bounds
-            if (!win!.isDestroyed()) {
-              win!.setBounds({ x: endX, y: endY, width: endW, height: endH });
-            }
-            resolve({ success: true });
-            return;
-          }
-
-          // Calculate progress (0 to 1)
-          const progress = tick / numTicks;
-          // Use easeOutQuad for smooth deceleration
-          const eased = 1 - (1 - progress) * (1 - progress);
-
-          const x = Math.round(startX + (endX - startX) * eased);
-          const y = Math.round(startY + (endY - startY) * eased);
-          const w = Math.round(startW + (endW - startW) * eased);
-          const h = Math.round(startH + (endH - startH) * eased);
-
-          win!.setBounds({ x, y, width: w, height: h });
-        }, timerInterval);
-      });
-    } catch (error) {
-      console.error('Failed to animate window:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
   ipcMain.handle('get-display-info', (ev) => {
     const win = BrowserWindow.fromWebContents(ev.sender);
     if (!win || win.isDestroyed()) return { success: false, error: 'Window not found' };
@@ -4272,23 +4163,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
     }
   });
 
-  // Check if window is draggable (default: true)
-  ipcMain.handle('window-is-draggable', (ev) => {
-    try {
-      const win = BrowserWindow.fromWebContents(ev.sender);
-      if (!win) {
-        return { success: false, error: 'Window not found' };
-      }
-      const winInfo = getWindowInfo(win.id);
-      // Default to draggable if not specified
-      const draggable = winInfo?.params?.draggable !== false;
-      return { success: true, draggable };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
   // Web navigation handlers - operate on the target http/https window
   const resolveWebWindow = (windowId?: number): BrowserWindow | null => {
     const id = windowId || lastFocusedVisibleWindowId;
@@ -4435,11 +4309,6 @@ export function registerMiscHandlers(onQuit: () => void): void {
       DEBUG && console.log('ipc:subscribe:notification', msg);
       ev.reply(msg.replyTopic, data);
     });
-  });
-
-  // Console log from renderer
-  ipcMain.on(IPC_CHANNELS.CONSOLE, (_ev, msg) => {
-    DEBUG && console.log('r:', msg.source, msg.text);
   });
 
   // App quit request
@@ -4962,17 +4831,6 @@ export function registerBackupHandlers(): void {
     try {
       const config = getBackupConfig();
       return { success: true, data: config };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Set backup configuration
-  ipcMain.handle('backup-set-config', async (_ev, data) => {
-    try {
-      setBackupConfig(data);
-      return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -5667,35 +5525,6 @@ function registerSessionHandlers(): void {
     try {
       saveSessionSnapshot('manual');
       return { success: true, message: 'Session saved' };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Get snapshot info (window count) without restoring
-  ipcMain.handle('session-get-snapshot-info', () => {
-    try {
-      const info = getSessionSnapshotInfo();
-      if (!info) return { success: true, data: null };
-      return { success: true, data: info };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Manual session restore (restores on top of existing windows)
-  // Skip crash dialog — user explicitly requested restore
-  ipcMain.handle('session-restore', async () => {
-    try {
-      const prefs = getPrefs();
-      const result = await restoreSessionSnapshot(prefs, { cleanShutdown: true, crashCount: 0 });
-      return {
-        success: true,
-        message: `Restored ${result.restored} of ${result.total} window(s)`,
-        ...result,
-      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
