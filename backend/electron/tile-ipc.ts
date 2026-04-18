@@ -17,7 +17,7 @@
  * Every handler validates the capability token before executing.
  */
 
-import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app } from 'electron';
+import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -115,6 +115,12 @@ import { checkIzuiAllowed } from './tile-izui-enforcement.js';
 import { getActiveThemeId, setActiveThemeId, getRegisteredThemeIds, getThemePath } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
+import {
+  getBackupConfig,
+  createBackup,
+  listBackups,
+} from './backup.js';
+import { getPrefs } from './windows.js';
 
 // Re-export for test access — keeps the public enforcement API on tile-ipc.
 export { validateTileDatastoreRequest } from './tile-datastore-scope.js';
@@ -6460,6 +6466,165 @@ body {
     DEBUG && console.log('[tile-ipc] app:restart requested from:', args.source ?? grant.tileId);
     app.relaunch();
     app.quit();
+  });
+
+  // ── tile:backup:* strict shims (Phase 3.11b) ─────────────────────────
+  //
+  // Strict counterparts of the legacy `backup-*` channels in ipc.ts.
+  // All handlers require trustedBuiltin — settings/diagnostic/page-host
+  // tiles will consume these once they migrate off preload.js.
+
+  ipcMain.handle('tile:backup:create', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'backup', 'tile:backup:create', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:backup:create' };
+    }
+    try {
+      const result = await createBackup();
+      return result;
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:backup:list', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'backup', 'tile:backup:list', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:backup:list' };
+    }
+    try {
+      const backups = listBackups();
+      const config = getBackupConfig();
+      return {
+        success: true,
+        data: {
+          backups,
+          backupDir: config.backupDir,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:backup:get-config', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'backup', 'tile:backup:get-config', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:backup:get-config' };
+    }
+    try {
+      const config = getBackupConfig();
+      return { success: true, data: config };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── tile:shell:open-path strict shim (Phase 3.11b) ───────────────────
+  //
+  // Strict counterpart of the legacy `shell-open-path` channel.
+  // Requires trustedBuiltin — opens a path in the OS file manager.
+
+  ipcMain.handle('tile:shell:open-path', async (_event, args: {
+    token: string;
+    path: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'shell', 'tile:shell:open-path', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:shell:open-path' };
+    }
+    try {
+      const pathToOpen = args.path;
+      if (!pathToOpen) return { success: false, error: 'Missing path' };
+      if (!fs.existsSync(pathToOpen)) {
+        fs.mkdirSync(pathToOpen, { recursive: true });
+      }
+      await shell.openPath(pathToOpen);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── tile:app:default-browser-status / set-default-browser / get-prefs ──
+  //
+  // Strict counterparts of the legacy `default-browser-status`,
+  // `set-default-browser`, and `get-app-prefs` channels.
+  // All require trustedBuiltin.
+
+  ipcMain.handle('tile:app:default-browser-status', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'app', 'tile:app:default-browser-status', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:app:default-browser-status' };
+    }
+    try {
+      const isDefaultHttp = app.isDefaultProtocolClient('http');
+      const isDefaultHttps = app.isDefaultProtocolClient('https');
+      return { isDefault: isDefaultHttp && isDefaultHttps };
+    } catch (err) {
+      return { isDefault: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:app:set-default-browser', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'app', 'tile:app:set-default-browser', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:app:set-default-browser' };
+    }
+    try {
+      app.setAsDefaultProtocolClient('http');
+      app.setAsDefaultProtocolClient('https');
+      const isDefaultHttp = app.isDefaultProtocolClient('http');
+      const isDefaultHttps = app.isDefaultProtocolClient('https');
+      if (isDefaultHttp && isDefaultHttps) {
+        return { success: true };
+      } else {
+        return { success: false, error: 'System did not accept the change. You may need to set the default browser in System Settings.' };
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('tile:app:get-prefs', (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'app', 'tile:app:get-prefs', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:app:get-prefs' };
+    }
+    return getPrefs();
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');

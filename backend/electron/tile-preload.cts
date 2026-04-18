@@ -2045,6 +2045,69 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
+  // ── Backup (trustedBuiltin only) ─────────────────────────────────────
+  //
+  // Strict counterparts of the legacy `backup-*` channels. Consumed by the
+  // settings tile once it migrates off preload.js (Phase 3.11b).
+  api.backup = {
+    create: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.backup requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:backup:create', { token: tileToken });
+    },
+    list: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.backup requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:backup:list', { token: tileToken });
+    },
+    getConfig: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.backup requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:backup:get-config', { token: tileToken });
+    },
+  };
+
+  // ── Shell (trustedBuiltin only) ───────────────────────────────────────
+  //
+  // Strict counterpart of the legacy `shell-open-path` channel.
+  api.shell = {
+    openPath: (filePath: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.shell requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:shell:open-path', { token: tileToken, path: filePath });
+    },
+  };
+
+  // ── App (trustedBuiltin only) — extended methods ──────────────────────
+  //
+  // Strict counterparts of the legacy `default-browser-status`,
+  // `set-default-browser`, and `get-app-prefs` channels. Extends the
+  // existing api.quit / api.restart app control surface.
+  api.app = {
+    getDefaultBrowserStatus: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.app requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:app:default-browser-status', { token: tileToken });
+    },
+    setDefaultBrowser: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.app requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:app:set-default-browser', { token: tileToken });
+    },
+    getPrefs: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.app requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:app:get-prefs', { token: tileToken });
+    },
+  };
+
   return api;
 }
 
