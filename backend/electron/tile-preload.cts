@@ -922,11 +922,11 @@ function buildAPI(): Record<string, unknown> {
     queryContent: (filter?: unknown) =>
       ipcRenderer.invoke('tile:datastore:query-content', { token: tileToken, filter }),
     getTable: (tableName: string) =>
-      ipcRenderer.invoke('datastore-get-table', { tableName }),
+      ipcRenderer.invoke('tile:datastore:get-table', { token: tileToken, tableName }),
     setRow: (tableName: string, rowId: string, rowData: unknown) =>
-      ipcRenderer.invoke('datastore-set-row', { tableName, rowId, rowData }),
+      ipcRenderer.invoke('tile:datastore:set-row', { token: tileToken, tableName, rowId, rowData }),
     getRow: (tableName: string, rowId: string) =>
-      ipcRenderer.invoke('datastore-get-row', { tableName, rowId }),
+      ipcRenderer.invoke('tile:datastore:get-row', { token: tileToken, tableName, rowId }),
     getStats: () => ipcRenderer.invoke('tile:datastore:get-stats', { token: tileToken }),
     // Tag helpers
     getOrCreateTag: (name: string) =>
@@ -951,13 +951,13 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.invoke('tile:datastore:get-untagged-addresses', { token: tileToken }),
     // Item helpers
     addItem: (type: string, options: unknown = {}) =>
-      ipcRenderer.invoke('datastore-add-item', { type, options }),
+      ipcRenderer.invoke('tile:datastore:add-item', { token: tileToken, type, options }),
     getItem: (id: string) =>
-      ipcRenderer.invoke('datastore-get-item', { id }),
+      ipcRenderer.invoke('tile:datastore:get-item', { token: tileToken, id }),
     updateItem: (id: string, options: unknown) =>
-      ipcRenderer.invoke('datastore-update-item', { id, options }),
+      ipcRenderer.invoke('tile:datastore:update-item', { token: tileToken, id, options }),
     deleteItem: (id: string) =>
-      ipcRenderer.invoke('datastore-delete-item', { id }),
+      ipcRenderer.invoke('tile:datastore:delete-item', { token: tileToken, id }),
     hardDeleteItem: (id: string) =>
       ipcRenderer.invoke('tile:datastore:hard-delete-item', { token: tileToken, id }),
     updateItemTitle: (url: string, title: string) =>
@@ -965,15 +965,15 @@ function buildAPI(): Record<string, unknown> {
     updateItemFavicon: (url: string, faviconUrl: string) =>
       ipcRenderer.invoke('tile:datastore:update-item-favicon', { token: tileToken, url, faviconUrl }),
     queryItems: (filter: unknown = {}) =>
-      ipcRenderer.invoke('datastore-query-items', { filter }),
+      ipcRenderer.invoke('tile:datastore:query-items', { token: tileToken, filter }),
     tagItem: (itemId: string, tagId: string) =>
-      ipcRenderer.invoke('datastore-tag-item', { itemId, tagId }),
+      ipcRenderer.invoke('tile:datastore:tag-item', { token: tileToken, itemId, tagId }),
     untagItem: (itemId: string, tagId: string) =>
-      ipcRenderer.invoke('datastore-untag-item', { itemId, tagId }),
+      ipcRenderer.invoke('tile:datastore:untag-item', { token: tileToken, itemId, tagId }),
     getItemTags: (itemId: string) =>
-      ipcRenderer.invoke('datastore-get-item-tags', { itemId }),
+      ipcRenderer.invoke('tile:datastore:get-item-tags', { token: tileToken, itemId }),
     getItemsByTag: (tagId: string) =>
-      ipcRenderer.invoke('datastore-get-items-by-tag', { tagId }),
+      ipcRenderer.invoke('tile:datastore:get-items-by-tag', { token: tileToken, tagId }),
     getHistory: (filter: unknown = {}) =>
       ipcRenderer.invoke('tile:datastore:get-history', { token: tileToken, filter }),
     recordItemVisit: (itemId: string, options?: unknown) =>
@@ -987,20 +987,20 @@ function buildAPI(): Record<string, unknown> {
     queryItemsByFrecency: (filter: unknown = {}) =>
       ipcRenderer.invoke('tile:datastore:query-items-by-frecency', { token: tileToken, filter }),
     // Item events
-    addItemEvent: (data: unknown) =>
-      ipcRenderer.invoke('datastore-add-item-event', data),
-    getItemEvent: (data: unknown) =>
-      ipcRenderer.invoke('datastore-get-item-event', data),
-    queryItemEvents: (data: unknown = {}) =>
-      ipcRenderer.invoke('datastore-query-item-events', data),
-    deleteItemEvent: (data: unknown) =>
-      ipcRenderer.invoke('datastore-delete-item-event', data),
-    deleteItemEvents: (data: unknown) =>
-      ipcRenderer.invoke('datastore-delete-item-events', data),
-    getLatestItemEvent: (data: unknown) =>
-      ipcRenderer.invoke('datastore-get-latest-item-event', data),
-    countItemEvents: (data: unknown) =>
-      ipcRenderer.invoke('datastore-count-item-events', data),
+    addItemEvent: (itemId: string, options?: unknown) =>
+      ipcRenderer.invoke('tile:datastore:add-item-event', { token: tileToken, itemId, options }),
+    getItemEvent: (eventId: string) =>
+      ipcRenderer.invoke('tile:datastore:get-item-event', { token: tileToken, eventId }),
+    queryItemEvents: (filter: unknown = {}) =>
+      ipcRenderer.invoke('tile:datastore:query-item-events', { token: tileToken, filter }),
+    deleteItemEvent: (eventId: string) =>
+      ipcRenderer.invoke('tile:datastore:delete-item-event', { token: tileToken, eventId }),
+    deleteItemEvents: (itemId: string) =>
+      ipcRenderer.invoke('tile:datastore:delete-item-events', { token: tileToken, itemId }),
+    getLatestItemEvent: (itemId: string) =>
+      ipcRenderer.invoke('tile:datastore:get-latest-item-event', { token: tileToken, itemId }),
+    countItemEvents: (itemId: string, filter?: unknown) =>
+      ipcRenderer.invoke('tile:datastore:count-item-events', { token: tileToken, itemId, filter }),
   };
 
   // ── Network (if granted) ──
