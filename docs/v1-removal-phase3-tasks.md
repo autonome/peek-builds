@@ -400,3 +400,73 @@ All packages target 15–30 min. Packages that hit the ceiling (3.4, 3.6,
 3.7) are the ones with genuine unknowns; if they overrun, the agent
 commits what it has + reports blocker so the next spawn adjusts scope.
 Prefer shipping 5 validated packages over 10 sketchy ones.
+
+---
+
+### phase3.1 — Audit findings (2026-04-18)
+
+**Conclusion: GO** — `extensionHostWindow` can be deleted in phase3.6 with
+near-zero product risk. The window is a true empty shell: cmd, hud, and
+page have all moved to top-level BrowserWindows (via `*-glue.ts` files
+using `tile-preload.cjs`). The only remaining iframe loader is
+`loadLazyExtension()` in `main.ts:740`, used for legacy v1 lazy stubs;
+all currently-bundled "consolidated" features have `manifestVersion: 2`
+and are routed through the v2 tile path before the lazy stub fires
+(verified entities, editor). The host therefore stays empty in practice.
+
+**Key correctness finding:** the smoke tests' comments are wrong about
+the architecture. They assert that cmd loads as an iframe inside
+extension-host "via cmd-glue.ts" (lines 4214, 5314, 5383) — but
+`cmd-glue.ts` actually creates a separate top-level BrowserWindow at
+`peek://cmd/index.html` with `tile-preload.cjs` (see cmd-glue.ts:80-168).
+Same for hud-glue.ts and page-glue.ts. The tests are therefore either
+silently passing on stale state or skipping their inner iframe lookups.
+
+#### Per-site recommendations
+
+| Site | What it validates | Real product feature? | Action |
+|------|-------------------|------------------------|--------|
+| `smoke.spec.ts:1383` | Waits for any window matching `peek://app/extension-host.html` URL inside the "shared app smoke" startup block. Used to gate further checks in that suite. | No — historical leftover from when host loaded all built-ins. | **delete** the `waitForWindow(... 'extension-host.html', 15000)` + `expect(hostWindow).toBeDefined()` lines (1380-1386). The v2 background-tile waits immediately below already validate startup readiness. |
+| `smoke.spec.ts:4177` (test "extension host window exists for built-in extensions") | Asserts host window exists. | No — host is empty now; cmd/hud/page are separate BrowserWindows; v2 tiles are separate BrowserWindows. | **delete** the entire test (4174-4179). Coverage of "v2 tiles exist" is provided by the test at 4219. |
+| `smoke.spec.ts:4189` (test "built-in extensions load as iframes in extension host") | Asserts cmd iframe is present inside host's `#extensions` container. | No — cmd is a top-level window now (peek://cmd/index.html via cmd-glue.ts). The test's own comment is incorrect. | **delete** the entire test (4181-4217). Replace with: nothing — the existing v2 background tile test at 4219 + cmd-availability is implicitly verified by every other test that opens the cmd panel. |
+| `smoke.spec.ts:4359` (inside "correct window count for hybrid mode" test) | `hostWindows.length).toBe(1)` — exactly one extension-host window exists. | No — host count is implementation detail; what matters is one bg + N tile windows + example. | **rewrite**: drop the `hostWindows` filter + assertion. Keep `bgWindows` and `exampleExtWindows` checks. Update test name comment (4344) to reflect post-host topology. |
+| `smoke.spec.ts:5292` (test "local shortcut from extension-host iframe roundtrip") | Tests `ev.reply` roundtrip when sender is an iframe (BrowserWindow.fromWebContents() returns null). Walks: find host window → find cmd/hud iframe inside → register shortcut → trigger via main → assert callback fires. | **No** — cmd/hud aren't iframes anymore. The frame search at 5316-5320 looks for `peek://cmd/` or `peek://hud/` frames in the host but finds none in current architecture. The roundtrip mechanism (ev.reply for top-level windows) is already covered by "local shortcut from background window roundtrip" earlier in the file. | **delete** the entire test (5291-5371). The iframe-sender variant of ev.reply is no longer a real code path — if no v1 iframes exist in production, the codepath is dead too (and would be removed naturally as part of phase3.6 + extensionBroadcaster simplification). |
+| `smoke.spec.ts:5299` (helper line inside test 5291) | Same as 5292 (it's the implementation of that test). | Same. | Covered by 5292 deletion. |
+| `smoke.spec.ts:5379` (test "global shortcut from extension-host iframe roundtrip") | Same as 5292 but for global shortcuts. Same iframe lookup. | **No** — same reason as 5292. The skipped `'shortcut from external extension window roundtrip'` test at 5435 already documents that v1 iframe shortcut paths are obsolete. | **delete** the entire test (5373-5433). Apply the same rationale as the already-skipped sibling test. |
+| `tests/fixtures/desktop-app.ts:227` (helper `waitForHybridExtensions`) | The fixture polls for the host window and waits for its DOM (`#extensions` div) to be ready before returning. Used as a gate for "extensions are ready". | No — gate is wrong: ready signal should come from v2 tile launch completion, not from the (empty) host's DOM. | **rewrite** to remove the host-window check; gate readiness on `getLoadedTileIds()` (via IPC) or on the bg window publishing a startup-complete signal. If the helper is hard to rewrite in scope, replace with a `waitForFunction` against the bg window that checks `app.extensions.getRunning()` (or v2 equivalent — phase 3.5 will provide `getLoadedTileIds`). |
+| `tests/README.md:140` (docs row "extension host window exists") | Docs only. | No — docs reflect old architecture. | **delete** that table row plus the surrounding rows about iframes (lines 140-141, 148). Update the "Hybrid Extension Mode" section to describe v2 tile topology. |
+
+#### Risk register for 3.6 execution
+
+1. **Lazy v1 extensions:** `loadLazyExtension()` would lose its iframe
+   target. Verified: all 20 ids in `CONSOLIDATED_EXTENSION_IDS` ship as
+   v2 tiles today (spot-checked entities, editor; rest are managed via
+   feature loader); the lazy stub never reaches the iframe-creation
+   branch. **Mitigation:** delete the `loadLazyExtension` function body
+   alongside the host (or convert to a no-op + warning) in phase3.6.
+2. **Third-party / out-of-tree extensions:** none currently. The
+   `example` extension is loaded as a separate window
+   (`peek://ext/example/background.html`), not the host. **Mitigation:**
+   none needed.
+3. **`will-attach-webview` host detection** at `entry.ts:472` checks
+   `address.includes('extension-host.html')`. **Mitigation:** delete
+   that branch in phase3.6 — no host means no host-page webview attach
+   path.
+4. **`INTERNAL_URLS` opener-parent detection** in `ipc.ts:2306`
+   references the host URL. **Mitigation:** drop the entry as part of
+   3.6 (already in plan).
+5. **`extensionBroadcaster` v1 branch** at `main.ts:226-244` iterates
+   host frames. **Mitigation:** delete — no host means no host frames
+   (already in plan).
+
+#### Recommended option for 3.6
+
+**(a) rewrite tests + delete window**, with the per-site actions above
+collapsed to: delete tests 4174-4179, 4181-4217, 5291-5371, 5373-5433;
+trim 1380-1386 and the host filter at 4359-4366; rewrite the fixture
+helper at desktop-app.ts:222-244 to gate on a bg-window readiness
+signal instead of the host DOM; trim README.md:140-141 + 148.
+
+**Net test deletion:** 4 full tests + 2 partial assertions + 1 fixture
+rewrite + 3 README rows. No production code coverage is lost — every
+remaining behaviour is exercised by tests on the v2 tile path.
