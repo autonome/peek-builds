@@ -1109,7 +1109,7 @@ webview.addEventListener('console-message', (e) => {
     try {
       const payload = JSON.parse(jsonStr);
       DEBUG && console.log('[page] Forwarding opener postMessage:', payload);
-      api.invoke('opener-postmessage', payload);
+      api.window.openerPostMessage(payload.message, payload.origin);
     } catch (err) {
       console.error('[page] Failed to parse opener postMessage:', err);
     }
@@ -1119,14 +1119,14 @@ webview.addEventListener('console-message', (e) => {
   // --- Popup opener.close() bridge (Level 4) ---
   if (e.message === '__PEEK_OPENER_CLOSE__') {
     DEBUG && console.log('[page] Popup requested opener.close()');
-    api.invoke('opener-close');
+    api.window.openerClose();
     return;
   }
 
   // --- Popup opener.focus() bridge (Level 4) ---
   if (e.message === '__PEEK_OPENER_FOCUS__') {
     DEBUG && console.log('[page] Popup requested opener.focus()');
-    api.invoke('opener-focus');
+    api.window.openerFocus();
     return;
   }
 });
