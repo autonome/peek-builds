@@ -1303,41 +1303,9 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Context ───────────────────────────────────────────────────────
   //
-  // Dual-path implementation mirroring api.shortcuts:
-  //
-  //   - STRICT: when the tile's manifest declared a `context` capability
-  //     (`true` or `{ read?, write?, modes?, queryWindows? }`), route
-  //     through `tile:context:*`. Main-process handlers validate the
-  //     token + capability shape + per-op gates.
-  //
-  //   - V1-COMPAT: when no context capability was declared, fall back
-  //     to the legacy `context-*` IPC channels. Those remain available
-  //     through the Phase 3/4 migration window.
-  //
-  // The decision is made per-call because `grantedCapabilities` is
-  // populated asynchronously by `initialize()`.
-
-  function hasContextCapability(): boolean {
-    const cc = grantedCapabilities?.context;
-    if (cc === true) return true;
-    if (cc && typeof cc === 'object') return true;
-    return false;
-  }
-
-  const contextCompat = {
-    get: (key: string, windowId: number | null = null) =>
-      ipcRenderer.invoke('context-get', { key, windowId }),
-    set: (key: string, value: unknown, metadata?: unknown, windowId?: number | null) =>
-      ipcRenderer.invoke('context-set', { key, value, metadata, windowId }),
-    history: (key: string, limit?: number) =>
-      ipcRenderer.invoke('context-history', { key, limit }),
-    snapshot: (windowId?: number | null) =>
-      ipcRenderer.invoke('context-snapshot', { windowId }),
-    windowsWithValue: (key: string, value: unknown) =>
-      ipcRenderer.invoke('context-windows-with-value', { key, value }),
-    windowsInSpace: (spaceId: string) =>
-      ipcRenderer.invoke('context-windows-in-space', { spaceId }),
-  };
+  // All renderers using tile-preload have `context` in their capability
+  // grant (feature tiles via manifest; cmd/hud/page via
+  // createTrustedBuiltinGrant). Route through tile:context:* strictly.
 
   const contextStrict = {
     get: (key: string, windowId: number | null = null) =>
@@ -1355,36 +1323,18 @@ function buildAPI(): Record<string, unknown> {
   };
 
   api.context = {
-    get: (key: unknown, windowId: unknown) => {
-      return hasContextCapability()
-        ? contextStrict.get(key as string, (windowId ?? null) as number | null)
-        : contextCompat.get(key as string, (windowId ?? null) as number | null);
-    },
-    set: (key: unknown, value: unknown, metadata: unknown, windowId: unknown) => {
-      return hasContextCapability()
-        ? contextStrict.set(key as string, value, metadata as Record<string, unknown> | undefined, (windowId ?? null) as number | null)
-        : contextCompat.set(key as string, value, metadata, (windowId ?? null) as number | null);
-    },
-    history: (key: unknown, limit: unknown) => {
-      return hasContextCapability()
-        ? contextStrict.history(key as string, limit as number | undefined)
-        : contextCompat.history(key as string, limit as number | undefined);
-    },
-    snapshot: (windowId: unknown) => {
-      return hasContextCapability()
-        ? contextStrict.snapshot((windowId ?? null) as number | null)
-        : contextCompat.snapshot((windowId ?? null) as number | null);
-    },
-    windowsWithValue: (key: unknown, value: unknown) => {
-      return hasContextCapability()
-        ? contextStrict.windowsWithValue(key as string, value)
-        : contextCompat.windowsWithValue(key as string, value);
-    },
-    windowsInSpace: (spaceId: unknown) => {
-      return hasContextCapability()
-        ? contextStrict.windowsInSpace(spaceId as string)
-        : contextCompat.windowsInSpace(spaceId as string);
-    },
+    get: (key: unknown, windowId: unknown) =>
+      contextStrict.get(key as string, (windowId ?? null) as number | null),
+    set: (key: unknown, value: unknown, metadata: unknown, windowId: unknown) =>
+      contextStrict.set(key as string, value, metadata as Record<string, unknown> | undefined, (windowId ?? null) as number | null),
+    history: (key: unknown, limit: unknown) =>
+      contextStrict.history(key as string, limit as number | undefined),
+    snapshot: (windowId: unknown) =>
+      contextStrict.snapshot((windowId ?? null) as number | null),
+    windowsWithValue: (key: unknown, value: unknown) =>
+      contextStrict.windowsWithValue(key as string, value),
+    windowsInSpace: (spaceId: unknown) =>
+      contextStrict.windowsInSpace(spaceId as string),
 
     // ── Convenience aliases ──────────────────────────────────────────
     // These wrap the generic get/set/subscribe surface for the common
@@ -1394,14 +1344,10 @@ function buildAPI(): Record<string, unknown> {
     setMode: (mode: unknown, options?: { metadata?: Record<string, unknown>; windowId?: number | null }) => {
       const metadata = options?.metadata;
       const windowId = (options?.windowId ?? null) as number | null;
-      return hasContextCapability()
-        ? contextStrict.set('mode', mode, metadata, windowId)
-        : contextCompat.set('mode', mode, metadata, windowId);
+      return contextStrict.set('mode', mode, metadata, windowId);
     },
 
-    getMode: () => hasContextCapability()
-      ? contextStrict.get('mode', null)
-      : contextCompat.get('mode', null),
+    getMode: () => contextStrict.get('mode', null),
 
     /**
      * Watch for mode changes.
@@ -1418,9 +1364,7 @@ function buildAPI(): Record<string, unknown> {
         }
       });
       // Fire initial value so caller doesn't have to do a separate getMode().
-      const getPromise = hasContextCapability()
-        ? contextStrict.get('mode', null)
-        : contextCompat.get('mode', null);
+      const getPromise = contextStrict.get('mode', null);
       (getPromise as Promise<unknown>).then((result: unknown) => {
         const r = result as { success?: boolean; data?: unknown; value?: unknown } | null;
         const value = r && typeof r === 'object' ? (('data' in r) ? (r as { data: unknown }).data : (r as { value: unknown }).value) : null;
@@ -1431,9 +1375,8 @@ function buildAPI(): Record<string, unknown> {
       return unsubscribe;
     },
 
-    getWindowsInSpace: (spaceId: unknown) => hasContextCapability()
-      ? contextStrict.windowsInSpace(spaceId as string)
-      : contextCompat.windowsInSpace(spaceId as string),
+    getWindowsInSpace: (spaceId: unknown) =>
+      contextStrict.windowsInSpace(spaceId as string),
   };
 
   // ── Dialogs ───────────────────────────────────────────────────────
