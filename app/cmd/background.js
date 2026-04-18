@@ -47,10 +47,10 @@ let currentSettings = {
  * Load settings from datastore
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
+  const result = await api.settings.get('prefs');
   if (result.success && result.data) {
     return {
-      prefs: result.data.prefs || defaults.prefs
+      prefs: result.data || defaults.prefs
     };
   }
   return { prefs: defaults.prefs };
@@ -60,7 +60,7 @@ const loadSettings = async () => {
  * Save settings to datastore
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set(settings);
+  const result = await api.settings.set('prefs', settings.prefs);
   if (!result.success) {
     log.error('ext:cmd', 'Failed to save settings:', result.error);
   }
