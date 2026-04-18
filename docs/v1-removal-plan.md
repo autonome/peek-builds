@@ -101,9 +101,9 @@ Phase 3 attempt revealed the original plan didn't enumerate a second always-on v
 2. **Webview preload injection in `entry.ts:179`** — every `peek://` webview (widget panes, HUD children, page canvas children) gets the v1 `preload.js` injected via `will-attach-webview`. Switch to `tile-preload.cjs` (or remove if widgets don't need the API).
 3. **`createExtensionWindow()`** — used for external builtins (e.g. `example`) and chrome extensions. Migrate to the v2 tile launcher path or document why it stays.
 4. **Dead-code cleanup that's safe today:** `CONSOLIDATED_EXTENSION_IDS` list (always empty after v2 migration), the `if (consolidatedIds.length > 0)` block in `loadExtensions()`, the `loadExtInHost` helper. Safe to delete now since no v2 feature uses them — preserved only because their removal interacts with smoke tests asserting on `peek://app/extension-host.html` existence.
-5. **Tauri mobile** uses `preload.js` via `include_str!`. That bridge needs its own equivalent before the Electron file can go.
+5. ~~Tauri mobile uses `preload.js` via `include_str!`~~ **Out of scope.** No Tauri/mobile work in this v1-removal pass. If deleting `preload.js` from Electron's path would break Tauri's `include_str!`, copy the file into a Tauri-local path first (e.g. `backend/tauri/src-tauri/src/preload.js`) and update the include — Tauri keeps its v1 surface untouched. The Electron-side cleanup proceeds regardless.
 
-After Phase 2.5: Phase 3 (destructive cleanup) can proceed cleanly.
+After Phase 2.5: Phase 3 (destructive cleanup) can proceed cleanly. Phase 4 (manifest cleanup) follows.
 
 ### Phase 3 — Delete v1 plumbing
 
