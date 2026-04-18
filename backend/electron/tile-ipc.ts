@@ -72,6 +72,8 @@ import {
   deleteItemEvent as dsDeleteItemEvent,
   deleteItemEvents as dsDeleteItemEvents,
   getItemEvent as dsGetItemEvent,
+  addContent as dsAddContent,
+  queryContent as dsQueryContent,
   addContextEntry,
   getContextEntry,
   queryContextHistory,
@@ -80,6 +82,7 @@ import {
   getWindowsMatchingContext,
   normalizeUrl,
 } from './datastore.js';
+import { tagItemAndPublish as dsTagItemAndPublish } from './tag-events.js';
 import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
@@ -160,6 +163,39 @@ function handleViolation(
 function handleDatastoreViolation(token: string | undefined, op: string, reason: string): void {
   const grant = token ? getGrantForToken(token) : null;
   handleViolation(grant, 'datastore', op, reason, token);
+}
+
+/**
+ * Convert an Item to an Address-compatible shape for backward-compat shims.
+ * Mirrors ipc.ts::itemToAddress — kept local so tile-ipc has no hard dep on ipc.ts.
+ */
+function _itemToAddress(item: import('../types/index.js').Item): Record<string, unknown> {
+  let protocol = '';
+  let urlPath = '';
+  try {
+    const u = new URL(String(item.content || ''));
+    protocol = u.protocol.replace(':', '');
+    urlPath = u.pathname;
+  } catch { /* not a valid URL */ }
+  return {
+    id: item.id,
+    uri: item.content || '',
+    protocol,
+    domain: item.domain || '',
+    path: urlPath,
+    title: item.title || '',
+    mimeType: item.mimeType || 'text/html',
+    favicon: item.favicon || '',
+    description: '',
+    tags: '',
+    metadata: item.metadata || '{}',
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    lastVisitAt: item.lastVisitAt || 0,
+    visitCount: item.visitCount || 0,
+    starred: item.starred || 0,
+    archived: item.archived || 0,
+  };
 }
 
 /**
@@ -4485,6 +4521,268 @@ export function registerTileIpcHandlers(): void {
     try {
       const data = dsQueryItemsByFrecency(args.filter as Parameters<typeof dsQueryItemsByFrecency>[0]);
       return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── Address compat shims (redirect to items + backward-compat shape) ──
+
+  ipcMain.handle('tile:datastore:add-address', async (_event, args: {
+    token: string;
+    uri: string;
+    options?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-address', check.error); return { error: check.error }; }
+    try {
+      const opts = args.options || {};
+      const normalizedUri = normalizeUrl(args.uri);
+      const metadata: Record<string, unknown> = {};
+      if (opts.title) metadata.title = opts.title;
+      if (opts.description) metadata.description = opts.description;
+      if (opts.favicon) metadata.favicon = opts.favicon;
+      const result = dsAddItem('url', {
+        content: normalizedUri,
+        mimeType: (opts.mimeType as string) || 'text/html',
+        metadata: JSON.stringify(metadata),
+        starred: (opts.starred as number) || 0,
+        archived: (opts.archived as number) || 0,
+      });
+      if (opts.favicon) {
+        getDb().prepare('UPDATE items SET favicon = ? WHERE id = ?').run(opts.favicon as string, result.id);
+      }
+      publish('system', scopes.GLOBAL, 'item:created', {
+        itemId: result.id, itemType: 'url', content: normalizedUri,
+      });
+      return { success: true, data: result, id: result.id };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-address', async (_event, args: {
+    token: string;
+    id: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-address', check.error); return { error: check.error }; }
+    try {
+      const item = dsGetItem(args.id);
+      if (!item) return { success: true, data: undefined };
+      return { success: true, data: _itemToAddress(item) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:update-address', async (_event, args: {
+    token: string;
+    id: string;
+    updates: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-address', check.error); return { error: check.error }; }
+    try {
+      const updates = args.updates || {};
+      const itemOpts: Record<string, unknown> = {};
+      if (updates.metadata !== undefined) itemOpts.metadata = updates.metadata;
+      if (updates.starred !== undefined) itemOpts.starred = updates.starred;
+      if (updates.archived !== undefined) itemOpts.archived = updates.archived;
+      if (updates.mimeType !== undefined) itemOpts.mimeType = updates.mimeType;
+      if (updates.uri !== undefined) itemOpts.content = updates.uri;
+      dsUpdateItem(args.id, itemOpts);
+      if (updates.title !== undefined) {
+        getDb().prepare('UPDATE items SET title = ?, updatedAt = ? WHERE id = ?').run(updates.title as string, Date.now(), args.id);
+      }
+      if (updates.favicon !== undefined) {
+        getDb().prepare('UPDATE items SET favicon = ?, updatedAt = ? WHERE id = ?').run(updates.favicon as string, Date.now(), args.id);
+      }
+      const updated = dsGetItem(args.id);
+      return { success: true, data: updated ? _itemToAddress(updated) : undefined };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:query-addresses', async (_event, args: {
+    token: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-addresses', check.error); return { error: check.error }; }
+    try {
+      const filter = args.filter || {};
+      const itemFilter: Record<string, unknown> = { type: 'url' };
+      if (filter.domain) itemFilter.domain = filter.domain;
+      if (filter.starred !== undefined) itemFilter.starred = filter.starred;
+      if (filter.sortBy) itemFilter.sortBy = filter.sortBy;
+      if (filter.limit) itemFilter.limit = filter.limit;
+      if (filter.search) itemFilter.search = filter.search;
+      const items = dsQueryItems(itemFilter);
+      return { success: true, data: items.map(_itemToAddress) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:add-visit', async (_event, args: {
+    token: string;
+    addressId: string;
+    options?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_visits']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-visit', check.error); return { error: check.error }; }
+    try {
+      const opts = args.options || {};
+      const result = dsRecordItemVisit(args.addressId, {
+        source: (opts.source as string) || 'direct',
+        sourceId: (opts.sourceId as string) || '',
+        windowType: (opts.windowType as string) || 'main',
+        interacted: (opts.interacted as number) || 0,
+      });
+      return { success: true, data: result, id: result.id };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:query-visits', async (_event, args: {
+    token: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['item_visits']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-visits', check.error); return { error: check.error }; }
+    try {
+      const filter = args.filter || {};
+      const itemFilter: Record<string, unknown> = {};
+      if (filter.addressId) itemFilter.itemId = filter.addressId;
+      if (filter.source) itemFilter.source = filter.source;
+      if (filter.since) itemFilter.since = filter.since;
+      if (filter.until) itemFilter.until = filter.until;
+      if (filter.limit) itemFilter.limit = filter.limit;
+      const visits = dsQueryItemVisits(itemFilter);
+      const mapped = visits.map(v => ({ ...v, addressId: v.itemId }));
+      return { success: true, data: mapped };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:add-content', async (_event, args: {
+    token: string;
+    options?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['content']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-content', check.error); return { error: check.error }; }
+    try {
+      const data = dsAddContent(args.options as Parameters<typeof dsAddContent>[0]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:query-content', async (_event, args: {
+    token: string;
+    filter?: Record<string, unknown>;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['content']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-content', check.error); return { error: check.error }; }
+    try {
+      const data = dsQueryContent(args.filter as Parameters<typeof dsQueryContent>[0]);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:tag-address', async (_event, args: {
+    token: string;
+    addressId: string;
+    tagId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:tag-address', check.error); return { error: check.error }; }
+    try {
+      const result = dsTagItemAndPublish(args.addressId, args.tagId);
+      if (!result.alreadyExists) {
+        const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
+        publish('system', scopes.GLOBAL, 'tag:address-added', {
+          tagId: args.tagId, tagName: tag?.name, addressId: args.addressId,
+        });
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:untag-address', async (_event, args: {
+    token: string;
+    addressId: string;
+    tagId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:untag-address', check.error); return { error: check.error }; }
+    try {
+      const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
+      const result = dsUntagItem(args.addressId, args.tagId);
+      if (result) {
+        publish('system', scopes.GLOBAL, 'tag:address-removed', {
+          tagId: args.tagId, tagName: tag?.name, addressId: args.addressId,
+        });
+        publish('system', scopes.GLOBAL, 'tag:item-removed', {
+          tagId: args.tagId, tagName: tag?.name, itemId: args.addressId,
+        });
+      }
+      return { success: true, data: result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-address-tags', async (_event, args: {
+    token: string;
+    addressId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-address-tags', check.error); return { error: check.error }; }
+    try {
+      const data = dsGetItemTags(args.addressId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-addresses-by-tag', async (_event, args: {
+    token: string;
+    tagId: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-addresses-by-tag', check.error); return { error: check.error }; }
+    try {
+      const items = dsGetItemsByTag(args.tagId);
+      return { success: true, data: items.map(_itemToAddress) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('tile:datastore:get-untagged-addresses', async (_event, args: {
+    token: string;
+  }) => {
+    const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-untagged-addresses', check.error); return { error: check.error }; }
+    try {
+      const items = getDb().prepare(`
+        SELECT i.* FROM items i
+        LEFT JOIN item_tags it ON i.id = it.itemId
+        WHERE i.type = 'url' AND i.deletedAt = 0 AND it.id IS NULL
+        ORDER BY i.visitCount DESC
+      `).all() as import('../types/index.js').Item[];
+      return { success: true, data: items.map(_itemToAddress) };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }

@@ -906,21 +906,21 @@ function buildAPI(): Record<string, unknown> {
     ...datastoreStrict,
     // Address helpers
     addAddress: (uri: string, options?: unknown) =>
-      ipcRenderer.invoke('datastore-add-address', { uri, options }),
+      ipcRenderer.invoke('tile:datastore:add-address', { token: tileToken, uri, options }),
     getAddress: (id: string) =>
-      ipcRenderer.invoke('datastore-get-address', { id }),
+      ipcRenderer.invoke('tile:datastore:get-address', { token: tileToken, id }),
     updateAddress: (id: string, updates: unknown) =>
-      ipcRenderer.invoke('datastore-update-address', { id, updates }),
+      ipcRenderer.invoke('tile:datastore:update-address', { token: tileToken, id, updates }),
     queryAddresses: (filter?: unknown) =>
-      ipcRenderer.invoke('datastore-query-addresses', { filter }),
+      ipcRenderer.invoke('tile:datastore:query-addresses', { token: tileToken, filter }),
     addVisit: (addressId: string, options?: unknown) =>
-      ipcRenderer.invoke('datastore-add-visit', { addressId, options }),
+      ipcRenderer.invoke('tile:datastore:add-visit', { token: tileToken, addressId, options }),
     queryVisits: (filter?: unknown) =>
-      ipcRenderer.invoke('datastore-query-visits', { filter }),
+      ipcRenderer.invoke('tile:datastore:query-visits', { token: tileToken, filter }),
     addContent: (options: unknown) =>
-      ipcRenderer.invoke('datastore-add-content', { options }),
+      ipcRenderer.invoke('tile:datastore:add-content', { token: tileToken, options }),
     queryContent: (filter?: unknown) =>
-      ipcRenderer.invoke('datastore-query-content', { filter }),
+      ipcRenderer.invoke('tile:datastore:query-content', { token: tileToken, filter }),
     getTable: (tableName: string) =>
       ipcRenderer.invoke('datastore-get-table', { tableName }),
     setRow: (tableName: string, rowId: string, rowData: unknown) =>
@@ -930,13 +930,13 @@ function buildAPI(): Record<string, unknown> {
     getStats: () => ipcRenderer.invoke('tile:datastore:get-stats', { token: tileToken }),
     // Tag helpers
     getOrCreateTag: (name: string) =>
-      ipcRenderer.invoke('datastore-get-or-create-tag', { name }),
+      ipcRenderer.invoke('tile:datastore:get-or-create-tag', { token: tileToken, name }),
     tagAddress: (addressId: string, tagId: string) =>
-      ipcRenderer.invoke('datastore-tag-address', { addressId, tagId }),
+      ipcRenderer.invoke('tile:datastore:tag-address', { token: tileToken, addressId, tagId }),
     untagAddress: (addressId: string, tagId: string) =>
-      ipcRenderer.invoke('datastore-untag-address', { addressId, tagId }),
+      ipcRenderer.invoke('tile:datastore:untag-address', { token: tileToken, addressId, tagId }),
     getTagsByFrecency: (domain?: string) =>
-      ipcRenderer.invoke('datastore-get-tags-by-frecency', { domain }),
+      ipcRenderer.invoke('tile:datastore:get-tags-by-frecency', { token: tileToken, domain }),
     renameTag: (tagId: string, newName: string) =>
       ipcRenderer.invoke('tile:datastore:rename-tag', { token: tileToken, tagId, newName }),
     updateTagColor: (tagId: string, color: string) =>
@@ -944,11 +944,11 @@ function buildAPI(): Record<string, unknown> {
     deleteTag: (tagId: string) =>
       ipcRenderer.invoke('tile:datastore:delete-tag', { token: tileToken, tagId }),
     getAddressTags: (addressId: string) =>
-      ipcRenderer.invoke('datastore-get-address-tags', { addressId }),
+      ipcRenderer.invoke('tile:datastore:get-address-tags', { token: tileToken, addressId }),
     getAddressesByTag: (tagId: string) =>
-      ipcRenderer.invoke('datastore-get-addresses-by-tag', { tagId }),
+      ipcRenderer.invoke('tile:datastore:get-addresses-by-tag', { token: tileToken, tagId }),
     getUntaggedAddresses: () =>
-      ipcRenderer.invoke('datastore-get-untagged-addresses', {}),
+      ipcRenderer.invoke('tile:datastore:get-untagged-addresses', { token: tileToken }),
     // Item helpers
     addItem: (type: string, options: unknown = {}) =>
       ipcRenderer.invoke('datastore-add-item', { type, options }),
