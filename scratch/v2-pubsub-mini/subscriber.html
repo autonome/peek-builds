@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>subscriber</title></head>
+<body>
+<h1>subscriber</h1>
+<div id="log"></div>
+<script>
+  window.__received = null;
+  const logEl = document.getElementById('log');
+  function ui(msg) {
+    const d = document.createElement('div');
+    d.textContent = msg;
+    logEl.appendChild(d);
+  }
+  ui('subscriber ready, app=' + (typeof window.app));
+  window.app.rlog('subscriber HTML script running, app=' + (typeof window.app));
+  window.app.subscribe('test-topic', (data) => {
+    window.__received = data;
+    ui('RECEIVED: ' + JSON.stringify(data));
+    window.app.rlog('subscriber callback fired: ' + JSON.stringify(data));
+  });
+  window.app.rlog('subscriber subscribe() returned');
+</script>
+</body>
+</html>

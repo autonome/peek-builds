@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>publisher</title></head>
+<body>
+<h1>publisher</h1>
+<button id="b">publish</button>
+<div id="log"></div>
+<script>
+  const logEl = document.getElementById('log');
+  function ui(msg) {
+    const d = document.createElement('div');
+    d.textContent = msg;
+    logEl.appendChild(d);
+  }
+  ui('publisher ready, app=' + (typeof window.app));
+  window.app.rlog('publisher HTML script running, app=' + (typeof window.app));
+  document.getElementById('b').addEventListener('click', () => {
+    const r = window.app.publish('test-topic', {hello: 'from-button', ts: Date.now()});
+    ui('publish result: ' + JSON.stringify(r));
+  });
+</script>
+</body>
+</html>
