@@ -1666,3 +1666,262 @@ currently unreferenced dead code), add `context: true` to the cmd/hud/
 page trustedBuiltin capability grant in the relevant glue files, delete
 the six `contextCompat` compat branches from `tile-preload.cts`, and
 delete the five legacy `context-*` handlers from `ipc.ts`.
+
+---
+
+### phase3.11-pre — preload.js deletion blockers (2026-04-18)
+
+This audit answers the question: after Wave 2 (3.5–3.10) completes, what
+prevents `preload.js` from being deleted in 3.11b? The 3.7a audit found
+23 channels with live `api.invoke('<channel>', …)` callers in `app/`
+files. This audit identifies those callers precisely, classifies each by
+renderer context (tile-preload vs preload.js), and determines which ones
+are true blockers.
+
+#### Methodology
+
+Searched all `.js` and `.html` files under `app/` and `features/` for:
+- `api.invoke(` (direct channel invocation)
+- `api.send(` / `api.on(` (IPC send/receive)
+- `window.app.invoke(` (DOM-based passthrough)
+- `ipcRenderer.invoke(` (renderer-side raw IPC)
+
+Results: **zero hits in `features/**`**. All live callers are in `app/`.
+
+---
+
+#### Section 1 — Complete `api.invoke(...)` call inventory in `app/`
+
+| File | Line | Channel | Context (-1 line) |
+|------|------|---------|-------------------|
+| `app/index.js` | 489 | `session-save` | `execute: async () => {` |
+| `app/index.js` | 501 | `session-restore-interactive` | `execute: async () => {` |
+| `app/index.js` | 528 | `web-nav-back` | `execute: () =>` |
+| `app/index.js` | 534 | `web-nav-forward` | `execute: () =>` |
+| `app/index.js` | 540 | `web-nav-reload` | `execute: () =>` |
+| `app/index.js` | 547 | `web-nav-state` | `execute: async () => {` |
+| `app/index.js` | 684 | `window-reopen-last-closed` | `api.subscribe('cmd:execute:reopen closed window', …)` |
+| `app/index.js` | 701 | `frontend-ready` | `// Signal to main process that frontend subscribers are ready.` |
+| `app/index.js` | 710 | `session-restore-pending` | `if (p.restoreSession !== false) {` |
+| `app/settings/settings.js` | 281 | `default-browser-status` | `(async () => {` |
+| `app/settings/settings.js` | 296 | `set-default-browser` | `defaultBrowserBtn.textContent = 'Setting...';` |
+| `app/settings/settings.js` | 3147 | `backup-create` | `backupOutput.textContent = 'Creating backup...';` |
+| `app/settings/settings.js` | 3159 | `backup-list` | `backupOutput.textContent = 'Loading...';` |
+| `app/settings/settings.js` | 3186 | `backup-get-config` | `backupBtnRow.appendChild(makeBtn('Open Backup Folder', async () => {` |
+| `app/settings/settings.js` | 3196 | `shell-open-path` | `await api.invoke('backup-get-config'); …` |
+| `app/page/page.js` | 847 | `get-app-prefs` | `(async () => {` |
+| `app/diagnostic.html` | 155 | `backup-create` | `logBackup('Creating Backup', 'Please wait...');` |
+| `app/diagnostic.html` | 169 | `backup-list` | `logBackup('Loading', 'Fetching backup list...');` |
+| `app/diagnostic.html` | 205 | `backup-get-config` | `window.openBackupFolder = async function() {` |
+| `app/diagnostic.html` | 217 | `shell-open-path` | `const configResult = await api.invoke('backup-get-config');` |
+| `app/cmd/commands/page.js` | 148 | `window-devtools` | `// DevTools is handled via IPC directly, not via page.js` |
+
+No `api.send(...)`, `api.on(...)`, `window.app.invoke(...)`, or
+`ipcRenderer.invoke(...)` calls found in any `app/` or `features/` file.
+
+---
+
+#### Section 2 — Channel table
+
+For each unique channel, the table records:
+
+- **Legacy handler in `ipc.ts`?** — `Y` = yes, `entry.ts` = in `entry.ts` not `ipc.ts`.
+- **`tile:*` equivalent in `tile-ipc.ts`?** — `Y` = yes, `N` = no.
+- **Caller files** — where invoked.
+- **Preload used by caller** — `tile-preload` or `preload.js`.
+- **Recommended action.**
+
+| Channel | ipc.ts? | tile:* equiv? | Caller file(s) | Caller preload | Action |
+|---------|---------|---------------|----------------|----------------|--------|
+| `frontend-ready` | entry.ts | N | `app/index.js:701` | tile-preload | **No action needed.** Core renderer uses tile-preload's `api.invoke` trustedBuiltin passthrough. `frontend-ready` lives in `entry.ts` (not ipc.ts); it is NOT in the preload.js legacy surface being deleted. |
+| `session-restore-pending` | entry.ts | N | `app/index.js:710` | tile-preload | **No action needed.** Same reason as `frontend-ready` — `entry.ts` handler, tile-preload trustedBuiltin passthrough. |
+| `session-save` | Y | N | `app/index.js:489` | tile-preload | **Build `tile:session:save` shim.** Caller is core background renderer (tile-preload, trustedBuiltin). Direct preload.js removal unblocks this channel's deletion, but to KEEP the feature working we need either a strict shim or keep the legacy handler. Since core renderer will use trustedBuiltin passthrough, keeping the legacy handler as a named channel is fine until a `tile:session:*` namespace is built out. |
+| `session-restore-interactive` | Y | N | `app/index.js:501` | tile-preload | Same as `session-save`. |
+| `web-nav-back` | Y | N | `app/index.js:528` | tile-preload | **Legacy handler can stay.** Caller is tile-preload trustedBuiltin passthrough — not blocked by preload.js deletion. These are in the "suspected dead in 3.4 audit" bucket (grep found no pl/tp callers). The `app/index.js` callers were missed by the 3.4 grep because that grep only scanned preload.js and tile-preload.cts, not `app/` scripts. These channels are LIVE, not dead. |
+| `web-nav-forward` | Y | N | `app/index.js:534` | tile-preload | Same as `web-nav-back`. LIVE via trustedBuiltin. |
+| `web-nav-reload` | Y | N | `app/index.js:540` | tile-preload | Same. LIVE. |
+| `web-nav-state` | Y | N | `app/index.js:547` | tile-preload | Same. LIVE. |
+| `window-reopen-last-closed` | Y | N | `app/index.js:684` | tile-preload | Same — LIVE via trustedBuiltin. (3.4 audit: "no caller found in pl/tp" — missed this.) |
+| `default-browser-status` | Y | N | `app/settings/settings.js:281` | **preload.js** | **BLOCKER.** `app/settings` has no v2 manifest; settings window gets `preload.js`. |
+| `set-default-browser` | Y | N | `app/settings/settings.js:296` | **preload.js** | **BLOCKER.** Same. |
+| `backup-create` | Y | N | `app/settings/settings.js:3147`, `app/diagnostic.html:155` | **preload.js** | **BLOCKER.** Both files use preload.js. (3.4 audit: "likely dead" — missed these.) |
+| `backup-list` | Y | N | `app/settings/settings.js:3159`, `app/diagnostic.html:169` | **preload.js** | **BLOCKER.** Same. |
+| `backup-get-config` | Y | N | `app/settings/settings.js:3186`, `app/diagnostic.html:205` | **preload.js** | **BLOCKER.** Same. |
+| `shell-open-path` | Y | N | `app/settings/settings.js:3196`, `app/diagnostic.html:217` | **preload.js** | **BLOCKER.** Same. (3.4 audit: "no caller — likely dead" — missed these.) |
+| `get-app-prefs` | Y | N | `app/page/page.js:847` | **preload.js** | **BLOCKER.** Canvas page windows have no tile manifest → get `preload.js`. |
+| `window-devtools` | Y | N | `app/cmd/commands/page.js:148` | tile-preload | **No action needed.** cmd is trustedBuiltin. Channel stays in ipc.ts until cmd migrates to strict `tile:extensions:windowDevtools` path (already exists). |
+
+**3.4 audit correction:** six channels were incorrectly classified as
+"no caller — likely dead" (`backup-get-config`, `backup-create`,
+`backup-list`, `shell-open-path`, `web-nav-back/forward/reload/state`,
+`window-reopen-last-closed`). The 3.4 grep only searched `preload.js`
+and `tile-preload.cts`. Actual callers live in `app/*.js` and
+`app/settings/settings.js` which were NOT grepped. These channels must
+NOT be deleted in 3.11a without first migrating the callers.
+
+Additionally, `frontend-ready` and `session-restore-pending` are NOT in
+`ipc.ts` — they live in `entry.ts` and are outside the v1-removal scope
+entirely. No action needed.
+
+---
+
+#### Section 3 — Renderer context per blocker file
+
+For each file with legacy-preload callers, this section identifies HOW
+the renderer is loaded and why it receives `preload.js`.
+
+The `window-open` handler in `ipc.ts:1022` calls
+`getTileWebPreferencesForUrl(url, …)` to decide which preload to assign
+a new BrowserWindow. That function returns `null` for any URL whose
+`peek://` host is not a registered v2 tile manifest. A `null` result
+falls back to `getPreloadPath()` = `preload.js`.
+
+##### `app/settings/settings.html` + `app/settings/settings.js`
+
+- **Entry point:** opened via `windowManager.createWindow(url, …)` in
+  `app/index.js:58`, which calls `api.window.open(settingsAddress, …)`
+  → `window-open` IPC with url = `peek://app/settings/settings.html`.
+- **URL host:** `app` — not a registered v2 tile (`app/settings/` has no
+  `manifest.json`, no tile registration in `tile-launcher.ts`).
+- **`getTileWebPreferencesForUrl` result:** `null`.
+- **Preload assigned:** `getPreloadPath()` = **`preload.js`**.
+- **Consequence:** All `api.*` calls in `settings.js` come from
+  `preload.js`. The file uses: `api.invoke` (5 direct channels),
+  `api.extensions.*`, `api.theme.*`, `api.adblocker.*`,
+  `api.chromeExtensions.*`, `api.darkMode.*`, `api.sync.*`,
+  `api.profiles.*`, `api.publish`, `api.scopes`.
+- **LOC:** `settings.js` 3491 + `settings.html` 30 = **3521 LOC**.
+- **Blocker classification:** BLOCKER. Cannot delete `preload.js` while
+  this window uses it.
+- **Migration path:** Convert `app/settings/` to a v2 tile. Add
+  `manifest.json` declaring `app/settings/settings.html` as its home
+  entry, add capability grants covering every `api.*` namespace used
+  (window, extensions, theme, adblocker, chromeExtensions, darkMode,
+  sync, profiles, datastore, pubsub). Register via `tile-launcher.ts`.
+  Replace all `api.invoke(...)` calls with structured `api.<ns>.<method>`
+  calls through tile-preload. Estimated budget: 30–45 min (large file).
+  Can be split into 3.11b-settings (manifest + registration) + 3.11b-settings2
+  (port api.* calls).
+
+##### `app/diagnostic.html`
+
+- **Entry point:** `api.window.open('peek://app/diagnostic.html', …)` in
+  `app/index.js:268` → `window-open` IPC with url = `peek://app/diagnostic.html`.
+- **URL host:** `app` — not a registered v2 tile.
+- **Preload assigned:** **`preload.js`**.
+- **API surface:** `api.invoke` (4 direct channels: `backup-create`,
+  `backup-list`, `backup-get-config`, `shell-open-path`),
+  `api.datastore.getTable`.
+- **LOC:** 232 LOC.
+- **Blocker classification:** BLOCKER. However, this is a developer-only
+  diagnostic tool. Lowest-risk migration option: either (a) convert to a
+  minimal v2 tile with `backup` + `datastore` capabilities, or (b) wrap
+  the 4 `api.invoke` calls into proper `api.backup.*` tile methods and
+  add a `tile:backup:*` namespace, then add a manifest. Budget: 20 min.
+
+##### `app/page/page.js` (canvas page host)
+
+- **Entry point:** canvas page windows are created by `window-open` with
+  a WEB URL (e.g. `https://example.com`). `getTileWebPreferencesForUrl`
+  returns `null` for non-`peek://` URLs. The window then loads
+  `peek://app/page/index.html?url=...` as `loadUrl` (ipc.ts:1225), but
+  the preload was already determined against the original `https://` URL
+  — so `preload.js` is used.
+- **Preload assigned:** **`preload.js`** (all canvas page windows).
+- **API surface used by `page.js`:**
+  - `api.invoke('get-app-prefs')` (line 847)
+  - `api.window.*` (getWindowId, setBounds, getBounds, getDisplayInfo,
+    setScrollPosition, openerPostMessage, openerClose, openerFocus)
+  - `api.profiles.getPartition` (line 630)
+  - `api.context.get` / `api.context.setMode` / `api.context.watchMode`
+    (lines 2109, 2119, 2133, 2140)
+  - `api.datastore.*` (updateItemTitle, trackNavigation, queryItems,
+    getItemTags, getTagsByFrecency, getOrCreateTag, tagItem, untagItem)
+  - `api.chromeExtensions.list` / `getUiEntries` (line 3543-3544)
+  - `api.subscribe` / `api.publish` / `api.scopes`
+- **LOC:** `page.js` 3788 + `app/page/index.html` (canvas host) —
+  combined **~4000+ LOC** of preload.js-dependent renderer code.
+- **Blocker classification:** BLOCKER — the largest single blocker.
+- **Migration path:** There is no straightforward v2 tile manifest path
+  for canvas page windows because they are created dynamically with web
+  URLs as their identity. The correct migration is one of:
+  - **(a) Dedicated `page` tile** — register `app/page/index.html` as a
+    v2 tile entry under a `page` tile manifest (`peek://page/page-host.html`
+    or similar), and in the `window-open` handler, use that tile's preload
+    for any canvas window instead of the web URL. This keeps the existing
+    canvas architecture but routes `page.js`'s `api.*` calls through
+    tile-preload. The token would carry `window`, `datastore`, `context`,
+    `profiles`, `chromeExtensions` capabilities + trustedBuiltin.
+    Estimated budget: 30 min (manifest + glue change in ipc.ts:1041-1042).
+  - **(b) Unconditional tile-preload for `peek://app/*`** — in the
+    `window-open` handler, for URLs that will `loadUrl` into
+    `peek://app/page/index.html`, assign a hardcoded tile-preload path +
+    `core` trustedBuiltin token (same as core background). Simpler but
+    gives the canvas window the full trustedBuiltin surface (same risk as
+    current `preload.js` isCore).
+  - **(c) Port `get-app-prefs` to a proper `tile:*` channel** and register
+    `app/page/` as a v2 tile. Requires addressing the full `api.*` surface
+    used by `page.js` — essentially same as option (a) but scoped to the
+    canvas page tile manifest.
+  Option (a) is cleanest architecturally.
+
+---
+
+#### Section 4 — Path-forward recommendation
+
+**True blockers** (renderers running under `preload.js`): 3 renderer
+contexts, ~3753 LOC of consumer code.
+
+**Non-blockers** (callers already on tile-preload trustedBuiltin
+passthrough): `app/index.js` (9 channels), `app/cmd/commands/page.js`
+(1 channel). These do NOT block preload.js deletion but do require the
+corresponding legacy channels to remain in `ipc.ts` until a `tile:*`
+shim is built for each. They represent channels the 3.4 audit
+incorrectly classified as "dead" — they must be removed from the 3.11a
+deletion list.
+
+##### Corrected 3.11a channel list
+
+Remove from the "suspected dead, delete in 3.11a" list:
+- `web-nav-back`, `web-nav-forward`, `web-nav-reload`, `web-nav-state`
+  (live callers: `app/index.js:528, 534, 540, 547` via trustedBuiltin)
+- `window-reopen-last-closed` (live caller: `app/index.js:684` via
+  trustedBuiltin)
+- `backup-get-config`, `backup-create`, `backup-list`, `shell-open-path`
+  (live callers: `app/settings/settings.js` + `app/diagnostic.html`)
+- `default-browser-status`, `set-default-browser` (live callers:
+  `app/settings/settings.js`)
+
+Keep these channels in `ipc.ts` until their callers migrate.
+
+##### Packages needed before 3.11b can execute
+
+| Package | Scope | Budget |
+|---------|-------|--------|
+| **3.11b-settings** | Convert `app/settings/settings.html` to v2 tile: add `manifest.json`, register in `tile-launcher.ts`, add `tile:backup:*` and `tile:shell:open` shims, add `tile:app:default-browser-*` shims, port all `api.invoke()` calls to structured `api.<ns>.*`. Replace remaining preload.js surface with tile-preload equivalents (most already exist: theme, extensions, chromeExtensions, sync, profiles, adblocker all have tile:* channels from Waves 2a–2b). | 45 min — split into 3.11b-settings1 (manifest + registration) + 3.11b-settings2 (api migration) |
+| **3.11b-diagnostic** | Convert `app/diagnostic.html` to v2 tile OR add `tile:backup:create/list/get-config` + `tile:shell:open-path` shims and keep as a core utility with trustedBuiltin. The file is only 232 LOC with 4 direct `api.invoke` calls and 1 `api.datastore.getTable` call — simplest path is option (b): give it a minimal `app` tile entry + trustedBuiltin grant in the window-open handler for `peek://app/diagnostic.html`. | 20 min |
+| **3.11b-page** | Convert canvas page host (`app/page/index.html` → `page.js`) to tile-preload. Add a `page-host` tile manifest or modify the `window-open` handler (ipc.ts:1041) to assign `tile-preload.cjs` with a trustedBuiltin page-host token for all canvas windows. Port `api.invoke('get-app-prefs')` to a `tile:app:get-prefs` shim. The rest of `page.js`'s `api.*` calls already have tile:* equivalents (window, datastore, context, profiles, chromeExtensions, pubsub). | 30 min |
+| **3.11b-nav-session** | Build `tile:nav:*` shims for `web-nav-back/forward/reload/state` and `tile:session:save` + `tile:session:restore-interactive` + `tile:session:reopen-last-closed`. These are called from `app/index.js` via trustedBuiltin passthrough — the channels still need to exist in ipc.ts until tile-preload has strict equivalents, but they do NOT block preload.js deletion (only block the legacy handler deletion in 3.7/3.11c). | 20 min |
+| **3.11b-prefs** | Build `tile:app:get-prefs` shim. Needed by `app/page/page.js:847`. Pairs with 3.11b-page. | (fold into 3.11b-page) |
+
+##### Summary of additional work before 3.11b
+
+1. **Build 3 missing `tile:*` namespaces:** `tile:backup:*` (3 methods),
+   `tile:shell:open-path` (1 method), `tile:app:get-prefs` (1 method).
+   Optionally `tile:nav:*` (4 methods) and `tile:app:default-browser-*`
+   (2 methods) for clean channel removal in 3.11c.
+2. **Migrate 3 renderer contexts** to tile-preload: `app/settings/`,
+   `app/diagnostic.html`, `app/page/` (canvas host).
+3. **Do NOT delete** these 10 channels in 3.11a: `backup-*` (3),
+   `shell-open-path`, `default-browser-*` (2), `web-nav-*` (4),
+   `window-reopen-last-closed`, `get-app-prefs`, `session-save`,
+   `session-restore-interactive`.
+4. **Fastest unblocking path:** 3.11b-diagnostic (20 min) + 3.11b-page
+   (30 min) + the `tile:backup:*` shims (15 min folded into 3.11b-settings1)
+   clear the majority of the surface. `settings.js` at 3491 LOC is the
+   largest single item but can be staged across two spawns.
+
+**Total additional budget before 3.11b:** ~115 min across 4–5 packages.
+Biggest single blocker: `app/settings/settings.js` (3491 LOC, broadest
+API surface, most new tile:* shims needed).
+
