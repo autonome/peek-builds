@@ -46,6 +46,7 @@ const sourceAddress = `peek://${tileId}/${tileEntry}`;
 // The tile must call initialize() which awaits validation.
 
 let tokenValid = false;
+let trustedBuiltin = false;
 let grantedCapabilities: Record<string, unknown> = {};
 let validationPromise: Promise<boolean> | undefined;
 
@@ -56,8 +57,9 @@ function validateToken(): Promise<boolean> {
     tileId,
     tileEntry,
     token: tileToken,
-  }).then((result: { valid: boolean; capabilities?: Record<string, unknown> }) => {
+  }).then((result: { valid: boolean; capabilities?: Record<string, unknown>; trustedBuiltin?: boolean }) => {
     tokenValid = result.valid;
+    trustedBuiltin = result.trustedBuiltin === true;
     if (result.capabilities) {
       grantedCapabilities = result.capabilities;
     }
@@ -403,6 +405,70 @@ function buildAPI(): Record<string, unknown> {
           data: { name },
         });
       }
+    },
+
+    /**
+     * List all registered commands. Mirrors the v1 preload.js behaviour
+     * — publishes `cmd:query-commands` on GLOBAL scope, listens for the
+     * `cmd:query-commands-response` reply. The cmd resident renderer
+     * answers with the full registry.
+     *
+     * Resolves with `{ success: true, data: Array<{name, description,
+     * source, scope?, modes?}> }` on success, or
+     * `{ success: false, data: [], error }` on timeout.
+     *
+     * Used by tests (via bgWindow) and by admin UIs that need to
+     * inspect the global registry from an outside tile.
+     */
+    list: () => {
+      if (!tokenValid) {
+        return Promise.resolve({ success: false, data: [], error: 'tile not initialized' });
+      }
+
+      return new Promise((resolve) => {
+        const topic = 'cmd:query-commands-response';
+        let settled = false;
+
+        const handler = (_event: unknown, msg: unknown) => {
+          if (settled) return;
+          settled = true;
+          ipcRenderer.removeListener(`pubsub:${topic}`, handler);
+          ipcRenderer.send('tile:pubsub:unsubscribe', {
+            token: tileToken,
+            source: sourceAddress,
+            topic,
+          });
+          const data = (msg as { commands?: unknown[] })?.commands || [];
+          resolve({ success: true, data });
+        };
+
+        ipcRenderer.send('tile:pubsub:subscribe', {
+          token: tileToken,
+          source: sourceAddress,
+          topic,
+        });
+        ipcRenderer.on(`pubsub:${topic}`, handler);
+
+        ipcRenderer.send('tile:pubsub:publish', {
+          token: tileToken,
+          source: sourceAddress,
+          scope: 3, // GLOBAL
+          topic: 'cmd:query-commands',
+          data: {},
+        });
+
+        setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          ipcRenderer.removeListener(`pubsub:${topic}`, handler);
+          ipcRenderer.send('tile:pubsub:unsubscribe', {
+            token: tileToken,
+            source: sourceAddress,
+            topic,
+          });
+          resolve({ success: false, data: [], error: 'Timeout querying commands' });
+        }, 3000);
+      });
     },
   };
 
@@ -1802,6 +1868,138 @@ function buildAPI(): Record<string, unknown> {
 
   api.log = (...args: unknown[]) => {
     ipcRenderer.send('renderer-log', { source: sourceAddress, args });
+  };
+
+  // ── Privileged escape hatch (trustedBuiltin only) ────────────────────
+  //
+  // `api.invoke(channel, data)` forwards to `ipcRenderer.invoke(...)` but
+  // ONLY when the token's grant carries `trustedBuiltin: true` (core
+  // renderers: cmd, hud, page, _test). Feature tiles never see this
+  // method — their api.invoke is a no-op that returns an error object.
+  //
+  // The v1 preload.js exposed `api.invoke` gated on `isCore` (i.e.
+  // `sourceAddress.startsWith('peek://app/')`). The test fixture and
+  // core diagnostics rely on it to talk to main-process handlers that
+  // don't (yet) have a tile-surfaced wrapper (backup-*, get-display-
+  // info, extension-*). Under v2 tile mechanics, trustedBuiltin is the
+  // renderer-level equivalent of v1's isCore.
+  //
+  // Two behaviours are possible:
+  //   - trustedBuiltin grant present → forward raw
+  //   - no trustedBuiltin            → return failure
+  // The boolean is populated by the `tile:validate-token` IPC response,
+  // so `api.invoke` must be called after `api.initialize()` resolves
+  // (same rule as every other capability API).
+  api.invoke = (channel: unknown, data?: unknown) => {
+    if (!tokenValid) {
+      return Promise.resolve({
+        success: false,
+        error: 'tile not initialized',
+      });
+    }
+    if (!trustedBuiltin) {
+      return Promise.resolve({
+        success: false,
+        error: 'api.invoke is only available to trustedBuiltin renderers',
+      });
+    }
+    if (typeof channel !== 'string' || channel.length === 0) {
+      return Promise.resolve({
+        success: false,
+        error: 'api.invoke: channel must be a non-empty string',
+      });
+    }
+    return ipcRenderer.invoke(channel, data);
+  };
+
+  // ── Extensions management (test-fixture bgWindow compat) ─────────────
+  //
+  // The v1 preload.js exposed an `api.extensions` surface used by:
+  //   - The test fixture (Playwright tests call `api.extensions.list()`,
+  //     `api.extensions.reload()`, `api.extensions.add()`, etc.)
+  //   - Core admin UIs (features-manager, etc.)
+  //
+  // Each method is a thin wrapper over a named IPC channel in ipc.ts
+  // (`extension-window-list`, `extension-reload`, ...). They don't have
+  // strict `tile:*` equivalents yet; exposing them here keeps the shape
+  // consistent with v1 and unblocks Phase 2 of v1-removal without a
+  // large test rewrite.
+  //
+  // Gated on trustedBuiltin — feature tiles must not be able to manage
+  // other extensions through the tile surface.
+  api.extensions = {
+    list: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-window-list');
+    },
+    listAllRegistered: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-list-all-registered');
+    },
+    reload: (id: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-reload', { id });
+    },
+    devtools: (id: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-window-devtools', { id });
+    },
+    pickFolder: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-pick-folder');
+    },
+    validateFolder: (folderPath: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-validate-folder', { folderPath });
+    },
+    add: (folderPath: string, manifest: unknown, enabled: boolean = false) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-add', { folderPath, manifest, enabled });
+    },
+    remove: (id: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-remove', { id });
+    },
+    update: (id: string, updates: unknown) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-update', { id, updates });
+    },
+    getAll: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-get-all');
+    },
+    get: (id: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('extension-get', { id });
+    },
+    getSettingsSchema: (extId: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.extensions requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('feature-settings-schema', { extId });
+    },
   };
 
   return api;

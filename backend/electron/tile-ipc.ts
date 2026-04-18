@@ -401,6 +401,7 @@ export function registerTileIpcHandlers(): void {
     return {
       valid: true,
       capabilities: record.grant.capabilities,
+      trustedBuiltin: record.grant.trustedBuiltin === true,
     };
   });
 
