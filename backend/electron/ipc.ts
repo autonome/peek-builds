@@ -289,7 +289,7 @@ export function clearLastFocusedVisibleWindowId(windowId: number): void {
 // window.opener.postMessage() calls from popup webviews back to the opener.
 // Populated in setWindowOpenHandler, cleaned up on popup window close.
 
-const popupToOpener = new Map<number, number>();
+export const popupToOpener = new Map<number, number>();
 
 /**
  * Convert an Item to an Address-like shape for backward compatibility.

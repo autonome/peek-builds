@@ -782,6 +782,48 @@ function buildAPI(): Record<string, unknown> {
         token: tileToken,
       });
     },
+
+    /**
+     * Send a postMessage from this popup tile to its opener window.
+     *
+     * Strict path routes through `tile:window:opener-postmessage` which
+     * requires `window.manage`. Intended for popup tiles that communicate
+     * results back to the window that opened them.
+     */
+    openerPostMessage: (message: unknown, origin?: string) => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:opener-postmessage', {
+        token: tileToken,
+        message,
+        origin,
+      });
+    },
+
+    /**
+     * Close the opener window from this popup tile.
+     *
+     * Strict path routes through `tile:window:opener-close` which
+     * requires `window.manage`.
+     */
+    openerClose: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:opener-close', {
+        token: tileToken,
+      });
+    },
+
+    /**
+     * Focus the opener window from this popup tile.
+     *
+     * Strict path routes through `tile:window:opener-focus` which
+     * requires `window.manage`.
+     */
+    openerFocus: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:opener-focus', {
+        token: tileToken,
+      });
+    },
   };
 
   // ── Datastore (if granted) ──

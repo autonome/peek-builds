@@ -40,6 +40,9 @@ import type { CapabilityGrant, WindowCapability } from './tile-manifest.js';
  * - `get-focused-visible-id` — read lastFocusedVisibleWindowId; gated by `query`.
  * - `set-overlay-focus-target` — set overlay restore target; gated by `manage`.
  * - `set-visible-on-all-workspaces` — pin window across macOS Spaces; gated by `manage`.
+ * - `opener-postmessage` — postMessage from a popup to its opener; gated by `manage`.
+ * - `opener-close` — close the opener window from a popup; gated by `manage`.
+ * - `opener-focus` — focus the opener window from a popup; gated by `manage`.
  */
 export type WindowOp =
   | 'open'
@@ -56,7 +59,10 @@ export type WindowOp =
   | 'fullscreen'
   | 'get-focused-visible-id'
   | 'set-overlay-focus-target'
-  | 'set-visible-on-all-workspaces';
+  | 'set-visible-on-all-workspaces'
+  | 'opener-postmessage'
+  | 'opener-close'
+  | 'opener-focus';
 
 export type WindowCheckResult =
   | { ok: true }
@@ -158,7 +164,10 @@ export function checkWindowAllowed(
     case 'maximize':
     case 'fullscreen':
     case 'set-overlay-focus-target':
-    case 'set-visible-on-all-workspaces': {
+    case 'set-visible-on-all-workspaces':
+    case 'opener-postmessage':
+    case 'opener-close':
+    case 'opener-focus': {
       // Mutating / probing an existing window by id is treated as a
       // management operation. Gated by `manage`.
       if (cap.manage !== true) {
