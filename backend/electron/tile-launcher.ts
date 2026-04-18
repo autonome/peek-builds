@@ -616,9 +616,7 @@ export async function unloadTile(tileId: string, entryId: string): Promise<void>
  * Relaunch a tile — re-read the manifest from disk, close the old window
  * (if any), revoke its tokens, then call `launchTile()` with the fresh manifest.
  *
- * This is the v2 replacement for `createExtensionWindow(extId)` used by
- * `reloadExtension()` and `loadDevExtension()` in main.ts. See Phase 2.5 #3b
- * in `docs/v1-removal-plan.md`.
+ * Used by `reloadExtension()` and `loadDevExtension()` in main.ts.
  *
  * Edge cases:
  *  - Tile not currently running (no window): just launches fresh.

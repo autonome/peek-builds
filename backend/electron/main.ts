@@ -17,7 +17,7 @@ import { initHud } from './hud-glue.js';
 import { initPage } from './page-glue.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
-import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, getExternalExtensions, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
+import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
 import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile } from './tile-launcher.js';
@@ -1106,99 +1106,6 @@ export function discoverBuiltinThemes(extensionsDir: string, legacyThemesDir?: s
 }
 
 /**
- * Create an extension window
- *
- * Legacy v1 path — creates a BrowserWindow for a registered extension with the
- * v1 `preload.js`. Still used by `reloadExtension()` (features-manager UI reload
- * button via `api.extensions.reload()`) and `loadDevExtension()` (CLI
- * `--load-extension` flag). The two startup-path callers below
- * (`externalBuiltinIds` + `enabledExternalExts` loops in `loadExtensions()`)
- * are empty in practice — all features in `features/` are v2 and get loaded
- * via `loadV2Tile()`; the `extensions` DB table is superseded by the v2
- * feature registry. See Phase 2.5 #3 audit in AGENT_REPORT.md and
- * `docs/v1-removal-plan.md`.
- *
- * Full removal requires a `relaunchTile(tileId)` helper in tile-launcher.ts —
- * tracked as Phase 2.5 #3b.
- */
-async function createExtensionWindow(extId: string): Promise<BrowserWindow | null> {
-  if (extensionWindows.has(extId)) {
-    DEBUG && console.log(`[ext:win] Extension ${extId} already has a window`);
-    return extensionWindows.get(extId)!.win;
-  }
-
-  const extPath = getExtensionPath(extId);
-  if (!extPath) {
-    console.error(`[ext:win] Extension path not found: ${extId}`);
-    return null;
-  }
-
-  const manifest = loadExtensionManifest(extPath);
-
-  DEBUG && console.log(`[ext:win] Creating window for extension: ${extId}`);
-
-  // Use profile-specific session for isolation
-  const profileSession = getProfileSession();
-
-  const win = new BrowserWindow({
-    show: false,
-    backgroundColor: getSystemThemeBackgroundColor(),
-    webPreferences: {
-      preload: config.preloadPath,
-      session: profileSession,
-      // Disable same-origin policy so extensions can fetch() cross-origin.
-      // These windows only load trusted extension code (peek://ext/{id}/...) —
-      // never user-provided URLs. corsEnabled:false on the scheme isn't sufficient
-      // for peek://ext origins (only peek://app gets implicit cross-origin access).
-      webSecurity: false,
-    }
-  });
-
-  // Forward console logs
-  win.webContents.on('console-message', (event) => {
-    DEBUG && console.log(`[ext:${extId}] ${event.message}`);
-  });
-
-  // Track crashes
-  win.webContents.on('render-process-gone', (event, details) => {
-    console.error(`[ext:win] Extension ${extId} crashed (reason: ${details.reason})`);
-    const entry = extensionWindows.get(extId);
-    if (entry) {
-      entry.status = 'crashed';
-    }
-  });
-
-  // Track close
-  win.on('closed', () => {
-    DEBUG && console.log(`[ext:win] Extension ${extId} window closed`);
-    extensionWindows.delete(extId);
-  });
-
-  extensionWindows.set(extId, { win, manifest, status: 'loading' });
-
-  try {
-    await win.loadURL(`peek://ext/${extId}/background.html`);
-    DEBUG && console.log(`[ext:win] Extension ${extId} loaded successfully`);
-    const entry = extensionWindows.get(extId);
-    if (entry) {
-      entry.status = 'running';
-    }
-
-    // Open devtools for extension in debug mode (not in tests or headless)
-    if (config.isDev && !isTestProfile() && !isHeadless()) {
-      win.webContents.openDevTools({ mode: 'detach', activate: false });
-    }
-
-    return win;
-  } catch (error) {
-    console.error(`[ext:win] Failed to load extension ${extId}:`, error);
-    extensionWindows.delete(extId);
-    win.destroy();
-    return null;
-  }
-}
-
-/**
  * Create the consolidated extension host window
  * All extensions load as iframes within this single window
  */
@@ -1374,22 +1281,6 @@ export async function loadExtensions(): Promise<number> {
     console.error('[ext] Feature startup failed, falling back to legacy-only loading:', err);
   }
 
-  // Get all registered extension IDs
-  const registeredExtIds = getRegisteredExtensionIds();
-
-  // External built-in extensions: registered IDs not in the consolidated list and not loaded by
-  // the v2 tile system. All CONSOLIDATED_EXTENSION_IDS features are v2, so this only catches
-  // any remaining v1 external extensions (e.g. 'example') that aren't in v2FeatureIds.
-  const externalBuiltinIds = registeredExtIds.filter(id =>
-    !CONSOLIDATED_EXTENSION_IDS.includes(id) && isBuiltinExtensionEnabled(id) && !v2FeatureIds.has(id)
-  );
-
-  // Get external extensions from datastore
-  const externalExts = getExternalExtensions();
-  const enabledExternalExts = externalExts.filter(ext => ext.enabled && ext.path);
-
-  DEBUG && console.log(`[ext] Startup: ${externalBuiltinIds.length + enabledExternalExts.length} external`);
-
   // Phase 1: Early
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
 
@@ -1408,26 +1299,6 @@ export async function loadExtensions(): Promise<number> {
   // would try to load the v2 tile through the v1 iframe path.
   registerLazyEventInterceptors({ skipExtensions: v2FeatureIds });
 
-  // Load external built-in extensions (like 'example') as separate windows
-  // Skip declarative-only extensions — they don't need background pages
-  for (const extId of externalBuiltinIds) {
-    if (isDeclarativeOnly(extId)) continue;
-    try { await createExtensionWindow(extId); } catch (e) {
-      console.error(`[ext] Failed to load external built-in extension ${extId}:`, e);
-    }
-  }
-
-  // Load external extensions from datastore as separate windows
-  for (const ext of enabledExternalExts) {
-    if (!extensionWindows.has(ext.id)) {
-      registerExtensionPath(ext.id, ext.path!);
-      try { await createExtensionWindow(ext.id); } catch (e) {
-        console.error(`[ext] Failed to load external extension ${ext.id}:`, e);
-      }
-    }
-  }
-
-  const totalCount = externalBuiltinIds.length + enabledExternalExts.length;
   DEBUG && console.log(`[ext:timing] hybrid total: ${Date.now() - extStart}ms`);
 
   // Phase 3: UI
@@ -1435,9 +1306,9 @@ export async function loadExtensions(): Promise<number> {
 
   // Phase 4: Complete
   publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'complete' });
-  publish('system', scopes.GLOBAL, 'ext:all-loaded', { count: totalCount });
+  publish('system', scopes.GLOBAL, 'ext:all-loaded', { count: 0 });
 
-  return totalCount;
+  return 0;
 }
 
 /**
