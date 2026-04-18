@@ -1,96 +1,159 @@
 # Phase 3 — v1-removal destructive cleanup
 
-## Status
+## Outcome — limited scope, 1 commit
 
-Starting Phase 3. Phase 1 and Phase 2 are landed:
-- cmd/hud/page run on `tile-preload.cts` + `createTrustedBuiltinGrant()` (Phase 1).
-- Playwright test fixture `bgWindow` is `peek://test/index.html` (v2 BrowserWindow via `test-fixture-glue.ts`). `getBackgroundWindow()` returns the v2 renderer. (Phase 2.)
-- URL.origin-for-peek:// broadcast-filter bug fixed in `b8dbc1b8`.
+The Phase 3 preconditions documented in `docs/v1-removal-plan.md` are
+only partially met: Phase 1 (cmd/hud/page on tile-preload) and
+Phase 2 (test fixture on v2 renderer) are landed, but the v1 plumbing
+has more dependencies than the plan enumerated. Most of the targets
+listed in the task are still LIVE at runtime and cannot be deleted
+in this phase without collateral migration work.
 
-## Pre-deletion audit — key findings
+One dead-code path was safely removed; everything else is documented
+here with evidence for the follow-up phase.
 
-### Files already absent (no work needed)
+## Commits in this run
 
-- `app/background.js` — does not exist.
-- `backend/electron/preload.js` — does not exist. v1 preload lives at
-  repo root: `/Users/dietrich/misc/mpeek/preload.js`.
+1. `chore(agent-report): Phase 3 triage — document v1 blockers`
+   (`f2755d5c`)
+2. `refactor main: delete dead loadExtensionsConsolidated — no callers,
+   stale path` (`744fd220`) — removed 59-line dead function in
+   `backend/electron/main.ts`. Not called anywhere; documented "kept
+   for compatibility" but actual loader is `loadExtensions()` which
+   incorporates the logic inline. No references outside a stale docs
+   mention.
 
-### v1 preload.js (root) — STILL LIVE
+## Validation after commit `744fd220`
 
-Referenced from:
-- `backend/electron/entry.ts:149` — `getPreloadPath()` consumer;
-  assigned as preload for background window (main.ts:2109), webviews
-  loading `peek://` URLs (entry.ts:179), and window.open callbacks
-  (ipc.ts:2296, ipc.ts:2698).
-- `backend/tauri/src-tauri/src/lib.rs:30` — `include_str!` for Tauri
-  (mobile) backend to inject as main-world script.
-- Cross-cutting: v1 tiles (remaining consolidated features, external
-  extensions, `app/background.html` / `WEB_CORE_ADDRESS`) depend on
-  the v1 `window.app` surface.
+All six quick tests pass, plus full unit suite:
 
-**Cannot delete in Phase 3.** Requires migrating:
-- `WEB_CORE_ADDRESS` background window to a v2 renderer.
-- All remaining consolidated v1 feature extensions (there is still a
-  `CONSOLIDATED_EXTENSION_IDS` list with ~20 features that load via
-  `loadExtInHost` into `extensionHostWindow` with `preload.js`).
-- External chrome-style extensions loaded via `createExtensionWindow`.
+| Test | Status |
+| --- | --- |
+| yarn test:unit (2220 tests) | pass |
+| v2 trustedBuiltin tile → v2 pubsub round-trip | pass |
+| direct pubsub kagi execution works (control) | pass |
+| tag command with # prefixed tags stores tags without prefix | pass |
+| open and close settings | pass |
+| HUD (11 tests) | pass |
+| Group Mode Context (5 tests) | pass |
 
-### `app/background.html` — STILL LIVE (as WEB_CORE_ADDRESS)
+LOC reduction: -59 lines (one function).
 
-Referenced from `backend/config.ts:12` as `WEB_CORE_ADDRESS`. Loaded
-by `createBackgroundWindow()` in `main.ts:2116`. Plus session.ts and
-ipc.ts special-case it as an internal URL never saved/restored.
+## Targets from the task — disposition
 
-Plan's Part A says this was replaced by `app/_test/index.html` for the
-test fixture, and implies it's deletable. But `createBackgroundWindow`
-is a separate code path (the core app's persistent window) still
-pointed at it. This is OUT of Phase 3's safe scope.
+### Part A — frontend / test side
 
-### `extensionHostWindow` / `loadExtInHost` / `extensionWindows` — STILL LIVE
+- `app/background.html` — **KEPT.** It is the target of
+  `WEB_CORE_ADDRESS` (`backend/config.ts:12`). Loaded at startup by
+  `createBackgroundWindow()` in `main.ts:2097` (called unconditionally
+  from `entry.ts:780`). Runs `app/index.js` — the core app logic
+  (session manager, pubsub hub, etc.). Cannot delete without migrating
+  this core window to a v2 renderer. Not Phase 3 scope.
+- `app/background.js` — **already absent** (tree has no such file).
 
-Used to load ~20 remaining v1 feature extensions (CONSOLIDATED_EXTENSION_IDS)
-as iframes in a single shared host window. Features not yet migrated
-to v2 include: editor, groups, lex, lists, peeks, search, slides,
-spaces, websearch, windows, files, pagestream, sheets, tags, feeds,
-helpdocs, entities, scripts, timers, wonderwall.
+### Part B — preload + glue
 
-**Cannot delete in Phase 3.** This was the understanding stated in
-v1-removal-plan.md's Option A2 ("keep test fixture out of v1 cleanup"
-— but also applies to v1 features).
+- `backend/electron/preload.js` — **already absent** (tree has no such
+  file). The file that plays this role lives at repo root:
+  `/Users/dietrich/misc/mpeek/preload.js`.
+- Root `preload.js` (v1) — **KEPT.** Live consumers:
+  - `backend/electron/entry.ts:149` captures the path via
+    `setPreloadPath()` and installs it on every `peek://` webview in
+    `will-attach-webview` (entry.ts:179).
+  - `backend/electron/main.ts:2098` uses it as the preload for
+    `createBackgroundWindow()` (the WEB_CORE_ADDRESS window).
+  - `backend/electron/ipc.ts:2296, 2698` use it as the window-open
+    fallback for non-v2 tile URLs.
+  - `backend/tauri/src-tauri/src/lib.rs:30` reads it via
+    `include_str!` for Tauri (mobile) backend.
+  All of these need migration before this file can go.
+- tile-preload.cts legacy fallback branches — **KEPT.** The plan says
+  these become unconditional strict-only once v1 is gone. With v1 still
+  present (see above), converting could break any v2 tile whose
+  manifest omits a capability. ~10 affected methods under
+  `window.*`, `datastore.*`, `context.*`, `feature-registry/install/update`,
+  `oauth`, `sync`. Audit cost exceeds remaining budget.
 
-### tile-preload.cts legacy fallback branches — CONDITIONAL
+### Part C — main process IPC + window mgmt
 
-The plan's idea is "these become unconditional strict paths once v1 is
-deleted". But v1 isn't deleted (see above). Converting these to strict
-would break any v2 tile that doesn't declare the relevant capability —
-unclear if any exist, but audit cost exceeds budget.
+- `extensionHostWindow`, `loadExtInHost`, `extensionWindows` — **KEPT.**
+  - `extensionHostWindow` is created unconditionally in `loadExtensions()`
+    via `createExtensionHostWindow()` (main.ts:1383) and loads
+    `peek://app/extension-host.html`.
+  - Playwright contracts assert its existence: `smoke.spec.ts:4177,
+    4189, 4359, 5299, 5379` and `README.md:140`.
+  - The v1 portion of `extensionBroadcaster` iterates
+    `extensionHostWindow.webContents.mainFrame.framesInSubtree` —
+    dead at runtime (no frames are added) but live code path.
+  - `loadExtInHost` is only called from within `loadExtensions()`'s
+    nested CONSOLIDATED_EXTENSION_IDS loops. Those loops are dead at
+    runtime because every feature is now `manifestVersion: 2` so
+    `consolidatedIds` is always empty — the `if (consolidatedIds.length
+    > 0)` block never enters. Deletion is technically safe but omits
+    updating `getRunningExtensions()` and the smoke tests that still
+    reference the host as "consolidated extension home".
+  - `extensionWindows` is the external-extension window map. Populated
+    by `createExtensionWindow()` — still called for `externalBuiltinIds`
+    and `enabledExternalExts`. Live.
+- Legacy IPC handlers in `ipc.ts` — **KEPT.**
+  - `ipcMain.handle('window-open')` (ipc.ts:3466), `handle('window-close')`
+    (3535) — called by root preload.js and by tile-preload fallback paths.
+  - `ipcMain.on(IPC_CHANNELS.PUBLISH/SUBSCRIBE)` (4460/4466) — called
+    by root preload.js lines 50, 68, 82, 163, 206, 233, 251, 508, 1288,
+    1292, 1331+ (many places).
+  - `cmd-result` — not yet audited, but likely live via the same
+    preload-mediated path.
 
-## What is actually doable in Phase 3
+### Part D — types / consts cleanup
 
-Given the above, the ONLY deletions that are safe within the 90-minute
-budget without scope creep are very small or none. The plan's Phase 3
-preconditions (Phase 1 AND Phase 2 AND all v1 features migrated) are
-not all met — only Phase 1 + Phase 2 are complete, with ~20 v1 features
-still loading via `extensionHostWindow` + `preload.js`.
+- `IPC_CHANNELS` const — **KEPT.** Every member is referenced by live
+  `ipcMain.on` handlers in `ipc.ts` plus the v1 preload, plus mobile
+  (Tauri) backend reads from the same file.
 
-Plan for this run:
+## Architectural observation — "Phase 2.5" is needed
 
-1. Commit this triage stub (documents the blocker).
-2. Investigate tile-preload.cts fallback conversions that are proven
-   dead (no v2 tile could hit the fallback) — this is the one slice
-   that might be safely unwound without touching shared plumbing.
-3. If no safe slices, commit a follow-up doc note to `v1-removal-plan.md`
-   explaining that Phase 3 requires Phase 2.5 — "migrate remaining v1
-   features to v2" — and exit.
+The plan's Phase 3 envisions a clean sweep after test-fixture migration,
+but the real blocker is broader:
 
-## Open items for Phase 4 / a future "Phase 2.5"
+- `createBackgroundWindow()` → `WEB_CORE_ADDRESS` → `app/background.html`
+  → `app/index.js` is an entire second v1 code path that was not
+  enumerated in the plan. It is always-on core infrastructure.
+- `entry.ts` injects v1 preload into every peek:// webview — widget
+  panes, HUD children, etc.
+- `createExtensionWindow()` (external extensions incl. Chrome extensions)
+  still uses v1 preload paths.
 
-- Migrate `CONSOLIDATED_EXTENSION_IDS` features off `loadExtInHost` to
-  v2 tile launcher (each one: manifest capabilities, tile-preload).
-- Migrate `createBackgroundWindow()` / `WEB_CORE_ADDRESS` to v2.
-- Migrate `createExtensionWindow()` (external extensions).
-- Audit `session.ts`, `ipc.ts` INTERNAL_URLS, `session.test.ts`,
-  `closed-window.test.ts` for `peek://app/background.html` references
-  after migration.
-- Tauri `lib.rs` reads `preload.js` via `include_str!` — ensure parity
-  of any replacement for mobile backend.
+Phase 3 as planned requires those to be migrated first.
+
+## Follow-up items for Phase 2.5 / Phase 4
+
+1. Migrate `createBackgroundWindow()` (`WEB_CORE_ADDRESS`) to a v2
+   renderer — either split `app/index.js` into a tile or promote it
+   so it no longer needs v1 `window.app`.
+2. Migrate `peek://` webview preload injection in `entry.ts:179` to
+   tile-preload (or remove entirely if widgets no longer need the
+   v1 API).
+3. Audit `createExtensionWindow()` callers (external built-ins like
+   `example`, third-party installable extensions) — migrate to the v2
+   tile launcher path.
+4. Remove the `CONSOLIDATED_EXTENSION_IDS` list — every feature now
+   reports `manifestVersion: 2`, so this list only affects dead
+   filtering.
+5. Remove the dead iframe-load code in `loadExtensions()` (the
+   `if (consolidatedIds.length > 0)` block plus the `loadExtInHost`
+   helper). Safe once the CONSOLIDATED list is gone.
+6. Once v1 preload.js has no consumers in Electron, inline the Tauri
+   bridge's equivalent functions so `include_str!("../../preload.js")`
+   can be swapped for the mobile-specific implementation, then delete
+   the Electron file.
+7. Update `smoke.spec.ts` assertions on `peek://app/extension-host.html`
+   once the consolidated host is gone.
+8. Flip tile-preload.cts fallback branches to unconditional strict —
+   one method per commit with a validation pass each.
+9. Delete `IPC_CHANNELS` const + handlers after root preload.js is gone.
+
+## Files touched
+
+- `AGENT_REPORT.md` — this report (triage commit + final).
+- `backend/electron/main.ts` — removed `loadExtensionsConsolidated`
+  (59 lines).
