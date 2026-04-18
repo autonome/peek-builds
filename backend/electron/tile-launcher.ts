@@ -45,8 +45,9 @@ import {
   clearAllTokens,
 } from './tile-tokens.js';
 import { scopes, publish, getSystemAddress, unsubscribeAllByPrefix } from './pubsub.js';
-import { DEBUG } from './config.js';
+import { DEBUG, getTilePreloadPath } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
+import { getExtensionPath } from './protocol.js';
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks
 // before the BrowserWindow is forcibly closed. Kept small so app-quit and
@@ -609,6 +610,71 @@ export async function unloadTile(tileId: string, entryId: string): Promise<void>
   revokeTokensForTile(tileId, entryId);
 
   DEBUG && console.log(`[tile-launcher] Unloaded tile: ${key}`);
+}
+
+/**
+ * Relaunch a tile — re-read the manifest from disk, close the old window
+ * (if any), revoke its tokens, then call `launchTile()` with the fresh manifest.
+ *
+ * This is the v2 replacement for `createExtensionWindow(extId)` used by
+ * `reloadExtension()` and `loadDevExtension()` in main.ts. See Phase 2.5 #3b
+ * in `docs/v1-removal-plan.md`.
+ *
+ * Edge cases:
+ *  - Tile not currently running (no window): just launches fresh.
+ *  - Window already destroyed: skips close, still revokes tokens and relaunches.
+ *  - Manifest no longer parseable: returns null (logs error).
+ *  - `getTilePreloadPath()` not configured: returns null (logs error).
+ */
+export async function relaunchTile(tileId: string): Promise<TileLaunchResult | null> {
+  const tilePath = getExtensionPath(tileId);
+  if (!tilePath) {
+    console.error(`[tile-launcher] relaunchTile: no path registered for tile ${tileId}`);
+    return null;
+  }
+
+  const tilePreloadPath = getTilePreloadPath();
+  if (!tilePreloadPath) {
+    console.error(`[tile-launcher] relaunchTile: tile preload path not configured — call initialize() first`);
+    return null;
+  }
+
+  // Re-read manifest from disk so any changes (e.g. during dev reload) are picked up.
+  const manifestPath = path.join(tilePath, 'manifest.json');
+  const parsed = parseManifestFile(manifestPath);
+  if (!parsed || parsed.version !== 'v2' || !parsed.v2) {
+    console.error(`[tile-launcher] relaunchTile: cannot re-read v2 manifest for ${tileId} at ${manifestPath}`);
+    return null;
+  }
+  const manifest = parsed.v2;
+
+  // Determine which entry to (re)launch — use the first entry, matching the
+  // pattern used in loadV2Tile / tile-compat.
+  const entry = manifest.tiles[0];
+  if (!entry) {
+    console.error(`[tile-launcher] relaunchTile: manifest for ${tileId} has no tile entries`);
+    return null;
+  }
+
+  // Close the existing window if one is running.
+  const existingWin = tileWindows.get(`${tileId}:${entry.id}`);
+  if (existingWin && !existingWin.isDestroyed()) {
+    // Use unloadTile for clean shutdown (shutdown signal + token revoke + unsubscribe).
+    await unloadTile(tileId, entry.id);
+  } else {
+    // No live window — still revoke any stale tokens from a previous run.
+    revokeTokensForTile(tileId, entry.id);
+    loadedManifests.delete(tileId);
+  }
+
+  DEBUG && console.log(`[tile-launcher] Relaunching ${tileId}:${entry.id} from ${tilePath}`);
+
+  return launchTile({
+    tilePath,
+    manifest,
+    preloadPath: tilePreloadPath,
+    entryId: entry.id,
+  });
 }
 
 // ─── Test Hooks ──────────────────────────────────────────────────────
