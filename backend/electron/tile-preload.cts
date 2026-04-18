@@ -1622,9 +1622,7 @@ function buildAPI(): Record<string, unknown> {
   api.izui = {
     isTransient: async () => {
       if (!hasIzuiCapability()) {
-        // Fall back to the legacy channel so existing callers keep
-        // working until manifests are updated to declare `izui: true`.
-        return ipcRenderer.invoke('izui-is-transient');
+        throw new Error('[tile-preload] api.izui.isTransient() requires the izui capability in your tile manifest');
       }
       const result = await ipcRenderer.invoke('tile:izui:is-transient', { token: tileToken });
       if (result && typeof result === 'object' && 'transient' in result) {
@@ -1633,7 +1631,7 @@ function buildAPI(): Record<string, unknown> {
       return result;
     },
     getEffectiveMode: async () => {
-      if (!hasIzuiCapability()) return ipcRenderer.invoke('izui-get-effective-mode');
+      if (!hasIzuiCapability()) throw new Error('[tile-preload] api.izui.getEffectiveMode() requires the izui capability in your tile manifest');
       const result = await ipcRenderer.invoke('tile:izui:get-effective-mode', { token: tileToken });
       if (result && typeof result === 'object' && 'mode' in result) {
         return (result as { mode: string }).mode;
@@ -1641,7 +1639,7 @@ function buildAPI(): Record<string, unknown> {
       return result;
     },
     getState: async () => {
-      if (!hasIzuiCapability()) return ipcRenderer.invoke('izui-get-state');
+      if (!hasIzuiCapability()) throw new Error('[tile-preload] api.izui.getState() requires the izui capability in your tile manifest');
       const result = await ipcRenderer.invoke('tile:izui:get-state', { token: tileToken });
       if (result && typeof result === 'object' && 'state' in result) {
         return (result as { state: unknown }).state;
@@ -1649,7 +1647,7 @@ function buildAPI(): Record<string, unknown> {
       return result;
     },
     getPreOverlayFocusTarget: async () => {
-      if (!hasIzuiCapability()) return ipcRenderer.invoke('izui-get-pre-overlay-focus-target');
+      if (!hasIzuiCapability()) throw new Error('[tile-preload] api.izui.getPreOverlayFocusTarget() requires the izui capability in your tile manifest');
       const result = await ipcRenderer.invoke('tile:izui:get-pre-overlay-focus-target', { token: tileToken });
       if (result && typeof result === 'object' && 'target' in result) {
         return (result as { target: unknown }).target;
@@ -1657,7 +1655,7 @@ function buildAPI(): Record<string, unknown> {
       return result;
     },
     closeSelf: () => {
-      if (!hasIzuiCapability()) return ipcRenderer.invoke('izui-close-self');
+      if (!hasIzuiCapability()) throw new Error('[tile-preload] api.izui.closeSelf() requires the izui capability in your tile manifest');
       return ipcRenderer.invoke('tile:izui:close-self', { token: tileToken });
     },
   };

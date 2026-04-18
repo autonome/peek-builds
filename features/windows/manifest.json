@@ -42,7 +42,8 @@
     },
     "commands": true,
     "shortcuts": true,
-    "settings": true
+    "settings": true,
+    "izui": true
   },
   "commands": [
     {

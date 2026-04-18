@@ -70,13 +70,6 @@ let _sessionRestoreDoneResolve: (() => void) | null = null;
 const _sessionRestoreDonePromise = new Promise<void>(resolve => { _sessionRestoreDoneResolve = resolve; });
 let _sessionRestoreDone = false;
 
-// Extension windows: extId -> { win, manifest, status }
-const extensionWindows = new Map<string, {
-  win: BrowserWindow;
-  manifest: unknown;
-  status: 'loading' | 'running' | 'crashed';
-}>();
-
 // Extension host window for built-in extensions (consolidated mode)
 let extensionHostWindow: BrowserWindow | null = null;
 
@@ -241,20 +234,6 @@ export async function initialize(): Promise<void> {
         }
       } catch {
         // Window may have been destroyed between check and send (during shutdown)
-      }
-    }
-
-    // Broadcast to separate extension windows (external extensions)
-    for (const [extId, entry] of extensionWindows) {
-      if (entry.win && !entry.win.isDestroyed() && entry.status === 'running') {
-        try {
-          entry.win.webContents.send(`pubsub:${topic}`, {
-            ...(msg as object),
-            source
-          });
-        } catch {
-          // Window may have been destroyed between check and send (during shutdown)
-        }
       }
     }
 
@@ -1336,17 +1315,6 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
     }
   }
 
-  // Add separate window extensions
-  for (const [extId, entry] of extensionWindows) {
-    if (entry.status === 'running') {
-      running.push({
-        id: extId,
-        manifest: entry.manifest,
-        status: entry.status
-      });
-    }
-  }
-
   // Add declarative-only extensions (no background page, but still active)
   for (const extId of declarativeExtensions) {
     // Skip if already included (shouldn't happen, but be safe)
@@ -1362,8 +1330,7 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
   }
 
   // Add v2 tiles launched by the tile-launcher as separate BrowserWindows.
-  // These aren't in loadedConsolidatedExtensions (that's for iframes in the host)
-  // or extensionWindows (that's for legacy external extensions).
+  // These aren't in loadedConsolidatedExtensions (that's for iframes in the host).
   for (const tileId of getLoadedTileIds()) {
     if (running.some(r => r.id === tileId)) continue;
     if (!isBuiltinExtensionEnabled(tileId)) continue;
@@ -1395,11 +1362,6 @@ export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unkn
       }
     }
   }
-  for (const [extId, entry] of extensionWindows) {
-    if (entry.status === 'running') {
-      runningSet.add(extId);
-    }
-  }
   for (const extId of declarativeExtensions) {
     runningSet.add(extId);
   }
@@ -1417,42 +1379,6 @@ export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unkn
   return result;
 }
 
-/**
- * Destroy an extension window
- */
-export function destroyExtensionWindow(extId: string): boolean {
-  const entry = extensionWindows.get(extId);
-  if (!entry) {
-    DEBUG && console.log(`[ext:win] No window to destroy for: ${extId}`);
-    return false;
-  }
-
-  DEBUG && console.log(`[ext:win] Destroying window for: ${extId}`);
-
-  if (entry.win && !entry.win.isDestroyed()) {
-    try {
-      entry.win.webContents.send('pubsub:app:shutdown', {});
-    } catch {
-      // Window may have been destroyed between check and send
-    }
-    setTimeout(() => {
-      if (!entry.win.isDestroyed()) {
-        entry.win.destroy();
-      }
-    }, 100);
-  }
-
-  extensionWindows.delete(extId);
-  return true;
-}
-
-/**
- * Get an extension window
- */
-export function getExtensionWindow(extId: string): BrowserWindow | null {
-  const entry = extensionWindows.get(extId);
-  return entry ? entry.win : null;
-}
 
 /**
  * Get the extension host window (for consolidated/builtin extensions)
@@ -1528,7 +1454,6 @@ export async function loadDevExtensions(): Promise<number> {
  */
 export function cleanupDevExtensions(): void {
   for (const [extId] of devExtensions) {
-    destroyExtensionWindow(extId);
     DEBUG && console.log(`[ext:dev] Cleaned up dev extension: ${extId}`);
   }
   devExtensions.clear();

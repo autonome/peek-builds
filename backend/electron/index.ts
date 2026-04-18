@@ -147,8 +147,6 @@ export {
   discoverBuiltinThemes,
   loadExtensions,
   getRunningExtensions,
-  destroyExtensionWindow,
-  getExtensionWindow,
   // Dev extension support (CLI --load-extension)
   registerDevExtension,
   loadDevExtension,

@@ -94,8 +94,6 @@ import {
 } from './protocol.js';
 
 import {
-  destroyExtensionWindow,
-  getExtensionWindow,
   getExtensionHostWindow,
   isConsolidatedExtension,
   getRunningExtensions,
@@ -1208,9 +1206,6 @@ export function registerExtensionHandlers(): void {
         return { success: false, error: `Extension ${extId} not found` };
       }
 
-      // Unload if running
-      destroyExtensionWindow(extId);
-
       // Remove from database
       db.prepare('DELETE FROM extensions WHERE id = ?').run(extId);
       db.prepare('DELETE FROM feature_settings WHERE featureId = ?').run(extId);
@@ -1294,20 +1289,10 @@ export function registerExtensionHandlers(): void {
   });
 
   // Note: `extension-window-load` and `extension-window-reload` were removed
-  // in Phase 2.5 #3 (dead handlers — no renderer invoked them). Extension
-  // reload now flows through `extension-reload` (ipc.ts below), which is the
-  // channel exposed via `api.extensions.reload()` from tile-preload.cts.
-  ipcMain.handle('extension-window-unload', async (ev, data) => {
-    try {
-      const extId = data.id;
-      const result = destroyExtensionWindow(extId);
-      return { success: result, data: { id: extId } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
+  // Note: `extension-window-load`, `extension-window-reload`, and
+  // `extension-window-unload` were removed in Phase 3.2 (dead handlers —
+  // extensionWindows map was always empty after Phase 2.5 #3).
+  // Extension reload now flows through `extension-reload` below.
   ipcMain.handle('extension-window-list', async () => {
     try {
       const running = getRunningExtensions();
@@ -1342,13 +1327,8 @@ export function registerExtensionHandlers(): void {
         return { success: true, data: { id: extId, isConsolidated: true } };
       }
 
-      // External extensions have their own windows
-      const win = getExtensionWindow(extId);
-      if (!win) {
-        return { success: false, error: `Extension ${extId} is not running` };
-      }
-      win.webContents.openDevTools({ mode: 'detach' });
-      return { success: true, data: { id: extId } };
+      // v2 tile or unknown — extensionWindows map removed in Phase 3.2
+      return { success: false, error: `Extension ${extId} is not running as a legacy window` };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
