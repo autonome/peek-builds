@@ -12,8 +12,10 @@
  * Commands and shortcuts are registered imperatively here (unlike features
  * that declare them in manifest.json) — there is no manifest for HUD.
  *
- * Runs inside the consolidated extension host iframe (peek://hud/background.html),
- * with backcompat access at peek://ext/hud/background.html.
+ * Runs inside the resident HUD renderer (`peek://hud/index.html`) — a
+ * standalone BrowserWindow created by hud-glue.ts with tile-preload.cjs
+ * and a trustedBuiltin capability grant, so every `tile:*` IPC call
+ * bypasses capability enforcement.
  */
 
 const api = window.app;
@@ -73,7 +75,7 @@ const buildDefaultSheetConfig = () => {
 const CURRENT_CONFIG_VERSION = 2;
 
 const ensureSheetConfig = async () => {
-  const result = await api.settings.getKey(HUD_SHEET_KEY);
+  const result = await api.settings.get(HUD_SHEET_KEY);
   if (result.success && result.data) {
     if (result.data.version && result.data.version >= CURRENT_CONFIG_VERSION) {
       return result.data;
@@ -82,7 +84,7 @@ const ensureSheetConfig = async () => {
 
   // Create default config (or upgrade)
   const config = buildDefaultSheetConfig();
-  await api.settings.setKey(HUD_SHEET_KEY, config);
+  await api.settings.set(HUD_SHEET_KEY, config);
   return config;
 };
 
@@ -254,7 +256,7 @@ const init = async () => {
   // App focus hide/show is handled in backend/electron/hud-glue.ts
   // (did-resign-active / did-become-active) for reliability — alwaysOnTop
   // windows are hidden/shown directly without pubsub round-trip.
-  api.subscribe('app:focus-changed', (msg) => {
+  api.pubsub.subscribe('app:focus-changed', (msg) => {
     appFocused = !!msg.focused;
   }, api.scopes.GLOBAL);
 
