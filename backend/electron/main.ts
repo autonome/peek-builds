@@ -1424,8 +1424,15 @@ export async function loadExtensions(): Promise<number> {
   // Load the extension host and cmd FIRST — cmd owns the command registry.
   // Any feature that publishes cmd:register or cmd:register-batch must find
   // cmd already subscribed, otherwise registration is lost.
+  // cmd now runs as a standalone tile renderer (tile-preload + trustedBuiltin
+  // grant) — no longer loaded as an iframe in the consolidated extension host.
   const host = await createExtensionHostWindow();
-  await initCmd({ host, loadExtInHost, waitForExtLoaded });
+  await initCmd({ tilePreloadPath });
+  // Keep cmd visible to getRunningExtensions(): the set is documented as
+  // "consolidated iframe extensions" but is the logical "core renderer is up"
+  // tracker used by the Features pane. Adding cmd here preserves that
+  // surfacing now that the renderer is a standalone BrowserWindow.
+  loadedConsolidatedExtensions.add('cmd');
 
   // Load HUD right after cmd — it's core app infrastructure like cmd, and
   // registers the `hud` command + CmdOrCtrl+H shortcut via the portable api.
