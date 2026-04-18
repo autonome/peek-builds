@@ -145,8 +145,6 @@ export {
   initialize,
   discoverBuiltinExtensions,
   discoverBuiltinThemes,
-  createExtensionWindow,
-  loadEnabledExtensions,
   loadExtensions,
   getRunningExtensions,
   destroyExtensionWindow,

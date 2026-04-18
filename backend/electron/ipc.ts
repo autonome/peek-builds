@@ -94,7 +94,6 @@ import {
 } from './protocol.js';
 
 import {
-  createExtensionWindow,
   destroyExtensionWindow,
   getExtensionWindow,
   getExtensionHostWindow,
@@ -1294,42 +1293,15 @@ export function registerExtensionHandlers(): void {
     }
   });
 
-  ipcMain.handle('extension-window-load', async (ev, data) => {
-    try {
-      const extId = data.id;
-      const win = await createExtensionWindow(extId);
-      if (!win) {
-        return { success: false, error: `Failed to load extension ${extId}` };
-      }
-      return { success: true, data: { id: extId, windowId: win.id } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
+  // Note: `extension-window-load` and `extension-window-reload` were removed
+  // in Phase 2.5 #3 (dead handlers — no renderer invoked them). Extension
+  // reload now flows through `extension-reload` (ipc.ts below), which is the
+  // channel exposed via `api.extensions.reload()` from tile-preload.cts.
   ipcMain.handle('extension-window-unload', async (ev, data) => {
     try {
       const extId = data.id;
       const result = destroyExtensionWindow(extId);
       return { success: result, data: { id: extId } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  ipcMain.handle('extension-window-reload', async (ev, data) => {
-    try {
-      const extId = data.id;
-      destroyExtensionWindow(extId);
-      // Small delay before reload
-      await new Promise(resolve => setTimeout(resolve, 100));
-      const win = await createExtensionWindow(extId);
-      if (!win) {
-        return { success: false, error: `Failed to reload extension ${extId}` };
-      }
-      return { success: true, data: { id: extId, windowId: win.id } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

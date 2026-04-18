@@ -804,8 +804,10 @@ export const init = async () => {
   // Initialize core features (non-extension features only)
   features().forEach(initFeature);
 
-  // Extensions are now loaded by main process ExtensionManager
-  // It receives the 'core:ready' signal and calls loadEnabledExtensions()
+  // Extensions are now loaded by main process ExtensionManager.
+  // The main-process startup (entry.ts -> loadExtensions()) runs the v2
+  // feature pipeline (tile-compat / tile-loader); core background just
+  // initializes in-process features and waits for `ext:all-loaded`.
   log('core', 'Core features initialized. Extensions loaded by main process.');
 
   // Register extension commands after all extensions (including cmd) are loaded.

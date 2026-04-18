@@ -1107,8 +1107,21 @@ export function discoverBuiltinThemes(extensionsDir: string, legacyThemesDir?: s
 
 /**
  * Create an extension window
+ *
+ * Legacy v1 path — creates a BrowserWindow for a registered extension with the
+ * v1 `preload.js`. Still used by `reloadExtension()` (features-manager UI reload
+ * button via `api.extensions.reload()`) and `loadDevExtension()` (CLI
+ * `--load-extension` flag). The two startup-path callers below
+ * (`externalBuiltinIds` + `enabledExternalExts` loops in `loadExtensions()`)
+ * are empty in practice — all features in `features/` are v2 and get loaded
+ * via `loadV2Tile()`; the `extensions` DB table is superseded by the v2
+ * feature registry. See Phase 2.5 #3 audit in AGENT_REPORT.md and
+ * `docs/v1-removal-plan.md`.
+ *
+ * Full removal requires a `relaunchTile(tileId)` helper in tile-launcher.ts —
+ * tracked as Phase 2.5 #3b.
  */
-export async function createExtensionWindow(extId: string): Promise<BrowserWindow | null> {
+async function createExtensionWindow(extId: string): Promise<BrowserWindow | null> {
   if (extensionWindows.has(extId)) {
     DEBUG && console.log(`[ext:win] Extension ${extId} already has a window`);
     return extensionWindows.get(extId)!.win;
@@ -1183,67 +1196,6 @@ export async function createExtensionWindow(extId: string): Promise<BrowserWindo
     win.destroy();
     return null;
   }
-}
-
-/**
- * Load all enabled extensions with startup phases for optimization
- *
- * Startup phases allow extensions to defer work:
- * - 'early': cmd loads first (it's the command registry)
- * - 'commands': other extensions load, should register commands
- * - 'ui': extensions can initialize UI elements
- * - 'complete': all extensions loaded
- */
-export async function loadEnabledExtensions(): Promise<number> {
-  const extStart = Date.now();
-  const builtinExtIds = getRegisteredExtensionIds();
-
-  // Phase 1: Early
-  // Note: cmd (command registry) is no longer loaded here — it's core app code
-  // loaded via initCmd() from cmd-glue.ts in the main loadExtensions() path.
-  // This alternate loader (loadEnabledExtensions) creates a standalone window
-  // per extension, which is NOT how cmd runs — so no cmd handling here.
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
-
-  // Phase 2: Commands - other extensions should register commands
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
-
-  // Register declarative commands/shortcuts from manifests (after cmd is ready)
-  registerDeclarativeCommands();
-
-  // Load built-in extensions in parallel (skip declarative-only)
-  const enabledBuiltinIds = builtinExtIds.filter(id => isBuiltinExtensionEnabled(id) && !isDeclarativeOnly(id));
-
-  const parallelStart = Date.now();
-  await Promise.allSettled(enabledBuiltinIds.map(id => createExtensionWindow(id)));
-  DEBUG && console.log(`[ext:timing] parallel (${enabledBuiltinIds.join(',')}): ${Date.now() - parallelStart}ms`);
-
-  // Load external extensions in parallel
-  const externalExts = getExternalExtensions();
-  const enabledExternalExts = externalExts.filter(ext => {
-    if (extensionWindows.has(ext.id)) return false;
-    if (!ext.enabled || !ext.path) return false;
-    return true;
-  });
-
-  if (enabledExternalExts.length > 0) {
-    const extExtStart = Date.now();
-    await Promise.allSettled(enabledExternalExts.map(ext => createExtensionWindow(ext.id)));
-    DEBUG && console.log(`[ext:timing] external: ${Date.now() - extExtStart}ms`);
-  }
-
-  DEBUG && console.log(`[ext:timing] total: ${Date.now() - extStart}ms`);
-
-  // Phase 3: UI - extensions can now initialize UI elements
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'ui' });
-
-  // Phase 4: Complete - all extensions loaded
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'complete' });
-  publish('system', scopes.GLOBAL, 'ext:all-loaded', {
-    count: extensionWindows.size
-  });
-
-  return extensionWindows.size;
 }
 
 /**
