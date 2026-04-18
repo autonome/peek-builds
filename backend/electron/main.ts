@@ -1448,9 +1448,14 @@ export async function loadExtensions(): Promise<number> {
   // Load page background right after hud — registers the `open` and `modal`
   // commands. Page is core infrastructure (the canvas architecture in
   // app/page/index.html + page.js is the primary web rendering surface).
-  // loadExtInHost/waitForExtLoaded populates loadedConsolidatedExtensions so
-  // getRunningExtensions() still reports page.
-  await initPage({ host, loadExtInHost, waitForExtLoaded });
+  // page now runs as a standalone tile renderer (tile-preload + trustedBuiltin
+  // grant) — no longer loaded as an iframe in the consolidated extension host.
+  await initPage({ tilePreloadPath });
+  // Keep page visible to getRunningExtensions(): the set is documented as
+  // "consolidated iframe extensions" but is the logical "core renderer is up"
+  // tracker used by the Features pane. Adding page here preserves that
+  // surfacing now that the renderer is a standalone BrowserWindow.
+  loadedConsolidatedExtensions.add('page');
 
   // ── V2 Feature Startup ──
   // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
