@@ -104,7 +104,7 @@ import { syncAll, getSyncConfig } from './sync.js';
 import { checkEscapeAllowed } from './tile-escape-enforcement.js';
 import { checkSessionAllowed } from './tile-session-enforcement.js';
 import { checkIzuiAllowed } from './tile-izui-enforcement.js';
-import { getActiveThemeId } from './protocol.js';
+import { getActiveThemeId, setActiveThemeId, getRegisteredThemeIds, getThemePath } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
 
@@ -3305,6 +3305,269 @@ export function registerTileIpcHandlers(): void {
     };
   });
 
+  // ── tile:theme:get ─────────────────────────────────────────────────
+  //
+  // Strict counterpart of the legacy `theme:get` channel.
+  // Returns current theme id, color scheme preference and effective scheme.
+  // Requires trustedBuiltin — non-core tiles use tile:theme:info instead.
+  ipcMain.handle('tile:theme:get', (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:get', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:get' };
+    }
+
+    const themeId = tileGetThemeSetting(TILE_THEME_ID_KEY) || getActiveThemeId();
+    const colorScheme = tileGetThemeSetting(TILE_THEME_COLOR_SCHEME_KEY) || 'system';
+    const isDark = nativeTheme.shouldUseDarkColors;
+    return {
+      themeId,
+      colorScheme,
+      isDark,
+      effectiveScheme: colorScheme === 'system' ? (isDark ? 'dark' : 'light') : colorScheme,
+    };
+  });
+
+  // ── tile:theme:setColorScheme ──────────────────────────────────────
+  //
+  // Strict counterpart of the legacy `theme:setColorScheme` channel.
+  // Sets the global color scheme preference (system/light/dark).
+  // Requires trustedBuiltin.
+  ipcMain.handle('tile:theme:setColorScheme', (_event, args: {
+    token: string;
+    colorScheme: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:setColorScheme', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:setColorScheme' };
+    }
+
+    const { colorScheme } = args;
+    if (!['system', 'light', 'dark'].includes(colorScheme)) {
+      return { success: false, error: 'Invalid color scheme' };
+    }
+
+    tileSetThemeSetting(TILE_THEME_COLOR_SCHEME_KEY, colorScheme);
+    nativeTheme.themeSource = colorScheme as 'system' | 'light' | 'dark';
+    tileBroadcastThemeChange(colorScheme);
+
+    return {
+      success: true,
+      colorScheme,
+      effectiveScheme: colorScheme === 'system'
+        ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+        : colorScheme,
+    };
+  });
+
+  // ── tile:theme:setWindowColorScheme ───────────────────────────────
+  //
+  // Strict counterpart of the legacy `theme:setWindowColorScheme` channel.
+  // Sets color scheme for a specific window only (does not affect global setting).
+  // Requires trustedBuiltin.
+  ipcMain.handle('tile:theme:setWindowColorScheme', (_event, args: {
+    token: string;
+    windowId: number;
+    colorScheme: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:setWindowColorScheme', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:setWindowColorScheme' };
+    }
+
+    const { windowId, colorScheme } = args;
+    if (!['system', 'light', 'dark', 'global'].includes(colorScheme)) {
+      return { success: false, error: 'Invalid color scheme' };
+    }
+
+    const win = BrowserWindow.fromId(windowId);
+    if (!win || win.isDestroyed()) {
+      return { success: false, error: 'Window not found' };
+    }
+
+    win.webContents.send('theme:windowChanged', { colorScheme });
+    return { success: true, windowId, colorScheme };
+  });
+
+  // ── tile:theme:setTheme ────────────────────────────────────────────
+  //
+  // Strict counterpart of the legacy `theme:setTheme` channel.
+  // Sets the active theme by id and broadcasts to all windows.
+  // Requires trustedBuiltin.
+  ipcMain.handle('tile:theme:setTheme', (_event, args: {
+    token: string;
+    themeId: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:setTheme', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:setTheme' };
+    }
+
+    const { themeId } = args;
+    if (!setActiveThemeId(themeId)) {
+      return { success: false, error: 'Theme not found' };
+    }
+    tileSetThemeSetting(TILE_THEME_ID_KEY, themeId);
+
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      win.webContents.send('theme:themeChanged', { themeId });
+    }
+    return { success: true, themeId };
+  });
+
+  // ── tile:theme:list ────────────────────────────────────────────────
+  //
+  // Strict counterpart of the legacy `theme:list` channel.
+  // Returns metadata for all registered (builtin) themes.
+  // Requires trustedBuiltin.
+  ipcMain.handle('tile:theme:list', (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:list', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:list' };
+    }
+
+    const themeIds = getRegisteredThemeIds();
+    const themes = themeIds.map(id => {
+      const themePath = getThemePath(id);
+      if (!themePath) return null;
+      try {
+        const manifestPath = path.join(themePath, 'manifest.json');
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+        return {
+          id: manifest.id || id,
+          name: manifest.name || id,
+          version: manifest.version || '1.0.0',
+          description: manifest.description || '',
+          colorSchemes: manifest.colorSchemes || ['light', 'dark'],
+        };
+      } catch {
+        return { id, name: id, version: '1.0.0', description: '', colorSchemes: ['light', 'dark'] };
+      }
+    }).filter(Boolean);
+
+    themes.sort((a: any, b: any) => {
+      if (a.id === 'peek') return -1;
+      if (b.id === 'peek') return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return { themes };
+  });
+
+  // ── tile:theme:getAll ──────────────────────────────────────────────
+  //
+  // Strict counterpart of the legacy `theme:getAll` channel.
+  // Returns all themes (builtin + external from DB).
+  // Requires trustedBuiltin.
+  ipcMain.handle('tile:theme:getAll', async (_event, args: {
+    token: string;
+  }) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:getAll', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:getAll' };
+    }
+
+    try {
+      const db = getDb();
+      const builtinIds = getRegisteredThemeIds();
+      const themes: Array<{
+        id: string;
+        name: string;
+        description: string;
+        version: string;
+        author: string;
+        path: string;
+        builtin: boolean;
+        colorSchemes: string[];
+      }> = [];
+
+      for (const id of builtinIds) {
+        const themePath = getThemePath(id);
+        if (!themePath) continue;
+        try {
+          const manifestPath = path.join(themePath, 'manifest.json');
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+          themes.push({
+            id: manifest.id || id,
+            name: manifest.name || id,
+            description: manifest.description || '',
+            version: manifest.version || '1.0.0',
+            author: manifest.author || '',
+            path: themePath,
+            builtin: true,
+            colorSchemes: manifest.colorSchemes || ['light', 'dark'],
+          });
+        } catch {
+          themes.push({
+            id,
+            name: id,
+            description: '',
+            version: '1.0.0',
+            author: '',
+            path: themePath,
+            builtin: true,
+            colorSchemes: ['light', 'dark'],
+          });
+        }
+      }
+
+      const externalThemes = db.prepare('SELECT * FROM themes WHERE builtin = 0').all() as Array<{
+        id: string;
+        name: string;
+        description: string;
+        version: string;
+        author: string;
+        path: string;
+        metadata?: string;
+      }>;
+
+      for (const ext of externalThemes) {
+        let colorSchemes = ['light', 'dark'];
+        try {
+          const metadata = JSON.parse(ext.metadata || '{}');
+          colorSchemes = metadata.colorSchemes || colorSchemes;
+        } catch { /* ignore */ }
+        themes.push({
+          id: ext.id,
+          name: ext.name,
+          description: ext.description,
+          version: ext.version,
+          author: ext.author,
+          path: ext.path,
+          builtin: false,
+          colorSchemes,
+        });
+      }
+
+      return { success: true, data: themes };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
   // ── Settings ──
 
   ipcMain.handle('tile:settings:get', async (_event, args: {
@@ -5713,6 +5976,49 @@ body {
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');
+}
+
+// ─── Theme helpers for tile:theme:* strict shims ──────────────────
+//
+// Private mirrors of the ipc.ts theme helpers. Used only by the
+// tile:theme:* handlers registered in registerTileHandlers() above.
+// Duplicated here to avoid coupling tile-ipc.ts to ipc.ts internals.
+
+const TILE_THEME_SETTINGS_KEY = 'core';
+const TILE_THEME_ID_KEY = 'theme.id';
+const TILE_THEME_COLOR_SCHEME_KEY = 'theme.colorScheme';
+
+function tileGetThemeSetting(key: string): string | null {
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
+    ).get(TILE_THEME_SETTINGS_KEY, key) as { value: string } | undefined;
+    if (!row?.value) return null;
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return row.value;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function tileSetThemeSetting(key: string, value: string): void {
+  const db = getDb();
+  const timestamp = Date.now();
+  db.prepare(`
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(`${TILE_THEME_SETTINGS_KEY}_${key}`, TILE_THEME_SETTINGS_KEY, key, JSON.stringify(value), timestamp);
+}
+
+function tileBroadcastThemeChange(colorScheme: string): void {
+  const windows = BrowserWindow.getAllWindows();
+  for (const win of windows) {
+    win.webContents.send('theme:changed', { colorScheme });
+  }
 }
 
 // ─── MIME type helper ─────────────────────────────────────────────

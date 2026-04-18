@@ -1061,6 +1061,70 @@ function buildAPI(): Record<string, unknown> {
         callback(data);
       });
     },
+
+    // ── tile:theme:* strict shims (Phase 3.5b) ──────────────────────────
+    // These route through the new tile:theme:* strict channels which enforce
+    // trustedBuiltin gating on the main-process side. Non-trusted callers
+    // will receive { success: false, error: 'trustedBuiltin required' }.
+    //
+    // NOTE: the trustedBuiltin block below OVERRIDES get/list/getAll/setTheme/
+    // setColorScheme/setWindowColorScheme with legacy theme:* routes for now.
+    // Wave 3.6b will flip that block to call tile:theme:* and remove the
+    // override, at which point these base implementations become the sole path.
+
+    /**
+     * Get current theme settings (id, colorScheme, isDark, effectiveScheme).
+     * Strict path; requires trustedBuiltin enforcement on the IPC side.
+     */
+    get: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:theme:get', { token: tileToken });
+    },
+
+    /**
+     * Set global color scheme preference (system/light/dark).
+     * Strict path; requires trustedBuiltin enforcement on the IPC side.
+     */
+    setColorScheme: (colorScheme: string) => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:theme:setColorScheme', { token: tileToken, colorScheme });
+    },
+
+    /**
+     * Set color scheme for a specific window only (does not affect global setting).
+     * Strict path; requires trustedBuiltin enforcement on the IPC side.
+     */
+    setWindowColorScheme: (windowId: number, colorScheme: string) => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:theme:setWindowColorScheme', { token: tileToken, windowId, colorScheme });
+    },
+
+    /**
+     * Set the active theme by id.
+     * Strict path; requires trustedBuiltin enforcement on the IPC side.
+     */
+    setTheme: (themeId: string) => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:theme:setTheme', { token: tileToken, themeId });
+    },
+
+    /**
+     * List available (builtin) themes with metadata.
+     * Strict path; requires trustedBuiltin enforcement on the IPC side.
+     */
+    list: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:theme:list', { token: tileToken });
+    },
+
+    /**
+     * Get all themes (builtin + external from DB).
+     * Strict path; requires trustedBuiltin enforcement on the IPC side.
+     */
+    getAll: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:theme:getAll', { token: tileToken });
+    },
   };
 
   // ── Settings (if granted) ──
