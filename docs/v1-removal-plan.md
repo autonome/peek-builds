@@ -57,14 +57,31 @@ Acceptance: cmd panel, hud, page-host commands all work. No `loadExtInHost` call
 
 ### Phase 2 — Migrate test fixture to `tile-preload`
 
-Tests today get `bgWindow` via `getBackgroundWindow()` and call `(window as any).app.publish/subscribe`. Replacement options:
+**Status: rolled back 2026-04-18.** First attempt landed (commits `ce382a0b` … `ee0379be`) but introduced a regression: when the new v2 BrowserWindow test fixture published via `tile:pubsub:publish` IPC, the message never reached the main-process handler. Confirmed via instrumentation: `api.publish` was a function, `tokenValid` was true, `api.scopes.GLOBAL` was correct, but `ipcRenderer.send('tile:pubsub:publish', ...)` produced no observable effect on main. Cause not isolated. The kagi control test (passing post-Phase-1c) regressed. Reverted to Phase 1c tip (`6a9e79ae`).
 
-- **A — Privileged test renderer:** add `app/_test/index.html` (or similar) — a hidden resident renderer loaded only when `E2E_TEST=true`. It uses `tile-preload.cts` with a privileged grant (same as core). `getBackgroundWindow()` returns this renderer's BrowserWindow. Test code keeps the same shape (`api.pubsub.publish`, `api.subscribe`, etc.) — only the underlying preload + IPC channels change.
-- **B — Drive through real UI:** rewrite tests to invoke commands via the cmd panel and assert on side effects. More realistic, much larger test rewrite.
+#### Lessons
 
-Recommend A. Keeps test mechanics close to current; only `s/api.publish/api.pubsub.publish/g`-style edits needed in tests. The privileged renderer is a frontend file in `app/_test/`; the gating to load-only-when-`E2E_TEST=true` lives in backend glue.
+- The previously-passing kagi control test exercises the exact v1 fixture → v2 tile → v1 fixture round-trip we wanted to keep working. It is the canary for any test-fixture migration.
+- Instrumenting tile-preload's preload context is hard: `require('fs')` is unavailable under sandbox, `console.error` survives forwarding but is suppressed by Playwright's reporter. The cleanest probe is to surface diagnostic data inside the test's `evaluate` return value (worked).
+- `ensureTileIpcHandlers()` (added in `a5c98bc4`) is load-bearing for the rest of Phase 2 — can't revert in isolation.
 
-Acceptance: every existing test passes against the new fixture. No `IPC_CHANNELS.SUBSCRIBE` callers in tests.
+#### Next attempt — Option A1: unit-test reproducer FIRST
+
+Before touching the fixture again, build a Node-level unit test that boots a minimal Electron-like environment with two tile-preload renderers and asserts a publish from one reaches the other through the broadcaster. This isolates the failure (or proves the v2 round-trip works in principle) outside Playwright's hard-to-debug environment.
+
+If the unit test reproduces the failure, fix it in product code. If the unit test passes but Playwright still fails, the bug is in something specific to how Playwright launches Electron / how the test fixture interacts with the cmd/hud/page renderers.
+
+#### Next attempt — Option A2: keep test fixture out of v1 cleanup
+
+Phase 3 can proceed *almost* fully: delete `loadExtInHost` for cmd/hud/page (already done in Phase 1), delete the legacy IPC channels NOT used by the test fixture, but **preserve** `extensionHostWindow` + `IPC_CHANNELS.SUBSCRIBE/PUBLISH` + `app/background.html` solely as the test fixture path. Defer Phase 4 until the test fixture is migrated. Cost: a sliver of v1 plumbing stays. Benefit: unblocks the rest of cleanup, isolates the test-fixture problem.
+
+#### Next attempt — Option B: drive tests through cmd panel UI
+
+Rewrite tests to invoke commands by typing into the cmd panel and asserting on side effects. Larger test rewrite but no privileged test renderer needed. Tests become more realistic.
+
+Recommend Option A1 next. The unit-test reproducer is a 1-day investment that either tells us how to fix Phase 2 or proves we need Option A2 / B.
+
+Acceptance (when ready to retry): every existing test passes against the new fixture. No `IPC_CHANNELS.SUBSCRIBE` callers in tests.
 
 ### Phase 3 — Delete v1 plumbing
 
