@@ -212,58 +212,59 @@ const isCacheValid = (cache, appVersion, extensionVersions) => {
  */
 const initCommandRegistry = () => {
   // Handle batch command registrations (from preload batching)
+  //
+  // Merge-preserve pattern: a later publish with partial metadata (e.g. the
+  // minimal {name, source} publish from tile-ipc.ts's tile:command:register)
+  // must NOT erase rich fields that an earlier publish carried (accepts,
+  // produces, description, params). Previously we overwrote unconditionally,
+  // which caused metadata from the preload's cmd:register publish to be
+  // erased when a tile also sent the minimal tile:command:register path.
   api.pubsub.subscribe('cmd:register-batch', (msg) => {
     if (!msg.commands || !Array.isArray(msg.commands)) return;
 
     log('ext:cmd', 'cmd:register-batch received:', msg.commands.length, 'commands');
 
     for (const cmd of msg.commands) {
+      const existing = commandRegistry.get(cmd.name) || {};
       const entry = {
         name: cmd.name,
-        description: cmd.description || '',
-        source: cmd.source,
-        // Scope: 'global' (app-wide), 'window' (target window), 'page' (page content)
-        scope: cmd.scope || 'global',
-        // Required major modes for command availability (empty = available in all modes)
-        modes: cmd.modes || [],
-        // Whether command has a canExecute guard
-        hasCanExecute: cmd.hasCanExecute || false,
-        // Connector metadata for chaining
-        accepts: cmd.accepts || [],
-        produces: cmd.produces || [],
-        // Parameter definitions for completions
-        params: cmd.params || []
+        description: cmd.description || existing.description || '',
+        source: cmd.source || existing.source,
+        scope: cmd.scope || existing.scope || 'global',
+        modes: cmd.modes || existing.modes || [],
+        hasCanExecute: cmd.hasCanExecute || existing.hasCanExecute || false,
+        // Connector metadata for chaining — preserve richer existing entry
+        // when the incoming publish lacks it (minimal publishes carry empty
+        // arrays; we want the previously-registered full metadata to win).
+        accepts: (cmd.accepts && cmd.accepts.length > 0) ? cmd.accepts : (existing.accepts || []),
+        produces: (cmd.produces && cmd.produces.length > 0) ? cmd.produces : (existing.produces || []),
+        params: (cmd.params && cmd.params.length > 0) ? cmd.params : (existing.params || []),
       };
-      // Preserve noun routing metadata for proxy dispatch
-      if (cmd._nounName) entry._nounName = cmd._nounName;
-      if (cmd._nounCapability) entry._nounCapability = cmd._nounCapability;
+      if (cmd._nounName || existing._nounName) entry._nounName = cmd._nounName || existing._nounName;
+      if (cmd._nounCapability || existing._nounCapability) entry._nounCapability = cmd._nounCapability || existing._nounCapability;
       commandRegistry.set(cmd.name, entry);
       liveRegisteredCommands.add(cmd.name);
     }
   }, api.scopes.GLOBAL);
 
   // Handle individual command registrations from extensions
+  // Merge-preserve pattern: see cmd:register-batch above for rationale.
   api.pubsub.subscribe('cmd:register', (msg) => {
     log('ext:cmd', 'cmd:register received:', msg.name);
+    const existing = commandRegistry.get(msg.name) || {};
     const entry = {
       name: msg.name,
-      description: msg.description || '',
-      source: msg.source,
-      // Scope: 'global' (app-wide), 'window' (target window), 'page' (page content)
-      scope: msg.scope || 'global',
-      // Required major modes for command availability
-      modes: msg.modes || [],
-      // Whether command has a canExecute guard
-      hasCanExecute: msg.hasCanExecute || false,
-      // Connector metadata for chaining
-      accepts: msg.accepts || [],   // MIME types this command accepts as input
-      produces: msg.produces || [],  // MIME types this command produces as output
-      // Parameter definitions for completions
-      params: msg.params || []
+      description: msg.description || existing.description || '',
+      source: msg.source || existing.source,
+      scope: msg.scope || existing.scope || 'global',
+      modes: msg.modes || existing.modes || [],
+      hasCanExecute: msg.hasCanExecute || existing.hasCanExecute || false,
+      accepts: (msg.accepts && msg.accepts.length > 0) ? msg.accepts : (existing.accepts || []),
+      produces: (msg.produces && msg.produces.length > 0) ? msg.produces : (existing.produces || []),
+      params: (msg.params && msg.params.length > 0) ? msg.params : (existing.params || []),
     };
-    // Preserve noun routing metadata for proxy dispatch
-    if (msg._nounName) entry._nounName = msg._nounName;
-    if (msg._nounCapability) entry._nounCapability = msg._nounCapability;
+    if (msg._nounName || existing._nounName) entry._nounName = msg._nounName || existing._nounName;
+    if (msg._nounCapability || existing._nounCapability) entry._nounCapability = msg._nounCapability || existing._nounCapability;
     commandRegistry.set(msg.name, entry);
     liveRegisteredCommands.add(msg.name);
   }, api.scopes.GLOBAL);

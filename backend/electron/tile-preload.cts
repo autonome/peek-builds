@@ -308,27 +308,27 @@ function buildAPI(): Record<string, unknown> {
         name,
       });
 
-      // When called with the object form, also publish cmd:register so the
-      // cmd panel picks up this command even though the manifest may only
-      // have declared metadata (matches the v1 preload flow).
-      if (typeof nameOrCommand === 'object') {
-        ipcRenderer.send('tile:pubsub:publish', {
-          token: tileToken,
+      // Publish cmd:register so the resident (and live panel) picks up this
+      // command. Emit for BOTH string-form (name+handler, no metadata) and
+      // object-form (name+metadata) registrations — string-form entries still
+      // need to appear in the registry so features-manager-style callers are
+      // visible to the cmd panel, even if they carry no accepts/produces.
+      ipcRenderer.send('tile:pubsub:publish', {
+        token: tileToken,
+        source: sourceAddress,
+        scope: 3, // GLOBAL
+        topic: 'cmd:register',
+        data: {
+          name,
+          description,
           source: sourceAddress,
-          scope: 3, // GLOBAL
-          topic: 'cmd:register',
-          data: {
-            name,
-            description,
-            source: sourceAddress,
-            scope: scope || 'global',
-            modes: modes || [],
-            accepts: accepts || [],
-            produces: produces || [],
-            params: params || [],
-          },
-        });
-      }
+          scope: scope || 'global',
+          modes: modes || [],
+          accepts: accepts || [],
+          produces: produces || [],
+          params: params || [],
+        },
+      });
 
       // Listen for command execution via pubsub relay (`pubsub:cmd:execute:{name}`).
       // Subscribe so main process forwards the topic to us.

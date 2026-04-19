@@ -546,12 +546,29 @@ export function registerTileIpcHandlers(): void {
       handleViolation(grant, 'commands', 'command:register', 'commands not granted', args.token);
       return;
     }
-    // Capability gate + token-tile linkage only. Previously this also
-    // published a minimal cmd:register-batch (name+source) — but that
-    // overwrote the full-metadata entry from the preload's own cmd:register
-    // publish, erasing accepts/produces/description. The preload is now the
-    // single source of truth for cmd registry metadata (see tile-preload.cts
-    // api.commands.register object-form publish).
+
+    // Publish a minimal cmd:register-batch so downstream subscribers know
+    // the tile claims ownership of this command name (used by the cmd
+    // panel's query-backed registry for lazy/external tiles that don't
+    // go through registerLazyTile at startup — e.g. `example`).
+    //
+    // This publish does NOT carry metadata (accepts/produces/description)
+    // — those come from either (a) registerLazyTile at startup for built-in
+    // tiles, or (b) the preload's own full cmd:register publish that
+    // fires after this send. cmd:register-batch and cmd:register are
+    // separate topics in the resident, and for a given command name the
+    // full publish arrives second and overwrites the minimal.
+    publish(
+      `peek://${args.tileId}/background`,
+      scopes.GLOBAL,
+      'cmd:register-batch',
+      {
+        commands: [{
+          name: args.name,
+          source: `peek://${args.tileId}/background`,
+        }],
+      }
+    );
   });
 
   ipcMain.on('tile:command:result', (_event, args: {
