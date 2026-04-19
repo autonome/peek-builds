@@ -3495,9 +3495,20 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `theme:setWindowColorScheme` channel.
   // Sets color scheme for a specific window only (does not affect global setting).
   // Requires trustedBuiltin.
+  //
+  // windowId resolution: callers may pass an explicit windowId, or omit it
+  // (null/undefined) and let the handler resolve. Resolution order:
+  //   1. Explicit windowId (if positive finite number and window exists)
+  //   2. lastFocusedVisibleWindowId tracked by ipc.ts
+  //   3. BrowserWindow.getFocusedWindow()
+  //   4. First non-destroyed, non-test-fixture, non-background BrowserWindow
+  //      that was not created as modal (by skipping `focusable:false` and
+  //      `background.html` URLs). This last branch is the headless-test
+  //      fallback — in headless mode all windows have `show:false` so
+  //      `isVisible()` is false and no focus events fire.
   ipcMain.handle('tile:theme:setWindowColorScheme', (_event, args: {
     token: string;
-    windowId: number;
+    windowId?: number | null;
     colorScheme: string;
   }) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
@@ -3508,18 +3519,73 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:theme:setWindowColorScheme' };
     }
 
-    const { windowId, colorScheme } = args;
+    const { colorScheme } = args;
     if (!['system', 'light', 'dark', 'global'].includes(colorScheme)) {
       return { success: false, error: 'Invalid color scheme' };
     }
 
-    const win = BrowserWindow.fromId(windowId);
+    // Resolve windowId. If caller passed a positive finite number, try it
+    // first. Otherwise walk the fallback chain.
+    let resolvedId: number | null = null;
+    const explicitId = typeof args.windowId === 'number' && Number.isFinite(args.windowId) && args.windowId > 0
+      ? args.windowId
+      : null;
+    if (explicitId !== null) {
+      const explicitWin = BrowserWindow.fromId(explicitId);
+      if (explicitWin && !explicitWin.isDestroyed()) {
+        resolvedId = explicitId;
+      }
+    }
+
+    if (resolvedId === null) {
+      const tracked = getLastFocusedVisibleWindowId();
+      if (tracked != null) {
+        const trackedWin = BrowserWindow.fromId(tracked);
+        if (trackedWin && !trackedWin.isDestroyed()) {
+          resolvedId = tracked;
+        }
+      }
+    }
+
+    if (resolvedId === null) {
+      const focused = BrowserWindow.getFocusedWindow();
+      if (focused && !focused.isDestroyed()) {
+        resolvedId = focused.id;
+      }
+    }
+
+    if (resolvedId === null) {
+      // Headless fallback: find a plausible target by filtering out the
+      // test fixture (focusable:false) and the core background renderer
+      // (url === peek://app/background.html). Take the highest-numbered
+      // matching window as a proxy for "most recently created".
+      const candidates = BrowserWindow.getAllWindows().filter((w) => {
+        if (w.isDestroyed()) return false;
+        if (!w.isFocusable()) return false;
+        try {
+          const wurl = w.webContents.getURL();
+          if (wurl === 'peek://app/background.html') return false;
+          if (wurl.startsWith('peek://test/')) return false;
+        } catch { /* ignore */ }
+        return true;
+      });
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.id - a.id);
+        resolvedId = candidates[0].id;
+      }
+    }
+
+    if (resolvedId === null) {
+      return { success: false, error: 'No visible window to target' };
+    }
+
+    const win = BrowserWindow.fromId(resolvedId);
     if (!win || win.isDestroyed()) {
       return { success: false, error: 'Window not found' };
     }
 
     win.webContents.send('theme:windowChanged', { colorScheme });
-    return { success: true, windowId, colorScheme };
+    return { success: true, windowId: resolvedId, colorScheme };
   });
 
   // ── tile:theme:setTheme ────────────────────────────────────────────

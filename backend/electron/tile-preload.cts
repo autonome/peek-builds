@@ -1979,25 +1979,48 @@ function buildAPI(): Record<string, unknown> {
   // so we keep a thin trustedBuiltin wrapper here that resolves the ID
   // before forwarding to the strict channel. All other theme methods route
   // through the base api.theme.* implementations above (tile:theme:*).
-  if (trustedBuiltin) {
-    (api.theme as Record<string, unknown>).setWindowColorScheme = async (colorScheme: string) => {
-      // Core/test renderers target the "last focused visible window" via
-      // `get-focused-visible-window-id`, not their own hidden
-      // BrowserWindow. Preserves v1 behaviour where the background
-      // iframe ran the theme command on behalf of the user-facing window.
-      let windowId = await ipcRenderer.invoke('get-focused-visible-window-id');
-      if (!windowId) {
-        windowId = await ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
-        if (windowId && typeof windowId === 'object' && 'id' in windowId) {
-          windowId = (windowId as { id: number }).id;
-        }
+  // Install the override unconditionally (the install-time `trustedBuiltin`
+  // flag is still `false` here — buildAPI runs synchronously before
+  // api.initialize() flips it). The handler itself runs at call time, by
+  // which point `trustedBuiltin` reflects the validated grant. Non-trusted
+  // callers are still rejected by the strict tile:theme:setWindowColorScheme
+  // handler which enforces `grant.trustedBuiltin`.
+  (api.theme as Record<string, unknown>).setWindowColorScheme = async (
+    windowIdOrColorScheme: number | string,
+    maybeColorScheme?: string,
+  ) => {
+    // Core/test renderers target the "last focused visible window" via
+    // `get-focused-visible-window-id`, not their own hidden
+    // BrowserWindow. Preserves v1 behaviour where the background
+    // iframe ran the theme command on behalf of the user-facing window.
+    //
+    // Support two call shapes:
+    //   setWindowColorScheme(colorScheme)            — trusted, resolve via tracker
+    //   setWindowColorScheme(windowId, colorScheme)  — legacy explicit target
+    let windowId: number | null = null;
+    let colorScheme: string;
+    if (typeof windowIdOrColorScheme === 'number' && typeof maybeColorScheme === 'string') {
+      windowId = windowIdOrColorScheme;
+      colorScheme = maybeColorScheme;
+    } else if (typeof windowIdOrColorScheme === 'string') {
+      colorScheme = windowIdOrColorScheme;
+    } else {
+      return { success: false, error: 'Invalid arguments to setWindowColorScheme' };
+    }
+
+    if (windowId == null) {
+      // Pass the tracked id as a hint. The strict handler has its own
+      // resolution chain (tracked id → getFocusedWindow → headless
+      // enumeration) so it can still resolve a target when the hint is
+      // null — critical for headless tests where `show:false` windows
+      // never emit focus events and the tracker may be stale.
+      const hint = await ipcRenderer.invoke('get-focused-visible-window-id');
+      if (typeof hint === 'number' && hint > 0) {
+        windowId = hint;
       }
-      if (!windowId) {
-        return { success: false, error: 'No visible window to target' };
-      }
-      return ipcRenderer.invoke('tile:theme:setWindowColorScheme', { token: tileToken, windowId, colorScheme });
-    };
-  }
+    }
+    return ipcRenderer.invoke('tile:theme:setWindowColorScheme', { token: tileToken, windowId, colorScheme });
+  };
 
   // ── Chrome Extensions (trustedBuiltin only) ──────────────────────────
   //
