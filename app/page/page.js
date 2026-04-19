@@ -23,6 +23,14 @@ import { PageNotesPane } from './page-notes.js';
 
 console.log('[page] Script loaded');
 
+// Initialize the tile-preload surface before any api.* call. Without this,
+// subscribe/publish silently no-op (tokenValid is false until init completes),
+// so page widgets that react to pubsub (tag:item-added, entities:extracted,
+// etc.) never update. See docs/cmd-chain-architecture.md for why this matters.
+if (api.initialize) {
+  await api.initialize();
+}
+
 window.addEventListener('unhandledrejection', (e) => {
   console.error('[page] Unhandled promise rejection:', e.reason);
 });
@@ -2379,20 +2387,24 @@ api.subscribe('websearch:engine-discovered', (msg) => {
 // --- Popup-to-opener postMessage bridge: receiver side (Level 3) ---
 // When main process routes a postMessage from a popup to this opener window,
 // dispatch it as a MessageEvent into the webview guest.
-api.ipc.on('opener-message-received', (data) => {
-  if (!data || !data.message) return;
-  DEBUG && console.log('[page] Received opener message, dispatching to webview:', data);
-  const messageJson = JSON.stringify(data.message);
-  const origin = data.origin || '*';
-  webview.executeJavaScript(`
-    window.dispatchEvent(new MessageEvent('message', {
-      data: ${messageJson},
-      origin: ${JSON.stringify(origin)}
-    }));
-  `).catch(err => {
-    DEBUG && console.log('[page] Failed to dispatch opener message to webview:', err.message);
+// Guarded: `api.ipc` isn't exposed in tile-preload — treat absence as no-op
+// rather than letting it halt module evaluation.
+if (api.ipc && typeof api.ipc.on === 'function') {
+  api.ipc.on('opener-message-received', (data) => {
+    if (!data || !data.message) return;
+    DEBUG && console.log('[page] Received opener message, dispatching to webview:', data);
+    const messageJson = JSON.stringify(data.message);
+    const origin = data.origin || '*';
+    webview.executeJavaScript(`
+      window.dispatchEvent(new MessageEvent('message', {
+        data: ${messageJson},
+        origin: ${JSON.stringify(origin)}
+      }));
+    `).catch(err => {
+      DEBUG && console.log('[page] Failed to dispatch opener message to webview:', err.message);
+    });
   });
-});
+}
 
 // --- Opener shim injection for popup windows (Level 3 & 4) ---
 // If this window was opened as a popup (has openerUrl param), inject a window.opener
@@ -3077,39 +3089,65 @@ if (tagsInput) {
 
 // --- React to tag pubsub events ---
 
+// Resolve all URL forms that identify "this page's item". The tag command
+// tags items keyed by the ACTIVE WINDOW URL, which may be either the raw
+// http(s) URL (once navigation has succeeded) or the wrapped
+// `peek://app/page/index.html?url=...` container URL. Check both forms so
+// the reactive tag widget doesn't miss its own updates.
+function getPageUrlCandidates() {
+  const candidates = new Set();
+  try {
+    const u = webview.getURL();
+    if (u && (u.startsWith('http://') || u.startsWith('https://'))) candidates.add(u);
+  } catch { /* webview not DOM-ready */ }
+  if (targetUrl) candidates.add(targetUrl);
+  try { candidates.add(window.location.href); } catch {}
+  return candidates;
+}
+
+function itemUrlMatchesPage(itemUrl) {
+  if (!itemUrl) return false;
+  const candidates = getPageUrlCandidates();
+  const normalized = normalizeUrlForCompare(itemUrl);
+  for (const c of candidates) {
+    if (normalizeUrlForCompare(c) === normalized) return true;
+  }
+  return false;
+}
+
 api.subscribe('tag:item-added', async (msg) => {
   if (msg && msg.itemId === currentItemId) {
     loadTagsForCurrentPage();
-  } else if (!currentItemId && msg && msg.itemId) {
-    // Item may have just been created by the tag command — try to resolve
+    loadAllTags();
+    return;
+  }
+  if (msg && msg.itemId) {
+    // Either we have no currentItemId yet, or msg is for a different item.
+    // Check whether msg.itemId belongs to OUR page URL — if so, adopt it.
+    // Covers both brand-new items the tag command just created and
+    // duplicate items created for the same URL.
     try {
-      const url = webview.getURL();
-      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-        const resolved = await resolveItemId(url);
-        if (resolved && resolved === msg.itemId) {
-          currentItemId = resolved;
-          loadTagsForCurrentPage();
-        }
+      const lookup = await api.datastore.getItem(msg.itemId);
+      if (lookup?.success && lookup.data && itemUrlMatchesPage(lookup.data.content)) {
+        currentItemId = msg.itemId;
+        loadTagsForCurrentPage();
       }
     } catch { /* ignore */ }
   }
-  // Refresh autocomplete cache on any tag creation
   loadAllTags();
 }, api.scopes.GLOBAL);
 
 api.subscribe('tag:item-removed', async (msg) => {
   if (msg && msg.itemId === currentItemId) {
     loadTagsForCurrentPage();
-  } else if (!currentItemId && msg && msg.itemId) {
-    // Item may have just been created — try to resolve
+    return;
+  }
+  if (msg && msg.itemId) {
     try {
-      const url = webview.getURL();
-      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-        const resolved = await resolveItemId(url);
-        if (resolved && resolved === msg.itemId) {
-          currentItemId = resolved;
-          loadTagsForCurrentPage();
-        }
+      const lookup = await api.datastore.getItem(msg.itemId);
+      if (lookup?.success && lookup.data && itemUrlMatchesPage(lookup.data.content)) {
+        currentItemId = msg.itemId;
+        loadTagsForCurrentPage();
       }
     } catch { /* ignore */ }
   }

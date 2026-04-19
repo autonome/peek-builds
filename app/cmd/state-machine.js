@@ -311,12 +311,10 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           target: States.EXECUTING,
           actions: ['recordFrecency', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'],
         },
-        {
-          guard: 'inputNonEmpty',
-          target: States.CLOSING,
-          actions: ['openSearch', 'clearInput', 'shutdown'],
-        },
-        // Empty input — no-op
+        // No URL, no committed command → no-op (do NOT fall back to search;
+        // typing random text and pressing Enter should not silently route to
+        // a web search — the user invokes search explicitly via the `search`
+        // command if they want one).
       ],
       [Events.ESCAPE]: [
         { guard: 'textNonEmpty', target: States.IDLE, actions: ['clearInput', 'clearMatches', 'updateGhostText', 'updateResults'] },

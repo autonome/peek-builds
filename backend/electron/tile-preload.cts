@@ -864,6 +864,12 @@ function buildAPI(): Record<string, unknown> {
       if (!tokenValid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
     },
+
+    // Legacy alias for getId — several callers still use the older name.
+    getWindowId: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
+    },
   };
 
   // ── Datastore (if granted) ──
