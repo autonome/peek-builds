@@ -3024,57 +3024,50 @@ test.describe('Command Chaining @desktop', () => {
   });
 
   test('selecting output item enters chain mode with filtered commands', async () => {
-    // Wait for csv command to be registered (from files extension via pubsub)
+    // Architectural contract (see docs/cmd-chain-architecture.md):
+    //   `list urls` → OUTPUT_SELECTION → Enter on a row → CHAIN_MODE.
+    // CHAIN_MODE is NEVER reached direct-from-EXECUTING; the user always
+    // sees their rows first so they can pick which one to chain against.
     await waitForCommand(bgWindow, 'csv', 10000);
 
-    // Open cmd panel
+    // Seed a couple of urls so list urls returns a selectable list
+    await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      await api.datastore.addItem('url', { url: 'https://example.com/chain-a', title: 'chain-a' });
+      await api.datastore.addItem('url', { url: 'https://example.com/chain-b', title: 'chain-b' });
+    });
+
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
-        modal: true,
-        width: 600,
-        height: 400,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        center: true
+        modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
     expect(openResult.success).toBe(true);
 
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
-    expect(cmdWindow).toBeTruthy();
-
-    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute list urls command
     await cmdWindow.fill('input', 'list urls');
-    await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
 
-    // list urls returns application/json array. With downstream commands registered
-    // (save accepts */*), this enters chain mode directly (not output selection).
-    await waitForClass(cmdWindow, '#chain-indicator', 'visible');
+    // Step 1: OUTPUT_SELECTION entered first (not CHAIN_MODE)
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'OUTPUT_SELECTION',
+      null, { timeout: 5000 }
+    );
 
-    // Should now be in chain mode
-    const chainVisible = await cmdWindow.$eval('#chain-indicator', (el: HTMLElement) => el.classList.contains('visible'));
-    expect(chainVisible).toBe(true);
+    // Step 2: Enter on the selected row → CHAIN_MODE
+    await cmdWindow.press('input', 'Enter');
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'CHAIN_MODE',
+      null, { timeout: 5000 }
+    );
 
-    // Type 'csv' to filter — csv accepts application/json
-    await cmdWindow.fill('input', 'csv');
+    // Step 3: CHAIN_MODE suggestions include csv (accepts application/json)
+    const suggestions = await cmdWindow.evaluate(() => (window as any)._cmdState?.matches || []);
+    expect(suggestions).toContain('csv');
 
-    // Wait for csv to appear in results (panel may still be receiving commands)
-    await cmdWindow.waitForFunction(() => {
-      const results = document.getElementById('results');
-      return results && results.textContent && results.textContent.toLowerCase().includes('csv');
-    }, { timeout: 5000 });
-
-    const resultText = await cmdWindow.$eval('#results', (el: HTMLElement) => el.textContent || '');
-    expect(resultText.toLowerCase()).toContain('csv');
-
-    // Close the window
     if (openResult.id) {
       await bgWindow.evaluate(async (id: number) => {
         return await (window as any).app.window.close(id);
@@ -3083,62 +3076,57 @@ test.describe('Command Chaining @desktop', () => {
   });
 
   test('csv command converts JSON to CSV format', async () => {
-    // Wait for csv command to be registered (from files extension via pubsub)
+    // list urls → OUTPUT_SELECTION → select row → CHAIN_MODE → csv → text/csv
     await waitForCommand(bgWindow, 'csv', 10000);
 
-    // Open cmd panel
+    await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      await api.datastore.addItem('url', { url: 'https://example.com/csv-a', title: 'csv-a' });
+      await api.datastore.addItem('url', { url: 'https://example.com/csv-b', title: 'csv-b' });
+    });
+
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
-        modal: true,
-        width: 600,
-        height: 400,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        center: true
+        modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
     expect(openResult.success).toBe(true);
 
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
-    expect(cmdWindow).toBeTruthy();
-
-    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute list urls command — enters chain mode directly (save accepts */*)
     await cmdWindow.fill('input', 'list urls');
-    await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
-    await waitForClass(cmdWindow, '#chain-indicator', 'visible');
 
-    // Now in chain mode - type 'csv' and execute
+    // OUTPUT_SELECTION first
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'OUTPUT_SELECTION',
+      null, { timeout: 5000 }
+    );
+
+    // Enter a row → CHAIN_MODE
+    await cmdWindow.press('input', 'Enter');
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'CHAIN_MODE',
+      null, { timeout: 5000 }
+    );
+
+    // Type csv to filter matches, then ArrowDown+Enter to execute
     await cmdWindow.fill('input', 'csv');
-
-    // Wait for csv to appear in results
-    await cmdWindow.waitForFunction(() => {
-      const results = document.getElementById('results');
-      return results && results.textContent && results.textContent.toLowerCase().includes('csv');
-    }, { timeout: 5000 });
-
+    await cmdWindow.waitForFunction(
+      () => ((window as any)._cmdState?.matches || []).includes('csv'),
+      null, { timeout: 5000 }
+    );
     await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
 
-    // CSV command produces text/csv output which triggers a chain-editor popup
-    // (text/* mimeTypes open the editor popup instead of inline preview).
-    // Verify the chain advanced by checking chain-mime shows text/csv.
-    await cmdWindow.waitForFunction(() => {
-      const el = document.getElementById('chain-mime');
-      return el && el.textContent === 'text/csv';
-    }, { timeout: 10000 });
+    // csv produces text/csv — wait for chainContext mimeType to update
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.chainContext?.mimeType === 'text/csv',
+      null, { timeout: 10000 }
+    );
 
-    const chainMime = await cmdWindow.$eval('#chain-mime', (el: HTMLElement) => el.textContent || '');
-    expect(chainMime).toBe('text/csv');
-
-    // Close the window
     if (openResult.id) {
       await bgWindow.evaluate(async (id: number) => {
         return await (window as any).app.window.close(id);
@@ -3147,52 +3135,54 @@ test.describe('Command Chaining @desktop', () => {
   });
 
   test('escape exits chain mode before closing panel', async () => {
-    // Open cmd panel
+    // Canonical ESC layering: ESC in CHAIN_MODE exits chain (back to
+    // OUTPUT_SELECTION or IDLE depending on stack), does NOT close the panel.
+    await waitForCommand(bgWindow, 'csv', 10000);
+
+    await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      await api.datastore.addItem('url', { url: 'https://example.com/esc-a', title: 'esc-a' });
+      await api.datastore.addItem('url', { url: 'https://example.com/esc-b', title: 'esc-b' });
+    });
+
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
-        modal: true,
-        width: 600,
-        height: 400,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        center: true
+        modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
     expect(openResult.success).toBe(true);
 
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
-    expect(cmdWindow).toBeTruthy();
-
-    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute list urls to enter chain mode directly
-    // (list urls returns application/json array, and downstream commands like save accept */*)
     await cmdWindow.fill('input', 'list urls');
-    await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
-    await waitForClass(cmdWindow, '#chain-indicator', 'visible');
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'OUTPUT_SELECTION',
+      null, { timeout: 5000 }
+    );
+    await cmdWindow.press('input', 'Enter');
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'CHAIN_MODE',
+      null, { timeout: 5000 }
+    );
 
-    // Verify in chain mode
-    let chainVisible = await cmdWindow.$eval('#chain-indicator', (el: HTMLElement) => el.classList.contains('visible'));
-    expect(chainVisible).toBe(true);
-
-    // Press Escape - should exit chain mode, not close panel
+    // ESC in CHAIN_MODE exits the chain — state changes away from CHAIN_MODE
+    // (target is OUTPUT_SELECTION, TYPING, or IDLE per implementation), but
+    // NOT CLOSING — the panel remains open.
     await cmdWindow.press('input', 'Escape');
-    await waitForClass(cmdWindow, '#chain-indicator', 'visible', false);
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState?.currentState;
+        return s !== 'CHAIN_MODE' && s !== 'CLOSING';
+      },
+      null, { timeout: 5000 }
+    );
 
-    // Chain indicator should be hidden now
-    chainVisible = await cmdWindow.$eval('#chain-indicator', (el: HTMLElement) => el.classList.contains('visible'));
-    expect(chainVisible).toBe(false);
-
-    // Panel should still exist (window not closed)
     const inputExists = await cmdWindow.$('input');
     expect(inputExists).toBeTruthy();
 
-    // Close the window
     if (openResult.id) {
       await bgWindow.evaluate(async (id: number) => {
         return await (window as any).app.window.close(id);
@@ -3201,58 +3191,54 @@ test.describe('Command Chaining @desktop', () => {
   });
 
   test('arrow navigation in output selection mode', async () => {
-    // Open cmd panel
+    // Seed multiple urls so navigation has more than one row
+    await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      await api.datastore.addItem('url', { url: 'https://example.com/nav-a', title: 'nav-a' });
+      await api.datastore.addItem('url', { url: 'https://example.com/nav-b', title: 'nav-b' });
+    });
+
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
-        modal: true,
-        width: 600,
-        height: 400,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        center: true
+        modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
     expect(openResult.success).toBe(true);
 
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
-    expect(cmdWindow).toBeTruthy();
-
-    // Wait for input to be ready and commands to be loaded
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute list urls command
     await cmdWindow.fill('input', 'list urls');
-    await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
-    await waitForResultsWithContent(cmdWindow);
 
-    // In output selection mode - first item should be selected
-    let selectedItem = await cmdWindow.$('.command-item.selected');
-    expect(selectedItem).toBeTruthy();
+    // OUTPUT_SELECTION with at least 2 rows
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return s?.currentState === 'OUTPUT_SELECTION' && (s?.outputItems?.length ?? 0) > 1;
+      },
+      null, { timeout: 5000 }
+    );
 
-    // Get initial selected item text
-    const firstSelectedText = await cmdWindow.$eval('.command-item.selected', (el: HTMLElement) => el.textContent || '');
+    // First item is selected (outputItemIndex starts at 0)
+    const initialIndex = await cmdWindow.evaluate(() => (window as any)._cmdState?.outputItemIndex);
+    expect(initialIndex).toBe(0);
 
-    // Press down to select next item
+    // Arrow down → index 1
     await cmdWindow.press('input', 'ArrowDown');
-    await waitForSelectionChange(cmdWindow, '.command-item.selected', firstSelectedText);
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.outputItemIndex === 1,
+      null, { timeout: 2000 }
+    );
 
-    // Selected item should change
-    const secondSelectedText = await cmdWindow.$eval('.command-item.selected', (el: HTMLElement) => el.textContent || '');
-    expect(secondSelectedText).not.toBe(firstSelectedText);
-
-    // Press up to go back
+    // Arrow up → back to 0
     await cmdWindow.press('input', 'ArrowUp');
-    await waitForSelectionChange(cmdWindow, '.command-item.selected', secondSelectedText);
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.outputItemIndex === 0,
+      null, { timeout: 2000 }
+    );
 
-    // Should be back to first item
-    const backToFirst = await cmdWindow.$eval('.command-item.selected', (el: HTMLElement) => el.textContent || '');
-    expect(backToFirst).toBe(firstSelectedText);
-
-    // Close the window
     if (openResult.id) {
       await bgWindow.evaluate(async (id: number) => {
         return await (window as any).app.window.close(id);
@@ -3331,10 +3317,9 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
   });
 
   test('list notes chains with csv', async () => {
-    // Wait for csv command to be registered
+    // list notes → OUTPUT_SELECTION → select row → CHAIN_MODE → csv → text/csv
     await waitForCommand(bgWindow, 'csv', 10000);
 
-    // Seed a text item
     const seedResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.addItem('text', {
         content: 'CSV chain test note'
@@ -3343,54 +3328,44 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
     expect(seedResult.success).toBe(true);
     const seedId = seedResult.data.id;
 
-    // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
-        modal: true,
-        width: 600,
-        height: 400,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        center: true
+        modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
     expect(openResult.success).toBe(true);
 
     const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
-    expect(cmdWindow).toBeTruthy();
-
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
-    // Execute list notes — enters chain mode directly (save accepts */*)
     await cmdWindow.fill('input', 'list notes');
-    await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
-    await waitForClass(cmdWindow, '#chain-indicator', 'visible');
 
-    // Now in chain mode - type 'csv' and execute
+    // OUTPUT_SELECTION → Enter row → CHAIN_MODE
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'OUTPUT_SELECTION',
+      null, { timeout: 5000 }
+    );
+    await cmdWindow.press('input', 'Enter');
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.currentState === 'CHAIN_MODE',
+      null, { timeout: 5000 }
+    );
+
+    // csv produces text/csv
     await cmdWindow.fill('input', 'csv');
-
-    // Wait for csv to appear in results
-    await cmdWindow.waitForFunction(() => {
-      const results = document.getElementById('results');
-      return results && results.textContent && results.textContent.toLowerCase().includes('csv');
-    }, { timeout: 5000 });
-
+    await cmdWindow.waitForFunction(
+      () => ((window as any)._cmdState?.matches || []).includes('csv'),
+      null, { timeout: 5000 }
+    );
     await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
     await cmdWindow.press('input', 'Enter');
 
-    // CSV command produces text/csv output
-    await cmdWindow.waitForFunction(() => {
-      const el = document.getElementById('chain-mime');
-      return el && el.textContent === 'text/csv';
-    }, { timeout: 10000 });
-
-    const chainMime = await cmdWindow.$eval('#chain-mime', (el: HTMLElement) => el.textContent || '');
-    expect(chainMime).toBe('text/csv');
+    await cmdWindow.waitForFunction(
+      () => (window as any)._cmdState?.chainContext?.mimeType === 'text/csv',
+      null, { timeout: 10000 }
+    );
 
     // Close the window
     if (openResult.id) {
