@@ -474,6 +474,20 @@ function buildAPI(): Record<string, unknown> {
         }, 3000);
       });
     },
+
+    /**
+     * Flush any pending command registrations immediately.
+     *
+     * In the v2 tile path, commands are published synchronously via
+     * ipcRenderer.send() in register() — there is no batch queue.
+     * This method exists for API compatibility with v1 callers that
+     * called flush() after a burst of register() calls; it is a no-op.
+     */
+    flush: (): Promise<{ success: true }> => {
+      // No-op: register() already sends each cmd:register publish
+      // synchronously, so nothing to drain.
+      return Promise.resolve({ success: true });
+    },
   };
 
   // ── Window ────────────────────────────────────────────────────────
