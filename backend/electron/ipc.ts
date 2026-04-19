@@ -1032,6 +1032,12 @@ export function registerWindowHandlers(): void {
       getLazyTileManifest,
     );
 
+    // When a special-case URL mints an ad-hoc trustedBuiltin token below, we
+    // must also register the resulting BrowserWindow with the tile broadcaster
+    // after creation so pubsub events (cmd:register, tag:item-added, …) are
+    // forwarded to it. Capture the token + ids here; register after new BrowserWindow.
+    let specialCaseToken: string | null = null;
+
     // Diagnostic is a developer-only utility; not a registered v2 tile but
     // needs tile-preload so api.backup.* / api.shell.openPath strict shims work.
     // Mint a trustedBuiltin token on-the-fly (same pattern as hud-glue / cmd-glue).
@@ -1050,6 +1056,7 @@ export function registerWindowHandlers(): void {
         tileId: DIAG_ID,
         entryId: DIAG_ENTRY,
       };
+      specialCaseToken = diagToken;
     }
 
     // Special-case: peek://app/settings/settings.html is not a registered v2
@@ -1068,6 +1075,7 @@ export function registerWindowHandlers(): void {
         tileId: 'settings',
         entryId: 'main',
       };
+      specialCaseToken = settingsToken;
       DEBUG && console.log('[window-open] settings window: assigned trustedBuiltin tile-preload token');
     }
 
@@ -1090,6 +1098,7 @@ export function registerWindowHandlers(): void {
         tileId: HUD_OVERLAY_ID,
         entryId: HUD_OVERLAY_ENTRY,
       };
+      specialCaseToken = hudOverlayToken;
       DEBUG && console.log('[window-open] hud-overlay window: assigned trustedBuiltin tile-preload token');
     }
 
@@ -1110,6 +1119,7 @@ export function registerWindowHandlers(): void {
         tileId: VIEWER_ID,
         entryId: VIEWER_ENTRY,
       };
+      specialCaseToken = viewerToken;
       DEBUG && console.log('[window-open] datastore-viewer window: assigned trustedBuiltin tile-preload token');
     }
 
@@ -1132,6 +1142,7 @@ export function registerWindowHandlers(): void {
         tileId: CMD_UI_ID,
         entryId: cmdUiEntry,
       };
+      specialCaseToken = cmdUiToken;
       DEBUG && console.log(`[window-open] cmd-ui window (${cmdUiEntry}): assigned trustedBuiltin tile-preload token`);
     }
 
@@ -1156,6 +1167,7 @@ export function registerWindowHandlers(): void {
         tileId: BLANK_ID,
         entryId: BLANK_ENTRY,
       };
+      specialCaseToken = blankToken;
       DEBUG && console.log('[window-open] about:blank window: assigned trustedBuiltin tile-preload token');
     }
 
@@ -1353,6 +1365,17 @@ export function registerWindowHandlers(): void {
     if (useCanvas && pageHostToken && pageHostEntryId) {
       registerTrustedBuiltinWindow(PAGE_HOST_TILE_ID, pageHostEntryId, win, pageHostToken);
       DEBUG && console.log(`[page-host] Registered canvas window ${win.id} as tile ${PAGE_HOST_TILE_ID}:${pageHostEntryId}`);
+    }
+
+    // Register any special-case trustedBuiltin window (diagnostic, settings,
+    // hud-overlay, datastore-viewer, cmd-ui, about:blank) with the broadcaster
+    // so pubsub messages (cmd:register, theme:changed, etc.) reach it. Without
+    // this, the window gets tile-preload + a valid token but `state.commands`,
+    // theme subscriptions, and every other pubsub-driven surface silently miss
+    // updates. The close handler revokes the token and removes the entry.
+    if (specialCaseToken && tileWebPrefs?.tileId && tileWebPrefs?.entryId) {
+      registerTrustedBuiltinWindow(tileWebPrefs.tileId, tileWebPrefs.entryId, win, specialCaseToken);
+      DEBUG && console.log(`[window-open] registered ${tileWebPrefs.tileId}:${tileWebPrefs.entryId} with tile broadcaster`);
     }
 
     // Track window position for display-watcher home display restoration

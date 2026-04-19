@@ -546,19 +546,12 @@ export function registerTileIpcHandlers(): void {
       handleViolation(grant, 'commands', 'command:register', 'commands not granted', args.token);
       return;
     }
-
-    // Register via pubsub (same mechanism as v1 extensions)
-    publish(
-      `peek://${args.tileId}/background`,
-      scopes.GLOBAL,
-      'cmd:register-batch',
-      {
-        commands: [{
-          name: args.name,
-          source: `peek://${args.tileId}/background`,
-        }],
-      }
-    );
+    // Capability gate + token-tile linkage only. Previously this also
+    // published a minimal cmd:register-batch (name+source) — but that
+    // overwrote the full-metadata entry from the preload's own cmd:register
+    // publish, erasing accepts/produces/description. The preload is now the
+    // single source of truth for cmd registry metadata (see tile-preload.cts
+    // api.commands.register object-form publish).
   });
 
   ipcMain.on('tile:command:result', (_event, args: {
@@ -3194,6 +3187,33 @@ export function registerTileIpcHandlers(): void {
 
     const win = BrowserWindow.fromWebContents(_event.sender);
     return win ? { success: true, id: win.id } : { success: false, error: 'Window not found' };
+  });
+
+  // ── tile:window:resize ────────────────────────────────────────────
+  //
+  // Resize the caller's own tile window. Used by tiles that expand/collapse
+  // based on content (cmd panel shows results list, HUD widgets adjust to
+  // content height, etc.). No capability gate — a tile can always resize
+  // its own window (cannot target other windows through this channel).
+  ipcMain.handle('tile:window:resize', (_event, args: {
+    token: string;
+    width: number;
+    height: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) {
+      return { success: false, error: 'Window not found' };
+    }
+    const width = Math.max(1, Math.floor(Number(args.width)));
+    const height = Math.max(1, Math.floor(Number(args.height)));
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      return { success: false, error: 'Invalid dimensions' };
+    }
+    win.setSize(width, height);
+    return { success: true };
   });
 
   // ── tile:screen:get-primary-display ───────────────────────────────

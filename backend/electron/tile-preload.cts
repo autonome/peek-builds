@@ -537,6 +537,21 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Resize the caller's own tile window. Useful for tiles that want to
+     * expand/collapse based on content (cmd panel, HUD widgets, etc.).
+     * Routes through the strict `tile:window:resize` channel; requires a
+     * `window` capability grant (or trustedBuiltin).
+     */
+    resize: (width: number, height: number) => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:resize', {
+        token: tileToken,
+        width,
+        height,
+      });
+    },
+
+    /**
      * Close a window. With no id, closes the caller's own tile window.
      * With an id, closes the target window (requires `window.manage`
      * under strict mode). Falls back to legacy `window-close` when no

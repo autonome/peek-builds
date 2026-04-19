@@ -500,16 +500,20 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           actions: ['hideSpinner', 'publishEditorOpen', 'shutdown'],
         },
         {
-          guard: (p) => guard('isArrayOutput', p) && guard('hasDownstreamCommands', p),
-          target: States.CHAIN_MODE,
-          actions: ['hideSpinner', 'enterChainMode'],
-        },
-        {
+          // Array output always enters OUTPUT_SELECTION first. From there the
+          // user selects a row (Enter/Tab) and the ITEM_SELECTED handler
+          // decides whether to branch into CHAIN_MODE (if downstream commands
+          // exist for the row's mimeType) or invoke a default action. This
+          // keeps the "see your rows first" ergonomic consistent regardless
+          // of whether chain commands happen to be registered — see
+          // docs/cmd-chain-architecture.md for the full rationale.
           guard: (p) => guard('isArrayOutput', p),
           target: States.OUTPUT_SELECTION,
           actions: ['hideSpinner', 'enterOutputSelection'],
         },
         {
+          // Non-array chainable output (single string, url, etc.) goes direct
+          // to CHAIN_MODE — there are no rows to select among.
           guard: 'hasChainableOutput',
           target: States.CHAIN_MODE,
           actions: ['hideSpinner', 'enterChainMode'],

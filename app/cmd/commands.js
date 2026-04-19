@@ -225,8 +225,19 @@ function initializeCommandRegistration() {
   debug && console.log('[cmd:commands] Command registration listeners initialized');
 }
 
-// Initialize command registration listeners
-initializeCommandRegistration();
+// Initialize command registration listeners.
+//
+// `api.subscribe` / `api.publish` silently no-op before `api.initialize()`
+// resolves (`tokenValid` is false in tile-preload). panel.js awaits
+// `api.initialize()` *after* importing this module, so we must defer our
+// subscription setup until the token is valid — otherwise every feature
+// tile's `cmd:register` publish is dropped and the panel sees only the
+// built-in commands loaded by `initializeCommandSources()`.
+if (api.initialize) {
+  api.initialize().then(() => initializeCommandRegistration());
+} else {
+  initializeCommandRegistration();
+}
 
 /**
  * Helper function for notifications (currently unused)
