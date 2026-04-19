@@ -17,6 +17,13 @@ log('cmd:panel', 'loaded');
 
 const api = window.app;
 
+// Initialize the tile-preload surface before any API calls. Without this,
+// `tokenValid` is false and api.settings/api.subscribe/api.commands all
+// silently no-op or reject — see docs/v1-removal-smoke-regressions.md §1.
+if (api.initialize) {
+  await api.initialize();
+}
+
 // Storage keys for persistent adaptive matching
 const STORAGE_KEY_FEEDBACK = 'adaptiveFeedback';
 const STORAGE_KEY_COUNTS = 'matchCounts';
@@ -28,36 +35,39 @@ const ADAPTIVE_VERSION = 2;
 let adaptiveDataCache = null;
 
 /**
- * Load persisted adaptive data from extension settings
+ * Load persisted adaptive data from extension settings.
+ * Phase 4 API: each key fetched individually via api.settings.get(key).
  */
 const loadAdaptiveData = async () => {
   if (adaptiveDataCache) {
     return adaptiveDataCache;
   }
 
-  const result = await api.settings.get();
-  if (result.success && result.data) {
-    const storedVersion = result.data[STORAGE_KEY_VERSION] || 0;
+  const [versionRes, feedbackRes, countsRes] = await Promise.all([
+    api.settings.get(STORAGE_KEY_VERSION),
+    api.settings.get(STORAGE_KEY_FEEDBACK),
+    api.settings.get(STORAGE_KEY_COUNTS),
+  ]);
 
-    if (storedVersion < ADAPTIVE_VERSION) {
-      log('cmd:panel', 'loadAdaptiveData: resetting stale feedback data (version', storedVersion, '->', ADAPTIVE_VERSION + ')');
-      adaptiveDataCache = {
-        feedback: {},
-        counts: result.data[STORAGE_KEY_COUNTS] || {}
-      };
-      await Promise.all([
-        api.settings.setKey(STORAGE_KEY_FEEDBACK, {}),
-        api.settings.setKey(STORAGE_KEY_VERSION, ADAPTIVE_VERSION)
-      ]);
-    } else {
-      adaptiveDataCache = {
-        feedback: result.data[STORAGE_KEY_FEEDBACK] || {},
-        counts: result.data[STORAGE_KEY_COUNTS] || {}
-      };
-    }
+  const storedVersion = (versionRes.success && versionRes.data) || 0;
+  const storedCounts = (countsRes.success && countsRes.data) || {};
+  const storedFeedback = (feedbackRes.success && feedbackRes.data) || {};
+
+  if (storedVersion < ADAPTIVE_VERSION) {
+    log('cmd:panel', 'loadAdaptiveData: resetting stale feedback data (version', storedVersion, '->', ADAPTIVE_VERSION + ')');
+    adaptiveDataCache = {
+      feedback: {},
+      counts: storedCounts,
+    };
+    await Promise.all([
+      api.settings.set(STORAGE_KEY_FEEDBACK, {}),
+      api.settings.set(STORAGE_KEY_VERSION, ADAPTIVE_VERSION),
+    ]);
   } else {
-    adaptiveDataCache = { feedback: {}, counts: {} };
-    await api.settings.setKey(STORAGE_KEY_VERSION, ADAPTIVE_VERSION);
+    adaptiveDataCache = {
+      feedback: storedFeedback,
+      counts: storedCounts,
+    };
   }
   log('cmd:panel', 'loadAdaptiveData: loaded', Object.keys(adaptiveDataCache.feedback).length, 'feedback entries,', Object.keys(adaptiveDataCache.counts).length, 'count entries');
   return adaptiveDataCache;
@@ -69,8 +79,8 @@ const loadAdaptiveData = async () => {
 const saveAdaptiveData = async (feedback, counts) => {
   adaptiveDataCache = { feedback, counts };
   await Promise.all([
-    api.settings.setKey(STORAGE_KEY_FEEDBACK, feedback),
-    api.settings.setKey(STORAGE_KEY_COUNTS, counts)
+    api.settings.set(STORAGE_KEY_FEEDBACK, feedback),
+    api.settings.set(STORAGE_KEY_COUNTS, counts),
   ]);
 };
 
@@ -90,10 +100,11 @@ loadAdaptiveData().then(data => {
 // Cached prefs for URL search behavior
 let showUrlsInResults = defaults.prefs.showUrlsInResults;
 
-// Load prefs on startup
-api.settings.get().then(result => {
-  if (result.success && result.data?.prefs) {
-    showUrlsInResults = result.data.prefs.showUrlsInResults ?? defaults.prefs.showUrlsInResults;
+// Load prefs on startup. Phase 4: api.settings.get(key) — request the
+// 'prefs' row directly rather than the (now removed) no-arg whole-object form.
+api.settings.get('prefs').then(result => {
+  if (result.success && result.data) {
+    showUrlsInResults = result.data.showUrlsInResults ?? defaults.prefs.showUrlsInResults;
   }
   log('cmd:panel', 'showUrlsInResults:', showUrlsInResults);
 });
