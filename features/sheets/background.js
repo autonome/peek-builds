@@ -18,16 +18,11 @@ const sheetPageUrl = 'peek://sheets/sheet.html';
  * Get all sheet configs from feature_settings
  */
 const listSheets = async () => {
-  const result = await api.settings.get();
+  const result = await api.settings.get('sheets');
   if (!result.success || !result.data) return [];
 
-  const sheets = [];
-  for (const [key, value] of Object.entries(result.data)) {
-    if (key.startsWith('sheet:')) {
-      sheets.push({ key, ...value });
-    }
-  }
-  return sheets;
+  const sheetsMap = result.data;
+  return Object.entries(sheetsMap).map(([key, value]) => ({ key, ...value }));
 };
 
 /**
@@ -43,7 +38,11 @@ const createSheet = async (name) => {
     items: []
   };
 
-  const result = await api.settings.set(key, config);
+  // Load existing sheets, add new one, save back
+  const existing = await api.settings.get('sheets');
+  const sheetsMap = (existing.success && existing.data) || {};
+  sheetsMap[key] = config;
+  const result = await api.settings.set('sheets', sheetsMap);
   if (result && result.error) {
     console.error('[ext:sheets] Failed to save sheet:', result.error);
   }

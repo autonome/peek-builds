@@ -63,7 +63,7 @@ let currentSettings = { scripts: [] };
  * Load scripts from datastore
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
+  const result = await api.settings.get('data');
   if (result.success && result.data) {
     return {
       scripts: result.data.scripts || defaults.scripts
@@ -76,7 +76,7 @@ const loadSettings = async () => {
  * Save scripts to datastore
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set(settings);
+  const result = await api.settings.set('data', settings);
   if (!result.success) {
     console.error('[ext:scripts] Failed to save settings:', result.error);
   }

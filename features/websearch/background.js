@@ -61,10 +61,10 @@ let searchWindowId = null;
  * Load settings from datastore
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
+  const result = await api.settings.get('prefs');
   if (result.success && result.data) {
     return {
-      prefs: { ...defaults.prefs, ...(result.data.prefs || {}) }
+      prefs: { ...defaults.prefs, ...(result.data || {}) }
     };
   }
   return { prefs: { ...defaults.prefs } };
@@ -74,7 +74,7 @@ const loadSettings = async () => {
  * Save settings to datastore
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set(settings);
+  const result = await api.settings.set('prefs', settings.prefs);
   if (!result.success) {
     console.error('[ext:websearch] Failed to save settings:', result.error);
   }
@@ -86,8 +86,8 @@ const saveSettings = async (settings) => {
  * Load custom/discovered engines from settings
  */
 const loadEngines = async () => {
-  const result = await api.settings.get();
-  const customEngines = (result.success && result.data && result.data.engines) || [];
+  const result = await api.settings.get('engines');
+  const customEngines = (result.success && result.data) || [];
 
   // Merge built-in with custom, custom engines can override built-in ones by ID
   const customIds = new Set(customEngines.map(e => e.id));
@@ -104,9 +104,7 @@ const loadEngines = async () => {
  */
 const saveEngines = async () => {
   const customEngines = engines.filter(e => !e.isBuiltIn);
-  const result = await api.settings.get();
-  const currentData = (result.success && result.data) || {};
-  await api.settings.set({ ...currentData, engines: customEngines });
+  await api.settings.set('engines', customEngines);
 };
 
 /**

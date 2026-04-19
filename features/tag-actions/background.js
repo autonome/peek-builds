@@ -27,7 +27,7 @@ let currentActions = []; // derived from pairs
 // ==================== Settings ====================
 
 const loadSettings = async () => {
-  const result = await api.settings.get();
+  const result = await api.settings.get('data');
   if (result.success && result.data) {
     // Support new pairs format
     if (Array.isArray(result.data.pairs)) {
@@ -49,7 +49,7 @@ const loadSettings = async () => {
 };
 
 const saveSettings = async () => {
-  const result = await api.settings.set({ pairs: currentPairs });
+  const result = await api.settings.set('data', { pairs: currentPairs });
   if (!result.success) {
     console.error('[tag-actions] Failed to save settings:', result.error);
   }

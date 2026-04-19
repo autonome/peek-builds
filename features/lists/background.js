@@ -33,10 +33,10 @@ let registeredShortcut = null;
  * @returns {Promise<{prefs: object}>}
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
+  const result = await api.settings.get('prefs');
   if (result.success && result.data) {
     return {
-      prefs: result.data.prefs || defaults.prefs
+      prefs: result.data
     };
   }
   return { prefs: defaults.prefs };
@@ -47,7 +47,7 @@ const loadSettings = async () => {
  * @param {object} settings - Settings object with prefs
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set(settings);
+  const result = await api.settings.set('prefs', settings.prefs);
   if (!result.success) {
     console.error('[ext:lists] Failed to save settings:', result.error);
   }

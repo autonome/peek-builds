@@ -3915,12 +3915,14 @@ export function registerTileIpcHandlers(): void {
 
   ipcMain.handle('tile:datastore:get-table', async (_event, args: {
     token: string;
-    table: string;
+    table?: string;
+    tableName?: string;
   }) => {
-    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    const table = args?.tableName ?? args?.table;
+    const check = validateTileDatastoreRequest(args?.token, [table as string]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-table', check.error); return { error: check.error }; }
     try {
-      const data = dsGetTable(args.table as TableName);
+      const data = dsGetTable(table as TableName);
       return { success: true, data };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -3929,13 +3931,15 @@ export function registerTileIpcHandlers(): void {
 
   ipcMain.handle('tile:datastore:get-row', async (_event, args: {
     token: string;
-    table: string;
+    table?: string;
+    tableName?: string;
     rowId: string;
   }) => {
-    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    const table = args?.tableName ?? args?.table;
+    const check = validateTileDatastoreRequest(args?.token, [table as string]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-row', check.error); return { error: check.error }; }
     try {
-      const data = dsGetRow(args.table as TableName, args.rowId);
+      const data = dsGetRow(table as TableName, args.rowId);
       return { success: true, data };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -3944,14 +3948,16 @@ export function registerTileIpcHandlers(): void {
 
   ipcMain.handle('tile:datastore:set-row', async (_event, args: {
     token: string;
-    table: string;
+    table?: string;
+    tableName?: string;
     rowId: string;
     rowData: Record<string, unknown>;
   }) => {
-    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+    const table = args?.tableName ?? args?.table;
+    const check = validateTileDatastoreRequest(args?.token, [table as string]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:set-row', check.error); return { error: check.error }; }
     try {
-      dsSetRow(args.table as TableName, args.rowId, args.rowData || {});
+      dsSetRow(table as TableName, args.rowId, args.rowData || {});
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };

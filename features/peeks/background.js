@@ -28,7 +28,7 @@ let currentSettings = {
  * @returns {Promise<{prefs: object, items: array}>}
  */
 const loadSettings = async () => {
-  const result = await api.settings.get();
+  const result = await api.settings.get('data');
   if (result.success && result.data) {
     return {
       prefs: result.data.prefs || defaults.prefs,
@@ -43,7 +43,7 @@ const loadSettings = async () => {
  * @param {object} settings - Settings object with prefs and items
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set(settings);
+  const result = await api.settings.set('data', settings);
   if (!result.success) {
     console.error('[ext:peeks] Failed to save settings:', result.error);
   }
