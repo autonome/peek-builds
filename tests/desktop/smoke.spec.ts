@@ -9,11 +9,10 @@
  *   BACKEND=tauri yarn test:desktop
  */
 
-import { test, expect, DesktopApp, launchDesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
+import { test, expect, DesktopApp, launchDesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
 import { waitForCommandResults, waitForWindowCount, waitForVisible, waitForClass, waitForResultsWithContent, waitForSelectionChange, sleep, waitForWindow, waitForExtensionsReady, queryCommandsWithRetry, waitForAppReady, waitForCommand, waitForPanelCommandsLoaded } from '../helpers/window-utils';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,35 +20,48 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.join(__dirname, '../..');
 
 // ============================================================================
-// SHARED APP INSTANCE
-// Most tests use a single shared app to avoid startup overhead.
-// Only tests that need fresh state or test lifecycle use isolated instances.
+// PER-DESCRIBE APP INSTANCES
+// Each describe block launches its own Electron instance so that window leaks,
+// stale lastFocusedVisibleWindowId, and datastore pollution cannot cross
+// describe boundaries. launchDesktopApp() is called in each describe's
+// beforeAll and the app is closed in afterAll.
 // ============================================================================
 
-// Shared app and window for tests that don't need isolation
-let sharedApp: DesktopApp;
-let sharedBgWindow: Page;
-
-// Initialize shared app once before all tests
-test.beforeAll(async () => {
-  sharedApp = await getSharedApp();
-  sharedBgWindow = await sharedApp.getBackgroundWindow();
-  await waitForExtensionsReady(sharedBgWindow);
-});
-
-// Clean up shared app after all tests
-test.afterAll(async () => {
-  await closeSharedApp();
-});
+/**
+ * Launch a fresh app + bgWindow for a single describe block.
+ * Call from test.beforeAll; close result.app in test.afterAll.
+ */
+async function createPerDescribeApp(label: string): Promise<{ app: DesktopApp; bgWindow: Page }> {
+  // Profile MUST start with "test" — `isTestProfile()` in backend/electron/config.ts
+  // keys on that prefix to skip the single-instance lock. Without it, parallel
+  // Playwright workers would all contend for the same machine-wide lock and
+  // only one Electron launch would succeed.
+  const profile = `test-smoke-${label.replace(/[^a-z0-9]/gi, '-')}-${Date.now()}`;
+  const app = await launchDesktopApp(profile);
+  const bgWindow = await app.getBackgroundWindow();
+  await waitForExtensionsReady(bgWindow);
+  return { app, bgWindow };
+}
 
 // ============================================================================
-// Settings Tests (uses shared app)
+// Settings Tests
 // ============================================================================
 
 test.describe('Settings @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('settings'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('open and close settings', async () => {
     // Settings opens on start in debug mode
-    const settingsWindow = await sharedApp.getWindow('settings/settings.html');
+    const settingsWindow = await app.getWindow('settings/settings.html');
     expect(settingsWindow).toBeTruthy();
 
     // Verify content loaded
@@ -63,14 +75,25 @@ test.describe('Settings @desktop', () => {
 });
 
 // ============================================================================
-// Cross-Origin Fetch Tests (uses shared app)
+// Cross-Origin Fetch Tests
 // ============================================================================
 
 test.describe('Cross-Origin Fetch @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cors'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('peek:// pages can fetch from https:// origins', async () => {
     // peek:// scheme has corsEnabled: false, so fetch() to external origins should work.
     // If corsEnabled were true, this would throw "Failed to fetch" due to CORS.
-    const result = await sharedBgWindow.evaluate(async () => {
+    const result = await bgWindow.evaluate(async () => {
       try {
         const res = await fetch('https://public.api.bsky.app/xrpc/_health');
         return { ok: res.ok, status: res.status, error: null };
@@ -86,16 +109,27 @@ test.describe('Cross-Origin Fetch @desktop', () => {
 });
 
 // ============================================================================
-// Command Palette Tests (uses shared app)
+// Command Palette Tests
 // ============================================================================
 
 test.describe('Cmd Palette @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-palette'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('open cmd and execute gallery command', async () => {
     // Wait for cmd extension to be ready (critical for packaged mode where startup is slower)
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Open cmd panel via window API
-    const openResult = await sharedBgWindow.evaluate(async () => {
+    const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
@@ -109,7 +143,7 @@ test.describe('Cmd Palette @desktop', () => {
     expect(openResult.success).toBe(true);
 
     // Find the cmd window (getWindow already polls until found)
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Wait for input to be ready and commands to be loaded
@@ -133,17 +167,17 @@ test.describe('Cmd Palette @desktop', () => {
 
     // Close the cmd window
     if (openResult.id) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         return await (window as any).app.window.close(id);
       }, openResult.id);
     }
   });
 
   test('edit command Tab-completion shows autocomplete and opens editor', async () => {
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Create a test note so the edit command has something to autocomplete
-    const addResult = await sharedBgWindow.evaluate(async () => {
+    const addResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.addItem('text', {
         content: '# Edit Tab Test Note\nThis is a note for testing edit tab-completion.'
       });
@@ -152,7 +186,7 @@ test.describe('Cmd Palette @desktop', () => {
     const noteId = addResult.data?.id;
 
     // Set up editor:open event capture BEFORE opening the cmd panel
-    await sharedBgWindow.evaluate(() => {
+    await bgWindow.evaluate(() => {
       (window as any).__editorOpenCaptured = [];
       (window as any).__editorOpenUnsub = (window as any).app.subscribe('editor:open', (data: any) => {
         (window as any).__editorOpenCaptured.push(data);
@@ -160,7 +194,7 @@ test.describe('Cmd Palette @desktop', () => {
     });
 
     // Open cmd panel
-    const openResult = await sharedBgWindow.evaluate(async () => {
+    const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
@@ -173,7 +207,7 @@ test.describe('Cmd Palette @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -202,17 +236,17 @@ test.describe('Cmd Palette @desktop', () => {
     await cmdWindow.keyboard.press('Enter');
 
     // Verify editor:open was published by polling the captured events
-    await sharedBgWindow.waitForFunction(() => {
+    await bgWindow.waitForFunction(() => {
       return (window as any).__editorOpenCaptured && (window as any).__editorOpenCaptured.length > 0;
     }, undefined, { timeout: 10000 });
 
-    const editorOpenData = await sharedBgWindow.evaluate(() => {
+    const editorOpenData = await bgWindow.evaluate(() => {
       return (window as any).__editorOpenCaptured[0];
     });
     expect(editorOpenData).toBeTruthy();
 
     // Clean up event listener
-    await sharedBgWindow.evaluate(() => {
+    await bgWindow.evaluate(() => {
       if ((window as any).__editorOpenUnsub) {
         (window as any).__editorOpenUnsub();
       }
@@ -223,7 +257,7 @@ test.describe('Cmd Palette @desktop', () => {
     // Close cmd window if still open
     try {
       if (openResult.id) {
-        await sharedBgWindow.evaluate(async (id: number) => {
+        await bgWindow.evaluate(async (id: number) => {
           return await (window as any).app.window.close(id);
         }, openResult.id);
       }
@@ -233,7 +267,7 @@ test.describe('Cmd Palette @desktop', () => {
 
     // Clean up the test note
     if (noteId) {
-      await sharedBgWindow.evaluate(async (id: string) => {
+      await bgWindow.evaluate(async (id: string) => {
         return await (window as any).app.datastore.deleteItem(id);
       }, noteId);
     }
@@ -245,9 +279,20 @@ test.describe('Cmd Palette @desktop', () => {
 // ============================================================================
 
 test.describe('Peeks @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('peeks'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('add a peek and test it opens', async () => {
     // Add a peek address to the datastore
-    const addResult = await sharedBgWindow.evaluate(async () => {
+    const addResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.addAddress('https://example.com', {
         title: 'Example Peek',
         description: 'Test peek for smoke tests'
@@ -256,14 +301,14 @@ test.describe('Peeks @desktop', () => {
     expect(addResult.success).toBe(true);
 
     // Verify peeks extension is loaded (hybrid mode: may be iframe or separate window)
-    const runningExts = await sharedBgWindow.evaluate(async () => {
+    const runningExts = await bgWindow.evaluate(async () => {
       return await (window as any).app.extensions.list();
     });
     const peeksRunning = runningExts.data?.some((ext: any) => ext.id === 'peeks');
     expect(peeksRunning).toBe(true);
 
     // Open a peek window for the address we created
-    const peekResult = await sharedBgWindow.evaluate(async () => {
+    const peekResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('https://example.com', {
         width: 800,
         height: 600,
@@ -273,12 +318,12 @@ test.describe('Peeks @desktop', () => {
     expect(peekResult.success).toBe(true);
 
     // Wait for window to open (getWindow polls)
-    const peekWindow = await sharedApp.getWindow('example.com', 5000);
+    const peekWindow = await app.getWindow('example.com', 5000);
     expect(peekWindow).toBeTruthy();
 
     // Close the peek
     if (peekResult.id) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         return await (window as any).app.window.close(id);
       }, peekResult.id);
     }
@@ -290,6 +335,17 @@ test.describe('Peeks @desktop', () => {
 // ============================================================================
 
 test.describe('Slides @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('slides'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('add slides and test they work', async () => {
     // Add multiple addresses to use as slides
     const urls = [
@@ -299,7 +355,7 @@ test.describe('Slides @desktop', () => {
     ];
 
     for (const url of urls) {
-      const result = await sharedBgWindow.evaluate(async (uri: string) => {
+      const result = await bgWindow.evaluate(async (uri: string) => {
         return await (window as any).app.datastore.addAddress(uri, {
           title: `Slide: ${uri}`,
           starred: 1
@@ -309,14 +365,14 @@ test.describe('Slides @desktop', () => {
     }
 
     // Verify slides extension is loaded (hybrid mode: may be iframe or separate window)
-    const runningExts = await sharedBgWindow.evaluate(async () => {
+    const runningExts = await bgWindow.evaluate(async () => {
       return await (window as any).app.extensions.list();
     });
     const slidesRunning = runningExts.data?.some((ext: any) => ext.id === 'slides');
     expect(slidesRunning).toBe(true);
 
     // Query addresses to verify they were added
-    const queryResult = await sharedBgWindow.evaluate(async () => {
+    const queryResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.queryAddresses({ starred: 1, limit: 10 });
     });
     expect(queryResult.success).toBe(true);
@@ -329,8 +385,18 @@ test.describe('Slides @desktop', () => {
 // ============================================================================
 
 test.describe('Groups Navigation @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('groups-nav'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('groups to group to url and back navigation', async () => {
-    const bgWindow = sharedBgWindow;
     // Create a tag/group with some items and promote it to a group
     const tagResult = await bgWindow.evaluate(async () => {
       const result = await (window as any).app.datastore.getOrCreateTag('test-group');
@@ -386,7 +452,7 @@ test.describe('Groups Navigation @desktop', () => {
     expect(groupsResult.success).toBe(true);
 
     // Find the groups window (getWindow polls)
-    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const groupsWindow = await app.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
 
@@ -417,14 +483,14 @@ test.describe('Groups Navigation @desktop', () => {
     const addressCard = await groupsWindow.$('peek-card.address-card');
     expect(addressCard).toBeTruthy();
 
-    const windowCountBefore = sharedApp.windows().length;
+    const windowCountBefore = app.windows().length;
     await addressCard!.click();
 
     // Wait for new window to open
-    await waitForWindowCount(() => sharedApp.windows(), windowCountBefore + 1, 5000);
+    await waitForWindowCount(() => app.windows(), windowCountBefore + 1, 5000);
 
     // Verify a new window was opened
-    const windowCountAfter = sharedApp.windows().length;
+    const windowCountAfter = app.windows().length;
     expect(windowCountAfter).toBeGreaterThan(windowCountBefore);
 
     // Navigate back to groups view
@@ -477,8 +543,18 @@ test.describe('Groups Navigation @desktop', () => {
 // ============================================================================
 
 test.describe('IZUI Escape Protocol @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('izui-escape'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('navigate mode: escape navigates internally before requesting close', async () => {
-    const bgWindow = sharedBgWindow;
 
     // Create a group with items so we can navigate into it
     const tagResult = await bgWindow.evaluate(async () => {
@@ -511,7 +587,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     });
     expect(groupsResult.success).toBe(true);
 
-    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const groupsWindow = await app.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
@@ -567,7 +643,6 @@ test.describe('IZUI Escape Protocol @desktop', () => {
   });
 
   test('peek-card: Enter key activates card via card-click event', async () => {
-    const bgWindow = sharedBgWindow;
 
     // Create a group with an item
     const tagResult = await bgWindow.evaluate(async () => {
@@ -600,7 +675,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     });
     expect(groupsResult.success).toBe(true);
 
-    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const groupsWindow = await app.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
     await groupsWindow.waitForSelector('peek-card.group-card', { timeout: 5000 });
@@ -636,7 +711,6 @@ test.describe('IZUI Escape Protocol @desktop', () => {
   });
 
   test('active mode: ESC at root does NOT close window', async () => {
-    const bgWindow = sharedBgWindow;
 
     // Open groups window with role: 'workspace' (like the real groups extension does)
     // In headless/test mode, appFocused defaults to true → session is 'active'
@@ -648,7 +722,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
       });
     });
     expect(groupsResult.success).toBe(true);
-    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const groupsWindow = await app.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
@@ -688,7 +762,6 @@ test.describe('IZUI Escape Protocol @desktop', () => {
   });
 
   test('active mode: ESC on child-content window does NOT close it (regression)', async () => {
-    const bgWindow = sharedBgWindow;
 
     // First open a workspace window (like groups) to establish an active session
     const workspaceResult = await bgWindow.evaluate(async () => {
@@ -699,7 +772,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
       });
     });
     expect(workspaceResult.success).toBe(true);
-    const workspaceWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const workspaceWindow = await app.getWindow('groups/home.html', 5000);
     expect(workspaceWindow).toBeTruthy();
     await workspaceWindow.waitForLoadState('domcontentloaded');
 
@@ -719,7 +792,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
       });
     });
     expect(contentResult.success).toBe(true);
-    const contentWindow = await sharedApp.getWindow('search/home.html', 5000);
+    const contentWindow = await app.getWindow('search/home.html', 5000);
     expect(contentWindow).toBeTruthy();
     await contentWindow.waitForLoadState('domcontentloaded');
 
@@ -754,7 +827,6 @@ test.describe('IZUI Escape Protocol @desktop', () => {
   });
 
   test('navigate mode: timeout does not close window', async () => {
-    const bgWindow = sharedBgWindow;
 
     // Open a window with navigate escape mode but NO escape handler registered
     // This simulates what happens when a window hasn't finished loading its IZUI
@@ -767,7 +839,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     });
     expect(result.success).toBe(true);
 
-    const testWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const testWindow = await app.getWindow('groups/home.html', 5000);
     expect(testWindow).toBeTruthy();
     await testWindow.waitForLoadState('domcontentloaded');
 
@@ -800,18 +872,29 @@ test.describe('IZUI Escape Protocol @desktop', () => {
 // ============================================================================
 
 test.describe('External URL Opening @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('external-url'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('open URL by calling executable', async () => {
     // Verify app is ready with background window
-    expect(sharedBgWindow).toBeTruthy();
+    expect(bgWindow).toBeTruthy();
     // Ensure the API is ready
-    await waitForAppReady(sharedBgWindow);
+    await waitForAppReady(bgWindow);
   });
 
   test('cmd panel detects and opens domain without protocol (youtube.com)', async () => {
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Open cmd panel
-    const openResult = await sharedBgWindow.evaluate(async () => {
+    const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
@@ -824,7 +907,7 @@ test.describe('External URL Opening @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
     // Type a domain without protocol
@@ -835,7 +918,7 @@ test.describe('External URL Opening @desktop', () => {
     await sleep(1000);
 
     // Verify URL was opened (check window list for the URL)
-    const windowList = await sharedBgWindow.evaluate(async () => {
+    const windowList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
 
@@ -848,17 +931,17 @@ test.describe('External URL Opening @desktop', () => {
 
     // Clean up
     if (exampleWindow) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         await (window as any).app.window.close(id);
       }, exampleWindow.id);
     }
   });
 
   test('cmd panel opens URL with http protocol', async () => {
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Open cmd panel
-    const openResult = await sharedBgWindow.evaluate(async () => {
+    const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
@@ -871,7 +954,7 @@ test.describe('External URL Opening @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
     // Type URL with http protocol
@@ -882,7 +965,7 @@ test.describe('External URL Opening @desktop', () => {
     await sleep(1000);
 
     // Verify URL was opened (should preserve http://)
-    const windowList = await sharedBgWindow.evaluate(async () => {
+    const windowList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
 
@@ -894,17 +977,17 @@ test.describe('External URL Opening @desktop', () => {
 
     // Clean up
     if (httpWindow) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         await (window as any).app.window.close(id);
       }, httpWindow.id);
     }
   });
 
   test('cmd panel opens URL with https protocol', async () => {
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Open cmd panel
-    const openResult = await sharedBgWindow.evaluate(async () => {
+    const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
@@ -917,7 +1000,7 @@ test.describe('External URL Opening @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
     // Type URL with https protocol
@@ -928,7 +1011,7 @@ test.describe('External URL Opening @desktop', () => {
     await sleep(1000);
 
     // Verify URL was opened
-    const windowList = await sharedBgWindow.evaluate(async () => {
+    const windowList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
 
@@ -940,17 +1023,17 @@ test.describe('External URL Opening @desktop', () => {
 
     // Clean up
     if (httpsWindow) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         await (window as any).app.window.close(id);
       }, httpsWindow.id);
     }
   });
 
   test('cmd panel opens localhost URLs', async () => {
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Open cmd panel
-    const openResult = await sharedBgWindow.evaluate(async () => {
+    const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
@@ -963,7 +1046,7 @@ test.describe('External URL Opening @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
     // Type localhost with port
@@ -974,7 +1057,7 @@ test.describe('External URL Opening @desktop', () => {
     await sleep(1000);
 
     // Verify URL was opened (normalized to https://localhost:3000)
-    const windowList = await sharedBgWindow.evaluate(async () => {
+    const windowList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
 
@@ -986,23 +1069,23 @@ test.describe('External URL Opening @desktop', () => {
 
     // Clean up
     if (localhostWindow) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         await (window as any).app.window.close(id);
       }, localhostWindow.id);
     }
   });
 
   test('cmd panel ignores non-URL non-command text on Enter', async () => {
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Snapshot window list before
-    const beforeList = await sharedBgWindow.evaluate(async () => {
+    const beforeList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
     const beforeCount = beforeList.windows?.length || 0;
 
     // Open cmd panel
-    const openResult = await sharedBgWindow.evaluate(async () => {
+    const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
@@ -1015,7 +1098,7 @@ test.describe('External URL Opening @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
     // Type non-URL text (no dots, no protocol) — not a command either
@@ -1026,7 +1109,7 @@ test.describe('External URL Opening @desktop', () => {
     await sleep(500);
 
     // Verify no new windows were opened (non-URL text is ignored, not routed anywhere)
-    const afterList = await sharedBgWindow.evaluate(async () => {
+    const afterList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
 
@@ -1044,7 +1127,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Close cmd panel if still open
     if (openResult.id) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         try {
           await (window as any).app.window.close(id);
         } catch (e) {
@@ -1059,10 +1142,10 @@ test.describe('External URL Opening @desktop', () => {
     // in another app when Peek is set as default browser).
     // Tests the fix for: first click focuses app but doesn't open URL, second click works.
 
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Get initial window count
-    const initialList = await sharedBgWindow.evaluate(async () => {
+    const initialList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
     const initialCount = initialList.windows?.length || 0;
@@ -1072,7 +1155,7 @@ test.describe('External URL Opening @desktop', () => {
     const testUrl = 'https://example.com/external-test';
 
     // Trigger external:open-url event directly (simulates what handleExternalUrl does)
-    await sharedBgWindow.evaluate(async (url: string) => {
+    await bgWindow.evaluate(async (url: string) => {
       const api = (window as any).app;
       // Publish the same event that handleExternalUrl publishes — core
       // renderer subscribes on GLOBAL scope, so publish with GLOBAL explicitly
@@ -1089,7 +1172,7 @@ test.describe('External URL Opening @desktop', () => {
     await sleep(500);
 
     // Verify URL was opened
-    const finalList = await sharedBgWindow.evaluate(async () => {
+    const finalList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
 
@@ -1107,7 +1190,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Clean up
     if (externalWindow) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         await (window as any).app.window.close(id);
       }, externalWindow.id);
     }
@@ -1120,10 +1203,10 @@ test.describe('External URL Opening @desktop', () => {
     // The previous test simulates via pubsub from the renderer; this test
     // exercises the full main-process -> pubsub -> renderer -> window-open flow.
 
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Get initial window count (include internal to see ALL windows)
-    const initialList = await sharedBgWindow.evaluate(async () => {
+    const initialList = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
     const initialCount = initialList.windows?.length || 0;
@@ -1131,7 +1214,7 @@ test.describe('External URL Opening @desktop', () => {
     const testUrl = 'https://example.com/main-process-external-test';
 
     // Call handleExternalUrl from the main process (simulates real OS open-url)
-    const mainResult = await sharedApp.evaluateMain!(({ app }) => {
+    const mainResult = await app.evaluateMain!(({ app }) => {
       const { handleExternalUrl } = (globalThis as any).__peek_test;
       if (!handleExternalUrl) return { error: 'handleExternalUrl not found on __peek_test' };
       handleExternalUrl('https://example.com/main-process-external-test', 'os');
@@ -1145,7 +1228,7 @@ test.describe('External URL Opening @desktop', () => {
     let externalWindow: any = null;
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
-      const list = await sharedBgWindow.evaluate(async () => {
+      const list = await bgWindow.evaluate(async () => {
         return await (window as any).app.window.list();
       });
       externalWindow = list.windows?.find((w: any) =>
@@ -1159,7 +1242,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Clean up
     if (externalWindow) {
-      await sharedBgWindow.evaluate(async (id: number) => {
+      await bgWindow.evaluate(async (id: number) => {
         await (window as any).app.window.close(id);
       }, externalWindow.id);
     }
@@ -1379,6 +1462,17 @@ test.describe('Data Persistence @desktop', () => {
 // ============================================================================
 
 test.describe('Core Functionality @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('core'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('app launches and extensions load', async () => {
     // After v2 tile migration:
     // - V2 features load as separate background BrowserWindows (peek://{id}/background.html)
@@ -1388,7 +1482,7 @@ test.describe('Core Functionality @desktop', () => {
     // Check that at least one eager v2 background tile window exists.
     // peeks and slides are eager v2 background tiles that launch at startup.
     const v2BgWindow = await waitForWindow(
-      () => sharedApp.windows(),
+      () => app.windows(),
       'peek://peeks/background.html',
       15000
     );
@@ -1396,7 +1490,7 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('database is accessible', async () => {
-    const result = await sharedBgWindow.evaluate(async () => {
+    const result = await bgWindow.evaluate(async () => {
       return await (window as any).app.datastore.getStats();
     });
     expect(result.success).toBe(true);
@@ -1406,7 +1500,7 @@ test.describe('Core Functionality @desktop', () => {
   test('commands are registered', async () => {
     // Commands are now owned by the cmd extension via pubsub
     // Query via cmd:query-commands topic with retry for extension loading
-    const result = await sharedBgWindow.evaluate(async () => {
+    const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
 
       const queryCommands = () => new Promise((resolve) => {
@@ -1438,11 +1532,11 @@ test.describe('Core Functionality @desktop', () => {
   test('quit and restart commands are registered', async () => {
     // quit/restart are registered asynchronously during app boot (app/index.js).
     // Poll via waitForCommand before querying details to avoid startup-race flake.
-    await waitForCommand(sharedBgWindow, 'quit', 10000);
-    await waitForCommand(sharedBgWindow, 'restart', 10000);
+    await waitForCommand(bgWindow, 'quit', 10000);
+    await waitForCommand(bgWindow, 'restart', 10000);
 
     // Query commands via cmd extension to verify descriptions
-    const result = await sharedBgWindow.evaluate(async () => {
+    const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
 
       return new Promise((resolve) => {
@@ -1467,7 +1561,7 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('reload extension command is registered', async () => {
-    const result = await sharedBgWindow.evaluate(async () => {
+    const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
 
       return new Promise((resolve) => {
@@ -1489,7 +1583,7 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('api.quit and api.restart functions exist', async () => {
-    const result = await sharedBgWindow.evaluate(() => {
+    const result = await bgWindow.evaluate(() => {
       const api = (window as any).app;
       return {
         hasQuit: typeof api.quit === 'function',
@@ -1503,7 +1597,7 @@ test.describe('Core Functionality @desktop', () => {
 
   test('window management works', async () => {
     // Open a test window
-    const openResult = await sharedBgWindow.evaluate(async () => {
+    const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('about:blank', {
         width: 400,
         height: 300
@@ -1513,17 +1607,17 @@ test.describe('Core Functionality @desktop', () => {
     expect(openResult.id).toBeDefined();
 
     // Wait for window to open
-    await sharedApp.getWindow('about:blank', 5000);
+    await app.getWindow('about:blank', 5000);
 
     // List windows
-    const listResult = await sharedBgWindow.evaluate(async () => {
+    const listResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.list();
     });
     expect(listResult.success).toBe(true);
     expect(Array.isArray(listResult.windows)).toBe(true);
 
     // Close the window
-    await sharedBgWindow.evaluate(async (id: number) => {
+    await bgWindow.evaluate(async (id: number) => {
       return await (window as any).app.window.close(id);
     }, openResult.id);
   });
@@ -1534,10 +1628,15 @@ test.describe('Core Functionality @desktop', () => {
 // ============================================================================
 
 test.describe('Tag Command @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('tag-cmd'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('creates address if not exists when tagging', async () => {
@@ -1744,13 +1843,13 @@ test.describe('Tag Command @desktop', () => {
 // ============================================================================
 
 test.describe('Command Execution @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
   let pageWindowId: number | null = null;
   const testPageUrl = `https://cmd-exec-test-${Date.now()}.example.com/`;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
-    await waitForExtensionsReady(bgWindow);
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-exec'));
 
     // Open a page window so tag commands have an "active window" to work with
     const openResult = await bgWindow.evaluate(async (url: string) => {
@@ -1773,11 +1872,14 @@ test.describe('Command Execution @desktop', () => {
 
   test.afterAll(async () => {
     // Close the page window we opened
-    if (pageWindowId) {
-      await bgWindow.evaluate(async (id: number) => {
-        return await (window as any).app.window.close(id);
-      }, pageWindowId);
+    if (pageWindowId && bgWindow && !bgWindow.isClosed()) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, pageWindowId);
+      } catch { /* app may already be closing */ }
     }
+    if (app) await app.close();
   });
 
   test('tag command with # prefixed tags stores tags without prefix', async () => {
@@ -2084,7 +2186,7 @@ test.describe('Command Execution @desktop', () => {
       // listener is live. Electron's `webContents.send` is fire-and-forget —
       // a pubsub event that arrives before the listener is attached is
       // silently dropped, which is the root cause of the full-suite flake.
-      const pageWindow = await sharedApp.getWindow(dynamicKey, 10000);
+      const pageWindow = await app.getWindow(dynamicKey, 10000);
       expect(pageWindow).toBeTruthy();
       await pageWindow.waitForFunction(
         () => (window as unknown as { __pageModuleReady?: boolean }).__pageModuleReady === true,
@@ -2291,10 +2393,15 @@ test.describe('Command Execution @desktop', () => {
 // ============================================================================
 
 test.describe('Tag Events @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('tag-events'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('tag:created is emitted when new tag is created', async () => {
@@ -2496,10 +2603,15 @@ test.describe('Tag Events @desktop', () => {
 // ============================================================================
 
 test.describe('Item Events @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('item-events'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('item:created is emitted when item is added', async () => {
@@ -2632,10 +2744,15 @@ test.describe('Item Events @desktop', () => {
 // ============================================================================
 
 test.describe('Groups View @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('groups-view'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('empty groups are not shown in groups list', async () => {
@@ -2683,7 +2800,7 @@ test.describe('Groups View @desktop', () => {
     expect(groupsResult.success).toBe(true);
 
     // Find the groups window (getWindow polls)
-    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const groupsWindow = await app.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
 
@@ -2742,7 +2859,7 @@ test.describe('Groups View @desktop', () => {
     expect(groupsResult.success).toBe(true);
 
     // Find the groups window (getWindow polls)
-    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const groupsWindow = await app.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
 
@@ -2889,10 +3006,15 @@ test.describe('Extension Lifecycle @desktop', () => {
 // ============================================================================
 
 test.describe('Command Chaining @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-chain'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('cmd panel loads with chain state initialized', async () => {
@@ -2910,7 +3032,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Verify state object has chain properties
@@ -2947,7 +3069,7 @@ test.describe('Command Chaining @desktop', () => {
     expect(openResult.success).toBe(true);
 
     // Find the cmd window
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Test MIME type matching function (if exposed, or test via behavior)
@@ -2985,7 +3107,7 @@ test.describe('Command Chaining @desktop', () => {
     expect(openResult.success).toBe(true);
 
     // Find the cmd window
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Wait for input to be ready
@@ -3019,7 +3141,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Check chain indicator element exists
@@ -3073,7 +3195,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     // Wait for input to be ready and commands to be loaded
@@ -3135,7 +3257,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
@@ -3183,7 +3305,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
@@ -3260,7 +3382,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
@@ -3313,7 +3435,7 @@ test.describe('Command Chaining @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
@@ -3360,10 +3482,15 @@ test.describe('Command Chaining @desktop', () => {
 // ============================================================================
 
 test.describe('Type-Specific Noun Commands @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('nouns'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('list notes command produces array output', async () => {
@@ -3390,7 +3517,7 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -3443,7 +3570,7 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
 
@@ -3517,7 +3644,7 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -3579,7 +3706,7 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -3624,10 +3751,15 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
 // ============================================================================
 
 test.describe('Edit Command Param Mode @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('edit-param'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('Tab in param mode fills text, does NOT execute', async () => {
@@ -3654,7 +3786,7 @@ test.describe('Edit Command Param Mode @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -3734,7 +3866,7 @@ test.describe('Edit Command Param Mode @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -3807,7 +3939,7 @@ test.describe('Edit Command Param Mode @desktop', () => {
     });
     expect(openResult.success).toBe(true);
 
-    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
 
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -3845,10 +3977,15 @@ test.describe('Edit Command Param Mode @desktop', () => {
 // ============================================================================
 
 test.describe('Themes @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('themes'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('theme API is available', async () => {
@@ -3991,12 +4128,17 @@ test.describe('Themes @desktop', () => {
 // ============================================================================
 
 test.describe('Command Registration Performance @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-perf'));
     // Wait for cmd extension to be fully ready before running performance tests
     await waitForExtensionsReady(bgWindow, 15000);
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('cmd:register-batch is handled by cmd extension', async () => {
@@ -4055,12 +4197,17 @@ test.describe('Command Registration Performance @desktop', () => {
 // ============================================================================
 
 test.describe('Startup Phase Events @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('startup-phase'));
     // Wait for extensions to be fully ready
     await waitForExtensionsReady(bgWindow);
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('ext:startup:phase events are available for subscription', async () => {
@@ -4159,39 +4306,33 @@ test.describe('Startup Phase Events @desktop', () => {
 // ============================================================================
 
 test.describe('Hybrid Extension Mode @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('hybrid-mode'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('v2 background tile windows exist as separate BrowserWindows', async () => {
     // V2 background tiles (peeks, slides) launch as separate hidden BrowserWindows
     // at peek://{id}/background.html — NOT as iframes in the extension host.
     const peeksWin = await waitForWindow(
-      () => sharedApp.windows(),
+      () => app.windows(),
       'peek://peeks/background.html',
       15000
     );
     expect(peeksWin).toBeDefined();
 
     const slidesWin = await waitForWindow(
-      () => sharedApp.windows(),
+      () => app.windows(),
       'peek://slides/background.html',
       15000
     );
     expect(slidesWin).toBeDefined();
-  });
-
-  test.skip('example extension loads as separate window (external)', async () => {
-    // SKIPPED: After v2 tile migration, the example extension is a v2 tile
-    // (manifestVersion: 2) with a lazy background tile. It no longer loads at
-    // startup as an "external" v1 window at peek://ext/example/background.html.
-    // Instead it launches at peek://example/background.html on first command
-    // invocation. See the "v2 background tile windows" test for eager v2 tiles.
-    //
-    // No extension currently uses the v1 external-window pattern after the
-    // v2 migration, so there is no equivalent to test here.
   });
 
   test('api.extensions.reload() reloads external extension', async () => {
@@ -4289,7 +4430,7 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     // - Lazy v2 tiles (including 'example') do NOT load at startup; they
     //   only launch at peek://{id}/background.html on first command invoke.
     // - Plus any UI windows (settings, etc.)
-    const windows = sharedApp.windows();
+    const windows = app.windows();
 
     const coreBgWindows = windows.filter(w => w.url().includes('peek://app/background.html'));
     expect(coreBgWindows.length).toBe(1);
@@ -4528,11 +4669,16 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
 // the user was looking at before opening the palette.
 
 test.describe('Window Targeting @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('window-targeting'));
     await sleep(500); // Wait for app to stabilize
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('setWindowColorScheme returns success with windowId', async () => {
@@ -4684,10 +4830,15 @@ test.describe('Window Targeting @desktop', () => {
 // ============================================================================
 
 test.describe('Backup @desktop', () => {
+  let app: DesktopApp;
   let bgWindow: Page;
 
   test.beforeAll(async () => {
-    bgWindow = sharedBgWindow;
+    ({ app, bgWindow } = await createPerDescribeApp('backup'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
 
   test('backup-get-config returns config object', async () => {
@@ -4818,8 +4969,18 @@ test.describe('Backup @desktop', () => {
 // ============================================================================
 
 test.describe('IZUI Behavior @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('izui-behavior'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('parentWindowId is set when opened from a content window', async () => {
-    const bgWindow = sharedBgWindow;
 
     // Step 1: Open a content window (groups home) from the background window.
     // Since background.html is an internal URL, parentWindowId should be null.
@@ -4832,7 +4993,7 @@ test.describe('IZUI Behavior @desktop', () => {
     expect(groupsResult.success).toBe(true);
     const groupsWindowId = groupsResult.id;
 
-    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const groupsWindow = await app.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
 
@@ -4879,7 +5040,6 @@ test.describe('IZUI Behavior @desktop', () => {
   });
 
   test('onEscape registers callback without changing backend escapeMode (role-based)', async () => {
-    const bgWindow = sharedBgWindow;
 
     // Open a plain window with no escapeMode set (defaults to 'auto')
     const result = await bgWindow.evaluate(async () => {
@@ -4891,7 +5051,7 @@ test.describe('IZUI Behavior @desktop', () => {
     expect(result.success).toBe(true);
     const windowId = result.id;
 
-    const contentWindow = await sharedApp.getWindow('about:blank', 5000);
+    const contentWindow = await app.getWindow('about:blank', 5000);
     expect(contentWindow).toBeTruthy();
 
     // Get escapeMode before registering handler
@@ -4938,7 +5098,6 @@ test.describe('IZUI Behavior @desktop', () => {
   });
 
   test('izui-close-self closes the window', async () => {
-    const bgWindow = sharedBgWindow;
 
     // Open a content window
     const result = await bgWindow.evaluate(async () => {
@@ -4951,7 +5110,7 @@ test.describe('IZUI Behavior @desktop', () => {
     expect(result.success).toBe(true);
     const windowId = result.id;
 
-    const contentWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const contentWindow = await app.getWindow('groups/home.html', 5000);
     expect(contentWindow).toBeTruthy();
     await contentWindow.waitForLoadState('domcontentloaded');
 
@@ -4975,7 +5134,6 @@ test.describe('IZUI Behavior @desktop', () => {
   });
 
   test('item:created fires from trackWindowLoad when opening external URL', async () => {
-    const bgWindow = sharedBgWindow;
     const timestamp = Date.now();
     const testUrl = `https://track-window-load-${timestamp}.example.com`;
 
@@ -5032,7 +5190,6 @@ test.describe('IZUI Behavior @desktop', () => {
   });
 
   test('ESC debouncing: two rapid presses trigger only one handler call', async () => {
-    const bgWindow = sharedBgWindow;
 
     // Open a groups window with navigate escape mode
     const result = await bgWindow.evaluate(async () => {
@@ -5045,7 +5202,7 @@ test.describe('IZUI Behavior @desktop', () => {
     expect(result.success).toBe(true);
     const windowId = result.id;
 
-    const groupsWindow = await sharedApp.getWindow('groups/home.html', 5000);
+    const groupsWindow = await app.getWindow('groups/home.html', 5000);
     expect(groupsWindow).toBeTruthy();
     await groupsWindow.waitForLoadState('domcontentloaded');
     await groupsWindow.waitForSelector('.cards', { timeout: 5000 });
@@ -5143,11 +5300,21 @@ test.describe('IZUI Behavior @desktop', () => {
 // ============================================================================
 
 test.describe('Shortcut Roundtrip @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('shortcut-roundtrip'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('local shortcut from background window roundtrip', async () => {
     // Register a local shortcut from bgWindow, trigger it via handleLocalShortcut
     // in the main process, verify callback fires in the renderer.
     // This tests the basic ev.reply roundtrip for a normal BrowserWindow WebContents.
-    const bgWindow = sharedBgWindow;
 
     // Register a local shortcut from the bgWindow
     await bgWindow.evaluate(() => {
@@ -5168,7 +5335,7 @@ test.describe('Shortcut Roundtrip @desktop', () => {
     // process "evaluate" context as destroyed if we return the raw result. To
     // avoid this flakiness, wrap the call in setImmediate + return via a
     // pre-computed flag so the evaluate settles cleanly before IPC fans out.
-    const handled = await sharedApp.evaluateMain!(({ app }) => {
+    const handled = await app.evaluateMain!(({ app }) => {
       try {
         const { handleLocalShortcut } = (globalThis as any).__peek_test;
         const result = handleLocalShortcut({
@@ -5211,15 +5378,6 @@ test.describe('Shortcut Roundtrip @desktop', () => {
     });
   });
 
-  test.skip('shortcut from external extension window roundtrip', async () => {
-    // SKIPPED: After v2 tile migration, no extension uses the v1 external-window
-    // pattern (peek://ext/{id}/background.html). The example extension is now a
-    // v2 tile launched at peek://example/background.html. v2 tile windows use
-    // tile-preload.ts which does NOT expose api.shortcuts (capability-scoped API
-    // does not currently include shortcut registration), so this scenario can't
-    // be reproduced. The general BrowserWindow ev.reply roundtrip is still
-    // covered by "local shortcut from background window roundtrip" above.
-  });
 });
 
 // ============================================================================
@@ -5227,12 +5385,23 @@ test.describe('Shortcut Roundtrip @desktop', () => {
 // ============================================================================
 
 test.describe('Scripts Extension @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('scripts'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
   test('create, save, and execute script', async () => {
     // Wait for scripts extension to be ready
-    await waitForExtensionsReady(sharedBgWindow, 15000);
+    await waitForExtensionsReady(bgWindow, 15000);
 
     // Create a new script directly via datastore
-    const scriptId = await sharedBgWindow.evaluate(async () => {
+    const scriptId = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
       const scriptId = `script_test_${Date.now()}`;
 
@@ -5272,7 +5441,7 @@ test.describe('Scripts Extension @desktop', () => {
     expect(scriptId).toBeTruthy();
 
     // Verify script was saved
-    const savedScript = await sharedBgWindow.evaluate(async (scriptId) => {
+    const savedScript = await bgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
       const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
@@ -5284,7 +5453,7 @@ test.describe('Scripts Extension @desktop', () => {
     expect(savedScript.name).toBe('Test Script');
 
     // Execute script - test executor directly
-    const executeResult = await sharedBgWindow.evaluate(async (scriptId) => {
+    const executeResult = await bgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
       const { scriptExecutor } = await import('peek://scripts/script-executor.js');
 
@@ -5312,7 +5481,7 @@ test.describe('Scripts Extension @desktop', () => {
     expect((executeResult as any).data.status).toBe('success');
 
     // Clean up - delete script
-    await sharedBgWindow.evaluate(async (scriptId) => {
+    await bgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
       const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
@@ -5329,7 +5498,7 @@ test.describe('Scripts Extension @desktop', () => {
 
   test('script pattern matching works', async () => {
     // Test pattern matching directly
-    const patternTests = await sharedBgWindow.evaluate(async () => {
+    const patternTests = await bgWindow.evaluate(async () => {
       // Import the script executor module
       const { ScriptExecutor } = await import('peek://scripts/script-executor.js');
       const executor = new ScriptExecutor();
@@ -5350,7 +5519,7 @@ test.describe('Scripts Extension @desktop', () => {
 
   test('script timeout protection works', async () => {
     // Create a script that runs forever
-    const scriptId = await sharedBgWindow.evaluate(async () => {
+    const scriptId = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
       const scriptId = `script_timeout_test_${Date.now()}`;
 
@@ -5385,7 +5554,7 @@ test.describe('Scripts Extension @desktop', () => {
     });
 
     // Execute with short timeout - test executor directly
-    const executeResult = await sharedBgWindow.evaluate(async (scriptId) => {
+    const executeResult = await bgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
       const { scriptExecutor } = await import('peek://scripts/script-executor.js');
 
@@ -5415,7 +5584,7 @@ test.describe('Scripts Extension @desktop', () => {
     expect((executeResult as any).data.error).toContain('timeout');
 
     // Clean up
-    await sharedBgWindow.evaluate(async (scriptId) => {
+    await bgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
       const settingsTable = await api.datastore.getTable('feature_settings');
       const scriptsRow = settingsTable.data?.['scripts:scripts'];
