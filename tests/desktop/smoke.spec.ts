@@ -2011,6 +2011,41 @@ test.describe('Command Execution @desktop', () => {
     const timestamp = Date.now();
     const setupTag = `setupdyn${timestamp}`;
     const dynamicTag = `testdynamic${timestamp}`;
+    // Per-test unique URL + key. Prevents cross-test window / item reuse in
+    // the shared-app full-suite context (where the describe's `pageWindowId`
+    // may have accumulated state from earlier tests or been closed/reopened
+    // with stale subscribers). Isolating this test to its own page window is
+    // the robust fix for the full-suite ordering flake — the other tests in
+    // this describe don't query #tags-list, so they tolerate the shared
+    // window; only this one is sensitive to page.js subscriber state.
+    const dynamicUrl = `https://cmd-exec-dyn-${timestamp}.example.com/`;
+    const dynamicKey = `cmd-exec-dyn-${timestamp}`;
+
+    // Close the shared page window so getActiveWindow() picks our fresh one
+    // (matches the pattern in "tag command creates item if none exists").
+    const hadSharedWindow = pageWindowId !== null;
+    if (pageWindowId) {
+      await bgWindow.evaluate(async (id: number) => {
+        return await (window as any).app.window.close(id);
+      }, pageWindowId);
+      pageWindowId = null;
+      await sleep(200);
+    }
+
+    // Open our isolated page window
+    const openResult = await bgWindow.evaluate(async (args: { url: string; key: string }) => {
+      return await (window as any).app.window.open(args.url, {
+        width: 800,
+        height: 600,
+        key: args.key
+      });
+    }, { url: dynamicUrl, key: dynamicKey });
+    expect(openResult.success).toBe(true);
+    const testWindowId = openResult.id;
+
+    // Wait for page.js to initialize and subscribe to pubsub
+    // (same 2s wait as in beforeAll — matches page.js init timing)
+    await sleep(2000);
 
     // Helper to execute a tag command and wait for the result
     const executeTag = async (tag: string) => {
@@ -2032,60 +2067,85 @@ test.describe('Command Execution @desktop', () => {
       }, { name: 'tag', search: tag });
     };
 
-    // First tag establishes the item in the datastore and triggers the page's
-    // resolveItemId fallback, setting currentItemId for subsequent events
-    const setupResult = await executeTag(setupTag);
-    expect((setupResult as any).success).toBe(true);
+    try {
+      // First tag establishes the item in the datastore and triggers the page's
+      // resolveItemId fallback, setting currentItemId for subsequent events
+      const setupResult = await executeTag(setupTag);
+      expect((setupResult as any).success).toBe(true);
 
-    // Get the specific page window opened by this test suite (matches URL key)
-    const pageWindow = await sharedApp.getWindow('cmd-exec-test', 10000);
-    expect(pageWindow).toBeTruthy();
+      // Get the specific page window we just opened (matches URL key)
+      const pageWindow = await sharedApp.getWindow(dynamicKey, 10000);
+      expect(pageWindow).toBeTruthy();
 
-    // Wait for page.js to initialize and for the setup tag to appear
-    // (proves the reactive update path works and currentItemId is set)
-    await pageWindow.waitForFunction(
-      (expected: string) => {
+      // Wait for page.js to initialize and for the setup tag to appear
+      // (proves the reactive update path works and currentItemId is set)
+      await pageWindow.waitForFunction(
+        (expected: string) => {
+          const list = document.getElementById('tags-list');
+          if (!list) return false;
+          const names = Array.from(list.querySelectorAll('.tag-name'))
+            .map(el => el.textContent);
+          return names.includes(expected);
+        },
+        setupTag,
+        { timeout: 10000 }
+      );
+
+      // Record tag count after setup
+      const tagCountBefore = await pageWindow.evaluate(() => {
         const list = document.getElementById('tags-list');
-        if (!list) return false;
-        const names = Array.from(list.querySelectorAll('.tag-name'))
-          .map(el => el.textContent);
-        return names.includes(expected);
-      },
-      setupTag,
-      { timeout: 10000 }
-    );
+        return list ? list.querySelectorAll('.tag-btn').length : 0;
+      });
 
-    // Record tag count after setup
-    const tagCountBefore = await pageWindow.evaluate(() => {
-      const list = document.getElementById('tags-list');
-      return list ? list.querySelectorAll('.tag-btn').length : 0;
-    });
+      // Now add a second tag — this should update the widget reactively
+      // because currentItemId is already set from the first tag
+      const result = await executeTag(dynamicTag);
+      expect((result as any).success).toBe(true);
+      expect((result as any).added).toContain(dynamicTag);
 
-    // Now add a second tag — this should update the widget reactively
-    // because currentItemId is already set from the first tag
-    const result = await executeTag(dynamicTag);
-    expect((result as any).success).toBe(true);
-    expect((result as any).added).toContain(dynamicTag);
+      // Verify the tags widget updates dynamically
+      await pageWindow.waitForFunction(
+        (expectedTag: string) => {
+          const list = document.getElementById('tags-list');
+          if (!list) return false;
+          const tagNames = Array.from(list.querySelectorAll('.tag-name'))
+            .map(el => el.textContent);
+          return tagNames.includes(expectedTag);
+        },
+        dynamicTag,
+        { timeout: 10000 }
+      );
 
-    // Verify the tags widget updates dynamically
-    await pageWindow.waitForFunction(
-      (expectedTag: string) => {
+      // Tag count increased
+      const tagCountAfter = await pageWindow.evaluate(() => {
         const list = document.getElementById('tags-list');
-        if (!list) return false;
-        const tagNames = Array.from(list.querySelectorAll('.tag-name'))
-          .map(el => el.textContent);
-        return tagNames.includes(expectedTag);
-      },
-      dynamicTag,
-      { timeout: 10000 }
-    );
+        return list ? list.querySelectorAll('.tag-btn').length : 0;
+      });
+      expect(tagCountAfter).toBeGreaterThan(tagCountBefore);
+    } finally {
+      // Close our isolated page window
+      if (testWindowId) {
+        await bgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, testWindowId);
+      }
 
-    // Tag count increased
-    const tagCountAfter = await pageWindow.evaluate(() => {
-      const list = document.getElementById('tags-list');
-      return list ? list.querySelectorAll('.tag-btn').length : 0;
-    });
-    expect(tagCountAfter).toBeGreaterThan(tagCountBefore);
+      // Reopen the shared page window so the remaining tests in this describe
+      // (and the afterAll cleanup) have the state they expect.
+      if (hadSharedWindow) {
+        const reopenResult = await bgWindow.evaluate(async (url: string) => {
+          return await (window as any).app.window.open(url, {
+            width: 800,
+            height: 600,
+            key: 'cmd-exec-test-page'
+          });
+        }, testPageUrl);
+        if (reopenResult.success && reopenResult.id) {
+          pageWindowId = reopenResult.id;
+        }
+        await sleep(300);
+      }
+    }
   });
 
   test('tag command with no args returns current tags', async () => {
