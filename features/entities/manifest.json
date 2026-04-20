@@ -8,33 +8,28 @@
   "builtin": true,
   "tiles": [
     {
-      "id": "background",
-      "type": "background",
-      "url": "background.html",
-      "lazy": false
-    },
-    {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "entities-browser",
-        "width": 900,
-        "height": 700,
-        "title": "Entities"
-      }
+      "width": 900,
+      "height": 700,
+      "title": "Entities",
+      "role": "workspace",
+      "key": "entities-browser",
+      "resident": true
     }
   ],
   "capabilities": {
     "pubsub": {
-      "scopes": ["self", "global", "system"],
+      "scopes": ["global", "system"],
       "topics": [
         "ext:ready",
         "ext:entities:shutdown",
         "app:shutdown",
         "item:created",
+        "item:deleted",
         "page:content-ready",
+        "editor:changed",
+        "sync:pull-completed",
         "entities:extract",
         "entities:extract:response",
         "entities:extracted",
