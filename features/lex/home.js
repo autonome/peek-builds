@@ -1,6 +1,10 @@
 /**
  * Lexicon Studio Home — AT Protocol identity and data browser UI
  *
+ * Single resident tile combining command/noun registration (formerly background.js)
+ * and the UI (formerly home.js window tile). chain-form remains a separate window
+ * tile (short-lived modal opened by the cmd panel's chain-popup protocol).
+ *
  * Orchestrator: loads a template pack and wires up events between templates.
  * Manages state (auth, current panel, selected lexicon) and handles IPC/pubsub.
  * All rendering is delegated to the active template pack.
@@ -9,6 +13,8 @@
 import {
   nsidToFriendlyName,
 } from './lexicon-ui.js';
+
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 import { getDefaultPack, listTemplatePackMetadata } from './templates/index.js';
 import { escapeHtml, rkeyFromUri } from './templates/raw/utils.js';
@@ -28,6 +34,104 @@ import {
 } from './atproto.js';
 
 const api = window.app;
+
+// ============================================================================
+// Noun registration (formerly background.js)
+// ============================================================================
+
+// Collection NSIDs discovered from user's repo — kept in sync after auth
+let knownCollectionNsids = [];
+
+/**
+ * Discover collection NSIDs from the user's repo.
+ * Uses the shared getCollections() from atproto.js.
+ * Non-blocking — called after session load.
+ */
+async function discoverCollections() {
+  if (!currentSession) return;
+  try {
+    const collections = await getCollections(currentSession, onSessionRefresh);
+    knownCollectionNsids = collections || [];
+    console.log(`[lex] Discovered ${knownCollectionNsids.length} collections for noun query`);
+  } catch (err) {
+    console.warn('[lex] Failed to discover collections for noun query:', err);
+  }
+}
+
+/**
+ * Get all known NSIDs — merge user's collection NSIDs with lexicon directory.
+ */
+async function getAllNsids() {
+  const dirLexicons = await fetchLexiconDirectory();
+  const dirNsids = dirLexicons ? dirLexicons.map(l => l.nsid) : [];
+  return [...new Set([...knownCollectionNsids, ...dirNsids])].sort();
+}
+
+function registerLexNoun() {
+  registerNoun({
+    name: 'lex',
+    singular: 'lex',
+    description: 'AT Protocol lexicons',
+    produces: 'application/x-lexicon-form',
+
+    query: async ({ search }) => {
+      const allNsids = await getAllNsids();
+      let filtered = allNsids;
+      if (search) {
+        const q = search.toLowerCase();
+        filtered = allNsids.filter(nsid => {
+          const friendly = nsidToFriendlyName(nsid).toLowerCase();
+          return nsid.toLowerCase().includes(q) || friendly.includes(q);
+        });
+      }
+      return {
+        success: true,
+        output: {
+          data: filtered.slice(0, 30).map(nsid => ({
+            name: `${nsidToFriendlyName(nsid)} — ${nsid}`,
+            nsid,
+          })),
+          mimeType: 'application/json',
+          title: `Lexicons (${filtered.length})`,
+        },
+      };
+    },
+
+    create: async ({ search }) => {
+      if (!currentSession) {
+        openLexWindow();
+        return { success: false, message: 'Not logged in. Opening Lexicon Studio...' };
+      }
+      const nsid = (search && search.includes('.'))
+        ? search.trim()
+        : (search && search.includes(' — '))
+          ? search.split(' — ').pop().trim()
+          : null;
+
+      if (!nsid) {
+        openLexWindow();
+        return { success: true };
+      }
+
+      const friendlyName = nsidToFriendlyName(nsid);
+      return {
+        success: true,
+        output: {
+          data: { nsid },
+          mimeType: 'application/x-lexicon-form',
+          title: friendlyName,
+          interactive: 'peek://lex/chain-form.html',
+        },
+      };
+    },
+
+    browse: async () => {
+      openLexWindow();
+    },
+  });
+
+  console.log('[lex] Noun registered: lex');
+}
 
 // ============================================================================
 // Template pack
@@ -103,8 +207,8 @@ async function saveSession() {
     if (currentProfile) {
       await api.settings.set(PROFILE_KEY, currentProfile);
     }
-    // Notify background script of session change
-    api.pubsub.publish('lex:session-changed', { session: currentSession }, api.scopes.GLOBAL);
+    // Session changed — refresh collection NSIDs for noun query (non-blocking)
+    discoverCollections();
   } catch (err) {
     console.warn('[lex] Failed to save session:', err);
   }
@@ -130,12 +234,11 @@ async function loadSession() {
 async function clearSession() {
   currentSession = null;
   currentProfile = null;
+  knownCollectionNsids = [];
   if (api) {
     try {
       await api.settings.set(STORAGE_KEY, null);
       await api.settings.set(PROFILE_KEY, null);
-      // Notify background script of session clear
-      api.pubsub.publish('lex:session-changed', { session: null }, api.scopes.GLOBAL);
     } catch (err) {
       console.warn('[lex] Failed to clear session:', err);
     }
@@ -672,6 +775,9 @@ async function init() {
     lexiconTemplate.setSession(currentSession);
     updateFormTemplateUploader();
     showAccountView();
+
+    // Discover collection NSIDs for noun query (non-blocking)
+    discoverCollections();
 
     // Refresh profile in background
     try {
@@ -1744,4 +1850,26 @@ function wireTemplateEvents() {
 // Bootstrap
 // ============================================================================
 
-document.addEventListener('DOMContentLoaded', init);
+(async () => {
+  console.log('[ext:lex] home.js loaded');
+
+  // Initialize v2 tile — validates capability token with main process
+  console.log('[ext:lex] initializing v2 tile');
+  await api.initialize();
+
+  // Register noun (formerly background.js responsibility)
+  registerLexNoun();
+
+  // Register shutdown handler
+  api.onShutdown(() => {
+    console.log('[ext:lex] received shutdown');
+    unregisterNoun('lex');
+  });
+
+  // Initialize UI once DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    await init();
+  }
+})();

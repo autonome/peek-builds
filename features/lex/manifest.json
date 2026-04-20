@@ -8,22 +8,14 @@
   "builtin": true,
   "tiles": [
     {
-      "id": "background",
-      "type": "background",
-      "url": "background.html",
-      "lazy": true
-    },
-    {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "lex-home",
-        "width": 860,
-        "height": 620,
-        "title": "Lexicon Studio"
-      }
+      "width": 860,
+      "height": 620,
+      "title": "Lexicon Studio",
+      "role": "workspace",
+      "key": "lex-home",
+      "resident": true
     },
     {
       "id": "chain-form",
@@ -44,7 +36,6 @@
         "ext:ready",
         "ext:lex:shutdown",
         "app:shutdown",
-        "lex:session-changed",
         "lex:recent-lexicons-changed",
         "lex:open-create",
         "chain-popup:content",
