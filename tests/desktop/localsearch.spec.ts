@@ -45,7 +45,7 @@ test.describe('Lists Extension @desktop', () => {
     // miss a fast creation (getWindow polls every 200ms and returns immediately
     // when the window appears — the 15s cap handles the full lazy-load chain:
     // background-tile launch → tile:ready → execute replay → tile:window:open).
-    const windowPromise = sharedApp.getWindow('ext/lists/home.html', 15000);
+    const windowPromise = sharedApp.getWindow('lists/home.html', 15000);
 
     // Execute the lists command
     await sharedBgWindow.evaluate(async () => {
@@ -77,7 +77,7 @@ test.describe('Lists Extension @desktop', () => {
     // Start waiting for the window BEFORE publishing the command so we don't
     // miss a fast creation (getWindow polls every 200ms and returns immediately
     // when the window appears).
-    const windowPromise = sharedApp.getWindow('ext/lists/home.html', 15000);
+    const windowPromise = sharedApp.getWindow('lists/home.html', 15000);
 
     // Open lists window
     await sharedBgWindow.evaluate(async () => {
@@ -113,7 +113,7 @@ test.describe('Lists Extension @desktop', () => {
 
     // Start waiting for the window BEFORE publishing the command so we don't
     // miss a fast creation (getWindow polls every 200ms).
-    const windowPromise = sharedApp.getWindow('ext/lists/home.html', 15000);
+    const windowPromise = sharedApp.getWindow('lists/home.html', 15000);
 
     // Open search window
     await sharedBgWindow.evaluate(async () => {
@@ -167,7 +167,7 @@ test.describe('Lists Extension @desktop', () => {
 
     // Start waiting for the window BEFORE publishing the command so we don't
     // miss a fast creation (getWindow polls every 200ms).
-    const windowPromise = sharedApp.getWindow('ext/lists/home.html', 15000);
+    const windowPromise = sharedApp.getWindow('lists/home.html', 15000);
 
     // Open search window
     await sharedBgWindow.evaluate(async () => {
@@ -208,7 +208,7 @@ test.describe('Lists Extension @desktop', () => {
 
     // Start waiting for the window BEFORE publishing the command so we don't
     // miss a fast creation (getWindow polls every 200ms).
-    const windowPromise = sharedApp.getWindow('ext/lists/home.html', 15000);
+    const windowPromise = sharedApp.getWindow('lists/home.html', 15000);
 
     // Open search window
     await sharedBgWindow.evaluate(async () => {
