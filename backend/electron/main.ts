@@ -5,7 +5,7 @@
  * a unified API for managing the Electron application.
  */
 
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -226,6 +226,32 @@ export async function initialize(): Promise<void> {
         }
       } catch {
         // Window may have been destroyed between check and send
+      }
+    }
+
+    // Broadcast to webview guests that are themselves peek:// tiles (HUD
+    // widgets, page-canvas webviews, etc.). These guest webContents each
+    // run a tile-preload with a capability token and subscribe to pubsub,
+    // but they are NOT returned by `getAllTileWindows()` (that registry
+    // only tracks top-level BrowserWindows), so without this second pass
+    // their subscribers never fire. Filter by `getType() === 'webview'`
+    // and peek:// URLs to avoid broadcasting into arbitrary http(s)
+    // content webviews.
+    for (const wc of webContents.getAllWebContents()) {
+      try {
+        if (wc.isDestroyed()) continue;
+        if (wc.getType() !== 'webview') continue;
+        const url = wc.getURL();
+        if (!url.startsWith('peek://')) continue;
+        const wcHost = peekHost(url);
+        if (wcHost !== sourceOrigin) {
+          wc.send(`pubsub:${topic}`, {
+            ...(msg as object),
+            source
+          });
+        }
+      } catch {
+        // WebContents may have been destroyed mid-iteration
       }
     }
   });
