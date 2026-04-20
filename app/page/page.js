@@ -3824,3 +3824,9 @@ webview.addEventListener('update-target-url', (e) => {
 });
 
 DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);
+
+// Module-end sentinel. If any top-level statement above throws (e.g. an api.*
+// surface was renamed or removed), module evaluation halts and this flag is
+// never set. A regression test asserts this flips within a short timeout.
+// See tests/desktop/module-health.spec.ts + feedback_top_level_await_silent_halt.md.
+window.__pageModuleReady = true;
