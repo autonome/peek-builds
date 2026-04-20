@@ -9,22 +9,14 @@
   "settingsSchema": "./settings-schema.json",
   "tiles": [
     {
-      "id": "background",
-      "type": "background",
-      "url": "background.html",
-      "lazy": true
-    },
-    {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "websearch-home",
-        "width": 600,
-        "height": 500,
-        "title": "Web Search"
-      }
+      "width": 600,
+      "height": 500,
+      "title": "Web Search",
+      "role": "workspace",
+      "key": "websearch-home",
+      "resident": true
     }
   ],
   "capabilities": {

@@ -1,29 +1,630 @@
 /**
- * Web Search Home UI
+ * Web Search Tile
  *
- * Provides:
- * - Search input with engine selector
- * - Suggestion list with keyboard navigation
- * - Engine list when no query is entered
- * - Keyboard navigation (arrow keys, Enter to search)
+ * Single-tile (resident: true) combining engine state management and UI:
+ * - Built-in engines: Google, DuckDuckGo, Bing, Wikipedia, Kagi
+ * - OpenSearch discovery from visited pages
+ * - Search suggestions with debounce and caching
+ * - Per-engine commands (/google, /ddg, /bing, /wiki, /kagi)
+ * - A general "web search" command with engine selection
+ * - Search UI (engine selector, suggestions, keyboard navigation)
+ *
+ * Commands are declared in manifest.json.
+ * Tile loads as resident (hidden at startup); shows itself when invoked.
  */
+
+import { id, labels, schemas, storageKeys, defaults, builtinEngines } from './config.js';
 
 const api = window.app;
 const debug = api.debug;
 
-// ===== IPC pubsub messaging =====
-// Background runs at peek://ext/websearch/ while home runs at peek://websearch/
-// — different origins, so BroadcastChannel cannot work. Use IPC pubsub instead.
+// ===== State =====
 
-function onChannel(topic, handler) {
-  api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
-}
+// In-memory settings cache (loaded from datastore on init)
+let currentSettings = {
+  prefs: defaults.prefs
+};
 
-function emitChannel(topic, data) {
-  api.pubsub.publish(topic, data, api.scopes.GLOBAL);
-}
+// All engines: built-in + custom/discovered
+let engines = [...builtinEngines];
 
-// ===== Utilities =====
+// Suggestion cache: Map<cacheKey, { suggestions, timestamp }>
+const suggestionCache = new Map();
+const SUGGESTION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const SUGGESTION_CACHE_MAX = 500;
+
+// Track in-flight suggestion requests for cancellation
+let currentSuggestionAbortController = null;
+
+// ===== Settings =====
+
+/**
+ * Load settings from datastore
+ */
+const loadSettings = async () => {
+  const result = await api.settings.get('prefs');
+  if (result.success && result.data) {
+    return {
+      prefs: { ...defaults.prefs, ...(result.data || {}) }
+    };
+  }
+  return { prefs: { ...defaults.prefs } };
+};
+
+/**
+ * Save settings to datastore
+ */
+const saveSettings = async (settings) => {
+  const result = await api.settings.set('prefs', settings.prefs);
+  if (!result.success) {
+    console.error('[ext:websearch] Failed to save settings:', result.error);
+  }
+};
+
+// ===== Engine Registry =====
+
+/**
+ * Load custom/discovered engines from settings
+ */
+const loadEngines = async () => {
+  const result = await api.settings.get('engines');
+  const customEngines = (result.success && result.data) || [];
+
+  // Merge built-in with custom, custom engines can override built-in ones by ID
+  const customIds = new Set(customEngines.map(e => e.id));
+  engines = [
+    ...builtinEngines.filter(e => !customIds.has(e.id)),
+    ...customEngines
+  ];
+
+  debug && console.log('[ext:websearch] Loaded engines:', engines.map(e => e.id));
+};
+
+/**
+ * Save custom engines to settings (only non-builtin ones)
+ */
+const saveEngines = async () => {
+  const customEngines = engines.filter(e => !e.isBuiltIn);
+  await api.settings.set('engines', customEngines);
+};
+
+/**
+ * Get an engine by ID
+ */
+const getEngine = (engineId) => {
+  return engines.find(e => e.id === engineId) || null;
+};
+
+/**
+ * Get an engine by short name (keyword)
+ */
+const getEngineByShortName = (shortName) => {
+  return engines.find(e => e.shortName === shortName && e.enabled !== false) || null;
+};
+
+/**
+ * Get the default engine
+ */
+const getDefaultEngine = () => {
+  const defaultId = currentSettings.prefs.defaultEngine;
+  return getEngine(defaultId) || engines.find(e => e.enabled !== false) || engines[0];
+};
+
+/**
+ * Get all enabled engines
+ */
+const getEnabledEngines = () => {
+  return engines.filter(e => e.enabled !== false);
+};
+
+/**
+ * Add a discovered/custom engine
+ */
+const addEngine = async (engine) => {
+  // Check for duplicate ID
+  const existingIndex = engines.findIndex(e => e.id === engine.id);
+  if (existingIndex >= 0) {
+    // Update existing
+    engines[existingIndex] = { ...engines[existingIndex], ...engine };
+  } else {
+    engines.push(engine);
+  }
+  await saveEngines();
+
+  // Re-register commands for the new engine
+  unregisterEngineCommands();
+  registerEngineCommands();
+
+  debug && console.log('[ext:websearch] Added engine:', engine.id, engine.name);
+};
+
+/**
+ * Remove a custom engine (cannot remove built-in)
+ */
+const removeEngine = async (engineId) => {
+  const engine = getEngine(engineId);
+  if (!engine) return false;
+  if (engine.isBuiltIn) {
+    console.warn('[ext:websearch] Cannot remove built-in engine:', engineId);
+    return false;
+  }
+
+  engines = engines.filter(e => e.id !== engineId);
+  await saveEngines();
+
+  // Re-register commands
+  unregisterEngineCommands();
+  registerEngineCommands();
+
+  return true;
+};
+
+// ===== Search URL Construction =====
+
+/**
+ * Build a search URL from a template and query
+ */
+const buildSearchUrl = (urlTemplate, query) => {
+  return urlTemplate.replace('{searchTerms}', encodeURIComponent(query));
+};
+
+/**
+ * Execute a search: open the search results URL in a new window
+ */
+const executeSearch = async (engine, query) => {
+  if (!query || !query.trim()) return;
+
+  const url = buildSearchUrl(engine.searchUrl, query.trim());
+  debug && console.log('[ext:websearch] Searching:', engine.name, query, '->', url);
+
+  api.window.open(url, {
+    role: 'content',
+    width: 1024,
+    height: 768,
+    trackingSource: 'websearch',
+    trackingSourceId: engine.id
+  }).catch(err => {
+    console.error('[ext:websearch] Failed to open search window:', err);
+  });
+};
+
+// ===== Search Suggestions =====
+
+/**
+ * Fetch suggestions from a search engine's suggest API.
+ * Supports OpenSearch JSON format: ["query", ["suggestion1", "suggestion2", ...]]
+ */
+const fetchSuggestions = async (engine, query, signal) => {
+  if (!engine.suggestUrl || !query || !query.trim()) return [];
+  if (!currentSettings.prefs.enableSuggestions) return [];
+
+  const url = buildSearchUrl(engine.suggestUrl, query.trim());
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    if (signal) signal.addEventListener('abort', () => controller.abort());
+
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (signal && signal.aborted) return [];
+
+    if (!res.ok) {
+      debug && console.log('[ext:websearch] Suggestion fetch failed:', res.status);
+      return [];
+    }
+
+    const data = await res.json();
+
+    // OpenSearch suggestion format: ["query", ["suggestion1", "suggestion2"]]
+    if (Array.isArray(data) && data.length >= 2 && Array.isArray(data[1])) {
+      return data[1].slice(0, 8);
+    }
+
+    // Google-style: { suggestions: [{ value: "..." }] }
+    if (data && Array.isArray(data.suggestions)) {
+      return data.suggestions.map(s => s.value || s).slice(0, 8);
+    }
+
+    return [];
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      debug && console.log('[ext:websearch] Suggestion fetch failed:', err.message);
+    }
+    return [];
+  }
+};
+
+/**
+ * Fetch suggestions with in-memory caching
+ */
+const fetchSuggestionsWithCache = async (engine, query, signal) => {
+  const cacheKey = `${engine.id}:${query.toLowerCase().trim()}`;
+  const cached = suggestionCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.timestamp < SUGGESTION_CACHE_TTL) {
+    return cached.suggestions;
+  }
+
+  const suggestions = await fetchSuggestions(engine, query, signal);
+
+  suggestionCache.set(cacheKey, {
+    suggestions,
+    timestamp: Date.now()
+  });
+
+  // Evict oldest entries if cache is too large
+  if (suggestionCache.size > SUGGESTION_CACHE_MAX) {
+    const oldestKey = suggestionCache.keys().next().value;
+    suggestionCache.delete(oldestKey);
+  }
+
+  return suggestions;
+};
+
+/**
+ * Clear the suggestion cache
+ */
+const clearSuggestionCache = () => {
+  suggestionCache.clear();
+};
+
+// ===== OpenSearch Discovery =====
+
+/**
+ * Parse an OpenSearch XML description document
+ * Returns an engine object or null if invalid
+ */
+const parseOpenSearchXml = (xmlText, sourceUrl) => {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlText, 'application/xml');
+
+    // Check for parse errors
+    const parseError = doc.querySelector('parsererror');
+    if (parseError) {
+      debug && console.log('[ext:websearch] OpenSearch XML parse error');
+      return null;
+    }
+
+    const ns = 'http://a9.com/-/spec/opensearch/1.1/';
+
+    const shortName = doc.getElementsByTagNameNS(ns, 'ShortName')[0]?.textContent?.trim();
+    const description = doc.getElementsByTagNameNS(ns, 'Description')[0]?.textContent?.trim();
+    const imageEl = doc.getElementsByTagNameNS(ns, 'Image')[0];
+    const iconUrl = imageEl?.textContent?.trim();
+
+    // Find search URL (type="text/html")
+    let searchUrl = null;
+    let suggestUrl = null;
+
+    const urlElements = doc.getElementsByTagNameNS(ns, 'Url');
+    for (const urlEl of urlElements) {
+      const type = urlEl.getAttribute('type');
+      const template = urlEl.getAttribute('template');
+      if (!template) continue;
+
+      if (type === 'text/html' && !searchUrl) {
+        searchUrl = template;
+      } else if ((type === 'application/x-suggestions+json' || type === 'application/json') && !suggestUrl) {
+        suggestUrl = template;
+      }
+    }
+
+    if (!shortName || !searchUrl) {
+      debug && console.log('[ext:websearch] OpenSearch XML missing required fields (ShortName, Url)');
+      return null;
+    }
+
+    // Validate that searchUrl contains {searchTerms}
+    if (!searchUrl.includes('{searchTerms}')) {
+      debug && console.log('[ext:websearch] OpenSearch search URL missing {searchTerms} placeholder');
+      return null;
+    }
+
+    // Reject javascript: URLs
+    if (searchUrl.startsWith('javascript:') || (suggestUrl && suggestUrl.startsWith('javascript:'))) {
+      debug && console.log('[ext:websearch] Rejecting javascript: URL in OpenSearch');
+      return null;
+    }
+
+    // Generate a stable ID from the source URL
+    const hostname = new URL(sourceUrl).hostname;
+    const engineId = `discovered-${hostname.replace(/\./g, '-')}`;
+
+    // Generate a short keyword from the hostname
+    const shortNameKeyword = hostname
+      .replace(/^www\./, '')
+      .split('.')[0]
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 12);
+
+    return {
+      id: engineId,
+      name: shortName,
+      shortName: shortNameKeyword,
+      description: description || `Search ${shortName}`,
+      searchUrl,
+      suggestUrl: suggestUrl || null,
+      iconUrl: iconUrl || null,
+      isBuiltIn: false,
+      enabled: true,
+      discoveredFrom: sourceUrl,
+      discoveredAt: Date.now()
+    };
+  } catch (err) {
+    console.error('[ext:websearch] Failed to parse OpenSearch XML:', err);
+    return null;
+  }
+};
+
+/**
+ * Attempt to discover and add a search engine from an OpenSearch URL
+ */
+const discoverEngine = async (opensearchUrl, pageUrl) => {
+  if (!currentSettings.prefs.enableAutoDiscovery) return null;
+
+  try {
+    const response = await fetch(opensearchUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/opensearchdescription+xml, application/xml, text/xml' },
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (!response.ok) return null;
+
+    const xmlText = await response.text();
+    const engine = parseOpenSearchXml(xmlText, pageUrl);
+
+    if (!engine) return null;
+
+    // Check if we already have this engine
+    const existing = getEngine(engine.id);
+    if (existing) {
+      debug && console.log('[ext:websearch] Engine already registered:', engine.id);
+      return existing;
+    }
+
+    // Auto-add the discovered engine
+    await addEngine(engine);
+
+    // Publish discovery event for UI notifications
+    api.pubsub.publish('websearch:engine-discovered', {
+      engine: { id: engine.id, name: engine.name, searchUrl: engine.searchUrl }
+    }, api.scopes.GLOBAL);
+
+    debug && console.log('[ext:websearch] Discovered search engine:', engine.name, 'from', pageUrl);
+    return engine;
+  } catch (err) {
+    debug && console.log('[ext:websearch] OpenSearch discovery failed:', err.message);
+    return null;
+  }
+};
+
+// ===== Query Extraction =====
+
+/**
+ * Extract the search query from a command execution context.
+ *
+ * The query can arrive in different fields depending on how the command
+ * was invoked:
+ *   - Inline ("kagi foo"):  ctx.search = "foo", ctx.params = ["foo"]
+ *   - Tab param mode:       ctx.search = "foo", ctx.params = ["foo"]
+ *   - Direct pubsub:        ctx.search = "foo"
+ *
+ * We check ctx.search first, then fall back to joining ctx.params,
+ * then try extracting from ctx.typed by stripping the command name.
+ */
+const extractSearchQuery = (ctx) => {
+  // 1. Explicit search field (set by buildExecutionContext when text follows command name)
+  if (ctx.search && ctx.search.trim()) {
+    return ctx.search.trim();
+  }
+
+  // 2. Params array (same source as search, but as split tokens)
+  if (ctx.params && ctx.params.length > 0) {
+    const joined = ctx.params.join(' ').trim();
+    if (joined) return joined;
+  }
+
+  // 3. Extract from typed text by stripping the command name
+  if (ctx.typed && ctx.name) {
+    const typed = ctx.typed.trim();
+    const nameLower = ctx.name.toLowerCase();
+    const typedLower = typed.toLowerCase();
+    if (typedLower.startsWith(nameLower + ' ')) {
+      const rest = typed.slice(ctx.name.length).trim();
+      if (rest) return rest;
+    } else if (typedLower.startsWith(nameLower)) {
+      const rest = typed.slice(ctx.name.length).trim();
+      if (rest) return rest;
+    }
+  }
+
+  // 4. Fallback: extract from value field (Enter payload passes value=input.value)
+  if (ctx.value && ctx.name) {
+    const val = ctx.value.trim();
+    const nameLower = ctx.name.toLowerCase();
+    const valLower = val.toLowerCase();
+    if (valLower.startsWith(nameLower + ' ')) {
+      const rest = val.slice(ctx.name.length).trim();
+      if (rest) return rest;
+    }
+  }
+
+  // 5. Last resort: if typed contains a space, take everything after the first space
+  // (handles case where name field might be missing)
+  if (ctx.typed) {
+    const spaceIdx = ctx.typed.indexOf(' ');
+    if (spaceIdx > 0) {
+      const rest = ctx.typed.slice(spaceIdx + 1).trim();
+      if (rest) return rest;
+    }
+  }
+
+  return '';
+};
+
+// ===== Command Definitions =====
+
+const staticCommandDefinitions = [
+  {
+    name: 'web search',
+    description: 'Search the web with your default search engine',
+    params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
+    execute: async (ctx) => {
+      debug && console.log('[ext:websearch] web search execute:',
+        'ctx keys:', ctx ? Object.keys(ctx) : 'null',
+        'search:', ctx?.search, 'params:', ctx?.params, 'typed:', ctx?.typed);
+      const query = extractSearchQuery(ctx);
+      if (query) {
+        const engine = getDefaultEngine();
+        await executeSearch(engine, query);
+      } else {
+        console.warn('[ext:websearch] No query extracted for web search - showing search window. ctx:', JSON.stringify(ctx));
+        await api.window.showSelf();
+      }
+      return { success: true };
+    }
+  },
+  {
+    name: 'open web search',
+    description: 'Open the web search window',
+    execute: async (ctx) => {
+      await api.window.showSelf();
+      return { success: true };
+    }
+  }
+];
+
+// Track registered commands for cleanup
+let registeredCommands = [];
+let engineCommands = [];
+
+/**
+ * Register per-engine commands (e.g., /google, /ddg, /bing, /wiki)
+ */
+const registerEngineCommands = () => {
+  const enabledEngines = getEnabledEngines();
+
+  for (const engine of enabledEngines) {
+    const cmd = {
+      name: engine.shortName,
+      description: `Search ${engine.name}`,
+      params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
+      execute: async (ctx) => {
+        debug && console.log('[ext:websearch] Engine command execute:', engine.shortName,
+          'ctx keys:', ctx ? Object.keys(ctx) : 'null',
+          'search:', ctx?.search, 'params:', ctx?.params, 'typed:', ctx?.typed, 'name:', ctx?.name);
+        const query = extractSearchQuery(ctx);
+        debug && console.log('[ext:websearch] Extracted query:', JSON.stringify(query), 'from ctx for', engine.shortName);
+        if (query) {
+          await executeSearch(engine, query);
+        } else {
+          console.warn('[ext:websearch] No query extracted for', engine.shortName, '- showing search window. ctx:', JSON.stringify(ctx));
+          await api.window.showSelf();
+        }
+        return { success: true };
+      }
+    };
+    api.commands.register(cmd);
+    engineCommands.push(engine.shortName);
+  }
+
+  debug && console.log('[ext:websearch] Registered engine commands:', engineCommands);
+};
+
+/**
+ * Unregister engine commands
+ */
+const unregisterEngineCommands = () => {
+  for (const name of engineCommands) {
+    api.commands.unregister(name);
+  }
+  engineCommands = [];
+};
+
+/**
+ * Register all commands (static + per-engine)
+ */
+const initCommands = () => {
+  // Register static commands
+  staticCommandDefinitions.forEach(cmd => {
+    api.commands.register(cmd);
+    registeredCommands.push(cmd.name);
+  });
+
+  // Register engine commands
+  registerEngineCommands();
+
+  debug && console.log('[ext:websearch] Registered commands:', [...registeredCommands, ...engineCommands]);
+};
+
+/**
+ * Unregister all commands
+ */
+const uninitCommands = () => {
+  registeredCommands.forEach(name => {
+    api.commands.unregister(name);
+  });
+  registeredCommands = [];
+
+  unregisterEngineCommands();
+
+  debug && console.log('[ext:websearch] Unregistered commands');
+};
+
+// ===== Event Handlers (background-mode) =====
+
+/**
+ * Handle page navigation events for OpenSearch discovery
+ */
+const handlePageLoaded = async (msg) => {
+  if (!currentSettings.prefs.enableAutoDiscovery) return;
+  if (!msg || !msg.url) return;
+
+  // Only discover from http/https pages
+  if (!msg.url.startsWith('http://') && !msg.url.startsWith('https://')) return;
+
+  // Check if the page has an OpenSearch link
+  if (msg.opensearchUrl) {
+    await discoverEngine(msg.opensearchUrl, msg.url);
+  }
+};
+
+// ===== Tile Lifecycle (engine init — runs before DOM) =====
+
+const uninit = () => {
+  uninitCommands();
+
+  // Cancel any in-flight suggestion request
+  if (currentSuggestionAbortController) {
+    currentSuggestionAbortController.abort();
+    currentSuggestionAbortController = null;
+  }
+};
+
+// ===== UI State =====
+
+let uiState = {
+  query: '',
+  suggestions: [],
+  engines: [],
+  selectedIndex: -1,
+  currentEngine: null,
+  defaultEngineId: 'duckduckgo',
+  mode: 'engines', // 'engines' | 'suggestions'
+};
+
+// Expose state for testing
+window._websearchState = uiState;
+
+// ===== UI Utilities =====
 
 /**
  * Simple debounce helper
@@ -49,54 +650,79 @@ const escapeHtml = (str) => {
 // Search magnifying glass icon SVG
 const searchIconSvg = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>';
 
-// ===== State =====
-
-let state = {
-  query: '',
-  suggestions: [],
-  engines: [],
-  selectedIndex: -1,
-  currentEngine: null,
-  defaultEngineId: 'duckduckgo',
-  mode: 'engines', // 'engines' | 'suggestions'
-};
-
-// Expose state for testing
-window._websearchState = state;
-
-// ===== Data fetching =====
+// ===== UI: Engine list sync from in-process state =====
 
 /**
- * Request engine list from background
+ * Populate UI state from the in-process engines array.
+ * Replaces the old cross-window websearch:engines-list pubsub round-trip.
  */
-const requestEngines = () => {
-  emitChannel('websearch:engine-request', { action: 'list' });
+const syncEnginesToUi = () => {
+  const defaultEngineId = currentSettings.prefs.defaultEngine;
+  uiState.engines = engines.map(e => ({
+    id: e.id,
+    name: e.name,
+    shortName: e.shortName,
+    description: e.description,
+    searchUrl: e.searchUrl,
+    suggestUrl: e.suggestUrl,
+    iconUrl: e.iconUrl,
+    isBuiltIn: e.isBuiltIn,
+    enabled: e.enabled !== false,
+    isDefault: e.id === defaultEngineId
+  }));
+  uiState.defaultEngineId = defaultEngineId;
+
+  // Set default engine if none selected
+  if (!uiState.currentEngine) {
+    uiState.currentEngine = uiState.engines.find(e => e.id === uiState.defaultEngineId) || uiState.engines[0];
+  }
 };
 
+// ===== UI: Suggestion handling =====
+
 /**
- * Request suggestions from background
+ * Request suggestions directly (no cross-window round-trip)
  */
-const requestSuggestions = debounce((query) => {
+const requestSuggestions = debounce(async (query) => {
   if (!query || !query.trim()) {
-    state.suggestions = [];
-    state.mode = 'engines';
+    uiState.suggestions = [];
+    uiState.mode = 'engines';
     render();
     return;
   }
 
-  emitChannel('websearch:request-suggestions', {
-    query: query.trim(),
-    engineId: state.currentEngine?.id || state.defaultEngineId
-  });
+  const engineId = uiState.currentEngine?.id || uiState.defaultEngineId;
+  const engine = getEngine(engineId) || getDefaultEngine();
+
+  // Cancel previous in-flight request
+  if (currentSuggestionAbortController) {
+    currentSuggestionAbortController.abort();
+  }
+  currentSuggestionAbortController = new AbortController();
+
+  const suggestions = await fetchSuggestionsWithCache(
+    engine,
+    query,
+    currentSuggestionAbortController.signal
+  );
+
+  uiState.suggestions = suggestions;
+  uiState.mode = 'suggestions';
+  uiState.selectedIndex = suggestions.length > 0 ? 0 : -1;
+  render();
 }, 300);
 
+// ===== UI: Search from UI =====
+
 /**
- * Execute search with the given query
+ * Execute search from the search window UI
  */
-const executeSearch = (query) => {
+const executeSearchFromUi = (query) => {
   if (!query || !query.trim()) return;
 
-  const engine = state.currentEngine || state.engines.find(e => e.id === state.defaultEngineId) || state.engines[0];
+  const engine = uiState.currentEngine
+    || uiState.engines.find(e => e.id === uiState.defaultEngineId)
+    || uiState.engines[0];
   if (!engine) return;
 
   const url = engine.searchUrl.replace('{searchTerms}', encodeURIComponent(query.trim()));
@@ -116,17 +742,17 @@ const executeSearch = (query) => {
  * Set the current engine
  */
 const setCurrentEngine = (engine) => {
-  state.currentEngine = engine;
+  uiState.currentEngine = engine;
   updateEngineIndicator();
 };
 
-// ===== Rendering =====
+// ===== UI: Rendering =====
 
 /**
  * Update the engine indicator display
  */
 const updateEngineIndicator = () => {
-  const engine = state.currentEngine || state.engines.find(e => e.id === state.defaultEngineId) || state.engines[0];
+  const engine = uiState.currentEngine || uiState.engines.find(e => e.id === uiState.defaultEngineId) || uiState.engines[0];
   if (!engine) return;
 
   const iconEl = document.getElementById('engine-icon');
@@ -144,16 +770,16 @@ const updateEngineIndicator = () => {
 
   // Update placeholder
   const searchInput = document.getElementById('search-input');
-  searchInput.placeholder = `Search ${engine.name}...`;
+  if (searchInput) searchInput.placeholder = `Search ${engine.name}...`;
 };
 
 /**
  * Render the current view
  */
 const render = () => {
-  if (state.mode === 'suggestions' && state.suggestions.length > 0) {
+  if (uiState.mode === 'suggestions' && uiState.suggestions.length > 0) {
     renderSuggestions();
-  } else if (state.query && state.query.trim()) {
+  } else if (uiState.query && uiState.query.trim()) {
     // Have a query but no suggestions yet — show nothing or a "press Enter" hint
     renderSuggestions();
   } else {
@@ -175,28 +801,28 @@ const renderSuggestions = () => {
 
   container.innerHTML = '';
 
-  if (state.suggestions.length === 0) {
-    if (state.query && state.query.trim()) {
+  if (uiState.suggestions.length === 0) {
+    if (uiState.query && uiState.query.trim()) {
       // Show "Press Enter to search" hint
       const hint = document.createElement('div');
       hint.className = 'suggestion-item selected';
       hint.innerHTML = `
         <div class="suggestion-icon">${searchIconSvg}</div>
-        <div class="suggestion-text">Search for "${escapeHtml(state.query)}"</div>
+        <div class="suggestion-text">Search for "${escapeHtml(uiState.query)}"</div>
       `;
       hint.addEventListener('click', () => {
-        executeSearch(state.query);
+        executeSearchFromUi(uiState.query);
       });
       container.appendChild(hint);
-      state.selectedIndex = 0;
+      uiState.selectedIndex = 0;
     }
     return;
   }
 
-  state.suggestions.forEach((suggestion, index) => {
+  uiState.suggestions.forEach((suggestion, index) => {
     const el = document.createElement('div');
     el.className = 'suggestion-item';
-    if (index === state.selectedIndex) {
+    if (index === uiState.selectedIndex) {
       el.classList.add('selected');
     }
     el.dataset.index = index;
@@ -207,16 +833,16 @@ const renderSuggestions = () => {
     `;
 
     el.addEventListener('click', () => {
-      state.selectedIndex = index;
+      uiState.selectedIndex = index;
       updateSelection();
-      executeSearch(suggestion);
+      executeSearchFromUi(suggestion);
     });
 
     container.appendChild(el);
   });
 
   // Add attribution
-  const engine = state.currentEngine || state.engines.find(e => e.id === state.defaultEngineId);
+  const engine = uiState.currentEngine || uiState.engines.find(e => e.id === uiState.defaultEngineId);
   if (engine) {
     const attr = document.createElement('div');
     attr.className = 'attribution';
@@ -239,7 +865,7 @@ const renderEngines = () => {
 
   container.innerHTML = '';
 
-  if (state.engines.length === 0) {
+  if (uiState.engines.length === 0) {
     emptyState.style.display = '';
     return;
   }
@@ -249,10 +875,10 @@ const renderEngines = () => {
   header.textContent = 'Search Engines';
   container.appendChild(header);
 
-  state.engines.forEach((engine, index) => {
+  uiState.engines.forEach((engine, index) => {
     const el = document.createElement('div');
     el.className = 'engine-item';
-    if (index === state.selectedIndex) {
+    if (index === uiState.selectedIndex) {
       el.classList.add('selected');
     }
     el.dataset.index = index;
@@ -289,13 +915,13 @@ const updateSelection = () => {
   // Update suggestions
   const suggestionEls = document.querySelectorAll('.suggestion-item');
   suggestionEls.forEach((el, i) => {
-    el.classList.toggle('selected', i === state.selectedIndex);
+    el.classList.toggle('selected', i === uiState.selectedIndex);
   });
 
   // Update engines
   const engineEls = document.querySelectorAll('.engine-item');
   engineEls.forEach((el, i) => {
-    el.classList.toggle('selected', i === state.selectedIndex);
+    el.classList.toggle('selected', i === uiState.selectedIndex);
   });
 
   // Scroll selected into view
@@ -314,12 +940,12 @@ const handleEscape = () => {
   const searchInput = document.getElementById('search-input');
 
   // If search has content, clear it
-  if (state.query) {
-    state.query = '';
+  if (uiState.query) {
+    uiState.query = '';
     searchInput.value = '';
-    state.suggestions = [];
-    state.selectedIndex = -1;
-    state.mode = 'engines';
+    uiState.suggestions = [];
+    uiState.selectedIndex = -1;
+    uiState.mode = 'engines';
     render();
     return { handled: true };
   }
@@ -332,10 +958,10 @@ const handleEscape = () => {
  * Get the list of items for current mode
  */
 const getCurrentItems = () => {
-  if (state.mode === 'suggestions' || (state.query && state.query.trim())) {
-    return state.suggestions.length > 0 ? state.suggestions : (state.query ? ['__search__'] : []);
+  if (uiState.mode === 'suggestions' || (uiState.query && uiState.query.trim())) {
+    return uiState.suggestions.length > 0 ? uiState.suggestions : (uiState.query ? ['__search__'] : []);
   }
-  return state.engines;
+  return uiState.engines;
 };
 
 /**
@@ -356,94 +982,72 @@ const handleKeydown = (e) => {
   switch (e.key) {
     case 'ArrowDown':
       e.preventDefault();
-      if (items.length > 0 && state.selectedIndex < items.length - 1) {
-        state.selectedIndex++;
+      if (items.length > 0 && uiState.selectedIndex < items.length - 1) {
+        uiState.selectedIndex++;
         updateSelection();
       }
       break;
 
     case 'ArrowUp':
       e.preventDefault();
-      if (state.selectedIndex > 0) {
-        state.selectedIndex--;
+      if (uiState.selectedIndex > 0) {
+        uiState.selectedIndex--;
         updateSelection();
       }
       break;
 
     case 'Enter':
       e.preventDefault();
-      if (state.mode === 'suggestions' || (state.query && state.query.trim())) {
+      if (uiState.mode === 'suggestions' || (uiState.query && uiState.query.trim())) {
         // If a suggestion is selected, search for it
-        if (state.selectedIndex >= 0 && state.selectedIndex < state.suggestions.length) {
-          executeSearch(state.suggestions[state.selectedIndex]);
+        if (uiState.selectedIndex >= 0 && uiState.selectedIndex < uiState.suggestions.length) {
+          executeSearchFromUi(uiState.suggestions[uiState.selectedIndex]);
         } else {
           // Search for the raw query
-          executeSearch(state.query);
+          executeSearchFromUi(uiState.query);
         }
-      } else if (state.mode === 'engines' && state.selectedIndex >= 0 && state.selectedIndex < state.engines.length) {
+      } else if (uiState.mode === 'engines' && uiState.selectedIndex >= 0 && uiState.selectedIndex < uiState.engines.length) {
         // Select engine
-        setCurrentEngine(state.engines[state.selectedIndex]);
+        setCurrentEngine(uiState.engines[uiState.selectedIndex]);
         searchInput.focus();
       }
       break;
 
     case 'Tab':
       // Autocomplete first suggestion
-      if (state.suggestions.length > 0 && state.query) {
+      if (uiState.suggestions.length > 0 && uiState.query) {
         e.preventDefault();
-        const suggestion = state.suggestions[0];
-        state.query = suggestion;
+        const suggestion = uiState.suggestions[0];
+        uiState.query = suggestion;
         searchInput.value = suggestion;
-        state.selectedIndex = 0;
+        uiState.selectedIndex = 0;
         updateSelection();
       }
       break;
   }
 };
 
-// ===== Event Subscriptions =====
+// ===== UI Initialization =====
 
-/**
- * Handle suggestion responses from background
- */
-const handleSuggestions = (msg) => {
-  if (!msg) return;
-
-  state.suggestions = msg.suggestions || [];
-  state.mode = 'suggestions';
-  state.selectedIndex = state.suggestions.length > 0 ? 0 : -1;
-  render();
-};
-
-/**
- * Handle engine list response from background
- */
-const handleEnginesList = (msg) => {
-  if (!msg) return;
-
-  state.engines = msg.engines || [];
-  state.defaultEngineId = msg.defaultEngineId || 'duckduckgo';
-
-  // Set default engine if none selected
-  if (!state.currentEngine) {
-    state.currentEngine = state.engines.find(e => e.id === state.defaultEngineId) || state.engines[0];
-  }
-
-  updateEngineIndicator();
-  render();
-};
-
-// ===== Initialization =====
-
-const init = async () => {
-  debug && console.log('[websearch:home] init');
+const initUi = () => {
+  debug && console.log('[websearch:home] initUi');
 
   // Register escape handler
   api.escape.onEscape(handleEscape);
 
-  // Subscribe to events via BroadcastChannel
-  onChannel('websearch:suggestions', handleSuggestions);
-  onChannel('websearch:engines-list', handleEnginesList);
+  // Subscribe to engine-discovered events to refresh UI
+  api.pubsub.subscribe('websearch:engine-discovered', () => {
+    syncEnginesToUi();
+    updateEngineIndicator();
+    render();
+  }, api.scopes.GLOBAL);
+
+  // Subscribe to settings changes to refresh UI
+  api.pubsub.subscribe('websearch:settings-changed', () => {
+    syncEnginesToUi();
+    updateEngineIndicator();
+    render();
+  }, api.scopes.SELF);
 
   // Set up search input
   const searchInput = document.getElementById('search-input');
@@ -455,18 +1059,18 @@ const init = async () => {
 
   // Handle input for suggestions
   searchInput.addEventListener('input', (e) => {
-    state.query = e.target.value;
-    state.selectedIndex = -1;
+    uiState.query = e.target.value;
+    uiState.selectedIndex = -1;
 
-    if (!state.query || !state.query.trim()) {
-      state.suggestions = [];
-      state.mode = 'engines';
+    if (!uiState.query || !uiState.query.trim()) {
+      uiState.suggestions = [];
+      uiState.mode = 'engines';
       render();
       return;
     }
 
-    state.mode = 'suggestions';
-    requestSuggestions(state.query);
+    uiState.mode = 'suggestions';
+    requestSuggestions(uiState.query);
   });
 
   // Keyboard navigation
@@ -475,11 +1079,11 @@ const init = async () => {
   // Engine indicator click cycles engines
   const engineIndicator = document.getElementById('engine-indicator');
   engineIndicator.addEventListener('click', () => {
-    if (state.engines.length === 0) return;
+    if (uiState.engines.length === 0) return;
 
-    const currentIndex = state.engines.findIndex(e => e.id === (state.currentEngine?.id || state.defaultEngineId));
-    const nextIndex = (currentIndex + 1) % state.engines.length;
-    setCurrentEngine(state.engines[nextIndex]);
+    const currentIndex = uiState.engines.findIndex(e => e.id === (uiState.currentEngine?.id || uiState.defaultEngineId));
+    const nextIndex = (currentIndex + 1) % uiState.engines.length;
+    setCurrentEngine(uiState.engines[nextIndex]);
   });
 
   // Re-focus search input on window focus
@@ -487,9 +1091,84 @@ const init = async () => {
     searchInput.focus();
   });
 
-  // Request engine list from background
-  requestEngines();
+  // Populate engine UI from in-process state (no round-trip needed)
+  syncEnginesToUi();
+  updateEngineIndicator();
+  render();
 };
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', init);
+// ===== Top-level init (runs as module in home.html) =====
+
+(async () => {
+  const extId = id;
+  console.log(`[ext:${extId}] home.js loaded`);
+
+  // Initialize tile — validates capability token with main process
+  console.log(`[ext:${extId}] initializing v2 tile`);
+  await api.initialize();
+
+  // Load settings and engines
+  currentSettings = await loadSettings();
+  await loadEngines();
+
+  // Register commands
+  initCommands();
+
+  // Listen for page load events for OpenSearch discovery
+  api.pubsub.subscribe('page:loaded', handlePageLoaded, api.scopes.GLOBAL);
+
+  // Listen for settings updates from Settings UI
+  api.pubsub.subscribe('websearch:settings-update', async (msg) => {
+    debug && console.log('[ext:websearch] settings-update received:', msg);
+
+    try {
+      if (msg.data) {
+        currentSettings = {
+          prefs: { ...currentSettings.prefs, ...(msg.data.prefs || {}) }
+        };
+      } else if (msg.key === 'prefs' && msg.path) {
+        const field = msg.path.split('.')[1];
+        if (field) {
+          currentSettings.prefs = { ...currentSettings.prefs, [field]: msg.value };
+        }
+      }
+
+      await saveSettings(currentSettings);
+
+      // Clear suggestion cache if suggestions were toggled off
+      if (!currentSettings.prefs.enableSuggestions) {
+        clearSuggestionCache();
+      }
+
+      uninit();
+      await loadEngines();
+      initCommands();
+
+      api.pubsub.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
+    } catch (err) {
+      console.error('[ext:websearch] settings-update error:', err);
+    }
+  }, api.scopes.GLOBAL);
+
+  // Register shutdown handler
+  api.onShutdown(() => {
+    console.log(`[ext:${extId}] received shutdown`);
+    uninit();
+  });
+
+  // Initialize UI once DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initUi);
+  } else {
+    initUi();
+  }
+})();
+
+export {
+  builtinEngines,
+  getEngine,
+  getDefaultEngine,
+  getEnabledEngines,
+  buildSearchUrl,
+  parseOpenSearchXml,
+};
