@@ -1,0 +1,51 @@
+{
+  "manifestVersion": 2,
+  "id": "pubsub-repro",
+  "shortname": "pubsub-repro",
+  "name": "Pubsub Repro",
+  "description": "Minimal repro: bg + home tile talking via GLOBAL pubsub round-trip",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "type": "background",
+      "url": "background.html",
+      "lazy": true
+    },
+    {
+      "id": "home",
+      "type": "window",
+      "url": "home.html",
+      "windowHints": {
+        "role": "workspace",
+        "key": "pubsub-repro-home",
+        "width": 400,
+        "height": 300,
+        "title": "Pubsub Repro"
+      }
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "ext:ready",
+        "reproduce:*",
+        "cmd:execute:*"
+      ]
+    },
+    "window": {
+      "create": true,
+      "query": true
+    },
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "pubsub repro",
+      "description": "Open the pubsub repro window",
+      "action": { "type": "execute" }
+    }
+  ]
+}
