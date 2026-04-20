@@ -286,13 +286,13 @@ describe('TYPING transitions', () => {
     assert.equal(machine.getState(), States.EXECUTING);
   });
 
-  it('TYPING + Enter no match -> CLOSING (search)', () => {
+  it('TYPING + Enter no match -> TYPING (no-op, search is explicit)', () => {
     const result = machine.dispatch(Events.ENTER, {
       value: 'xyzzy',
       isURL: false,
       committed: false
     });
-    assert.equal(machine.getState(), States.CLOSING);
+    assert.equal(machine.getState(), States.TYPING);
   });
 
   it('TYPING + Escape with text -> IDLE', () => {
@@ -497,13 +497,16 @@ describe('EXECUTING transitions', () => {
     assert.equal(machine.getState(), States.OUTPUT_SELECTION);
   });
 
-  it('EXECUTING + command_complete (chainable output, has downstream) -> CHAIN_MODE', () => {
+  it('EXECUTING + command_complete (array output, has downstream) -> OUTPUT_SELECTION', () => {
+    // Array outputs always go to OUTPUT_SELECTION first even when downstream
+    // commands exist; the chain branch is taken on row selection. See the
+    // guard rationale in app/cmd/state-machine.js EXECUTING.COMMAND_COMPLETE.
     machine.dispatch(Events.COMMAND_COMPLETE, {
       result: { output: { data: [{ id: '1' }], mimeType: 'application/json' } },
       name: 'list',
       hasDownstream: true
     });
-    assert.equal(machine.getState(), States.CHAIN_MODE);
+    assert.equal(machine.getState(), States.OUTPUT_SELECTION);
   });
 
   it('EXECUTING + command_complete (array, no downstream) -> OUTPUT_SELECTION', () => {

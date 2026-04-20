@@ -288,7 +288,8 @@ export type TableName =
   | 'item_events'
   | 'item_groups'
   | 'item_group_members'
-  | 'settings';
+  | 'settings'
+  | 'features_history';
 
 export const tableNames: TableName[] = [
   'content',
@@ -306,7 +307,8 @@ export const tableNames: TableName[] = [
   'item_events',
   'item_groups',
   'item_group_members',
-  'settings'
+  'settings',
+  'features_history'
 ];
 
 // ==================== Sync Types ====================

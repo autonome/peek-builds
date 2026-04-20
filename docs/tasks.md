@@ -43,6 +43,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 - [x] Atomic install with rollback on partial failure (temp dir + rename)
 - [x] `minPeekVersion` enforcement on install
 - [x] Icon/screenshot blob handling in publish.js
+- [ ] **Verify atproto record signatures.** (Gap found 2026-04-20.) `backend/electron/atproto-source.ts:356` fetches the release record via `com.atproto.repo.getRecord` and accepts the response with no signature check. A compromised or malicious PDS can forge a record with CIDs pointing at tampered bundle blobs, and `verifyBlobCid()` (line 502) will happily validate those tampered bytes against the forged CIDs. Current trust boundary is TLS to the PDS, not the publisher's signing key. Full design and step-by-step plan (commit-level signature, MST inclusion, `@atproto/crypto`, PLC key-rotation handling, icon/screenshot gap) in [atproto-signature-verification-plan.md](atproto-signature-verification-plan.md). ~3 days.
 
 ### Pubsub audit follow-ups (2026-04-16)
 - [x] Missing tag lifecycle events: `tag:created`, `tag:renamed`, `tag:deleted`

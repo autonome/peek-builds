@@ -381,8 +381,10 @@ describe('Schema Fidelity Tests', () => {
       assert.ok(tableNameMatch, 'TableName type should be defined in types/index.ts');
       const tsTableNames = tableNameMatch[1].match(/'([^']+)'/g).map(v => v.replace(/'/g, ''));
 
-      // Extract CREATE TABLE names from Electron datastore (skip migration temp tables)
-      const createTableRegex = /CREATE TABLE IF NOT EXISTS (\w+)/g;
+      // Extract CREATE TABLE names from Electron datastore (skip migration temp tables).
+      // Require the opening `(` of the column list so comments that mention
+      // "CREATE TABLE IF NOT EXISTS above" etc. don't register as tables.
+      const createTableRegex = /CREATE TABLE IF NOT EXISTS (\w+)\s*\(/g;
       const electronTables = new Set();
       let m;
       while ((m = createTableRegex.exec(electronSql)) !== null) {

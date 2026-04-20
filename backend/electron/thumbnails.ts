@@ -12,12 +12,27 @@
  * - NativeImage released immediately after write
  */
 
-import { app, type WebContents } from 'electron';
+import type { WebContents } from 'electron';
+import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEBUG } from './config.js';
 import { normalizeUrl } from './datastore.js';
+
+// Lazy-load `app` via CommonJS require so this module can be imported under
+// ELECTRON_RUN_AS_NODE=1 (where electron's named ESM exports are empty).
+// Consumers that never call initThumbnailDir/cleanupThumbnails (e.g. unit
+// tests that transitively import via protocol.ts -> tile-launcher.ts) won't
+// trigger the require.
+const requireElectron = createRequire(import.meta.url);
+let _app: typeof import('electron').app | null = null;
+function getApp(): typeof import('electron').app {
+  if (_app) return _app;
+  const electron = requireElectron('electron') as typeof import('electron');
+  _app = electron.app;
+  return _app;
+}
 
 let thumbnailDir: string;
 
@@ -63,7 +78,7 @@ async function processQueue(): Promise<void> {
  * Ensure the thumbnails directory exists under userData.
  */
 export function initThumbnailDir(): void {
-  thumbnailDir = path.join(app.getPath('userData'), 'thumbnails');
+  thumbnailDir = path.join(getApp().getPath('userData'), 'thumbnails');
   if (!fs.existsSync(thumbnailDir)) {
     fs.mkdirSync(thumbnailDir, { recursive: true });
     DEBUG && console.log('[thumbnails] Created thumbnail dir:', thumbnailDir);

@@ -11,7 +11,7 @@
  * - peek://local-file/{path} - Local filesystem files (images, documents, media, etc.)
  */
 
-import { protocol, net } from 'electron';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -24,6 +24,26 @@ import { buildCSPForTile, buildDefaultCSP, injectCSPHeader } from './tile-csp.js
 
 export const APP_SCHEME = 'peek';
 export const APP_PROTOCOL = `${APP_SCHEME}:`;
+
+// Lazy-load `protocol` and `net` via CommonJS require so this module can be
+// imported under ELECTRON_RUN_AS_NODE=1 (where electron's named ESM exports
+// are empty). Unit tests that only consume pure helpers (e.g. extension path
+// resolution via getExtensionPath) never touch the lazy binding.
+const requireElectron = createRequire(import.meta.url);
+let _electron: typeof import('electron') | null = null;
+function getElectron(): typeof import('electron') {
+  if (_electron) return _electron;
+  _electron = requireElectron('electron') as typeof import('electron');
+  return _electron;
+}
+const protocol: typeof import('electron').protocol = new Proxy(
+  {} as typeof import('electron').protocol,
+  { get: (_t, prop) => (getElectron().protocol as any)[prop] }
+);
+const net: typeof import('electron').net = new Proxy(
+  {} as typeof import('electron').net,
+  { get: (_t, prop) => (getElectron().net as any)[prop] }
+);
 
 // Extension path cache: extensionId -> filesystem path
 const extensionPaths = new Map<string, string>();
