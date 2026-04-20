@@ -1436,7 +1436,12 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('quit and restart commands are registered', async () => {
-    // Query commands via cmd extension
+    // quit/restart are registered asynchronously during app boot (app/index.js).
+    // Poll via waitForCommand before querying details to avoid startup-race flake.
+    await waitForCommand(sharedBgWindow, 'quit', 10000);
+    await waitForCommand(sharedBgWindow, 'restart', 10000);
+
+    // Query commands via cmd extension to verify descriptions
     const result = await sharedBgWindow.evaluate(async () => {
       const api = (window as any).app;
 
