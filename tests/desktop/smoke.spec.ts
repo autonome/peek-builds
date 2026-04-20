@@ -2068,14 +2068,29 @@ test.describe('Command Execution @desktop', () => {
     };
 
     try {
+      // Grab the page window handle first so we can gate on page.js readiness
+      // BEFORE firing the setup tag. Under full-suite load the 2s sleep above
+      // is not enough — the tag command can otherwise publish `tag:item-added`
+      // before page.js has run its top-level `api.subscribe('tag:item-added',
+      // ...)`. tile-preload's `subscribeImpl` attaches the underlying
+      // `ipcRenderer.on('pubsub:tag:item-added')` listener synchronously from
+      // page.js module evaluation, so gating on `__pageModuleReady` (the
+      // sentinel flipped at the very bottom of page.js) guarantees the
+      // listener is live. Electron's `webContents.send` is fire-and-forget —
+      // a pubsub event that arrives before the listener is attached is
+      // silently dropped, which is the root cause of the full-suite flake.
+      const pageWindow = await sharedApp.getWindow(dynamicKey, 10000);
+      expect(pageWindow).toBeTruthy();
+      await pageWindow.waitForFunction(
+        () => (window as unknown as { __pageModuleReady?: boolean }).__pageModuleReady === true,
+        null,
+        { timeout: 10000 }
+      );
+
       // First tag establishes the item in the datastore and triggers the page's
       // resolveItemId fallback, setting currentItemId for subsequent events
       const setupResult = await executeTag(setupTag);
       expect((setupResult as any).success).toBe(true);
-
-      // Get the specific page window we just opened (matches URL key)
-      const pageWindow = await sharedApp.getWindow(dynamicKey, 10000);
-      expect(pageWindow).toBeTruthy();
 
       // Wait for page.js to initialize and for the setup tag to appear
       // (proves the reactive update path works and currentItemId is set)
