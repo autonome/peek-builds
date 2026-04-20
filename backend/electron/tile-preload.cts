@@ -174,40 +174,34 @@ function buildAPI(): Record<string, unknown> {
   }
 
   function subscribeImpl(topic: string, callback: (data: unknown) => void, _scope?: number) {
-    // Register the IPC listener immediately (synchronous) so messages
-    // received after validation completes are not dropped.
-    // The upstream tile:pubsub:subscribe is sent only after the token
-    // validates. If validation fails we tear down the listener.
+    // Attach the IPC listener AND send the upstream subscribe synchronously
+    // in the same tick. Deferring the upstream send behind validationPromise
+    // created a race: publishers (e.g. tag:item-added from command execution)
+    // that fire between "listener attached locally" and "main process has
+    // registered this tile as a subscriber" are dropped. Main-side already
+    // validates the token in the tile:pubsub:subscribe handler (tile-ipc.ts)
+    // — an invalid token is silently ignored — so the client-side gate was
+    // redundant. See commit history for the tag-widget flake that motivated
+    // this change.
     let unsubscribed = false;
     const handler = (_event: unknown, msg: unknown) => {
       callback(msg);
     };
     ipcRenderer.on(`pubsub:${topic}`, handler);
-
-    validationPromise.then((valid) => {
-      if (!valid) {
-        console.warn('[tile-preload] subscribe: token validation failed, not subscribing upstream for topic:', topic);
-        ipcRenderer.removeListener(`pubsub:${topic}`, handler);
-        return;
-      }
-      if (unsubscribed) return;
-      ipcRenderer.send('tile:pubsub:subscribe', {
-        token: tileToken,
-        source: sourceAddress,
-        topic,
-      });
+    ipcRenderer.send('tile:pubsub:subscribe', {
+      token: tileToken,
+      source: sourceAddress,
+      topic,
     });
 
     return () => {
+      if (unsubscribed) return;
       unsubscribed = true;
       ipcRenderer.removeListener(`pubsub:${topic}`, handler);
-      validationPromise.then((valid) => {
-        if (!valid) return;
-        ipcRenderer.send('tile:pubsub:unsubscribe', {
-          token: tileToken,
-          source: sourceAddress,
-          topic,
-        });
+      ipcRenderer.send('tile:pubsub:unsubscribe', {
+        token: tileToken,
+        source: sourceAddress,
+        topic,
       });
     };
   }
@@ -249,6 +243,38 @@ function buildAPI(): Record<string, unknown> {
   // re-registers the same command (swap handler in-place instead of adding a
   // second `pubsub:cmd:execute:{name}` listener).
   const registeredCommands = new Map<string, (params: unknown) => unknown>();
+  // Cache of cmd:register publish payloads so we can re-emit them if a later-
+  // booting cmd extension asks via `cmd:request-registers`. Without this, a
+  // tile that registers its commands during module init can have its events
+  // dropped if the cmd extension's subscriber wasn't yet live on main-side —
+  // the broadcaster iterates `tileWindows` unconditionally but only at the
+  // moment of publish. See smoke.spec.ts:1502 flake analysis.
+  const registeredPayloads = new Map<string, Record<string, unknown>>();
+  let cmdRequestRegistersListenerInstalled = false;
+
+  function ensureCmdRequestRegistersListener(): void {
+    if (cmdRequestRegistersListenerInstalled) return;
+    cmdRequestRegistersListenerInstalled = true;
+    // Synchronous upstream subscribe (same pattern as subscribeImpl post-fix).
+    // On request, re-emit every cached cmd:register payload so a freshly-
+    // booted cmd extension gets this tile's registry.
+    ipcRenderer.send('tile:pubsub:subscribe', {
+      token: tileToken,
+      source: sourceAddress,
+      topic: 'cmd:request-registers',
+    });
+    ipcRenderer.on('pubsub:cmd:request-registers', () => {
+      for (const payload of registeredPayloads.values()) {
+        ipcRenderer.send('tile:pubsub:publish', {
+          token: tileToken,
+          source: sourceAddress,
+          scope: 3, // GLOBAL
+          topic: 'cmd:register',
+          data: payload,
+        });
+      }
+    });
+  }
 
   function hasCommandsCapability(): boolean {
     const cc = grantedCapabilities?.commands;
@@ -328,21 +354,24 @@ function buildAPI(): Record<string, unknown> {
       // object-form (name+metadata) registrations — string-form entries still
       // need to appear in the registry so features-manager-style callers are
       // visible to the cmd panel, even if they carry no accepts/produces.
+      const registerPayload = {
+        name,
+        description,
+        source: sourceAddress,
+        scope: scope || 'global',
+        modes: modes || [],
+        accepts: accepts || [],
+        produces: produces || [],
+        params: params || [],
+      };
+      registeredPayloads.set(name, registerPayload);
+      ensureCmdRequestRegistersListener();
       ipcRenderer.send('tile:pubsub:publish', {
         token: tileToken,
         source: sourceAddress,
         scope: 3, // GLOBAL
         topic: 'cmd:register',
-        data: {
-          name,
-          description,
-          source: sourceAddress,
-          scope: scope || 'global',
-          modes: modes || [],
-          accepts: accepts || [],
-          produces: produces || [],
-          params: params || [],
-        },
+        data: registerPayload,
       });
 
       // Listen for command execution via pubsub relay (`pubsub:cmd:execute:{name}`).

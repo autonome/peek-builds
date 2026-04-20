@@ -48,8 +48,22 @@ async function listTags() {
 // ============================================================================
 
 /**
- * Get the most recently focused non-internal window
+ * Get the most recently focused non-internal window.
+ *
+ * Primary: the tracker (`getFocusedVisibleWindowId()`) — survives cmd panel
+ * focus changes and matches OS-level user intent.
+ *
+ * Fallback (tracker is null, common under headless where focus events may
+ * not reliably fire): prefer a canvas page window
+ * (`peek://app/page/index.html?url=...`) because that's the content surface
+ * tagging typically targets, and take the newest by id. This keeps the
+ * heuristic deterministic: if the user just opened a page, that's the one
+ * we tag. Falls back to the last listed window only if no page window
+ * exists at all.
  */
+const isPageCanvasUrl = (url) =>
+  typeof url === 'string' && url.startsWith('peek://app/page/index.html');
+
 const getActiveWindow = async () => {
   const result = await api.window.list({ includeInternal: false });
   if (!result.success || !result.windows.length) {
@@ -61,8 +75,14 @@ const getActiveWindow = async () => {
     const focused = result.windows.find(w => w.id === focusedId);
     if (focused) return focused;
   }
-  // Fall back to first window if no focused window found
-  return result.windows[0];
+  // Fallback: newest page-canvas window, deterministic and user-intent
+  // aligned. See smoke.spec.ts:2015 flake analysis.
+  const pageWindows = result.windows.filter(w => isPageCanvasUrl(w.url));
+  if (pageWindows.length) {
+    return pageWindows.reduce((a, b) => (a.id > b.id ? a : b));
+  }
+  // No page windows at all — fall back to the newest window by id.
+  return result.windows.reduce((a, b) => (a.id > b.id ? a : b));
 };
 
 /**
