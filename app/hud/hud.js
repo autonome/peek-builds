@@ -16,10 +16,12 @@ const HUD_SHEET_KEY = 'hud_sheet';
 let sheetConfig = null;
 
 /**
- * Load HUD sheet config from feature_settings
+ * Load HUD sheet config from feature_settings.
+ * Config is written by background.js (tileId='hud') so we must read from
+ * the 'hud' namespace rather than our own 'hud-overlay' namespace.
  */
 const loadSheetConfig = async () => {
-  const result = await api.settings.get(HUD_SHEET_KEY);
+  const result = await api.settings.getExtKey('hud', HUD_SHEET_KEY);
   if (result.success && result.data) {
     return result.data;
   }
@@ -114,6 +116,14 @@ const autoResizeWindow = () => {
  */
 const init = async () => {
   console.log('[hud] Initializing widget sheet display');
+
+  // Initialize the tile-preload surface BEFORE any api.* call. Without this,
+  // api.settings.getExtKey throws ('requires readForeign capability') because
+  // grantedCapabilities is empty until initialize() resolves. Same pattern as
+  // page.js — see feedback_top_level_await_silent_halt.md.
+  if (api.initialize) {
+    await api.initialize();
+  }
 
   sheetConfig = await loadSheetConfig();
 

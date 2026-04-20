@@ -75,6 +75,13 @@ const refreshMode = async () => {
 };
 
 const init = async () => {
+  // Initialize tile-preload surface so api.* calls have a valid token +
+  // granted capabilities. Without this, api.subscribe silently no-ops and
+  // api.context.get may throw. See feedback_top_level_await_silent_halt.md.
+  if (api.initialize) {
+    await api.initialize();
+  }
+
   await refreshMode();
 
   // Watch for mode changes

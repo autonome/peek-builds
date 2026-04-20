@@ -50,6 +50,10 @@ const refreshWindowInfo = async () => {
 };
 
 const init = async () => {
+  if (api.initialize) {
+    await api.initialize();
+  }
+
   await refreshWindowInfo();
 
   // Refresh on window events

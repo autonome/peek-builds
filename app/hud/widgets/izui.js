@@ -34,6 +34,10 @@ const refreshIzuiState = async () => {
 };
 
 const init = async () => {
+  if (api.initialize) {
+    await api.initialize();
+  }
+
   await refreshIzuiState();
 
   // Subscribe to IZUI state changes

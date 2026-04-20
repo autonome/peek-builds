@@ -67,6 +67,10 @@ const refreshStats = async () => {
 };
 
 const init = async () => {
+  if (api.initialize) {
+    await api.initialize();
+  }
+
   await refreshStats();
 
   // Refresh on window events

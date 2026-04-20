@@ -1296,15 +1296,20 @@ function buildAPI(): Record<string, unknown> {
       if (!hasSettingsForeignCapability()) {
         throw new Error('[tile-preload] api.settings.getExtKey requires settings.readForeign capability in manifest (Phase 4: v1-compat fallback removed)');
       }
+      // Handler returns { success, data } (native shape) — normalise into the
+      // legacy { success, data, value } envelope so callers using either
+      // field work. Returns `success: true, data: null` when the key simply
+      // hasn't been written yet (not an error).
       const r = await ipcRenderer.invoke('tile:settings:get-foreign', {
         token: tileToken,
         foreignExtId: extId,
         key,
-      }) as { value?: unknown; error?: string } | null;
-      if (!r || r.error) {
+      }) as { success?: boolean; data?: unknown; value?: unknown; error?: string } | null;
+      if (!r || r.success === false) {
         return { success: false, data: undefined, value: undefined, error: r?.error ?? 'unknown error' };
       }
-      return { success: true, data: r.value, value: r.value, error: undefined };
+      const value = r.data !== undefined ? r.data : r.value;
+      return { success: true, data: value, value, error: undefined };
     },
   };
 
