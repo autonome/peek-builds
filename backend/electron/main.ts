@@ -196,29 +196,22 @@ export async function initialize(): Promise<void> {
   // Hybrid mode: broadcast to BOTH consolidated (iframes) AND separate windows
   // All send() calls are wrapped in try-catch to prevent errors during shutdown
   // when windows are being destroyed concurrently (race between isDestroyed check and send).
-  // Extract the host (tile id) from a peek://host/path source string.
-  // Node's URL.origin returns "null" for non-standard schemes regardless of
-  // Electron's standard:true registration, which would make every peek://
-  // window appear to share an origin with every other — silently dropping
-  // every cross-tile pubsub message. Parse the host manually instead.
-  function peekHost(s: string): string {
-    if (!s.startsWith('peek://')) return s;
-    const rest = s.slice('peek://'.length);
-    const slash = rest.indexOf('/');
-    return slash === -1 ? rest : rest.slice(0, slash);
-  }
   setExtensionBroadcaster((topic, msg, source) => {
-    const sourceOrigin = peekHost(source);
-
     // Broadcast to v2 tile BrowserWindows (launched by tile-launcher).
     // Without this, v2 tiles that subscribe to global pubsub events (editor:open,
     // item:created, etc.) never receive them.
+    //
+    // Echo-prevention compares FULL source URL against FULL window URL rather
+    // than just the peek host. One feature tile can have multiple
+    // BrowserWindows sharing the same host (e.g. websearch has peek://websearch/
+    // background.html AND peek://websearch/home.html). A host-level compare
+    // treats those siblings as the same sender and silently drops their
+    // intra-feature pubsub round-trips. Full-URL compare only excludes the
+    // exact originating window, allowing sibling entries to receive.
     for (const tileWin of getAllTileWindows()) {
       try {
-        const winHost = peekHost(tileWin.webContents.getURL());
-        // Don't echo back to sender (matched by tile host, not URL.origin —
-        // see peekHost comment above).
-        if (winHost !== sourceOrigin) {
+        const winUrl = tileWin.webContents.getURL();
+        if (winUrl !== source) {
           tileWin.webContents.send(`pubsub:${topic}`, {
             ...(msg as object),
             source
@@ -236,15 +229,14 @@ export async function initialize(): Promise<void> {
     // only tracks top-level BrowserWindows), so without this second pass
     // their subscribers never fire. Filter by `getType() === 'webview'`
     // and peek:// URLs to avoid broadcasting into arbitrary http(s)
-    // content webviews.
+    // content webviews. Same full-URL echo-prevention as above.
     for (const wc of webContents.getAllWebContents()) {
       try {
         if (wc.isDestroyed()) continue;
         if (wc.getType() !== 'webview') continue;
         const url = wc.getURL();
         if (!url.startsWith('peek://')) continue;
-        const wcHost = peekHost(url);
-        if (wcHost !== sourceOrigin) {
+        if (url !== source) {
           wc.send(`pubsub:${topic}`, {
             ...(msg as object),
             source
