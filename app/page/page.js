@@ -844,6 +844,13 @@ let dragStartScreenY = 0;
 let dragStartBoundsX = 0;
 let dragStartBoundsY = 0;
 let pageMouseButtonDown = false;
+// When a drag was initiated from a maximized state, the window width/height
+// were restored to the exact pre-maximize WINDOW bounds (bypassing
+// computeWindowBounds margin math). Subsequent mousemove updates during this
+// same drag must preserve those exact dimensions — otherwise computeWindowBounds
+// re-adds MARGIN*2 and grows the window (visible as a ~16px jump on platforms
+// where the canvas margin adjustment is skipped, e.g. headless tests).
+let dragOutOfMaximizeWindowSize = null; // { width, height } or null
 
 // Hold-to-drag state (configurable, read from prefs at init)
 const JITTER_TOLERANCE = 3; // px of movement allowed during hold without cancelling
@@ -893,8 +900,15 @@ function startDrag(screenX, screenY) {
         width: savedWindowBounds.width,
         height: savedWindowBounds.height,
       });
+      // Remember the exact window size so mousemove updates during this
+      // drag preserve it (see dragOutOfMaximizeWindowSize declaration).
+      dragOutOfMaximizeWindowSize = {
+        width: savedWindowBounds.width,
+        height: savedWindowBounds.height,
+      };
     } else {
       api.window.setBounds(computeWindowBounds(screenBounds));
+      dragOutOfMaximizeWindowSize = null;
     }
   }
   isDragging = true;
@@ -1297,8 +1311,16 @@ document.addEventListener('mousemove', (e) => {
     const dy = e.screenY - dragStartScreenY;
     screenBounds.x = dragStartBoundsX + dx;
     screenBounds.y = dragStartBoundsY + dy;
-    // Move the window — element positions within the window stay the same
-    setWindowBounds(computeWindowBounds(screenBounds));
+    // Move the window — element positions within the window stay the same.
+    // If this drag started by exiting maximize, preserve the exact window
+    // size captured at that moment (computeWindowBounds would otherwise add
+    // MARGIN*2 on top, causing a ~16px growth per mousemove).
+    const computed = computeWindowBounds(screenBounds);
+    if (dragOutOfMaximizeWindowSize) {
+      computed.width = dragOutOfMaximizeWindowSize.width;
+      computed.height = dragOutOfMaximizeWindowSize.height;
+    }
+    setWindowBounds(computed);
   }
 });
 
@@ -1310,6 +1332,8 @@ document.addEventListener('mouseup', () => {
     navbar.style.cursor = 'grab';
     updateUrlParams();
   }
+  // Clear the drag-out-of-maximize override once the drag ends.
+  dragOutOfMaximizeWindowSize = null;
 });
 
 // --- State display ---
