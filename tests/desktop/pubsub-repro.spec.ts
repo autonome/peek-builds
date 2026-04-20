@@ -28,12 +28,13 @@ test.beforeAll(async () => {
 
 test.describe('Pubsub Repro @desktop', () => {
 
-  // EXPECTED FAILURE: the home-publish → bg-subscribe leg of a cross-tile
-  // GLOBAL pubsub round-trip is currently broken at the broadcaster level.
-  // Proven architectural (not websearch-specific) by this minimal repro.
-  // When the fix lands, flip `test.fail()` to `test()` — Playwright will
-  // report a surprise pass if the test starts working before we expect.
-  test.fail('bg responds to home via GLOBAL pubsub round-trip', async () => {
+  // Cross-tile GLOBAL pubsub round-trip: home-entry publishes, bg-entry
+  // subscribes + responds, home-entry receives the response. Previously
+  // broken: v2 tile window-entries opened via api.window.open() weren't
+  // registered with the tile broadcaster, so inbound pubsub messages were
+  // silently dropped. Fixed by registering such windows with
+  // registerTrustedBuiltinWindow() in the window-open IPC handler.
+  test('bg responds to home via GLOBAL pubsub round-trip', async () => {
     // Force-load the pubsub-repro extension by invoking its command.
     // Mirrors the websearch pattern at websearch.spec.ts:91-126.
     const extensionLoaded = await sharedBgWindow.evaluate(async () => {

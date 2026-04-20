@@ -44,7 +44,7 @@ import {
   revokeTokensForTile,
   clearAllTokens,
 } from './tile-tokens.js';
-import { scopes, publish, getSystemAddress, unsubscribeAllByPrefix } from './pubsub.js';
+import { scopes, publish, getSystemAddress, unsubscribeAll, unsubscribeAllByPrefix } from './pubsub.js';
 import { DEBUG, getTilePreloadPath } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getExtensionPath } from './protocol.js';
@@ -397,7 +397,11 @@ export function registerTrustedBuiltinWindow(
     readyTiles.delete(key);
     revokeToken(token);
     try {
-      unsubscribeAllByPrefix(`peek://${tileId}/`);
+      // Scope the unsubscribe to THIS entry's source address only — otherwise a
+      // window-entry closing would wipe out a sibling background-entry's pubsub
+      // subscriptions, since the tile registry keys subscriptions by full source
+      // address `peek://{tileId}/{entryId}`.
+      unsubscribeAll(`peek://${tileId}/${entryId}`);
     } catch (err) {
       console.error(`[tile-launcher:${tileId}:${entryId}] Failed to unsubscribe on close:`, err);
     }
@@ -428,7 +432,7 @@ export function getTileWebPreferencesForUrl(
   url: string,
   tilePreloadPath: string,
   lookupLazyManifest: (tileId: string) => TileManifestV2 | null,
-): { preload: string; additionalArguments: string[]; tileId: string; entryId: string } | null {
+): { preload: string; additionalArguments: string[]; tileId: string; entryId: string; token?: string } | null {
   let host: string;
   let pathPart: string;
   try {
@@ -472,6 +476,7 @@ export function getTileWebPreferencesForUrl(
     ],
     tileId: manifest.id,
     entryId: entry.id,
+    token,
   };
 }
 

@@ -1376,6 +1376,18 @@ export function registerWindowHandlers(): void {
     if (specialCaseToken && tileWebPrefs?.tileId && tileWebPrefs?.entryId) {
       registerTrustedBuiltinWindow(tileWebPrefs.tileId, tileWebPrefs.entryId, win, specialCaseToken);
       DEBUG && console.log(`[window-open] registered ${tileWebPrefs.tileId}:${tileWebPrefs.entryId} with tile broadcaster`);
+    } else if (tileWebPrefs?.tileId && tileWebPrefs?.entryId && tileWebPrefs?.token) {
+      // Feature tile window-entry opened via api.window.open(): register the
+      // BrowserWindow with the tile broadcaster so GLOBAL-scope pubsub messages
+      // reach it. Without this, the window gets tile-preload + a valid token
+      // (so publish works) but inbound pubsub messages are silently dropped
+      // because getAllTileWindows() only knows about windows launched directly
+      // by launchTile() (i.e. background entries). Symptom: feature's background
+      // tile subscribes to a topic the window publishes (or vice versa), and
+      // the subscribe-side handler never fires. See pubsub-repro.spec.ts for
+      // a minimal repro.
+      registerTrustedBuiltinWindow(tileWebPrefs.tileId, tileWebPrefs.entryId, win, tileWebPrefs.token);
+      DEBUG && console.log(`[window-open] registered v2 tile window ${tileWebPrefs.tileId}:${tileWebPrefs.entryId} with tile broadcaster`);
     }
 
     // Track window position for display-watcher home display restoration
