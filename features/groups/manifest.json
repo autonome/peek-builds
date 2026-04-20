@@ -8,22 +8,13 @@
   "builtin": true,
   "tiles": [
     {
-      "id": "background",
-      "type": "background",
-      "url": "background.html",
-      "lazy": true
-    },
-    {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "peek://ext/groups/home.html",
-        "width": 800,
-        "height": 600,
-        "title": "Groups"
-      }
+      "width": 800,
+      "height": 600,
+      "title": "Groups",
+      "role": "workspace",
+      "key": "peek://ext/groups/home.html"
     }
   ],
   "capabilities": {

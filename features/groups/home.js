@@ -18,6 +18,8 @@ import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+import { labels, defaults } from './config.js';
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -348,6 +350,652 @@ const setupCreateGroup = () => {
     }
   });
 };
+
+// ============================================================================
+// Background logic (inlined from background.js)
+// ============================================================================
+// Commands, shortcuts, bulk-open (openGroup), pins, close/switch/restore,
+// settings load/save, and shutdown-related pubsub subscriptions.
+// Runs once at module load (see bootstrap IIFE at bottom), NOT inside the
+// DOMContentLoaded init() — keeps UI init path clean.
+
+console.log('[ext:groups] background', labels.name);
+
+// Extension content is served from peek://ext/groups/
+const bgAddress = 'peek://ext/groups/home.html';
+
+// In-memory settings cache (loaded from datastore during bg init)
+let currentSettings = {
+  prefs: defaults.prefs
+};
+
+// Track the groups window ID for mode cleanup (from bg-initiated opens)
+let groupsWindowId = null;
+
+// Track the current active group context (bulk-open path)
+let activeGroupId = null;
+let activeGroupName = null;
+
+// Track suspended (hidden) group windows: groupId -> [windowId, ...]
+const suspendedGroups = new Map();
+
+/** Load settings from datastore */
+const loadSettings = async () => {
+  const result = await api.settings.get('prefs');
+  if (!result.error && result.value) {
+    return { prefs: result.value || defaults.prefs };
+  }
+  return { prefs: defaults.prefs };
+};
+
+/** Save settings to datastore */
+const saveSettings = async (settings) => {
+  const result = await api.settings.set('prefs', settings.prefs);
+  if (result.error) {
+    console.error('[ext:groups] Failed to save settings:', result.error);
+  }
+};
+
+let isOpeningGroups = false;
+const openGroupsWindow = async () => {
+  if (isOpeningGroups) return;
+  isOpeningGroups = true;
+  try {
+    const params = {
+      role: 'workspace',
+      key: bgAddress,
+      height: 600,
+      width: 800,
+      trackingSource: 'cmd',
+      trackingSourceId: 'groups'
+    };
+    const window = await api.window.open(bgAddress, params);
+    debug && console.log('[ext:groups] Groups window opened:', window);
+    groupsWindowId = window?.id || null;
+  } catch (error) {
+    console.error('[ext:groups] Failed to open groups window:', error);
+  } finally {
+    isOpeningGroups = false;
+  }
+};
+
+/** Set group mode for a window via context API */
+const setGroupMode = async (windowId, groupId, groupName, color = null) => {
+  if (!api.context) return;
+  try {
+    await api.context.setMode('group', {
+      windowId,
+      metadata: { groupId, groupName, color }
+    });
+    debug && console.log(`[ext:groups] Set group mode for window ${windowId}: ${groupName}`);
+  } catch (err) {
+    console.error('[ext:groups] Failed to set group mode:', err);
+  }
+};
+
+/** Exit group mode for all windows in a group */
+const exitGroupMode = async (groupId) => {
+  if (!api.context) return;
+  try {
+    const result = await api.context.getWindowsInSpace(groupId);
+    if (!result.success || !result.data) return;
+    const windowIds = result.data;
+    debug && console.log(`[ext:groups] Exiting group mode for ${windowIds.length} windows`);
+    for (const windowId of windowIds) {
+      await api.context.setMode('page', { windowId });
+    }
+  } catch (err) {
+    console.error('[ext:groups] Failed to exit group mode:', err);
+  }
+};
+
+/** Resolve current group from active context or last focused window */
+const resolveCurrentGroup = async () => {
+  if (activeGroupId) {
+    return { groupId: activeGroupId, groupName: activeGroupName };
+  }
+  try {
+    const targetWindowId = await api.window.getFocusedVisibleWindowId();
+    if (targetWindowId) {
+      const modeResult = await api.context.get('mode', targetWindowId);
+      if (modeResult.success && modeResult.data?.value === 'group' && modeResult.data.metadata?.groupId) {
+        return {
+          groupId: modeResult.data.metadata.groupId,
+          groupName: modeResult.data.metadata.groupName || ''
+        };
+      }
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] Failed to resolve current group:', err);
+  }
+  return null;
+};
+
+/** Close (suspend) a group — hide all windows in the group context */
+const closeGroup = async (groupId = null, groupName = null) => {
+  if (!groupId) {
+    const current = await resolveCurrentGroup();
+    if (current) { groupId = current.groupId; groupName = current.groupName; }
+  }
+  if (!groupId) return { success: false, error: 'No active group to close' };
+
+  try {
+    if (api.session?.saveSpaceWorkspaces) await api.session.saveSpaceWorkspaces();
+  } catch (err) {
+    debug && console.log('[ext:groups] Failed to save workspace before close:', err);
+  }
+
+  const result = await api.context.getWindowsInSpace(groupId);
+  if (!result.success || !result.data || result.data.length === 0) {
+    return { success: false, error: 'No windows found in group' };
+  }
+
+  const windowIds = result.data;
+  const hiddenIds = [];
+  for (const windowId of windowIds) {
+    try {
+      await api.window.hide(windowId);
+      hiddenIds.push(windowId);
+    } catch (err) {
+      debug && console.log(`[ext:groups] Failed to hide window ${windowId}:`, err);
+    }
+  }
+  suspendedGroups.set(groupId, hiddenIds);
+
+  if (activeGroupId === groupId) {
+    activeGroupId = null;
+    activeGroupName = null;
+  }
+
+  console.log(`[ext:groups] Closed group "${groupName || groupId}": hid ${hiddenIds.length} window(s)`);
+  return { success: true, count: hiddenIds.length, groupId, groupName };
+};
+
+/** Restore a suspended group — show all hidden windows */
+const restoreGroup = async (groupId, groupName = null) => {
+  const hiddenIds = suspendedGroups.get(groupId);
+  if (!hiddenIds || hiddenIds.length === 0) {
+    if (groupName) return openGroup(groupName);
+    return { success: false, error: 'Group not suspended and no name to open' };
+  }
+
+  let restoredCount = 0;
+  const failedIds = [];
+  for (const windowId of hiddenIds) {
+    try {
+      const exists = await api.window.exists(windowId);
+      if (exists?.exists) {
+        await api.window.show(windowId);
+        restoredCount++;
+      } else {
+        failedIds.push(windowId);
+      }
+    } catch (err) {
+      debug && console.log(`[ext:groups] Failed to show window ${windowId}:`, err);
+      failedIds.push(windowId);
+    }
+  }
+  suspendedGroups.delete(groupId);
+
+  if (failedIds.length > 0 && groupName) {
+    console.log(`[ext:groups] ${failedIds.length} windows destroyed while suspended, re-opening group`);
+    return openGroup(groupName);
+  }
+
+  activeGroupId = groupId;
+  activeGroupName = groupName;
+  console.log(`[ext:groups] Restored group "${groupName || groupId}": showed ${restoredCount} window(s)`);
+  return { success: true, count: restoredCount };
+};
+
+/** Switch from current group to target group */
+const switchGroup = async (targetGroupName) => {
+  if (!targetGroupName) return { success: false, error: 'Usage: switch group <name>' };
+  const tagsResult = await api.datastore.getTagsByFrecency();
+  if (!tagsResult.success) return { success: false, error: 'Failed to get tags' };
+  const targetTag = tagsResult.data.find(t => t.name.toLowerCase() === targetGroupName.toLowerCase());
+  if (!targetTag) return { success: false, error: `Group "${targetGroupName}" not found` };
+  const current = await resolveCurrentGroup();
+  if (current && current.groupId !== targetTag.id) {
+    await closeGroup(current.groupId, current.groupName);
+  }
+  const result = await restoreGroup(targetTag.id, targetTag.name);
+  console.log(`[ext:groups] Switched to group "${targetGroupName}"`);
+  return result;
+};
+
+// ===== Pins =====
+
+const getPinnedItems = async (groupId) => {
+  try {
+    const result = await api.settings.get(`pins:${groupId}`);
+    if (!result.error && result.value) {
+      return Array.isArray(result.value) ? result.value : [];
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] Failed to load pins:', err);
+  }
+  return [];
+};
+
+const savePinnedItems = async (groupId, pinnedItemIds) => {
+  try {
+    await api.settings.set(`pins:${groupId}`, pinnedItemIds);
+  } catch (err) {
+    console.error('[ext:groups] Failed to save pins:', err);
+  }
+};
+
+// Note: normalizeUrlForCompare already defined in home.js (line ~519) — reused below.
+
+const getOrCreateUrlItem = async (url, title = '') => {
+  const result = await api.datastore.queryItems({ type: 'url', search: url, limit: 10 });
+  if (!result.success) return null;
+  const normalizedUrl = normalizeUrlForCompare(url);
+  const existing = result.data.find(item => normalizeUrlForCompare(item.content) === normalizedUrl);
+  if (existing) return existing;
+  const addResult = await api.datastore.addItem('url', {
+    content: url,
+    metadata: JSON.stringify({ title })
+  });
+  if (!addResult.success) return null;
+  return { id: addResult.data.id, content: url };
+};
+
+const pinItem = async (url, groupId = null) => {
+  if (!groupId) {
+    const current = await resolveCurrentGroup();
+    if (current) groupId = current.groupId;
+  }
+  if (!groupId) return { success: false, error: 'No active group context — open a group first' };
+  if (!url) return { success: false, error: 'Usage: pin <url>' };
+
+  const item = await getOrCreateUrlItem(url);
+  if (!item) return { success: false, error: 'Failed to find or create item for URL' };
+
+  const pins = await getPinnedItems(groupId);
+  if (!pins.includes(item.id)) {
+    pins.push(item.id);
+    await savePinnedItems(groupId, pins);
+  }
+
+  api.pubsub.publish('group:pin-changed', { groupId, itemId: item.id, pinned: true }, api.scopes.GLOBAL);
+  console.log(`[ext:groups] Pinned item "${url}" in group ${groupId}`);
+  return { success: true, itemId: item.id, groupId };
+};
+
+const unpinItem = async (url, groupId = null) => {
+  if (!groupId) {
+    const current = await resolveCurrentGroup();
+    if (current) groupId = current.groupId;
+  }
+  if (!groupId) return { success: false, error: 'No active group context' };
+  if (!url) return { success: false, error: 'Usage: unpin <url>' };
+
+  const item = await getOrCreateUrlItem(url);
+  if (!item) return { success: false, error: 'Item not found' };
+
+  const pins = await getPinnedItems(groupId);
+  const idx = pins.indexOf(item.id);
+  if (idx !== -1) {
+    pins.splice(idx, 1);
+    await savePinnedItems(groupId, pins);
+  }
+
+  api.pubsub.publish('group:pin-changed', { groupId, itemId: item.id, pinned: false }, api.scopes.GLOBAL);
+  console.log(`[ext:groups] Unpinned item "${url}" from group ${groupId}`);
+  return { success: true, itemId: item.id, groupId };
+};
+
+// ===== Group query/save/open helpers =====
+
+const getAllGroups = async () => {
+  const result = await api.datastore.getTagsByFrecency();
+  if (!result.success) return [];
+  return result.data;
+};
+
+const saveToGroup = async (groupName) => {
+  console.log('[ext:groups] Saving to group:', groupName);
+  const tagResult = await api.datastore.getOrCreateTag(groupName);
+  if (!tagResult.success) {
+    console.error('[ext:groups] Failed to get/create tag:', tagResult.error);
+    return { success: false, error: tagResult.error };
+  }
+
+  const tag = tagResult.data.tag;
+  const tagId = tag.id;
+
+  try {
+    let meta = {};
+    if (tag.metadata) {
+      meta = typeof tag.metadata === 'object' ? tag.metadata : JSON.parse(tag.metadata);
+    }
+    if (!meta.isGroup) {
+      meta.isGroup = true;
+      await api.datastore.setRow('tags', tagId, { ...tag, metadata: JSON.stringify(meta) });
+      debug && console.log('[ext:groups] Auto-promoted tag to group:', groupName);
+    }
+  } catch (err) {
+    console.error('[ext:groups] Failed to auto-promote tag:', err);
+  }
+
+  const listResult = await api.window.list({ includeInternal: false });
+  if (!listResult.success || listResult.windows.length === 0) {
+    console.log('[ext:groups] No windows to save');
+    return { success: false, error: 'No windows to save' };
+  }
+
+  let savedCount = 0;
+  for (const win of listResult.windows) {
+    const item = await getOrCreateUrlItem(win.url, win.title);
+    if (item) {
+      const linkResult = await api.datastore.tagItem(item.id, tagId);
+      if (linkResult.success && !linkResult.alreadyExists) savedCount++;
+    }
+  }
+  console.log(`[ext:groups] Saved ${savedCount} URLs to group "${groupName}"`);
+
+  try {
+    if (api.session?.saveSpaceWorkspaces) {
+      await api.session.saveSpaceWorkspaces();
+      debug && console.log('[ext:groups] Group workspace layouts saved');
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] Failed to save workspace layouts:', err);
+  }
+
+  return { success: true, count: savedCount, total: listResult.windows.length };
+};
+
+/** Open all URLs in a group (bulk-open path — NOT the home.js showAddresses path) */
+const openGroup = async (groupName) => {
+  console.log('[ext:groups] Opening group:', groupName);
+  const tagsResult = await api.datastore.getTagsByFrecency();
+  if (!tagsResult.success) return { success: false, error: 'Failed to get tags' };
+
+  const tag = tagsResult.data.find(t => t.name.toLowerCase() === groupName.toLowerCase());
+  if (!tag) {
+    console.log('[ext:groups] Group not found:', groupName);
+    return { success: false, error: 'Group not found' };
+  }
+
+  const itemsResult = await api.datastore.getItemsByTag(tag.id);
+  if (!itemsResult.success) {
+    console.log('[ext:groups] Failed to get items for group:', groupName);
+    return { success: false, error: 'Failed to get group items' };
+  }
+
+  const allUrlItems = itemsResult.data
+    .map(item => {
+      if (item.type === 'url') return { ...item, _openUrl: item.content };
+      if (item.type === 'text' && item.content) {
+        const urlMatch = item.content.trim().match(/^https?:\/\/\S+/) || item.content.match(/https?:\/\/[^\s<>"')\]]+/i);
+        if (urlMatch) {
+          try { new URL(urlMatch[0]); return { ...item, _openUrl: urlMatch[0] }; } catch (e) {}
+        }
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  const seenUrls = new Set();
+  const urlItems = allUrlItems.filter(item => {
+    const normalized = normalizeUrlForCompare(item._openUrl);
+    if (seenUrls.has(normalized)) return false;
+    seenUrls.add(normalized);
+    return true;
+  });
+
+  if (urlItems.length === 0) {
+    console.log('[ext:groups] No URLs in group:', groupName);
+    return { success: false, error: 'Group is empty' };
+  }
+
+  const pinnedItemIds = await getPinnedItems(tag.id);
+  const pinnedSet = new Set(pinnedItemIds);
+
+  activeGroupId = tag.id;
+  activeGroupName = tag.name;
+
+  let savedBoundsMap = null;
+  let sortedUrlItems = urlItems;
+  try {
+    const wsResult = api.settings.getExtKey
+      ? await api.settings.getExtKey('spaces', 'workspace:' + tag.id)
+      : { success: false };
+    if (wsResult.success && wsResult.data) {
+      const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;
+      if (snapshot.version === 1 && Array.isArray(snapshot.windows)) {
+        savedBoundsMap = new Map();
+        for (const w of snapshot.windows) {
+          if (w.url && w.bounds) {
+            savedBoundsMap.set(normalizeUrlForCompare(w.url), { bounds: w.bounds, zOrder: w.zOrder ?? 0 });
+          }
+        }
+        sortedUrlItems = [...urlItems].sort((a, b) => {
+          const aPinned = pinnedSet.has(a.id) ? 1 : 0;
+          const bPinned = pinnedSet.has(b.id) ? 1 : 0;
+          if (aPinned !== bPinned) return bPinned - aPinned;
+          const aZ = savedBoundsMap.get(normalizeUrlForCompare(a._openUrl))?.zOrder ?? 0;
+          const bZ = savedBoundsMap.get(normalizeUrlForCompare(b._openUrl))?.zOrder ?? 0;
+          return bZ - aZ;
+        });
+        debug && console.log(`[ext:groups] Loaded workspace snapshot with ${snapshot.windows.length} saved positions`);
+      }
+    }
+  } catch (err) {
+    debug && console.log('[ext:groups] No saved workspace layout, using defaults:', err);
+  }
+
+  const openedWindows = [];
+  for (const item of sortedUrlItems) {
+    const savedEntry = savedBoundsMap?.get(normalizeUrlForCompare(item._openUrl));
+    const boundsOpts = savedEntry?.bounds ? {
+      x: savedEntry.bounds.x,
+      y: savedEntry.bounds.y,
+      width: savedEntry.bounds.width,
+      height: savedEntry.bounds.height,
+    } : {};
+    const result = await api.window.open(item._openUrl, {
+      role: 'content',
+      trackingSource: 'cmd',
+      trackingSourceId: `group:${groupName}`,
+      groupMode: { groupId: tag.id, groupName: tag.name, color: tag.color },
+      ...boundsOpts
+    });
+    if (result?.id) {
+      openedWindows.push(result.id);
+      await setGroupMode(result.id, tag.id, tag.name, tag.color);
+    }
+  }
+
+  console.log(`[ext:groups] Opened ${urlItems.length} windows from group "${groupName}"`);
+  return { success: true, count: urlItems.length, windowIds: openedWindows };
+};
+
+// ===== Registration =====
+
+let registeredShortcut = null;
+const LOCAL_SHORTCUT = 'CommandOrControl+G';
+
+const initShortcut = (shortcut) => {
+  api.shortcuts.register(shortcut, () => { openGroupsWindow(); }, { global: true });
+  registeredShortcut = shortcut;
+  api.shortcuts.register(LOCAL_SHORTCUT, () => { openGroupsWindow(); });
+};
+
+const initCommands = () => {
+  registerNoun({
+    name: 'groups',
+    singular: 'group',
+    description: 'Saved tab groups',
+
+    query: async ({ search }) => {
+      const current = await resolveCurrentGroup();
+      const groups = await getAllGroups();
+      const withCounts = await Promise.all(groups.map(async g => {
+        const result = await api.datastore.getItemsByTag(g.id);
+        const count = result.success ? result.data.filter(i => i.type === 'url').length : 0;
+        return { id: g.id, name: g.name, color: g.color, count };
+      }));
+      let filtered = withCounts.filter(g => g.count > 0);
+      if (search) {
+        const s = search.toLowerCase();
+        filtered = filtered.filter(g => g.name.toLowerCase().includes(s));
+      }
+
+      if (current) {
+        const activeIdx = filtered.findIndex(g => g.id === current.groupId);
+        if (activeIdx > 0) {
+          const [active] = filtered.splice(activeIdx, 1);
+          active.name = `${active.name} (active)`;
+          filtered.unshift(active);
+        }
+      }
+
+      if (filtered.length === 0) return { output: 'No groups found.', mimeType: 'text/plain' };
+
+      const title = current
+        ? `Groups (${filtered.length}) [scope: ${current.groupName}]`
+        : `Groups (${filtered.length})`;
+
+      return {
+        success: true,
+        output: { data: filtered, mimeType: 'application/json', title }
+      };
+    },
+
+    browse: async () => { openGroupsWindow(); },
+    open: async (ctx) => { if (ctx.search) await openGroup(ctx.search.trim()); },
+    create: async ({ search }) => {
+      if (!search) return { success: false, error: 'Usage: new group <name>' };
+      return await saveToGroup(search.trim());
+    },
+
+    produces: 'application/json'
+  });
+  console.log('[ext:groups] Noun registered: groups');
+
+  // pin <url>
+  api.pubsub.subscribe('cmd:execute:pin', async (msg) => {
+    const result = await pinItem(msg.search?.trim());
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+  api.pubsub.publish('cmd:register', {
+    name: 'pin',
+    description: 'Pin a URL in the current group (always opens with group)',
+    source: 'groups',
+    scope: 'global',
+    accepts: [],
+    produces: [],
+    params: [{ name: 'url', type: 'string', required: true, description: 'URL to pin' }]
+  }, api.scopes.GLOBAL);
+
+  // unpin <url>
+  api.pubsub.subscribe('cmd:execute:unpin', async (msg) => {
+    const result = await unpinItem(msg.search?.trim());
+    if (msg.expectResult && msg.resultTopic) {
+      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+    }
+  }, api.scopes.GLOBAL);
+  api.pubsub.publish('cmd:register', {
+    name: 'unpin',
+    description: 'Unpin a URL from the current group',
+    source: 'groups',
+    scope: 'global',
+    accepts: [],
+    produces: [],
+    params: [{ name: 'url', type: 'string', required: true, description: 'URL to unpin' }]
+  }, api.scopes.GLOBAL);
+
+  console.log('[ext:groups] Standalone commands registered: pin, unpin');
+};
+
+const uninitCommands = () => {
+  unregisterNoun('groups');
+  for (const name of ['pin', 'unpin']) {
+    api.pubsub.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+  }
+  console.log('[ext:groups] Noun and commands unregistered: groups');
+};
+
+const initBackground = async () => {
+  console.log('[ext:groups] init');
+  currentSettings = await loadSettings();
+  initShortcut(currentSettings.prefs.shortcutKey);
+  initCommands();
+
+  api.pubsub.subscribe('window:closed', async (msg) => {
+    const closedWindowId = msg?.id;
+    if (closedWindowId === groupsWindowId) {
+      debug && console.log('[ext:groups] Groups window closed, keeping group mode on member windows');
+      groupsWindowId = null;
+    }
+  }, api.scopes.GLOBAL);
+
+  api.pubsub.subscribe('groups:settings-changed', async () => {
+    console.log('[ext:groups] settings changed, reinitializing');
+    uninitBackground();
+    currentSettings = await loadSettings();
+    initShortcut(currentSettings.prefs.shortcutKey);
+    initCommands();
+  }, api.scopes.GLOBAL);
+
+  api.pubsub.subscribe('groups:settings-update', async (msg) => {
+    console.log('[ext:groups] settings-update received:', msg);
+    try {
+      if (msg.data) {
+        currentSettings = { prefs: msg.data.prefs || currentSettings.prefs };
+      } else if (msg.key === 'prefs' && msg.path) {
+        const field = msg.path.split('.')[1];
+        if (field) {
+          currentSettings.prefs = { ...currentSettings.prefs, [field]: msg.value };
+        }
+      }
+      await saveSettings(currentSettings);
+      uninitBackground();
+      initShortcut(currentSettings.prefs.shortcutKey);
+      initCommands();
+      api.pubsub.publish('groups:settings-changed', currentSettings, api.scopes.GLOBAL);
+    } catch (err) {
+      console.error('[ext:groups] settings-update error:', err);
+    }
+  }, api.scopes.GLOBAL);
+};
+
+const uninitBackground = () => {
+  console.log('[ext:groups] uninit');
+  if (registeredShortcut) {
+    api.shortcuts.unregister(registeredShortcut, { global: true });
+    registeredShortcut = null;
+  }
+  api.shortcuts.unregister(LOCAL_SHORTCUT);
+  uninitCommands();
+};
+
+// ============================================================================
+// Bootstrap (module top-level)
+// ============================================================================
+// Runs bg init once at module load. Does NOT block DOMContentLoaded — uses
+// fire-and-forget IIFE so the module keeps parsing (registering the
+// DOMContentLoaded listener for `init` at the bottom of this file).
+// Errors here are logged but do not prevent UI init from running.
+
+(async () => {
+  try {
+    await api.initialize();
+    await initBackground();
+    api.onShutdown(() => {
+      console.log('[ext:groups] received shutdown');
+      uninitBackground();
+    });
+  } catch (err) {
+    console.error('[ext:groups] bootstrap failed:', err);
+  }
+})();
 
 const init = async () => {
   debug && console.log('Groups init');
