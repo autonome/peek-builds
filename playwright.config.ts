@@ -32,6 +32,16 @@ export default defineConfig({
       testMatch: /desktop\/.*\.spec\.ts/,
     },
     {
+      // Tests that exercise OS-integration behavior (modal panel focus/blur,
+      // keyboard flows driving the cmd panel) are fragile under fullyParallel +
+      // workers>1. yarn test:electron runs this project as a SEPARATE
+      // playwright invocation with --workers=1, after the parallel project
+      // finishes, so no other Electron instances are competing.
+      name: 'desktop-serial',
+      testMatch: /desktop-serial\/.*\.spec\.ts/,
+      fullyParallel: false,
+    },
+    {
       name: 'components',
       testMatch: /components\/.*\.spec\.ts/,
       use: {
@@ -61,9 +71,26 @@ export default defineConfig({
     timeout: 10000
   },
 
-  // Desktop app tests must run serially
+  // Playwright workers — each runs in its own Electron with its own
+  // --user-data-dir (see tests/fixtures/desktop-app.ts). The single-instance
+  // lock is bypassed when the profile starts with "test" (see
+  // `isTestProfile()` in backend/electron/config.ts), so parallel workers
+  // don't collide on the lock. Default is 1 (both local and CI) for
+  // reliability: the parallelism payoff is minor while smoke.spec.ts is a
+  // single-file bottleneck, and concurrent Electron launches surface
+  // occasional OS-level races. Set `PEEK_TEST_WORKERS=N` to opt in to
+  // parallelism once smoke.spec.ts has been split into smaller files.
+  //
+  // fullyParallel: false — tests within a file run serially in one worker,
+  // different files distribute across workers. We tried fullyParallel: true
+  // but OS-level cross-Electron focus/timing races under 4 parallel workers
+  // surfaced in too many scattered tests. Current choice trades raw
+  // parallelism for stability; smoke.spec.ts (the big file, ~218 tests)
+  // bottlenecks on one worker but the rest of the suite distributes freely.
+  // To recover more parallelism, the right move is to split smoke.spec.ts
+  // into smaller files rather than re-enable fullyParallel.
   fullyParallel: false,
-  workers: 1,
+  workers: parseInt(process.env.PEEK_TEST_WORKERS || '1'),
 
   // CI settings
   forbidOnly: !!process.env.CI,

@@ -143,7 +143,7 @@
     "test:unit:shortcuts": "./scripts/timed.sh sh -c 'yarn build && ELECTRON_RUN_AS_NODE=1 npx electron --test dist/backend/electron/shortcuts.test.js'",
     "test:unit:datastore": "./scripts/timed.sh sh -c 'yarn build && ELECTRON_RUN_AS_NODE=1 npx electron --test dist/backend/electron/datastore.test.js'",
     "test": "./scripts/timed.sh sh -c 'yarn build && yarn test:electron && yarn test:tauri'",
-    "test:electron": "./scripts/timed.sh sh -c 'yarn check:native && yarn build && HEADLESS=1 BACKEND=electron npx playwright test tests/desktop/'",
+    "test:electron": "./scripts/timed.sh sh -c 'yarn check:native && yarn build && HEADLESS=1 BACKEND=electron npx playwright test --project=desktop && HEADLESS=1 BACKEND=electron npx playwright test --project=desktop-serial --workers=1'",
     "test:electron:x": "./scripts/timed.sh sh -c 'yarn build && HEADLESS=1 BACKEND=electron npx playwright test tests/desktop/ -x'",
     "test:tauri": "./scripts/timed.sh sh -c 'yarn test:tauri:frontend; yarn test:tauri:rust'",
     "test:tauri:frontend": "./scripts/timed.sh sh -c 'HEADLESS=1 BACKEND=tauri npx playwright test tests/desktop/'",

@@ -29,6 +29,12 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 ---
 
+## Test infrastructure
+
+- [ ] **Move OS-integration-fragile tests to a non-parallel suite.** Under `fullyParallel: true` + `workers > 1`, tests that drive modal cmd panels with OS-level focus/blur dependencies are flaky. Confirmed examples: most of `tests/desktop/cmd-state-machine.spec.ts` (`Escape layering…`, `URL opening…`) and `smoke.spec.ts` Type-Specific Noun Commands describe (`new note with content saves to datastore`, `new note without content signals editor open`). Add a second Playwright project in `playwright.config.ts` matching `tests/desktop-serial/` with `workers: 1, fullyParallel: false`. Move the fragile tests. Also refine the `isTestProfile()` gate in `backend/electron/ipc.ts:2373` that currently disables modal close-on-blur in all test profiles — the serial suite may want to exercise that behavior.
+
+---
+
 ## Features
 
 - [x] **Commands for browser-extension options pages.** Registered `<name> options` command per installed Chromium extension that declares `options_page`/`options_ui.page`.

@@ -21,6 +21,7 @@ import {
   waitForExtensionsReady,
   waitForCommandResults,
   waitForPanelCommandsLoaded,
+  waitForCmdNotExecuting,
   sleep,
 } from '../helpers/window-utils';
 
@@ -71,6 +72,7 @@ async function closeCmdPanel(bgWindow: Page, windowId: number) {
     // Panel may have already closed
   }
 }
+
 
 // Ensure the websearch extension is loaded before our UI tests
 async function ensureWebsearchLoaded(bgWindow: Page) {
@@ -236,33 +238,15 @@ test.describe('Websearch Cmd Panel Execution @desktop', () => {
       // Press Enter to execute the command through the UI proxy flow
       await cmdWindow.keyboard.press('Enter');
 
-      // Wait for the command to complete (should NOT hang)
-      // The cmd panel state machine transitions to EXECUTING on Enter,
-      // then to IDLE/OUTPUT_SELECTION/CLOSING on completion.
-      // If it stays in EXECUTING for more than 15s, the command hung.
-      const executionResult = await cmdWindow.waitForFunction(
-        () => {
-          const state = (window as any)._cmdState;
-          if (!state) return null;
-          const currentState = state.currentState;
-          // EXECUTING = the command is still running
-          // Any other state means it completed (or errored)
-          if (currentState !== 'EXECUTING') {
-            return { completed: true, finalState: currentState };
-          }
-          return null; // Keep waiting
-        },
-        undefined,
-        { timeout: 20000 }  // 20s — well under the 30s proxy timeout
-      );
+      // Wait for the command to complete (should NOT hang). 20s is well under
+      // the 30s proxy timeout. Helper tolerates the panel closing mid-poll.
+      const finalState = await waitForCmdNotExecuting(cmdWindow, 20000);
+      console.log('Command completed with final state:', finalState);
 
-      const result = await executionResult.jsonValue() as { completed: boolean; finalState: string };
-      console.log('Command completed with final state:', result.finalState);
-
-      // The command should have completed, not timed out
-      expect(result.completed).toBe(true);
-      // It should NOT be in ERROR state (timeout would cause ERROR)
-      expect(result.finalState).not.toBe('ERROR');
+      // Must have left EXECUTING — that's what "didn't hang" means.
+      expect(finalState).not.toBe('TIMEOUT');
+      // ERROR means the proxy timed out / the command errored.
+      expect(finalState).not.toBe('ERROR');
 
     } finally {
       await closeCmdPanel(sharedBgWindow, windowId);
@@ -280,26 +264,12 @@ test.describe('Websearch Cmd Panel Execution @desktop', () => {
       await cmdWindow.fill('input', 'google test');
       await cmdWindow.keyboard.press('Enter');
 
-      // Wait for execution to complete
-      const executionResult = await cmdWindow.waitForFunction(
-        () => {
-          const state = (window as any)._cmdState;
-          if (!state) return null;
-          const currentState = state.currentState;
-          if (currentState !== 'EXECUTING') {
-            return { completed: true, finalState: currentState };
-          }
-          return null;
-        },
-        undefined,
-        { timeout: 20000 }
-      );
+      // Wait for execution to complete (tolerates panel closing mid-poll)
+      const finalState = await waitForCmdNotExecuting(cmdWindow, 20000);
+      console.log('Google command completed with final state:', finalState);
 
-      const result = await executionResult.jsonValue() as { completed: boolean; finalState: string };
-      console.log('Google command completed with final state:', result.finalState);
-
-      expect(result.completed).toBe(true);
-      expect(result.finalState).not.toBe('ERROR');
+      expect(finalState).not.toBe('TIMEOUT');
+      expect(finalState).not.toBe('ERROR');
 
     } finally {
       await closeCmdPanel(sharedBgWindow, windowId);

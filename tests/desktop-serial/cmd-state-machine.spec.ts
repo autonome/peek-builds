@@ -75,14 +75,30 @@ async function getState(cmdWindow: Page): Promise<string> {
 }
 
 /**
- * Helper: Wait for a specific state machine state
+ * Helper: Wait for a specific state machine state.
+ *
+ * If the caller expects CLOSING, tolerate the panel actually closing — the
+ * CLOSING transition triggers window.close(), and waitForFunction can race
+ * with the close and throw "Target page, context or browser has been closed".
+ * That's the success case for CLOSING.
  */
 async function waitForState(cmdWindow: Page, expectedState: string, timeout = 5000) {
-  await cmdWindow.waitForFunction(
-    (state: string) => (window as any)._cmdState.currentState === state,
-    expectedState,
-    { timeout }
-  );
+  try {
+    await cmdWindow.waitForFunction(
+      (state: string) => (window as any)._cmdState.currentState === state,
+      expectedState,
+      { timeout }
+    );
+  } catch (err) {
+    // Panel closed during the wait. For CLOSING (and other terminal states
+    // where the window teardown is the expected behavior), accept that as
+    // having reached the state. For non-terminal states, rethrow — a closed
+    // panel while expecting TYPING/IDLE/PARAM_MODE is a real failure.
+    const msg = err instanceof Error ? err.message : String(err);
+    const isPageClosed = msg.includes('Target page') || msg.includes('context or browser has been closed');
+    if (isPageClosed && expectedState === 'CLOSING') return;
+    throw err;
+  }
 }
 
 // ============================================================================
@@ -413,12 +429,9 @@ test.describe('Cmd State Machine @desktop', () => {
       // Enter should detect URL and close
       await cmdWindow.keyboard.press('Enter');
 
-      // Should transition to CLOSING
-      await cmdWindow.waitForFunction(
-        () => (window as any)._cmdState.currentState === 'CLOSING',
-        undefined,
-        { timeout: 5000 }
-      );
+      // Should transition to CLOSING (waitForState tolerates the panel
+      // actually closing during the CLOSING transition).
+      await waitForState(cmdWindow, 'CLOSING');
     } finally {
       await closeCmdPanel(windowId);
     }

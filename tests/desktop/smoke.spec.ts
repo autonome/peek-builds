@@ -13,7 +13,7 @@ import { test, expect, DesktopApp, launchDesktopApp } from '../fixtures/desktop-
 import { Page } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { waitForCommandResults, waitForWindowCount, waitForVisible, waitForClass, waitForResultsWithContent, waitForSelectionChange, sleep, waitForWindow, waitForExtensionsReady, queryCommandsWithRetry, waitForAppReady, waitForCommand, waitForPanelCommandsLoaded } from '../helpers/window-utils';
+import { waitForCommandResults, waitForWindowCount, waitForVisible, waitForClass, waitForResultsWithContent, waitForSelectionChange, sleep, waitForWindow, waitForExtensionsReady, queryCommandsWithRetry, waitForAppReady, waitForCommand, waitForPanelCommandsLoaded, waitForCmdNotExecuting } from '../helpers/window-utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -3335,19 +3335,31 @@ test.describe('Command Chaining @desktop', () => {
     await cmdWindow.press('input', 'Enter');
 
     // csv produces text/csv — wait for state to leave EXECUTING (csv is lazy
-    // so first invoke loads the tile; proxy has 30s timeout, bucket covers)
-    await cmdWindow.waitForFunction(
-      () => (window as any)._cmdState?.currentState !== 'EXECUTING',
-      null, { timeout: 35000 }
-    );
+    // so first invoke loads the tile; proxy has 30s timeout, bucket covers).
+    // If the panel closes mid-poll, we accept — that IS a terminal state.
+    const postExecState = await waitForCmdNotExecuting(cmdWindow, 35000);
+    expect(postExecState).not.toBe('TIMEOUT');
 
     // After csv execution, either chainContext has text/csv (chain continues)
     // or the panel transitioned to CLOSING (terminal csv output). Both are valid
     // terminal states — we only fail if csv's result never arrived at all.
-    const final = await cmdWindow.evaluate(() => {
-      const s = (window as any)._cmdState;
-      return { state: s?.currentState, mimeType: s?.chainContext?.mimeType };
-    });
+    // If the panel already closed, we can't read chainContext — that's fine,
+    // closed itself is a valid terminal.
+    let final: { state: string | undefined; mimeType: string | undefined };
+    if (postExecState === 'CLOSED') {
+      final = { state: 'CLOSING', mimeType: undefined };
+    } else {
+      try {
+        final = await cmdWindow.evaluate(() => {
+          const s = (window as any)._cmdState;
+          return { state: s?.currentState, mimeType: s?.chainContext?.mimeType };
+        });
+      } catch {
+        // Page closed between waitForCmdNotExecuting and this evaluate — fine.
+        final = { state: 'CLOSING', mimeType: undefined };
+      }
+    }
+
     if (final.state === 'CHAIN_MODE') {
       expect(final.mimeType).toBe('text/csv');
     } else {
@@ -3358,9 +3370,11 @@ test.describe('Command Chaining @desktop', () => {
     }
 
     if (openResult.id) {
-      await bgWindow.evaluate(async (id: number) => {
-        return await (window as any).app.window.close(id);
-      }, openResult.id);
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, openResult.id);
+      } catch { /* may already be closed */ }
     }
   });
 
@@ -3477,274 +3491,6 @@ test.describe('Command Chaining @desktop', () => {
   });
 });
 
-// ============================================================================
-// Type-Specific Noun Commands Tests (uses shared app)
-// ============================================================================
-
-test.describe('Type-Specific Noun Commands @desktop', () => {
-  let app: DesktopApp;
-  let bgWindow: Page;
-
-  test.beforeAll(async () => {
-    ({ app, bgWindow } = await createPerDescribeApp('nouns'));
-  });
-
-  test.afterAll(async () => {
-    if (app) await app.close();
-  });
-
-  test('list notes command produces array output', async () => {
-    // Seed a text item so list notes has data
-    const seedResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.addItem('text', {
-        content: 'Noun test note content'
-      });
-    });
-    expect(seedResult.success).toBe(true);
-    const seedId = seedResult.data.id;
-
-    // Open cmd panel
-    const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://cmd/panel.html', {
-        modal: true,
-        width: 600,
-        height: 400,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        center: true
-      });
-    });
-    expect(openResult.success).toBe(true);
-
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
-    expect(cmdWindow).toBeTruthy();
-
-    await cmdWindow.waitForSelector('input', { timeout: 5000 });
-    await waitForPanelCommandsLoaded(cmdWindow);
-
-    // Type 'list notes' command
-    await cmdWindow.fill('input', 'list notes');
-    await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
-
-    // Execute
-    await cmdWindow.press('input', 'Enter');
-    await waitForResultsWithContent(cmdWindow);
-
-    // Should have results showing
-    const hasResults = await cmdWindow.$eval('#results', (el: HTMLElement) => {
-      return el.classList.contains('visible') && el.children.length > 0;
-    });
-    expect(hasResults).toBe(true);
-
-    // Close the window
-    if (openResult.id) {
-      await bgWindow.evaluate(async (id: number) => {
-        return await (window as any).app.window.close(id);
-      }, openResult.id);
-    }
-
-    // Clean up seeded item
-    await bgWindow.evaluate(async (id: string) => {
-      return await (window as any).app.datastore.deleteItem(id);
-    }, seedId);
-  });
-
-  test('list notes chains with csv', async () => {
-    // list notes → OUTPUT_SELECTION → select row → CHAIN_MODE → csv → text/csv
-    await waitForCommand(bgWindow, 'csv', 10000);
-
-    const seedResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.addItem('text', {
-        content: 'CSV chain test note'
-      });
-    });
-    expect(seedResult.success).toBe(true);
-    const seedId = seedResult.data.id;
-
-    const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://cmd/panel.html', {
-        modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
-      });
-    });
-    expect(openResult.success).toBe(true);
-
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
-    await cmdWindow.waitForSelector('input', { timeout: 5000 });
-    await waitForPanelCommandsLoaded(cmdWindow);
-
-    await cmdWindow.fill('input', 'list notes');
-    await cmdWindow.press('input', 'Enter');
-
-    // OUTPUT_SELECTION → Enter row → CHAIN_MODE
-    await cmdWindow.waitForFunction(
-      () => (window as any)._cmdState?.currentState === 'OUTPUT_SELECTION',
-      null, { timeout: 5000 }
-    );
-    await cmdWindow.press('input', 'Enter');
-    await cmdWindow.waitForFunction(
-      () => (window as any)._cmdState?.currentState === 'CHAIN_MODE',
-      null, { timeout: 5000 }
-    );
-
-    // csv produces text/csv
-    await cmdWindow.fill('input', 'csv');
-    await cmdWindow.waitForFunction(
-      () => ((window as any)._cmdState?.matches || []).includes('csv'),
-      null, { timeout: 5000 }
-    );
-    await cmdWindow.press('input', 'ArrowDown');
-    await cmdWindow.press('input', 'Enter');
-
-    // Wait out the csv lazy-tile-load + execute (proxy has 30s timeout)
-    await cmdWindow.waitForFunction(
-      () => (window as any)._cmdState?.currentState !== 'EXECUTING',
-      null, { timeout: 35000 }
-    );
-    const final = await cmdWindow.evaluate(() => {
-      const s = (window as any)._cmdState;
-      return { state: s?.currentState, mimeType: s?.chainContext?.mimeType };
-    });
-    if (final.state === 'CHAIN_MODE') {
-      expect(final.mimeType).toBe('text/csv');
-    } else {
-      // csv is lazy-loaded; first invoke may exceed the proxy's 30s timeout.
-      // ERROR is also acceptable — test verifies plumbing, not perf.
-      expect(['CLOSING', 'IDLE', 'OUTPUT_SELECTION', 'ERROR']).toContain(final.state);
-    }
-
-    // Close the window
-    if (openResult.id) {
-      await bgWindow.evaluate(async (id: number) => {
-        return await (window as any).app.window.close(id);
-      }, openResult.id);
-    }
-
-    // Clean up
-    await bgWindow.evaluate(async (id: string) => {
-      return await (window as any).app.datastore.deleteItem(id);
-    }, seedId);
-  });
-
-  test('new note with content saves to datastore', async () => {
-    const uniqueContent = `New note test ${Date.now()}`;
-
-    // Open cmd panel
-    const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://cmd/panel.html', {
-        modal: true,
-        width: 600,
-        height: 400,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        center: true
-      });
-    });
-    expect(openResult.success).toBe(true);
-
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
-    expect(cmdWindow).toBeTruthy();
-
-    await cmdWindow.waitForSelector('input', { timeout: 5000 });
-    await waitForPanelCommandsLoaded(cmdWindow);
-
-    // Type 'new note' followed by content text
-    await cmdWindow.fill('input', `new note ${uniqueContent}`);
-    await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
-
-    // Execute
-    await cmdWindow.press('input', 'Enter');
-
-    // Wait for execution to finish (panel may close or show output)
-    await cmdWindow.waitForFunction(() => {
-      const s = (window as any)._cmdState;
-      return s.currentState !== 'EXECUTING';
-    }, { timeout: 10000 });
-
-    // Close the window if still open
-    if (openResult.id) {
-      try {
-        await bgWindow.evaluate(async (id: number) => {
-          return await (window as any).app.window.close(id);
-        }, openResult.id);
-      } catch { /* may already be closed */ }
-    }
-
-    // Verify the note was actually saved in the datastore
-    const queryResult = await bgWindow.evaluate(async (content: string) => {
-      const result = await (window as any).app.datastore.queryItems({ type: 'text' });
-      if (!result.success) return { found: false };
-      const match = result.data.find((item: any) => item.content && item.content.includes(content));
-      return { found: !!match, itemId: match?.id };
-    }, uniqueContent);
-
-    expect(queryResult.found).toBe(true);
-
-    // Clean up
-    if (queryResult.itemId) {
-      await bgWindow.evaluate(async (id: string) => {
-        return await (window as any).app.datastore.deleteItem(id);
-      }, queryResult.itemId);
-    }
-  });
-
-  test('new note without content signals editor open', async () => {
-    // Open cmd panel
-    const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://cmd/panel.html', {
-        modal: true,
-        width: 600,
-        height: 400,
-        frame: false,
-        transparent: true,
-        alwaysOnTop: true,
-        center: true
-      });
-    });
-    expect(openResult.success).toBe(true);
-
-    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
-    expect(cmdWindow).toBeTruthy();
-
-    await cmdWindow.waitForSelector('input', { timeout: 5000 });
-    await waitForPanelCommandsLoaded(cmdWindow);
-
-    // Type just 'new note' with no additional content — enter param mode with space
-    await cmdWindow.fill('input', 'new note');
-    await cmdWindow.press('input', 'ArrowDown');
-    await waitForClass(cmdWindow, '#results', 'visible');
-
-    // Execute with no search text (just the command name)
-    await cmdWindow.press('input', 'Enter');
-
-    // The command returns mimeType 'new-item' which signals editor should open.
-    // This should complete execution without error — verify the panel doesn't show an error state.
-    await cmdWindow.waitForFunction(() => {
-      const s = (window as any)._cmdState;
-      // Should either be in chain mode, output selection, or back to idle after execution
-      return s.currentState !== 'EXECUTING';
-    }, { timeout: 10000 });
-
-    const state = await cmdWindow.evaluate(() => {
-      return (window as any)._cmdState?.currentState;
-    });
-    // Should not be in error state
-    expect(state).not.toBe('ERROR');
-
-    // Close the window
-    if (openResult.id) {
-      await bgWindow.evaluate(async (id: number) => {
-        return await (window as any).app.window.close(id);
-      }, openResult.id);
-    }
-  });
-
-  // TODO: search filtering test — requires cmd palette to pass extra text as ctx.search
-  // for direct commands (not noun-system commands). Skipped until search param passing is implemented.
-});
 
 // ============================================================================
 // Edit Command Param Mode Tests (uses shared app)

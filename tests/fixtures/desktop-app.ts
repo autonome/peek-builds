@@ -652,7 +652,7 @@ export async function getSharedApp(): Promise<DesktopApp> {
     return sharedAppPromise;
   }
 
-  sharedAppPromise = launchDesktopApp('shared-test-instance');
+  sharedAppPromise = launchDesktopApp('test-shared-instance');
   sharedApp = await sharedAppPromise;
   sharedAppPromise = null;
   return sharedApp;

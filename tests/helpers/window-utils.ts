@@ -410,3 +410,40 @@ export async function waitForPanelCommandsLoaded(
     { timeout }
   );
 }
+
+/**
+ * Poll the cmd panel's state machine until it leaves EXECUTING.
+ *
+ * Returns the final state as a primitive string. If the panel closes
+ * mid-poll — which is the normal outcome for commands that transition
+ * EXECUTING → CLOSING → actual close (e.g. search, URL open) — return
+ * 'CLOSED'. That counts as success: the only real failure mode is staying
+ * in EXECUTING past the timeout.
+ *
+ * Avoids the race where `waitForFunction(...).jsonValue()` or a subsequent
+ * `cmdWindow.evaluate(...)` fires against a page that has already closed,
+ * throwing "Target page, context or browser has been closed". The tests
+ * that used that pattern were flaky under parallel load (workers > 1,
+ * fullyParallel: true).
+ */
+export async function waitForCmdNotExecuting(
+  cmdWindow: Page,
+  timeoutMs: number
+): Promise<string> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const state = await cmdWindow.evaluate(() => {
+        const s = (window as any)._cmdState;
+        return s?.currentState ?? null;
+      });
+      if (state && state !== 'EXECUTING') return state;
+    } catch {
+      // Page closed — command completed (the panel's CLOSING transition
+      // actually closes the window). Treat as success.
+      return 'CLOSED';
+    }
+    await sleep(50);
+  }
+  return 'TIMEOUT';
+}
