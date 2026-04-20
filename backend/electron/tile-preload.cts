@@ -48,29 +48,29 @@ const sourceAddress = `peek://${tileId}/${tileEntry}`;
 let tokenValid = false;
 let trustedBuiltin = false;
 let grantedCapabilities: Record<string, unknown> = {};
-let validationPromise: Promise<boolean> | undefined;
+
+// Kick off token validation eagerly at module load time.
+// Tiles no longer need to call api.initialize() before using cap-gated
+// methods — each method awaits this promise internally. api.initialize()
+// is kept as a thin backward-compatible wrapper.
+const validationPromise: Promise<boolean> = ipcRenderer.invoke('tile:validate-token', {
+  tileId,
+  tileEntry,
+  token: tileToken,
+}).then((result: { valid: boolean; capabilities?: Record<string, unknown>; trustedBuiltin?: boolean }) => {
+  tokenValid = result.valid;
+  trustedBuiltin = result.trustedBuiltin === true;
+  if (result.capabilities) {
+    grantedCapabilities = result.capabilities;
+  }
+  return result.valid;
+}).catch(() => {
+  tokenValid = false;
+  return false;
+});
 
 function validateToken(): Promise<boolean> {
-  if (validationPromise !== undefined) return validationPromise;
-
-  const promise = ipcRenderer.invoke('tile:validate-token', {
-    tileId,
-    tileEntry,
-    token: tileToken,
-  }).then((result: { valid: boolean; capabilities?: Record<string, unknown>; trustedBuiltin?: boolean }) => {
-    tokenValid = result.valid;
-    trustedBuiltin = result.trustedBuiltin === true;
-    if (result.capabilities) {
-      grantedCapabilities = result.capabilities;
-    }
-    return result.valid;
-  }).catch(() => {
-    tokenValid = false;
-    return false;
-  });
-
-  validationPromise = promise;
-  return promise;
+  return validationPromise;
 }
 
 // ─── Phase 4: v1-compat violation logger REMOVED ─────────────────────
@@ -158,9 +158,10 @@ function buildAPI(): Record<string, unknown> {
   // `api.subscribe('editor:open', handler, api.scopes.GLOBAL)`. Scope is only
   // advisory for the client — capability-based enforcement happens in main.
 
-  function publishImpl(topic: string, data: unknown, scope?: number) {
-    if (!tokenValid) {
-      console.warn('[tile-preload] publish called before initialize()');
+  async function publishImpl(topic: string, data: unknown, scope?: number) {
+    const valid = await validationPromise;
+    if (!valid) {
+      console.warn('[tile-preload] publish called but token validation failed');
       return;
     }
     ipcRenderer.send('tile:pubsub:publish', {
@@ -173,27 +174,40 @@ function buildAPI(): Record<string, unknown> {
   }
 
   function subscribeImpl(topic: string, callback: (data: unknown) => void, _scope?: number) {
-    if (!tokenValid) {
-      console.warn('[tile-preload] subscribe called before initialize()');
-      return () => {};
-    }
-    ipcRenderer.send('tile:pubsub:subscribe', {
-      token: tileToken,
-      source: sourceAddress,
-      topic,
-    });
-
+    // Register the IPC listener immediately (synchronous) so messages
+    // received after validation completes are not dropped.
+    // The upstream tile:pubsub:subscribe is sent only after the token
+    // validates. If validation fails we tear down the listener.
+    let unsubscribed = false;
     const handler = (_event: unknown, msg: unknown) => {
       callback(msg);
     };
     ipcRenderer.on(`pubsub:${topic}`, handler);
 
-    return () => {
-      ipcRenderer.removeListener(`pubsub:${topic}`, handler);
-      ipcRenderer.send('tile:pubsub:unsubscribe', {
+    validationPromise.then((valid) => {
+      if (!valid) {
+        console.warn('[tile-preload] subscribe: token validation failed, not subscribing upstream for topic:', topic);
+        ipcRenderer.removeListener(`pubsub:${topic}`, handler);
+        return;
+      }
+      if (unsubscribed) return;
+      ipcRenderer.send('tile:pubsub:subscribe', {
         token: tileToken,
         source: sourceAddress,
         topic,
+      });
+    });
+
+    return () => {
+      unsubscribed = true;
+      ipcRenderer.removeListener(`pubsub:${topic}`, handler);
+      validationPromise.then((valid) => {
+        if (!valid) return;
+        ipcRenderer.send('tile:pubsub:unsubscribe', {
+          token: tileToken,
+          source: sourceAddress,
+          topic,
+        });
       });
     };
   }
@@ -242,9 +256,10 @@ function buildAPI(): Record<string, unknown> {
   }
 
   api.commands = {
-    register: (nameOrCommand: unknown, maybeHandler?: (params: unknown) => unknown) => {
-      if (!tokenValid) {
-        console.warn('[tile-preload] commands.register called before initialize()');
+    register: async (nameOrCommand: unknown, maybeHandler?: (params: unknown) => unknown) => {
+      const valid = await validationPromise;
+      if (!valid) {
+        console.warn('[tile-preload] commands.register called but token validation failed');
         return;
       }
 
@@ -424,8 +439,9 @@ function buildAPI(): Record<string, unknown> {
      * Used by tests (via bgWindow) and by admin UIs that need to
      * inspect the global registry from an outside tile.
      */
-    list: () => {
-      if (!tokenValid) {
+    list: async () => {
+      const _valid = await validationPromise;
+      if (!_valid) {
         return Promise.resolve({ success: false, data: [], error: 'tile not initialized' });
       }
 
@@ -520,8 +536,8 @@ function buildAPI(): Record<string, unknown> {
      * declared a `window` capability; otherwise falls back to the
      * un-gated legacy `window-open` channel.
      */
-    open: (url: string, options?: Record<string, unknown>) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    open: async (url: string, options?: Record<string, unknown>) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       if (hasWindowCapability()) {
         return ipcRenderer.invoke('tile:window:open', {
           token: tileToken,
@@ -542,8 +558,8 @@ function buildAPI(): Record<string, unknown> {
      * Routes through the strict `tile:window:resize` channel; requires a
      * `window` capability grant (or trustedBuiltin).
      */
-    resize: (width: number, height: number) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    resize: async (width: number, height: number) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:resize', {
         token: tileToken,
         width,
@@ -788,8 +804,8 @@ function buildAPI(): Record<string, unknown> {
      * it can only affect the window it runs in. Use for tiles that start
      * hidden at boot (resident: true) and reveal themselves on command.
      */
-    showSelf: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    showSelf: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:show-self', {
         token: tileToken,
       });
@@ -804,8 +820,8 @@ function buildAPI(): Record<string, unknown> {
      *
      * No `window` capability required. The tile's token is the authority.
      */
-    hideSelf: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    hideSelf: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:hide-self', {
         token: tileToken,
       });
@@ -818,8 +834,8 @@ function buildAPI(): Record<string, unknown> {
      * requires `window.manage`. Intended for popup tiles that communicate
      * results back to the window that opened them.
      */
-    openerPostMessage: (message: unknown, origin?: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    openerPostMessage: async (message: unknown, origin?: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:opener-postmessage', {
         token: tileToken,
         message,
@@ -833,8 +849,8 @@ function buildAPI(): Record<string, unknown> {
      * Strict path routes through `tile:window:opener-close` which
      * requires `window.manage`.
      */
-    openerClose: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    openerClose: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:opener-close', {
         token: tileToken,
       });
@@ -846,8 +862,8 @@ function buildAPI(): Record<string, unknown> {
      * Strict path routes through `tile:window:opener-focus` which
      * requires `window.manage`.
      */
-    openerFocus: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    openerFocus: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:opener-focus', {
         token: tileToken,
       });
@@ -860,14 +876,14 @@ function buildAPI(): Record<string, unknown> {
      * capability required — the tile's token is the authority
      * (a tile always knows its own window).
      */
-    getId: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    getId: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
     },
 
     // Legacy alias for getId — several callers still use the older name.
-    getWindowId: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    getWindowId: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
     },
 
@@ -877,8 +893,8 @@ function buildAPI(): Record<string, unknown> {
      * Routes strictly through `tile:window:get-bounds`. No `window`
      * capability required — a tile always knows its own bounds.
      */
-    getBounds: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    getBounds: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:get-bounds', { token: tileToken });
     },
 
@@ -889,8 +905,8 @@ function buildAPI(): Record<string, unknown> {
      * Routes strictly through `tile:window:get-display-info`. No `window`
      * capability required — a tile can always query its own display.
      */
-    getDisplayInfo: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    getDisplayInfo: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:get-display-info', { token: tileToken });
     },
 
@@ -900,8 +916,8 @@ function buildAPI(): Record<string, unknown> {
      * Routes strictly through `tile:window:set-bounds`. No `window`
      * capability required — a tile can always reposition its own window.
      */
-    setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    setBounds: async (bounds: { x?: number; y?: number; width?: number; height?: number }) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:set-bounds', { token: tileToken, ...bounds });
     },
   };
@@ -916,8 +932,8 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Get a value from the tile's scoped storage
      */
-    get: (table: string, key: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    get: async (table: string, key: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:datastore:get', {
         token: tileToken,
         table,
@@ -928,8 +944,8 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Set a value in the tile's scoped storage
      */
-    set: (table: string, key: string, value: unknown) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    set: async (table: string, key: string, value: unknown) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:datastore:set', {
         token: tileToken,
         table,
@@ -941,8 +957,8 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Query rows from a table
      */
-    query: (table: string, filter?: Record<string, unknown>) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    query: async (table: string, filter?: Record<string, unknown>) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:datastore:query', {
         token: tileToken,
         table,
@@ -956,8 +972,8 @@ function buildAPI(): Record<string, unknown> {
      * from user-owned browsing state and fits the datastore domain.
      * Used by entities to harvest page content for downstream parsing.
      */
-    extractPageContent: (url: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    extractPageContent: async (url: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:datastore:extract-page-content', {
         token: tileToken,
         url,
@@ -1084,8 +1100,8 @@ function buildAPI(): Record<string, unknown> {
      * Fetch a URL — domain-gated by capability
      * The main process validates the domain against the allowlist
      */
-    fetch: (url: string, options?: Record<string, unknown>) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    fetch: async (url: string, options?: Record<string, unknown>) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:network:fetch', {
         token: tileToken,
         url,
@@ -1100,8 +1116,8 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Read a file — path-gated by capability
      */
-    read: (filePath: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    read: async (filePath: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:filesystem:read', {
         token: tileToken,
         path: filePath,
@@ -1111,8 +1127,8 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Write a file — path-gated by capability
      */
-    write: (filePath: string, content: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    write: async (filePath: string, content: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:filesystem:write', {
         token: tileToken,
         path: filePath,
@@ -1153,8 +1169,8 @@ function buildAPI(): Record<string, unknown> {
      * Get current theme settings (id, colorScheme, isDark, effectiveScheme).
      * Strict path; requires trustedBuiltin enforcement on the IPC side.
      */
-    get: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    get: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:theme:get', { token: tileToken });
     },
 
@@ -1162,8 +1178,8 @@ function buildAPI(): Record<string, unknown> {
      * Set global color scheme preference (system/light/dark).
      * Strict path; requires trustedBuiltin enforcement on the IPC side.
      */
-    setColorScheme: (colorScheme: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    setColorScheme: async (colorScheme: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:theme:setColorScheme', { token: tileToken, colorScheme });
     },
 
@@ -1171,8 +1187,8 @@ function buildAPI(): Record<string, unknown> {
      * Set color scheme for a specific window only (does not affect global setting).
      * Strict path; requires trustedBuiltin enforcement on the IPC side.
      */
-    setWindowColorScheme: (windowId: number, colorScheme: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    setWindowColorScheme: async (windowId: number, colorScheme: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:theme:setWindowColorScheme', { token: tileToken, windowId, colorScheme });
     },
 
@@ -1180,8 +1196,8 @@ function buildAPI(): Record<string, unknown> {
      * Set the active theme by id.
      * Strict path; requires trustedBuiltin enforcement on the IPC side.
      */
-    setTheme: (themeId: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    setTheme: async (themeId: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:theme:setTheme', { token: tileToken, themeId });
     },
 
@@ -1189,8 +1205,8 @@ function buildAPI(): Record<string, unknown> {
      * List available (builtin) themes with metadata.
      * Strict path; requires trustedBuiltin enforcement on the IPC side.
      */
-    list: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    list: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:theme:list', { token: tileToken });
     },
 
@@ -1198,8 +1214,8 @@ function buildAPI(): Record<string, unknown> {
      * Get all themes (builtin + external from DB).
      * Strict path; requires trustedBuiltin enforcement on the IPC side.
      */
-    getAll: () => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+    getAll: async () => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:theme:getAll', { token: tileToken });
     },
   };
@@ -1222,7 +1238,7 @@ function buildAPI(): Record<string, unknown> {
      *   error    — error string when the call failed, undefined otherwise
      */
     get: async (key: string) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       const r = await ipcRenderer.invoke('tile:settings:get', {
         token: tileToken,
         key,
@@ -1238,7 +1254,7 @@ function buildAPI(): Record<string, unknown> {
      * so callers that inspect the result get a consistent shape.
      */
     set: async (key: string, value: unknown) => {
-      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       const r = await ipcRenderer.invoke('tile:settings:set', {
         token: tileToken,
         key,
@@ -1913,11 +1929,12 @@ function buildAPI(): Record<string, unknown> {
   // Two behaviours are possible:
   //   - trustedBuiltin grant present → forward raw
   //   - no trustedBuiltin            → return failure
-  // The boolean is populated by the `tile:validate-token` IPC response,
-  // so `api.invoke` must be called after `api.initialize()` resolves
-  // (same rule as every other capability API).
-  api.invoke = (channel: unknown, data?: unknown) => {
-    if (!tokenValid) {
+  // The boolean is populated by the `tile:validate-token` IPC response.
+  // Validation is now kicked off at module load time; callers no longer
+  // need to call api.initialize() before using api.invoke.
+  api.invoke = async (channel: unknown, data?: unknown) => {
+    const _valid = await validationPromise;
+    if (!_valid) {
       return Promise.resolve({
         success: false,
         error: 'tile not initialized',
