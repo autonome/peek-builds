@@ -14,7 +14,7 @@ import { extractStructuredDataEntities, extractPageMetadata } from './extractors
 import { processEntities } from './entity-matcher.js';
 import { getEntities, getObservations, setEntityFeedback } from './entity-store.js';
 import { ensureNameDatabase } from './name-validator.js';
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 

@@ -9,7 +9,7 @@
  * - Commands: tag, tags, untag, tagset
  */
 
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 // Feature detection - check if Peek API is available
 const hasPeekAPI = typeof window.app !== 'undefined';
@@ -20,7 +20,7 @@ const api = hasPeekAPI ? window.app : null;
  */
 function openTags() {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/tags/home.html', {
+    api.window.open('peek://tags/home.html', {
       role: 'workspace',
       key: 'tags-home',
       width: 900,

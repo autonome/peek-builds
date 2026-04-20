@@ -40,7 +40,7 @@ test.afterAll(async () => {
 // Helper to open the cmd panel and return the panel window + open result
 async function openCmdPanel(bgWindow: Page, app: DesktopApp) {
   const openResult = await bgWindow.evaluate(async () => {
-    return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+    return await (window as any).app.window.open('peek://cmd/panel.html', {
       modal: true,
       width: 600,
       height: 50,

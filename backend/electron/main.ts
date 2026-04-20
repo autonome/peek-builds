@@ -442,7 +442,7 @@ export async function initialize(): Promise<void> {
             const isKeepLive = windowData.params.keepLive === true;
             const isModal = windowData.params.modal === true;
             const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
-            const isPeekUrl = address && (address.startsWith('peek://ext/') || address.startsWith('peek://app/'));
+            const isPeekUrl = address && address.startsWith('peek://');
             const isBackgroundPage = address && (address.includes('background.html') || address.includes('extension-host.html'));
             const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
             const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
@@ -606,7 +606,7 @@ export function registerDeclarativeCommands(): void {
  * the command metadata to the cmd registry.
  */
 function registerDeclarativeCommand(extId: string, cmd: ManifestCommand): void {
-  const source = `peek://ext/${extId}/`;
+  const source = `peek://${extId}/`;
 
   // Subscribe to execution requests from the cmd panel
   subscribe(source, scopes.GLOBAL, `cmd:execute:${cmd.name}`, (msg: unknown) => {
@@ -634,7 +634,7 @@ function registerDeclarativeCommand(extId: string, cmd: ManifestCommand): void {
  * Maps the shortcut keys to execute the associated command's action.
  */
 function registerDeclarativeShortcut(extId: string, shortcut: ManifestShortcut, commands: ManifestCommand[]): void {
-  const source = `peek://ext/${extId}/`;
+  const source = `peek://${extId}/`;
 
   // Find the associated command
   const cmd = commands.find(c => c.name === shortcut.command);
@@ -647,7 +647,7 @@ function registerDeclarativeShortcut(extId: string, shortcut: ManifestShortcut, 
     DEBUG && console.log(`[ext:declarative] Shortcut triggered: ${shortcut.keys} -> ${shortcut.command}`);
     if (cmd.action.type === 'execute') {
       // For execute-type commands, publish to cmd:execute so lazy stubs can intercept
-      publish(`peek://ext/${extId}/`, scopes.GLOBAL, `cmd:execute:${cmd.name}`, {});
+      publish(`peek://${extId}/`, scopes.GLOBAL, `cmd:execute:${cmd.name}`, {});
     } else {
       executeDeclarativeAction(cmd, {});
     }
@@ -804,7 +804,7 @@ function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
   });
 
   // Register the command metadata with the cmd registry
-  const extSource = `peek://ext/${extId}/`;
+  const extSource = `peek://${extId}/`;
   publish(extSource, scopes.GLOBAL, 'cmd:register', {
     name: cmd.name,
     description: cmd.description || '',

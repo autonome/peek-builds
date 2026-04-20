@@ -9,7 +9,7 @@
  * Commands and shortcuts are declared in manifest.json.
  * This extension loads lazily on first command invocation.
  *
- * Runs in isolated extension process (peek://ext/timers/background.html)
+ * Runs in isolated extension process (peek://timers/background.html)
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
@@ -17,8 +17,8 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 const api = window.app;
 const debug = api.debug;
 
-// Extension content is served from peek://ext/timers/
-const address = 'peek://ext/timers/home.html';
+// Extension content is served from peek://timers/
+const address = 'peek://timers/home.html';
 
 // In-memory timer state: id -> { item, tickState }
 const activeTimers = new Map();

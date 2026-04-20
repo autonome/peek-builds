@@ -39,7 +39,7 @@ test.afterAll(async () => {
 /** Open the cmd panel and return the window page + window id. */
 async function openCmdPanel(): Promise<{ cmdWindow: Page; windowId: number | null }> {
   const openResult = await sharedBgWindow.evaluate(async () => {
-    return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+    return await (window as any).app.window.open('peek://cmd/panel.html', {
       modal: true,
       width: 600,
       height: 50,

@@ -19,7 +19,7 @@
       "url": "home.html",
       "windowHints": {
         "role": "workspace",
-        "key": "peek://ext/pagestream/home.html",
+        "key": "peek://pagestream/home.html",
         "transparent": true,
         "title": "Pagestream"
       }

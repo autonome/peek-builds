@@ -170,7 +170,7 @@ try {
 // access to window.app API while leaving external web content webviews untouched.
 //
 // Resolution order (Phase 3.11b-hud — v1 preload.js removed):
-//   1. HUD widget webviews: peek://ext/hud/widgets/*.html get a dedicated
+//   1. HUD widget webviews: peek://hud/widgets/*.html get a dedicated
 //      trustedBuiltin token (hud-widget). HUD has no v2 manifest but
 //      widgets use api.window/context/izui/pubsub — all covered by
 //      trustedBuiltin grant.
@@ -187,11 +187,11 @@ app.on('web-contents-created', (_event, contents) => {
       const tilePreloadPath = getTilePreloadPath();
       if (!tilePreloadPath) return;
 
-      // Special-case: HUD widget webviews (peek://ext/hud/widgets/*.html).
+      // Special-case: HUD widget webviews (peek://hud/widgets/*.html).
       // HUD has no v2 manifest; mint a trustedBuiltin token for all widgets
       // under a unified hud-widget tile id so they can use api.window.*,
       // api.context.*, api.izui.*, api.pubsub.*, etc.
-      if (params.src.startsWith('peek://ext/hud/widgets/')) {
+      if (params.src.startsWith('peek://hud/widgets/')) {
         const HUD_WIDGET_ID = 'hud-widget';
         const HUD_WIDGET_ENTRY = 'main';
         const hudWidgetGrant = createTrustedBuiltinGrant(HUD_WIDGET_ID);

@@ -3,7 +3,7 @@
  *
  * Edge-anchored slide-in panels triggered by keyboard shortcuts (Option+Arrow)
  *
- * Runs in isolated extension process (peek://ext/slides/background.html)
+ * Runs in isolated extension process (peek://slides/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
 

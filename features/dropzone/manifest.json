@@ -16,7 +16,7 @@
       "description": "Open drop zone inspector",
       "action": {
         "type": "window",
-        "url": "peek://ext/dropzone/home.html",
+        "url": "peek://dropzone/home.html",
         "options": {
           "role": "workspace",
           "key": "dropzone-home",

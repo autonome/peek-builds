@@ -6,7 +6,7 @@
  * websearch-specific. If this fails, the bug is architectural to any
  * feature with bg + window tiles talking via pubsub.
  *
- *   bg (peek://ext/pubsub-repro/background.html)
+ *   bg (peek://pubsub-repro/background.html)
  *      subscribe GLOBAL  reproduce:request     -> publish GLOBAL reproduce:response
  *   home (peek://pubsub-repro/home.html)
  *      subscribe GLOBAL  reproduce:response    -> window._reproResponse

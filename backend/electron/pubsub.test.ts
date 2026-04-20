@@ -140,10 +140,10 @@ describe('PubSub Module Tests', () => {
       // Only stub subscriber — should return false when excluding stubs
       assert.strictEqual(pubsub.hasSubscriber('test:has:excl', undefined, 'lazy-stub/'), false);
       // Add a real subscriber
-      pubsub.subscribe('peek://ext/real/', pubsub.scopes.GLOBAL, 'test:has:excl', () => {});
+      pubsub.subscribe('peek://real/', pubsub.scopes.GLOBAL, 'test:has:excl', () => {});
       assert.strictEqual(pubsub.hasSubscriber('test:has:excl', undefined, 'lazy-stub/'), true);
       pubsub.unsubscribe('lazy-stub/foo', 'test:has:excl');
-      pubsub.unsubscribe('peek://ext/real/', 'test:has:excl');
+      pubsub.unsubscribe('peek://real/', 'test:has:excl');
     });
   });
 });

@@ -1434,7 +1434,7 @@ describe('Session Integration Tests', () => {
 
     it('skips non-focusable utility windows like HUD (role=utility, focusable=false)', () => {
       const skip = shouldSkipWindow(
-        'peek://ext/hud/panel.html',
+        'peek://hud/panel.html',
         { role: 'utility', focusable: false },
         true,
         false
@@ -1464,7 +1464,7 @@ describe('Session Integration Tests', () => {
 
     it('skips modal windows', () => {
       const skip = shouldSkipWindow(
-        'peek://ext/cmd/panel.html',
+        'peek://cmd/panel.html',
         { modal: true },
         true,
         false
@@ -1524,7 +1524,7 @@ describe('Session Integration Tests', () => {
 
     it('includes extension windows with non-utility role', () => {
       const skip = shouldSkipWindow(
-        'peek://ext/tags/home.html',
+        'peek://tags/home.html',
         { role: 'content' },
         true,
         false
@@ -1880,7 +1880,7 @@ describe('Closed window stack persistence', () => {
     const windowDescriptors = [
       makeDescriptor({ url: 'https://github.com' }),
       makeDescriptor({ url: 'https://example.com' }),
-      makeDescriptor({ url: 'peek://ext/groups/home.html' }), // non-web, should be skipped
+      makeDescriptor({ url: 'peek://groups/home.html' }), // non-web, should be skipped
     ];
 
     // Simulate the before-quit logic from session.ts

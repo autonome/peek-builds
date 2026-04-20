@@ -68,7 +68,7 @@ test.describe('Module Health @desktop', () => {
 
   test('cmd panel.js module evaluates to completion', async () => {
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,

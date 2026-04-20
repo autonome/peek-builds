@@ -7,7 +7,7 @@
  * Step 3: Confirm and publish (upload blobs + create record)
  */
 
-import { uploadBlob, xrpcPost } from 'peek://ext/lex/atproto.js';
+import { uploadBlob, xrpcPost } from 'peek://lex/atproto.js';
 
 const api = window.app;
 const hasPeekAPI = !!api;

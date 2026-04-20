@@ -59,7 +59,7 @@
       "description": "Open the connected accounts manager",
       "action": {
         "type": "window",
-        "url": "peek://ext/wonderwall/home.html",
+        "url": "peek://wonderwall/home.html",
         "options": {
           "role": "workspace",
           "key": "wonderwall-home",

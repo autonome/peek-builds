@@ -18,7 +18,7 @@
  *
  * The cmd panel window itself (the visible palette UI) is created
  * on-demand from the resident renderer via
- * `api.window.open('peek://ext/cmd/panel.html', ...)`. That path resolves
+ * `api.window.open('peek://cmd/panel.html', ...)`. That path resolves
  * to `app/cmd/panel.html` via protocol.ts.
  *
  * An eventual Tauri port would add backend/tauri/src-tauri/src/cmd_glue.rs

@@ -33,7 +33,7 @@ export async function waitForWindow(
  */
 export function getExtensionWindows(getWindows: () => Page[]): Page[] {
   const windows = getWindows();
-  return windows.filter(w => w.url().includes('peek://ext/') && w.url().includes('background.html'));
+  return windows.filter(w => w.url().startsWith('peek://') && !w.url().startsWith('peek://app/') && w.url().includes('background.html'));
 }
 
 /**

@@ -311,7 +311,7 @@ describe('detectModeFromUrl (used by updateModeForNavigation)', () => {
   });
 
   it('detects "default" for peek:// URLs', () => {
-    assert.strictEqual(detectModeFromUrl('peek://ext/spaces/home.html'), 'default');
+    assert.strictEqual(detectModeFromUrl('peek://spaces/home.html'), 'default');
   });
 
   it('detects "default" for empty string', () => {

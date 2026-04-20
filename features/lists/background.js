@@ -8,7 +8,7 @@
  * The shortcut key is configurable — manifest provides the default (Option+F),
  * and if the user customizes it, the extension registers the custom key on load.
  *
- * Runs in isolated extension process (peek://ext/lists/background.html)
+ * Runs in isolated extension process (peek://lists/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
 
@@ -17,8 +17,8 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 const api = window.app;
 const debug = api.debug;
 
-// Extension content is served from peek://ext/lists/
-const address = 'peek://ext/lists/home.html';
+// Extension content is served from peek://lists/
+const address = 'peek://lists/home.html';
 
 // In-memory settings cache (loaded from datastore on init)
 let currentSettings = {

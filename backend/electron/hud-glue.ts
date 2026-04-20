@@ -16,7 +16,7 @@
  *     pubsub round-trip through the renderer.
  *
  * The HUD overlay window itself is created on-demand from the resident
- * renderer via `api.window.open('peek://ext/hud/hud.html', ...)`; that
+ * renderer via `api.window.open('peek://hud/hud.html', ...)`; that
  * path resolves to `app/hud/hud.html` via `protocol.ts`.
  *
  * An eventual Tauri port would add backend/tauri/src-tauri/src/hud_glue.rs

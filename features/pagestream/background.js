@@ -3,18 +3,18 @@
  *
  * Vertical, chat-like navigational interface for web history.
  *
- * Runs in isolated extension process (peek://ext/pagestream/background.html)
+ * Runs in isolated extension process (peek://pagestream/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
 
-// Extension content is served from peek://ext/pagestream/
-const address = 'peek://ext/pagestream/home.html';
+// Extension content is served from peek://pagestream/
+const address = 'peek://pagestream/home.html';
 
 // In-memory settings cache (loaded from datastore on init)
 let currentSettings = {

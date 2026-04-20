@@ -3,7 +3,7 @@
  *
  * Widget sheets with freeform card layouts hosting webviews.
  *
- * Runs in isolated extension process (peek://ext/sheets/background.html)
+ * Runs in isolated extension process (peek://sheets/background.html)
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';

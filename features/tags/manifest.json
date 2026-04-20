@@ -78,7 +78,7 @@
       "description": "Open the tags browser",
       "action": {
         "type": "window",
-        "url": "peek://ext/tags/home.html",
+        "url": "peek://tags/home.html",
         "options": { "role": "workspace", "key": "tags-home", "width": 900, "height": 700, "title": "Tags" }
       }
     }

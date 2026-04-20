@@ -3,7 +3,7 @@
  *
  * File and format commands (CSV, save)
  *
- * Runs in isolated extension process (peek://ext/files/background.html)
+ * Runs in isolated extension process (peek://files/background.html)
  */
 
 const api = window.app;
@@ -483,7 +483,7 @@ const commandDefinitions = [
             data: markdownOutput,
             mimeType: 'text/markdown',
             title: docTitle,
-            interactive: 'peek://ext/cmd/chain-editor.html'
+            interactive: 'peek://cmd/chain-editor.html'
           }
         };
       } catch (err) {

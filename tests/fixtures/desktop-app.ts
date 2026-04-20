@@ -272,7 +272,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
 
     getExtensionWindows: () => {
       return electronApp.windows().filter(w =>
-        w.url().includes('peek://ext/') && w.url().includes('background.html')
+        w.url().startsWith('peek://') && !w.url().startsWith('peek://app/') && w.url().includes('background.html')
       );
     },
 
@@ -527,8 +527,10 @@ async function launchTauriFrontend(profile: string): Promise<DesktopApp> {
     let targetUrl = url;
     if (url.startsWith('peek://app/')) {
       targetUrl = `http://localhost:${MOCK_PORT}/${url.replace('peek://app/', '')}`;
-    } else if (url.startsWith('peek://ext/')) {
-      targetUrl = `http://localhost:${MOCK_PORT}/ext/${url.replace('peek://ext/', '')}`;
+    } else if (url.startsWith('peek://') && !url.startsWith('peek://app/')) {
+      // peek://<id>/... (v2 canonical) — map to mock server
+      const withoutScheme = url.replace('peek://', '');
+      targetUrl = `http://localhost:${MOCK_PORT}/ext/${withoutScheme}`;
     } else if (url.startsWith('http://') || url.startsWith('https://')) {
       // External URLs - open as-is
       targetUrl = url;

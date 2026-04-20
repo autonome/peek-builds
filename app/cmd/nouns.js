@@ -5,7 +5,7 @@
  * Uses only window.app pubsub (works on Electron, Tauri, browser extension).
  *
  * Usage:
- *   import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+ *   import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
  */
 
 const api = window.app;

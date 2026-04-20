@@ -14,7 +14,7 @@
       "height": 600,
       "title": "Groups",
       "role": "workspace",
-      "key": "peek://ext/groups/home.html"
+      "key": "peek://groups/home.html"
     }
   ],
   "capabilities": {
@@ -62,7 +62,7 @@
       "description": "Open groups browser",
       "action": {
         "type": "window",
-        "url": "peek://ext/groups/home.html",
+        "url": "peek://groups/home.html",
         "options": { "role": "workspace", "width": 1024, "height": 768 }
       }
     },

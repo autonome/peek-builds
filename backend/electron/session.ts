@@ -296,7 +296,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       suppressClosedWindowPush();
       for (const descriptor of windowDescriptors) {
         const isWebUrl = descriptor.url.startsWith('http://') || descriptor.url.startsWith('https://');
-        const isPeekUrl = descriptor.url.startsWith('peek://ext/') || descriptor.url.startsWith('peek://app/');
+        const isPeekUrl = descriptor.url.startsWith('peek://');
         const isBackgroundPage = descriptor.url.includes('background.html') || descriptor.url.includes('extension-host.html');
         const isReopenable = isWebUrl || (isPeekUrl && !isBackgroundPage);
         if (!isReopenable) continue;
@@ -330,7 +330,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       }
       DEBUG && console.log(`[session] Pushed ${windowDescriptors.filter(d => {
         const isWeb = d.url.startsWith('http://') || d.url.startsWith('https://');
-        const isPeek = d.url.startsWith('peek://ext/') || d.url.startsWith('peek://app/');
+        const isPeek = d.url.startsWith('peek://');
         const isBg = d.url.includes('background.html') || d.url.includes('extension-host.html');
         return isWeb || (isPeek && !isBg);
       }).length} open window(s) to closed window stack`);
@@ -413,13 +413,24 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
   }
 
   // Validate extension URLs reference a known extension
-  // (e.g. peek://ext/me:core/... from a renamed extension would be stale)
-  const extMatch = descriptor.url.match(/^peek:\/\/ext\/([^/]+)/);
-  if (extMatch) {
-    const extId = extMatch[1];
+  // (e.g. peek://me:core/... from a renamed extension would be stale)
+  let extIdFromUrl: string | null = null;
+  try {
+    const u = new URL(descriptor.url);
+    if (u.protocol === 'peek:') {
+      if (u.host === 'ext') {
+        // Legacy form: peek://ext/<id>/...
+        extIdFromUrl = u.pathname.split('/').filter(Boolean)[0] ?? null;
+      } else if (u.host !== 'app') {
+        // v2 canonical: peek://<id>/...
+        extIdFromUrl = u.host;
+      }
+    }
+  } catch { /* unparseable URL */ }
+  if (extIdFromUrl) {
     const knownIds = getRegisteredExtensionIds();
-    if (!knownIds.includes(extId)) {
-      DEBUG && console.log(`[session] Filtering stale extension window: ${extId}`);
+    if (!knownIds.includes(extIdFromUrl)) {
+      DEBUG && console.log(`[session] Filtering stale extension window: ${extIdFromUrl}`);
       return false;
     }
   }

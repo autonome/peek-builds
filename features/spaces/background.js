@@ -4,7 +4,7 @@
  * Workspace mode with auto-tagging, screen border, and session management.
  * All space-specific logic lives here — the backend provides only generic primitives.
  *
- * Runs in isolated extension process (peek://ext/spaces/background.html)
+ * Runs in isolated extension process (peek://spaces/background.html)
  */
 
 import {
@@ -57,7 +57,7 @@ async function showBorder(color, name) {
     if (!displayResult.success) return;
     const { bounds } = displayResult.data;
 
-    const borderHtml = `peek://ext/spaces/border.html?color=${encodeURIComponent(safeColor)}&name=${encodeURIComponent(name)}`;
+    const borderHtml = `peek://spaces/border.html?color=${encodeURIComponent(safeColor)}&name=${encodeURIComponent(name)}`;
     const result = await api.window.open(borderHtml, {
       role: 'overlay',
       x: bounds.x,
@@ -267,7 +267,7 @@ async function openSpace(spaceName) {
 
   if (!restored) {
     // No saved state — open spaces home UI
-    const homeUrl = `peek://ext/spaces/home.html?spaceId=${encodeURIComponent(tag.id)}&spaceName=${encodeURIComponent(activeSpaceName)}`;
+    const homeUrl = `peek://spaces/home.html?spaceId=${encodeURIComponent(tag.id)}&spaceName=${encodeURIComponent(activeSpaceName)}`;
     await api.window.open(homeUrl, {
       role: 'workspace',
       width: 1024,

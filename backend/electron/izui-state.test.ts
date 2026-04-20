@@ -34,7 +34,7 @@ function createMockWindow(id: number, options: { focused?: boolean; destroyed?: 
     _destroyed: options.destroyed ?? false,
     _focused: options.focused ?? false,
     _visible: options.visible ?? true,
-    _url: options.url ?? `peek://ext/test/window-${id}.html`,
+    _url: options.url ?? `peek://test/window-${id}.html`,
     isDestroyed: function() { return this._destroyed; },
     isFocused: function() { return this._focused; },
     isVisible: function() { return this._visible; },

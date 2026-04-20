@@ -463,7 +463,7 @@ describe('isWebUrl', () => {
   });
 
   it('returns false for peek:// URLs', () => {
-    assert.equal(isWebUrl('peek://ext/groups/home.html'), false);
+    assert.equal(isWebUrl('peek://groups/home.html'), false);
   });
 
   it('returns false for empty string', () => {

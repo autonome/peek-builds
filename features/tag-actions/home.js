@@ -17,7 +17,7 @@
  *   tag-actions:create:response, :update:response, :delete:response
  */
 
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -171,7 +171,7 @@ const pairsToActionRules = (pairs) => {
 // ==================== Commands ====================
 
 const openTagActions = () => {
-  api.window.open('peek://ext/tag-actions/home.html', {
+  api.window.open('peek://tag-actions/home.html', {
     role: 'workspace',
     key: 'tag-actions-home',
     width: 560,

@@ -3,7 +3,7 @@
  *
  * Provides sync commands and functionality
  *
- * Runs in isolated extension process (peek://ext/sync/background.html)
+ * Runs in isolated extension process (peek://sync/background.html)
  */
 
 const api = window.app;

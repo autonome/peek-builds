@@ -96,7 +96,7 @@ test.describe('Cmd Palette @desktop', () => {
 
     // Open cmd panel via window API
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -161,7 +161,7 @@ test.describe('Cmd Palette @desktop', () => {
 
     // Open cmd panel
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -378,7 +378,7 @@ test.describe('Groups Navigation @desktop', () => {
 
     // Open groups home
     const groupsResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         width: 800,
         height: 600
       });
@@ -503,7 +503,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
 
     // Open groups window (background.js uses escapeMode: 'navigate')
     const groupsResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         width: 800,
         height: 600,
         escapeMode: 'navigate'
@@ -592,7 +592,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
 
     // Open groups window
     const groupsResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         role: 'workspace',
         width: 800,
         height: 600
@@ -641,7 +641,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     // Open groups window with role: 'workspace' (like the real groups extension does)
     // In headless/test mode, appFocused defaults to true → session is 'active'
     const groupsResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         role: 'workspace',
         width: 400,
         height: 300,
@@ -692,7 +692,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
 
     // First open a workspace window (like groups) to establish an active session
     const workspaceResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         role: 'workspace',
         width: 400,
         height: 300,
@@ -712,7 +712,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     // Now open a child-content window (simulates opening a web page from groups)
     // Using the workspace window as the opener gives it child-content role
     const contentResult = await workspaceWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/search/home.html', {
+      return await (window as any).app.window.open('peek://search/home.html', {
         role: 'child-content',
         width: 400,
         height: 300,
@@ -759,7 +759,7 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     // Open a window with navigate escape mode but NO escape handler registered
     // This simulates what happens when a window hasn't finished loading its IZUI
     const result = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         width: 400,
         height: 300,
         escapeMode: 'navigate'
@@ -812,7 +812,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Open cmd panel
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -859,7 +859,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Open cmd panel
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -905,7 +905,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Open cmd panel
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -951,7 +951,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Open cmd panel
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -1003,7 +1003,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Open cmd panel
     const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -2595,7 +2595,7 @@ test.describe('Groups View @desktop', () => {
 
     // Open groups home
     const groupsResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         width: 800,
         height: 600
       });
@@ -2653,7 +2653,7 @@ test.describe('Groups View @desktop', () => {
 
     // Open groups home
     const groupsResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         width: 800,
         height: 600,
         key: 'groups-untagged-test'
@@ -2818,7 +2818,7 @@ test.describe('Command Chaining @desktop', () => {
   test('cmd panel loads with chain state initialized', async () => {
     // Open cmd panel to verify it loads correctly with chain support
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 300,
@@ -2854,7 +2854,7 @@ test.describe('Command Chaining @desktop', () => {
   test('MIME type matching works correctly', async () => {
     // Test MIME matching logic in panel context
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 50,
@@ -2892,7 +2892,7 @@ test.describe('Command Chaining @desktop', () => {
   test('cmd panel input works correctly', async () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 400,
@@ -2927,7 +2927,7 @@ test.describe('Command Chaining @desktop', () => {
   test('panel has chain indicator, preview, and execution state elements', async () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 300,
@@ -2981,7 +2981,7 @@ test.describe('Command Chaining @desktop', () => {
   test('list urls command produces array output and enters output selection mode', async () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 400,
@@ -3049,7 +3049,7 @@ test.describe('Command Chaining @desktop', () => {
     });
 
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
@@ -3097,7 +3097,7 @@ test.describe('Command Chaining @desktop', () => {
     });
 
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
@@ -3174,7 +3174,7 @@ test.describe('Command Chaining @desktop', () => {
     });
 
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
@@ -3227,7 +3227,7 @@ test.describe('Command Chaining @desktop', () => {
     });
 
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
@@ -3298,7 +3298,7 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
 
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 400,
@@ -3357,7 +3357,7 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
     const seedId = seedResult.data.id;
 
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
@@ -3425,7 +3425,7 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
 
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 400,
@@ -3487,7 +3487,7 @@ test.describe('Type-Specific Noun Commands @desktop', () => {
   test('new note without content signals editor open', async () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 400,
@@ -3562,7 +3562,7 @@ test.describe('Edit Command Param Mode @desktop', () => {
 
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 400,
@@ -3642,7 +3642,7 @@ test.describe('Edit Command Param Mode @desktop', () => {
 
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 400,
@@ -3715,7 +3715,7 @@ test.describe('Edit Command Param Mode @desktop', () => {
   test('Tab in command mode completes name, does not execute', async () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true,
         width: 600,
         height: 400,
@@ -4744,7 +4744,7 @@ test.describe('IZUI Behavior @desktop', () => {
     // Step 1: Open a content window (groups home) from the background window.
     // Since background.html is an internal URL, parentWindowId should be null.
     const groupsResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         width: 600,
         height: 400
       });
@@ -4862,7 +4862,7 @@ test.describe('IZUI Behavior @desktop', () => {
 
     // Open a content window
     const result = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         width: 400,
         height: 300,
         escapeMode: 'navigate'
@@ -4956,7 +4956,7 @@ test.describe('IZUI Behavior @desktop', () => {
 
     // Open a groups window with navigate escape mode
     const result = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://ext/groups/home.html', {
+      return await (window as any).app.window.open('peek://groups/home.html', {
         width: 400,
         height: 300,
         escapeMode: 'navigate'
@@ -5206,7 +5206,7 @@ test.describe('Scripts Extension @desktop', () => {
     // Execute script - test executor directly
     const executeResult = await sharedBgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
-      const { scriptExecutor } = await import('peek://ext/scripts/script-executor.js');
+      const { scriptExecutor } = await import('peek://scripts/script-executor.js');
 
       // Get the script from datastore
       const settingsTable = await api.datastore.getTable('feature_settings');
@@ -5251,7 +5251,7 @@ test.describe('Scripts Extension @desktop', () => {
     // Test pattern matching directly
     const patternTests = await sharedBgWindow.evaluate(async () => {
       // Import the script executor module
-      const { ScriptExecutor } = await import('peek://ext/scripts/script-executor.js');
+      const { ScriptExecutor } = await import('peek://scripts/script-executor.js');
       const executor = new ScriptExecutor();
 
       return {
@@ -5307,7 +5307,7 @@ test.describe('Scripts Extension @desktop', () => {
     // Execute with short timeout - test executor directly
     const executeResult = await sharedBgWindow.evaluate(async (scriptId) => {
       const api = (window as any).app;
-      const { scriptExecutor } = await import('peek://ext/scripts/script-executor.js');
+      const { scriptExecutor } = await import('peek://scripts/script-executor.js');
 
       // Get the script from datastore
       const settingsTable = await api.datastore.getTable('feature_settings');

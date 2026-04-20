@@ -10,7 +10,7 @@
     {
       "id": "sheet",
       "url": "sheet.html",
-      "key": "peek://ext/widget-demo/sheet.html",
+      "key": "peek://widget-demo/sheet.html",
       "title": "Widget Demo",
       "resident": true
     }

@@ -9,11 +9,11 @@
  * - Scripts manager UI
  * - Command registration
  *
- * Runs in isolated extension process (peek://ext/scripts/background.html)
+ * Runs in isolated extension process (peek://scripts/background.html)
  */
 
 import { scriptExecutor } from './script-executor.js';
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 

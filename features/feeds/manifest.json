@@ -54,7 +54,7 @@
       "description": "Open the feed reader",
       "action": {
         "type": "window",
-        "url": "peek://ext/feeds/feeds.html",
+        "url": "peek://feeds/feeds.html",
         "options": { "key": "feeds-reader", "width": 900, "height": 700, "title": "Feed Reader" }
       }
     },

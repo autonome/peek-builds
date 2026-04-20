@@ -84,7 +84,7 @@ function createClosedWindowEntry(
   const isKeepLive = params.keepLive === true;
   const isModal = params.modal === true;
   const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
-  const isPeekUrl = address && (address.startsWith('peek://ext/') || address.startsWith('peek://app/'));
+  const isPeekUrl = address && address.startsWith('peek://');
   const isBackgroundPage = address && (address.includes('background.html') || address.includes('extension-host.html'));
   const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
   const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
@@ -292,15 +292,15 @@ describe('Entry creation logic', () => {
     assert.notStrictEqual(entry, null);
   });
 
-  it('saves peek://ext/ URLs (feature windows)', () => {
+  it('saves peek://<id>/ URLs (feature windows)', () => {
     const entry = createClosedWindowEntry(
-      { address: 'peek://ext/groups/home.html' },
+      { address: 'peek://groups/home.html' },
       null,
       null,
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
-    assert.strictEqual(entry!.url, 'peek://ext/groups/home.html');
+    assert.strictEqual(entry!.url, 'peek://groups/home.html');
   });
 
   it('saves peek://app/ URLs (app pages)', () => {
@@ -486,7 +486,7 @@ describe('Entry creation logic', () => {
   it('peek:// URLs do NOT get canvas bounds adjustment', () => {
     const bounds = { x: 100, y: 200, width: 800, height: 600 };
     const entry = createClosedWindowEntry(
-      { address: 'peek://ext/groups/home.html' },
+      { address: 'peek://groups/home.html' },
       null,
       bounds,
       'test-ext',

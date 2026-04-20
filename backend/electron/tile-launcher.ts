@@ -413,7 +413,6 @@ export function registerTrustedBuiltinWindow(
  * Resolve a peek:// URL to v2 tile web preferences (preload + token).
  *
  * Used by the `window-open` IPC handler so that windows opened via
- * `api.window.open('peek://ext/<tile>/<entry.url>')` or
  * `api.window.open('peek://<tile>/<entry.url>')` get the strict tile
  * preload with a capability token, instead of the legacy `preload.js`
  * (which has the old v1 API surface and no `api.initialize()`).
@@ -440,7 +439,7 @@ export function getTileWebPreferencesForUrl(
     if (parsed.protocol !== 'peek:') return null;
     const cleanPath = parsed.pathname.replace(/^\//, '');
     if (parsed.host === 'ext') {
-      // peek://ext/<tileId>/<entry.url>
+      // peek://ext/<tileId>/<entry.url> (legacy compat — handled by protocol.ts shim)
       const segments = cleanPath.split('/');
       if (segments.length < 2) return null;
       host = segments[0];
@@ -487,13 +486,13 @@ export function getTileWebPreferencesForUrl(
  * correspond to a declared tile entry as belonging to the parent tile's
  * grant. This is the loader path for HTML assets a tile loads inside a
  * `<webview>` element (e.g. `widget-demo`'s widget cards loading
- * `peek://ext/widget-demo/widgets/clock.html` — `widgets/clock.html` is
+ * `peek://widget-demo/widgets/clock.html` — `widgets/clock.html` is
  * not declared as its own tile entry, but logically belongs to
  * `widget-demo`).
  *
  * Resolution rules:
  *  - URL must be peek://
- *  - Tile-id (URL host or first path segment under `peek://ext/`) must
+ *  - Tile-id (URL host, or first path segment under `peek://ext/` for legacy compat) must
  *    match a registered v2 manifest
  *  - If a tile entry's `url` matches the path, mint a token for that
  *    specific entry (same as `getTileWebPreferencesForUrl`)

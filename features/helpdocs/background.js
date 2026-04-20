@@ -4,7 +4,7 @@
  * Spawns a fullscreen transparent overlay window with animated
  * documentation hints that appear from screen edges.
  *
- * Runs in isolated extension process (peek://ext/helpdocs/background.html)
+ * Runs in isolated extension process (peek://helpdocs/background.html)
  */
 
 const api = window.app;
@@ -12,7 +12,7 @@ const debug = api.debug;
 
 console.log('[ext:helpdocs] background init');
 
-const OVERLAY_ADDRESS = 'peek://ext/helpdocs/overlay.html';
+const OVERLAY_ADDRESS = 'peek://helpdocs/overlay.html';
 const STORAGE_KEY = 'helpdocs_enabled';
 
 let enabled = false;

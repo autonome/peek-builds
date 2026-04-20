@@ -72,7 +72,7 @@ async function seedTestData(bgWindow: Page): Promise<{ itemIds: string[] }> {
 
 async function openPagestream(bgWindow: Page): Promise<{ pagestreamWindow: Page; windowId: number }> {
   const result = await bgWindow.evaluate(async () => {
-    return await (window as any).app.window.open('peek://ext/pagestream/home.html', {
+    return await (window as any).app.window.open('peek://pagestream/home.html', {
       width: 500,
       height: 700
     });

@@ -1,7 +1,7 @@
 /**
  * Cmd Panel - command input and execution UI
  *
- * Runs in isolated panel window (peek://ext/cmd/panel.html)
+ * Runs in isolated panel window (peek://cmd/panel.html)
  * Uses api.settings for persistent adaptive matching data
  *
  * State management is handled by the state machine module (state-machine.js).
@@ -694,7 +694,7 @@ function doChainUndo() {
 // ===== Chain Popup Functions =====
 
 const DEFAULT_POPUPS = {
-  'text/': 'peek://ext/cmd/chain-editor.html',
+  'text/': 'peek://cmd/chain-editor.html',
 };
 
 function getDefaultPopupForMime(mimeType) {
@@ -2222,7 +2222,7 @@ function actionHandlers() {
       if (!trimmedText) return;
 
       log('cmd:panel', 'Opening search for:', trimmedText);
-      api.window.open(`peek://ext/search/home.html?q=${encodeURIComponent(trimmedText)}`, {
+      api.window.open(`peek://search/home.html?q=${encodeURIComponent(trimmedText)}`, {
         role: 'workspace',
         key: 'search-home',
         width: 700,

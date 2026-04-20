@@ -19,7 +19,7 @@
       "url": "home.html",
       "windowHints": {
         "role": "workspace",
-        "key": "peek://ext/timers/home.html",
+        "key": "peek://timers/home.html",
         "width": 700,
         "height": 600,
         "title": "Timers"

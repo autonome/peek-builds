@@ -3,7 +3,7 @@
  *
  * Renders HUD widget pages in a peek-grid freeform layout.
  * Each widget is a webview pointing to an individual widget page
- * (e.g., peek://ext/hud/widgets/mode.html).
+ * (e.g., peek://hud/widgets/mode.html).
  *
  * The layout config is loaded from feature_settings (created by background.js).
  */

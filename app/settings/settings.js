@@ -2256,7 +2256,7 @@ const renderFeatureSettings = async (feature) => {
   const { id, labels, schemas, storageKeys, defaults } = feature;
 
   // Use extension shortname for datastore key (e.g., 'peeks', 'slides', 'websearch')
-  // This must match what api.settings uses (derived from peek://ext/{shortname}/... URL)
+  // This must match what api.settings uses (derived from peek://{shortname}/... URL)
   const extId = feature.shortname || labels.name.toLowerCase();
 
   // Load from datastore

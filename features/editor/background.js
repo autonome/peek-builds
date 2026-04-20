@@ -12,7 +12,7 @@
  * This extension loads lazily on first command invocation.
  */
 
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 // Feature detection
 const hasPeekAPI = typeof window.app !== 'undefined';
@@ -23,7 +23,7 @@ const api = hasPeekAPI ? window.app : null;
  */
 function openEditor(params) {
   if (hasPeekAPI) {
-    let url = 'peek://ext/editor/home.html';
+    let url = 'peek://editor/home.html';
     if (params) {
       const qs = new URLSearchParams(params).toString();
       if (qs) url += '?' + qs;

@@ -7,7 +7,7 @@
  * - Commands: list features
  */
 
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 // Note: updater.js exports compareSemver/compareCapabilities utilities used by
 // browse.js. background.js delegates update checking entirely to the backend
 // via api.features.updateCheckAll() + api.features.updateApply(), so no
@@ -33,7 +33,7 @@ const STARTUP_CHECK_DELAY_MS = 60 * 1000;
  */
 function openManage() {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/features-manager/manage.html', {
+    api.window.open('peek://features-manager/manage.html', {
       role: 'workspace',
       key: 'features-manage',
       width: 900,
@@ -50,7 +50,7 @@ function openManage() {
  */
 function openPublish() {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/features-manager/publish.html', {
+    api.window.open('peek://features-manager/publish.html', {
       role: 'workspace',
       key: 'features-publish',
       width: 700,
@@ -67,7 +67,7 @@ function openPublish() {
  */
 function openBrowse() {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/features-manager/browse.html', {
+    api.window.open('peek://features-manager/browse.html', {
       role: 'workspace',
       key: 'features-browse',
       width: 960,

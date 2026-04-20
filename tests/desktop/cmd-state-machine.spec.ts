@@ -30,7 +30,7 @@ test.afterAll(async () => {
  */
 async function openCmdPanel(): Promise<{ cmdWindow: Page; windowId: number | null }> {
   const openResult = await sharedBgWindow.evaluate(async () => {
-    return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+    return await (window as any).app.window.open('peek://cmd/panel.html', {
       modal: true,
       width: 600,
       height: 50,
@@ -279,7 +279,7 @@ test.describe('Cmd State Machine @desktop', () => {
 
       // Reopen
       const reopenResult = await sharedBgWindow.evaluate(async () => {
-        return await (window as any).app.window.open('peek://ext/cmd/panel.html', {
+        return await (window as any).app.window.open('peek://cmd/panel.html', {
           modal: true,
           width: 600,
           height: 50,

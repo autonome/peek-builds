@@ -21,7 +21,7 @@
 const api = window.app;
 const debug = api.debug;
 
-const HUD_ADDRESS = 'peek://ext/hud/hud.html';
+const HUD_ADDRESS = 'peek://hud/hud.html';
 const STORAGE_KEY = 'hud_enabled';
 const HUD_SHEET_KEY = 'hud_sheet';
 const TOGGLE_SHORTCUT = 'CommandOrControl+H';
@@ -34,10 +34,10 @@ const WIDGET_GAP = 2;
 const STATS_WIDGET_HEIGHT = 120; // taller for 6 metric rows
 
 const DEFAULT_HUD_WIDGETS = [
-  { id: 'mode',   url: 'peek://ext/hud/widgets/mode.html' },
-  { id: 'izui',   url: 'peek://ext/hud/widgets/izui.html' },
-  { id: 'window', url: 'peek://ext/hud/widgets/window.html' },
-  { id: 'stats',  url: 'peek://ext/hud/widgets/stats.html', height: STATS_WIDGET_HEIGHT }
+  { id: 'mode',   url: 'peek://hud/widgets/mode.html' },
+  { id: 'izui',   url: 'peek://hud/widgets/izui.html' },
+  { id: 'window', url: 'peek://hud/widgets/window.html' },
+  { id: 'stats',  url: 'peek://hud/widgets/stats.html', height: STATS_WIDGET_HEIGHT }
 ];
 
 /**

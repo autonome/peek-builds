@@ -46,11 +46,11 @@ const DEMO_SHEET_KEY = 'demo_sheet';
 
 // Widget definitions with default layout (same as was in background.js)
 const DEMO_WIDGETS = [
-  { id: 'clock',     url: 'peek://ext/widget-demo/widgets/clock.html',     width: 200, height: 160 },
-  { id: 'counter',   url: 'peek://ext/widget-demo/widgets/counter.html',   width: 200, height: 160 },
-  { id: 'note',      url: 'peek://ext/widget-demo/widgets/note.html',      width: 280, height: 220 },
-  { id: 'bookmarks', url: 'peek://ext/widget-demo/widgets/bookmarks.html', width: 280, height: 220 },
-  { id: 'theme',     url: 'peek://ext/widget-demo/widgets/theme.html',     width: 280, height: 200 },
+  { id: 'clock',     url: 'peek://widget-demo/widgets/clock.html',     width: 200, height: 160 },
+  { id: 'counter',   url: 'peek://widget-demo/widgets/counter.html',   width: 200, height: 160 },
+  { id: 'note',      url: 'peek://widget-demo/widgets/note.html',      width: 280, height: 220 },
+  { id: 'bookmarks', url: 'peek://widget-demo/widgets/bookmarks.html', width: 280, height: 220 },
+  { id: 'theme',     url: 'peek://widget-demo/widgets/theme.html',     width: 280, height: 200 },
 ];
 
 /**

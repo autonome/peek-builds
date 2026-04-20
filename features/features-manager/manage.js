@@ -365,7 +365,7 @@ function createFeatureCard(feature) {
       e.stopPropagation();
       // Open publish.html with featureId pre-selected
       if (hasPeekAPI) {
-        api.window.open(`peek://ext/features-manager/publish.html?featureId=${encodeURIComponent(feature.id)}`, {
+        api.window.open(`peek://features-manager/publish.html?featureId=${encodeURIComponent(feature.id)}`, {
           key: 'features-publish',
           width: 700,
           height: 600,

@@ -100,7 +100,7 @@ test.describe('HUD Extension @desktop', () => {
     await sharedBgWindow.evaluate(async () => {
       (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
     });
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
     expect(hudWindow).toBeTruthy();
 
     // Verify the HUD has basic DOM structure
@@ -122,7 +122,7 @@ test.describe('HUD Extension @desktop', () => {
     await sleep(1000);
 
     // Find HUD window - if command is registered, the window should appear
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
     expect(hudWindow).toBeTruthy();
 
     // Clean up - toggle off
@@ -137,7 +137,7 @@ test.describe('HUD Extension @desktop', () => {
     await toggleHUD();
 
     // Find HUD window
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
     expect(hudWindow).toBeTruthy();
 
     // Verify HUD container is visible
@@ -153,7 +153,7 @@ test.describe('HUD Extension @desktop', () => {
     // Open HUD
     await toggleHUD();
 
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
 
     // Set mode to 'default' AFTER HUD is open so the subscription receives it
     await sharedBgWindow.evaluate(async () => {
@@ -206,7 +206,7 @@ test.describe('HUD Extension @desktop', () => {
     // Open HUD
     await toggleHUD();
 
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
 
     // Query IZUI widget value via webview.executeJavaScript
     const start = Date.now();
@@ -258,7 +258,7 @@ test.describe('HUD Extension @desktop', () => {
     // Open HUD
     await toggleHUD();
 
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
 
     // Query stats widget content via webview.executeJavaScript
     // The stats widget renders a grid of stat-label/stat-value pairs in #stats-content
@@ -301,7 +301,7 @@ test.describe('HUD Extension @desktop', () => {
     await toggleHUD();
 
     // Verify HUD window exists via Playwright
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
     expect(hudWindow).toBeTruthy();
 
     // Verify the HUD window URL contains the expected path
@@ -335,7 +335,7 @@ test.describe('HUD Extension @desktop', () => {
     await toggleHUD();
 
     // Verify HUD is open via Playwright window lookup
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
     expect(hudWindow).toBeTruthy();
 
     // Verify HUD container is visible in the window
@@ -350,7 +350,7 @@ test.describe('HUD Extension @desktop', () => {
     // Open HUD
     await toggleHUD();
 
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
 
     // Set to default mode
     await sharedBgWindow.evaluate(async () => {
@@ -394,7 +394,17 @@ test.describe('HUD Extension @desktop', () => {
     // Open HUD
     await toggleHUD();
 
-    const hudWindow = await sharedApp.getWindow('ext/hud/hud.html', 5000);
+    const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
+
+    // Reset to default first and confirm the mode widget is subscribed and
+    // reflecting context changes. Without this, the subsequent setMode('group')
+    // can race the webview subscription on a freshly (re-)opened HUD and
+    // leave the widget showing a stale 'default' until the 5s refresh interval.
+    // Mirrors the pattern used by 'HUD displays mode information' above.
+    await sharedBgWindow.evaluate(async () => {
+      return await (window as any).app.context.setMode('default');
+    });
+    await waitForHudModeValue(hudWindow, 'default', 10000);
 
     // Set to group mode with metadata
     await sharedBgWindow.evaluate(async () => {

@@ -8,7 +8,7 @@
  * - Commands for subscribing and viewing feeds
  */
 
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
@@ -296,7 +296,7 @@ async function getEntries(feedId = null, limit = 50) {
 // ==================== UI ====================
 
 function openFeedsUI() {
-  api.window.open('peek://ext/feeds/feeds.html', {
+  api.window.open('peek://feeds/feeds.html', {
     key: 'feeds-reader',
     width: 900,
     height: 700,

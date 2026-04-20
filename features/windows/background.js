@@ -3,7 +3,7 @@
  *
  * Full-screen window switcher with transparent overlay
  *
- * Runs in isolated extension process (peek://ext/windows/background.html)
+ * Runs in isolated extension process (peek://windows/background.html)
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';

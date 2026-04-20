@@ -14,7 +14,7 @@ import { extractStructuredDataEntities, extractPageMetadata } from './extractors
 import { processEntities } from './entity-matcher.js';
 import { getEntities, getObservations, setEntityFeedback } from './entity-store.js';
 import { ensureNameDatabase } from './name-validator.js';
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 
@@ -315,7 +315,7 @@ async function extractCurrentPage() {
 // ==================== UI ====================
 
 function openEntityBrowser() {
-  api.window.open('peek://ext/entities/home.html', {
+  api.window.open('peek://entities/home.html', {
     role: 'workspace',
     key: 'entities-browser',
     width: 900,

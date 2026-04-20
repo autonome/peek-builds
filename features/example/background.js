@@ -99,7 +99,7 @@ async function handleImageReceived(ctx) {
  */
 function openGallery() {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/example/gallery.html', {
+    api.window.open('peek://example/gallery.html', {
       key: 'example-gallery',
       width: 1024,
       height: 768,

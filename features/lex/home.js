@@ -14,7 +14,7 @@ import {
   nsidToFriendlyName,
 } from './lexicon-ui.js';
 
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 import { getDefaultPack, listTemplatePackMetadata } from './templates/index.js';
 import { escapeHtml, rkeyFromUri } from './templates/raw/utils.js';

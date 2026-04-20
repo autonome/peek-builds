@@ -3,7 +3,7 @@
  *
  * Quick access modal windows for web pages via keyboard shortcuts (Option+0-9)
  *
- * Runs in isolated extension process (peek://ext/peeks/background.html)
+ * Runs in isolated extension process (peek://peeks/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
 

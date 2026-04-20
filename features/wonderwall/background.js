@@ -10,7 +10,7 @@ const api = hasPeekAPI ? window.app : null;
 
 function openWonderwall() {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/wonderwall/home.html', {
+    api.window.open('peek://wonderwall/home.html', {
       role: 'workspace',
       key: 'wonderwall-home',
       width: 1024,

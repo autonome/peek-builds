@@ -38,7 +38,7 @@ describe('Lazy Loading Patterns', () => {
         pubsub.unsubscribe(stubSource, topic);
 
         // Subscribe the "real" handler
-        pubsub.subscribe('peek://ext/test/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
+        pubsub.subscribe('peek://test/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
           replayed = m;
         });
 
@@ -57,7 +57,7 @@ describe('Lazy Loading Patterns', () => {
       assert.deepStrictEqual(replayed, { arg: 'hello' });
 
       // Cleanup
-      pubsub.unsubscribe('peek://ext/test/', topic);
+      pubsub.unsubscribe('peek://test/', topic);
     });
 
     it('concurrent invocations should buffer latest message only', async () => {
@@ -90,7 +90,7 @@ describe('Lazy Loading Patterns', () => {
         pubsub.unsubscribe(stubSource, topic);
 
         // Subscribe the "real" handler
-        pubsub.subscribe('peek://ext/test2/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
+        pubsub.subscribe('peek://test2/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
           replayed = m;
         });
 
@@ -113,7 +113,7 @@ describe('Lazy Loading Patterns', () => {
       assert.deepStrictEqual(replayed, { version: 2 }, 'Should replay latest message');
 
       // Cleanup
-      pubsub.unsubscribe('peek://ext/test2/', topic);
+      pubsub.unsubscribe('peek://test2/', topic);
     });
 
     it('per-command stub sources should be independent', () => {
@@ -150,7 +150,7 @@ describe('Lazy Loading Patterns', () => {
         pubsub.unsubscribe(interceptorSource, topic);
 
         // Subscribe the "real" handler
-        pubsub.subscribe('peek://ext/editor/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
+        pubsub.subscribe('peek://editor/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
           replayed = m;
         });
 
@@ -164,7 +164,7 @@ describe('Lazy Loading Patterns', () => {
 
       assert.deepStrictEqual(replayed, { file: 'test.txt' });
 
-      pubsub.unsubscribe('peek://ext/editor/', topic);
+      pubsub.unsubscribe('peek://editor/', topic);
     });
 
     it('concurrent events should buffer latest', async () => {
@@ -188,7 +188,7 @@ describe('Lazy Loading Patterns', () => {
 
         pubsub.unsubscribe(interceptorSource, topic);
 
-        pubsub.subscribe('peek://ext/editor2/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
+        pubsub.subscribe('peek://editor2/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
           replayed = m;
         });
 
@@ -204,7 +204,7 @@ describe('Lazy Loading Patterns', () => {
 
       assert.deepStrictEqual(replayed, { file: 'b.txt' }, 'Should replay latest event');
 
-      pubsub.unsubscribe('peek://ext/editor2/', topic);
+      pubsub.unsubscribe('peek://editor2/', topic);
     });
 
     it('per-topic interceptor sources should be independent', () => {
@@ -228,24 +228,24 @@ describe('Lazy Loading Patterns', () => {
     it('should detect when all command subscribers are present', () => {
       const topics = ['cmd:execute:a', 'cmd:execute:b', 'cmd:execute:c'];
       for (const t of topics) {
-        pubsub.subscribe(`peek://ext/test/${t}`, pubsub.scopes.GLOBAL, t, () => {});
+        pubsub.subscribe(`peek://test/${t}`, pubsub.scopes.GLOBAL, t, () => {});
       }
 
       const allPresent = topics.every(t => pubsub.hasSubscriber(t));
       assert.strictEqual(allPresent, true);
 
       for (const t of topics) {
-        pubsub.unsubscribe(`peek://ext/test/${t}`, t);
+        pubsub.unsubscribe(`peek://test/${t}`, t);
       }
     });
 
     it('should detect missing subscribers', () => {
-      pubsub.subscribe('peek://ext/test/x', pubsub.scopes.GLOBAL, 'cmd:execute:present', () => {});
+      pubsub.subscribe('peek://test/x', pubsub.scopes.GLOBAL, 'cmd:execute:present', () => {});
 
       assert.strictEqual(pubsub.hasSubscriber('cmd:execute:present'), true);
       assert.strictEqual(pubsub.hasSubscriber('cmd:execute:missing'), false);
 
-      pubsub.unsubscribe('peek://ext/test/x', 'cmd:execute:present');
+      pubsub.unsubscribe('peek://test/x', 'cmd:execute:present');
     });
 
     it('should work with zero expected topics', () => {

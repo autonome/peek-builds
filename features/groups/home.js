@@ -19,7 +19,7 @@ import {
 } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { labels, defaults } from './config.js';
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -361,8 +361,8 @@ const setupCreateGroup = () => {
 
 console.log('[ext:groups] background', labels.name);
 
-// Extension content is served from peek://ext/groups/
-const bgAddress = 'peek://ext/groups/home.html';
+// Extension content is served from peek://groups/
+const bgAddress = 'peek://groups/home.html';
 
 // In-memory settings cache (loaded from datastore during bg init)
 let currentSettings = {

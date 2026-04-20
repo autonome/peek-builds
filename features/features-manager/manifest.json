@@ -98,7 +98,7 @@
       "description": "Open features manager",
       "action": {
         "type": "window",
-        "url": "peek://ext/features-manager/manage.html",
+        "url": "peek://features-manager/manage.html",
         "options": {
           "role": "workspace",
           "key": "features-manage",
@@ -113,7 +113,7 @@
       "description": "Open features manager",
       "action": {
         "type": "window",
-        "url": "peek://ext/features-manager/manage.html",
+        "url": "peek://features-manager/manage.html",
         "options": {
           "role": "workspace",
           "key": "features-manage",
@@ -128,7 +128,7 @@
       "description": "Browse and search features by publisher",
       "action": {
         "type": "window",
-        "url": "peek://ext/features-manager/browse.html",
+        "url": "peek://features-manager/browse.html",
         "options": {
           "role": "workspace",
           "key": "features-browse",
@@ -143,7 +143,7 @@
       "description": "Publish a local feature to AT Protocol",
       "action": {
         "type": "window",
-        "url": "peek://ext/features-manager/publish.html",
+        "url": "peek://features-manager/publish.html",
         "options": {
           "role": "workspace",
           "key": "features-publish",

@@ -36,7 +36,7 @@ const liveRegisteredCommands = new Set();
 let registeredShortcut = null;
 
 // Panel window address
-const panelAddress = 'peek://ext/cmd/panel.html';
+const panelAddress = 'peek://cmd/panel.html';
 
 // In-memory settings cache
 let currentSettings = {

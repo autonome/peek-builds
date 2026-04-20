@@ -11,7 +11,7 @@
  * Commands are declared in manifest.json.
  * This extension loads lazily on first command invocation.
  *
- * Runs in isolated extension process (peek://ext/websearch/background.html)
+ * Runs in isolated extension process (peek://websearch/background.html)
  * Uses api.settings for datastore-backed settings storage
  */
 
@@ -21,7 +21,7 @@ const api = window.app;
 const debug = api.debug;
 
 // ===== IPC pubsub messaging =====
-// Background runs at peek://ext/websearch/ while home runs at peek://websearch/
+// Background runs at peek://websearch/ while home runs at peek://websearch/
 // — different origins, so BroadcastChannel cannot work. Use IPC pubsub instead.
 
 function onChannel(topic, handler) {

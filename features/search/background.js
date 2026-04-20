@@ -10,7 +10,7 @@ const id = 'search';
 const api = window.app;
 const debug = api.debug;
 
-const baseAddress = 'peek://ext/search/home.html';
+const baseAddress = 'peek://search/home.html';
 
 let isOpeningSearch = false;
 

@@ -5173,7 +5173,7 @@ export function registerTileIpcHandlers(): void {
 
   // NOTE: `feature-publish:upload-blob` and `feature-publish:create-record` IPC
   // handlers have been removed. The publish flow now calls lex's renderer-side
-  // atproto helpers (uploadBlob / xrpcPost from peek://ext/lex/atproto.js)
+  // atproto helpers (uploadBlob / xrpcPost from peek://lex/atproto.js)
   // directly so that DPoP signing happens in the renderer via Web Crypto —
   // no backend DPoP implementation is needed.
 
@@ -6615,7 +6615,7 @@ body {
     }
     const shortSource = (args.source ?? grant.tileId)
       .replace('peek://app/', '')
-      .replace('peek://ext/', 'ext/');
+      .replace('peek://', '');
     console.log(`[${shortSource}]`, ...(args.args ?? []));
   });
 

@@ -1,7 +1,7 @@
 /**
  * Commands manager - loads and provides commands to the command panel
  *
- * Runs in panel window context (peek://ext/cmd/panel.html)
+ * Runs in panel window context (peek://cmd/panel.html)
  * Queries cmd extension background for registered commands
  */
 import { id, labels, schemas, storageKeys, defaults } from './config.js';

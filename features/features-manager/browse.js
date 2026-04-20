@@ -493,7 +493,7 @@ publisherInput.addEventListener('keydown', (e) => {
 
 manageBtn.addEventListener('click', () => {
   if (hasPeekAPI) {
-    api.window.open('peek://ext/features-manager/manage.html', {
+    api.window.open('peek://features-manager/manage.html', {
       role: 'workspace',
       key: 'features-manage',
       width: 900,

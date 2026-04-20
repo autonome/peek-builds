@@ -78,7 +78,7 @@ async function createGroupWithItems(
 
 async function openGroupsHome(bgWindow: Page): Promise<{ groupsWindow: Page; windowId: number }> {
   const groupsResult = await bgWindow.evaluate(async () => {
-    return await (window as any).app.window.open('peek://ext/groups/home.html', {
+    return await (window as any).app.window.open('peek://groups/home.html', {
       width: 800,
       height: 600
     });

@@ -14,7 +14,7 @@
  * Internally converts pairs to action rules so resolveAffordances() works unchanged.
  */
 
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -141,7 +141,7 @@ const generateId = () => {
 // ==================== Commands ====================
 
 const openTagActions = () => {
-  api.window.open('peek://ext/tag-actions/home.html', {
+  api.window.open('peek://tag-actions/home.html', {
     role: 'workspace',
     key: 'tag-actions-home',
     width: 560,

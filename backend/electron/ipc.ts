@@ -1079,11 +1079,11 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log('[window-open] settings window: assigned trustedBuiltin tile-preload token');
     }
 
-    // Special-case: peek://ext/hud/hud.html is the HUD overlay BrowserWindow
+    // Special-case: peek://hud/hud.html is the HUD overlay BrowserWindow
     // opened on-demand by app/hud/background.js via api.window.open(). It
     // hosts webview widget cards (app/hud/hud.js) and needs tile-preload for
     // api.settings.get / api.window.resize. No v2 manifest — trustedBuiltin.
-    if (!tileWebPrefs && url === 'peek://ext/hud/hud.html') {
+    if (!tileWebPrefs && url === 'peek://hud/hud.html') {
       const HUD_OVERLAY_ID = 'hud-overlay';
       const HUD_OVERLAY_ENTRY = 'main';
       const hudOverlayGrant = createTrustedBuiltinGrant(HUD_OVERLAY_ID);
@@ -1123,11 +1123,11 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log('[window-open] datastore-viewer window: assigned trustedBuiltin tile-preload token');
     }
 
-    // Special-case: peek://ext/cmd/panel.html is the cmd palette UI, opened
-    // on-demand from the cmd resident renderer. peek://ext/cmd/chain-editor.html
+    // Special-case: peek://cmd/panel.html is the cmd palette UI, opened
+    // on-demand from the cmd resident renderer. peek://cmd/chain-editor.html
     // is the chain editor opened from the panel. Both need tile-preload to call
     // api.window.*, api.context.*, api.datastore.*, api.publish/subscribe, etc.
-    if (!tileWebPrefs && (url === 'peek://ext/cmd/panel.html' || url === 'peek://ext/cmd/chain-editor.html')) {
+    if (!tileWebPrefs && (url === 'peek://cmd/panel.html' || url === 'peek://cmd/chain-editor.html')) {
       const CMD_UI_ID = 'cmd-ui';
       const cmdUiEntry = url.endsWith('panel.html') ? 'panel' : 'chain-editor';
       const cmdUiGrant = createTrustedBuiltinGrant(CMD_UI_ID);
