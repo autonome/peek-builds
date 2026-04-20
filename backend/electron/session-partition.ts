@@ -258,8 +258,23 @@ export function resolveUniqueDownloadPath(desiredPath: string): string {
  *    Chromium aborts the download navigation and the webview stays put.
  * 3. Webview guest in a popup window opened for a download URL: close
  *    the host window — the webview has no real content (blank page).
+ *
+ * Idempotent: tracks which sessions already have the handler so we can
+ * safely call it from multiple places (profileSession init + webview
+ * `did-attach-webview`) without double-registering.
  */
-function registerDownloadHandler(ses: Session): void {
+const sessionsWithDownloadHandler = new WeakSet<Session>();
+
+export function registerDownloadHandler(ses: Session): void {
+  if (sessionsWithDownloadHandler.has(ses)) {
+    DEBUG && console.log('[download] Handler already registered on this session, skipping');
+    return;
+  }
+  sessionsWithDownloadHandler.add(ses);
+  _registerDownloadHandlerImpl(ses);
+}
+
+function _registerDownloadHandlerImpl(ses: Session): void {
   ses.on('will-download', (_event, item, webContents) => {
     const filename = item.getFilename();
     const desiredPath = path.join(app.getPath('downloads'), filename);

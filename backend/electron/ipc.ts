@@ -136,6 +136,7 @@ import {
 
 import {
   getProfileSession,
+  registerDownloadHandler,
 } from './session-partition.js';
 
 import {
@@ -1723,6 +1724,20 @@ export function registerWindowHandlers(): void {
         popupWin.webContents.on('did-attach-webview', (_event, guestWebContents) => {
           console.log(`[webview-popup] Guest webContents attached to popup ${popupWin.id}, adding keyboard shortcuts`);
 
+          // Register download handler on the guest's own session. Electron's
+          // `will-download` fires on the session that owns the webContents,
+          // not the parent BrowserWindow's session. A <webview> gets its
+          // session from its `partition` attribute (set async by page.js),
+          // which may be a different Session instance than the host window's
+          // `profileSession`. Without registering here, downloads that abort
+          // navigation leave the popup stuck with no page and no cleanup.
+          // `registerDownloadHandler` is idempotent via WeakSet tracking.
+          try {
+            registerDownloadHandler(guestWebContents.session);
+          } catch (e) {
+            console.log('[webview-popup] Failed to register download handler on guest session:', e);
+          }
+
           // Keyboard shortcuts inside the webview guest for page navigation
           guestWebContents.on('before-input-event', (event, input) => {
             const modifier = process.platform === 'darwin' ? input.meta : input.control;
@@ -1910,6 +1925,17 @@ export function registerWindowHandlers(): void {
       if (useCanvas) {
         win.webContents.on('did-attach-webview', (_event, guestWebContents) => {
           console.log(`[webview-popup] Guest webContents attached to window ${win.id}, adding setWindowOpenHandler + Cmd+L`);
+
+          // Register download handler on the guest's own session. See the
+          // equivalent comment in the popup's did-attach-webview handler
+          // above — downloads from a <webview> guest fire `will-download`
+          // on the guest's session, which may differ from profileSession
+          // depending on how the webview's partition attribute was set.
+          try {
+            registerDownloadHandler(guestWebContents.session);
+          } catch (e) {
+            console.log('[webview-popup] Failed to register download handler on guest session:', e);
+          }
 
           // Keyboard shortcuts inside the webview guest for page navigation
           guestWebContents.on('before-input-event', (event, input) => {
