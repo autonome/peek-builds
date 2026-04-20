@@ -2373,8 +2373,17 @@ export function registerWindowHandlers(): void {
 
       // Set up modal behavior if requested
       // Delay blur handler attachment to avoid race condition where focus events
-      // are still settling after window creation (can cause immediate close)
-      if (options.modal === true) {
+      // are still settling after window creation (can cause immediate close).
+      //
+      // In test profiles, skip the close-on-blur handler entirely. Under
+      // parallel Playwright workers (fullyParallel + workers > 1), focus
+      // events flicker between windows in ways they don't in real user
+      // sessions, causing modal cmd panels to close mid-test with
+      // "Target page, context or browser has been closed" errors on any
+      // subsequent .press() / .evaluate() call. OS-integration behavior
+      // for close-on-blur should be covered by a dedicated serial suite,
+      // not smoke.
+      if (options.modal === true && !isTestProfile()) {
         setTimeout(() => {
           if (!win.isDestroyed()) {
             win.on('blur', () => {

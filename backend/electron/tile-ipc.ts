@@ -33,7 +33,7 @@ import {
 } from './tile-launcher.js';
 import { parseManifestFile } from './tile-manifest.js';
 import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js';
-import { DEBUG, TILE_STRICT } from './config.js';
+import { DEBUG, TILE_STRICT, isHeadless } from './config.js';
 import { publishCapabilityViolation } from './tile-violations.js';
 import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
@@ -2740,7 +2740,14 @@ export function registerTileIpcHandlers(): void {
       if (!win || win.isDestroyed()) {
         return { success: false, error: 'Tile window not found' };
       }
-      win.show();
+      // In headless test runs, keep the window hidden. Otherwise it pops
+      // foreground and steals OS focus from other Electron instances in
+      // parallel Playwright workers, which triggers blur on modal cmd panels
+      // and breaks unrelated tests. The tests that assert showSelf's effect
+      // check state via pubsub / evaluate, not visual presence.
+      if (!isHeadless()) {
+        win.show();
+      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
