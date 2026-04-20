@@ -9,22 +9,14 @@
   "settingsSchema": "./settings-schema.json",
   "tiles": [
     {
-      "id": "background",
-      "type": "background",
-      "url": "background.html",
-      "lazy": true
-    },
-    {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "tag-actions-home",
-        "width": 560,
-        "height": 400,
-        "title": "Tag Pairs"
-      }
+      "width": 560,
+      "height": 400,
+      "title": "Tag Pairs",
+      "role": "workspace",
+      "key": "tag-actions-home",
+      "resident": true
     }
   ],
   "capabilities": {
@@ -34,10 +26,6 @@
         "ext:ready",
         "ext:tag-actions:shutdown",
         "app:shutdown",
-        "tag-actions:get-pairs",
-        "tag-actions:get-pairs:response",
-        "tag-actions:set-pairs",
-        "tag-actions:set-pairs:response",
         "tag-actions:get-all",
         "tag-actions:get-all:response",
         "tag-actions:create",
@@ -58,17 +46,7 @@
     {
       "name": "tag actions",
       "description": "Open the tag actions manager",
-      "action": {
-        "type": "window",
-        "url": "peek://ext/tag-actions/home.html",
-        "options": {
-          "role": "workspace",
-          "key": "tag-actions-home",
-          "width": 560,
-          "height": 400,
-          "title": "Tag Pairs"
-        }
-      }
+      "action": { "type": "execute" }
     }
   ]
 }

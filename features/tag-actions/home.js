@@ -1,13 +1,23 @@
 /**
- * Tag Actions - Simplified Tag Pairs UI
+ * Tag Actions - Single Resident Tile
+ *
+ * Combines background state management and UI in one tile (resident: true).
+ * State (pairs, action rules), settings I/O, command registration, and
+ * external pubsub handlers (tag-actions:get-all, :create, :update, :delete)
+ * all live here. Internal get-pairs/set-pairs request-response replaced with
+ * direct function calls.
  *
  * Shows a flat list of tag pairs. Each pair has:
  * - Active tag (e.g. "todo")
  * - Completed tag (e.g. "done")
  * - Icon style (checkbox, eye, star, etc.)
  *
- * Communicates with background.js via pubsub request/response pattern.
+ * External consumers (tag-action-affordances.js) still use:
+ *   tag-actions:get-all / tag-actions:get-all:response
+ *   tag-actions:create:response, :update:response, :delete:response
  */
+
+import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
@@ -50,35 +60,201 @@ const DEFAULT_PAIRS = [
 
 // ==================== State ====================
 
-let pairs = [];
+let currentPairs = [];
+let currentActions = []; // derived from pairs
 
-// ==================== Pubsub Helpers ====================
+// ==================== Settings ====================
 
-const request = (topic, data = {}) => {
-  return new Promise((resolve) => {
-    const handler = (msg) => {
-      resolve(msg);
-    };
-    api.pubsub.subscribe(`${topic}:response`, handler, api.scopes.GLOBAL);
-    api.pubsub.publish(topic, data, api.scopes.GLOBAL);
+const loadSettings = async () => {
+  const result = await api.settings.get('data');
+  if (result.success && result.data) {
+    // Support new pairs format
+    if (Array.isArray(result.data.pairs)) {
+      currentPairs = result.data.pairs;
+    }
+    // Migration: convert old actions format to pairs
+    else if (Array.isArray(result.data.actions) && result.data.actions.length > 0) {
+      currentPairs = migrateActionsToToPairs(result.data.actions);
+    } else {
+      currentPairs = [];
+    }
+  } else {
+    currentPairs = [];
+  }
+
+  // Derive action rules from pairs
+  currentActions = pairsToActionRules(currentPairs);
+  debug && console.log('[tag-actions] Loaded', currentPairs.length, 'pairs ->', currentActions.length, 'action rules');
+};
+
+const saveSettings = async () => {
+  const result = await api.settings.set('data', { pairs: currentPairs });
+  if (!result.success) {
+    console.error('[tag-actions] Failed to save settings:', result.error);
+  }
+  // Regenerate action rules
+  currentActions = pairsToActionRules(currentPairs);
+  return result;
+};
+
+// ==================== Migration ====================
+
+/**
+ * Convert old-format actions array to new pairs format.
+ * Only migrates toggle-type actions (the visual affordance type).
+ */
+const migrateActionsToToPairs = (actions) => {
+  const pairs = [];
+  for (const action of actions) {
+    if (action.actionType === 'toggle' && action.actionConfig) {
+      const config = action.actionConfig;
+      // Map old icon names to new iconPair names
+      let iconPair = 'checkbox';
+      if (config.icon === 'eye' || config.checkedIcon === 'eye') iconPair = 'eye';
+      else if (config.icon === 'star' || config.checkedIcon === 'star') iconPair = 'star';
+      else if (config.icon === 'heart' || config.checkedIcon === 'heart') iconPair = 'heart';
+      else if (config.icon === 'flag' || config.checkedIcon === 'flag') iconPair = 'flag';
+      else if (config.icon === 'bookmark' || config.checkedIcon === 'bookmark') iconPair = 'bookmark';
+
+      pairs.push({
+        activeTag: config.activeTag || action.triggerTag || '',
+        completedTag: config.completedTag || '',
+        iconPair
+      });
+    }
+  }
+  return pairs;
+};
+
+// ==================== Pairs to Action Rules ====================
+
+/**
+ * Icon pair name to the icon/checkedIcon names used by tag-action-affordances.js
+ */
+const ICON_PAIR_MAP = {
+  checkbox: { icon: 'unchecked', checkedIcon: 'checked' },
+  eye:      { icon: 'eye-open', checkedIcon: 'eye-closed' },
+  star:     { icon: 'star-empty', checkedIcon: 'star-filled' },
+  heart:    { icon: 'heart-empty', checkedIcon: 'heart-filled' },
+  flag:     { icon: 'flag-empty', checkedIcon: 'flag-filled' },
+  bookmark: { icon: 'bookmark-empty', checkedIcon: 'bookmark-filled' }
+};
+
+/**
+ * Convert simplified pairs to action rule objects compatible with resolveAffordances().
+ */
+const pairsToActionRules = (pairs) => {
+  return pairs
+    .filter(p => p.activeTag && p.completedTag)
+    .map((pair, i) => {
+      const icons = ICON_PAIR_MAP[pair.iconPair] || ICON_PAIR_MAP.checkbox;
+      return {
+        id: `pair_${i}`,
+        name: `${pair.activeTag}/${pair.completedTag}`,
+        enabled: true,
+        triggerTag: pair.activeTag,
+        triggerOn: 'add',
+        actionType: 'toggle',
+        actionConfig: {
+          activeTag: pair.activeTag,
+          completedTag: pair.completedTag,
+          icon: icons.icon,
+          checkedIcon: icons.checkedIcon,
+          color: '#007aff',
+          checkedColor: '#34c759'
+        },
+        itemTypes: null
+      };
+    });
+};
+
+// ==================== Commands ====================
+
+const openTagActions = () => {
+  api.window.open('peek://ext/tag-actions/home.html', {
+    role: 'workspace',
+    key: 'tag-actions-home',
+    width: 560,
+    height: 400,
+    title: 'Tag Pairs'
   });
 };
 
-// ==================== Data Loading ====================
+const registerCommands = () => {
+  registerNoun({
+    name: 'tag actions',
+    singular: 'tag action',
+    description: 'Tag pair toggles on item cards',
 
-const loadPairs = async () => {
-  const result = await request('tag-actions:get-pairs');
-  if (result.success && Array.isArray(result.data)) {
-    pairs = result.data;
-  } else {
-    pairs = [];
-  }
-  debug && console.log('[tag-actions:home] Loaded pairs:', pairs.length);
+    query: async ({ search }) => {
+      let filtered = currentPairs;
+      if (search) {
+        const s = search.toLowerCase();
+        filtered = filtered.filter(p =>
+          p.activeTag.toLowerCase().includes(s) ||
+          p.completedTag.toLowerCase().includes(s)
+        );
+      }
+      if (filtered.length === 0) {
+        return { output: 'No tag pairs found.', mimeType: 'text/plain' };
+      }
+      return {
+        success: true,
+        output: {
+          data: filtered,
+          mimeType: 'application/json',
+          title: `Tag Pairs (${filtered.length})`
+        }
+      };
+    },
+
+    browse: async () => { openTagActions(); },
+
+    create: async ({ search }) => {
+      currentPairs.push({ activeTag: search || '', completedTag: '', iconPair: 'checkbox' });
+      await saveSettings();
+      openTagActions();
+      return { success: true };
+    },
+
+    produces: 'application/json'
+  });
 };
 
-const savePairs = async () => {
-  await request('tag-actions:set-pairs', { pairs });
-  debug && console.log('[tag-actions:home] Saved pairs:', pairs.length);
+// ==================== External Pubsub Handlers ====================
+// These topics are consumed by tag-action-affordances.js (external shared lib)
+// and must remain as pubsub even in the single-tile model.
+
+const registerExternalHandlers = () => {
+  // tag-action-affordances.js queries for action rules
+  api.pubsub.subscribe('tag-actions:get-all', () => {
+    api.pubsub.publish('tag-actions:get-all:response', {
+      success: true,
+      data: currentActions
+    }, api.scopes.GLOBAL);
+  }, api.scopes.GLOBAL);
+
+  // Legacy CRUD endpoints -- respond gracefully; pairs is the source of truth
+  api.pubsub.subscribe('tag-actions:create', async (msg) => {
+    // If it looks like a toggle action, convert to pair
+    if (msg.actionType === 'toggle' && msg.actionConfig) {
+      currentPairs.push({
+        activeTag: msg.actionConfig.activeTag || msg.triggerTag || '',
+        completedTag: msg.actionConfig.completedTag || '',
+        iconPair: 'checkbox'
+      });
+      await saveSettings();
+    }
+    api.pubsub.publish('tag-actions:create:response', { success: true }, api.scopes.GLOBAL);
+  }, api.scopes.GLOBAL);
+
+  api.pubsub.subscribe('tag-actions:update', async (_msg) => {
+    api.pubsub.publish('tag-actions:update:response', { success: true }, api.scopes.GLOBAL);
+  }, api.scopes.GLOBAL);
+
+  api.pubsub.subscribe('tag-actions:delete', async (_msg) => {
+    api.pubsub.publish('tag-actions:delete:response', { success: true }, api.scopes.GLOBAL);
+  }, api.scopes.GLOBAL);
 };
 
 // ==================== Escape Handler ====================
@@ -93,12 +269,12 @@ const render = () => {
   const container = document.querySelector('.pairs-list');
   container.innerHTML = '';
 
-  if (pairs.length === 0) {
+  if (currentPairs.length === 0) {
     container.innerHTML = '<div class="empty-state">No tag pairs yet. Click + to create one.</div>';
     return;
   }
 
-  pairs.forEach((pair, index) => {
+  currentPairs.forEach((pair, index) => {
     container.appendChild(createPairRow(pair, index));
   });
 };
@@ -125,7 +301,7 @@ const createPairRow = (pair, index) => {
   activeInput.placeholder = 'active tag';
   activeInput.addEventListener('change', (e) => {
     pair.activeTag = e.target.value.trim();
-    savePairs();
+    saveSettings();
   });
   tagsArea.appendChild(activeInput);
 
@@ -142,7 +318,7 @@ const createPairRow = (pair, index) => {
   completedInput.placeholder = 'completed tag';
   completedInput.addEventListener('change', (e) => {
     pair.completedTag = e.target.value.trim();
-    savePairs();
+    saveSettings();
   });
   tagsArea.appendChild(completedInput);
 
@@ -163,7 +339,7 @@ const createPairRow = (pair, index) => {
     // Update icon preview
     const newStyle = ICON_STYLES[pair.iconPair] || ICON_STYLES.checkbox;
     iconPreview.innerHTML = newStyle.svg;
-    savePairs();
+    saveSettings();
   });
   row.appendChild(iconSelect);
 
@@ -173,8 +349,8 @@ const createPairRow = (pair, index) => {
   deleteBtn.title = 'Remove pair';
   deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
   deleteBtn.addEventListener('click', async () => {
-    pairs.splice(index, 1);
-    await savePairs();
+    currentPairs.splice(index, 1);
+    await saveSettings();
     render();
   });
   row.appendChild(deleteBtn);
@@ -185,22 +361,24 @@ const createPairRow = (pair, index) => {
 // ==================== Init ====================
 
 const init = async () => {
-  debug && console.log('[tag-actions:home] init');
+  debug && console.log('[tag-actions] init');
+
+  await loadSettings();
+  registerCommands();
+  registerExternalHandlers();
 
   api.escape.onEscape(handleEscape);
 
-  await loadPairs();
-
   // If no pairs exist, populate defaults
-  if (pairs.length === 0) {
-    pairs = DEFAULT_PAIRS.map(p => ({ ...p }));
-    await savePairs();
+  if (currentPairs.length === 0) {
+    currentPairs = DEFAULT_PAIRS.map(p => ({ ...p }));
+    await saveSettings();
   }
 
   // Add pair button
   document.querySelector('.add-pair-btn').addEventListener('click', async () => {
-    pairs.push({ activeTag: '', completedTag: '', iconPair: 'checkbox' });
-    await savePairs();
+    currentPairs.push({ activeTag: '', completedTag: '', iconPair: 'checkbox' });
+    await saveSettings();
     render();
     // Focus the first empty input in the new row
     requestAnimationFrame(() => {
@@ -214,6 +392,12 @@ const init = async () => {
   });
 
   render();
+
+  debug && console.log('[tag-actions] initialized with', currentPairs.length, 'pairs');
+};
+
+const uninit = () => {
+  unregisterNoun('tag actions');
 };
 
 document.addEventListener('DOMContentLoaded', init);
