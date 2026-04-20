@@ -870,6 +870,40 @@ function buildAPI(): Record<string, unknown> {
       if (!tokenValid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
     },
+
+    /**
+     * Get the full bounds (x, y, width, height) for the calling window.
+     *
+     * Routes strictly through `tile:window:get-bounds`. No `window`
+     * capability required — a tile always knows its own bounds.
+     */
+    getBounds: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:get-bounds', { token: tileToken });
+    },
+
+    /**
+     * Get display info (workArea, bounds, scaleFactor) for the display
+     * containing the calling window.
+     *
+     * Routes strictly through `tile:window:get-display-info`. No `window`
+     * capability required — a tile can always query its own display.
+     */
+    getDisplayInfo: () => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:get-display-info', { token: tileToken });
+    },
+
+    /**
+     * Set the position and/or size of the calling window.
+     *
+     * Routes strictly through `tile:window:set-bounds`. No `window`
+     * capability required — a tile can always reposition its own window.
+     */
+    setBounds: (bounds: { x?: number; y?: number; width?: number; height?: number }) => {
+      if (!tokenValid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:window:set-bounds', { token: tileToken, ...bounds });
+    },
   };
 
   // ── Datastore (if granted) ──

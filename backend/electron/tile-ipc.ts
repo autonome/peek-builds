@@ -3206,6 +3206,80 @@ export function registerTileIpcHandlers(): void {
     return win ? { success: true, id: win.id } : { success: false, error: 'Window not found' };
   });
 
+  // ── tile:window:get-bounds ────────────────────────────────────────
+  //
+  // Return the full bounds (x, y, width, height) for the calling renderer's
+  // window. No `window` capability required — a tile always has an inherent
+  // right to know its own bounds. Token validity is still enforced so
+  // un-initialised callers cannot probe bounds.
+  ipcMain.handle('tile:window:get-bounds', (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) {
+      return { success: false, error: 'Window not found' };
+    }
+    const bounds = win.getBounds();
+    return { success: true, ...bounds };
+  });
+
+  // ── tile:window:get-display-info ──────────────────────────────────
+  //
+  // Return display info (workArea, bounds, scaleFactor) for the display
+  // that contains the calling window. No `window` capability required —
+  // a tile can always query the display it lives on.
+  ipcMain.handle('tile:window:get-display-info', (_event, args: {
+    token: string;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) {
+      return { success: false, error: 'Window not found' };
+    }
+    const display = screen.getDisplayMatching(win.getBounds());
+    return {
+      success: true,
+      workArea: display.workArea,
+      bounds: display.bounds,
+      scaleFactor: display.scaleFactor,
+      data: { workArea: display.workArea, bounds: display.bounds, scaleFactor: display.scaleFactor },
+    };
+  });
+
+  // ── tile:window:set-bounds ────────────────────────────────────────
+  //
+  // Set the position and/or size of the calling window. No `window`
+  // capability required — a tile can always reposition its own window.
+  // (Cannot target other windows through this channel.)
+  ipcMain.handle('tile:window:set-bounds', (_event, args: {
+    token: string;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+  }) => {
+    const grant = getGrantForToken(args.token);
+    if (!grant) return { success: false, error: 'Invalid token' };
+
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (!win || win.isDestroyed()) {
+      return { success: false, error: 'Window not found' };
+    }
+    const current = win.getBounds();
+    win.setBounds({
+      x: args.x ?? current.x,
+      y: args.y ?? current.y,
+      width: args.width ?? current.width,
+      height: args.height ?? current.height,
+    });
+    return { success: true };
+  });
+
   // ── tile:window:resize ────────────────────────────────────────────
   //
   // Resize the caller's own tile window. Used by tiles that expand/collapse

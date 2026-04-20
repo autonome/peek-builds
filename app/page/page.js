@@ -39,10 +39,15 @@ const DEBUG = false;
 
 // Cache our window ID for filtering GLOBAL pubsub messages
 let myWindowId = null;
-api.window.getWindowId().then(id => { myWindowId = id; }).catch(err => {
+api.window.getWindowId().then(result => {
+  // tile:window:get-id returns { success, id } — unwrap the numeric id
+  myWindowId = (result && typeof result === 'object' && 'id' in result) ? result.id : result;
+}).catch(err => {
   console.error('[page] Failed to get window ID, retrying:', err);
   setTimeout(() => {
-    api.window.getWindowId().then(id => { myWindowId = id; }).catch(err2 => {
+    api.window.getWindowId().then(result => {
+      myWindowId = (result && typeof result === 'object' && 'id' in result) ? result.id : result;
+    }).catch(err2 => {
       console.error('[page] Failed to get window ID on retry:', err2);
     });
   }, 1000);
