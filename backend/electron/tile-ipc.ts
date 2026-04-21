@@ -476,6 +476,9 @@ export function registerTileIpcHandlers(): void {
     topic: string;
     data: unknown;
   }) => {
+    if (args.topic === 'cmd:register' || args.topic === 'cmd:register-batch') {
+      console.error(`[DIAG pub] topic=${args.topic} source=${args.source} name=${(args.data as { name?: string })?.name ?? '(batch)'}`);
+    }
     const grant = getGrantForToken(args.token);
     if (!grant) {
       DEBUG && console.log('[tile-ipc] pubsub:publish rejected: invalid token');

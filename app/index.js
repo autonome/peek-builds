@@ -5,6 +5,7 @@ import api from './api.js';
 import fc from './features.js';
 import migrations from './migrations/index.js';
 import { log } from './log.js';
+import { initCmd } from './cmd/background.js';
 
 const { id, labels, schemas, storageKeys, defaults } = appConfig;
 
@@ -591,6 +592,27 @@ export const init = async () => {
   // Create datastore-backed store
   store = await createDatastoreStore('core', defaults);
 
+  // Initialize cmd registry + subscribers FIRST so that any feature tile
+  // that publishes `cmd:register` / `cmd:register-batch` during its own
+  // init reaches a live registry. Pre-consolidation this ran in a separate
+  // cmd-resident BrowserWindow created by cmd-glue.ts; now it runs inside
+  // this core background renderer.
+  await initCmd();
+
+  // Register ext:all-loaded subscriber BEFORE publishing topicCorePrefs.
+  // Main subscribes to topicCorePrefs and kicks off loadExtensions() which
+  // publishes ext:all-loaded. Because loadExtensions runs in parallel with
+  // the rest of this init(), subscribing later in init() would race and
+  // miss the publish — the renderer's subscriber would be registered
+  // after the IPC message had already been sent and dropped.
+  api.subscribe('ext:all-loaded', () => {
+    try {
+      registerExtensionCommands();
+    } catch (err) {
+      log.error('core', 'registerExtensionCommands threw:', err);
+    }
+  }, api.scopes.GLOBAL);
+
   const p = prefs();
 
   // main process uses these for initialization
@@ -810,14 +832,8 @@ export const init = async () => {
   // initializes in-process features and waits for `ext:all-loaded`.
   log('core', 'Core features initialized. Extensions loaded by main process.');
 
-  // Register extension commands after all extensions (including cmd) are loaded.
-  // cmd:register-batch is fire-and-forget via pubsub — if cmd's subscriber isn't
-  // ready when the message is published, it's lost. ext:all-loaded guarantees cmd
-  // has initialized its subscriber via initCommandRegistry().
-  api.subscribe('ext:all-loaded', () => {
-    registerExtensionCommands();
-  }, api.scopes.GLOBAL);
 };
+
 
 // Note: init() is now called explicitly by app/background.html AFTER
 // `await api.initialize()` resolves, so the v2 tile-preload capability

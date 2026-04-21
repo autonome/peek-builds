@@ -12,7 +12,6 @@ import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
-import { initCmd } from './cmd-glue.js';
 import { initHud } from './hud-glue.js';
 import { initPage } from './page-glue.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
@@ -74,8 +73,10 @@ let _sessionRestoreDone = false;
 //
 // NOTE: 'cmd', 'hud', and 'page' were removed from this list when they were
 // extracted from features/ into core app code (app/cmd/, app/hud/, app/page/).
-// They're now loaded via initCmd() / initHud() / initPage() from their
-// respective glue files, which run before feature loading.
+// cmd's registry + shortcut wiring now runs inside the core background
+// renderer (app/index.js calls initCmd() directly). hud and page still use
+// their own resident renderers (hud-glue / page-glue); those are pending
+// consolidation into core next.
 const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'entities', 'scripts', 'timers', 'wonderwall'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
@@ -1060,11 +1061,12 @@ export async function loadExtensions(): Promise<number> {
     }
   });
 
-  // Load cmd FIRST — cmd owns the command registry.
-  // Any feature that publishes cmd:register or cmd:register-batch must find
-  // cmd already subscribed, otherwise registration is lost.
-  // cmd runs as a standalone tile renderer (tile-preload + trustedBuiltin grant).
-  await initCmd({ tilePreloadPath });
+  // cmd's registry + shortcut wiring runs inside the core background
+  // renderer (app/index.js awaits initCmd() at the top of its init).
+  // initCore — called earlier in entry.ts — already blocked on
+  // `window.__coreReady`, which is set AFTER core's init (including
+  // cmd's subscribers) completes. So by the time we reach feature
+  // loading below, cmd:register publishers always find a live registry.
 
   // Load HUD right after cmd — it's core app infrastructure like cmd, and
   // registers the `hud` command + CmdOrCtrl+H shortcut via the portable api.

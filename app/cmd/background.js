@@ -1,5 +1,5 @@
 /**
- * Cmd Extension Background Script
+ * Cmd — command registry and shortcut wiring.
  *
  * Command palette for quick command access via keyboard shortcut.
  *
@@ -7,10 +7,18 @@
  * - Owns the command registry
  * - Subscribes to cmd:register, cmd:unregister for command management
  *
- * Runs inside the resident cmd renderer (`peek://cmd/index.html`) — a
- * standalone BrowserWindow created by cmd-glue.ts with tile-preload.cjs
- * and a trustedBuiltin capability grant, so every `tile:*` IPC call
- * bypasses capability enforcement.
+ * Runs INSIDE the core background renderer (app/background.html →
+ * app/index.js imports this module and awaits initCmd()). Previously
+ * this ran in a separate `peek://cmd/index.html` resident BrowserWindow
+ * created by cmd-glue.ts; that window is gone — see consolidation plan
+ * where cmd/hud/page resident logic moved into the core renderer.
+ *
+ * The core renderer has a trustedBuiltin capability grant, so every
+ * `tile:*` IPC call bypasses capability enforcement same as before.
+ *
+ * The visible command palette UI (`app/cmd/panel.html`) is still a
+ * separate BrowserWindow opened on-demand via api.window.open(...) when
+ * the shortcut fires — unchanged.
  */
 
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
@@ -250,6 +258,8 @@ const initCommandRegistry = () => {
   // Handle individual command registrations from extensions
   // Merge-preserve pattern: see cmd:register-batch above for rationale.
   api.pubsub.subscribe('cmd:register', (msg) => {
+    if (!window.__cmdRegisterLog) window.__cmdRegisterLog = [];
+    window.__cmdRegisterLog.push({ name: msg.name, source: msg.source });
     log('ext:cmd', 'cmd:register received:', msg.name);
     const existing = commandRegistry.get(msg.name) || {};
     const entry = {
@@ -623,12 +633,4 @@ const init = async () => {
 
 };
 
-export default {
-  defaults,
-  id,
-  init,
-  uninit,
-  labels,
-  schemas,
-  storageKeys
-};
+export { init as initCmd, uninit as uninitCmd };

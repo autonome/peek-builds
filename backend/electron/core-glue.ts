@@ -134,15 +134,13 @@ export async function initCore(opts: InitCoreOptions): Promise<BrowserWindow> {
 
   win.webContents.on('console-message', (event) => {
     try {
-      const level = parseInt(String((event as { level?: unknown }).level), 10);
-      const message = String((event as { message?: unknown }).message ?? '');
-      const levelLabels = ['verbose', 'info', 'warning', 'error'];
-      const levelLabel = levelLabels[level] || 'info';
-      if (level >= 2) {
-        console.error(`[core:background] [${levelLabel}] ${message}`);
-      } else if (DEBUG) {
-        console.log(`[core:background] [${levelLabel}] ${message}`);
-      }
+      // Electron 40 changed console-message event shape: `level` is a string
+      // literal ('info'|'warning'|'error'|...), not an integer. Forward
+      // everything via console.error for visibility; renderers gate their
+      // own verbosity.
+      const asAny = event as unknown as { level?: unknown; message?: unknown };
+      const message = String(asAny.message ?? '');
+      console.error(`[core:background] level=${String(asAny.level)} ${message}`);
     } catch {
       /* logging must never throw */
     }
