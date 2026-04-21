@@ -125,7 +125,7 @@
     "//-- Packaged Electron --//": "",
     "kill:packaged": "pkill -f 'out/mac-arm64/Peek.app' || true",
     "kill:prod": "pkill -f '/Applications/Peek.app' || true",
-    "run:packaged": "yarn kill:packaged; open out/mac-arm64/Peek.app",
+    "run:packaged": "./scripts/timed.sh sh -c 'yarn kill:packaged; yarn build && electron-builder --dir && PROFILE=tmp-$(date +%s) out/mac-arm64/Peek.app/Contents/MacOS/Peek'",
     "run:packaged:debug": "yarn kill:packaged; DEBUG=1 out/mac-arm64/Peek.app/Contents/MacOS/Peek",
     "run:packaged:bg": "yarn kill:packaged; out/mac-arm64/Peek.app/Contents/MacOS/Peek > /tmp/packaged-debug.log 2>&1 &",
     "run:packaged:debug:bg": "yarn kill:packaged; DEBUG=1 out/mac-arm64/Peek.app/Contents/MacOS/Peek > /tmp/packaged-debug.log 2>&1 &",

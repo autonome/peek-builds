@@ -75,3 +75,15 @@ export function isTestProfile(): boolean {
 export function isDevProfile(): boolean {
   return _profile === 'dev';
 }
+
+/**
+ * True for any non-production ephemeral profile — dev, test-*, or
+ * tmp-* manual-smoke profiles. Used only by the single-instance lock
+ * check: these profiles always skip the lock so multiple instances
+ * (prod + manual + parallel tests) can coexist. Does NOT gate any
+ * test-only behaviors — those still use `isTestProfile()` or the
+ * `E2E_TEST` env var as appropriate.
+ */
+export function isEphemeralProfile(): boolean {
+  return isDevProfile() || isTestProfile() || _profile.startsWith('tmp-');
+}

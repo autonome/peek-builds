@@ -21,7 +21,7 @@ import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, r
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
-import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
+import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
@@ -1905,8 +1905,10 @@ export function registerActivateHandler(): void {
  * Skips lock in dev/test profiles to allow running alongside production
  */
 export function requestSingleInstance(): boolean {
-  // Skip single-instance lock in dev/test profiles to allow running alongside production
-  if (isDevProfile() || isTestProfile()) {
+  // Skip single-instance lock for ephemeral profiles (dev / test-* /
+  // tmp-*) so production, parallel tests, and manual sandbox runs can
+  // coexist with a running production instance.
+  if (isEphemeralProfile()) {
     DEBUG && console.log('Skipping single-instance lock for profile:', getProfile());
     return true;
   }
