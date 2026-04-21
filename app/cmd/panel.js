@@ -127,6 +127,32 @@ api.subscribe('cmd:url-mode', () => {
   }
 }, api.scopes.GLOBAL);
 
+// Close the panel when the user focuses another Peek window.
+//
+// macOS Cmd+` cycles through "standard" windows only — panel-type +
+// alwaysOnTop windows (like this cmd panel) are skipped, so the panel
+// never fires `blur` in that flow and the modal blur handler can't
+// clean up. Subscribe to the global `window:focused` pubsub (published
+// by backend/electron/ipc.ts for every focus event) and hide the
+// panel when another non-utility window gains focus. Utility children
+// (chain popup, etc.) are excluded so opening one doesn't dismiss the
+// panel it spawned.
+let ownWindowId = null;
+api.window.getWindowId().then((result) => {
+  ownWindowId = result?.id ?? result;
+});
+api.subscribe('window:focused', async (msg) => {
+  if (!msg || !msg.id) return;
+  if (msg.id === ownWindowId) return;
+  if (msg.role === 'utility') return;
+  if (!ownWindowId) return;
+  try {
+    await api.window.hide(ownWindowId);
+  } catch (err) {
+    log.error('cmd:panel', 'Failed to hide panel on other-window focus:', err);
+  }
+}, api.scopes.GLOBAL);
+
 // Chain popup state (module-level for cleanup)
 let chainPopupWindowId = null;
 
@@ -307,6 +333,15 @@ async function initModeIndicator() {
   if (api.context) {
     api.context.watchMode((mode, entry) => {
       log('cmd:panel', 'Context mode changed:', mode, entry);
+      // watchMode's initial fire reads the CURRENT window's mode (cmd
+      // panel's own window), which has no context entry — `mode` comes
+      // back null and would overwrite the correct 'page'/'group'/etc.
+      // value that loadCommandContext already set via the focused
+      // visible window. Ignore null/empty and let loadCommandContext
+      // win on the cold read; real mode changes during panel lifetime
+      // still flow through because they publish with their own non-null
+      // value.
+      if (mode === null || mode === undefined) return;
       currentMode = mode || 'default';
       currentModeMetadata = entry?.metadata || {};
       updateModeIndicator();

@@ -1555,11 +1555,17 @@ function buildAPI(): Record<string, unknown> {
         }
       });
       // Fire initial value so caller doesn't have to do a separate getMode().
+      // `tile:context:get` returns `{success, data: ContextEntry}` where the
+      // ContextEntry has `{value, metadata, ...}` — the pubsub-driven path
+      // below delivers `(value, entry)`, so match that shape here too
+      // (previously this passed the whole ContextEntry as `mode`, causing
+      // callers that did `textContent = mode` to render "[object Object]").
       const getPromise = contextStrict.get('mode', null);
       (getPromise as Promise<unknown>).then((result: unknown) => {
-        const r = result as { success?: boolean; data?: unknown; value?: unknown } | null;
-        const value = r && typeof r === 'object' ? (('data' in r) ? (r as { data: unknown }).data : (r as { value: unknown }).value) : null;
-        callback(value ?? null, null);
+        const r = result as { success?: boolean; data?: { value?: unknown } | null } | null;
+        const entry = r && typeof r === 'object' && r.data && typeof r.data === 'object' ? r.data : null;
+        const value = entry ? (entry as { value?: unknown }).value ?? null : null;
+        callback(value, entry);
       }).catch(() => {
         callback(null, null);
       });

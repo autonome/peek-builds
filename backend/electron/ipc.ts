@@ -963,6 +963,15 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
+          // Stamp show-time so the modal blur handler can suppress the
+          // spurious blur that NSPanel + `alwaysOnTop:'floating'` emits
+          // during the first ~200ms after show(). Without this, hitting
+          // the global hotkey from another app produces: show → immediate
+          // blur → hide(), and the NSPanel's floating-level order race
+          // leaves the panel rendered even though Electron reports
+          // isVisible=false. See commit 1b568d40 for original fix; this
+          // was lost in the tiles v2 refactor.
+          (existingWindow.window as { __lastShowTime?: number }).__lastShowTime = Date.now();
           existingWindow.window.show();
           existingWindow.window.focus();
         }
@@ -2351,9 +2360,13 @@ export function registerWindowHandlers(): void {
           const coordinator = getIzuiCoordinator();
           coordinator.setFocusedWindow(win.id);
         }
-        // Notify HUD and other listeners that a window gained focus
+        // Notify HUD and other listeners that a window gained focus.
+        // Include `role` so subscribers (e.g. cmd panel's auto-hide-on-
+        // other-window-focus) can filter out utility children (chain
+        // popup, etc.) without another round-trip.
         publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:focused', {
-          id: win.id
+          id: win.id,
+          role: winInfo?.params?.role as string | undefined,
         });
       });
       // Also track immediately if this is a content/visible window (non-modal only)
@@ -2375,15 +2388,16 @@ export function registerWindowHandlers(): void {
       // Delay blur handler attachment to avoid race condition where focus events
       // are still settling after window creation (can cause immediate close).
       //
-      // In test profiles, skip the close-on-blur handler entirely. Under
-      // parallel Playwright workers (fullyParallel + workers > 1), focus
-      // events flicker between windows in ways they don't in real user
-      // sessions, causing modal cmd panels to close mid-test with
-      // "Target page, context or browser has been closed" errors on any
-      // subsequent .press() / .evaluate() call. OS-integration behavior
-      // for close-on-blur should be covered by a dedicated serial suite,
-      // not smoke.
-      if (options.modal === true && !isTestProfile()) {
+      // Under Playwright (E2E_TEST=true), skip the close-on-blur handler
+      // entirely. Parallel workers cause focus events to flicker between
+      // windows in ways they don't in real user sessions, closing modal
+      // cmd panels mid-test with "Target page, context or browser has
+      // been closed" errors on the next .press() / .evaluate(). Gating on
+      // `E2E_TEST` rather than `isTestProfile()` lets a developer run the
+      // packaged app with `PROFILE=test-sandbox` (required to bypass the
+      // single-instance lock for a manual smoke) and still see real
+      // close-on-blur behaviour.
+      if (options.modal === true && process.env.E2E_TEST !== 'true') {
         setTimeout(() => {
           if (!win.isDestroyed()) {
             win.on('blur', () => {
@@ -2396,7 +2410,22 @@ export function registerWindowHandlers(): void {
                   return;
                 }
               }
-              // Skip blur events that fire shortly after the window was shown.
+              // Suppress spurious blurs that fire shortly after show. When a
+              // keepLive modal NSPanel is (re-)shown — especially triggered
+              // from another app via global hotkey — the macOS activation
+              // policy change plus the `alwaysOnTop: 'floating'` window level
+              // produces a brief focus dance that fires blur before focus
+              // actually settles. Hiding during this window leaves the
+              // NSPanel layer rendered even though `isVisible()` flips to
+              // false. Re-focus instead. Original fix: commit 1b568d40.
+              const showTime = (win as { __lastShowTime?: number }).__lastShowTime;
+              if (showTime && Date.now() - showTime < 200) {
+                DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
+                if (!win.isDestroyed()) {
+                  win.focus();
+                }
+                return;
+              }
               DEBUG && console.log('window-open: blur for modal window', url);
               closeOrHideWindow(win.id);
             });
@@ -2579,6 +2608,7 @@ export function registerWindowHandlers(): void {
         return { success: false, error: 'Window not found' };
       }
 
+      (win as { __lastShowTime?: number }).__lastShowTime = Date.now();
       win.show();
       return { success: true };
     } catch (error) {
