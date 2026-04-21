@@ -112,12 +112,16 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 - [ ] Phase 7 — polish + indexing (curated directory, relay/indexer service as separate repo)
 
 ### Core extraction (from `docs/core-extraction-plan.md`)
-- [x] cmd → `app/cmd/`
-- [x] hud → `app/hud/` + `backend/electron/hud-glue.ts`
-- [ ] page → `app/page/` (FROZEN canvas architecture — needs design first)
+- [x] cmd → `app/cmd/` → consolidated into core background renderer (2026-04-21)
+- [x] hud → `app/hud/` → consolidated into core background renderer (2026-04-21)
+- [x] page → `app/page/` → consolidated into core background renderer (2026-04-21)
 
-### Feature conversion holdouts
-- [ ] Remaining v1 features: page (pending design)
+All three command-registration surfaces now run inside the core
+background renderer (`app/index.js` awaits `initCmd()`, `initPage()`,
+`initHud()`). No separate resident BrowserWindows; `cmd-glue.ts`,
+`page-glue.ts`, and `hud-glue.ts` are deleted. The page-canvas and
+HUD overlay windows still exist — only the *command-registering*
+resident renderers were merged.
 
 ---
 
@@ -125,6 +129,9 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 Keep short — for recent context only. Prune after a few weeks.
 
+- 2026-04-21 cmd / page / hud resident renderers consolidated into the core background renderer (`app/index.js` → `initCmd/initPage/initHud`). `cmd-glue.ts`, `page-glue.ts`, `hud-glue.ts`, and the three resident shim HTMLs deleted. cmd command registry, page `open`/`modal`, HUD `hud` command + CmdOrCtrl+H shortcut all run inside the single core renderer now.
+- 2026-04-21 fixed cmd `ext:ready` / extension-commands race — `registerExtensionCommands()` was hung on an `ext:all-loaded` subscriber that was wired AFTER `topicCorePrefs` publish kicked off `loadExtensions()` in main, so the GLOBAL publish was dropped. Subscribe now lands before the publish; registry grows 72→96 commands on cold start (quit/restart/back/forward/reload/settings/theme-* etc. now register reliably).
+- 2026-04-21 fixed Electron 40 console-message forwarder in `core-glue.ts` — event `level` is a string literal in E40, not an int, so the numeric filter dropped all renderer output.
 - 2026-04-16 Trimming Phase 5 closed: TILE_STRICT env flag, capability-violation pubsub topic with rate limiting, static tile-api.d.ts
 - 2026-04-16 Trimming Phase 4 datastore restoration: Phase 4 over-reached; named api.datastore.* methods restored as legacy routes (the strict surface remains)
 - 2026-04-16 Trimming Phase 4 closed: v1-compat shims removed, hard-fail stubs in their place, v1 else-branches deleted from 22 feature HTMLs (2218 tests passing)
