@@ -2,19 +2,14 @@
  * Minimal reproducer for the v2-tile pubsub routing bug that blocked
  * v1-removal Phase 2.
  *
- * Approach: use windows that already exist post-Phase-1 as a pure
- * v2→v2 pubsub round-trip. Both cmd (via cmd-glue) and hud (via
- * hud-glue) are trustedBuiltin tile renderers loaded at startup
- * with `tile-preload.cjs`. cmd publishes, hud subscribes. If the
- * subscriber never fires, the v2→v2 pubsub path is broken — no test
- * fixture needed.
+ * Post-consolidation (cmd + hud + page merged into the core background
+ * renderer), the trustedBuiltin tile windows we can use for a pure v2
+ * pubsub round-trip are:
+ *   - the core background renderer (peek://app/background.html)
+ *   - any eager feature tile (e.g. peek://entities/home.html)
  *
- * Observed: under `yarn test:grep` (E2E test profile), hud window is
- * NOT present in `electronApp.windows()` (only cmd, app/background,
- * app/extension-host, app/settings). Falls back to looking for ANY
- * other v2 tile window (e.g. entities/background.html) as subscriber.
- * Test throws with the available URL list when no pairing is found —
- * serves as diagnostic output for later investigation.
+ * core publishes; the feature tile subscribes. If the subscriber never
+ * fires, the v2 pubsub routing is broken.
  */
 
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
@@ -42,39 +37,31 @@ function findTileWindow(app: DesktopApp, urlMatch: string): Page | null {
 }
 
 test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', async () => {
-  // Give hud/page glue time to launch their resident renderers.
-  // initHud / initPage are awaited inside loadExtensions() but the
-  // BrowserWindow's URL may not resolve to the final peek:// host until
-  // the protocol handler fires. 2s is generous.
-  await new Promise(r => setTimeout(r, 2000));
-
   const urls = sharedApp.windows().map(w => w.url());
   console.log('[repro] available window URLs:', JSON.stringify(urls));
 
-  // cmd resident (publisher) — trustedBuiltin tile from cmd-glue
-  const cmdWin = findTileWindow(sharedApp, 'peek://cmd/index.html');
-  if (!cmdWin) {
-    throw new Error(`cmd window not found. URLs: ${JSON.stringify(urls)}`);
+  // Publisher: core background renderer — trustedBuiltin tile.
+  const pubWin = findTileWindow(sharedApp, 'peek://app/background.html');
+  if (!pubWin) {
+    throw new Error(`core window not found. URLs: ${JSON.stringify(urls)}`);
   }
 
-  // Pick any second v2 tile window (subscriber). Try hud, then page,
-  // then any eager feature tile.
+  // Subscriber: any eager feature tile.
   const subWin =
-    findTileWindow(sharedApp, 'peek://hud/index.html') ||
-    findTileWindow(sharedApp, 'peek://page/') ||
     findTileWindow(sharedApp, 'peek://entities/') ||
+    findTileWindow(sharedApp, 'peek://page/') ||
     findTileWindow(sharedApp, 'peek://me/') ||
     findTileWindow(sharedApp, 'peek://atproto/');
 
   if (!subWin) {
     throw new Error(
-      `No second v2 tile window found for subscriber pairing. ` +
+      `No feature tile window found for subscriber pairing. ` +
       `Available URLs: ${JSON.stringify(urls)}`
     );
   }
   console.log('[repro] subscriber window:', subWin.url());
 
-  // 1. Subscribe on the second v2 tile.
+  // 1. Subscribe on the feature tile.
   await subWin.evaluate(() => {
     const api = (window as any).app;
     (window as any).__reproReceived = null;
@@ -95,8 +82,8 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
   // Small buffer: IPC subscribe is async in main.
   await new Promise(r => setTimeout(r, 200));
 
-  // 2. Publish from cmd.
-  const pubResult = await cmdWin.evaluate(() => {
+  // 2. Publish from core.
+  const pubResult = await pubWin.evaluate(() => {
     const api = (window as any).app;
     const diag: any = {
       apiExists: !!api,
@@ -104,7 +91,7 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
       scopeGlobal: api && api.scopes && api.scopes.GLOBAL,
     };
     if (api && api.publish && api.scopes) {
-      api.publish('repro:v2-v2-hello', { from: 'cmd', ts: Date.now() }, api.scopes.GLOBAL);
+      api.publish('repro:v2-v2-hello', { from: 'core', ts: Date.now() }, api.scopes.GLOBAL);
       diag.published = true;
     }
     return diag;
@@ -124,6 +111,6 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
   });
   console.log('[repro] received:', JSON.stringify(received));
 
-  expect(pubResult.published, `cmd failed to publish: ${JSON.stringify(pubResult)}`).toBe(true);
-  expect(received, 'subscriber never received cmd publish — v2 pubsub routing broken').not.toBeNull();
+  expect(pubResult.published, `core failed to publish: ${JSON.stringify(pubResult)}`).toBe(true);
+  expect(received, 'subscriber never received core publish — v2 pubsub routing broken').not.toBeNull();
 });

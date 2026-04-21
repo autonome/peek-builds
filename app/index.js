@@ -7,6 +7,7 @@ import migrations from './migrations/index.js';
 import { log } from './log.js';
 import { initCmd } from './cmd/background.js';
 import { initPage } from './page/background.js';
+import { initHud } from './hud/background.js';
 
 const { id, labels, schemas, storageKeys, defaults } = appConfig;
 
@@ -600,6 +601,7 @@ export const init = async () => {
   // this core background renderer.
   await initCmd();
   await initPage();
+  await initHud();
 
   // Register ext:all-loaded subscriber BEFORE publishing topicCorePrefs.
   // Main subscribes to topicCorePrefs and kicks off loadExtensions() which

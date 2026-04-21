@@ -12,20 +12,64 @@ const api = window.app;
 const debug = api.debug;
 
 const HUD_SHEET_KEY = 'hud_sheet';
+const CURRENT_CONFIG_VERSION = 2;
+
+// Default HUD sheet layout — arranges widget pages vertically.
+const WIDGET_WIDTH = 220;
+const WIDGET_HEIGHT = 40;
+const WIDGET_GAP = 2;
+const STATS_WIDGET_HEIGHT = 120;
+
+const DEFAULT_HUD_WIDGETS = [
+  { id: 'mode',   url: 'peek://hud/widgets/mode.html' },
+  { id: 'izui',   url: 'peek://hud/widgets/izui.html' },
+  { id: 'window', url: 'peek://hud/widgets/window.html' },
+  { id: 'stats',  url: 'peek://hud/widgets/stats.html', height: STATS_WIDGET_HEIGHT },
+];
+
+const buildDefaultSheetConfig = () => {
+  let y = 0;
+  const items = DEFAULT_HUD_WIDGETS.map((widget) => {
+    const h = widget.height || WIDGET_HEIGHT;
+    const item = {
+      id: widget.id,
+      url: widget.url,
+      x: 0,
+      y,
+      width: WIDGET_WIDTH,
+      height: h,
+    };
+    y += h + WIDGET_GAP;
+    return item;
+  });
+
+  return {
+    version: CURRENT_CONFIG_VERSION,
+    name: 'HUD',
+    createdAt: Date.now(),
+    items,
+  };
+};
 
 let sheetConfig = null;
 
 /**
- * Load HUD sheet config from feature_settings.
- * Config is written by background.js (tileId='hud') so we must read from
- * the 'hud' namespace rather than our own 'hud-overlay' namespace.
+ * Load HUD sheet config from this tile's settings, seeding a default
+ * layout on first run. Previously the config was written by
+ * background.js running in a `peek://hud/` resident renderer; with HUD
+ * command/shortcut registration consolidated into the core renderer
+ * (which writes to the `core` namespace), the overlay now owns its own
+ * layout storage here.
  */
-const loadSheetConfig = async () => {
-  const result = await api.settings.getExtKey('hud', HUD_SHEET_KEY);
-  if (result.success && result.data) {
-    return result.data;
+const ensureSheetConfig = async () => {
+  const existing = await api.settings.get(HUD_SHEET_KEY);
+  if (existing.success && existing.data && existing.data.version >= CURRENT_CONFIG_VERSION) {
+    return existing.data;
   }
-  return null;
+
+  const fresh = buildDefaultSheetConfig();
+  await api.settings.set(HUD_SHEET_KEY, fresh);
+  return fresh;
 };
 
 /**
@@ -125,22 +169,7 @@ const init = async () => {
     await api.initialize();
   }
 
-  sheetConfig = await loadSheetConfig();
-
-  if (!sheetConfig) {
-    console.warn('[hud] No HUD sheet config found — waiting for background.js to create it');
-    // Retry after a short delay (background.js may still be initializing)
-    setTimeout(async () => {
-      sheetConfig = await loadSheetConfig();
-      if (sheetConfig) {
-        renderWidgets();
-      } else {
-        console.error('[hud] HUD sheet config still not found');
-      }
-    }, 1000);
-    return;
-  }
-
+  sheetConfig = await ensureSheetConfig();
   renderWidgets();
   console.log('[hud] Widget sheet display initialized with', sheetConfig.items.length, 'widgets');
 };

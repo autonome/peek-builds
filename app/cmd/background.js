@@ -51,26 +51,38 @@ let currentSettings = {
   prefs: defaults.prefs
 };
 
-/**
- * Load settings from datastore
- */
+// cmd's prefs row lives in the `feature_settings` table keyed `cmd_prefs`
+// (legacy `${tileId}_${key}` format that `api.settings.set` uses). The
+// cmd panel window reads via `api.settings.get('prefs')` from its own
+// tile namespace (tileId='cmd') — so we must keep writing to the `cmd`
+// namespace even though this code now runs inside the core renderer
+// (tileId='core'). `api.settings.set` would route to `core_prefs`;
+// persist directly to the known row instead.
+const CMD_PREFS_ROW_ID = 'cmd_prefs';
+
 const loadSettings = async () => {
-  const result = await api.settings.get('prefs');
-  if (result.success && result.data) {
-    return {
-      prefs: result.data || defaults.prefs
-    };
+  try {
+    const result = await api.datastore.getRow('feature_settings', CMD_PREFS_ROW_ID);
+    if (result?.success && result.data?.value) {
+      const parsed = JSON.parse(result.data.value);
+      return { prefs: parsed || defaults.prefs };
+    }
+  } catch (err) {
+    log.error('ext:cmd', 'Failed to load settings:', err);
   }
   return { prefs: defaults.prefs };
 };
 
-/**
- * Save settings to datastore
- */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set('prefs', settings.prefs);
-  if (!result.success) {
-    log.error('ext:cmd', 'Failed to save settings:', result.error);
+  try {
+    await api.datastore.setRow('feature_settings', CMD_PREFS_ROW_ID, {
+      featureId: 'cmd',
+      key: 'prefs',
+      value: JSON.stringify(settings.prefs),
+      updatedAt: Date.now(),
+    });
+  } catch (err) {
+    log.error('ext:cmd', 'Failed to save settings:', err);
   }
 };
 

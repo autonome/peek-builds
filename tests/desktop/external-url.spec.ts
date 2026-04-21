@@ -286,6 +286,20 @@ test.describe('External URL Opening @desktop', () => {
     // This bypasses the normal window.open flow and tests the handleExternalUrl path
     const testUrl = 'https://example.com/external-test';
 
+    // Subscribe to the window:opened event BEFORE publishing the
+    // trigger so there's no race — main publishes this as soon as the
+    // new window is registered (see backend/electron/ipc.ts
+    // window-create handler).
+    await bgWindow.evaluate((url: string) => {
+      const api = (window as any).app;
+      (window as any).__externalUrlWindowOpened = null;
+      api.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && (msg.url.includes(url) || msg.url.includes(encodeURIComponent(url)))) {
+          (window as any).__externalUrlWindowOpened = msg;
+        }
+      }, api.scopes.GLOBAL);
+    }, testUrl);
+
     // Trigger external:open-url event directly (simulates what handleExternalUrl does)
     await bgWindow.evaluate(async (url: string) => {
       const api = (window as any).app;
@@ -300,8 +314,12 @@ test.describe('External URL Opening @desktop', () => {
       }, api.scopes.GLOBAL);
     }, testUrl);
 
-    // Wait for window to be created (give it time to process the event)
-    await sleep(500);
+    // Wait for the window:opened event for our URL — deterministic.
+    await bgWindow.waitForFunction(
+      () => (window as any).__externalUrlWindowOpened !== null,
+      undefined,
+      { timeout: 5000 }
+    );
 
     // Verify URL was opened
     const finalList = await bgWindow.evaluate(async () => {

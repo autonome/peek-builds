@@ -12,7 +12,6 @@ import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
-import { initHud } from './hud-glue.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
@@ -258,8 +257,15 @@ export async function initialize(): Promise<void> {
     (app as any).on('did-become-active', () => {
       getIzuiCoordinator().setAppFocused(true);
       publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
-      // Showing alwaysOnTop overlay windows (e.g. HUD) when the app regains
-      // focus is handled by hud-glue.ts.
+      // Show any alwaysOnTop overlay windows (e.g. HUD) that were hidden
+      // by the did-resign-active handler below. This hide/show pair
+      // avoids a pubsub round-trip through a renderer.
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && win.isAlwaysOnTop() && (win as any).__hudHidden) {
+          win.showInactive();
+          (win as any).__hudHidden = false;
+        }
+      }
     });
     (app as any).on('did-resign-active', () => {
       const coordBefore = getIzuiCoordinator();
@@ -299,8 +305,16 @@ export async function initialize(): Promise<void> {
         DEBUG && console.log('[izui] Skipping overlay close in did-resign-active (within cooldown: exit=', coordinator.isWithinOverlayExitCooldown(), 'entry=', coordinator.isWithinOverlayEntryCooldown(), ')');
       }
 
-      // Hiding non-focusable alwaysOnTop overlay windows (e.g. HUD) when the
-      // app loses focus is handled by hud-glue.ts.
+      // Hide non-focusable alwaysOnTop overlay windows (e.g. HUD) when
+      // the app loses focus. Skip focusable alwaysOnTop windows (e.g.
+      // the cmd panel) — they have their own blur handler and would
+      // blink if hidden here.
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && win.isAlwaysOnTop() && win.isVisible() && !win.isFocusable()) {
+          win.hide();
+          (win as any).__hudHidden = true;
+        }
+      }
     });
   } else {
     // Non-macOS fallback: use browser-window-focus/blur with focused-window check
@@ -1060,24 +1074,13 @@ export async function loadExtensions(): Promise<number> {
     }
   });
 
-  // cmd's registry + shortcut wiring runs inside the core background
-  // renderer (app/index.js awaits initCmd() at the top of its init).
-  // initCore — called earlier in entry.ts — already blocked on
-  // `window.__coreReady`, which is set AFTER core's init (including
-  // cmd's subscribers) completes. So by the time we reach feature
-  // loading below, cmd:register publishers always find a live registry.
-
-  // Load HUD right after cmd — it's core app infrastructure like cmd, and
-  // registers the `hud` command + CmdOrCtrl+H shortcut via the portable api.
-  // HUD now runs as a standalone tile renderer (tile-preload + trustedBuiltin
-  // grant) — no longer loaded as an iframe in the consolidated extension host.
-  await initHud({ tilePreloadPath });
-
-  // page's `open` / `modal` command registration now runs inside the
-  // core background renderer (app/index.js awaits initPage() from
-  // app/page/background.js). No separate resident window — the per-URL
-  // canvas page windows are still created on demand by the cmd
-  // handlers calling api.window.open(...).
+  // cmd, hud, and page's command/shortcut wiring all run inside the
+  // core background renderer (app/index.js awaits initCmd(), initHud(),
+  // and initPage() at the top of its init). initCore — called earlier
+  // in entry.ts — already blocked on `window.__coreReady`, set AFTER
+  // core's init (including those subscribers) completes. So by the time
+  // we reach feature loading below, cmd:register publishers always find
+  // a live registry.
 
   // Launch the privileged test-fixture renderer when running under
   // Playwright (E2E_TEST=true). This is the v2 replacement for the v1

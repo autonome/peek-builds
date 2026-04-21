@@ -1,21 +1,22 @@
 /**
- * HUD Background Script
- *
- * Always-on-top overlay showing current mode, IZUI state, and window context.
+ * HUD — always-on-top overlay for mode, IZUI state, and window context.
  * Uses the widget sheet system — each piece of HUD info is an individual
  * widget page rendered via webview in a peek-grid freeform layout.
  *
- * HUD is NOT a feature — it's core app infrastructure that ships with every
- * copy of Peek. It used to live in features/hud/; now it lives in app/hud/
- * and is loaded by backend/electron/hud-glue.ts.
+ * HUD is NOT a feature — it's core app infrastructure that ships with
+ * every copy of Peek. Its command + shortcut registration now runs INSIDE
+ * the core background renderer (app/index.js awaits initHud() from this
+ * module). Previously this ran in a separate `peek://hud/index.html`
+ * resident BrowserWindow created by hud-glue.ts; that window is gone.
  *
- * Commands and shortcuts are registered imperatively here (unlike features
- * that declare them in manifest.json) — there is no manifest for HUD.
+ * Commands and shortcuts are registered imperatively here (unlike
+ * features that declare them in manifest.json) — there is no manifest
+ * for HUD. The overlay window itself is still a separate window at
+ * `peek://hud/hud.html`, opened on-demand via api.window.open(...).
  *
- * Runs inside the resident HUD renderer (`peek://hud/index.html`) — a
- * standalone BrowserWindow created by hud-glue.ts with tile-preload.cjs
- * and a trustedBuiltin capability grant, so every `tile:*` IPC call
- * bypasses capability enforcement.
+ * macOS app-focus hide/show of the alwaysOnTop HUD window is handled
+ * directly in the main process (see backend/electron/main.ts) —
+ * registering that handler does not require a renderer.
  */
 
 const api = window.app;
@@ -23,70 +24,15 @@ const debug = api.debug;
 
 const HUD_ADDRESS = 'peek://hud/hud.html';
 const STORAGE_KEY = 'hud_enabled';
-const HUD_SHEET_KEY = 'hud_sheet';
 const TOGGLE_SHORTCUT = 'CommandOrControl+H';
 
-// Default HUD sheet layout — arranges widget pages vertically
-const WIDGET_WIDTH = 220;
-const WIDGET_HEIGHT = 40;
-const WIDGET_GAP = 2;
-
-const STATS_WIDGET_HEIGHT = 120; // taller for 6 metric rows
-
-const DEFAULT_HUD_WIDGETS = [
-  { id: 'mode',   url: 'peek://hud/widgets/mode.html' },
-  { id: 'izui',   url: 'peek://hud/widgets/izui.html' },
-  { id: 'window', url: 'peek://hud/widgets/window.html' },
-  { id: 'stats',  url: 'peek://hud/widgets/stats.html', height: STATS_WIDGET_HEIGHT }
-];
-
-/**
- * Build the default HUD sheet config
- * Arranges widgets in a vertical stack
- */
-const buildDefaultSheetConfig = () => {
-  let y = 0;
-  const items = DEFAULT_HUD_WIDGETS.map((widget) => {
-    const h = widget.height || WIDGET_HEIGHT;
-    const item = {
-      id: widget.id,
-      url: widget.url,
-      x: 0,
-      y,
-      width: WIDGET_WIDTH,
-      height: h
-    };
-    y += h + WIDGET_GAP;
-    return item;
-  });
-
-  return {
-    version: 2,
-    name: 'HUD',
-    createdAt: Date.now(),
-    items
-  };
-};
-
-/**
- * Ensure the HUD sheet config exists in feature_settings.
- * Creates a default config if none exists.
- */
-const CURRENT_CONFIG_VERSION = 2;
-
-const ensureSheetConfig = async () => {
-  const result = await api.settings.get(HUD_SHEET_KEY);
-  if (result.success && result.data) {
-    if (result.data.version && result.data.version >= CURRENT_CONFIG_VERSION) {
-      return result.data;
-    }
-  }
-
-  // Create default config (or upgrade)
-  const config = buildDefaultSheetConfig();
-  await api.settings.set(HUD_SHEET_KEY, config);
-  return config;
-};
+// Approximate default window size for the initial HUD overlay open. The
+// overlay auto-resizes to fit its widget layout on load (see hud.js
+// `autoResizeWindow`), so this just needs to be close enough to avoid a
+// visible reflow. Default layout: 4 widgets stacked, ~40–120px tall, +
+// 22px container padding.
+const DEFAULT_HUD_WIDTH = 242;
+const DEFAULT_HUD_HEIGHT = 268;
 
 // Track HUD state
 let hudEnabled = false;
@@ -119,23 +65,6 @@ const saveState = (enabled) => {
 };
 
 /**
- * Calculate HUD window size from sheet config
- */
-const getHudWindowSize = (config) => {
-  let maxRight = 0;
-  let maxBottom = 0;
-  for (const item of config.items) {
-    maxRight = Math.max(maxRight, item.x + item.width);
-    maxBottom = Math.max(maxBottom, item.y + item.height);
-  }
-  // Add container padding (10px each side) + border
-  return {
-    width: maxRight + 22,
-    height: maxBottom + 22
-  };
-};
-
-/**
  * Open the HUD window
  */
 const openHud = async () => {
@@ -148,13 +77,13 @@ const openHud = async () => {
     hudWindowId = null;
   }
 
-  const config = await ensureSheetConfig();
-  const size = getHudWindowSize(config);
-
+  // The overlay (hud.js) loads / creates its sheet config on its own
+  // tile, then calls api.window.resize() to match. See
+  // autoResizeWindow() in hud.js.
   const params = {
     key: HUD_ADDRESS,
-    width: size.width,
-    height: size.height,
+    width: DEFAULT_HUD_WIDTH,
+    height: DEFAULT_HUD_HEIGHT,
     x: 20,
     y: 20,
     transparent: true,
@@ -239,9 +168,6 @@ const init = async () => {
   // Load persisted state
   await loadState();
 
-  // Ensure HUD sheet config exists (create default if needed)
-  await ensureSheetConfig();
-
   // Register command and shortcut imperatively — HUD has no manifest.
   api.commands.register({
     name: 'hud',
@@ -275,11 +201,4 @@ const uninit = () => {
   closeHud();
 };
 
-export default {
-  id: 'hud',
-  labels: {
-    name: 'HUD'
-  },
-  init,
-  uninit
-};
+export { init as initHud, uninit as uninitHud };
