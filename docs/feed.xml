@@ -4,7 +4,7 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 21 Apr 2026 17:12:51 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 21 Apr 2026 17:22:34 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
@@ -59,6 +59,108 @@ Desktop - Other fixes
 - setWindowColorScheme window resolution in headless (Cat 3 theme fix)
 - ELECTRON_RUN_AS_NODE import compat for schema codegen
 - atproto signature-verification plan written (implementation pending)</description>
+    </item>
+    <item>
+      <title>2026-04-14</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-14</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-04-14</guid>
+      <pubDate>Tue, 14 Apr 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Tiles v2 strict capability API
+- Phase 2: strict IPC handlers for window, features, context, dialogs, shortcuts, sync, oauth, settings.readForeign, session, escape, screen — all capability-gated
+- Phase 3: migrate all 26 features to strict capabilities (3 rounds) — example, websearch, timers, helpdocs, sync, dropzone, mcp-server, widget-demo, feeds, windows, slides, scripts, pagestream, lists, tag-actions, peeks, sheets, tags, search, lex, wonderwall, entities, editor, groups, spaces, features-manager
+- Drop all v1-compat shim IIFEs from feature HTML, migrate api.subscribe/publish to api.pubsub.*, settings.getKey/setKey to get/set
+- Hard-fail stubs replace removed v1-compat names; TILE_STRICT env flag throws on capability violations
+- Features admin: update/dev/publish/devtools/browse actions with allowlists; izui capability gate
+- Per-table datastore scoping enforcement + context {read, write:[entities]} scoping
+- Single-file tiles: resident: true, flat window fields, unified show:false, showSelf/hideSelf no-capability actions — hello-world, widget-demo, mcp-server converted
+- relaunchTile(tileId) helper; delete dead createExtensionWindow + loadExtensionsConsolidated + stale consolidatedIds branches
+- trustedBuiltin grant + registerTrustedBuiltinWindow for core-renderer pubsub broadcast
+
+Desktop - Core extraction (cmd + hud + page)
+- Move cmd UI from features/cmd/ to app/cmd/; add cmd-glue.ts for Electron plumbing, wire into startup
+- Move hud UI from features/hud/ to app/hud/; add hud-glue.ts; peek://hud/ backcompat route
+- Extract page host from features/ to app/core via page-glue.ts
+- Launch cmd / hud / page-bg with tile-preload + trustedBuiltin grant, drop loadExtInHost
+- Merge background.{html,js} into single-file index.html core renderers
+- peek://ext/cmd/ and peek://ext/hud/ routes map to app/cmd/ / app/hud/ for backcompat
+
+Desktop - Features Manager feature
+- New feature — registry with persistence + CRUD, installer with builtin scan/local/sync, tile-loader bridging registry to tile launcher, feature-startup orchestrator
+- Manage UI: feature cards, search, actions, update badges, policy selector, capability review modal
+- Browse UI: discover features by publisher, noun browse action wired to browse.html
+- Install from AT URI: AtprotoSource with DidDocument narrowing, capability preview, minPeekVersion enforcement, CID validation on bundle blobs, atomic install via temp dir + rename
+- Publish wizard: AT Protocol publish flow with step 2 metadata UI (icon + screenshots), space.peek.feature.release lexicon, call lex atproto helpers directly from renderer
+- Update mechanism: compareCapabilities, shouldAutoUpdate, compareSemver, scheduled background checks + update commands
+- features_history table with uninstall history write; disabled/update fields in registry
+
+Desktop - Tiles pubsub + lifecycle
+- Fix URL.origin returning null for peek:// — broadcaster was filtering ALL v2 tile messages as self-echo
+- ensureTileIpcHandlers at top of initialize so handlers register before any BrowserWindow
+- Forward console messages + handle render-process-gone for v2 tiles (revoke token, publish tile:crashed)
+- Tile lifecycle cleanup for shutdown, unsubscribe, unload, crash visibility
+- Expose DevTools button for all tile features via feature-devtools:open
+- Global unhandledRejection / uncaughtException handlers
+- Broadcast pubsub to v2 tile BrowserWindows
+
+Desktop - Cmd panel
+- Await init before publishing ext:ready so subscribers are ready for command batches
+- Replay registered commands when cmd loads to avoid timing race
+- Tab completion enters PARAM_MODE for commands with params
+- Lazy event interceptors: lazyEvents manifest field, pre-load tiles on subscribed events
+
+Desktop - Page host
+- toggleMaximize captures window bounds for exact restore
+- Track server-side redirects via did-redirect-navigation to prevent blank page on 301/302
+- Preserve group mode on init + during navigation (not just space mode)
+- Rename groups mode from space to group (undo incomplete rename), support groupMode option in window-open
+
+Desktop - MCP server feature
+- MCP server tile with stdio JSON-RPC transport, sqlite3 CLI database helper
+- Setup script + wrapper for Claude Code MCP config registration
+- Tile manifest, background tile, mcp-server:setup command
+
+Desktop - Other fixes
+- Auto-iterate download filenames to avoid overwrite failure
+- Clear lastFocusedVisibleWindowId on window close to prevent stale targeting
+- CSP injection on all tile responses (not just successful HTML)
+- get-display-info returns workArea at top level for direct invoke
+- Disable bypassCSP on peek:// protocol for tile security; v2 features excluded from legacy extension loading path
+- Emit tag:created/renamed/deleted pubsub events; publish tag:item-added for content hashtags, history auto-tag, sync pull, IPC handlers
+- Fall back to manifest defaults when settings key not stored
+- TWP translate extension vendored + registered; browser-extension options-page command registration
+- Pool isolated agent workspaces with per-agent Electron profile; split clean script
+
+Desktop - Testing
+- Smoke tests updated for v2 tile architecture (iframes → BrowserWindows)
+- AtprotoSource + installFromBundle unit tests (34); updater tests for compareCapabilities / shouldAutoUpdate / compareSemver
+- Deterministic waits for localsearch tests; replace waitForTimeout with trigger() for ESC child-content regression
+- Tile IPC coverage for strict capability enforcement across all surfaces (window, features, context, dialogs, shortcuts, datastore, sync, oauth, session, escape)
+- Exfiltration vector CSP tests; lazy event interceptor coverage</description>
+    </item>
+    <item>
+      <title>2026-04-07</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-07</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-04-07</guid>
+      <pubDate>Tue, 07 Apr 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Tiles v2 architecture (initial landing)
+- Tile manifest v2 schema + parser, CSP injection for tile HTML responses in protocol handler
+- Tile launcher with token management + lifecycle
+- Capability-scoped tile preload with token validation
+- IPC capability enforcement for tile operations
+- Lazy loading for tiles with command stub registration
+- v1/v2 compatibility layer for incremental migration
+- Migrate first features (sync, tags) to v2 tile manifest format
+- Tile tests and token extraction into pure module
+
+Desktop - Docs
+- Lex web app design doc</description>
+    </item>
+    <item>
+      <title>2026-03-31</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-31</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-03-31</guid>
+      <pubDate>Tue, 31 Mar 2026 12:00:00 GMT</pubDate>
+      <description>No user-facing changes this week.</description>
     </item>
     <item>
       <title>2026-03-24</title>

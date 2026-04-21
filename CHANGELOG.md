@@ -63,6 +63,99 @@ Desktop - Other fixes
 - [x] ELECTRON_RUN_AS_NODE import compat for schema codegen
 - [x] atproto signature-verification plan written (implementation pending)
 
+## 2026-04-14
+
+Desktop - Tiles v2 strict capability API
+- [x] Phase 2: strict IPC handlers for window, features, context, dialogs, shortcuts, sync, oauth, settings.readForeign, session, escape, screen — all capability-gated
+- [x] Phase 3: migrate all 26 features to strict capabilities (3 rounds) — example, websearch, timers, helpdocs, sync, dropzone, mcp-server, widget-demo, feeds, windows, slides, scripts, pagestream, lists, tag-actions, peeks, sheets, tags, search, lex, wonderwall, entities, editor, groups, spaces, features-manager
+- [x] Drop all v1-compat shim IIFEs from feature HTML, migrate `api.subscribe/publish` to `api.pubsub.*`, `settings.getKey/setKey` to `get/set`
+- [x] Hard-fail stubs replace removed v1-compat names; `TILE_STRICT` env flag throws on capability violations
+- [x] Features admin: update/dev/publish/devtools/browse actions with allowlists; izui capability gate
+- [x] Per-table datastore scoping enforcement + context `{read, write:[entities]}` scoping
+- [x] Single-file tiles: `resident: true`, flat window fields, unified `show:false`, `showSelf`/`hideSelf` no-capability actions — hello-world, widget-demo, mcp-server converted
+- [x] `relaunchTile(tileId)` helper; delete dead `createExtensionWindow` + loadExtensionsConsolidated + stale consolidatedIds branches
+- [x] `trustedBuiltin` grant + `registerTrustedBuiltinWindow` for core-renderer pubsub broadcast
+
+Desktop - Core extraction (cmd + hud + page)
+- [x] Move cmd UI from `features/cmd/` to `app/cmd/`; add `cmd-glue.ts` for Electron plumbing, wire into startup
+- [x] Move hud UI from `features/hud/` to `app/hud/`; add `hud-glue.ts`; `peek://hud/` backcompat route
+- [x] Extract page host from `features/` to `app/core` via `page-glue.ts`
+- [x] Launch cmd / hud / page-bg with tile-preload + trustedBuiltin grant, drop `loadExtInHost`
+- [x] Merge `background.{html,js}` into single-file `index.html` core renderers
+- [x] `peek://ext/cmd/` and `peek://ext/hud/` routes map to `app/cmd/` / `app/hud/` for backcompat
+
+Desktop - Features Manager feature
+- [x] New feature — registry with persistence + CRUD, installer with builtin scan/local/sync, tile-loader bridging registry to tile launcher, feature-startup orchestrator
+- [x] Manage UI: feature cards, search, actions, update badges, policy selector, capability review modal
+- [x] Browse UI: discover features by publisher, noun browse action wired to `browse.html`
+- [x] Install from AT URI: AtprotoSource with DidDocument narrowing, capability preview, minPeekVersion enforcement, CID validation on bundle blobs, atomic install via temp dir + rename
+- [x] Publish wizard: AT Protocol publish flow with step 2 metadata UI (icon + screenshots), `space.peek.feature.release` lexicon, call lex atproto helpers directly from renderer
+- [x] Update mechanism: `compareCapabilities`, `shouldAutoUpdate`, `compareSemver`, scheduled background checks + update commands
+- [x] `features_history` table with uninstall history write; disabled/update fields in registry
+
+Desktop - Tiles pubsub + lifecycle
+- [x] Fix `URL.origin` returning null for `peek://` — broadcaster was filtering ALL v2 tile messages as self-echo
+- [x] `ensureTileIpcHandlers` at top of `initialize` so handlers register before any BrowserWindow
+- [x] Forward console messages + handle `render-process-gone` for v2 tiles (revoke token, publish `tile:crashed`)
+- [x] Tile lifecycle cleanup for shutdown, unsubscribe, unload, crash visibility
+- [x] Expose DevTools button for all tile features via `feature-devtools:open`
+- [x] Global `unhandledRejection` / `uncaughtException` handlers
+- [x] Broadcast pubsub to v2 tile BrowserWindows
+
+Desktop - Cmd panel
+- [x] Await init before publishing `ext:ready` so subscribers are ready for command batches
+- [x] Replay registered commands when cmd loads to avoid timing race
+- [x] Tab completion enters PARAM_MODE for commands with params
+- [x] Lazy event interceptors: `lazyEvents` manifest field, pre-load tiles on subscribed events
+
+Desktop - Page host
+- [x] `toggleMaximize` captures window bounds for exact restore
+- [x] Track server-side redirects via `did-redirect-navigation` to prevent blank page on 301/302
+- [x] Preserve group mode on init + during navigation (not just space mode)
+- [x] Rename groups mode from `space` to `group` (undo incomplete rename), support `groupMode` option in window-open
+
+Desktop - MCP server feature
+- [x] MCP server tile with stdio JSON-RPC transport, sqlite3 CLI database helper
+- [x] Setup script + wrapper for Claude Code MCP config registration
+- [x] Tile manifest, background tile, `mcp-server:setup` command
+
+Desktop - Other fixes
+- [x] Auto-iterate download filenames to avoid overwrite failure
+- [x] Clear `lastFocusedVisibleWindowId` on window close to prevent stale targeting
+- [x] CSP injection on all tile responses (not just successful HTML)
+- [x] `get-display-info` returns `workArea` at top level for direct invoke
+- [x] Disable bypassCSP on peek:// protocol for tile security; v2 features excluded from legacy extension loading path
+- [x] Emit `tag:created/renamed/deleted` pubsub events; publish `tag:item-added` for content hashtags, history auto-tag, sync pull, IPC handlers
+- [x] Fall back to manifest defaults when settings key not stored
+- [x] TWP translate extension vendored + registered; browser-extension options-page command registration
+- [x] Pool isolated agent workspaces with per-agent Electron profile; split clean script
+
+Desktop - Testing
+- [x] Smoke tests updated for v2 tile architecture (iframes → BrowserWindows)
+- [x] AtprotoSource + `installFromBundle` unit tests (34); updater tests for compareCapabilities / shouldAutoUpdate / compareSemver
+- [x] Deterministic waits for localsearch tests; replace `waitForTimeout` with `trigger()` for ESC child-content regression
+- [x] Tile IPC coverage for strict capability enforcement across all surfaces (window, features, context, dialogs, shortcuts, datastore, sync, oauth, session, escape)
+- [x] Exfiltration vector CSP tests; lazy event interceptor coverage
+
+## 2026-04-07
+
+Desktop - Tiles v2 architecture (initial landing)
+- [x] Tile manifest v2 schema + parser, CSP injection for tile HTML responses in protocol handler
+- [x] Tile launcher with token management + lifecycle
+- [x] Capability-scoped tile preload with token validation
+- [x] IPC capability enforcement for tile operations
+- [x] Lazy loading for tiles with command stub registration
+- [x] v1/v2 compatibility layer for incremental migration
+- [x] Migrate first features (sync, tags) to v2 tile manifest format
+- [x] Tile tests and token extraction into pure module
+
+Desktop - Docs
+- [x] Lex web app design doc
+
+## 2026-03-31
+
+No user-facing changes this week.
+
 ## 2026-03-24
 
 Desktop - Page Host
