@@ -13,7 +13,6 @@ import { pathToFileURL } from 'node:url';
 import { initDatabase, closeDatabase, getDb, getContextEntry } from './datastore.js';
 import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initHud } from './hud-glue.js';
-import { initPage } from './page-glue.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
@@ -73,10 +72,10 @@ let _sessionRestoreDone = false;
 //
 // NOTE: 'cmd', 'hud', and 'page' were removed from this list when they were
 // extracted from features/ into core app code (app/cmd/, app/hud/, app/page/).
-// cmd's registry + shortcut wiring now runs inside the core background
-// renderer (app/index.js calls initCmd() directly). hud and page still use
-// their own resident renderers (hud-glue / page-glue); those are pending
-// consolidation into core next.
+// cmd's registry + shortcut wiring and page's `open`/`modal` commands now
+// run inside the core background renderer (app/index.js calls initCmd()
+// and initPage() directly). hud still uses its own resident renderer
+// (hud-glue); pending consolidation into core next.
 const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'entities', 'scripts', 'timers', 'wonderwall'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
@@ -1074,12 +1073,11 @@ export async function loadExtensions(): Promise<number> {
   // grant) — no longer loaded as an iframe in the consolidated extension host.
   await initHud({ tilePreloadPath });
 
-  // Load page background right after hud — registers the `open` and `modal`
-  // commands. Page is core infrastructure (the canvas architecture in
-  // app/page/index.html + page.js is the primary web rendering surface).
-  // page now runs as a standalone tile renderer (tile-preload + trustedBuiltin
-  // grant) — no longer loaded as an iframe in the consolidated extension host.
-  await initPage({ tilePreloadPath });
+  // page's `open` / `modal` command registration now runs inside the
+  // core background renderer (app/index.js awaits initPage() from
+  // app/page/background.js). No separate resident window — the per-URL
+  // canvas page windows are still created on demand by the cmd
+  // handlers calling api.window.open(...).
 
   // Launch the privileged test-fixture renderer when running under
   // Playwright (E2E_TEST=true). This is the v2 replacement for the v1
