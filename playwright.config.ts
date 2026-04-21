@@ -75,22 +75,24 @@ export default defineConfig({
   // --user-data-dir (see tests/fixtures/desktop-app.ts). The single-instance
   // lock is bypassed when the profile starts with "test" (see
   // `isTestProfile()` in backend/electron/config.ts), so parallel workers
-  // don't collide on the lock. Default is 1 (both local and CI) for
-  // reliability: the parallelism payoff is minor while smoke.spec.ts is a
-  // single-file bottleneck, and concurrent Electron launches surface
-  // occasional OS-level races. Set `PEEK_TEST_WORKERS=N` to opt in to
-  // parallelism once smoke.spec.ts has been split into smaller files.
+  // don't collide on the lock. Default is 4 since smoke.spec.ts was split
+  // into one-describe-per-file (~44 files total), giving real parallelism
+  // across spec files. Override with `PEEK_TEST_WORKERS=1` to debug or
+  // on machines where 4 concurrent Electrons is too much.
   //
   // fullyParallel: false — tests within a file run serially in one worker,
-  // different files distribute across workers. We tried fullyParallel: true
-  // but OS-level cross-Electron focus/timing races under 4 parallel workers
-  // surfaced in too many scattered tests. Current choice trades raw
-  // parallelism for stability; smoke.spec.ts (the big file, ~218 tests)
-  // bottlenecks on one worker but the rest of the suite distributes freely.
-  // To recover more parallelism, the right move is to split smoke.spec.ts
-  // into smaller files rather than re-enable fullyParallel.
+  // different files distribute across workers. fullyParallel: true exposed
+  // OS-level cross-Electron focus/timing races; also conflicts with the
+  // intra-test ordering some describes rely on (e.g. Extension Lifecycle:
+  // add → update → remove). File-level parallelism is enough.
+  //
+  // Cmd-panel-keyboard-flow tests live in tests/desktop-serial/ (separate
+  // project) because they hit OS-level modal focus/blur that misbehaves
+  // when N Electron instances are competing. `yarn test:electron` runs
+  // the desktop project at PEEK_TEST_WORKERS, then runs desktop-serial
+  // afterward at --workers=1.
   fullyParallel: false,
-  workers: parseInt(process.env.PEEK_TEST_WORKERS || '1'),
+  workers: parseInt(process.env.PEEK_TEST_WORKERS || '4'),
 
   // CI settings
   forbidOnly: !!process.env.CI,
