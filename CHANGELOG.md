@@ -13,6 +13,56 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-04-20
+
+Desktop - Core consolidation
+- [x] Merge cmd + page + hud resident renderers into the core background renderer — `app/index.js` now awaits `initCmd()`, `initPage()`, `initHud()`; `cmd-glue.ts`, `page-glue.ts`, `hud-glue.ts` and the three resident shim HTMLs deleted
+- [x] Fix `ext:all-loaded` subscribe-after-publish race that was silently dropping 26 core commands (quit/restart/back/forward/reload/settings/theme-* etc) on cold start — registry now grows 72→96
+- [x] Fix Electron 40 `console-message` forwarder — event `level` is a string literal in E40, not an int, so the numeric filter dropped all renderer output
+- [x] Move macOS did-become-active / did-resign-active overlay-hide/show handlers inline into `main.ts` (no longer owned by hud-glue)
+- [x] Remove unused helpdocs feature
+
+Desktop - Tile preload migration (Phase 3.11)
+- [x] Delete `preload.js` — cmd panel, chain-editor, canvas page host, settings, HUD overlay + widgets, datastore viewer, navigator, session, diagnostic all migrated to `tile-preload.cjs`
+- [x] Delete legacy `extensionHostWindow` + host HTML + v1 branch of the extension broadcaster (Phase 3.10)
+- [x] Delete `IPC_CHANNELS` const + 6 dead `ipcMain.on` handlers (Phase 3.11c)
+- [x] Strict shims for `tile:theme:*`, `tile:extensions:*`, `tile:chrome-extensions:*`, `tile:window:opener-*`, `tile:features:settings-schema`, `tile:window:get-id`, `tile:log:write`, `tile:app:quit/restart`, `tile:backup/shell/app` — all trustedBuiltin-gated
+- [x] Flip datastore, app-control, theme, extension-*, opener-*, features-schema, get-window-id to strict + delete legacy (Phase 3.6 sweep)
+- [x] Migrate 6 features to the v2 settings API, fix datastore `tableName` param mismatch
+- [x] Route `about:blank` and cmd panel / chain-editor through tile-preload (Cat 4 IZUI fix)
+
+Desktop - Feature tile conversions
+- [x] Collapse groups, tag-actions, lex, entities, websearch into single-tile resident form — drop cross-window pubsub round-trips
+- [x] Migrate callers from legacy `peek://ext/{id}` to v2 `peek://{id}` — plus test-URL sweep
+
+Desktop - Pubsub + tile-preload
+- [x] Auto-initialize `tile-preload` at module load — remove the call-order trap
+- [x] Register v2 window-entries opened via `api.window.open` with the tile broadcaster (they weren't being forwarded global publishes)
+- [x] Broadcaster now reaches webview guests (peek:// URLs), not just BrowserWindows
+- [x] Echo-prevention compares full URL, not just peek host — fixes sibling-window dropped pubsub inside the same feature
+- [x] HUD widget init: `initialize()` calls, `getExtKey` shape fix
+- [x] `tile-preload` getBounds / getDisplayInfo / setBounds + unwrap `getWindowId` result
+
+Desktop - Testing
+- [x] Split `smoke.spec.ts` (2000+ lines, 29 describes) into one-file-per-describe for parallelism
+- [x] Add `desktop-serial` Playwright project (workers: 1) for OS-integration-fragile tests
+- [x] Per-describe Electron isolation via `createPerDescribeApp()` — kills cross-test state leaks
+- [x] Disable cmd-panel close-on-blur + showSelf `window.show` under headless
+- [x] Test module-health check — detects silent module-halt regressions from api drift
+- [x] Deterministic `window:opened`-event wait in external-url test (no more 500ms sleep)
+- [x] Fix tag-widget page-widget flake: per-test URL + key, gate on `__pageModuleReady`, poll for quit/restart registration
+- [x] Rewrite cmd chain tests around canonical OUTPUT_SELECTION → CHAIN_MODE flow
+- [x] Delete v1 `api.commands.flush` batching tests (no-op in v2)
+
+Desktop - Other fixes
+- [x] Register `will-download` handler on webview guest session — fixes download-popup not being cleaned up
+- [x] Preserve window size during drag-out-of-maximize in page host
+- [x] Page widget updates reactively for tag events
+- [x] Restore minimal `cmd:register-batch` publish + merge-preserve pattern in cmd resident
+- [x] setWindowColorScheme window resolution in headless (Cat 3 theme fix)
+- [x] ELECTRON_RUN_AS_NODE import compat for schema codegen
+- [x] atproto signature-verification plan written (implementation pending)
+
 ## 2026-03-24
 
 Desktop - Page Host

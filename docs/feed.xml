@@ -4,9 +4,62 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Wed, 25 Mar 2026 14:42:00 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 21 Apr 2026 17:12:51 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2026-04-20</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-20</link>
+      <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-04-20</guid>
+      <pubDate>Mon, 20 Apr 2026 12:00:00 GMT</pubDate>
+      <description>Desktop - Core consolidation
+- Merge cmd + page + hud resident renderers into the core background renderer — app/index.js now awaits initCmd(), initPage(), initHud(); cmd-glue.ts, page-glue.ts, hud-glue.ts and the three resident shim HTMLs deleted
+- Fix ext:all-loaded subscribe-after-publish race that was silently dropping 26 core commands (quit/restart/back/forward/reload/settings/theme-* etc) on cold start — registry now grows 72→96
+- Fix Electron 40 console-message forwarder — event level is a string literal in E40, not an int, so the numeric filter dropped all renderer output
+- Move macOS did-become-active / did-resign-active overlay-hide/show handlers inline into main.ts (no longer owned by hud-glue)
+- Remove unused helpdocs feature
+
+Desktop - Tile preload migration (Phase 3.11)
+- Delete preload.js — cmd panel, chain-editor, canvas page host, settings, HUD overlay + widgets, datastore viewer, navigator, session, diagnostic all migrated to tile-preload.cjs
+- Delete legacy extensionHostWindow + host HTML + v1 branch of the extension broadcaster (Phase 3.10)
+- Delete IPC_CHANNELS const + 6 dead ipcMain.on handlers (Phase 3.11c)
+- Strict shims for tile:theme:, tile:extensions:, tile:chrome-extensions:, tile:window:opener-, tile:features:settings-schema, tile:window:get-id, tile:log:write, tile:app:quit/restart, tile:backup/shell/app — all trustedBuiltin-gated
+- Flip datastore, app-control, theme, extension-, opener-, features-schema, get-window-id to strict + delete legacy (Phase 3.6 sweep)
+- Migrate 6 features to the v2 settings API, fix datastore tableName param mismatch
+- Route about:blank and cmd panel / chain-editor through tile-preload (Cat 4 IZUI fix)
+
+Desktop - Feature tile conversions
+- Collapse groups, tag-actions, lex, entities, websearch into single-tile resident form — drop cross-window pubsub round-trips
+- Migrate callers from legacy peek://ext/{id} to v2 peek://{id} — plus test-URL sweep
+
+Desktop - Pubsub + tile-preload
+- Auto-initialize tile-preload at module load — remove the call-order trap
+- Register v2 window-entries opened via api.window.open with the tile broadcaster (they weren&apos;t being forwarded global publishes)
+- Broadcaster now reaches webview guests (peek:// URLs), not just BrowserWindows
+- Echo-prevention compares full URL, not just peek host — fixes sibling-window dropped pubsub inside the same feature
+- HUD widget init: initialize() calls, getExtKey shape fix
+- tile-preload getBounds / getDisplayInfo / setBounds + unwrap getWindowId result
+
+Desktop - Testing
+- Split smoke.spec.ts (2000+ lines, 29 describes) into one-file-per-describe for parallelism
+- Add desktop-serial Playwright project (workers: 1) for OS-integration-fragile tests
+- Per-describe Electron isolation via createPerDescribeApp() — kills cross-test state leaks
+- Disable cmd-panel close-on-blur + showSelf window.show under headless
+- Test module-health check — detects silent module-halt regressions from api drift
+- Deterministic window:opened-event wait in external-url test (no more 500ms sleep)
+- Fix tag-widget page-widget flake: per-test URL + key, gate on __pageModuleReady, poll for quit/restart registration
+- Rewrite cmd chain tests around canonical OUTPUT_SELECTION → CHAIN_MODE flow
+- Delete v1 api.commands.flush batching tests (no-op in v2)
+
+Desktop - Other fixes
+- Register will-download handler on webview guest session — fixes download-popup not being cleaned up
+- Preserve window size during drag-out-of-maximize in page host
+- Page widget updates reactively for tag events
+- Restore minimal cmd:register-batch publish + merge-preserve pattern in cmd resident
+- setWindowColorScheme window resolution in headless (Cat 3 theme fix)
+- ELECTRON_RUN_AS_NODE import compat for schema codegen
+- atproto signature-verification plan written (implementation pending)</description>
+    </item>
     <item>
       <title>2026-03-24</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-03-24</link>
