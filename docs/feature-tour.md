@@ -674,17 +674,6 @@ A comprehensive guide to every feature in Peek, the desktop web user agent. Peek
 7. **Create Record** -- search for a lexicon, select it, and fill in an auto-generated form based on the schema. Toggle to "Raw JSON" mode for full control. Supports blob uploads for image fields.
 8. Successfully created record types appear as sidebar shortcuts under the navigation. Click to jump back, or [x] to remove.
 
-### Help Docs (Easter Egg)
-
-**Summary:** A hidden documentation overlay that shows animated help hints from screen edges. Disguised as "Help docs" in the extension system. Disabled by default.
-
-**Where in UI:** Command palette.
-
-**How to try it:**
-1. Type `help docs` in the command palette.
-2. A fullscreen transparent, click-through overlay appears with animated documentation hints.
-3. Type `help docs` again to toggle it off.
-
 ### Example Gallery
 
 **Summary:** A demonstration extension showcasing the Peek API -- feature detection, image handling, and storage patterns. Useful for developers building extensions.
@@ -795,7 +784,6 @@ All commands accessible from `Option+Space` or `Cmd+K`:
 | `pagestream` | Open browsing history stream |
 | `Sync now` | Trigger manual sync |
 | `hud` | Toggle HUD overlay |
-| `help docs` | Toggle help docs overlay |
 | `devtools` | Open DevTools for active window |
 | `debug <url>` | Open URL with DevTools enabled |
 | `open file` | Open a text file from disk |

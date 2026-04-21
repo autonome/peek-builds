@@ -104,7 +104,6 @@ Columns:
 | groups | restore group | execute | lazy | works |
 | groups | pin | execute | lazy | works |
 | groups | unpin | execute | lazy | works |
-| helpdocs | help docs | execute | lazy | works |
 | lex | lexicon studio | window | lazy | works — needs tile:window:open fix + settings.getKey |
 | lex | lex | execute | lazy | works |
 | lists | lists | execute | lazy | works |

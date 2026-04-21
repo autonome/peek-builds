@@ -76,7 +76,7 @@ let _sessionRestoreDone = false;
 // extracted from features/ into core app code (app/cmd/, app/hud/, app/page/).
 // They're now loaded via initCmd() / initHud() / initPage() from their
 // respective glue files, which run before feature loading.
-const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'helpdocs', 'entities', 'scripts', 'timers', 'wonderwall'];
+const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'entities', 'scripts', 'timers', 'wonderwall'];
 
 // Extensions that must load eagerly (not lazy) — needed at startup
 const EAGER_EXTENSION_IDS = new Set(['entities']);
