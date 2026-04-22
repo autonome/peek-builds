@@ -319,6 +319,28 @@ const createTableStatements = `
   );
   CREATE INDEX IF NOT EXISTS idx_features_history_feature ON features_history(featureId);
   CREATE INDEX IF NOT EXISTS idx_features_history_time ON features_history(timestamp DESC);
+
+  -- manifest_cache: parsed manifest declarations per installed feature.
+  -- Authoritative source for static declarations (commands, nouns,
+  -- shortcuts, lazyEvents, capability grant) that cmd panel / shortcut
+  -- registry / lazyEvents interceptor read at boot. Writes happen only
+  -- at install/update time + boot-time manifest discovery. Distinct
+  -- from registry.json (install metadata) — see
+  -- backend/electron/feature-registry.ts for that.
+  -- See docs/tile-lifecycle-fsm.md.
+  CREATE TABLE IF NOT EXISTS manifest_cache (
+    featureId TEXT PRIMARY KEY,
+    version TEXT NOT NULL,
+    manifest TEXT NOT NULL,         -- parsed manifest JSON
+    commands TEXT,                  -- JSON array of declared commands
+    nouns TEXT,                     -- JSON array of declared nouns (metadata only; handlers live in tile)
+    shortcuts TEXT,                 -- JSON array of shortcut bindings
+    capabilities TEXT,              -- resolved capability grant JSON
+    lazyEvents TEXT,                -- JSON array of {topic, command} entries
+    updatedAt INTEGER NOT NULL,
+    disabledAt INTEGER              -- null = enabled
+  );
+  CREATE INDEX IF NOT EXISTS idx_manifest_cache_disabled ON manifest_cache(disabledAt);
 `;
 
 // Module state
