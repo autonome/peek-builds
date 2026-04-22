@@ -8,6 +8,18 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 ---
 
+## Current priority (drop everything)
+
+- [ ] **Message-passing / pubsub state machine.** Cmd dispatch + pubsub + tile lifecycle have too many intersecting paths; Phase E/F surfaced three different manifestations of the same class of bug (see below). Write a formal state machine describing every legal transition: who can publish what topic from what source in what tile-state, who can subscribe to what, how results return, how lazy tiles mount. Runtime enforcement + bisectable tests derive from the machine. Goal: the "lost publish somewhere in the fabric" class of bug becomes impossible — if a message is dropped, the machine tells us exactly which transition was invalid. Explicit user directive 2026-04-23: "we're going to drop everything and write a state machine for the message passing and pubsub, so never have to worry about this again." Pre-requisite for tasks below.
+
+- [ ] **Root-cause: only hello-world commands visible in cmd panel.** After Phases E/F, only hello-world's commands (`hello`, "hello world trace") appear in the cmd panel. Every other lazy tile's commands — tag, untag, kagi, google, ddg, lists, peeks, slides, and dozens more — are missing. Agent hypothesis: Phase E's `registerLazyTile()` publishes `cmd:register-batch` at boot before the cmd panel's core/background subscription lands. Do NOT band-aid; fix this only after the state machine is in place so the fix comes from the right abstraction. Manual test case: `yarn start`, open cmd panel, type a few characters, should see many matches — currently only sees hello-world's.
+
+- [ ] **Consolidate command-result paths into one.** Two paths exist today: (A) `tile:command:result` IPC from tile-preload's `api.commands.register` wrapper → main-process unrestricted `publish()`; (B) handlers that manually `tile:pubsub:publish` to `cmd:execute:X:result:...`. This duality is why the Phase E bug hid for so long — pre-Phase-E tests only exercised path (A), which bypassed the capability allowlist; path (B) was silently rejected until the 2026-04-23 fix (`tolwnovr f32063db`). Collapse to one (probably A). Pre-req: state machine task above.
+
+- [ ] **UI-level tests for cmd-panel repeat invocation.** The 2026-04-23 repro (`tests/desktop/cmd-execute-twice.spec.ts`) fires on the pubsub bus directly and passes 3/3. Manual testing caught a 3rd-invocation stall that the bus test misses — the difference must be panel UI state (`state.executionTimeout`, `urlSearchTimer`, subscription lifetime in `ensureCmdRequestRegistersListener`) leaking across repeats. Add Playwright tests that drive Cmd+K → type → Enter 3-5x in a row and assert panel closes + no spinner.
+
+---
+
 ## Tile architecture cleanup (post-conversion)
 
 - [ ] **Merge websearch's separate background tile into the home window.** Manifest has two tile entries: `background.html` (lazy:true) for settings/engine state, `home.html` for the UI. They communicate via pubsub round-trips (`websearch:engine-request` → `websearch:engines-list`) across `peek://ext/websearch/background.html` vs `peek://websearch/home.html`. Cross-window pubsub within one feature is fragile (see 2026-04-20 session — broadcaster echo-prevention bug + cluster 3 regression risk). The round-trip also blocks 3 websearch tests from passing. With the single-file tiles model shipping (`resident: true`), websearch can collapse to one tile whose home window owns both UI and engine state directly. No IPC needed. Applies also to any feature tile with a bg + window pair that pubsubs between itself — audit other candidates.
