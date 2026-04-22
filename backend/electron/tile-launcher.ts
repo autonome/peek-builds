@@ -48,6 +48,7 @@ import { scopes, publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
 import { DEBUG, getTilePreloadPath } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getExtensionPath } from './protocol.js';
+import * as tileLifecycle from './tile-lifecycle.js';
 
 // Config hooks for values sourced from electron-heavy modules
 // (session-partition, windows) that we can't safely import at top
@@ -189,6 +190,15 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   } = spec;
   const publishCrashEvent = spec.publishCrashEvent ?? (manifest !== undefined);
 
+  // FSM: REGISTERED → LOADING. The transition is best-effort — for
+  // trustedBuiltin callers that never ran through the feature
+  // registry (hud-glue, cmd-glue, etc.) the entry starts in
+  // UNREGISTERED and this call is rejected. That's fine; the FSM is
+  // only authoritative for v2 feature tiles today, and a silent
+  // rejection on trustedBuiltin entries doesn't harm drift detection.
+  tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.LOAD,
+    { source: 'createTileBrowserWindow' });
+
   // Hints from the manifest entry (windowHints + flat fields on the
   // entry itself, which we treat as shorthand for the same thing).
   let hints: Partial<TileEntry['windowHints']> & Partial<TileEntry> = {};
@@ -281,6 +291,8 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     console.error(
       `[tile:${tileId}:${entryId}] Render process gone: ${details.reason} (exitCode=${details.exitCode})`
     );
+    tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.RENDER_GONE,
+      { reason: details.reason, exitCode: details.exitCode });
     tileWindows.delete(key);
     readyTiles.delete(key);
     revokeToken(token);
@@ -303,7 +315,18 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   });
 
   // Normal close: same cleanup as crash, minus the crash broadcast.
+  //
+  // FSM: drive the entry back toward `registered`. From a ready/visible/
+  // loading state the correct sequence is SHUTDOWN → UNLOADING →
+  // CLEANUP_KEEP → REGISTERED. Each step is best-effort; if it's already
+  // UNREGISTERED (trustedBuiltin callers, uninstall races), the FSM
+  // silently rejects and we continue with the resource cleanup below.
   win.on('closed', () => {
+    const curState = tileLifecycle.getState(tileId, entryId);
+    if (curState !== tileLifecycle.STATES.UNREGISTERED && curState !== tileLifecycle.STATES.CRASHED) {
+      tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.SHUTDOWN, { source: 'window-closed' });
+      tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.CLEANUP_KEEP, { source: 'window-closed' });
+    }
     tileWindows.delete(key);
     readyTiles.delete(key);
     revokeToken(token);
@@ -395,6 +418,12 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
 export function signalTileReady(tileId: string, entryId: string): void {
   const key = `${tileId}:${entryId}`;
   readyTiles.add(key);
+
+  // FSM: LOADING → READY. Silent no-op for entries that aren't in
+  // LOADING (e.g. trustedBuiltin callers that never transitioned
+  // through the feature registry).
+  tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.TILE_READY,
+    { source: 'signalTileReady' });
 
   // Resolve any pending callbacks
   const callbacks = readyCallbacks.get(key);

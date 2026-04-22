@@ -17,6 +17,7 @@ import { syncBuiltinFeatures } from './feature-installer.js';
 import { loadFeaturesFromRegistry, type TileLoaderConfig, type FeatureLoadResult } from './tile-loader.js';
 import { AtprotoSource } from './atproto-source.js';
 import * as manifestCache from './manifest-cache.js';
+import * as tileLifecycle from './tile-lifecycle.js';
 import { isEphemeralProfile } from './config.js';
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -90,6 +91,32 @@ function upsertManifestCacheForEntry(entry: FeatureRegistryEntry): void {
   }
 }
 
+// ─── tile-lifecycle bridge ──────────────────────────────────────────
+
+/**
+ * Drive the tile-lifecycle FSM for every entry declared by a feature.
+ * Each entry gets its own transition — the FSM is per-entry (a feature
+ * with a background + a window entry has two independent lifecycles).
+ * Called from the registry listener on install and from the seed pass
+ * at boot so the FSM state map matches on-disk reality.
+ *
+ * `trigger` should be whatever the caller intends — `INSTALL` when a
+ * feature arrives, a cleanup trigger on uninstall. If a transition is
+ * invalid from the current state (e.g. INSTALL when the entry is
+ * already REGISTERED), the call is a silent no-op; the FSM rejects it.
+ */
+function fireFsmTriggerForFeature(entry: FeatureRegistryEntry, trigger: string): void {
+  const row = manifestCache.get(entry.id);
+  if (!row || !row.manifest || !Array.isArray(row.manifest.tiles)) return;
+  for (const tileEntry of row.manifest.tiles) {
+    try {
+      tileLifecycle.transition(entry.id, tileEntry.id, trigger, { source: 'feature-startup' });
+    } catch (err) {
+      console.warn(`[feature-startup] FSM ${trigger} failed for ${entry.id}:${tileEntry.id}:`, err);
+    }
+  }
+}
+
 // ─── Startup ────────────────────────────────────────────────────────
 
 /**
@@ -114,8 +141,26 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
   // from the Features pane — keeps the cache in step without each
   // caller having to know the cache exists.
   registry.addListener({
-    onRegister: upsertManifestCacheForEntry,
+    onRegister: (entry) => {
+      // Cache must land first — the FSM transition reads the cached
+      // manifest to enumerate tile entries.
+      upsertManifestCacheForEntry(entry);
+      fireFsmTriggerForFeature(entry, tileLifecycle.TRIGGERS.INSTALL);
+    },
     onUnregister: (id) => {
+      // Transition first while the cache row still exists (the FSM
+      // callback enumerates tile entries from it), then remove.
+      const cached = manifestCache.get(id);
+      if (cached && cached.manifest && Array.isArray(cached.manifest.tiles)) {
+        for (const tileEntry of cached.manifest.tiles) {
+          try {
+            tileLifecycle.transition(id, tileEntry.id, tileLifecycle.TRIGGERS.UNINSTALL,
+              { source: 'feature-startup' });
+          } catch (err) {
+            console.warn(`[feature-startup] FSM UNINSTALL failed for ${id}:${tileEntry.id}:`, err);
+          }
+        }
+      }
       try { manifestCache.remove(id); }
       catch (err) { console.warn(`[feature-startup] manifest-cache remove failed for ${id}:`, err); }
     },
@@ -143,6 +188,8 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
   // entries never fired the onRegister listener — we have to walk them
   // manually. Runs before sync so the sync's own registerFeature calls
   // (for updated paths / removed builtins) simply refresh on top.
+  // Also drives the tile-lifecycle FSM to the initial REGISTERED state
+  // so dispatch-drift checks see a correct baseline.
   for (const entry of registry.listFeatures()) {
     upsertManifestCacheForEntry(entry);
     if (entry.disabled) {
@@ -151,6 +198,7 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
         // Already warned by the upsert path if anything went wrong.
       }
     }
+    fireFsmTriggerForFeature(entry, tileLifecycle.TRIGGERS.INSTALL);
   }
 
   // 2. Sync builtins

@@ -39,7 +39,8 @@ import {
   type TileLaunchResult,
 } from './tile-launcher.js';
 import { type TileManifestV2, type TileCommand } from './tile-manifest.js';
-import { DEBUG } from './config.js';
+import { DEBUG, isDevProfile } from './config.js';
+import * as tileLifecycle from './tile-lifecycle.js';
 
 // ─── Launcher Injection (for testability) ───────────────────────────
 
@@ -228,6 +229,19 @@ async function handleCommandDispatch(
 
   const { tileId, cmd } = match;
 
+  // Drift check: the owning tile's background entry should be in a
+  // predictable state at dispatch time — either REGISTERED (we're
+  // about to load it), LOADING (someone else already is), READY /
+  // VISIBLE (handler is live), or UNREGISTERED (for trustedBuiltin
+  // tiles whose FSM we don't drive). Anything else (UNLOADING,
+  // CRASHED) means something upstream got out of sync with policy.
+  // Dev profile surfaces loudly; prod stays quiet (the hook still
+  // proceeds — it's a diagnostic, not a blocker).
+  const bgEntry = getBackgroundEntry(tileId);
+  if (bgEntry) {
+    assertDispatchFsmState(tileId, bgEntry, `cmd:execute:${name}`);
+  }
+
   // Declarative `type: 'window'` commands: the main process opens the
   // window directly. No handler on the tile side; the cmd:execute
   // publish would go nowhere. Short-circuit: publish window-open,
@@ -272,12 +286,44 @@ async function handleLazyEventDispatch(topic: string): Promise<PrePublishHookRes
     // hook run). Just proceed.
     return 'continue';
   }
+  const bgEntry = getBackgroundEntry(owner.tileId);
+  if (bgEntry) {
+    assertDispatchFsmState(owner.tileId, bgEntry, `lazyEvent:${topic}`);
+  }
   try {
     await ensureTileLoaded(owner.tileId);
   } catch (err) {
     console.error(`[tile-lazy] Failed to load tile ${owner.tileId} for lazyEvent ${topic}:`, err);
   }
   return 'continue';
+}
+
+/**
+ * Dev-mode drift check at dispatch entry. Logs loudly under
+ * `isDevProfile()` when a tile is in a state the FSM says shouldn't
+ * accept dispatch (UNLOADING / CRASHED). Never blocks delivery — this
+ * is a diagnostic to catch wiring bugs, not a policy enforcer.
+ *
+ * Accepted states: UNREGISTERED (trustedBuiltin callers skip the FSM),
+ * REGISTERED (normal lazy case), LOADING (concurrent dispatch),
+ * READY / VISIBLE (hot path).
+ */
+function assertDispatchFsmState(tileId: string, entryId: string, label: string): void {
+  if (!isDevProfile()) return;
+  const state = tileLifecycle.getState(tileId, entryId);
+  const ok =
+    state === tileLifecycle.STATES.UNREGISTERED ||
+    state === tileLifecycle.STATES.REGISTERED ||
+    state === tileLifecycle.STATES.LOADING ||
+    state === tileLifecycle.STATES.READY ||
+    state === tileLifecycle.STATES.VISIBLE;
+  if (!ok) {
+    console.warn(
+      `[tile-lazy] DRIFT: dispatch to ${tileId}:${entryId} (${label}) while FSM is "${state}" — ` +
+      'expected unregistered/registered/loading/ready/visible. ' +
+      'Something bypassed the lifecycle wiring.',
+    );
+  }
 }
 
 // ─── Load orchestration ─────────────────────────────────────────────
