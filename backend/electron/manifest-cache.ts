@@ -27,9 +27,6 @@
  * See docs/tile-lifecycle-fsm.md.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { getDb } from './datastore.js';
 import { parseManifestFile, resolveCapabilities } from './tile-manifest.js';
 import type { TileManifestV2, CapabilityGrant } from './tile-manifest.js';
@@ -363,30 +360,7 @@ function extractLazyEvents(manifest: TileManifestV2): Array<{ topic: string; com
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Boot-time discovery (stub — wiring lands in Phase B)
-// ---------------------------------------------------------------------------
-
-/**
- * Discover builtin feature manifests on disk and upsert each into the
- * cache. Call once at startup after `initDatabase()`. Idempotent.
- *
- * Stub body for Phase A — returns the list of featureIds it would
- * upsert without actually writing. Phase B replaces the no-op with a
- * real upsert and handles parse errors (skip + log, don't abort).
- */
-export function discoverAndUpsertBuiltins(builtinFeaturesDir: string): string[] {
-  const seen: string[] = [];
-  if (!fs.existsSync(builtinFeaturesDir)) return seen;
-
-  for (const entry of fs.readdirSync(builtinFeaturesDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const manifestPath = path.join(builtinFeaturesDir, entry.name, 'manifest.json');
-    if (!fs.existsSync(manifestPath)) continue;
-    seen.push(entry.name);
-    // Intentionally not writing in Phase A — scaffold only.
-    // Phase B replaces this with: upsertFromManifest(entry.name, manifestPath);
-  }
-
-  return seen;
-}
+// Boot-time discovery lives in `feature-startup.ts` — it subscribes to
+// the registry's mutation listener and walks the loaded registry at
+// startup, so every install/uninstall/disable path automatically keeps
+// the cache in step without this module having to re-scan the disk.

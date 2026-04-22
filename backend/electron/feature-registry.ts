@@ -63,6 +63,20 @@ interface RegistryData {
   features: Record<string, FeatureRegistryEntry>;
 }
 
+/**
+ * Listener for registry mutations. Used by side-effectful subsystems
+ * (manifest-cache, drift detectors) that need to react to install /
+ * uninstall / disable changes without every caller having to know
+ * about them. Subscribers opt in from a single wire-up point
+ * (`feature-startup.ts`) so feature-installer and tile-ipc callers
+ * stay unchanged.
+ */
+export interface FeatureRegistryListener {
+  onRegister?: (entry: FeatureRegistryEntry) => void;
+  onUnregister?: (id: string) => void;
+  onDisableChange?: (id: string, disabled: boolean) => void;
+}
+
 // ─── Registry Class ─────────────────────────────────────────────────
 
 /**
@@ -75,10 +89,48 @@ export class FeatureRegistry {
   private dataDir: string;
   private data: RegistryData;
   private dirty = false;
+  private listeners: FeatureRegistryListener[] = [];
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
     this.data = { version: 1, features: {} };
+  }
+
+  /**
+   * Subscribe to registry mutations. Returns an unsubscribe function.
+   * Listeners are invoked synchronously after the in-memory mutation;
+   * listener exceptions are caught so one broken subscriber can't
+   * destabilize the registry.
+   */
+  addListener(listener: FeatureRegistryListener): () => void {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== listener);
+    };
+  }
+
+  private emitRegister(entry: FeatureRegistryEntry): void {
+    for (const l of this.listeners) {
+      if (!l.onRegister) continue;
+      try { l.onRegister(entry); }
+      catch (err) { console.warn('[feature-registry] onRegister listener failed:', err); }
+    }
+  }
+
+  private emitUnregister(id: string): void {
+    for (const l of this.listeners) {
+      if (!l.onUnregister) continue;
+      try { l.onUnregister(id); }
+      catch (err) { console.warn('[feature-registry] onUnregister listener failed:', err); }
+    }
+  }
+
+  private emitDisableChange(id: string, disabled: boolean): void {
+    for (const l of this.listeners) {
+      if (!l.onDisableChange) continue;
+      try { l.onDisableChange(id, disabled); }
+      catch (err) { console.warn('[feature-registry] onDisableChange listener failed:', err); }
+    }
   }
 
   // ─── Path Helpers ───────────────────────────────────────────────
@@ -171,6 +223,7 @@ export class FeatureRegistry {
     }
     this.data.features[entry.id] = entry;
     this.dirty = true;
+    this.emitRegister(entry);
   }
 
   /**
@@ -181,6 +234,7 @@ export class FeatureRegistry {
     if (this.data.features[id]) {
       delete this.data.features[id];
       this.dirty = true;
+      this.emitUnregister(id);
       return true;
     }
     return false;
@@ -194,6 +248,7 @@ export class FeatureRegistry {
     if (!entry) return false;
     entry.disabled = true;
     this.dirty = true;
+    this.emitDisableChange(id, true);
     return true;
   }
 
@@ -205,6 +260,7 @@ export class FeatureRegistry {
     if (!entry) return false;
     entry.disabled = false;
     this.dirty = true;
+    this.emitDisableChange(id, false);
     return true;
   }
 

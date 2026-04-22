@@ -12,10 +12,12 @@
 
 import path from 'node:path';
 
-import { FeatureRegistry } from './feature-registry.js';
+import { FeatureRegistry, type FeatureRegistryEntry } from './feature-registry.js';
 import { syncBuiltinFeatures } from './feature-installer.js';
 import { loadFeaturesFromRegistry, type TileLoaderConfig, type FeatureLoadResult } from './tile-loader.js';
 import { AtprotoSource } from './atproto-source.js';
+import * as manifestCache from './manifest-cache.js';
+import { isEphemeralProfile } from './config.js';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -71,6 +73,23 @@ export function getAtprotoSource(): AtprotoSource | null {
   return _atprotoSource;
 }
 
+// ─── manifest-cache bridge ──────────────────────────────────────────
+
+/**
+ * Upsert a registry entry's manifest into the cache. Reads the
+ * manifest from `<entry.path>/manifest.json`. Swallows parse / write
+ * errors with a warning — a feature with an unreadable manifest
+ * shouldn't bring down startup or every subsequent registry mutation.
+ */
+function upsertManifestCacheForEntry(entry: FeatureRegistryEntry): void {
+  try {
+    const manifestPath = path.join(entry.path, 'manifest.json');
+    manifestCache.upsertFromManifest(entry.id, manifestPath);
+  } catch (err) {
+    console.warn(`[feature-startup] manifest-cache upsert failed for ${entry.id}:`, err);
+  }
+}
+
 // ─── Startup ────────────────────────────────────────────────────────
 
 /**
@@ -88,6 +107,51 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
   // Store singleton references for IPC handlers
   _registry = registry;
   _atprotoSource = new AtprotoSource({ peekVersion: config.peekVersion });
+
+  // Wire manifest-cache to registry mutations. Every subsequent
+  // registerFeature / unregisterFeature / (dis|en)ableFeature call —
+  // from syncBuiltinFeatures below, from tile-ipc install handlers,
+  // from the Features pane — keeps the cache in step without each
+  // caller having to know the cache exists.
+  registry.addListener({
+    onRegister: upsertManifestCacheForEntry,
+    onUnregister: (id) => {
+      try { manifestCache.remove(id); }
+      catch (err) { console.warn(`[feature-startup] manifest-cache remove failed for ${id}:`, err); }
+    },
+    onDisableChange: (id, disabled) => {
+      try { manifestCache.setDisabled(id, disabled); }
+      catch (err) { console.warn(`[feature-startup] manifest-cache setDisabled failed for ${id}:`, err); }
+    },
+  });
+
+  // Ephemeral profiles (dev, test-*, tmp-*) start with an empty cache
+  // each boot — the on-disk copy is throwaway and the subsequent
+  // loadRegistry + sync will repopulate it from the current state of
+  // the features dir. Production profiles preserve the cache across
+  // boots; upserts below are idempotent so any drift heals itself.
+  if (isEphemeralProfile()) {
+    try {
+      manifestCache.clearAll();
+    } catch (err) {
+      console.warn('[feature-startup] manifest-cache clearAll failed:', err);
+    }
+  }
+
+  // Seed the cache from the just-loaded registry. loadRegistry() sets
+  // the in-memory map directly (no registerFeature calls), so its
+  // entries never fired the onRegister listener — we have to walk them
+  // manually. Runs before sync so the sync's own registerFeature calls
+  // (for updated paths / removed builtins) simply refresh on top.
+  for (const entry of registry.listFeatures()) {
+    upsertManifestCacheForEntry(entry);
+    if (entry.disabled) {
+      try { manifestCache.setDisabled(entry.id, true); }
+      catch {
+        // Already warned by the upsert path if anything went wrong.
+      }
+    }
+  }
 
   // 2. Sync builtins
   const sync = syncBuiltinFeatures(config.builtinFeaturesDir, registry);
