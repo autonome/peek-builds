@@ -18,12 +18,13 @@ import path from 'node:path';
 import { FeatureRegistry, type FeatureRegistryEntry } from './feature-registry.js';
 import {
   parseManifestFile,
-  detectManifestVersion,
   type TileManifestV2,
   type ParsedManifest,
 } from './tile-manifest.js';
 import { type AnnotatedExtension, loadV2Tile, type TileCompatConfig } from './tile-compat.js';
 import { type ExtensionManifest } from './extensions.js';
+import * as manifestCache from './manifest-cache.js';
+import { DEBUG } from './config.js';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -78,6 +79,40 @@ export function loadFeaturesFromRegistry(
 }
 
 /**
+ * Resolve a feature's manifest, preferring manifest_cache over disk.
+ *
+ * Phase C: the cache is the authoritative source. Disk fallback covers
+ * two legitimate cases — v1 manifests (which the cache deliberately
+ * doesn't store) and cache drift (e.g. ephemeral profile whose cache
+ * was cleared mid-session between registry seed and feature load).
+ *
+ * Returning `null` means both paths failed; caller surfaces an error.
+ */
+function loadParsedManifest(
+  entry: FeatureRegistryEntry,
+  manifestPath: string,
+): ParsedManifest | null {
+  try {
+    const cached = manifestCache.get(entry.id);
+    if (cached && cached.manifest) {
+      // The cache stores the full parsed v2 manifest JSON; it IS both
+      // the validated `v2` view and the `raw` view as far as downstream
+      // consumers care (they only touch v2 fields when version is 'v2').
+      return {
+        version: 'v2',
+        v2: cached.manifest,
+        raw: cached.manifest as unknown as Record<string, unknown>,
+      };
+    }
+  } catch (err) {
+    DEBUG && console.warn(`[tile-loader] manifest-cache read failed for ${entry.id}, falling back to disk:`, err);
+  }
+
+  if (!fs.existsSync(manifestPath)) return null;
+  return parseManifestFile(manifestPath);
+}
+
+/**
  * Load a single feature from a registry entry
  */
 function loadSingleFeature(
@@ -96,24 +131,19 @@ function loadSingleFeature(
 
   const manifestPath = path.join(entry.path, 'manifest.json');
 
-  // Check the feature directory still exists
-  if (!fs.existsSync(manifestPath)) {
-    return {
-      id: entry.id,
-      loaded: false,
-      manifestVersion: 'v2',
-      error: `Manifest not found at ${manifestPath}`,
-    };
-  }
-
-  // Parse manifest
-  const parsed = parseManifestFile(manifestPath);
+  // Cache-first read. feature-startup seeds manifest_cache from the
+  // registry at boot (Phase B), so every v2 feature that went through
+  // the installer is here. A miss means either a v1 feature (not
+  // cached — we don't extract v1 decls) or drift (cache cleared mid-
+  // session, disk-only manifest). Fall back to the disk parse so we
+  // don't hard-fail in either case.
+  const parsed = loadParsedManifest(entry, manifestPath);
   if (!parsed) {
     return {
       id: entry.id,
       loaded: false,
       manifestVersion: 'v2',
-      error: 'Failed to parse manifest',
+      error: `Manifest not available for ${entry.id} (cache miss + disk parse failed)`,
     };
   }
 
