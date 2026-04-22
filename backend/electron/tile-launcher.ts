@@ -44,10 +44,37 @@ import {
   revokeTokensForTile,
   clearAllTokens,
 } from './tile-tokens.js';
-import { scopes, publish, getSystemAddress, unsubscribeAll, unsubscribeAllByPrefix } from './pubsub.js';
+import { scopes, publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
 import { DEBUG, getTilePreloadPath } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getExtensionPath } from './protocol.js';
+
+// Config hooks for values sourced from electron-heavy modules
+// (session-partition, windows) that we can't safely import at top
+// level in this file: both transitively `import { BrowserWindow }`
+// from 'electron' as ESM, which breaks under ELECTRON_RUN_AS_NODE=1
+// where electron's named ESM exports are empty. Unit tests load
+// tile-launcher.js under that mode and would crash at module parse
+// time. We inject the getters at app startup instead — same pattern
+// as `setExtensionBroadcaster` in pubsub.ts. Tests that stub the
+// launcher never call createTileBrowserWindow, so the hooks stay
+// null and the baseline helpers fall back cleanly.
+let _getProfileSession: (() => Electron.Session) | null = null;
+let _getSystemThemeBackgroundColor: (() => string) | null = null;
+
+/**
+ * Wire tile-launcher up to its electron-side dependencies. Called once
+ * at app startup, before any `launchTile` / `createTileBrowserWindow`
+ * call. Passing either as undefined keeps that dependency unused (unit
+ * tests do this implicitly by never calling this function).
+ */
+export function configureTileLauncher(hooks: {
+  getProfileSession?: () => Electron.Session;
+  getSystemThemeBackgroundColor?: () => string;
+}): void {
+  if (hooks.getProfileSession) _getProfileSession = hooks.getProfileSession;
+  if (hooks.getSystemThemeBackgroundColor) _getSystemThemeBackgroundColor = hooks.getSystemThemeBackgroundColor;
+}
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks
 // before the BrowserWindow is forcibly closed. Kept small so app-quit and
@@ -102,13 +129,204 @@ export interface TileLaunchResult {
 }
 
 /**
+ * Spec for `createTileBrowserWindow` — the canonical BrowserWindow
+ * constructor for every tile window in the app.
+ */
+export interface CreateTileBrowserWindowSpec {
+  tileId: string;
+  entryId: string;
+  token: string;
+  preloadPath: string;
+  /**
+   * Optional manifest + entry used as the source of declared window hints
+   * (width/height/frame/transparent/etc). Launchers derive hints from the
+   * manifest; callers that have no manifest (e.g. trustedBuiltin callers
+   * doing post-hoc registration) can omit this.
+   */
+  manifest?: TileManifestV2;
+  entry?: TileEntry;
+  /**
+   * Extra BrowserWindow options applied after manifest hints. Used by the
+   * `window-open` IPC branch to thread through caller-provided position,
+   * modal, skipTaskbar, etc. Takes precedence over manifest hints.
+   */
+  browserWindowOverrides?: Partial<Electron.BrowserWindowConstructorOptions>;
+  /**
+   * Extra webPreferences options merged into the canonical tile
+   * webPreferences (preload + additionalArguments + sandbox + session).
+   */
+  webPreferencesOverrides?: Partial<Electron.WebPreferences>;
+  /**
+   * When true, the render-process-gone handler publishes a `tile:crashed`
+   * event on the pubsub bus so UIs can react. Regular feature tiles want
+   * this on; one-off trustedBuiltin helpers (cmd panel popup, settings
+   * window) can opt out to avoid flooding the bus on dev reload crashes.
+   * Default: true when `manifest` is provided, false otherwise.
+   */
+  publishCrashEvent?: boolean;
+}
+
+/**
+ * createTileBrowserWindow — the ONE function that creates tile
+ * BrowserWindows. All tile-window lifecycles go through here so:
+ *
+ *   - Baseline chrome defaults (autoHideMenuBar, session, backgroundColor)
+ *     can't drift between callers.
+ *   - The tile registry, console forwarding, crash handler, and
+ *     per-entry pubsub cleanup are wired identically every time.
+ *
+ * Merge order (later wins):
+ *   baseline defaults ◁ manifest-entry windowHints ◁ caller overrides
+ *
+ * Returns the BrowserWindow. Caller is responsible for `loadURL` (the
+ * URL is not part of this helper so the window-open IPC branch can do
+ * its own URL rewrites / redirects).
+ */
+export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): BrowserWindow {
+  const {
+    tileId, entryId, token, preloadPath, manifest, entry,
+    browserWindowOverrides, webPreferencesOverrides,
+  } = spec;
+  const publishCrashEvent = spec.publishCrashEvent ?? (manifest !== undefined);
+
+  // Hints from the manifest entry (windowHints + flat fields on the
+  // entry itself, which we treat as shorthand for the same thing).
+  let hints: Partial<TileEntry['windowHints']> & Partial<TileEntry> = {};
+  if (entry) {
+    const { width, height, minWidth, minHeight, alwaysOnTop, transparent,
+            focusable, frame, resizable, role, key: entryKey, title } = entry;
+    const entryFlat = { width, height, minWidth, minHeight, alwaysOnTop, transparent,
+                        focusable, frame, resizable, role, key: entryKey, title };
+    hints = { ...entry.windowHints, ...entryFlat };
+  }
+
+  const transparentResolved = browserWindowOverrides?.transparent ?? hints?.transparent === true;
+
+  // Canonical baseline options. Every tile window inherits these unless
+  // manifest hints or caller overrides explicitly change them.
+  const baseline: Electron.BrowserWindowConstructorOptions = {
+    // All tiles start hidden. Visibility is a runtime choice
+    // (showSelf / window-open show flag / session restore).
+    show: false,
+    // No OS menubar anywhere, ever. Silent divergence between launchTile
+    // (which never set this) and window-open (which sometimes inherited
+    // it from callers) was the Phase D trigger — nothing opts in now.
+    autoHideMenuBar: true,
+    // System-theme background prevents a white flash on dark mode. Skip
+    // for transparent tiles — setting backgroundColor defeats transparency.
+    backgroundColor: transparentResolved ? undefined : _getSystemThemeBackgroundColor?.(),
+  };
+
+  // Merge order: baseline ◁ hints ◁ overrides. The hints object is
+  // spread into individual BrowserWindow fields so we can apply the
+  // `hints.frame !== false` style defaults without the spread clobbering
+  // them with undefined.
+  const windowOptions: Electron.BrowserWindowConstructorOptions = {
+    ...baseline,
+    width: hints?.width || 800,
+    height: hints?.height || 600,
+    minWidth: hints?.minWidth,
+    minHeight: hints?.minHeight,
+    frame: hints?.frame !== false,
+    transparent: transparentResolved,
+    alwaysOnTop: hints?.alwaysOnTop === true,
+    focusable: hints?.focusable !== false,
+    resizable: hints?.resizable !== false,
+    title: hints?.title || manifest?.name,
+    ...browserWindowOverrides,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      session: _getProfileSession?.(),
+      preload: preloadPath,
+      additionalArguments: [
+        `--tile-id=${tileId}`,
+        `--tile-entry=${entryId}`,
+        `--tile-token=${token}`,
+      ],
+      ...webPreferencesOverrides,
+    },
+  };
+
+  const BrowserWindow = getBrowserWindowCtor();
+  const win = new BrowserWindow(windowOptions);
+
+  const key = `${tileId}:${entryId}`;
+  tileWindows.set(key, win);
+  if (manifest) loadedManifests.set(tileId, manifest);
+
+  // Forward console messages from the tile's webContents to main-process
+  // stdout. Errors/warnings always forwarded; info/debug only under DEBUG.
+  win.webContents.on('console-message', (event) => {
+    try {
+      const level = parseInt(String((event as { level?: unknown }).level), 10);
+      const message = String((event as { message?: unknown }).message ?? '');
+      const levelLabels = ['verbose', 'info', 'warning', 'error'];
+      const levelLabel = levelLabels[level] || 'info';
+      if (level >= 2) {
+        console.error(`[tile:${tileId}:${entryId}] [${levelLabel}] ${message}`);
+      } else if (DEBUG) {
+        console.log(`[tile:${tileId}:${entryId}] [${levelLabel}] ${message}`);
+      }
+    } catch {
+      // Logging must never throw.
+    }
+  });
+
+  // Render-process crashes: revoke token, drop tracked state, unsubscribe
+  // this entry's subs only (sibling entries stay subscribed), and
+  // optionally publish a `tile:crashed` event.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error(
+      `[tile:${tileId}:${entryId}] Render process gone: ${details.reason} (exitCode=${details.exitCode})`
+    );
+    tileWindows.delete(key);
+    readyTiles.delete(key);
+    revokeToken(token);
+    try {
+      unsubscribeAll(`peek://${tileId}/${entryId}`);
+    } catch (err) {
+      console.error(`[tile:${tileId}:${entryId}] Failed to unsubscribe after crash:`, err);
+    }
+    if (publishCrashEvent) {
+      try {
+        publish(getSystemAddress(), scopes.GLOBAL, 'tile:crashed', {
+          tileId, entryId,
+          reason: details.reason,
+          exitCode: details.exitCode,
+        });
+      } catch (err) {
+        console.error(`[tile:${tileId}:${entryId}] Failed to publish tile:crashed event:`, err);
+      }
+    }
+  });
+
+  // Normal close: same cleanup as crash, minus the crash broadcast.
+  win.on('closed', () => {
+    tileWindows.delete(key);
+    readyTiles.delete(key);
+    revokeToken(token);
+    try {
+      unsubscribeAll(`peek://${tileId}/${entryId}`);
+    } catch (err) {
+      console.error(`[tile-launcher:${tileId}:${entryId}] Failed to unsubscribe on close:`, err);
+    }
+    DEBUG && console.log(`[tile-launcher:${tileId}:${entryId}] Tile closed`);
+  });
+
+  return win;
+}
+
+/**
  * Launch a tile entry
  *
- * Creates the appropriate context (BrowserWindow) with:
- * - sandbox: true
- * - contextIsolation: true
- * - nodeIntegration: false
- * - Capability token passed via additionalArguments
+ * Thin wrapper over `createTileBrowserWindow` that:
+ *  - Resolves which tile entry to launch from the manifest
+ *  - Resolves and grants capabilities
+ *  - Mints a capability token
+ *  - Creates the window via the canonical helper
+ *  - Calls `loadURL` with the tile's peek:// URL
  */
 export function launchTile(options: TileLaunchOptions): TileLaunchResult {
   const { tilePath, manifest, preloadPath, entryId, windowOverrides } = options;
@@ -136,45 +354,21 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
   // Generate token
   const token = generateToken(manifest.id, entry.id, grant);
 
-  // Build window options — merge windowHints (compat) with top-level flat
-  // window fields (top-level wins if both are set), then apply overrides.
-  const { width, height, minWidth, minHeight, alwaysOnTop, transparent,
-          focusable, frame, resizable, role, key: entryKey, title } = entry;
-  const entryFlat = { width, height, minWidth, minHeight, alwaysOnTop, transparent,
-                      focusable, frame, resizable, role, key: entryKey, title };
-  const hints = { ...entry.windowHints, ...entryFlat, ...windowOverrides };
-  const windowOptions: Electron.BrowserWindowConstructorOptions = {
-    width: hints?.width || 800,
-    height: hints?.height || 600,
-    minWidth: hints?.minWidth,
-    minHeight: hints?.minHeight,
-    // All tiles start hidden. Visibility is a runtime choice (showSelf / session restore).
-    show: false,
-    frame: hints?.frame !== false,
-    transparent: hints?.transparent === true,
-    alwaysOnTop: hints?.alwaysOnTop === true,
-    focusable: hints?.focusable !== false,
-    resizable: hints?.resizable !== false,
-    title: hints?.title || manifest.name,
-    webPreferences: {
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: preloadPath,
-      additionalArguments: [
-        `--tile-id=${manifest.id}`,
-        `--tile-entry=${entry.id}`,
-        `--tile-token=${token}`,
-      ],
-    },
-  };
+  // Apply per-launch windowOverrides by merging them onto the entry
+  // before we hand it to the helper. windowOverrides are defined as
+  // `Partial<TileEntry['windowHints']>` so they're semantically hints.
+  const entryWithOverrides: TileEntry = windowOverrides
+    ? { ...entry, windowHints: { ...entry.windowHints, ...windowOverrides } }
+    : entry;
 
-  // Tiles are resident or not, shown or not — orthogonal. No special
-  // dimensions for "background" tiles: they use declared width/height like
-  // any tile (default 800×600).
-
-  const BrowserWindow = getBrowserWindowCtor();
-  const win = new BrowserWindow(windowOptions);
+  const win = createTileBrowserWindow({
+    tileId: manifest.id,
+    entryId: entry.id,
+    token,
+    preloadPath,
+    manifest,
+    entry: entryWithOverrides,
+  });
 
   // Build the URL for this tile: peek://{tileId}/{url}
   const tileUrl = `peek://${manifest.id}/${entry.url}`;
@@ -182,87 +376,10 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
 
   // Populate manifest.defaults from the tile's settingsSchema file so
   // tile:settings:get can fall back to declared defaults on DB miss.
-  // Loaded once per tile process; subsequent launches reuse the cached
-  // object if it was already populated.
   if (manifest.defaults === undefined) {
     const defaults = loadSchemaDefaults(tilePath, manifest.settingsSchema);
     if (defaults) manifest.defaults = defaults;
   }
-
-  // Track the window
-  const key = `${manifest.id}:${entry.id}`;
-  tileWindows.set(key, win);
-  loadedManifests.set(manifest.id, manifest);
-
-  // Forward console messages from the tile's webContents to the main process
-  // stdout. Without this, console.log/error/warn inside tile code vanishes
-  // silently and there is no way to correlate a log line to a specific tile.
-  // Electron 40's console-message event surfaces `event.level` (0..3) and
-  // `event.message` (see backend/electron/ipc.ts:2486 for the same pattern).
-  win.webContents.on('console-message', (event) => {
-    try {
-      const level = parseInt(String((event as { level?: unknown }).level), 10);
-      const message = String((event as { message?: unknown }).message ?? '');
-      const levelLabels = ['verbose', 'info', 'warning', 'error'];
-      const levelLabel = levelLabels[level] || 'info';
-      // Errors/warnings always forwarded; info/debug only when DEBUG is on.
-      if (level >= 2) {
-        console.error(`[tile:${manifest.id}:${entry.id}] [${levelLabel}] ${message}`);
-      } else if (DEBUG) {
-        console.log(`[tile:${manifest.id}:${entry.id}] [${levelLabel}] ${message}`);
-      }
-    } catch {
-      // Logging must never throw.
-    }
-  });
-
-  // Track render-process crashes — without this, tiles crash silently.
-  // On crash: revoke the capability token, drop tracked state, unsubscribe
-  // any leftover pubsub registrations, and publish a GLOBAL-scope
-  // `tile:crashed` event so UI (e.g. manage/features-manager) can react.
-  win.webContents.on('render-process-gone', (_event, details) => {
-    console.error(
-      `[tile:${manifest.id}:${entry.id}] Render process gone: ${details.reason} (exitCode=${details.exitCode})`
-    );
-    tileWindows.delete(key);
-    readyTiles.delete(key);
-    revokeToken(token);
-    try {
-      // Crashed renderer can't unsubscribe itself — clear every subscription
-      // sourced from this tile so the main-process registry doesn't leak.
-      unsubscribeAllByPrefix(`peek://${manifest.id}/`);
-    } catch (err) {
-      console.error(`[tile:${manifest.id}:${entry.id}] Failed to unsubscribe after crash:`, err);
-    }
-    try {
-      // GLOBAL (not SYSTEM) so non-privileged UIs like the manage panel can
-      // subscribe to tile:crashed and surface a crashed badge.
-      publish(getSystemAddress(), scopes.GLOBAL, 'tile:crashed', {
-        tileId: manifest.id,
-        entryId: entry.id,
-        reason: details.reason,
-        exitCode: details.exitCode,
-      });
-    } catch (err) {
-      console.error(`[tile:${manifest.id}:${entry.id}] Failed to publish tile:crashed event:`, err);
-    }
-  });
-
-  // Clean up on close — drop tracked state, revoke token, and unsubscribe
-  // any pubsub subscriptions the tile registered (these live in the
-  // main-process registry keyed by `peek://{tileId}/{entry}` and won't
-  // clean themselves up when the renderer goes away).
-  win.on('closed', () => {
-    tileWindows.delete(key);
-    readyTiles.delete(key);
-    revokeToken(token);
-    try {
-      unsubscribeAllByPrefix(`peek://${manifest.id}/`);
-    } catch (err) {
-      console.error(`[tile-launcher:${manifest.id}:${entry.id}] Failed to unsubscribe on close:`, err);
-    }
-    DEBUG && console.log(`[tile-launcher:${manifest.id}:${entry.id}] Tile closed`);
-  });
 
   DEBUG && console.log(`[tile-launcher:${manifest.id}:${entry.id}] Launched -> ${tileUrl}`);
 

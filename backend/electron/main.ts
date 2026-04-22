@@ -17,7 +17,7 @@ import { initTestFixture } from './test-fixture-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
-import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile } from './tile-launcher.js';
+import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
@@ -186,6 +186,16 @@ export async function initialize(): Promise<void> {
   // Electron preload scripts must be CommonJS under `sandbox: true`.
   const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.cjs');
   setTilePreloadPath(tilePreloadPath);
+
+  // Inject tile-launcher's electron-side dependencies. These live on
+  // modules that tile-launcher can't import at its top level (they
+  // transitively ESM-import BrowserWindow, which blows up under
+  // ELECTRON_RUN_AS_NODE=1 during unit tests). See `configureTileLauncher`
+  // for the why.
+  configureTileLauncher({
+    getProfileSession,
+    getSystemThemeBackgroundColor,
+  });
 
   // Initialize database
   const dbPath = path.join(config.userDataPath, config.profile, 'datastore.sqlite');
