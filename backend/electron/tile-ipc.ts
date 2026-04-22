@@ -476,9 +476,6 @@ export function registerTileIpcHandlers(): void {
     topic: string;
     data: unknown;
   }) => {
-    if (args.topic === 'cmd:register' || args.topic === 'cmd:register-batch') {
-      console.error(`[DIAG pub] topic=${args.topic} source=${args.source} name=${(args.data as { name?: string })?.name ?? '(batch)'}`);
-    }
     const grant = getGrantForToken(args.token);
     if (!grant) {
       DEBUG && console.log('[tile-ipc] pubsub:publish rejected: invalid token');
@@ -495,7 +492,30 @@ export function registerTileIpcHandlers(): void {
 
     // Topic enforcement: if topics allowlist is set, check it.
     // Trusted-builtin core renderers bypass the topic allowlist.
-    if (!grant.trustedBuiltin && grant.capabilities.pubsub?.topics) {
+    //
+    // Infrastructure topics owned by the cmd / noun registry are exempt
+    // from per-tile allowlists when the tile has the `commands`
+    // capability — they're the pubsub half of api.commands.register,
+    // api.commands.registerNoun, and the noun-execute → result
+    // round-trip (`noun:browse:*`, `noun:query:*`, `noun:open:*`,
+    // `noun:create:*`, and the dynamic `noun:result:<noun>:<ts>` topics
+    // the cmd panel subscribes to for each invocation). Gating these on
+    // manifest topics would require every feature to hand-copy an
+    // opaque infrastructure-topic list and enumerate the dynamic result
+    // topic pattern. `tile:command:register/unregister` IPC already
+    // bypasses the check this way; the registerNoun + noun-invocation
+    // publish paths go through here so we must exempt them too.
+    const INFRA_EXACT_TOPICS = new Set([
+      'cmd:register',
+      'cmd:register-batch',
+      'cmd:unregister',
+    ]);
+    const isInfraTopic = hasCapability(grant, 'commands') && (
+      INFRA_EXACT_TOPICS.has(args.topic) ||
+      args.topic.startsWith('noun:')
+    );
+
+    if (!grant.trustedBuiltin && !isInfraTopic && grant.capabilities.pubsub?.topics) {
       const allowed = grant.capabilities.pubsub.topics.some(pattern => {
         if (pattern === args.topic) return true;
         // Simple glob: pattern:* matches pattern:anything

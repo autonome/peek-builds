@@ -73,6 +73,9 @@ files:
 asar: true
 asarUnpack:
   - "assets/tray/**/*"
+  # Chrome extensions must live on a real filesystem — Electron's
+  # session.loadExtension() can't read from inside app.asar.
+  - "chrome-extensions/**/*"
 
 # macOS specific
 mac:
