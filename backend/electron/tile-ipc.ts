@@ -510,8 +510,16 @@ export function registerTileIpcHandlers(): void {
       'cmd:register-batch',
       'cmd:unregister',
     ]);
+    // `cmd:execute:*` covers both the dispatch topic and its result
+    // reply (e.g. `cmd:execute:hello:result:1776…:abc`). A tile's
+    // command handler MUST be able to publish the result-reply back
+    // to the cmd panel; without this exemption the reply is silently
+    // dropped and the panel's proxy times out at 30s, leaving a
+    // spinner on screen. Gated on the `commands` capability so non-
+    // command tiles can't spoof dispatch topics.
     const isInfraTopic = hasCapability(grant, 'commands') && (
       INFRA_EXACT_TOPICS.has(args.topic) ||
+      args.topic.startsWith('cmd:execute:') ||
       args.topic.startsWith('noun:')
     );
 
