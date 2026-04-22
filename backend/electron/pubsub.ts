@@ -30,6 +30,30 @@ const topics = new Map<string, Map<string, (msg: unknown) => void>>();
 // Callback for broadcasting to extension windows
 let extensionBroadcaster: ((topic: string, msg: unknown, source: string) => void) | null = null;
 
+/**
+ * Pre-publish hooks let a module intercept publish calls before delivery.
+ * Return value / resolved value controls what happens next:
+ *   - `undefined` / `'continue'` — proceed with normal delivery
+ *   - `'skip'` — drop this publish; no subscriber runs, no extension broadcast
+ *   - `Promise` — deliver is deferred until the promise resolves; the
+ *     promise's resolved value is then interpreted the same way
+ *
+ * Matched in registration order — first hook whose predicate returns true
+ * wins (so more-specific hooks should register first, or the predicate
+ * itself should be selective). Multiple hooks for the same topic aren't
+ * composed; that path is load-on-dispatch only today.
+ *
+ * Rationale: lets the tile lifecycle module enforce "load the owning tile
+ * before a `cmd:execute:X` or declared lazyEvent topic reaches its
+ * handler" without every caller having to know about tile state, and
+ * without littering the pubsub registry with per-command stub subscribers.
+ */
+export type PrePublishHookResult = void | 'continue' | 'skip';
+export type PrePublishHook = (topic: string, msg: unknown) => PrePublishHookResult | Promise<PrePublishHookResult>;
+export type PrePublishHookPredicate = (topic: string) => boolean;
+
+const prePublishHooks: Array<{ predicate: PrePublishHookPredicate; hook: PrePublishHook }> = [];
+
 // Session stats tracking
 const sessionStats = {
   messagesPublished: 0,
@@ -75,13 +99,66 @@ export function setExtensionBroadcaster(
 }
 
 /**
- * Publish a message to a topic
+ * Publish a message to a topic.
+ *
+ * If a pre-publish hook matches `topic`, its result is consulted before
+ * any subscriber runs. An async hook (returning a Promise) defers
+ * delivery until the promise resolves; a `'skip'` result aborts the
+ * publish entirely. See `registerPrePublishHook` for the mechanism.
  */
 export function publish(source: string, scope: Scope, topic: string, msg: unknown): void {
-  // Track session stats
+  // Track session stats — counted once per publish call regardless of
+  // whether a hook defers/skips delivery. Stats reflect publish intent.
   sessionStats.messagesPublished++;
   sessionStats.topicsUsed.add(topic);
 
+  const hook = findPrePublishHook(topic);
+  if (!hook) {
+    deliver(source, scope, topic, msg);
+    return;
+  }
+
+  let result: PrePublishHookResult | Promise<PrePublishHookResult>;
+  try {
+    result = hook(topic, msg);
+  } catch (err) {
+    console.error(`[pubsub] pre-publish hook threw for ${topic}:`, err);
+    deliver(source, scope, topic, msg);
+    return;
+  }
+
+  if (result && typeof (result as Promise<PrePublishHookResult>).then === 'function') {
+    (result as Promise<PrePublishHookResult>).then(
+      (val) => {
+        if (val === 'skip') return;
+        deliver(source, scope, topic, msg);
+      },
+      (err) => {
+        // Hook failed mid-flight — best-effort deliver anyway so a
+        // broken loader can't hang every matching publish forever.
+        console.error(`[pubsub] pre-publish hook rejected for ${topic}:`, err);
+        deliver(source, scope, topic, msg);
+      },
+    );
+    return;
+  }
+
+  if (result === 'skip') return;
+  deliver(source, scope, topic, msg);
+}
+
+function findPrePublishHook(topic: string): PrePublishHook | null {
+  for (const { predicate, hook } of prePublishHooks) {
+    try {
+      if (predicate(topic)) return hook;
+    } catch (err) {
+      console.error('[pubsub] pre-publish predicate threw:', err);
+    }
+  }
+  return null;
+}
+
+function deliver(source: string, scope: Scope, topic: string, msg: unknown): void {
   // Route to traditional subscribers (via IPC callbacks)
   if (topics.has(topic)) {
     const t = topics.get(topic)!;
@@ -97,6 +174,30 @@ export function publish(source: string, scope: Scope, topic: string, msg: unknow
   if (scope === scopes.GLOBAL && extensionBroadcaster) {
     extensionBroadcaster(topic, msg, source);
   }
+}
+
+/**
+ * Register a pre-publish hook. Returns an unsubscribe function.
+ *
+ * `predicate` runs on every publish; keep it fast (no I/O, no
+ * allocation where avoidable). Only when it returns true does `hook`
+ * run. See `PrePublishHook` for result semantics.
+ */
+export function registerPrePublishHook(
+  predicate: PrePublishHookPredicate,
+  hook: PrePublishHook,
+): () => void {
+  const entry = { predicate, hook };
+  prePublishHooks.push(entry);
+  return () => {
+    const idx = prePublishHooks.indexOf(entry);
+    if (idx >= 0) prePublishHooks.splice(idx, 1);
+  };
+}
+
+/** @internal Test hook: clear all registered pre-publish hooks. */
+export function __clearPrePublishHooksForTest(): void {
+  prePublishHooks.length = 0;
 }
 
 /**

@@ -1,19 +1,28 @@
 /**
- * Unit tests for v2 tile command registration end-to-end plumbing.
+ * Unit tests for v2 tile command registration plumbing.
  *
- * Validates that:
- * 1. registerLazyTile() publishes cmd:register-batch for each command
- * 2. When cmd:execute:{name} fires, the stub loads the tile
- * 3. The buffered message is replayed to the real handler
- * 4. Commands with params are registered with their params metadata
+ * Phase E rewrote the dispatch machinery — per-command stubs are gone,
+ * replaced by a single dispatch hook. These tests cover what survives:
+ *
+ *   1. `registerLazyTile` publishes `cmd:register-batch` so the cmd
+ *      panel can list declared commands without loading the tile.
+ *   2. Commands with params preserve their params metadata in the
+ *      announcement.
+ *   3. When `cmd:execute:{name}` fires for a lazy tile, the dispatch
+ *      hook loads the tile and the message reaches its real handler.
+ *   4. Window-action commands still appear in the announcement.
  */
 
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 
-import { publish, subscribe, unsubscribe, scopes, hasSubscriber } from './pubsub.js';
+import {
+  publish, subscribe, unsubscribe, scopes,
+  __clearPrePublishHooksForTest,
+} from './pubsub.js';
 import {
   registerLazyTile,
+  installLoadOnDispatchHook,
   __setTileLazyLauncherForTest,
   __resetTileLazyStateForTest,
 } from './tile-lazy.js';
@@ -86,6 +95,8 @@ describe('tile command registration', () => {
 
   beforeEach(() => {
     __resetTileLazyStateForTest();
+    __clearPrePublishHooksForTest();
+    installLoadOnDispatchHook();
     launcherState = {
       launchCalls: [],
       loaded: new Set(),
@@ -95,7 +106,7 @@ describe('tile command registration', () => {
     __setTileLazyLauncherForTest(makeFakeLauncher(launcherState));
   });
 
-  it('publishes cmd:register-batch for each manifest command', () => {
+  it('publishes cmd:register-batch announcing every manifest command', () => {
     const registered: unknown[] = [];
     subscribe('test-observer', scopes.GLOBAL, 'cmd:register-batch', (msg: unknown) => {
       registered.push(msg);
@@ -108,28 +119,13 @@ describe('tile command registration', () => {
 
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
 
-    // Expect one batch per command (tile-lazy publishes per command)
-    assert.strictEqual(registered.length, 2, 'expected one batch publish per command');
-
-    const names = registered
-      .flatMap((m: unknown) => (m as { commands: Array<{ name: string }> }).commands.map(c => c.name))
-      .sort();
+    // Phase E emits one batch per tile, not per command.
+    assert.strictEqual(registered.length, 1, 'expected a single batch publish per tile');
+    const batch = registered[0] as { commands: Array<{ name: string }> };
+    const names = batch.commands.map(c => c.name).sort();
     assert.deepStrictEqual(names, ['bar', 'foo']);
 
     unsubscribe('test-observer', 'cmd:register-batch');
-  });
-
-  it('registers subscriber for cmd:execute:{name} for each command', () => {
-    const manifest = makeManifestWithCommands('cmd-test-2', [
-      { name: 'baz', action: { type: 'execute' } },
-    ]);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
-
-    // lazy-stub subscribes to cmd:execute:baz
-    assert.ok(
-      hasSubscriber('cmd:execute:baz', 'lazy-stub/baz'),
-      'lazy-stub/baz should be subscribed to cmd:execute:baz'
-    );
   });
 
   it('preserves params metadata in cmd:register-batch', () => {
@@ -157,13 +153,12 @@ describe('tile command registration', () => {
     unsubscribe('test-observer-2', 'cmd:register-batch');
   });
 
-  it('loads tile and replays message when command is invoked', async () => {
+  it('loads tile and delivers message when cmd:execute fires', async () => {
     const manifest = makeManifestWithCommands('cmd-test-4', [
       { name: 'doit', action: { type: 'execute' } },
     ]);
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
 
-    // Simulate the tile registering its real handler on launch.
     const realHandlerReceived: unknown[] = [];
     launcherState.onLaunch = () => {
       subscribe('peek://cmd-test-4/bg', scopes.GLOBAL, 'cmd:execute:doit', (msg: unknown) => {
@@ -172,30 +167,33 @@ describe('tile command registration', () => {
       signalReady(launcherState, 'cmd-test-4', 'background');
     };
 
-    // Invoke the command — lazy stub intercepts, loads, replays
     publish('test-caller', scopes.GLOBAL, 'cmd:execute:doit', { payload: 42 });
 
-    // Wait for microtasks and the async replay
-    await flushMicrotasks();
-    await flushMicrotasks();
-    await flushMicrotasks();
+    // Dispatch hook is async — yield enough microtasks for load,
+    // ready-signal, hook continuation, and delivery.
+    for (let i = 0; i < 10; i++) await flushMicrotasks();
 
     assert.strictEqual(launcherState.launchCalls.length, 1, 'tile should be launched once');
-    assert.strictEqual(realHandlerReceived.length, 1, 'real handler should receive the replay');
+    assert.strictEqual(realHandlerReceived.length, 1, 'real handler should receive the deferred message');
     assert.deepStrictEqual(realHandlerReceived[0], { payload: 42 });
 
     unsubscribe('peek://cmd-test-4/bg', 'cmd:execute:doit');
   });
 
-  it('window-action commands still get registered in cmd batch', () => {
+  it('window-action commands are announced in the batch and skip tile load on dispatch', async () => {
     const received: unknown[] = [];
     subscribe('test-observer-3', scopes.GLOBAL, 'cmd:register-batch', (msg: unknown) => {
       received.push(msg);
     });
 
+    const windowOpenReceived: unknown[] = [];
+    subscribe('test-window-observer', scopes.GLOBAL, 'window:reopen-request', (msg: unknown) => {
+      windowOpenReceived.push(msg);
+    });
+
     const manifest = makeManifestWithCommands('cmd-test-5', [
       {
-        name: 'open window',
+        name: 'open-window',
         description: 'Open a window',
         action: { type: 'window', url: 'peek://cmd-test-5/home.html' },
       } as TileCommand,
@@ -204,9 +202,18 @@ describe('tile command registration', () => {
 
     assert.strictEqual(received.length, 1);
     const batch = received[0] as { commands: Array<{ name: string; action?: { type: string } }> };
-    assert.strictEqual(batch.commands[0].name, 'open window');
+    assert.strictEqual(batch.commands[0].name, 'open-window');
     assert.strictEqual(batch.commands[0].action?.type, 'window');
 
+    // Firing the command should publish window:reopen-request and NOT
+    // load the tile (declarative window actions bypass tile boot).
+    publish('test-caller', scopes.GLOBAL, 'cmd:execute:open-window', {});
+    for (let i = 0; i < 3; i++) await flushMicrotasks();
+
+    assert.strictEqual(launcherState.launchCalls.length, 0, 'declarative window action must not load the tile');
+    assert.strictEqual(windowOpenReceived.length, 1, 'window:reopen-request should be published');
+
     unsubscribe('test-observer-3', 'cmd:register-batch');
+    unsubscribe('test-window-observer', 'window:reopen-request');
   });
 });

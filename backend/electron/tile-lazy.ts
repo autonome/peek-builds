@@ -1,16 +1,36 @@
 /**
- * Lazy Loading for Tiles
+ * Lazy Loading for Tiles — load-on-dispatch
  *
- * Runtime-level lazy loading: tiles don't need to know about it.
- * - Register command stubs from manifest (tile not loaded yet)
- * - On first command invocation, load the tile
- * - Buffer the message, wait for tile:ready, replay it
+ * A lazy v2 tile is registered at boot with its manifest + launch
+ * config, but no BrowserWindow is created. The tile's declared
+ * commands are announced to the cmd panel via `cmd:register-batch` so
+ * it can list them; its background process boots the first time it
+ * needs to handle a command or a declared lazyEvent topic.
  *
- * This mirrors the existing lazy loading in main.ts but adapted
- * for the v2 tile manifest format.
+ * Load-on-dispatch mechanism (Phase E):
+ *
+ *   - A single pre-publish hook on the pubsub bus intercepts
+ *     `cmd:execute:{name}` publishes and any topic declared in some
+ *     tile's `lazyEvents`. When the hook matches, it awaits the
+ *     owning tile's boot + ready signal, then lets the publish
+ *     continue on to subscribers — by which point the tile's real
+ *     handler is registered.
+ *
+ *   - No per-command stub subscribers. The old Phase A-C code
+ *     subscribed `lazy-stub/{name}` to every `cmd:execute:{name}` at
+ *     boot; that's gone. The hook is the one and only dispatch-site
+ *     intercept, scoped by topic predicate.
+ *
+ *   - Declarative `type: 'window'` commands bypass tile load — the
+ *     hook publishes `window:reopen-request` directly and returns
+ *     'skip' so the cmd:execute publish never reaches a handler
+ *     (there wouldn't have been one anyway; the tile never loads).
  */
 
-import { publish, subscribe, unsubscribe, scopes, hasSubscriber, getSystemAddress } from './pubsub.js';
+import {
+  publish, scopes, registerPrePublishHook, getSystemAddress,
+  type PrePublishHookResult,
+} from './pubsub.js';
 import {
   launchTile as _launchTile,
   waitForTileReady as _waitForTileReady,
@@ -39,10 +59,6 @@ let launcher: TileLazyLauncher = {
   isTileLoaded: _isTileLoaded,
 };
 
-/**
- * Override the launcher hooks. Intended for tests only.
- * Pass `null` to restore the real launcher.
- */
 export function __setTileLazyLauncherForTest(override: Partial<TileLazyLauncher> | null): void {
   if (override === null) {
     launcher = {
@@ -59,23 +75,14 @@ export function __setTileLazyLauncherForTest(override: Partial<TileLazyLauncher>
   };
 }
 
-/**
- * Reset internal state. Tests only.
- */
 export function __resetTileLazyStateForTest(): void {
-  lazyCommandPending.clear();
-  lazyEventPending.clear();
   lazyTileRegistry.clear();
   loadingTiles.clear();
+  declaredLazyEventTopics.clear();
+  _hookInstalled = false;
 }
 
 // ─── State ───────────────────────────────────────────────────────────
-
-/** Pending lazy load: command name -> buffered message */
-const lazyCommandPending = new Map<string, unknown>();
-
-/** Pending lazy load: `${tileId}:${topic}` -> buffered message */
-const lazyEventPending = new Map<string, unknown>();
 
 /** Tiles registered for lazy loading: tileId -> launch options (without window) */
 const lazyTileRegistry = new Map<string, {
@@ -84,54 +91,78 @@ const lazyTileRegistry = new Map<string, {
   preloadPath: string;
 }>();
 
-/** Track which lazy tiles are currently being loaded */
+/** Tiles currently being loaded — prevents duplicate launch on concurrent dispatch. */
 const loadingTiles = new Set<string>();
+
+/**
+ * Topics declared across every registered tile's `lazyEvents`. Used
+ * by the dispatch-hook predicate as a fast O(1) check so publishes of
+ * unrelated topics pay only a Set lookup, not a manifest scan.
+ */
+const declaredLazyEventTopics = new Set<string>();
 
 /** Timeout for lazy load (ms) */
 const LAZY_LOAD_TIMEOUT_MS = 10000;
 
-// ─── Stub Registration ──────────────────────────────────────────────
+// ─── Registration ────────────────────────────────────────────────────
 
 /**
- * Register a tile for lazy loading
+ * Register a tile for lazy loading.
  *
- * Creates command stubs that trigger tile load on first invocation.
- * The tile's background entry point is loaded only when needed.
+ * Publishes `cmd:register-batch` so the cmd panel can list the tile's
+ * declared commands, stores the launch config for the dispatch hook to
+ * use when it needs to boot the tile, and adds the tile's lazyEvent
+ * topics to the hook predicate set.
+ *
+ * Unlike pre-Phase-E, this does NOT subscribe any per-command stubs.
+ * The pre-publish dispatch hook (`dispatchLoadHook`) is the single
+ * intercept point for load-on-dispatch.
  */
 export function registerLazyTile(
   manifest: TileManifestV2,
   tilePath: string,
-  preloadPath: string
+  preloadPath: string,
 ): void {
   const tileId = manifest.id;
-
-  // Store launch config
   lazyTileRegistry.set(tileId, { manifest, tilePath, preloadPath });
 
-  // Register command stubs
-  if (manifest.commands) {
-    for (const cmd of manifest.commands) {
-      registerCommandStub(tileId, cmd);
-    }
+  // Add any declared lazyEvents topics to the predicate set.
+  for (const topic of collectLazyEventTopics(manifest)) {
+    declaredLazyEventTopics.add(topic);
   }
 
-  // Register event interceptors for any tile entries that declare lazyEvents
-  const eventTopics = collectLazyEventTopics(manifest);
-  for (const topic of eventTopics) {
-    registerEventInterceptor(tileId, topic);
+  // Announce declared commands to the cmd panel. The panel's
+  // subscriber builds proxy entries from this batch; it doesn't care
+  // whether a stub or a real handler sits behind the source address.
+  if (Array.isArray(manifest.commands) && manifest.commands.length > 0) {
+    publish(
+      `peek://${tileId}/lazy-stub`,
+      scopes.GLOBAL,
+      'cmd:register-batch',
+      {
+        commands: manifest.commands.map(cmd => ({
+          name: cmd.name,
+          description: cmd.description || '',
+          source: `peek://${tileId}/background`,
+          action: cmd.action,
+          scope: cmd.scope,
+          modes: cmd.modes,
+          accepts: cmd.accepts,
+          produces: cmd.produces,
+          params: cmd.params,
+        })),
+      },
+    );
   }
 
   DEBUG && console.log(
-    `[tile-lazy] Registered lazy tile: ${tileId} with ${manifest.commands?.length || 0} commands, ${eventTopics.length} lazy events`
+    `[tile-lazy] Registered lazy tile: ${tileId} (${manifest.commands?.length || 0} commands, ${collectLazyEventTopics(manifest).length} lazyEvents)`
   );
 }
 
-/**
- * Collect all lazyEvents topics declared across a manifest's tile entries.
- * Deduplicates topics that appear in multiple entries.
- */
 function collectLazyEventTopics(manifest: TileManifestV2): string[] {
   const topics = new Set<string>();
+  if (!Array.isArray(manifest.tiles)) return [];
   for (const tile of manifest.tiles) {
     if (!tile.lazyEvents) continue;
     for (const topic of tile.lazyEvents) {
@@ -143,194 +174,135 @@ function collectLazyEventTopics(manifest: TileManifestV2): string[] {
   return Array.from(topics);
 }
 
+// ─── Dispatch hook ───────────────────────────────────────────────────
+
 /**
- * Register a single command stub for lazy loading
- *
- * The stub subscribes to cmd:execute:{name}. When invoked:
- * 1. Buffer the message
- * 2. Load the tile
- * 3. Wait for tile:ready
- * 4. Verify the tile registered a real handler
- * 5. Replay the buffered message
+ * Install the single pre-publish hook that enforces load-on-dispatch.
+ * Call once at app init, before any command can fire. Idempotent.
  */
-function registerCommandStub(tileId: string, cmd: TileCommand): void {
-  const stubSource = `lazy-stub/${cmd.name}`;
-  const executeTopic = `cmd:execute:${cmd.name}`;
-
-  // Subscribe to the execute topic as a stub
-  subscribe(stubSource, scopes.GLOBAL, executeTopic, async (msg: unknown) => {
-    DEBUG && console.log(`[tile-lazy] Stub invoked for ${cmd.name}, loading tile ${tileId}`);
-
-    // Declarative `type: window` commands don't need the tile loaded —
-    // the main process can open the window directly. This avoids the race
-    // condition where tile:ready fires before api.commands.register runs.
-    if (cmd.action?.type === 'window' && cmd.action.url) {
-      DEBUG && console.log(`[tile-lazy] Declarative window action for ${cmd.name}, opening directly`);
-      publish(getSystemAddress(), scopes.GLOBAL, 'window:reopen-request', {
-        url: cmd.action.url,
-        options: {
-          ...(cmd.action.options || {}),
-          trackingSource: 'declarative',
-          trackingSourceId: cmd.name,
-        },
-      });
-      // Publish result so cmd panel spinner resolves
-      const typed = msg as { resultTopic?: string } | null;
-      if (typed?.resultTopic) {
-        publish(stubSource, scopes.GLOBAL, typed.resultTopic, { success: true });
-      }
-      return;
-    }
-
-    // Buffer the latest message (latest wins for concurrent invocations)
-    lazyCommandPending.set(cmd.name, msg);
-
-    // Unsubscribe the stub immediately to prevent re-entry
-    unsubscribe(stubSource, executeTopic);
-
-    // Load the tile
-    try {
-      await loadLazyTile(tileId);
-
-      // Wait for the tile to be ready
-      const bgEntry = getBackgroundEntry(tileId);
-      if (bgEntry) {
-        await launcher.waitForTileReady(tileId, bgEntry);
-      }
-
-      // Verify the real handler registered (exclude our stub prefix)
-      const hasRealHandler = hasSubscriber(executeTopic, undefined, 'lazy-stub/');
-      if (!hasRealHandler) {
-        console.warn(`[tile-lazy] Tile ${tileId} loaded but no handler registered for ${cmd.name}`);
-      }
-
-      // Replay the buffered message
-      const buffered = lazyCommandPending.get(cmd.name);
-      if (buffered !== undefined) {
-        lazyCommandPending.delete(cmd.name);
-        publish(
-          `peek://${tileId}/lazy-replay`,
-          scopes.GLOBAL,
-          executeTopic,
-          buffered
-        );
-      }
-    } catch (err) {
-      console.error(`[tile-lazy] Failed to load tile ${tileId} for command ${cmd.name}:`, err);
-      lazyCommandPending.delete(cmd.name);
-
-      // Re-register the stub so the command can be retried
-      registerCommandStub(tileId, cmd);
-    }
-  });
-
-  // Register the command in the command registry (so it shows up in cmd panel)
-  // Use the same batch mechanism as v1 extensions
-  publish(
-    `peek://${tileId}/lazy-stub`,
-    scopes.GLOBAL,
-    'cmd:register-batch',
-    {
-      commands: [{
-        name: cmd.name,
-        description: cmd.description || '',
-        source: `peek://${tileId}/background`,
-        action: cmd.action,
-        scope: cmd.scope,
-        modes: cmd.modes,
-        accepts: cmd.accepts,
-        produces: cmd.produces,
-        params: cmd.params,
-      }],
-    }
-  );
+let _hookInstalled = false;
+export function installLoadOnDispatchHook(): void {
+  if (_hookInstalled) return;
+  registerPrePublishHook(dispatchHookPredicate, dispatchHookBody);
+  _hookInstalled = true;
 }
 
 /**
- * Register a single event interceptor stub for lazy loading
+ * Predicate: does this topic need the hook?
  *
- * Mirrors the command stub pattern but for pubsub topics. When the topic
- * fires before the tile is loaded:
- * 1. Buffer the message (latest wins for concurrent fires)
- * 2. Load the tile
- * 3. Wait for tile:ready
- * 4. Verify the real handler subscribed (exclude our stub prefix)
- * 5. Re-publish the buffered message for the real handler
- *
- * After successful load, the stub unsubscribes itself so future publishes
- * reach the real handler directly.
+ * Yes if it's a primary `cmd:execute:{name}` topic (NOT a sub-topic
+ * like `cmd:execute:{name}:result`), or if it's a declared lazyEvent
+ * topic. Kept to an O(1) Set/startsWith/slice check — runs on every
+ * publish.
  */
-function registerEventInterceptor(tileId: string, topic: string): void {
-  const stubSource = `lazy-interceptor/${tileId}/${topic}`;
-  const pendingKey = `${tileId}:${topic}`;
-
-  subscribe(stubSource, scopes.GLOBAL, topic, async (msg: unknown) => {
-    // If the tile is already loaded AND the real handler is subscribed, the
-    // real handler fired from this same publish call (pubsub iterates all
-    // subscribers). Just unsubscribe the stub and skip replay to avoid
-    // duplicate delivery.
-    const bgEntry = getBackgroundEntry(tileId);
-    const tileLoaded = bgEntry ? launcher.isTileLoaded(tileId, bgEntry) : false;
-    const realHandlerPresent = hasSubscriber(topic, undefined, `lazy-interceptor/${tileId}/`);
-    if (tileLoaded && realHandlerPresent) {
-      unsubscribe(stubSource, topic);
-      return;
-    }
-
-    // Buffer the latest message (latest wins for concurrent fires during load)
-    const alreadyLoading = lazyEventPending.has(pendingKey);
-    lazyEventPending.set(pendingKey, msg);
-
-    if (alreadyLoading) {
-      DEBUG && console.log(`[tile-lazy] ${topic} fired again during load of ${tileId}, buffering`);
-      return;
-    }
-
-    DEBUG && console.log(`[tile-lazy] ${topic} fired, ensuring tile ${tileId} is loaded`);
-
-    try {
-      await loadLazyTile(tileId);
-
-      // Wait for the tile to be ready (loadLazyTile already waits, but be defensive)
-      const bgEntry = getBackgroundEntry(tileId);
-      if (bgEntry) {
-        await launcher.waitForTileReady(tileId, bgEntry);
-      }
-
-      // Unsubscribe the stub now that the real handler should be in place
-      unsubscribe(stubSource, topic);
-
-      // Verify the real handler registered (exclude our stub prefix)
-      const hasRealHandler = hasSubscriber(topic, undefined, `lazy-interceptor/${tileId}/`);
-      if (!hasRealHandler) {
-        console.warn(`[tile-lazy] Tile ${tileId} loaded but no handler registered for ${topic}`);
-      }
-
-      // Replay the buffered (latest) message exactly once
-      const buffered = lazyEventPending.get(pendingKey);
-      lazyEventPending.delete(pendingKey);
-      DEBUG && console.log(`[tile-lazy] Tile ${tileId} loaded, re-publishing ${topic}`);
-      publish(stubSource, scopes.GLOBAL, topic, buffered);
-    } catch (err) {
-      console.error(`[tile-lazy] Failed to load tile ${tileId} for event ${topic}:`, err);
-      lazyEventPending.delete(pendingKey);
-    }
-  });
+function dispatchHookPredicate(topic: string): boolean {
+  if (topic.startsWith('cmd:execute:')) {
+    const rest = topic.slice('cmd:execute:'.length);
+    // `cmd:execute:name` — no further colons. `cmd:execute:name:result`
+    // has a colon in the rest and must not be intercepted.
+    return !rest.includes(':') && rest.length > 0;
+  }
+  return declaredLazyEventTopics.has(topic);
 }
 
-// ─── Tile Loading ────────────────────────────────────────────────────
+async function dispatchHookBody(topic: string, msg: unknown): Promise<PrePublishHookResult> {
+  if (topic.startsWith('cmd:execute:')) {
+    const name = topic.slice('cmd:execute:'.length);
+    return handleCommandDispatch(name, msg);
+  }
+  // lazyEvent topic — find owner and ensure loaded.
+  return handleLazyEventDispatch(topic);
+}
+
+async function handleCommandDispatch(
+  name: string,
+  msg: unknown,
+): Promise<PrePublishHookResult> {
+  const match = findTileByCommand(name);
+  if (!match) {
+    // Unknown command (wasn't declared in any registered lazy tile).
+    // It may be a dynamically registered handler — let delivery proceed
+    // and any real subscriber handles it.
+    return 'continue';
+  }
+
+  const { tileId, cmd } = match;
+
+  // Declarative `type: 'window'` commands: the main process opens the
+  // window directly. No handler on the tile side; the cmd:execute
+  // publish would go nowhere. Short-circuit: publish window-open,
+  // resolve the caller's result topic if they provided one, and skip
+  // the original publish.
+  if (cmd.action?.type === 'window' && cmd.action.url) {
+    DEBUG && console.log(`[tile-lazy] Declarative window action for ${name}, opening directly`);
+    publish(getSystemAddress(), scopes.GLOBAL, 'window:reopen-request', {
+      url: cmd.action.url,
+      options: {
+        ...(cmd.action.options || {}),
+        trackingSource: 'declarative',
+        trackingSourceId: name,
+      },
+    });
+    const typed = msg as { resultTopic?: string } | null;
+    if (typed?.resultTopic) {
+      publish(getSystemAddress(), scopes.GLOBAL, typed.resultTopic, { success: true });
+    }
+    return 'skip';
+  }
+
+  // Programmatic command: load the tile (if needed), then let the
+  // publish continue — by which point the tile's background has
+  // subscribed its real handler.
+  try {
+    await ensureTileLoaded(tileId);
+  } catch (err) {
+    console.error(`[tile-lazy] Failed to load tile ${tileId} for command ${name}:`, err);
+    // Delivery continues anyway so that any already-registered
+    // fallback subscriber sees the message. If none exist, the cmd
+    // panel's result-timeout will eventually surface the failure.
+  }
+  return 'continue';
+}
+
+async function handleLazyEventDispatch(topic: string): Promise<PrePublishHookResult> {
+  const owner = findTileByLazyEventTopic(topic);
+  if (!owner) {
+    // Topic is in the predicate set but no registered tile claims it
+    // anymore (e.g. tile was uninstalled between predicate match and
+    // hook run). Just proceed.
+    return 'continue';
+  }
+  try {
+    await ensureTileLoaded(owner.tileId);
+  } catch (err) {
+    console.error(`[tile-lazy] Failed to load tile ${owner.tileId} for lazyEvent ${topic}:`, err);
+  }
+  return 'continue';
+}
+
+// ─── Load orchestration ─────────────────────────────────────────────
 
 /**
- * Load a lazy tile on demand
+ * Ensure a tile is loaded AND ready. Handles the three cases:
+ *   - not loaded yet: start load + wait for ready
+ *   - loading in progress: wait for the existing load to complete
+ *   - already loaded + ready: resolves immediately
+ */
+async function ensureTileLoaded(tileId: string): Promise<void> {
+  const bgEntry = getBackgroundEntry(tileId) || 'background';
+  await loadLazyTile(tileId);
+  await launcher.waitForTileReady(tileId, bgEntry);
+}
+
+/**
+ * Load a lazy tile on demand. Used by the dispatch hook when it needs
+ * to boot a tile. Idempotent: concurrent calls for the same tile
+ * share the same in-flight launch.
  */
 async function loadLazyTile(tileId: string): Promise<void> {
-  // Already loaded or loading
-  if (launcher.isTileLoaded(tileId, getBackgroundEntry(tileId) || 'background')) {
-    return;
-  }
+  const bgEntry = getBackgroundEntry(tileId) || 'background';
+  if (launcher.isTileLoaded(tileId, bgEntry)) return;
   if (loadingTiles.has(tileId)) {
-    // Wait for the existing load to complete
-    const bgEntry = getBackgroundEntry(tileId) || 'background';
     await launcher.waitForTileReady(tileId, bgEntry);
     return;
   }
@@ -341,15 +313,12 @@ async function loadLazyTile(tileId: string): Promise<void> {
   }
 
   loadingTiles.add(tileId);
-
   try {
-    // Find the background tile entry
     const bgTile = config.manifest.tiles.find(t => t.type === 'background');
     if (!bgTile) {
       throw new Error(`[tile-lazy] No background tile entry in ${tileId}`);
     }
 
-    // Launch the tile
     launcher.launchTile({
       tilePath: config.tilePath,
       manifest: config.manifest,
@@ -357,7 +326,6 @@ async function loadLazyTile(tileId: string): Promise<void> {
       entryId: bgTile.id,
     });
 
-    // Set up a safety timeout
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<void>((_, reject) => {
       timeoutHandle = setTimeout(() => {
@@ -365,7 +333,6 @@ async function loadLazyTile(tileId: string): Promise<void> {
       }, LAZY_LOAD_TIMEOUT_MS);
     });
 
-    // Wait for ready or timeout
     try {
       await Promise.race([
         launcher.waitForTileReady(tileId, bgTile.id),
@@ -381,38 +348,50 @@ async function loadLazyTile(tileId: string): Promise<void> {
   }
 }
 
-/**
- * Get the background entry ID for a tile
- */
 function getBackgroundEntry(tileId: string): string | null {
   const config = lazyTileRegistry.get(tileId);
   if (!config) return null;
-
   const bgTile = config.manifest.tiles.find(t => t.type === 'background');
   return bgTile ? bgTile.id : null;
 }
 
-// ─── Queries ─────────────────────────────────────────────────────────
+// ─── Lookups ────────────────────────────────────────────────────────
 
-/**
- * Check if a tile is registered for lazy loading
- */
+function findTileByCommand(
+  name: string,
+): { tileId: string; cmd: TileCommand } | null {
+  for (const [tileId, config] of lazyTileRegistry) {
+    if (!Array.isArray(config.manifest.commands)) continue;
+    const cmd = config.manifest.commands.find(c => c.name === name);
+    if (cmd) return { tileId, cmd };
+  }
+  return null;
+}
+
+function findTileByLazyEventTopic(topic: string): { tileId: string } | null {
+  for (const [tileId, config] of lazyTileRegistry) {
+    if (collectLazyEventTopics(config.manifest).includes(topic)) {
+      return { tileId };
+    }
+  }
+  return null;
+}
+
+// ─── Public queries ─────────────────────────────────────────────────
+
 export function isLazyTileRegistered(tileId: string): boolean {
   return lazyTileRegistry.has(tileId);
 }
 
 /**
  * Get the manifest for a lazy-registered tile (without forcing load).
- * Used by the window-open IPC handler to recognise v2 tile URLs before
- * the tile has actually booted.
+ * Used by the window-open IPC handler to recognise v2 tile URLs
+ * before the tile has actually booted.
  */
 export function getLazyTileManifest(tileId: string): TileManifestV2 | null {
   return lazyTileRegistry.get(tileId)?.manifest || null;
 }
 
-/**
- * Get all registered lazy tile IDs
- */
 export function getLazyTileIds(): string[] {
   return Array.from(lazyTileRegistry.keys());
 }

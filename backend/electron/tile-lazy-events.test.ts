@@ -1,18 +1,24 @@
 /**
- * Unit tests for tile-lazy event interceptor ("lazyEvents") behavior.
+ * Unit tests for tile-lazy dispatch-hook behavior ("lazyEvents").
  *
- * Validates that a lazy v2 tile declaring `lazyEvents` in its manifest
- * gets loaded when any of those pubsub topics are first published, and
- * the buffered message is replayed to the real handler afterward.
+ * Phase E replaced the per-topic stub subscriber pattern with a single
+ * pre-publish hook on the pubsub bus. These tests verify the
+ * behaviors that matter end-to-end: tile launches on first matching
+ * topic, messages reach the real handler, subsequent events don't
+ * re-launch, concurrent publishes during load are handled cleanly.
  */
 
 import { describe, it, beforeEach, before } from 'node:test';
 import * as assert from 'node:assert';
 
-import { publish, subscribe, unsubscribe, scopes, hasSubscriber } from './pubsub.js';
+import {
+  publish, subscribe, unsubscribe, scopes,
+  __clearPrePublishHooksForTest,
+} from './pubsub.js';
 import {
   registerLazyTile,
   isLazyTileRegistered,
+  installLoadOnDispatchHook,
   __setTileLazyLauncherForTest,
   __resetTileLazyStateForTest,
 } from './tile-lazy.js';
@@ -98,11 +104,13 @@ function flushMicrotasks(): Promise<void> {
 
 // ─── Tests ────────────────────────────────────────────────────────────
 
-describe('tile-lazy event interceptors', () => {
+describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
   let launcherState: FakeLauncherState;
 
   beforeEach(() => {
     __resetTileLazyStateForTest();
+    __clearPrePublishHooksForTest();
+    installLoadOnDispatchHook();
     launcherState = {
       launchCalls: [],
       loaded: new Set(),
@@ -112,20 +120,17 @@ describe('tile-lazy event interceptors', () => {
     __setTileLazyLauncherForTest(makeFakeLauncher(launcherState));
   });
 
-  it('registers lazy tile with lazyEvents', () => {
+  it('registers lazy tile', () => {
     const manifest = makeManifest('test-tile-1', ['test1:open']);
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
-
     assert.ok(isLazyTileRegistered('test-tile-1'));
-    // Interceptor stub subscribed to the topic
-    assert.ok(hasSubscriber('test1:open', 'lazy-interceptor/test-tile-1/test1:open'));
   });
 
-  it('loads tile when a lazyEvents topic is published', async () => {
+  it('loads tile when a declared lazyEvent topic is published', async () => {
     const manifest = makeManifest('test-tile-2', ['test2:open']);
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
 
-    // On launch, simulate the tile registering its real handler and signal ready.
+    // On launch, simulate the tile registering its real handler and signaling ready.
     launcherState.onLaunch = () => {
       subscribe('peek://test-tile-2/bg', scopes.GLOBAL, 'test2:open', () => {
         /* real handler */
@@ -134,18 +139,19 @@ describe('tile-lazy event interceptors', () => {
     };
 
     publish('peek://test-publisher', scopes.GLOBAL, 'test2:open', { id: 'abc' });
-    // Yield for async subscriber
-    await flushMicrotasks();
-    await flushMicrotasks();
+
+    // The dispatch hook defers delivery until load+ready. Yield enough
+    // microtasks for: launch → microtask that sets loaded + onLaunch →
+    // waitForTileReady resolution → hook continuation → deliver.
+    for (let i = 0; i < 10; i++) await flushMicrotasks();
 
     assert.strictEqual(launcherState.launchCalls.length, 1, 'tile should have been launched');
     assert.strictEqual(launcherState.launchCalls[0].manifest.id, 'test-tile-2');
 
-    // Clean up
     unsubscribe('peek://test-tile-2/bg', 'test2:open');
   });
 
-  it('replays the buffered event to the real handler after load', async () => {
+  it('the real handler receives the deferred message after load', async () => {
     const manifest = makeManifest('test-tile-3', ['test3:open']);
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
 
@@ -159,11 +165,9 @@ describe('tile-lazy event interceptors', () => {
 
     const payload = { itemId: 'note-42', cursor: { line: 3, col: 5 } };
     publish('peek://test-publisher', scopes.GLOBAL, 'test3:open', payload);
-
-    // Allow async load + replay
     for (let i = 0; i < 10; i++) await flushMicrotasks();
 
-    assert.strictEqual(received.length, 1, 'real handler should receive replayed message');
+    assert.strictEqual(received.length, 1, 'real handler should receive the deferred message');
     assert.deepStrictEqual(received[0], payload);
 
     unsubscribe('peek://test-tile-3/bg', 'test3:open');
@@ -187,7 +191,8 @@ describe('tile-lazy event interceptors', () => {
     assert.strictEqual(launcherState.launchCalls.length, 1);
     assert.strictEqual(received.length, 1);
 
-    // Second publish — real handler already in place, interceptor stub unsubscribed
+    // Second publish — tile already loaded + ready; hook sees that and
+    // continues synchronously. No second launch.
     publish('peek://pub', scopes.GLOBAL, 'test4:open', { n: 2 });
     for (let i = 0; i < 5; i++) await flushMicrotasks();
 
@@ -195,22 +200,12 @@ describe('tile-lazy event interceptors', () => {
     assert.strictEqual(received.length, 2);
     assert.deepStrictEqual(received[1], { n: 2 });
 
-    // Interceptor should have unsubscribed itself
-    assert.strictEqual(
-      hasSubscriber('test4:open', 'lazy-interceptor/test-tile-4/test4:open'),
-      false
-    );
-
     unsubscribe('peek://test-tile-4/bg', 'test4:open');
   });
 
-  it('multiple lazyEvents topics load tile independently (first wins)', async () => {
+  it('multiple lazyEvents on one tile share a single launch', async () => {
     const manifest = makeManifest('test-tile-5', ['test5:open', 'test5:add']);
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
-
-    // Both stubs registered
-    assert.ok(hasSubscriber('test5:open', 'lazy-interceptor/test-tile-5/test5:open'));
-    assert.ok(hasSubscriber('test5:add', 'lazy-interceptor/test-tile-5/test5:add'));
 
     const received: Array<{ topic: string; msg: unknown }> = [];
     launcherState.onLaunch = () => {
@@ -223,7 +218,7 @@ describe('tile-lazy event interceptors', () => {
       signalReady(launcherState, 'test-tile-5', 'background');
     };
 
-    // Publish one topic — should trigger load
+    // First topic triggers load.
     publish('peek://pub', scopes.GLOBAL, 'test5:open', { kind: 'open' });
     for (let i = 0; i < 10; i++) await flushMicrotasks();
 
@@ -231,7 +226,7 @@ describe('tile-lazy event interceptors', () => {
     assert.strictEqual(received.length, 1);
     assert.strictEqual(received[0].topic, 'test5:open');
 
-    // Now publish the other topic — tile already loaded, should go straight to real handler
+    // Second topic: tile is already loaded, goes straight to real handler.
     publish('peek://pub', scopes.GLOBAL, 'test5:add', { kind: 'add' });
     for (let i = 0; i < 5; i++) await flushMicrotasks();
 
@@ -243,24 +238,19 @@ describe('tile-lazy event interceptors', () => {
     unsubscribe('peek://test-tile-5/bg', 'test5:add');
   });
 
-  it('only launches once even when topic fires multiple times before ready', async () => {
+  it('concurrent fires during load: one launch, every message is delivered', async () => {
     const manifest = makeManifest('test-tile-6', ['test6:open']);
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
 
-    // Defer ready signal so the first event is still "loading" when #2/#3 fire.
-    // Note: the fake launchTile synchronously adds to `loaded` and calls onLaunch,
-    // so subsequent events see tile-loaded + real-handler-present and deliver directly.
-    // We only assert that: (a) tile is launched exactly once, (b) the real handler
-    // eventually sees the replayed buffered message.
+    // Defer ready so we can fire multiple publishes while still loading.
     let readyTrigger: (() => void) | null = null;
+    const received: unknown[] = [];
     launcherState.onLaunch = () => {
       subscribe('peek://test-tile-6/bg', scopes.GLOBAL, 'test6:open', (msg) => {
         received.push(msg);
       });
       readyTrigger = () => signalReady(launcherState, 'test-tile-6', 'background');
     };
-
-    const received: unknown[] = [];
 
     publish('peek://pub', scopes.GLOBAL, 'test6:open', { n: 1 });
     await flushMicrotasks();
@@ -269,48 +259,40 @@ describe('tile-lazy event interceptors', () => {
     publish('peek://pub', scopes.GLOBAL, 'test6:open', { n: 3 });
     await flushMicrotasks();
 
-    // First event launched the tile; subsequent events short-circuit (stub unsubscribes).
+    // All three hooks are awaiting waitForTileReady; none resolved yet.
     assert.strictEqual(launcherState.launchCalls.length, 1, 'tile should launch exactly once');
 
-    // Finish the load so the buffered replay fires.
-    const trigger = readyTrigger as (() => void) | null;
-    assert.ok(trigger, 'onLaunch should have captured a ready trigger');
-    trigger();
+    // Resolve readiness — the three deferred publishes all fan out.
+    readyTrigger!();
     for (let i = 0; i < 10; i++) await flushMicrotasks();
 
-    // Real handler must have received at least the replayed n:1 (first event, buffered)
-    // plus any subsequent directly-delivered events (n:2, n:3 hit the real handler
-    // after the stub unsubscribed itself).
-    const payloads = received.map(r => (r as { n: number }).n);
-    assert.ok(payloads.includes(1), `expected n:1 in delivered payloads, got ${JSON.stringify(payloads)}`);
+    const payloads = received.map(r => (r as { n: number }).n).sort();
+    assert.deepStrictEqual(payloads, [1, 2, 3],
+      `expected all three deferred publishes to reach the real handler, got ${JSON.stringify(payloads)}`);
 
     unsubscribe('peek://test-tile-6/bg', 'test6:open');
   });
 
-  it('does not register event interceptor when manifest has no lazyEvents', () => {
-    const manifest: TileManifestV2 = {
-      manifestVersion: 2,
-      id: 'test-tile-7',
-      name: 'test-tile-7',
-      builtin: true,
-      tiles: [
-        {
-          id: 'background',
-          type: 'background',
-          url: 'background.html',
-          lazy: true,
-          // no lazyEvents
-        },
-      ],
-      capabilities: { pubsub: { scopes: ['self', 'global'] } },
-    };
+  it('topic not declared anywhere bypasses the hook entirely', async () => {
+    // Register a tile with a specific lazyEvent topic — an unrelated
+    // publish must not go through the dispatch hook (no launch, no defer).
+    const manifest = makeManifest('test-tile-7', ['test7:only-this-topic']);
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
 
-    // No interceptor subscribed for any arbitrary topic
-    assert.strictEqual(
-      hasSubscriber('editor:open', 'lazy-interceptor/test-tile-7/editor:open'),
-      false
-    );
+    const received: unknown[] = [];
+    subscribe('peek://unrelated', scopes.GLOBAL, 'unrelated:topic', (msg) => {
+      received.push(msg);
+    });
+
+    publish('peek://pub', scopes.GLOBAL, 'unrelated:topic', { x: 1 });
+    // No awaits needed — unmatched topics deliver synchronously.
+    // But give the loop a tick just to be safe for any microtask work.
+    await flushMicrotasks();
+
+    assert.strictEqual(launcherState.launchCalls.length, 0, 'unrelated publish should not trigger a launch');
+    assert.strictEqual(received.length, 1);
+
+    unsubscribe('peek://unrelated', 'unrelated:topic');
   });
 });
 

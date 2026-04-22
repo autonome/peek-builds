@@ -18,6 +18,7 @@ import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, t
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
 import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
+import { installLoadOnDispatchHook } from './tile-lazy.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
@@ -196,6 +197,13 @@ export async function initialize(): Promise<void> {
     getProfileSession,
     getSystemThemeBackgroundColor,
   });
+
+  // Install the load-on-dispatch pre-publish hook. Every subsequent
+  // `cmd:execute:{name}` or declared-lazyEvent publish passes through
+  // this hook, which awaits the owning tile's boot before letting the
+  // publish reach subscribers. Must run before any command can fire
+  // (i.e. before loadExtensions / initializeFeatures).
+  installLoadOnDispatchHook();
 
   // Initialize database
   const dbPath = path.join(config.userDataPath, config.profile, 'datastore.sqlite');
