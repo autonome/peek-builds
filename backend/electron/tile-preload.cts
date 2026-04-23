@@ -2380,6 +2380,222 @@ function buildAPI(): Record<string, unknown> {
 const api = buildAPI();
 contextBridge.exposeInMainWorld('app', api);
 
+// ─── Click-and-Hold Window Drag (unified, application-wide) ─────────
+//
+// Provides drag-to-move for all frameless windows. Hold the mouse button
+// down for `dragHoldDelay` seconds (default 1s; configurable via the
+// `dragHoldDelay` pref in app/config.js), then drag to move the window.
+// Works in every tile window that doesn't opt out via `data-no-drag` on
+// <body> (e.g. peek://app/page/index.html — canvas pages have their own
+// hold-drag system that pipes through the webview console-message
+// bridge).
+//
+// Ported from the deleted v1 preload.js (Phase 3.11b-hud removal lost
+// it). Settings, cmd panel, hud overlay, and other pseudo-tile windows
+// all relied on this for window movement; without it, drag was dead.
+{
+  const MOVE_THRESHOLD = 3;     // px of movement after hold to engage drag
+  const JITTER_TOLERANCE = 3;   // px allowed during hold without cancelling
+  let HOLD_DELAY = 1000;        // ms; updated from prefs at init
+
+  let isDragging = false;
+  let holdReady = false;
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let mouseButtonDown = false;
+  let cachedWindowId: number | null = null;
+
+  let lastScreenX = 0, lastScreenY = 0;
+  let holdOriginX = 0, holdOriginY = 0;
+  let dragOriginX = 0, dragOriginY = 0;
+  let windowOriginX = 0, windowOriginY = 0;
+
+  let positionPromise: Promise<{ success: boolean; x?: number; y?: number } | null> | null = null;
+  let suppressClick = false;
+
+  let rafPending = false;
+  let rafX = 0, rafY = 0;
+
+  const shouldBlockDrag = (target: EventTarget | null): boolean => {
+    if (!target || !(target as Element).closest) return false;
+    const el = target as Element;
+    if (el.closest('[data-no-drag]')) return true;
+    const tag = (el.tagName || '').toLowerCase();
+    if ((tag === 'input' || tag === 'textarea') && el === document.activeElement) return true;
+    if ((el as HTMLElement).isContentEditable && el === document.activeElement) return true;
+    return false;
+  };
+
+  const hasTextSelection = (): boolean => {
+    const sel = window.getSelection();
+    return !!(sel && sel.toString().length > 0);
+  };
+
+  const cancelHold = () => {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+  };
+
+  const endDrag = () => {
+    const wasDragging = isDragging;
+    cancelHold();
+    holdReady = false;
+    if (wasDragging) {
+      isDragging = false;
+      suppressClick = true;
+      document.body.classList.remove('is-dragging');
+      document.body.style.userSelect = '';
+      (document.body.style as { webkitUserSelect?: string }).webkitUserSelect = '';
+    }
+    document.body.classList.remove('hold-ready');
+    positionPromise = null;
+  };
+
+  const onMouseDown = (e: MouseEvent) => {
+    if (e.button !== 0) return;
+    mouseButtonDown = true;
+    lastScreenX = e.screenX;
+    lastScreenY = e.screenY;
+    holdOriginX = e.screenX;
+    holdOriginY = e.screenY;
+
+    if (shouldBlockDrag(e.target)) return;
+    if (cachedWindowId == null) return;
+
+    positionPromise = ipcRenderer.invoke('window-get-position', { id: cachedWindowId })
+      .catch(() => null);
+
+    holdTimer = setTimeout(async () => {
+      holdTimer = null;
+      if (!mouseButtonDown) { positionPromise = null; return; }
+      if (hasTextSelection()) { positionPromise = null; return; }
+
+      const pos = await positionPromise;
+      positionPromise = null;
+      if (!pos || !pos.success || typeof pos.x !== 'number' || typeof pos.y !== 'number') return;
+      if (!mouseButtonDown) return;
+
+      dragOriginX = lastScreenX;
+      dragOriginY = lastScreenY;
+      windowOriginX = pos.x;
+      windowOriginY = pos.y;
+      holdReady = true;
+      document.body.classList.add('hold-ready');
+    }, HOLD_DELAY);
+  };
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (!mouseButtonDown) return;
+    lastScreenX = e.screenX;
+    lastScreenY = e.screenY;
+
+    if (holdTimer && !holdReady && !isDragging) {
+      const dx = Math.abs(e.screenX - holdOriginX);
+      const dy = Math.abs(e.screenY - holdOriginY);
+      if (dx > JITTER_TOLERANCE || dy > JITTER_TOLERANCE) {
+        cancelHold();
+        positionPromise = null;
+        return;
+      }
+    }
+
+    if (holdReady && !isDragging) {
+      const dx = e.screenX - dragOriginX;
+      const dy = e.screenY - dragOriginY;
+      if (Math.abs(dx) < MOVE_THRESHOLD && Math.abs(dy) < MOVE_THRESHOLD) return;
+
+      holdReady = false;
+      isDragging = true;
+      document.body.classList.remove('hold-ready');
+      document.body.classList.add('is-dragging');
+      window.getSelection()?.removeAllRanges();
+      document.body.style.userSelect = 'none';
+      (document.body.style as { webkitUserSelect?: string }).webkitUserSelect = 'none';
+    }
+
+    if (!isDragging) return;
+    rafX = windowOriginX + (e.screenX - dragOriginX);
+    rafY = windowOriginY + (e.screenY - dragOriginY);
+
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        if (isDragging && cachedWindowId != null) {
+          ipcRenderer.invoke('window-move', { id: cachedWindowId, x: rafX, y: rafY });
+        }
+      });
+    }
+  };
+
+  const onMouseUp = (e: MouseEvent) => {
+    if (e.button !== 0) return;
+    mouseButtonDown = false;
+    endDrag();
+  };
+
+  const onClickCapture = (e: MouseEvent) => {
+    if (suppressClick) {
+      suppressClick = false;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }
+  };
+
+  const onBlur = () => { cancelHold(); };
+
+  const initDrag = async () => {
+    // Body opt-out: peek://app/page/* uses its own webview-bridged drag.
+    if (document.body && document.body.hasAttribute('data-no-drag')) return;
+
+    // Resolve cachedWindowId via the strict tile:window:get-id channel
+    // (already present in the api surface via api.window.getWindowId).
+    try {
+      const valid = await validationPromise;
+      if (valid) {
+        const result = await ipcRenderer.invoke('tile:window:get-id', { token: tileToken });
+        if (result && typeof result.id === 'number') cachedWindowId = result.id;
+      }
+    } catch {
+      // Without windowId we can't drag — bail silently.
+    }
+    if (cachedWindowId == null) return;
+
+    // Try to read dragHoldDelay from prefs. Requires trustedBuiltin grant
+    // (tile:app:get-prefs gates on it). Non-trusted tiles fall back to
+    // the 1000ms default — they typically don't need finer control.
+    try {
+      if (trustedBuiltin) {
+        const prefs = await ipcRenderer.invoke('tile:app:get-prefs', { token: tileToken });
+        if (prefs && typeof prefs.dragHoldDelay === 'number') {
+          HOLD_DELAY = Math.max(0, prefs.dragHoldDelay * 1000);
+        }
+      }
+    } catch {
+      // Use default
+    }
+
+    const dragStyle = document.createElement('style');
+    dragStyle.textContent =
+      'body.hold-ready, body.hold-ready * { cursor: grab !important; }\n' +
+      'body.is-dragging, body.is-dragging * { cursor: grabbing !important; }';
+    document.head.appendChild(dragStyle);
+
+    document.addEventListener('mousedown', onMouseDown, true);
+    window.addEventListener('mousemove', onMouseMove, true);
+    window.addEventListener('mouseup', onMouseUp, true);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('click', onClickCapture, true);
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDrag);
+  } else {
+    initDrag();
+  }
+}
+
 // ─── Theme Live-Reload ───────────────────────────────────────────────
 //
 // Tiles use `@import url('peek://theme/variables.css')` in their CSS to

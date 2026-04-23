@@ -715,8 +715,15 @@ const loadingLifecycle = {
 // --- Show / Hide navbar state ---
 // Declared here (before loadingLifecycle.onChange) so they are initialized when
 // startLoading() triggers show() synchronously during module execution.
+// `navbarGeneration` is also referenced by show() at line ~1378; declaring it
+// later (its original location) put it in the temporal dead zone when show()
+// fired from the synchronous loadingLifecycle.onChange callback below — the
+// `Cannot access 'navbarGeneration' before initialization` ReferenceError
+// surfaced once the Electron 40 console-message forwarder fix made renderer
+// errors visible (commit 58ef736e).
 let hideTimer = null;
 let showSource = null; // 'hover', 'shortcut', or 'loading'
+let navbarGeneration = 0;
 
 // Visual effect module — applies/removes CSS classes based on lifecycle state
 // Also shows/hides navbar with loading spinner during page load.
@@ -1358,11 +1365,9 @@ function updateState() {
 // loadingLifecycle.onChange) to avoid TDZ errors when startLoading() calls show()
 // during module initialization.
 
-// Generation counter to prevent stale hide() completions from clobbering a
-// subsequent show(). Incremented by both show() and hide() — if show() fires
-// while hide() is awaiting setBounds, the hide's post-await code sees a stale
-// generation and bails out.
-let navbarGeneration = 0;
+// Generation counter for show()/hide() — declared earlier alongside hideTimer
+// to avoid TDZ when show() fires from the synchronous loadingLifecycle.onChange
+// callback during module initialization.
 
 async function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
