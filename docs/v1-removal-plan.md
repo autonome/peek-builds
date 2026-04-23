@@ -1,5 +1,28 @@
 # V1 Removal Plan
 
+## Status (2026-04-24, autonomous overnight pass)
+
+What's actually done as of today, on top of the work documented in earlier sections:
+
+- Phase 1 (core background → tile-preload): done. cmd/page/hud are consolidated into the core background renderer (`app/index.js` → `initCmd/initPage/initHud`). HUD is currently disabled (commit `6f8a80b1`) but the wiring exists.
+- Phase 2 (test fixture → tile-preload): done. `peek://test/index.html` is the privileged renderer, launched from `test-fixture-glue.ts` with a `createTrustedBuiltinGrant('test')` token.
+- Phase 2.5 (other v1 surfaces): done. `loadExtInHost`, `extensionHostWindow`, `createExtensionHostWindow`, `extensionWindows` map, and the `createExtensionWindow` helper are all gone — only stale comments remain.
+- Phase 3.7e (delete `IPC_CHANNELS.*` handlers + const): done in commit `dadb6902`. All 6 handlers (`PUBLISH`/`SUBSCRIBE`/`CLOSE_WINDOW`/`REGISTER_SHORTCUT`/`UNREGISTER_SHORTCUT`/`MODIFY_WINDOW`) had zero callers after preload.js's deletion.
+- Phase 3.7b (window-* dead handlers): done in commit `39440baa`. Deleted `window-resize`, `window-blur`, `window-is-transient`, `window-set-scroll-position`, `window-get-bounds`, `window-set-bounds`, `get-display-info`, `window-move`, `window-get-position`. Also migrated tile-preload's drag IIFE off `window-move`/`window-get-position` to the strict `tile:window:get-bounds`/`tile:window:set-bounds`.
+- Phase 3.7d (extract-page-content + dialog/file/info/fetch + modes/izui/feature-settings): done in commit `39dba9d6`. Deleted ~20 dead legacy handlers; their only callers were preload.js or in already-deleted code paths. tile-preload's surfaces (`api.dialogs`, `api.filesystem`, `api.modes`, `api.izui`, `api.settings`) all route through strict `tile:*` channels now.
+- Theme directory shims: added `api.theme.{pickFolder,validateFolder,add,remove,reload}` to tile-preload (committed alongside Phase 3.7d). These keep using legacy `theme:*` IPC handlers — Settings UI requires them. Settings was previously broken on these calls.
+- preload.js: already gone (deleted in Phase 3.11b-hud).
+
+What remains:
+
+- Phase 3.7a/c: tile-preload still has window-* fallback branches (`if (!hasWindowCapability()) return ipcRenderer.invoke('window-*')`) that route to legacy handlers. Each fallback can be deleted once we confirm every deployed tile declares the relevant capability. No tile-preload caller of window-* is unconditional anymore — the only LIVE callers are: capability-fallbacks + my new drag IIFE (which now uses strict).
+- Phase 3.8 (final preload.js cleanup): preload.js itself is gone; `setPreloadPath`/`getPreloadPath` may still be referenced — quick audit needed.
+- Phase 4 (manifest cleanup): NOT started. Drop `type?` field, drop `windowHints`, decide manifestVersion bump, update 26 feature manifests.
+
+Validation today: `yarn tsc --noEmit` clean after each commit. Unit tests 2284/0 across all commits. Full Playwright suite NOT run during this session — user explicitly asked to defer until morning review.
+
+
+
 Goal: every renderer in Peek runs through `tile-preload.cts` against `tile:*` IPC. No more v1 consolidated-extension-host iframes, no more legacy IPC channels, no more dual paths in tile-preload. Frontend logic stays in `app/` (portable across Electron / Tauri / mobile); backend glue only launches the renderer.
 
 This eliminates the v1↔v2 seam that's the source of the kagi/google/tag flaky test cluster (~10 tests). Removes substantial compat code in `tile-preload.cts`, `main.ts`, and `ipc.ts`, and one whole BrowserWindow.

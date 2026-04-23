@@ -121,7 +121,6 @@ import {
 
 import {
   detectModeFromUrl,
-  type MajorModeId,
 } from './datastore.js';
 
 import {
