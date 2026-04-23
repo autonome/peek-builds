@@ -174,6 +174,30 @@ function buildAPI(): Record<string, unknown> {
     }
   };
 
+  // ── Profiles (admin surface) ──
+  //
+  // Thin wrappers over the existing `profiles:*` ipcMain handlers in
+  // ipc.ts. No capability gate — Settings is the only real consumer
+  // and it has a trustedBuiltin grant. The whole namespace went
+  // missing during the v1→v2 migration; without it, settings.js
+  // calls (`api.profiles.list()`, etc.) throw before the try/catch
+  // and the Profiles section renders empty.
+  api.profiles = {
+    list: () => ipcRenderer.invoke('profiles:list'),
+    create: (name: string) => ipcRenderer.invoke('profiles:create', { name }),
+    get: (slug: string) => ipcRenderer.invoke('profiles:get', { slug }),
+    delete: (id: string) => ipcRenderer.invoke('profiles:delete', { id }),
+    getCurrent: () => ipcRenderer.invoke('profiles:getCurrent'),
+    switch: (slug: string) => ipcRenderer.invoke('profiles:switch', { slug }),
+    enableSync: (profileId: string, apiKey: string, serverProfileId: string) =>
+      ipcRenderer.invoke('profiles:enableSync', { profileId, apiKey, serverProfileId }),
+    disableSync: (profileId: string) =>
+      ipcRenderer.invoke('profiles:disableSync', { profileId }),
+    getSyncConfig: (profileId: string) =>
+      ipcRenderer.invoke('profiles:getSyncConfig', { profileId }),
+    getPartition: () => ipcRenderer.invoke('profiles:getPartition'),
+  };
+
   // ── PubSub (if granted) ──
   //
   // Publish supports two call shapes:

@@ -545,6 +545,27 @@ interface TileEscape {
   onEscape(callback: () => TileEscapeResult | void | Promise<TileEscapeResult | void>): void;
 }
 
+// ─── Profiles ─────────────────────────────────────────────────────────
+
+interface TileProfileResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+interface TileProfiles {
+  list(): Promise<TileProfileResult>;
+  create(name: string): Promise<TileProfileResult>;
+  get(slug: string): Promise<TileProfileResult>;
+  delete(id: string): Promise<TileProfileResult>;
+  getCurrent(): Promise<TileProfileResult>;
+  switch(slug: string): Promise<TileProfileResult>;
+  enableSync(profileId: string, apiKey: string, serverProfileId: string): Promise<TileProfileResult>;
+  disableSync(profileId: string): Promise<TileProfileResult>;
+  getSyncConfig(profileId: string): Promise<TileProfileResult>;
+  getPartition(): Promise<TileProfileResult>;
+}
+
 // ─── Full window.app API ─────────────────────────────────────────────
 
 interface TileAPI {
@@ -584,6 +605,7 @@ interface TileAPI {
 
   screen: TileScreen;
   escape: TileEscape;
+  profiles: TileProfiles;
 
   // ── Removed v1 shims (Phase 4) — these throw if called ────────────
 

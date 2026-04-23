@@ -1962,14 +1962,24 @@ export function registerActivateHandler(): void {
 /**
  * Request single instance lock
  * Returns true if lock acquired, false if another instance is running
- * Skips lock in dev/test profiles to allow running alongside production
+ *
+ * Skipped when:
+ * - Source build (!app.isPackaged): every `yarn start` invocation can
+ *   coexist with a packaged Peek and with other source instances. The
+ *   packaged build is the only "owner" of the lock — that's what
+ *   handles `open -a Peek URL` Apple Events. Source builds are dev
+ *   tooling and shouldn't block on the prod lock or each other.
+ * - Ephemeral profile (dev / test-* / tmp-*): packaged builds running
+ *   under one of these profile prefixes are explicitly secondary
+ *   (used by `run:packaged` and parallel Playwright workers).
+ *
+ * The `agent-*` family used by `scripts/spawn-isolated-agent.sh`
+ * always runs from source, so it's covered by the !app.isPackaged
+ * branch — no special-case needed.
  */
 export function requestSingleInstance(): boolean {
-  // Skip single-instance lock for ephemeral profiles (dev / test-* /
-  // tmp-*) so production, parallel tests, and manual sandbox runs can
-  // coexist with a running production instance.
-  if (isEphemeralProfile()) {
-    DEBUG && console.log('Skipping single-instance lock for profile:', getProfile());
+  if (!app.isPackaged || isEphemeralProfile()) {
+    DEBUG && console.log('Skipping single-instance lock for profile:', getProfile(), 'isPackaged:', app.isPackaged);
     return true;
   }
 
