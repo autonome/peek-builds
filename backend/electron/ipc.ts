@@ -78,7 +78,6 @@ import {
   APP_DEF_HEIGHT,
   WEB_CORE_ADDRESS,
   getTilePreloadPath,
-  IPC_CHANNELS,
   isHeadless,
   isTestProfile,
   DEBUG,
@@ -98,18 +97,10 @@ import {
   addEscHandler,
   winDevtoolsConfig,
   closeOrHideWindow,
-  closeWindow,
-  modWindow,
   getSystemThemeBackgroundColor,
   getPrefs,
 } from './windows.js';
 
-import {
-  registerGlobalShortcut,
-  unregisterGlobalShortcut,
-  registerLocalShortcut,
-  unregisterLocalShortcut,
-} from './shortcuts.js';
 
 import { trackWindow } from './display-watcher.js';
 
@@ -3122,99 +3113,11 @@ export function registerMiscHandlers(onQuit: () => void): void {
   //   - BrowserWindow.fromWebContents(ev.sender): returns null for iframe senders
   //   - webContents.fromId(id): does not find sub-frame WebContents
   //   - sender.send(): sends to main frame only, not the specific iframe
-  ipcMain.on(IPC_CHANNELS.REGISTER_SHORTCUT, (ev, msg) => {
-    const isGlobal = msg.global === true;
-    const modeStr = msg.mode ? ` mode:${msg.mode}` : '';
-    DEBUG && console.log('ipc register shortcut', msg.shortcut, isGlobal ? '(global)' : '(local)', modeStr);
-
-    const callback = () => {
-      DEBUG && console.log('on(registershortcut): shortcut executed', msg.shortcut, msg.replyTopic);
-      try {
-        if (!ev.sender.isDestroyed()) {
-          ev.reply(msg.replyTopic, { foo: 'bar' });
-        } else {
-          DEBUG && console.log('on(registershortcut): sender destroyed, skipping reply for', msg.shortcut);
-        }
-      } catch (err) {
-        // Guard against edge cases where sender state changes between check and send
-        DEBUG && console.log('on(registershortcut): reply failed for', msg.shortcut, err);
-      }
-    };
-
-    if (isGlobal) {
-      registerGlobalShortcut(msg.shortcut, msg.source, callback);
-    } else {
-      // Build mode conditions if provided
-      const modeConditions = msg.mode ? { majorMode: msg.mode } : undefined;
-      registerLocalShortcut(msg.shortcut, msg.source, callback, modeConditions);
-    }
-  });
-
-  // Unregister shortcut
-  ipcMain.on(IPC_CHANNELS.UNREGISTER_SHORTCUT, (_ev, msg) => {
-    const isGlobal = msg.global === true;
-    DEBUG && console.log('ipc unregister shortcut', msg.shortcut, isGlobal ? '(global)' : '(local)');
-
-    if (isGlobal) {
-      const err = unregisterGlobalShortcut(msg.shortcut);
-      if (err) {
-        DEBUG && console.log('ipc unregister global shortcut error:', err.message);
-      }
-    } else {
-      // Build mode conditions if provided
-      const modeConditions = msg.mode ? { majorMode: msg.mode } : undefined;
-      unregisterLocalShortcut(msg.shortcut, msg.source, modeConditions);
-    }
-  });
-
-  // Close window
-  ipcMain.on(IPC_CHANNELS.CLOSE_WINDOW, (ev, msg) => {
-    closeWindow(msg.params, (output) => {
-      DEBUG && console.log('main.closeWindow api callback, output:', output);
-      if (msg && msg.replyTopic) {
-        ev.reply(msg.replyTopic, output);
-      }
-    });
-  });
-
-  // PubSub publish
-  ipcMain.on(IPC_CHANNELS.PUBLISH, (_ev, msg) => {
-    DEBUG && console.log('ipc:publish', msg);
-    publish(msg.source, msg.topic, msg.data);
-  });
-
-  // PubSub subscribe
-  ipcMain.on(IPC_CHANNELS.SUBSCRIBE, (ev, msg) => {
-    DEBUG && console.log('ipc:subscribe', msg);
-
-    subscribe(msg.source, msg.topic, (data: unknown) => {
-      DEBUG && console.log('ipc:subscribe:notification', msg);
-      ev.reply(msg.replyTopic, data);
-    });
-  });
-
-  // Modify window
-  ipcMain.on(IPC_CHANNELS.MODIFY_WINDOW, (ev, msg) => {
-    DEBUG && console.log('modifywindow', msg);
-
-    const key = Object.prototype.hasOwnProperty.call(msg, 'name') ? msg.name : null;
-
-    if (key != null) {
-      const existingWindow = findWindowByKey(msg.source, key);
-      if (existingWindow) {
-        DEBUG && console.log('FOUND WINDOW FOR KEY', key);
-        const bw = existingWindow.window;
-        let r = false;
-        try {
-          modWindow(bw, msg.params);
-          r = true;
-        } catch (ex) {
-          console.error(ex);
-        }
-        ev.reply(msg.replyTopic, { output: r });
-      }
-    }
-  });
+  // IPC_CHANNELS.* handlers (REGISTER_SHORTCUT, UNREGISTER_SHORTCUT,
+  // CLOSE_WINDOW, PUBLISH, SUBSCRIBE, MODIFY_WINDOW) were removed as
+  // part of the v1 removal (Phase 3.7e). Their only caller was the
+  // deleted `preload.js`. Tile-preload uses strict `tile:*` IPC paths
+  // instead (tile:shortcuts:register, tile:pubsub:publish, etc.).
 
   // File save dialog - shows native save dialog and writes file
   ipcMain.handle('file-save-dialog', async (ev, data: {

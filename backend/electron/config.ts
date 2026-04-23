@@ -11,7 +11,6 @@ export {
   APP_DEF_HEIGHT,
   WEB_CORE_ADDRESS,
   SETTINGS_ADDRESS,
-  IPC_CHANNELS,
   TOPICS,
 } from '../config.js';
 
