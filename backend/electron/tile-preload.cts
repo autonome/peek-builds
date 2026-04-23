@@ -247,38 +247,6 @@ function buildAPI(): Record<string, unknown> {
   // re-registers the same command (swap handler in-place instead of adding a
   // second `pubsub:cmd:execute:{name}` listener).
   const registeredCommands = new Map<string, (params: unknown) => unknown>();
-  // Cache of cmd:register publish payloads so we can re-emit them if a later-
-  // booting cmd extension asks via `cmd:request-registers`. Without this, a
-  // tile that registers its commands during module init can have its events
-  // dropped if the cmd extension's subscriber wasn't yet live on main-side —
-  // the broadcaster iterates `tileWindows` unconditionally but only at the
-  // moment of publish. See smoke.spec.ts:1502 flake analysis.
-  const registeredPayloads = new Map<string, Record<string, unknown>>();
-  let cmdRequestRegistersListenerInstalled = false;
-
-  function ensureCmdRequestRegistersListener(): void {
-    if (cmdRequestRegistersListenerInstalled) return;
-    cmdRequestRegistersListenerInstalled = true;
-    // Synchronous upstream subscribe (same pattern as subscribeImpl post-fix).
-    // On request, re-emit every cached cmd:register payload so a freshly-
-    // booted cmd extension gets this tile's registry.
-    ipcRenderer.send('tile:pubsub:subscribe', {
-      token: tileToken,
-      source: sourceAddress,
-      topic: 'cmd:request-registers',
-    });
-    ipcRenderer.on('pubsub:cmd:request-registers', () => {
-      for (const payload of registeredPayloads.values()) {
-        ipcRenderer.send('tile:pubsub:publish', {
-          token: tileToken,
-          source: sourceAddress,
-          scope: 3, // GLOBAL
-          topic: 'cmd:register',
-          data: payload,
-        });
-      }
-    });
-  }
 
   function hasCommandsCapability(): boolean {
     const cc = grantedCapabilities?.commands;
@@ -368,8 +336,6 @@ function buildAPI(): Record<string, unknown> {
         produces: produces || [],
         params: params || [],
       };
-      registeredPayloads.set(name, registerPayload);
-      ensureCmdRequestRegistersListener();
       ipcRenderer.send('tile:pubsub:publish', {
         token: tileToken,
         source: sourceAddress,

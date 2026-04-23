@@ -361,15 +361,6 @@ const initCommandRegistry = () => {
     api.pubsub.publish('cmd:query-commands-response', { commands }, api.scopes.GLOBAL);
   }, api.scopes.GLOBAL);
 
-  // Request every booted tile re-emit its cmd:register events. Tiles that
-  // registered their commands during their own init may have done so before
-  // this extension's `cmd:register` subscriber was live on main-side — the
-  // broadcaster iterates tileWindows at publish time, so any tile registered
-  // in tileWindows after the publish never saw those events. Each tile-
-  // preload caches its `cmd:register` payloads and replays them in response
-  // to this request. See smoke.spec.ts:1502 flake analysis.
-  api.pubsub.publish('cmd:request-registers', {}, api.scopes.GLOBAL);
-
   log('ext:cmd', 'Command registry initialized');
 };
 

@@ -16,7 +16,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 - [x] **Consolidate command-result paths into one.** DONE 2026-04-23 as Phase 3 of pubsub-state-machine.md. The `tile:command:result` side-channel (preload send site + main-process unrestricted `publish()` handler) is gone; all command results now flow through the capability-gated `tile:pubsub:publish` of `cmd:execute:{name}:result:{uuid}` via the infra carve-out (commit `f32063db`).
 
-- [ ] **UI-level tests for cmd-panel repeat invocation.** The 2026-04-23 repro (`tests/desktop/cmd-execute-twice.spec.ts`) fires on the pubsub bus directly and passes 3/3. Manual testing caught a 3rd-invocation stall that the bus test misses — the difference must be panel UI state (`state.executionTimeout`, `urlSearchTimer`, subscription lifetime in `ensureCmdRequestRegistersListener`) leaking across repeats. Add Playwright tests that drive Cmd+K → type → Enter 3-5x in a row and assert panel closes + no spinner.
+- [ ] **UI-level tests for cmd-panel repeat invocation.** The 2026-04-23 repro (`tests/desktop/cmd-execute-twice.spec.ts`) fires on the pubsub bus directly and passes 3/3. Manual testing caught a 3rd-invocation stall that the bus test misses — the difference must be panel UI state (`state.executionTimeout`, `urlSearchTimer`, command subscription lifetime) leaking across repeats. Add Playwright tests that drive Cmd+K → type → Enter 3-5x in a row and assert panel closes + no spinner.
 
 ---
 
