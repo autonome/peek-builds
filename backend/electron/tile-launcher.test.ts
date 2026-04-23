@@ -15,7 +15,6 @@ import {
   publish,
   unsubscribeAllByPrefix,
   hasSubscriber,
-  scopes,
 } from './pubsub.js';
 import {
   shutdownTile,
@@ -29,10 +28,10 @@ import {
 
 describe('unsubscribeAllByPrefix', () => {
   it('removes every subscription whose source starts with the prefix', () => {
-    subscribe('peek://mytile/background.html', scopes.GLOBAL, 'test:prefix:a', () => {});
-    subscribe('peek://mytile/home.html', scopes.GLOBAL, 'test:prefix:a', () => {});
-    subscribe('peek://mytile/home.html', scopes.GLOBAL, 'test:prefix:b', () => {});
-    subscribe('peek://othertile/home.html', scopes.GLOBAL, 'test:prefix:a', () => {});
+    subscribe('peek://mytile/background.html', 'test:prefix:a', () => {});
+    subscribe('peek://mytile/home.html', 'test:prefix:a', () => {});
+    subscribe('peek://mytile/home.html', 'test:prefix:b', () => {});
+    subscribe('peek://othertile/home.html', 'test:prefix:a', () => {});
 
     const removed = unsubscribeAllByPrefix('peek://mytile/');
 
@@ -52,7 +51,7 @@ describe('unsubscribeAllByPrefix', () => {
   });
 
   it('returns 0 and is a no-op for empty prefix', () => {
-    subscribe('peek://foo/x', scopes.GLOBAL, 'test:prefix:empty', () => {});
+    subscribe('peek://foo/x', 'test:prefix:empty', () => {});
     const removed = unsubscribeAllByPrefix('');
     assert.strictEqual(removed, 0);
     // Still subscribed.
@@ -62,11 +61,11 @@ describe('unsubscribeAllByPrefix', () => {
 
   it('stops deliveries after prefix unsubscribe', () => {
     let count = 0;
-    subscribe('peek://quiet/home.html', scopes.GLOBAL, 'test:prefix:delivery', () => { count++; });
-    publish('peek://src/', scopes.GLOBAL, 'test:prefix:delivery', {});
+    subscribe('peek://quiet/home.html', 'test:prefix:delivery', () => { count++; });
+    publish('peek://src/', 'test:prefix:delivery', {});
     assert.strictEqual(count, 1);
     unsubscribeAllByPrefix('peek://quiet/');
-    publish('peek://src/', scopes.GLOBAL, 'test:prefix:delivery', {});
+    publish('peek://src/', 'test:prefix:delivery', {});
     assert.strictEqual(count, 1, 'no further deliveries after prefix unsubscribe');
   });
 });

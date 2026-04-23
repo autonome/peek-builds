@@ -173,7 +173,7 @@ const init = async () => {
       debug && console.log('[ext:windows] Windows view closed');
       windowsViewId = null;
     }
-  }, api.scopes.GLOBAL);
+  });
 };
 
 const uninit = () => {

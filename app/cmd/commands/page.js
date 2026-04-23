@@ -38,13 +38,13 @@ function pageRequest(action, params = {}, timeout = 10000) {
       } else {
         resolve(msg.data);
       }
-    }, api.scopes.GLOBAL);
+    });
 
     api.publish('page:cmd:request', {
       requestId,
       action,
       ...params
-    }, api.scopes.GLOBAL);
+    });
 
     setTimeout(() => {
       if (settled) return;

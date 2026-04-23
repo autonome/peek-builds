@@ -142,7 +142,7 @@ const init = async () => {
       debug && console.log('[ext:pagestream] Pagestream window closed');
       pagestreamWindowId = null;
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for settings changes to hot-reload
   api.pubsub.subscribe('pagestream:settings-changed', async () => {
@@ -151,7 +151,7 @@ const init = async () => {
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
     initCommands();
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for settings updates from Settings UI
   api.pubsub.subscribe('pagestream:settings-update', async (msg) => {
@@ -175,11 +175,11 @@ const init = async () => {
       initShortcut(currentSettings.prefs.shortcutKey);
       initCommands();
 
-      api.pubsub.publish('pagestream:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('pagestream:settings-changed', currentSettings);
     } catch (err) {
       console.error('[ext:pagestream] settings-update error:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 };
 
 const uninit = () => {

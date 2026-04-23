@@ -278,7 +278,7 @@ describe('Desktop Datastore Tests', () => {
     it('should publish tag:created when a new tag is inserted', () => {
       const events: Array<Record<string, unknown>> = [];
       const sub = 'peek://test/tag-created';
-      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:created', (msg) => {
+      pubsub.subscribe(sub, 'tag:created', (msg) => {
         events.push(msg as Record<string, unknown>);
       });
 
@@ -297,7 +297,7 @@ describe('Desktop Datastore Tests', () => {
 
       const events: Array<Record<string, unknown>> = [];
       const sub = 'peek://test/tag-created-noop';
-      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:created', (msg) => {
+      pubsub.subscribe(sub, 'tag:created', (msg) => {
         events.push(msg as Record<string, unknown>);
       });
 
@@ -313,7 +313,7 @@ describe('Desktop Datastore Tests', () => {
 
       const events: Array<Record<string, unknown>> = [];
       const sub = 'peek://test/tag-renamed';
-      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:renamed', (msg) => {
+      pubsub.subscribe(sub, 'tag:renamed', (msg) => {
         events.push(msg as Record<string, unknown>);
       });
 
@@ -330,7 +330,7 @@ describe('Desktop Datastore Tests', () => {
     it('should NOT publish tag:renamed when the tag id does not exist', () => {
       const events: Array<Record<string, unknown>> = [];
       const sub = 'peek://test/tag-renamed-miss';
-      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:renamed', (msg) => {
+      pubsub.subscribe(sub, 'tag:renamed', (msg) => {
         events.push(msg as Record<string, unknown>);
       });
 
@@ -346,7 +346,7 @@ describe('Desktop Datastore Tests', () => {
 
       const events: Array<Record<string, unknown>> = [];
       const sub = 'peek://test/tag-deleted';
-      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:deleted', (msg) => {
+      pubsub.subscribe(sub, 'tag:deleted', (msg) => {
         events.push(msg as Record<string, unknown>);
       });
 
@@ -362,7 +362,7 @@ describe('Desktop Datastore Tests', () => {
     it('should NOT publish tag:deleted when no row was removed', () => {
       const events: Array<Record<string, unknown>> = [];
       const sub = 'peek://test/tag-deleted-miss';
-      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:deleted', (msg) => {
+      pubsub.subscribe(sub, 'tag:deleted', (msg) => {
         events.push(msg as Record<string, unknown>);
       });
 
@@ -378,7 +378,7 @@ describe('Desktop Datastore Tests', () => {
 
       const events: Array<Record<string, unknown>> = [];
       const sub = 'peek://test/tag-color';
-      pubsub.subscribe(sub, pubsub.scopes.GLOBAL, 'tag:color-changed', (msg) => {
+      pubsub.subscribe(sub, 'tag:color-changed', (msg) => {
         events.push(msg as Record<string, unknown>);
       });
 

@@ -784,7 +784,7 @@ const createItemCard = (item) => {
       if (!confirm(`Delete "${deleteItem.title || deleteItem.content || 'this item'}"?`)) return;
       try {
         await api.datastore.deleteItem(deleteItem.id);
-        api.pubsub.publish('item:deleted', { id: deleteItem.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('item:deleted', { id: deleteItem.id });
         if (state.currentSpace) { await loadItemsForSpace(state.currentSpace.id); renderItems(); }
       } catch (err) {
         console.error('[spaces] Failed to delete item:', err);
@@ -833,7 +833,7 @@ const createItemCard = (item) => {
         e.stopPropagation();
         try {
           await api.datastore.untagItem(item.id, state.currentSpace.id);
-          api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: state.currentSpace.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: state.currentSpace.id });
           if (state.currentSpace) { await loadItemsForSpace(state.currentSpace.id); renderItems(); }
         } catch (err) {
           console.error('[spaces] Failed to remove item from space:', err);
@@ -880,14 +880,14 @@ const init = async () => {
     }
   }, 150);
 
-  api.pubsub.subscribe('tag:item-added', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('tag:item-removed', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('tag:created', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('item:created', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('item:deleted', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('sync:pull-completed', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('tag:renamed', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('tag:color-changed', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('tag:item-added', () => debouncedRefresh());
+  api.pubsub.subscribe('tag:item-removed', () => debouncedRefresh());
+  api.pubsub.subscribe('tag:created', () => debouncedRefresh());
+  api.pubsub.subscribe('item:created', () => debouncedRefresh());
+  api.pubsub.subscribe('item:deleted', () => debouncedRefresh());
+  api.pubsub.subscribe('sync:pull-completed', () => debouncedRefresh());
+  api.pubsub.subscribe('tag:renamed', () => debouncedRefresh());
+  api.pubsub.subscribe('tag:color-changed', () => debouncedRefresh());
 
   setupCreateSpace();
 

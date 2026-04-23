@@ -52,7 +52,7 @@ const init = async () => {
   api.pubsub.subscribe('cmd:execute:search', (msg) => {
     const query = msg?.data?.query || msg?.data?.text || '';
     openSearchWindow(query);
-  }, api.scopes.GLOBAL);
+  });
 };
 
 const uninit = () => {

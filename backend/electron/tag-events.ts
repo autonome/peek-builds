@@ -15,7 +15,7 @@
  */
 
 import { getDb, tagItem, untagItem } from './datastore.js';
-import { publish, scopes as PubSubScopes } from './pubsub.js';
+import { publish } from './pubsub.js';
 
 /**
  * Tag an item and publish `tag:item-added` on the GLOBAL scope so UIs
@@ -34,7 +34,7 @@ export function tagItemAndPublish(
     const db = getDb();
     const tag = db.prepare('SELECT name FROM tags WHERE id = ?').get(tagId) as { name: string } | undefined;
     const item = db.prepare('SELECT type FROM items WHERE id = ?').get(itemId) as { type: string } | undefined;
-    publish('system', PubSubScopes.GLOBAL, 'tag:item-added', {
+    publish('system', 'tag:item-added', {
       tagId,
       tagName: tag?.name,
       itemId,
@@ -54,7 +54,7 @@ export function untagItemAndPublish(itemId: string, tagId: string): boolean {
   const tag = db.prepare('SELECT name FROM tags WHERE id = ?').get(tagId) as { name: string } | undefined;
   const removed = untagItem(itemId, tagId);
   if (removed) {
-    publish('system', PubSubScopes.GLOBAL, 'tag:item-removed', {
+    publish('system', 'tag:item-removed', {
       tagId,
       tagName: tag?.name,
       itemId,

@@ -184,7 +184,7 @@ const init = async () => {
   // windows are hidden/shown directly without pubsub round-trip.
   api.pubsub.subscribe('app:focus-changed', (msg) => {
     appFocused = !!msg.focused;
-  }, api.scopes.GLOBAL);
+  });
 
   // Open HUD if it was enabled in a previous session
   if (hudEnabled) {

@@ -238,7 +238,7 @@ const init = async () => {
         slideWindows.delete(key);
       }
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Initialize slides
   if (currentSettings.items && currentSettings.items.length > 0) {
@@ -249,7 +249,7 @@ const init = async () => {
   api.pubsub.subscribe('slides:settings-changed', () => {
     console.log('[ext:slides] settings changed, reinitializing');
     reinit();
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for settings updates from Settings UI
   // Settings UI sends proposed changes, we validate and save
@@ -286,11 +286,11 @@ const init = async () => {
       await reinit();
 
       // Confirm change back to Settings UI
-      api.pubsub.publish('slides:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('slides:settings-changed', currentSettings);
     } catch (err) {
       console.error('[ext:slides] settings-update error:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 };
 
 export default {

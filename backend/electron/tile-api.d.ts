@@ -17,31 +17,23 @@
  *   // or place in tsconfig.json "typeRoots" / "types" array
  */
 
-// ─── Scope constants ─────────────────────────────────────────────────
-
-interface TileScopes {
-  readonly SELF: 2;
-  readonly GLOBAL: 3;
-}
-
 // ─── PubSub ──────────────────────────────────────────────────────────
 
 interface TilePubSub {
   /**
    * Publish a message to a topic.
-   * Requires `pubsub` capability with an appropriate scope grant.
+   * Requires `pubsub` capability.
    * @param topic   Event topic string
    * @param data    Payload (any serialisable value)
-   * @param scope   Optional scope: api.scopes.SELF (2) or api.scopes.GLOBAL (3). Default: SELF.
    */
-  publish(topic: string, data: unknown, scope?: number): void;
+  publish(topic: string, data: unknown): void;
 
   /**
    * Subscribe to a topic.
    * Requires `pubsub` capability.
    * @returns Unsubscribe function
    */
-  subscribe(topic: string, callback: (data: unknown) => void, scope?: number): () => void;
+  subscribe(topic: string, callback: (data: unknown) => void): () => void;
 }
 
 // ─── Commands ────────────────────────────────────────────────────────
@@ -568,9 +560,6 @@ interface TileAPI {
 
   /** Register a shutdown handler. */
   onShutdown(callback: () => void): void;
-
-  /** Scope constants for pubsub. */
-  readonly scopes: TileScopes;
 
   /** Whether the app is running in debug mode. */
   readonly debug: boolean;

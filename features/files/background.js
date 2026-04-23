@@ -535,7 +535,7 @@ const commandDefinitions = [
         }
 
         // Notify editor of the new item
-        api.publish('editor:changed', { action: 'add', itemId }, api.scopes.GLOBAL);
+        api.publish('editor:changed', { action: 'add', itemId });
 
         return {
           success: true,

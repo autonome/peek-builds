@@ -25,11 +25,11 @@ const debug = api.debug;
 // — different origins, so BroadcastChannel cannot work. Use IPC pubsub instead.
 
 function onChannel(topic, handler) {
-  api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
+  api.pubsub.subscribe(topic, handler);
 }
 
 function emitChannel(topic, data) {
-  api.pubsub.publish(topic, data, api.scopes.GLOBAL);
+  api.pubsub.publish(topic, data);
 }
 
 const address = 'peek://websearch/home.html';
@@ -415,7 +415,7 @@ const discoverEngine = async (opensearchUrl, pageUrl) => {
     // Publish discovery event for UI notifications
     api.pubsub.publish('websearch:engine-discovered', {
       engine: { id: engine.id, name: engine.name, searchUrl: engine.searchUrl }
-    }, api.scopes.GLOBAL);
+    });
 
     debug && console.log('[ext:websearch] Discovered search engine:', engine.name, 'from', pageUrl);
     return engine;
@@ -713,7 +713,7 @@ const handleEngineRequest = async (msg) => {
       if (msg.engineId && getEngine(msg.engineId)) {
         currentSettings.prefs.defaultEngine = msg.engineId;
         await saveSettings(currentSettings);
-        api.pubsub.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
+        api.pubsub.publish('websearch:settings-changed', currentSettings);
       }
       break;
 
@@ -745,7 +745,7 @@ const init = async () => {
   initCommands();
 
   // Listen for page load events for OpenSearch discovery
-  api.pubsub.subscribe('page:loaded', handlePageLoaded, api.scopes.GLOBAL);
+  api.pubsub.subscribe('page:loaded', handlePageLoaded);
 
   // Listen for suggestion requests via BroadcastChannel
   onChannel('websearch:request-suggestions', handleSuggestionRequest);
@@ -760,7 +760,7 @@ const init = async () => {
       debug && console.log('[ext:websearch] Search window closed');
       searchWindowId = null;
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for settings changes to hot-reload
   api.pubsub.subscribe('websearch:settings-changed', async () => {
@@ -769,7 +769,7 @@ const init = async () => {
     currentSettings = await loadSettings();
     await loadEngines();
     initCommands();
-  }, api.scopes.SELF);
+  });
 
   // Listen for settings updates from Settings UI
   api.pubsub.subscribe('websearch:settings-update', async (msg) => {
@@ -798,11 +798,11 @@ const init = async () => {
       await loadEngines();
       initCommands();
 
-      api.pubsub.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
+      api.pubsub.publish('websearch:settings-changed', currentSettings);
     } catch (err) {
       console.error('[ext:websearch] settings-update error:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 };
 
 const uninit = () => {

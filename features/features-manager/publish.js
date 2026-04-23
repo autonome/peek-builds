@@ -410,7 +410,7 @@ function base64ToBytes(b64) {
 function onLexSessionRefreshed(updated) {
   lexSession = updated;
   try {
-    api.pubsub.publish('lex:session-changed', { session: updated }, api.scopes?.GLOBAL);
+    api.pubsub.publish('lex:session-changed', { session: updated });
   } catch {}
 }
 
@@ -799,7 +799,7 @@ if (hasPeekAPI) {
     if (currentStep === 3) {
       renderStep3();
     }
-  }, api.scopes?.GLOBAL);
+  });
 }
 
 // ─── Init ──────────────────────────────────────────────────────────

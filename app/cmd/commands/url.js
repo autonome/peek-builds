@@ -28,7 +28,7 @@ const commands = [
       }
 
       console.log('Saved URL:', result.data.id);
-      api.publish('editor:changed', { action: 'add', itemId: result.data.id }, api.scopes.GLOBAL);
+      api.publish('editor:changed', { action: 'add', itemId: result.data.id });
       return { success: true, message: 'URL saved' };
     }
   }

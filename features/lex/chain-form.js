@@ -31,7 +31,7 @@ import {
 const api = window.app;
 
 function emitChannel(topic, data) {
-  api.pubsub.publish(topic, data, api.scopes.GLOBAL);
+  api.pubsub.publish(topic, data);
 }
 
 // Read URL params
@@ -119,7 +119,7 @@ function publishResult(data) {
     data: data || null,
     mimeType: 'application/json',
     done: true,
-  }, api.scopes.GLOBAL);
+  });
 }
 
 /**
@@ -323,7 +323,7 @@ async function init() {
     }
 
     loadForm(nsid);
-  }, api.scopes.GLOBAL);
+  });
 }
 
 init();

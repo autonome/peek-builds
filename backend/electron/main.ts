@@ -25,7 +25,7 @@ import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, 
 import { installLoadOnDispatchHook } from './tile-lazy.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
-import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
+import { publish, subscribe, unsubscribe, hasSubscriber, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
@@ -317,7 +317,7 @@ export async function initialize(): Promise<void> {
     // (e.g. HUD with alwaysOnTop+focusable:false confuses getFocusedWindow()).
     (app as any).on('did-become-active', () => {
       getIzuiCoordinator().setAppFocused(true);
-      publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
+      publish(getSystemAddress(), 'app:focus-changed', { focused: true });
       // Show any alwaysOnTop overlay windows (e.g. HUD) that were hidden
       // by the did-resign-active handler below. This hide/show pair
       // avoids a pubsub round-trip through a renderer.
@@ -332,7 +332,7 @@ export async function initialize(): Promise<void> {
       const coordBefore = getIzuiCoordinator();
       DEBUG && console.log('[izui] did-resign-active fired. state:', coordBefore.getState(), 'isOverlay:', coordBefore.isOverlay(), 'exitCooldown:', coordBefore.isWithinOverlayExitCooldown(), 'entryCooldown:', coordBefore.isWithinOverlayEntryCooldown());
       coordBefore.setAppFocused(false);
-      publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
+      publish(getSystemAddress(), 'app:focus-changed', { focused: false });
 
       // Close overlay window (e.g. windows switcher) when app loses OS focus.
       // The overlay is a transient full-screen picker that should dismiss when the user
@@ -381,14 +381,14 @@ export async function initialize(): Promise<void> {
     // Non-macOS fallback: use browser-window-focus/blur with focused-window check
     app.on('browser-window-focus', () => {
       getIzuiCoordinator().setAppFocused(true);
-      publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: true });
+      publish(getSystemAddress(), 'app:focus-changed', { focused: true });
     });
     app.on('browser-window-blur', () => {
       // Only mark unfocused if NO window has focus (user switched to another app).
       // During window switches within Peek, one window blurs before another focuses.
       if (!BrowserWindow.getFocusedWindow()) {
         getIzuiCoordinator().setAppFocused(false);
-        publish(getSystemAddress(), scopes.GLOBAL, 'app:focus-changed', { focused: false });
+        publish(getSystemAddress(), 'app:focus-changed', { focused: false });
       }
     });
   }
@@ -502,7 +502,7 @@ export async function initialize(): Promise<void> {
             coordinator.popWindow(windowId);
           }
 
-          publish(windowData.source, scopes.GLOBAL, 'window:closed', {
+          publish(windowData.source, 'window:closed', {
             id: windowId,
             source: windowData.source
           });
@@ -684,16 +684,16 @@ function registerDeclarativeCommand(extId: string, cmd: ManifestCommand): void {
   const source = `peek://${extId}/`;
 
   // Subscribe to execution requests from the cmd panel
-  subscribe(source, scopes.GLOBAL, `cmd:execute:${cmd.name}`, (msg: unknown) => {
+  subscribe(source, `cmd:execute:${cmd.name}`, (msg: unknown) => {
     DEBUG && console.log(`[ext:declarative] Executing command: ${cmd.name}`);
     executeDeclarativeAction(cmd, msg as Record<string, unknown>);
     // Signal completion so the cmd panel proxy resolves immediately
     // (publish-type actions are fire-and-forget — don't block the UI)
-    publish(source, scopes.GLOBAL, `cmd:execute:${cmd.name}:result`, { success: true });
+    publish(source, `cmd:execute:${cmd.name}:result`, { success: true });
   });
 
   // Register the command with the cmd extension's registry
-  publish(source, scopes.GLOBAL, 'cmd:register', {
+  publish(source, 'cmd:register', {
     name: cmd.name,
     description: cmd.description || '',
     source,
@@ -722,7 +722,7 @@ function registerDeclarativeShortcut(extId: string, shortcut: ManifestShortcut, 
     DEBUG && console.log(`[ext:declarative] Shortcut triggered: ${shortcut.keys} -> ${shortcut.command}`);
     if (cmd.action.type === 'execute') {
       // For execute-type commands, publish to cmd:execute so lazy stubs can intercept
-      publish(`peek://${extId}/`, scopes.GLOBAL, `cmd:execute:${cmd.name}`, {});
+      publish(`peek://${extId}/`, `cmd:execute:${cmd.name}`, {});
     } else {
       executeDeclarativeAction(cmd, {});
     }
@@ -753,7 +753,7 @@ function executeDeclarativeAction(cmd: ManifestCommand, ctx: Record<string, unkn
 
       // Use window:reopen-request which app/index.js already handles
       // (creates a window via windowManager.createWindow)
-      publish(getSystemAddress(), scopes.GLOBAL, 'window:reopen-request', {
+      publish(getSystemAddress(), 'window:reopen-request', {
         url,
         options: {
           ...options,
@@ -769,7 +769,7 @@ function executeDeclarativeAction(cmd: ManifestCommand, ctx: Record<string, unkn
       const topic = action.topic;
       const data = { ...(action.data || {}), ...ctx };
       DEBUG && console.log(`[ext:declarative] Publishing: ${topic}`);
-      publish(getSystemAddress(), scopes.GLOBAL, topic, data);
+      publish(getSystemAddress(), topic, data);
       break;
     }
 
@@ -851,11 +851,11 @@ function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
   const stubSource = `lazy-stub/${cmd.name}`;
   const topic = `cmd:execute:${cmd.name}`;
 
-  subscribe(stubSource, scopes.GLOBAL, topic, async (msg: unknown) => {
+  subscribe(stubSource, topic, async (msg: unknown) => {
     // Extension already loaded — forward directly and clean up
     if (lazyExtensionLoaded.has(extId)) {
       unsubscribe(stubSource, topic);
-      publish(stubSource, scopes.GLOBAL, topic, msg);
+      publish(stubSource, topic, msg);
       return;
     }
 
@@ -875,12 +875,12 @@ function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
     const bufferedMsg = lazyCommandPending.get(cmd.name);
     lazyCommandPending.delete(cmd.name);
     DEBUG && console.log(`[ext:lazy] Extension ${extId} loaded, re-publishing command: ${cmd.name}`);
-    publish(stubSource, scopes.GLOBAL, topic, bufferedMsg);
+    publish(stubSource, topic, bufferedMsg);
   });
 
   // Register the command metadata with the cmd registry
   const extSource = `peek://${extId}/`;
-  publish(extSource, scopes.GLOBAL, 'cmd:register', {
+  publish(extSource, 'cmd:register', {
     name: cmd.name,
     description: cmd.description || '',
     source: extSource,
@@ -966,7 +966,7 @@ export function registerLazyEventInterceptors(options?: { skipExtensions?: Set<s
     for (const topic of editorEvents) {
       const interceptorSource = `lazy-interceptor/${topic}`;
 
-      subscribe(interceptorSource, scopes.GLOBAL, topic, async (msg: unknown) => {
+      subscribe(interceptorSource, topic, async (msg: unknown) => {
         // If editor is already loaded, nothing to do — the extension's own handler
         // will fire from the same publish (pubsub iterates all subscribers).
         if (lazyExtensionLoaded.has('editor')) return;
@@ -988,7 +988,7 @@ export function registerLazyEventInterceptors(options?: { skipExtensions?: Set<s
         const bufferedMsg = lazyInterceptorPending.get(topic);
         lazyInterceptorPending.delete(topic);
         DEBUG && console.log(`[ext:lazy-interceptor] Editor loaded, re-publishing ${topic}`);
-        publish(interceptorSource, scopes.GLOBAL, topic, bufferedMsg);
+        publish(interceptorSource, topic, bufferedMsg);
       });
     }
 
@@ -1127,7 +1127,7 @@ export async function loadExtensions(): Promise<number> {
   const v2FeatureIds = new Set<string>();
 
   // Subscribe to ext:ready — extensions publish this after registering their handlers.
-  subscribe(getSystemAddress(), scopes.SYSTEM, 'ext:ready', (data: unknown) => {
+  subscribe(getSystemAddress(), 'ext:ready', (data: unknown) => {
     const extId = (data as { id?: string })?.id;
     const registeredTopics = (data as { registeredTopics?: string[] })?.registeredTopics;
     if (extId) {
@@ -1184,10 +1184,10 @@ export async function loadExtensions(): Promise<number> {
   }
 
   // Phase 1: Early
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'early' });
+  publish('system', 'ext:startup:phase', { phase: 'early' });
 
   // Phase 2: Commands
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'commands' });
+  publish('system', 'ext:startup:phase', { phase: 'commands' });
 
   // Register declarative commands/shortcuts from manifests (after cmd is ready)
   registerDeclarativeCommands();
@@ -1204,11 +1204,11 @@ export async function loadExtensions(): Promise<number> {
   DEBUG && console.log(`[ext:timing] hybrid total: ${Date.now() - extStart}ms`);
 
   // Phase 3: UI
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'ui' });
+  publish('system', 'ext:startup:phase', { phase: 'ui' });
 
   // Phase 4: Complete
-  publish('system', scopes.GLOBAL, 'ext:startup:phase', { phase: 'complete' });
-  publish('system', scopes.GLOBAL, 'ext:all-loaded', { count: 0 });
+  publish('system', 'ext:startup:phase', { phase: 'complete' });
+  publish('system', 'ext:all-loaded', { count: 0 });
 
   return 0;
 }
@@ -1592,7 +1592,7 @@ export function loadClosedWindowStack(): void {
  */
 export async function shutdown(): Promise<void> {
   // Publish shutdown event
-  publish(getSystemAddress(), scopes.GLOBAL, 'app:shutdown', {
+  publish(getSystemAddress(), 'app:shutdown', {
     timestamp: Date.now()
   });
 
@@ -1719,7 +1719,7 @@ export function handleExternalUrl(url: string, sourceId = 'os'): void {
 function publishExternalUrl(url: string, sourceId: string): void {
   const processUrl = () => {
     // Note: Using trackingSource/trackingSourceId because preload.js overwrites msg.source
-    publish(getSystemAddress(), scopes.GLOBAL, 'external:open-url', {
+    publish(getSystemAddress(), 'external:open-url', {
       url,
       trackingSource: 'external',
       trackingSourceId: sourceId,
@@ -2012,7 +2012,6 @@ export function quitApp(): void {
 
 // Re-export commonly used functions
 export {
-  scopes,
   publish,
   subscribe,
   getSystemAddress,

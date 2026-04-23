@@ -155,7 +155,7 @@ const init = async () => {
   api.pubsub.subscribe('peeks:settings-changed', () => {
     console.log('[ext:peeks] settings changed, reinitializing');
     reinit();
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for settings updates from Settings UI
   // Settings UI sends proposed changes, we validate and save
@@ -192,11 +192,11 @@ const init = async () => {
       await reinit();
 
       // Confirm change back to Settings UI
-      api.pubsub.publish('peeks:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('peeks:settings-changed', currentSettings);
     } catch (err) {
       console.error('[ext:peeks] settings-update error:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 };
 
 export default {

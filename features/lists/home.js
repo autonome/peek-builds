@@ -339,11 +339,11 @@ const createResultElement = (item, query, index) => {
     onDelete: async (item) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       await api.datastore.deleteItem(item.id);
-      api.pubsub.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+      api.pubsub.publish('item:deleted', { id: item.id });
     },
     onTagRemove: async (item, tag) => {
       await api.datastore.untagItem(item.id, tag.id);
-      api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+      api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id });
     },
     onClick: async (item) => {
       state.selectedIndex = index;
@@ -379,10 +379,10 @@ const activateResult = async (item) => {
     }
   } else if (item.type === 'tag') {
     // Open the tags view filtered to this tag
-    api.pubsub.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
+    api.pubsub.publish('editor:open', { itemId: item.id });
   } else if (item.type === 'text' || item.type === 'tagset') {
     // Open in editor
-    api.pubsub.publish('editor:open', { itemId: item.id }, api.scopes.GLOBAL);
+    api.pubsub.publish('editor:open', { itemId: item.id });
   }
 };
 
@@ -533,27 +533,27 @@ const debouncedRefresh = debounce(async () => {
 api.pubsub.subscribe('sync:pull-completed', (msg) => {
   debug && console.log('[lists] sync:pull-completed event received:', msg);
   debouncedRefresh();
-}, api.scopes.GLOBAL);
+});
 
 api.pubsub.subscribe('item:created', (msg) => {
   debug && console.log('[lists] item:created event received:', msg);
   debouncedRefresh();
-}, api.scopes.GLOBAL);
+});
 
 api.pubsub.subscribe('item:deleted', (msg) => {
   debug && console.log('[lists] item:deleted event received:', msg);
   debouncedRefresh();
-}, api.scopes.GLOBAL);
+});
 
 api.pubsub.subscribe('tag:item-added', (msg) => {
   debug && console.log('[lists] tag:item-added event received:', msg);
   debouncedRefresh();
-}, api.scopes.GLOBAL);
+});
 
 api.pubsub.subscribe('tag:item-removed', (msg) => {
   debug && console.log('[lists] tag:item-removed event received:', msg);
   debouncedRefresh();
-}, api.scopes.GLOBAL);
+});
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', init);

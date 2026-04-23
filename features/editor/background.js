@@ -89,12 +89,12 @@ const extension = {
         params.itemId = msg.itemId;
       }
       openEditor(Object.keys(params).length > 0 ? params : undefined);
-    }, api.scopes.GLOBAL);
+    });
 
     // Subscribe to editor:add — open a new blank editor document
     api.pubsub.subscribe('editor:add', () => {
       openEditor();
-    }, api.scopes.GLOBAL);
+    });
   },
 
   uninit() {

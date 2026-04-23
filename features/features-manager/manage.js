@@ -983,7 +983,7 @@ if (hasPeekAPI) {
   for (const topic of refreshTopics) {
     api.pubsub.subscribe(topic, () => {
       loadFeatures();
-    }, api.scopes?.GLOBAL);
+    });
   }
 }
 

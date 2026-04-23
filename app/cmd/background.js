@@ -265,7 +265,7 @@ const initCommandRegistry = () => {
       commandRegistry.set(cmd.name, entry);
       liveRegisteredCommands.add(cmd.name);
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Handle individual command registrations from extensions
   // Merge-preserve pattern: see cmd:register-batch above for rationale.
@@ -289,13 +289,13 @@ const initCommandRegistry = () => {
     if (msg._nounCapability || existing._nounCapability) entry._nounCapability = msg._nounCapability || existing._nounCapability;
     commandRegistry.set(msg.name, entry);
     liveRegisteredCommands.add(msg.name);
-  }, api.scopes.GLOBAL);
+  });
 
   // Handle command unregistrations
   api.pubsub.subscribe('cmd:unregister', (msg) => {
     log('ext:cmd', 'cmd:unregister received:', msg.name);
     commandRegistry.delete(msg.name);
-  }, api.scopes.GLOBAL);
+  });
 
   // ===== Noun Registration Handlers =====
 
@@ -330,9 +330,9 @@ const initCommandRegistry = () => {
 
     // Broadcast generated commands to panel via existing cmd:register-batch flow
     if (generatedCommands.length > 0) {
-      api.pubsub.publish('cmd:register-batch', { commands: generatedCommands }, api.scopes.GLOBAL);
+      api.pubsub.publish('cmd:register-batch', { commands: generatedCommands });
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Handle noun unregistrations
   api.pubsub.subscribe('noun:unregister', (msg) => {
@@ -348,18 +348,18 @@ const initCommandRegistry = () => {
     for (const cmd of commands) {
       commandRegistry.delete(cmd.name);
       liveRegisteredCommands.delete(cmd.name);
-      api.pubsub.publish('cmd:unregister', { name: cmd.name }, api.scopes.GLOBAL);
+      api.pubsub.publish('cmd:unregister', { name: cmd.name });
     }
 
     nounRegistry.delete(msg.name);
-  }, api.scopes.GLOBAL);
+  });
 
   // Handle command list queries from the panel
   api.pubsub.subscribe('cmd:query-commands', () => {
     const commands = Array.from(commandRegistry.values());
     log('ext:cmd', 'cmd:query-commands received');
-    api.pubsub.publish('cmd:query-commands-response', { commands }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:query-commands-response', { commands });
+  });
 
   log('ext:cmd', 'Command registry initialized');
 };
@@ -460,7 +460,7 @@ const initShortcut = (prefs) => {
   // main.ts skips local shortcut dispatch for Cmd+L on page host windows,
   // so this only fires from non-page windows.
   api.shortcuts.register(URL_MODE_SHORTCUT, () => {
-    api.pubsub.publish('cmd:url-mode', {}, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:url-mode', {});
     openPanelWindow(prefs);
   });
 
@@ -583,7 +583,7 @@ const init = async () => {
   api.pubsub.subscribe('cmd:settings-changed', () => {
     log('ext:cmd', 'settings changed, reinitializing');
     reinit();
-  }, api.scopes.GLOBAL);
+  });
 
   // 4b. Save command cache after all extensions have loaded
   api.pubsub.subscribe('ext:all-loaded', async () => {
@@ -601,13 +601,13 @@ const init = async () => {
         log('ext:cmd', 'Purging stale cached command:', name);
         commandRegistry.delete(name);
         // Notify panel so it removes the command from its local registry
-        api.pubsub.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+        api.pubsub.publish('cmd:unregister', { name });
       }
 
       const { appVersion, extensionVersions } = await getCurrentVersions();
       await saveCommandCache(appVersion, extensionVersions);
     }, 100);
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for settings updates from Settings UI
   api.pubsub.subscribe('cmd:settings-update', async (msg) => {
@@ -628,11 +628,11 @@ const init = async () => {
       await saveSettings(currentSettings);
       await reinit();
 
-      api.pubsub.publish('cmd:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('cmd:settings-changed', currentSettings);
     } catch (err) {
       log.error('ext:cmd', 'settings-update error:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 
 };
 

@@ -38,7 +38,6 @@ import {
   publish,
   getSystemAddress,
   __clearPrePublishHooksForTest,
-  scopes,
 } from './pubsub.js';
 
 // Ensure NODE_ENV is 'test' — resetForTests / __simulateLifecycleReadyForTest
@@ -68,7 +67,7 @@ function captureStateChanged(): {
 } {
   const events: StateChangedPayload[] = [];
   const source = `test-state-listener-${Math.random().toString(36).slice(2, 8)}`;
-  subscribe(source, scopes.GLOBAL, 'tile:state-changed', (msg) => {
+  subscribe(source, 'tile:state-changed', (msg) => {
     events.push(msg as StateChangedPayload);
   });
   return {
@@ -253,7 +252,7 @@ describe('tile-lifecycle: subscribe-before-publish invariant', () => {
     // first publishes are never dropped.
     const received: unknown[] = [];
     const source = 'test-core-cmd-registry';
-    subscribe(source, scopes.GLOBAL, 'cmd:register', (msg) => {
+    subscribe(source, 'cmd:register', (msg) => {
       received.push(msg);
     });
     try {
@@ -261,7 +260,7 @@ describe('tile-lifecycle: subscribe-before-publish invariant', () => {
       // system the publish goes through `publish()` in pubsub.ts.
       // We call the same function directly here — the invariant under
       // test is about ordering, not about which process code path fires.
-      publish(getSystemAddress(), scopes.GLOBAL, 'cmd:register', {
+      publish(getSystemAddress(), 'cmd:register', {
         name: 'hello',
         source: 'fx',
       });

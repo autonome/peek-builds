@@ -128,13 +128,13 @@ function createProxyCommand(cmdData) {
           settled = true;
           unsubscribe?.();
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(topic, {
           ...ctx,
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => {
           if (settled) return;
@@ -158,13 +158,13 @@ function createProxyCommand(cmdData) {
         settled = true;
         unsubscribe?.();
         resolve(result);
-      }, api.scopes.GLOBAL);
+      });
 
       api.publish(`cmd:execute:${cmdData.name}`, {
         ...ctx,
         expectResult: true,
         resultTopic
-      }, api.scopes.GLOBAL);
+      });
 
       setTimeout(() => {
         if (settled) return;
@@ -191,7 +191,7 @@ function initializeCommandRegistration() {
       });
       onCommandsUpdated(); // Single update after batch
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Handle batch registrations from preload batching
   api.subscribe('cmd:register-batch', (msg) => {
@@ -203,24 +203,24 @@ function initializeCommandRegistration() {
       });
       onCommandsUpdated(); // Single update after batch
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Also listen for individual registrations while panel is open
   api.subscribe('cmd:register', (msg) => {
     debug && console.log('[cmd:commands] cmd:register received (live)', msg);
     const command = createProxyCommand(msg);
     addCommand(command);
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for unregistrations while panel is open
   api.subscribe('cmd:unregister', (msg) => {
     debug && console.log('[cmd:commands] cmd:unregister received', msg);
     removeCommand(msg.name);
-  }, api.scopes.GLOBAL);
+  });
 
   // Query the background process for currently registered commands
   debug && console.log('[cmd:commands] Querying for registered commands...');
-  api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+  api.publish('cmd:query-commands', {});
 
   debug && console.log('[cmd:commands] Command registration listeners initialized');
 }

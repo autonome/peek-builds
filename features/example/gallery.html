@@ -364,7 +364,7 @@
       api.pubsub.subscribe('example:image-added', (msg) => {
         console.log('[gallery] Image added event:', msg);
         renderGallery();
-      }, api.scopes.GLOBAL);
+      });
     }
 
     // Initial render

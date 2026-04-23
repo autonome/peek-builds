@@ -46,7 +46,7 @@ const init = async () => {
       currentIzuiState = msg.state;
       updateDisplay();
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Periodic fallback
   setInterval(refreshIzuiState, 5000);

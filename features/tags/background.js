@@ -343,14 +343,14 @@ async function executeTagset(ctx) {
   if (ctx.search) {
     try {
       const { id, tags } = await createTagset(ctx.search);
-      api.pubsub.publish('editor:changed', { action: 'add', itemId: id }, api.scopes.GLOBAL);
+      api.pubsub.publish('editor:changed', { action: 'add', itemId: id });
       return { success: true, message: `Tagset created with tags: ${tags.join(', ')}` };
     } catch (error) {
       console.error('Failed to create tagset:', error);
       return { success: false, message: error.message };
     }
   } else {
-    api.pubsub.publish('editor:add', { type: 'tagset' }, api.scopes.GLOBAL);
+    api.pubsub.publish('editor:add', { type: 'tagset' });
     return { success: true, message: 'Opening editor' };
   }
 }

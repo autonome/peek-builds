@@ -332,7 +332,7 @@ const completeTimer = async (timer) => {
     id: timer.id,
     title: timer.title,
     timerType: timer.metadata.timerType
-  }, api.scopes.GLOBAL);
+  });
 
   debug && console.log('[ext:timers] Timer completed:', timer.id);
 };
@@ -358,7 +358,7 @@ const fireIntervalNotification = (timer) => {
     id: timer.id,
     title: timer.title,
     count: timer.metadata.intervalCount
-  }, api.scopes.GLOBAL);
+  });
 };
 
 // ===== Tick Loop =====
@@ -435,7 +435,7 @@ const tick = () => {
 
   // Publish tick for UI updates
   if (tickData.length > 0) {
-    api.pubsub.publish('timer:tick', { timers: tickData }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:tick', { timers: tickData });
   }
 
   // Update HUD with active timer summary
@@ -473,7 +473,7 @@ const stopTickLoopIfEmpty = () => {
 const updateHud = (tickData) => {
   const running = tickData.filter(t => t.status === 'running');
   if (running.length === 0) {
-    api.pubsub.publish('timer:hud-update', { text: '' }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:hud-update', { text: '' });
     return;
   }
 
@@ -482,7 +482,7 @@ const updateHud = (tickData) => {
   const text = count === 1
     ? `${running[0].display}`
     : `${count} timers: ${displays.join(', ')}`;
-  api.pubsub.publish('timer:hud-update', { text, count }, api.scopes.GLOBAL);
+  api.pubsub.publish('timer:hud-update', { text, count });
 };
 
 // ===== Restore Running Timers =====
@@ -726,9 +726,9 @@ const setupPubsubHandlers = () => {
     }
 
     await updateTimerMetadata(timer.id, timer.metadata);
-    api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'paused' }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'paused' });
     debug && console.log('[ext:timers] Paused timer:', timer.id);
-  }, api.scopes.GLOBAL);
+  });
 
   // Resume a timer
   api.pubsub.subscribe('timer:resume', async (msg) => {
@@ -757,9 +757,9 @@ const setupPubsubHandlers = () => {
     timer.metadata.pausedAt = null;
     await updateTimerMetadata(timer.id, timer.metadata);
     startTickLoop();
-    api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'running' }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'running' });
     debug && console.log('[ext:timers] Resumed timer:', timer.id);
-  }, api.scopes.GLOBAL);
+  });
 
   // Stop a timer
   api.pubsub.subscribe('timer:stop', async (msg) => {
@@ -776,9 +776,9 @@ const setupPubsubHandlers = () => {
     await updateTimerMetadata(timer.id, timer.metadata);
     activeTimers.delete(timer.id);
     stopTickLoopIfEmpty();
-    api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'stopped' }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'stopped' });
     debug && console.log('[ext:timers] Stopped timer:', timer.id);
-  }, api.scopes.GLOBAL);
+  });
 
   // Delete a timer
   api.pubsub.subscribe('timer:delete', async (msg) => {
@@ -789,9 +789,9 @@ const setupPubsubHandlers = () => {
     } catch (err) {
       console.error('[ext:timers] Failed to delete timer:', err);
     }
-    api.pubsub.publish('timer:state-changed', { id: msg.id, status: 'deleted' }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:state-changed', { id: msg.id, status: 'deleted' });
     debug && console.log('[ext:timers] Deleted timer:', msg.id);
-  }, api.scopes.GLOBAL);
+  });
 
   // Request current timer state (UI requests on load)
   api.pubsub.subscribe('timer:request-state', async () => {
@@ -816,8 +816,8 @@ const setupPubsubHandlers = () => {
     } catch (err) {
       console.error('[ext:timers] Failed to query timers:', err);
     }
-    api.pubsub.publish('timer:state-response', { timers }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:state-response', { timers });
+  });
 };
 
 // ===== Registration =====
@@ -836,9 +836,9 @@ const init = async () => {
   api.pubsub.subscribe('cmd:execute:timer countdown', async (msg) => {
     const result = await handleCountdown(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'timer countdown',
     description: 'Start a countdown timer (e.g., 30m, 1h, 5m30s)',
@@ -847,14 +847,14 @@ const init = async () => {
     accepts: [],
     produces: [],
     params: [{ name: 'duration', type: 'string', required: true, description: 'Duration (e.g., 30m, 1h, 5m30s, 90s)' }]
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('cmd:execute:timer alarm', async (msg) => {
     const result = await handleAlarm(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'timer alarm',
     description: 'Set an alarm for a specific time (e.g., 6pm, 14:30)',
@@ -863,14 +863,14 @@ const init = async () => {
     accepts: [],
     produces: [],
     params: [{ name: 'time', type: 'string', required: true, description: 'Time (e.g., 6pm, 14:30, 6:30pm)' }]
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('cmd:execute:timer stopwatch', async (msg) => {
     const result = await handleStopwatch(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'timer stopwatch',
     description: 'Start a stopwatch that counts up',
@@ -879,14 +879,14 @@ const init = async () => {
     accepts: [],
     produces: [],
     params: [{ name: 'name', type: 'string', required: false, description: 'Optional name for the stopwatch' }]
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('cmd:execute:timer interval', async (msg) => {
     const result = await handleInterval(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'timer interval',
     description: 'Start a repeating interval timer',
@@ -895,7 +895,7 @@ const init = async () => {
     accepts: [],
     produces: [],
     params: [{ name: 'duration', type: 'string', required: true, description: 'Interval duration (e.g., 25m, 1h)' }]
-  }, api.scopes.GLOBAL);
+  });
 
   // Set up pubsub handlers for timer control
   setupPubsubHandlers();
@@ -912,7 +912,7 @@ const uninit = () => {
   }
   // Unregister standalone commands
   for (const name of ['timer countdown', 'timer alarm', 'timer stopwatch', 'timer interval']) {
-    api.pubsub.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:unregister', { name });
   }
 };
 

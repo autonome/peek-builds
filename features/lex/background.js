@@ -286,7 +286,7 @@ const extension = {
         knownCollectionNsids = [];
         console.log('[lex:bg] Session cleared');
       }
-    }, api.scopes.GLOBAL);
+    });
   },
 
   uninit() {

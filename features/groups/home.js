@@ -619,7 +619,7 @@ const pinItem = async (url, groupId = null) => {
     await savePinnedItems(groupId, pins);
   }
 
-  api.pubsub.publish('group:pin-changed', { groupId, itemId: item.id, pinned: true }, api.scopes.GLOBAL);
+  api.pubsub.publish('group:pin-changed', { groupId, itemId: item.id, pinned: true });
   console.log(`[ext:groups] Pinned item "${url}" in group ${groupId}`);
   return { success: true, itemId: item.id, groupId };
 };
@@ -642,7 +642,7 @@ const unpinItem = async (url, groupId = null) => {
     await savePinnedItems(groupId, pins);
   }
 
-  api.pubsub.publish('group:pin-changed', { groupId, itemId: item.id, pinned: false }, api.scopes.GLOBAL);
+  api.pubsub.publish('group:pin-changed', { groupId, itemId: item.id, pinned: false });
   console.log(`[ext:groups] Unpinned item "${url}" from group ${groupId}`);
   return { success: true, itemId: item.id, groupId };
 };
@@ -881,9 +881,9 @@ const initCommands = () => {
   api.pubsub.subscribe('cmd:execute:pin', async (msg) => {
     const result = await pinItem(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'pin',
     description: 'Pin a URL in the current group (always opens with group)',
@@ -892,15 +892,15 @@ const initCommands = () => {
     accepts: [],
     produces: [],
     params: [{ name: 'url', type: 'string', required: true, description: 'URL to pin' }]
-  }, api.scopes.GLOBAL);
+  });
 
   // unpin <url>
   api.pubsub.subscribe('cmd:execute:unpin', async (msg) => {
     const result = await unpinItem(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'unpin',
     description: 'Unpin a URL from the current group',
@@ -909,7 +909,7 @@ const initCommands = () => {
     accepts: [],
     produces: [],
     params: [{ name: 'url', type: 'string', required: true, description: 'URL to unpin' }]
-  }, api.scopes.GLOBAL);
+  });
 
   console.log('[ext:groups] Standalone commands registered: pin, unpin');
 };
@@ -917,7 +917,7 @@ const initCommands = () => {
 const uninitCommands = () => {
   unregisterNoun('groups');
   for (const name of ['pin', 'unpin']) {
-    api.pubsub.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:unregister', { name });
   }
   console.log('[ext:groups] Noun and commands unregistered: groups');
 };
@@ -934,7 +934,7 @@ const initBackground = async () => {
       debug && console.log('[ext:groups] Groups window closed, keeping group mode on member windows');
       groupsWindowId = null;
     }
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('groups:settings-changed', async () => {
     console.log('[ext:groups] settings changed, reinitializing');
@@ -942,7 +942,7 @@ const initBackground = async () => {
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
     initCommands();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('groups:settings-update', async (msg) => {
     console.log('[ext:groups] settings-update received:', msg);
@@ -959,11 +959,11 @@ const initBackground = async () => {
       uninitBackground();
       initShortcut(currentSettings.prefs.shortcutKey);
       initCommands();
-      api.pubsub.publish('groups:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('groups:settings-changed', currentSettings);
     } catch (err) {
       console.error('[ext:groups] settings-update error:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 };
 
 const uninitBackground = () => {
@@ -1050,53 +1050,53 @@ const init = async () => {
   api.pubsub.subscribe('tag:item-added', (msg) => {
     debug && console.log('[groups] tag:item-added event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('tag:item-removed', (msg) => {
     debug && console.log('[groups] tag:item-removed event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('tag:created', (msg) => {
     debug && console.log('[groups] tag:created event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to item events for reactive updates
   api.pubsub.subscribe('item:created', (msg) => {
     debug && console.log('[groups] item:created event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('item:deleted', (msg) => {
     debug && console.log('[groups] item:deleted event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to sync events — sync operations bypass per-item events,
   // so we need this to refresh when new data arrives via sync
   api.pubsub.subscribe('sync:pull-completed', (msg) => {
     debug && console.log('[groups] sync:pull-completed event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to tag rename events for reactive updates
   api.pubsub.subscribe('tag:renamed', (msg) => {
     debug && console.log('[groups] tag:renamed event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to pin change events for reactive updates
   api.pubsub.subscribe('group:pin-changed', (msg) => {
     debug && console.log('[groups] group:pin-changed event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to color changes (e.g. border color resolution persisted back)
   api.pubsub.subscribe('tag:color-changed', (msg) => {
     debug && console.log('[groups] tag:color-changed event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Set up create group UI
   setupCreateGroup();
@@ -1827,7 +1827,7 @@ const createAddressCard = (address) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       try {
         await api.datastore.deleteItem(item.id);
-        api.pubsub.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('item:deleted', { id: item.id });
         if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
       } catch (err) {
         console.error('[groups] Failed to delete item:', err);
@@ -1836,7 +1836,7 @@ const createAddressCard = (address) => {
     onTagRemove: async (item, tag) => {
       try {
         await api.datastore.untagItem(item.id, tag.id);
-        api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id });
         if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
       } catch (err) {
         console.error('[groups] Failed to remove tag:', err);
@@ -1894,7 +1894,7 @@ const createAddressCard = (address) => {
         e.stopPropagation();
         try {
           await api.datastore.untagItem(address.id, state.currentTag.id);
-          api.pubsub.publish('tag:item-removed', { itemId: address.id, tagId: state.currentTag.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('tag:item-removed', { itemId: address.id, tagId: state.currentTag.id });
           if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
         } catch (err) {
           console.error('[groups] Failed to remove item from group:', err);
@@ -1974,7 +1974,7 @@ const createAddressCard = (address) => {
         chip.remove();
         try {
           await api.datastore.untagItem(address.id, tag.id);
-          api.pubsub.publish('tag:item-removed', { itemId: address.id, tagId: tag.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('tag:item-removed', { itemId: address.id, tagId: tag.id });
         } catch (err) {
           console.error('[groups] Failed to remove tag:', err);
         }

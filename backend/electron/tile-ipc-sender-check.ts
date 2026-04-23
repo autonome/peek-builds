@@ -39,7 +39,7 @@
  */
 
 import { getGrantForToken, getTokenOwner, setTokenOwner } from './tile-tokens.js';
-import { publish, scopes, getSystemAddress } from './pubsub.js';
+import { publish, getSystemAddress } from './pubsub.js';
 import type { CapabilityGrant } from './tile-manifest.js';
 
 /**
@@ -51,7 +51,7 @@ import type { CapabilityGrant } from './tile-manifest.js';
 export function emitTileDrift(reason: string, ctx: Record<string, unknown>): void {
   const payload = { reason, ...ctx, ts: Date.now() };
   try {
-    publish(getSystemAddress(), scopes.GLOBAL, 'tile:drift', payload);
+    publish(getSystemAddress(), 'tile:drift', payload);
   } catch (err) {
     // Publishing drift must never throw out of the handler — swallow
     // and log so the original rejection path stays clean.

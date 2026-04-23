@@ -17,14 +17,6 @@ export interface ApiResult<T = unknown> {
   error?: string;
 }
 
-// ==================== Scopes ====================
-
-export enum ApiScope {
-  SYSTEM = 1,
-  SELF = 2,
-  GLOBAL = 3
-}
-
 // ==================== Command Scopes ====================
 
 /**
@@ -353,10 +345,10 @@ export interface ICommandsApi {
 
 export interface IPubSubApi {
   /** Publish a message to a topic */
-  publish(topic: string, msg: unknown, scope?: ApiScope): void;
+  publish(topic: string, msg: unknown): void;
 
   /** Subscribe to a topic */
-  subscribe(topic: string, callback: (msg: unknown) => void, scope?: ApiScope): void;
+  subscribe(topic: string, callback: (msg: unknown) => void): void;
 }
 
 // ==================== Extensions ====================
@@ -460,8 +452,6 @@ export interface IPeekApi {
   /** Current debug level */
   debugLevel: number;
 
-  /** Scope constants for pubsub */
-  scopes: typeof ApiScope;
 
   /** Keyboard shortcuts */
   shortcuts: IShortcutsApi;

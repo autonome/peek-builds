@@ -154,7 +154,6 @@ yarn test:electron      <span class="cmt"># foreground headless</span></pre>
     log('api.publish is function: ' + (typeof api.publish === 'function'), typeof api.publish === 'function' ? 'ok' : 'fail');
     log('api.datastore present: ' + !!api.datastore, api.datastore ? 'ok' : 'fail');
     log('api.datastore.queryItems is function: ' + (typeof api.datastore?.queryItems === 'function'), typeof api.datastore?.queryItems === 'function' ? 'ok' : 'fail');
-    log('api.scopes present: ' + !!api.scopes, api.scopes ? 'ok' : 'fail');
     log('api.getTileId: ' + (api.getTileId ? api.getTileId() : 'n/a'));
 
     // ── Phase 2: initialize ──
@@ -210,7 +209,7 @@ yarn test:electron      <span class="cmt"># foreground headless</span></pre>
       try {
         const unsub = api.pubsub.subscribe('item:created', (msg) => {
           log('event item:created: ' + JSON.stringify(msg).slice(0, 200), 'ok');
-        }, api.scopes?.GLOBAL);
+        });
         log('pubsub.subscribe returned: ' + (typeof unsub), typeof unsub === 'function' ? 'ok' : 'warn');
       } catch (err) {
         log('pubsub.subscribe THREW: ' + (err.message || err), 'fail');
@@ -223,7 +222,7 @@ yarn test:electron      <span class="cmt"># foreground headless</span></pre>
       try {
         api.subscribe('hello:ping', (msg) => {
           log('event hello:ping: ' + JSON.stringify(msg).slice(0, 200), 'ok');
-        }, api.scopes?.GLOBAL);
+        });
         log('api.subscribe(hello:ping) registered', 'ok');
       } catch (err) {
         log('api.subscribe THREW: ' + (err.message || err), 'fail');
@@ -234,7 +233,7 @@ yarn test:electron      <span class="cmt"># foreground headless</span></pre>
     header('pubsub publish');
     if (api.pubsub?.publish) {
       try {
-        api.pubsub.publish('hello:ping', { ts: Date.now() }, api.scopes?.GLOBAL);
+        api.pubsub.publish('hello:ping', { ts: Date.now() });
         log('pubsub.publish hello:ping fired', 'ok');
       } catch (err) {
         log('pubsub.publish THREW: ' + (err.message || err), 'fail');

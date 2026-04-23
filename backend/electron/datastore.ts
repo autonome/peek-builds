@@ -32,7 +32,7 @@ import { tableNames } from '../types/index.js';
 import { DEBUG } from './config.js';
 import { DATASTORE_VERSION } from '../version.js';
 import { addDeviceMetadata } from './device.js';
-import { publish, scopes as pubsubScopes, getSystemAddress } from './pubsub.js';
+import { publish, getSystemAddress } from './pubsub.js';
 
 // Load canonical schema for validation
 // Path is relative to compiled JS in dist/backend/electron/
@@ -2789,7 +2789,7 @@ export function getOrCreateTag(name: string): { tag: Tag; created: boolean } {
   // Emit tag:created so any caller (legacy ipc, strict tile handlers, direct
   // imports) triggers downstream UI refreshes (groups, tags page, etc.).
   try {
-    publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:created', {
+    publish(getSystemAddress(), 'tag:created', {
       tagId: newTag.id,
       name: newTag.name,
       // Back-compat alias used by existing listeners
@@ -2818,7 +2818,7 @@ export function renameTag(id: string, newName: string): Tag | null {
   const updated = getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
 
   try {
-    publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:renamed', {
+    publish(getSystemAddress(), 'tag:renamed', {
       tagId: id,
       oldName: existing?.name,
       newName: updated.name,
@@ -2841,7 +2841,7 @@ export function updateTagColor(id: string, color: string): Tag | null {
   const updated = getDb().prepare('SELECT * FROM tags WHERE id = ?').get(id) as Tag;
 
   try {
-    publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:color-changed', {
+    publish(getSystemAddress(), 'tag:color-changed', {
       tagId: id,
       color,
     });
@@ -2866,7 +2866,7 @@ export function deleteTag(id: string): boolean {
 
   if (deleted) {
     try {
-      publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:deleted', {
+      publish(getSystemAddress(), 'tag:deleted', {
         tagId: id,
         name: existing?.name,
         // Back-compat alias
@@ -3064,7 +3064,7 @@ function syncContentHashtags(itemId: string, content: string): void {
       if (!alreadyExists) {
         try {
           const item = getDb().prepare('SELECT type FROM items WHERE id = ?').get(itemId) as { type: string } | undefined;
-          publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:item-added', {
+          publish(getSystemAddress(), 'tag:item-added', {
             tagId: tag.id,
             tagName: tag.name,
             itemId,
@@ -3704,7 +3704,7 @@ export function trackNavigation(uri: string, options: {
     const { alreadyExists } = tagItem(itemId, historyTag.id);
     if (!alreadyExists) {
       try {
-        publish(getSystemAddress(), pubsubScopes.GLOBAL, 'tag:item-added', {
+        publish(getSystemAddress(), 'tag:item-added', {
           tagId: historyTag.id,
           tagName: historyTag.name,
           itemId,

@@ -69,11 +69,11 @@ export class PageNotesPane {
     });
 
     // Subscribe to relevant events
-    api.subscribe('item:created', () => this._reload(), api.scopes.GLOBAL);
-    api.subscribe('item:deleted', () => this._reload(), api.scopes.GLOBAL);
-    api.subscribe('tag:item-added', () => this._reload(), api.scopes.GLOBAL);
-    api.subscribe('tag:item-removed', () => this._reload(), api.scopes.GLOBAL);
-    api.subscribe('sync:pull-completed', () => this._reload(), api.scopes.GLOBAL);
+    api.subscribe('item:created', () => this._reload());
+    api.subscribe('item:deleted', () => this._reload());
+    api.subscribe('tag:item-added', () => this._reload());
+    api.subscribe('tag:item-removed', () => this._reload());
+    api.subscribe('sync:pull-completed', () => this._reload());
   }
 
   /**

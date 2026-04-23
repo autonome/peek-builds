@@ -386,7 +386,7 @@ const extension = {
           await pollFeed(msg.itemId, item.data.content);
         }
       }
-    }, api.scopes.GLOBAL);
+    });
 
   },
 

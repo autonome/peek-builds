@@ -222,7 +222,7 @@ const renderCoreSettings = async () => {
     await store.set(storageKeys.PREFS, prefs);
     await store.set(storageKeys.ITEMS, features);
     // Notify main process of prefs change for live updates (quit shortcut, dock visibility, etc.)
-    api.publish('topic:core:prefs', { id, prefs }, api.scopes.SYSTEM);
+    api.publish('topic:core:prefs', { id, prefs });
   };
 
   const pProps = schemas.prefs.properties;
@@ -2279,7 +2279,7 @@ const renderFeatureSettings = async (feature) => {
     }
 
     // Notify feature to hot-reload with new settings (GLOBAL for cross-process)
-    api.publish(settingsChangedTopic, {}, api.scopes.GLOBAL);
+    api.publish(settingsChangedTopic, {});
   };
 
   // Preferences
@@ -3279,7 +3279,7 @@ const init = async () => {
     if (window._refreshExtensionsList) {
       window._refreshExtensionsList();
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Add Extensions section (bundled webextensions: ad blocker, consent-o-matic, etc.)
   const privacyNav = document.createElement('a');
@@ -3499,7 +3499,7 @@ window.addEventListener('load', init);
     if (msg.section) {
       showSection(msg.section);
     }
-  }, api.scopes.GLOBAL);
+  });
 })();
 
 // Expose showSection for external navigation

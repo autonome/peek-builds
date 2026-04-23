@@ -46,7 +46,7 @@ after(() => {
 
 function subscribeViolations(cb: (msg: unknown) => void): () => void {
   const source = `peek://test-violation-subscriber/${Date.now()}`;
-  pubsub.subscribe(source, pubsub.scopes.GLOBAL, 'tile:capability-violation', cb);
+  pubsub.subscribe(source, 'tile:capability-violation', cb);
   const unsub = () => pubsub.unsubscribe(source, 'tile:capability-violation');
   teardowns.push(unsub);
   return unsub;

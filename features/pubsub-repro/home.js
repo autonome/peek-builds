@@ -8,11 +8,11 @@
 const api = window.app;
 
 function onChannel(topic, handler) {
-  api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
+  api.pubsub.subscribe(topic, handler);
 }
 
 function emitChannel(topic, data) {
-  api.pubsub.publish(topic, data, api.scopes.GLOBAL);
+  api.pubsub.publish(topic, data);
 }
 
 // Expose for test assertions

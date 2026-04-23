@@ -231,8 +231,8 @@ const registerExternalHandlers = () => {
     api.pubsub.publish('tag-actions:get-all:response', {
       success: true,
       data: currentActions
-    }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    });
+  });
 
   // Legacy CRUD endpoints -- respond gracefully; pairs is the source of truth
   api.pubsub.subscribe('tag-actions:create', async (msg) => {
@@ -245,16 +245,16 @@ const registerExternalHandlers = () => {
       });
       await saveSettings();
     }
-    api.pubsub.publish('tag-actions:create:response', { success: true }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('tag-actions:create:response', { success: true });
+  });
 
   api.pubsub.subscribe('tag-actions:update', async (_msg) => {
-    api.pubsub.publish('tag-actions:update:response', { success: true }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('tag-actions:update:response', { success: true });
+  });
 
   api.pubsub.subscribe('tag-actions:delete', async (_msg) => {
-    api.pubsub.publish('tag-actions:delete:response', { success: true }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('tag-actions:delete:response', { success: true });
+  });
 };
 
 // ==================== Escape Handler ====================

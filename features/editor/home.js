@@ -438,7 +438,7 @@ const init = async () => {
       } catch (err) {
         debug && console.log('[editor] Failed to reload settings:', err);
       }
-    }, api.scopes.GLOBAL);
+    });
   }
 
   debug && console.log('[editor] Editor initialized');
@@ -641,7 +641,7 @@ const performAutosave = async (content) => {
 
       // Publish change event
       if (api?.pubsub?.publish) {
-        api.pubsub.publish('editor:changed', { action: 'update', itemId: currentItemId }, api.scopes.GLOBAL);
+        api.pubsub.publish('editor:changed', { action: 'update', itemId: currentItemId });
       }
     } else {
       console.error('[editor] Autosave failed:', result.error);
@@ -683,7 +683,7 @@ const createDeferredNoteItem = async (content) => {
 
       // Notify that a new item was created
       if (api?.pubsub?.publish) {
-        api.pubsub.publish('editor:changed', { action: 'add', itemId: currentItemId }, api.scopes.GLOBAL);
+        api.pubsub.publish('editor:changed', { action: 'add', itemId: currentItemId });
       }
 
       // Set context to editor mode
@@ -745,7 +745,7 @@ const scheduleAutosave = (content) => {
 const handleContentChange = async (content) => {
   // Publish change event for other extensions
   if (api?.pubsub?.publish) {
-    api.pubsub.publish('editor:contentChanged', { content }, api.scopes.GLOBAL);
+    api.pubsub.publish('editor:contentChanged', { content });
   }
 
   // If this is a deferred new note and user typed real content, create the item now

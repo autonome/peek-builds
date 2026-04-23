@@ -126,7 +126,6 @@ export type { InputEvent } from './shortcuts.js';
 
 // PubSub messaging
 export {
-  scopes,
   publish,
   subscribe,
   unsubscribe,
@@ -135,7 +134,6 @@ export {
   getSystemAddress,
 } from './pubsub.js';
 
-export type { Scope } from './pubsub.js';
 
 // Main process orchestration
 export {
@@ -229,7 +227,6 @@ export {
 export type {
   IPeekApi,
   ApiResult,
-  ApiScope,
   IShortcutsApi,
   IWindowApi,
   IDatastoreApi,

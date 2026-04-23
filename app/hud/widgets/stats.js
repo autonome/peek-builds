@@ -74,8 +74,8 @@ const init = async () => {
   await refreshStats();
 
   // Refresh on window events
-  api.subscribe('window:opened', () => refreshStats(), api.scopes.GLOBAL);
-  api.subscribe('window:closed', () => refreshStats(), api.scopes.GLOBAL);
+  api.subscribe('window:opened', () => refreshStats());
+  api.subscribe('window:closed', () => refreshStats());
 
   // Poll every 3 seconds for pubsub stats (they change frequently)
   setInterval(refreshStats, 3000);

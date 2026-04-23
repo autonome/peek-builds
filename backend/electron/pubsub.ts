@@ -3,23 +3,14 @@
  *
  * Handles:
  * - Topic-based publish/subscribe
- * - Scope-based message filtering (SYSTEM, SELF, GLOBAL)
  * - Renderer window broadcasting (via callback)
  *
- * NOTE: The scope/topic logic is mirrored in app/lib/pubsub.js (the shared
- * renderer-layer PubSub engine). This file stays separate because the main
- * process acts as an IPC hub and cannot import ES modules from app/lib/.
- * If you change scope semantics here, update app/lib/pubsub.js too.
+ * Scope (SYSTEM / SELF / GLOBAL) was removed in Phase 6 of the pubsub
+ * state-machine plan (see docs/pubsub-state-machine.md). Every subscriber
+ * now receives every publish whose topic it subscribed to; privilege is
+ * enforced by capability grants (topic allowlists) and by topic naming,
+ * not by a runtime scope filter.
  */
-
-// Message scopes
-export const scopes = {
-  SYSTEM: 1,
-  SELF: 2,
-  GLOBAL: 3
-} as const;
-
-export type Scope = typeof scopes[keyof typeof scopes];
 
 // System address for privileged subscribers
 const SYSTEM_ADDRESS = 'peek://system/';
@@ -62,33 +53,6 @@ const sessionStats = {
 };
 
 /**
- * Extract pseudo-host from a peek:// URL
- * e.g., 'peek://app/foo.html' -> 'app'
- */
-function getPseudoHost(str: string): string {
-  return str.split('/')[2] || '';
-}
-
-/**
- * Check if a subscriber should receive a message based on scope
- */
-function scopeCheck(pubSource: string, subSource: string, scope: Scope): boolean {
-  // System address receives everything
-  if (subSource === SYSTEM_ADDRESS) {
-    return true;
-  }
-  // GLOBAL scope sends to everyone
-  if (scope === scopes.GLOBAL) {
-    return true;
-  }
-  // SELF scope only sends to same pseudo-host
-  if (getPseudoHost(subSource) === getPseudoHost(pubSource)) {
-    return true;
-  }
-  return false;
-}
-
-/**
  * Set the callback for broadcasting to renderer windows
  * This is called from the main process to inject the window broadcasting logic
  */
@@ -106,7 +70,7 @@ export function setPubsubBroadcaster(
  * delivery until the promise resolves; a `'skip'` result aborts the
  * publish entirely. See `registerPrePublishHook` for the mechanism.
  */
-export function publish(source: string, scope: Scope, topic: string, msg: unknown): void {
+export function publish(source: string, topic: string, msg: unknown): void {
   // Track session stats — counted once per publish call regardless of
   // whether a hook defers/skips delivery. Stats reflect publish intent.
   sessionStats.messagesPublished++;
@@ -114,7 +78,7 @@ export function publish(source: string, scope: Scope, topic: string, msg: unknow
 
   const hook = findPrePublishHook(topic);
   if (!hook) {
-    deliver(source, scope, topic, msg);
+    deliver(source, topic, msg);
     return;
   }
 
@@ -123,7 +87,7 @@ export function publish(source: string, scope: Scope, topic: string, msg: unknow
     result = hook(topic, msg);
   } catch (err) {
     console.error(`[pubsub] pre-publish hook threw for ${topic}:`, err);
-    deliver(source, scope, topic, msg);
+    deliver(source, topic, msg);
     return;
   }
 
@@ -131,20 +95,20 @@ export function publish(source: string, scope: Scope, topic: string, msg: unknow
     (result as Promise<PrePublishHookResult>).then(
       (val) => {
         if (val === 'skip') return;
-        deliver(source, scope, topic, msg);
+        deliver(source, topic, msg);
       },
       (err) => {
         // Hook failed mid-flight — best-effort deliver anyway so a
         // broken loader can't hang every matching publish forever.
         console.error(`[pubsub] pre-publish hook rejected for ${topic}:`, err);
-        deliver(source, scope, topic, msg);
+        deliver(source, topic, msg);
       },
     );
     return;
   }
 
   if (result === 'skip') return;
-  deliver(source, scope, topic, msg);
+  deliver(source, topic, msg);
 }
 
 function findPrePublishHook(topic: string): PrePublishHook | null {
@@ -158,20 +122,22 @@ function findPrePublishHook(topic: string): PrePublishHook | null {
   return null;
 }
 
-function deliver(source: string, scope: Scope, topic: string, msg: unknown): void {
-  // Route to traditional subscribers (via IPC callbacks)
+function deliver(source: string, topic: string, msg: unknown): void {
+  // Route to traditional subscribers (via IPC callbacks) — every subscriber
+  // on this topic receives the message. Scope filtering was removed in
+  // Phase 6; privilege is enforced by capability grants and topic naming.
   if (topics.has(topic)) {
     const t = topics.get(topic)!;
-    for (const [subSource, cb] of t) {
-      if (scopeCheck(source, subSource, scope)) {
-        sessionStats.messagesDelivered++;
-        cb(msg);
-      }
+    for (const [, cb] of t) {
+      sessionStats.messagesDelivered++;
+      cb(msg);
     }
   }
 
-  // Route to renderer windows (GLOBAL scope only)
-  if (scope === scopes.GLOBAL && pubsubBroadcaster) {
+  // Route to renderer windows. In Phase 5 this was gated on GLOBAL scope;
+  // with scope gone, every publish routes to the broadcaster so v2 tile
+  // windows and bgWindow subscribers see the event.
+  if (pubsubBroadcaster) {
     pubsubBroadcaster(topic, msg, source);
   }
 }
@@ -205,7 +171,6 @@ export function __clearPrePublishHooksForTest(): void {
  */
 export function subscribe(
   source: string,
-  scope: Scope,
   topic: string,
   cb: (msg: unknown) => void
 ): void {

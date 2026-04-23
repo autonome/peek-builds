@@ -16,7 +16,7 @@
  * runaway tile retries repeatedly.
  */
 
-import { publish, scopes, getSystemAddress } from './pubsub.js';
+import { publish, getSystemAddress } from './pubsub.js';
 
 export interface CapabilityViolationDetails {
   tileId: string | null;
@@ -52,7 +52,7 @@ export function publishCapabilityViolation(details: CapabilityViolationDetails):
     timestamp: now,
   };
 
-  publish(getSystemAddress(), scopes.GLOBAL, 'tile:capability-violation', event);
+  publish(getSystemAddress(), 'tile:capability-violation', event);
 }
 
 /**

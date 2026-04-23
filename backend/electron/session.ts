@@ -19,7 +19,7 @@ import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWin
 import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredExtensionIds } from './protocol.js';
 
-import { publish, scopes as PubSubScopes, getSystemAddress } from './pubsub.js';
+import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
 
 export interface WindowContext {
@@ -747,7 +747,7 @@ export async function restoreSessionSnapshot(
   if (result.failed > 0 && result.total > 2 && result.failed > result.total / 2) {
     console.warn(`[session] Partial restore: ${result.failed}/${result.total} windows failed`);
     try {
-      publish(getSystemAddress(), PubSubScopes.GLOBAL, 'session:restore-partial', {
+      publish(getSystemAddress(), 'session:restore-partial', {
         restored: result.restored,
         failed: result.failed,
         total: result.total,
@@ -759,7 +759,7 @@ export async function restoreSessionSnapshot(
 
   // Publish session:restored event
   try {
-    publish(getSystemAddress(), PubSubScopes.GLOBAL, 'session:restored', {
+    publish(getSystemAddress(), 'session:restored', {
       restored: result.restored,
       failed: result.failed,
       total: result.total,

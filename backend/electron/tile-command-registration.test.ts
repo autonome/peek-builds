@@ -17,7 +17,7 @@ import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 
 import {
-  publish, subscribe, unsubscribe, scopes,
+  publish, subscribe, unsubscribe,
   __clearPrePublishHooksForTest,
 } from './pubsub.js';
 import {
@@ -108,7 +108,7 @@ describe('tile command registration', () => {
 
   it('publishes cmd:register-batch announcing every manifest command', () => {
     const registered: unknown[] = [];
-    subscribe('test-observer', scopes.GLOBAL, 'cmd:register-batch', (msg: unknown) => {
+    subscribe('test-observer', 'cmd:register-batch', (msg: unknown) => {
       registered.push(msg);
     });
 
@@ -130,7 +130,7 @@ describe('tile command registration', () => {
 
   it('preserves params metadata in cmd:register-batch', () => {
     const received: unknown[] = [];
-    subscribe('test-observer-2', scopes.GLOBAL, 'cmd:register-batch', (msg: unknown) => {
+    subscribe('test-observer-2', 'cmd:register-batch', (msg: unknown) => {
       received.push(msg);
     });
 
@@ -161,13 +161,13 @@ describe('tile command registration', () => {
 
     const realHandlerReceived: unknown[] = [];
     launcherState.onLaunch = () => {
-      subscribe('peek://cmd-test-4/bg', scopes.GLOBAL, 'cmd:execute:doit', (msg: unknown) => {
+      subscribe('peek://cmd-test-4/bg', 'cmd:execute:doit', (msg: unknown) => {
         realHandlerReceived.push(msg);
       });
       signalReady(launcherState, 'cmd-test-4', 'background');
     };
 
-    publish('test-caller', scopes.GLOBAL, 'cmd:execute:doit', { payload: 42 });
+    publish('test-caller', 'cmd:execute:doit', { payload: 42 });
 
     // Dispatch hook is async — yield enough microtasks for load,
     // ready-signal, hook continuation, and delivery.
@@ -182,12 +182,12 @@ describe('tile command registration', () => {
 
   it('window-action commands are announced in the batch and skip tile load on dispatch', async () => {
     const received: unknown[] = [];
-    subscribe('test-observer-3', scopes.GLOBAL, 'cmd:register-batch', (msg: unknown) => {
+    subscribe('test-observer-3', 'cmd:register-batch', (msg: unknown) => {
       received.push(msg);
     });
 
     const windowOpenReceived: unknown[] = [];
-    subscribe('test-window-observer', scopes.GLOBAL, 'window:reopen-request', (msg: unknown) => {
+    subscribe('test-window-observer', 'window:reopen-request', (msg: unknown) => {
       windowOpenReceived.push(msg);
     });
 
@@ -207,7 +207,7 @@ describe('tile command registration', () => {
 
     // Firing the command should publish window:reopen-request and NOT
     // load the tile (declarative window actions bypass tile boot).
-    publish('test-caller', scopes.GLOBAL, 'cmd:execute:open-window', {});
+    publish('test-caller', 'cmd:execute:open-window', {});
     for (let i = 0; i < 3; i++) await flushMicrotasks();
 
     assert.strictEqual(launcherState.launchCalls.length, 0, 'declarative window action must not load the tile');

@@ -281,23 +281,23 @@ export const createActionRulesCache = (api) => {
       rules = msg.data;
       loaded = true;
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for changes (create/update/delete)
   const unsubCreate = api.subscribe('tag-actions:create:response', () => {
-    api.publish('tag-actions:get-all', {}, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.publish('tag-actions:get-all', {});
+  });
 
   const unsubUpdate = api.subscribe('tag-actions:update:response', () => {
-    api.publish('tag-actions:get-all', {}, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.publish('tag-actions:get-all', {});
+  });
 
   const unsubDelete = api.subscribe('tag-actions:delete:response', () => {
-    api.publish('tag-actions:get-all', {}, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.publish('tag-actions:get-all', {});
+  });
 
   // Initial fetch
-  api.publish('tag-actions:get-all', {}, api.scopes.GLOBAL);
+  api.publish('tag-actions:get-all', {});
 
   return {
     getRules: () => rules,

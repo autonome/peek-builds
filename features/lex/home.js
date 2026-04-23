@@ -170,7 +170,7 @@ function onCollectionsChanged(nsids) {
 
 function onRecentLexiconsChanged() {
   // Also publish for chain-form.js (runs in separate modal window)
-  api.pubsub.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons }, api.scopes.GLOBAL);
+  api.pubsub.publish('lex:recent-lexicons-changed', { nsids: state.recentLexicons });
 }
 
 // Listen for recent lexicon changes from chain-form.js
@@ -188,7 +188,7 @@ api.pubsub.subscribe('lex:recent-lexicons-changed', (msg) => {
     saveRecentLexicons();
     renderRecentLexicons();
   }
-}, api.scopes.GLOBAL);
+});
 
 // ============================================================================
 // Session state
@@ -760,7 +760,7 @@ async function init() {
     } else {
       switchPanel('create');
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Load session from storage directly
   await loadSession();

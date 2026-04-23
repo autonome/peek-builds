@@ -78,7 +78,7 @@ export function createPageWidgetHost(deps) {
   // --- Subscription helpers ---
 
   function subscribe(topic, handler) {
-    const unsub = api.subscribe(topic, handler, api.scopes.GLOBAL);
+    const unsub = api.subscribe(topic, handler);
     unsubs.push(unsub);
     return unsub;
   }
@@ -109,7 +109,7 @@ export function createPageWidgetHost(deps) {
       extensionId: msg.extensionId,
       widgetId: msg.widgetId,
       success: true,
-    }, api.scopes.GLOBAL);
+    });
   }
 
   // --- Widget rendering ---
@@ -142,7 +142,7 @@ export function createPageWidgetHost(deps) {
         api.publish('widget:closed', {
           extensionId: msg.extensionId,
           widgetId: msg.widgetId,
-        }, api.scopes.GLOBAL);
+        });
       },
     });
 
@@ -198,7 +198,7 @@ export function createPageWidgetHost(deps) {
         extensionId: msg.extensionId,
         error: 'No webview available',
         success: false,
-      }, api.scopes.GLOBAL);
+      });
       return;
     }
 
@@ -215,7 +215,7 @@ export function createPageWidgetHost(deps) {
         extensionId: msg.extensionId,
         error: err.message || String(err),
         success: false,
-      }, api.scopes.GLOBAL);
+      });
       return;
     }
 
@@ -232,7 +232,7 @@ export function createPageWidgetHost(deps) {
           extensionId: msg.extensionId,
           result,
           success: true,
-        }, api.scopes.GLOBAL);
+        });
       })
       .catch((err) => {
         api.publish('page:script-result', {
@@ -240,18 +240,18 @@ export function createPageWidgetHost(deps) {
           extensionId: msg.extensionId,
           error: err.message || String(err),
           success: false,
-        }, api.scopes.GLOBAL);
+        });
       });
   }
 
   // --- Lifecycle event publishers ---
 
   function publishNavigated(url, title) {
-    api.publish('page:navigated', { url, title }, api.scopes.GLOBAL);
+    api.publish('page:navigated', { url, title });
   }
 
   function publishWillClose(url) {
-    api.publish('page:will-close', { url }, api.scopes.GLOBAL);
+    api.publish('page:will-close', { url });
   }
 
   // --- Init / Destroy ---

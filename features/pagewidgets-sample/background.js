@@ -56,7 +56,7 @@ function executeContentScript(script, timeout = 5000) {
       } else {
         reject(new Error(msg.error || 'Script execution failed'));
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Set timeout
     timer = setTimeout(() => {
@@ -69,7 +69,7 @@ function executeContentScript(script, timeout = 5000) {
       extensionId: EXTENSION_ID,
       requestId,
       script,
-    }, api.scopes.GLOBAL);
+    });
   });
 }
 
@@ -184,7 +184,7 @@ async function onPageLoaded(msg) {
       widgetId: WIDGET_ID,
       title: 'Page Summary',
       html,
-    }, api.scopes.GLOBAL);
+    });
 
     debug && console.log('[ext:pagewidgets-sample] Widget rendered for:', msg.url);
   } catch (err) {
@@ -195,7 +195,7 @@ async function onPageLoaded(msg) {
       widgetId: WIDGET_ID,
       title: 'Page Summary',
       html: '<div style="font-size:12px;color:var(--theme-text-muted,#666);font-style:italic;">Could not extract page metadata</div>',
-    }, api.scopes.GLOBAL);
+    });
   }
 }
 
@@ -216,7 +216,7 @@ function onPageWillClose() {
   api.pubsub.publish('widget:close', {
     extensionId: EXTENSION_ID,
     widgetId: WIDGET_ID,
-  }, api.scopes.GLOBAL);
+  });
 }
 
 // ===== Lifecycle =====
@@ -230,12 +230,12 @@ const init = async () => {
     widgetId: WIDGET_ID,
     title: 'Page Summary',
     position: 'right',
-  }, api.scopes.GLOBAL);
+  });
 
   // Step 2: Listen for page lifecycle events
-  api.pubsub.subscribe('page:loaded', onPageLoaded, api.scopes.GLOBAL);
-  api.pubsub.subscribe('page:navigated', onPageNavigated, api.scopes.GLOBAL);
-  api.pubsub.subscribe('page:will-close', onPageWillClose, api.scopes.GLOBAL);
+  api.pubsub.subscribe('page:loaded', onPageLoaded);
+  api.pubsub.subscribe('page:navigated', onPageNavigated);
+  api.pubsub.subscribe('page:will-close', onPageWillClose);
 
   console.log('[ext:pagewidgets-sample] Initialized — listening for page events');
 };

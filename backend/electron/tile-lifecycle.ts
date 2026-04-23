@@ -35,7 +35,7 @@ import {
   isDispatchable,
   acceptsDynamicRegistration,
 } from './tile-fsm.js';
-import { publish, scopes, getSystemAddress } from './pubsub.js';
+import { publish, getSystemAddress } from './pubsub.js';
 
 // Lazy-load ipcMain via CommonJS require so this module can be imported
 // under ELECTRON_RUN_AS_NODE=1 (where electron's named ESM exports are
@@ -264,7 +264,7 @@ export function transition(
   // `tile:state-changed` directly; the authorization-rules table
   // restricts writes to System.
   try {
-    publish(getSystemAddress(), scopes.GLOBAL, 'tile:state-changed', {
+    publish(getSystemAddress(), 'tile:state-changed', {
       tileId,
       entryId,
       from,

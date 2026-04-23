@@ -12,7 +12,7 @@ import { describe, it, beforeEach, before } from 'node:test';
 import * as assert from 'node:assert';
 
 import {
-  publish, subscribe, unsubscribe, scopes,
+  publish, subscribe, unsubscribe,
   __clearPrePublishHooksForTest,
 } from './pubsub.js';
 import {
@@ -132,13 +132,13 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
     // On launch, simulate the tile registering its real handler and signaling ready.
     launcherState.onLaunch = () => {
-      subscribe('peek://test-tile-2/bg', scopes.GLOBAL, 'test2:open', () => {
+      subscribe('peek://test-tile-2/bg', 'test2:open', () => {
         /* real handler */
       });
       signalReady(launcherState, 'test-tile-2', 'background');
     };
 
-    publish('peek://test-publisher', scopes.GLOBAL, 'test2:open', { id: 'abc' });
+    publish('peek://test-publisher', 'test2:open', { id: 'abc' });
 
     // The dispatch hook defers delivery until load+ready. Yield enough
     // microtasks for: launch → microtask that sets loaded + onLaunch →
@@ -157,14 +157,14 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
     const received: unknown[] = [];
     launcherState.onLaunch = () => {
-      subscribe('peek://test-tile-3/bg', scopes.GLOBAL, 'test3:open', (msg) => {
+      subscribe('peek://test-tile-3/bg', 'test3:open', (msg) => {
         received.push(msg);
       });
       signalReady(launcherState, 'test-tile-3', 'background');
     };
 
     const payload = { itemId: 'note-42', cursor: { line: 3, col: 5 } };
-    publish('peek://test-publisher', scopes.GLOBAL, 'test3:open', payload);
+    publish('peek://test-publisher', 'test3:open', payload);
     for (let i = 0; i < 10; i++) await flushMicrotasks();
 
     assert.strictEqual(received.length, 1, 'real handler should receive the deferred message');
@@ -179,13 +179,13 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
     const received: unknown[] = [];
     launcherState.onLaunch = () => {
-      subscribe('peek://test-tile-4/bg', scopes.GLOBAL, 'test4:open', (msg) => {
+      subscribe('peek://test-tile-4/bg', 'test4:open', (msg) => {
         received.push(msg);
       });
       signalReady(launcherState, 'test-tile-4', 'background');
     };
 
-    publish('peek://pub', scopes.GLOBAL, 'test4:open', { n: 1 });
+    publish('peek://pub', 'test4:open', { n: 1 });
     for (let i = 0; i < 10; i++) await flushMicrotasks();
 
     assert.strictEqual(launcherState.launchCalls.length, 1);
@@ -193,7 +193,7 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
     // Second publish — tile already loaded + ready; hook sees that and
     // continues synchronously. No second launch.
-    publish('peek://pub', scopes.GLOBAL, 'test4:open', { n: 2 });
+    publish('peek://pub', 'test4:open', { n: 2 });
     for (let i = 0; i < 5; i++) await flushMicrotasks();
 
     assert.strictEqual(launcherState.launchCalls.length, 1, 'tile should not be relaunched');
@@ -209,17 +209,17 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
     const received: Array<{ topic: string; msg: unknown }> = [];
     launcherState.onLaunch = () => {
-      subscribe('peek://test-tile-5/bg', scopes.GLOBAL, 'test5:open', (msg) => {
+      subscribe('peek://test-tile-5/bg', 'test5:open', (msg) => {
         received.push({ topic: 'test5:open', msg });
       });
-      subscribe('peek://test-tile-5/bg', scopes.GLOBAL, 'test5:add', (msg) => {
+      subscribe('peek://test-tile-5/bg', 'test5:add', (msg) => {
         received.push({ topic: 'test5:add', msg });
       });
       signalReady(launcherState, 'test-tile-5', 'background');
     };
 
     // First topic triggers load.
-    publish('peek://pub', scopes.GLOBAL, 'test5:open', { kind: 'open' });
+    publish('peek://pub', 'test5:open', { kind: 'open' });
     for (let i = 0; i < 10; i++) await flushMicrotasks();
 
     assert.strictEqual(launcherState.launchCalls.length, 1);
@@ -227,7 +227,7 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
     assert.strictEqual(received[0].topic, 'test5:open');
 
     // Second topic: tile is already loaded, goes straight to real handler.
-    publish('peek://pub', scopes.GLOBAL, 'test5:add', { kind: 'add' });
+    publish('peek://pub', 'test5:add', { kind: 'add' });
     for (let i = 0; i < 5; i++) await flushMicrotasks();
 
     assert.strictEqual(launcherState.launchCalls.length, 1, 'tile should not be relaunched');
@@ -246,17 +246,17 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
     let readyTrigger: (() => void) | null = null;
     const received: unknown[] = [];
     launcherState.onLaunch = () => {
-      subscribe('peek://test-tile-6/bg', scopes.GLOBAL, 'test6:open', (msg) => {
+      subscribe('peek://test-tile-6/bg', 'test6:open', (msg) => {
         received.push(msg);
       });
       readyTrigger = () => signalReady(launcherState, 'test-tile-6', 'background');
     };
 
-    publish('peek://pub', scopes.GLOBAL, 'test6:open', { n: 1 });
+    publish('peek://pub', 'test6:open', { n: 1 });
     await flushMicrotasks();
-    publish('peek://pub', scopes.GLOBAL, 'test6:open', { n: 2 });
+    publish('peek://pub', 'test6:open', { n: 2 });
     await flushMicrotasks();
-    publish('peek://pub', scopes.GLOBAL, 'test6:open', { n: 3 });
+    publish('peek://pub', 'test6:open', { n: 3 });
     await flushMicrotasks();
 
     // All three hooks are awaiting waitForTileReady; none resolved yet.
@@ -280,11 +280,11 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
     registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
 
     const received: unknown[] = [];
-    subscribe('peek://unrelated', scopes.GLOBAL, 'unrelated:topic', (msg) => {
+    subscribe('peek://unrelated', 'unrelated:topic', (msg) => {
       received.push(msg);
     });
 
-    publish('peek://pub', scopes.GLOBAL, 'unrelated:topic', { x: 1 });
+    publish('peek://pub', 'unrelated:topic', { x: 1 });
     // No awaits needed — unmatched topics deliver synchronously.
     // But give the loop a tick just to be safe for any microtask work.
     await flushMicrotasks();

@@ -204,8 +204,8 @@ const init = async () => {
     api.pubsub.publish('tag-actions:get-pairs:response', {
       success: true,
       data: currentPairs
-    }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    });
+  });
 
   api.pubsub.subscribe('tag-actions:set-pairs', async (msg) => {
     if (Array.isArray(msg.pairs)) {
@@ -215,8 +215,8 @@ const init = async () => {
     api.pubsub.publish('tag-actions:set-pairs:response', {
       success: true,
       data: currentPairs
-    }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    });
+  });
 
   // Backward-compatible: respond to get-all with derived action rules
   // so tag-action-affordances.js cache still works
@@ -224,8 +224,8 @@ const init = async () => {
     api.pubsub.publish('tag-actions:get-all:response', {
       success: true,
       data: currentActions
-    }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    });
+  });
 
   // Legacy CRUD endpoints -- respond gracefully but pairs is the source of truth now
   api.pubsub.subscribe('tag-actions:create', async (msg) => {
@@ -238,16 +238,16 @@ const init = async () => {
       });
       await saveSettings();
     }
-    api.pubsub.publish('tag-actions:create:response', { success: true }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('tag-actions:create:response', { success: true });
+  });
 
   api.pubsub.subscribe('tag-actions:update', async (msg) => {
-    api.pubsub.publish('tag-actions:update:response', { success: true }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('tag-actions:update:response', { success: true });
+  });
 
   api.pubsub.subscribe('tag-actions:delete', async (msg) => {
-    api.pubsub.publish('tag-actions:delete:response', { success: true }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('tag-actions:delete:response', { success: true });
+  });
 
   debug && console.log('[tag-actions] initialized with', currentPairs.length, 'pairs');
 };

@@ -28,7 +28,7 @@ import {
   getTokenOwner,
 } from './tile-tokens.js';
 import { resolveCapabilities } from './tile-manifest.js';
-import { subscribe, unsubscribe, scopes } from './pubsub.js';
+import { subscribe, unsubscribe } from './pubsub.js';
 import { verifyTokenSender } from './tile-ipc-sender-check.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ function mintToken(tileId: string): string {
 function captureDriftEvents(): { events: Array<Record<string, unknown>>; stop: () => void } {
   const events: Array<Record<string, unknown>> = [];
   const source = `test-drift-listener-${Math.random().toString(36).slice(2, 8)}`;
-  subscribe(source, scopes.GLOBAL, 'tile:drift', (msg) => {
+  subscribe(source, 'tile:drift', (msg) => {
     events.push(msg as Record<string, unknown>);
   });
   return {

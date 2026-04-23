@@ -49,11 +49,11 @@ Use `api.pubsub.publish` / `api.pubsub.subscribe` directly. The flat
 used in new code.
 
 ```javascript
-api.pubsub.publish('example:image-added', payload, api.scopes.GLOBAL);
+api.pubsub.publish('example:image-added', payload);
 
 api.pubsub.subscribe('example:image-added', (msg) => {
   renderGallery();
-}, api.scopes.GLOBAL);
+});
 ```
 
 The manifest must declare every topic you publish or subscribe to under

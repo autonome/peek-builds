@@ -29,7 +29,7 @@
       labels: extension.labels,
       version: '1.0.0'
     }
-  }, api.scopes.SYSTEM);
+  });
 
   // Handle shutdown request from main process
   api.pubsub.subscribe('app:shutdown', () => {
@@ -37,7 +37,7 @@
     if (extension.uninit) {
       extension.uninit();
     }
-  }, api.scopes.SYSTEM);
+  });
 
   // Handle extension-specific shutdown
   api.pubsub.subscribe(`ext:${extId}:shutdown`, () => {
@@ -45,7 +45,7 @@
     if (extension.uninit) {
       extension.uninit();
     }
-  }, api.scopes.SYSTEM);
+  });
 </script>
 </body>
 </html>

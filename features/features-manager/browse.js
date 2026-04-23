@@ -516,7 +516,7 @@ if (hasPeekAPI) {
   api.pubsub.subscribe('feature:installed', async () => {
     await loadInstalledFeatures();
     renderResults();
-  }, api.scopes?.GLOBAL);
+  });
 }
 
 // ─── Init ───────────────────────────────────────────────────────────

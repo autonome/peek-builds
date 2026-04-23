@@ -44,7 +44,7 @@ async function showBorder(color, name) {
       const exists = await api.window.exists(borderWindowId);
       if (exists?.exists) {
         // Update color and name via message
-        api.pubsub.publish('spaces:border-update', { color: safeColor, name }, api.scopes.GLOBAL);
+        api.pubsub.publish('spaces:border-update', { color: safeColor, name });
         return;
       }
     } catch { /* window gone */ }
@@ -132,7 +132,7 @@ async function handleItemCreated(msg) {
         tagId: spaceTagId,
         itemId,
         source: 'spaces-auto-tag'
-      }, api.scopes.GLOBAL);
+      });
       debug && console.log('[ext:spaces] Auto-tagged item', itemId, 'with space', spaceTagId);
     }
   } catch (err) {
@@ -336,52 +336,52 @@ const initCommands = () => {
   api.pubsub.subscribe('cmd:execute:open space', async (msg) => {
     const result = await openSpace(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'open space',
     description: 'Open a space (restore saved state or show home)',
     source: 'spaces',
     scope: 'global',
     params: [{ name: 'name', type: 'string', required: true, description: 'Space name' }]
-  }, api.scopes.GLOBAL);
+  });
 
   // "close space"
   api.pubsub.subscribe('cmd:execute:close space', async (msg) => {
     const result = await closeSpace();
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'close space',
     description: 'Save window state and close all space windows',
     source: 'spaces',
     scope: 'global',
-  }, api.scopes.GLOBAL);
+  });
 
   // "switch space <name>"
   api.pubsub.subscribe('cmd:execute:switch space', async (msg) => {
     const result = await switchSpace(msg.search?.trim());
     if (msg.expectResult && msg.resultTopic) {
-      api.pubsub.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.pubsub.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.pubsub.publish('cmd:register', {
     name: 'switch space',
     description: 'Close current space and open another',
     source: 'spaces',
     scope: 'global',
     params: [{ name: 'name', type: 'string', required: true, description: 'Target space name' }]
-  }, api.scopes.GLOBAL);
+  });
 
   console.log('[ext:spaces] Commands registered: open space, close space, switch space');
 };
 
 const uninitCommands = () => {
   for (const name of ['open space', 'close space', 'switch space']) {
-    api.pubsub.publish('cmd:unregister', { name }, api.scopes.GLOBAL);
+    api.pubsub.publish('cmd:unregister', { name });
   }
 };
 
@@ -393,14 +393,14 @@ const init = async () => {
   initCommands();
 
   // Subscribe to item:created for auto-tagging
-  api.pubsub.subscribe('item:created', handleItemCreated, api.scopes.GLOBAL);
+  api.pubsub.subscribe('item:created', handleItemCreated);
 
   // Subscribe to tag:item-removed for mode reset
-  api.pubsub.subscribe('tag:item-removed', handleTagRemoved, api.scopes.GLOBAL);
+  api.pubsub.subscribe('tag:item-removed', handleTagRemoved);
 
   // Subscribe to focus events for border visibility
-  api.pubsub.subscribe('window:focused', () => updateBorderVisibility(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('window:closed', () => updateBorderVisibility(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('window:focused', () => updateBorderVisibility());
+  api.pubsub.subscribe('window:closed', () => updateBorderVisibility());
   api.pubsub.subscribe('app:focus-changed', (msg) => {
     if (!msg?.focused) {
       // App lost focus — hide border
@@ -408,7 +408,7 @@ const init = async () => {
     } else {
       updateBorderVisibility();
     }
-  }, api.scopes.GLOBAL);
+  });
 };
 
 const uninit = () => {

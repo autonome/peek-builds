@@ -115,7 +115,6 @@ import { trackWindow } from './display-watcher.js';
 import {
   publish,
   subscribe,
-  scopes as PubSubScopes,
   getSystemAddress,
   getStats as getPubSubStats,
 } from './pubsub.js';
@@ -855,7 +854,7 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
   if (entry.scrollY != null) options.scrollY = entry.scrollY;
 
   // Publish event for the background window to pick up and open
-  publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:reopen-request', {
+  publish(getSystemAddress(), 'window:reopen-request', {
     url: entry.url,
     options,
   });
@@ -893,7 +892,7 @@ export function openNewPageWindow(): void {
   }
 
   // Publish event for the background window to open the URL
-  publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:new-page-request', {
+  publish(getSystemAddress(), 'window:new-page-request', {
     url: 'peek://app/new-tab/index.html',
     options,
   });
@@ -997,7 +996,7 @@ export function registerWindowHandlers(): void {
         // Reload the page so content is fresh (the webview may have navigated
         // away or the content may be stale from session restore).
         try {
-          publish('system', PubSubScopes.GLOBAL, 'page:reload', { windowId: existingByUrl.id });
+          publish('system', 'page:reload', { windowId: existingByUrl.id });
         } catch (e) {
           DEBUG && console.log('Failed to send reload to reused window:', e);
         }
@@ -1652,7 +1651,7 @@ export function registerWindowHandlers(): void {
           });
           popupItemId = popupTrack.itemId;
           if (popupTrack.created) {
-            publish('system', PubSubScopes.GLOBAL, 'item:created', {
+            publish('system', 'item:created', {
               itemId: popupTrack.itemId,
               itemType: 'url',
               content: popupUrl,
@@ -1798,25 +1797,25 @@ export function registerWindowHandlers(): void {
             const modifier = process.platform === 'darwin' ? input.meta : input.control;
             if (input.type !== 'keyDown' || !modifier) return;
             if (input.key === 'l') {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: popupWin.id });
+              publish('peek://system/', 'page:show-navbar', { windowId: popupWin.id });
               event.preventDefault();
             } else if (input.key === 'r') {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:reload', { windowId: popupWin.id });
+              publish('peek://system/', 'page:reload', { windowId: popupWin.id });
               event.preventDefault();
             } else if (input.key === 'f') {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find', { windowId: popupWin.id });
+              publish('peek://system/', 'page:find', { windowId: popupWin.id });
               event.preventDefault();
             } else if (input.key === 'g' && input.shift) {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-prev', { windowId: popupWin.id });
+              publish('peek://system/', 'page:find-prev', { windowId: popupWin.id });
               event.preventDefault();
             } else if (input.key === 'g') {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-next', { windowId: popupWin.id });
+              publish('peek://system/', 'page:find-next', { windowId: popupWin.id });
               event.preventDefault();
             } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-back', { windowId: popupWin.id });
+              publish('peek://system/', 'page:go-back', { windowId: popupWin.id });
               event.preventDefault();
             } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-forward', { windowId: popupWin.id });
+              publish('peek://system/', 'page:go-forward', { windowId: popupWin.id });
               event.preventDefault();
             }
           });
@@ -1831,7 +1830,7 @@ export function registerWindowHandlers(): void {
                 } catch (e) {
                   DEBUG && console.log('Failed to update title from popup guest page-title-updated:', e);
                 }
-                publish('system', PubSubScopes.GLOBAL, 'page:content-ready', {
+                publish('system', 'page:content-ready', {
                   url: guestUrl,
                   title,
                   windowId: popupWin.id,
@@ -1942,25 +1941,25 @@ export function registerWindowHandlers(): void {
           const modifier = process.platform === 'darwin' ? input.meta : input.control;
           if (input.type !== 'keyDown' || !modifier) return;
           if (input.key === 'l') {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: popupWin.id });
+            publish('peek://system/', 'page:show-navbar', { windowId: popupWin.id });
             event.preventDefault();
           } else if (input.key === 'r') {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:reload', { windowId: popupWin.id });
+            publish('peek://system/', 'page:reload', { windowId: popupWin.id });
             event.preventDefault();
           } else if (input.key === 'f') {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find', { windowId: popupWin.id });
+            publish('peek://system/', 'page:find', { windowId: popupWin.id });
             event.preventDefault();
           } else if (input.key === 'g' && input.shift) {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-prev', { windowId: popupWin.id });
+            publish('peek://system/', 'page:find-prev', { windowId: popupWin.id });
             event.preventDefault();
           } else if (input.key === 'g') {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-next', { windowId: popupWin.id });
+            publish('peek://system/', 'page:find-next', { windowId: popupWin.id });
             event.preventDefault();
           } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-back', { windowId: popupWin.id });
+            publish('peek://system/', 'page:go-back', { windowId: popupWin.id });
             event.preventDefault();
           } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-forward', { windowId: popupWin.id });
+            publish('peek://system/', 'page:go-forward', { windowId: popupWin.id });
             event.preventDefault();
           }
         });
@@ -1997,25 +1996,25 @@ export function registerWindowHandlers(): void {
             const modifier = process.platform === 'darwin' ? input.meta : input.control;
             if (input.type !== 'keyDown' || !modifier) return;
             if (input.key === 'l') {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: win.id });
+              publish('peek://system/', 'page:show-navbar', { windowId: win.id });
               event.preventDefault();
             } else if (input.key === 'r') {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:reload', { windowId: win.id });
+              publish('peek://system/', 'page:reload', { windowId: win.id });
               event.preventDefault();
             } else if (input.key === 'f') {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find', { windowId: win.id });
+              publish('peek://system/', 'page:find', { windowId: win.id });
               event.preventDefault();
             } else if (input.key === 'g' && input.shift) {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-prev', { windowId: win.id });
+              publish('peek://system/', 'page:find-prev', { windowId: win.id });
               event.preventDefault();
             } else if (input.key === 'g') {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-next', { windowId: win.id });
+              publish('peek://system/', 'page:find-next', { windowId: win.id });
               event.preventDefault();
             } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-back', { windowId: win.id });
+              publish('peek://system/', 'page:go-back', { windowId: win.id });
               event.preventDefault();
             } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
-              publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-forward', { windowId: win.id });
+              publish('peek://system/', 'page:go-forward', { windowId: win.id });
               event.preventDefault();
             }
           });
@@ -2034,7 +2033,7 @@ export function registerWindowHandlers(): void {
                   DEBUG && console.log('Failed to update title from guest page-title-updated:', e);
                 }
                 // Notify extensions that page content is available for extraction
-                publish('system', PubSubScopes.GLOBAL, 'page:content-ready', {
+                publish('system', 'page:content-ready', {
                   url: guestUrl,
                   title,
                   windowId: win.id,
@@ -2175,25 +2174,25 @@ export function registerWindowHandlers(): void {
           const modifier = process.platform === 'darwin' ? input.meta : input.control;
           if (input.type !== 'keyDown' || !modifier) return;
           if (input.key === 'l') {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:show-navbar', { windowId: win.id });
+            publish('peek://system/', 'page:show-navbar', { windowId: win.id });
             event.preventDefault();
           } else if (input.key === 'r') {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:reload', { windowId: win.id });
+            publish('peek://system/', 'page:reload', { windowId: win.id });
             event.preventDefault();
           } else if (input.key === 'f') {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find', { windowId: win.id });
+            publish('peek://system/', 'page:find', { windowId: win.id });
             event.preventDefault();
           } else if (input.key === 'g' && input.shift) {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-prev', { windowId: win.id });
+            publish('peek://system/', 'page:find-prev', { windowId: win.id });
             event.preventDefault();
           } else if (input.key === 'g') {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:find-next', { windowId: win.id });
+            publish('peek://system/', 'page:find-next', { windowId: win.id });
             event.preventDefault();
           } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-back', { windowId: win.id });
+            publish('peek://system/', 'page:go-back', { windowId: win.id });
             event.preventDefault();
           } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
-            publish('peek://system/', PubSubScopes.GLOBAL, 'page:go-forward', { windowId: win.id });
+            publish('peek://system/', 'page:go-forward', { windowId: win.id });
             event.preventDefault();
           }
         });
@@ -2290,7 +2289,7 @@ export function registerWindowHandlers(): void {
               DEBUG && console.log('Failed to update title from page-title-updated:', e);
             }
             // Notify extensions that page content is available for extraction
-            publish('system', PubSubScopes.GLOBAL, 'page:content-ready', {
+            publish('system', 'page:content-ready', {
               url: pageUrl,
               title,
               windowId: win.id,
@@ -2340,7 +2339,7 @@ export function registerWindowHandlers(): void {
             title: options.title || (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
           });
           if (trackResult.created) {
-            publish('system', PubSubScopes.GLOBAL, 'item:created', {
+            publish('system', 'item:created', {
               itemId: trackResult.itemId,
               itemType: 'url',
               content: url,
@@ -2377,7 +2376,7 @@ export function registerWindowHandlers(): void {
             title: (win.getTitle() !== 'Loading...' ? win.getTitle() : '') || '',
           });
           if (navTrack.created) {
-            publish('system', PubSubScopes.GLOBAL, 'item:created', {
+            publish('system', 'item:created', {
               itemId: navTrack.itemId,
               itemType: 'url',
               content: navUrl,
@@ -2410,7 +2409,7 @@ export function registerWindowHandlers(): void {
         // Include `role` so subscribers (e.g. cmd panel's auto-hide-on-
         // other-window-focus) can filter out utility children (chain
         // popup, etc.) without another round-trip.
-        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:focused', {
+        publish(getSystemAddress(), 'window:focused', {
           id: win.id,
           role: winInfo?.params?.role as string | undefined,
         });
@@ -2517,7 +2516,7 @@ export function registerWindowHandlers(): void {
       }
 
       // Notify HUD and other listeners that a window was opened
-      publish(getSystemAddress(), PubSubScopes.GLOBAL, 'window:opened', {
+      publish(getSystemAddress(), 'window:opened', {
         id: win.id,
         url,
         source: msg.source
@@ -3271,14 +3270,14 @@ export function registerMiscHandlers(onQuit: () => void): void {
   // PubSub publish
   ipcMain.on(IPC_CHANNELS.PUBLISH, (_ev, msg) => {
     DEBUG && console.log('ipc:publish', msg);
-    publish(msg.source, msg.scope, msg.topic, msg.data);
+    publish(msg.source, msg.topic, msg.data);
   });
 
   // PubSub subscribe
   ipcMain.on(IPC_CHANNELS.SUBSCRIBE, (ev, msg) => {
     DEBUG && console.log('ipc:subscribe', msg);
 
-    subscribe(msg.source, msg.scope, msg.topic, (data: unknown) => {
+    subscribe(msg.source, msg.topic, (data: unknown) => {
       DEBUG && console.log('ipc:subscribe:notification', msg);
       ev.reply(msg.replyTopic, data);
     });
@@ -3562,7 +3561,7 @@ export function registerMiscHandlers(onQuit: () => void): void {
  */
 export function registerSyncHandlers(): void {
   // Handle declarative sync trigger (from manifest-declared commands)
-  subscribe(getSystemAddress(), PubSubScopes.GLOBAL, 'sync:manual-trigger', async () => {
+  subscribe(getSystemAddress(), 'sync:manual-trigger', async () => {
     DEBUG && console.log('[sync] Manual sync triggered via declarative command');
     try {
       const config = getSyncConfig();
@@ -3575,7 +3574,7 @@ export function registerSyncHandlers(): void {
 
       // Notify all windows that sync pulled new data so they can refresh
       if (result.pulled > 0) {
-        publish(getSystemAddress(), PubSubScopes.GLOBAL, 'sync:pull-completed', {
+        publish(getSystemAddress(), 'sync:pull-completed', {
           pulled: result.pulled,
           pushed: result.pushed,
           conflicts: result.conflicts
@@ -3629,7 +3628,7 @@ export function registerSyncHandlers(): void {
 
       // Notify all windows that sync pulled new data so they can refresh
       if (result.pulled > 0) {
-        publish('system', PubSubScopes.GLOBAL, 'sync:pull-completed', {
+        publish('system', 'sync:pull-completed', {
           pulled: result.pulled,
           conflicts: result.conflicts
         });
@@ -3888,7 +3887,7 @@ export function registerModesHandlers(): void {
       addContextEntry('mode', data.mode, { windowId, source });
 
       // Publish mode change for backwards compatibility
-      publish(getSystemAddress(), PubSubScopes.GLOBAL, 'modes:changed', {
+      publish(getSystemAddress(), 'modes:changed', {
         windowId,
         major: data.mode,
       });

@@ -27,7 +27,7 @@ describe('Lazy Loading Patterns', () => {
       let pendingMsg: unknown = null;
 
       // Simulate the lazy stub
-      pubsub.subscribe(stubSource, pubsub.scopes.GLOBAL, topic, async (msg: unknown) => {
+      pubsub.subscribe(stubSource, topic, async (msg: unknown) => {
         pendingMsg = msg;
         loadTriggered = true;
 
@@ -38,16 +38,16 @@ describe('Lazy Loading Patterns', () => {
         pubsub.unsubscribe(stubSource, topic);
 
         // Subscribe the "real" handler
-        pubsub.subscribe('peek://test/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
+        pubsub.subscribe('peek://test/', topic, (m: unknown) => {
           replayed = m;
         });
 
         // Replay buffered message
-        pubsub.publish(stubSource, pubsub.scopes.GLOBAL, topic, pendingMsg);
+        pubsub.publish(stubSource, topic, pendingMsg);
       });
 
       // Invoke the command
-      pubsub.publish('peek://cmd/', pubsub.scopes.GLOBAL, topic, { arg: 'hello' });
+      pubsub.publish('peek://cmd/', topic, { arg: 'hello' });
       assert.strictEqual(loadTriggered, true);
 
       // Wait for async replay
@@ -72,7 +72,7 @@ describe('Lazy Loading Patterns', () => {
       let resolveLoad: () => void;
       const loadPromise = new Promise<void>(r => { resolveLoad = r; });
 
-      pubsub.subscribe(stubSource, pubsub.scopes.GLOBAL, topic, async (msg: unknown) => {
+      pubsub.subscribe(stubSource, topic, async (msg: unknown) => {
         const wasLoading = alreadyLoading;
         pendingMsg = msg;
 
@@ -90,18 +90,18 @@ describe('Lazy Loading Patterns', () => {
         pubsub.unsubscribe(stubSource, topic);
 
         // Subscribe the "real" handler
-        pubsub.subscribe('peek://test2/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
+        pubsub.subscribe('peek://test2/', topic, (m: unknown) => {
           replayed = m;
         });
 
         // Replay buffered message (latest wins)
-        pubsub.publish(stubSource, pubsub.scopes.GLOBAL, topic, pendingMsg);
+        pubsub.publish(stubSource, topic, pendingMsg);
       });
 
       // First invocation
-      pubsub.publish('peek://cmd/', pubsub.scopes.GLOBAL, topic, { version: 1 });
+      pubsub.publish('peek://cmd/', topic, { version: 1 });
       // Second invocation while loading
-      pubsub.publish('peek://cmd/', pubsub.scopes.GLOBAL, topic, { version: 2 });
+      pubsub.publish('peek://cmd/', topic, { version: 2 });
 
       assert.strictEqual(loadCount, 1, 'Should only trigger load once');
 
@@ -121,13 +121,13 @@ describe('Lazy Loading Patterns', () => {
       const stub2 = 'lazy-stub/cmd-b';
       let a = false, b = false;
 
-      pubsub.subscribe(stub1, pubsub.scopes.GLOBAL, 'cmd:execute:cmd-a', () => { a = true; });
-      pubsub.subscribe(stub2, pubsub.scopes.GLOBAL, 'cmd:execute:cmd-b', () => { b = true; });
+      pubsub.subscribe(stub1, 'cmd:execute:cmd-a', () => { a = true; });
+      pubsub.subscribe(stub2, 'cmd:execute:cmd-b', () => { b = true; });
 
       // Unsubscribing one shouldn't affect the other
       pubsub.unsubscribe(stub1, 'cmd:execute:cmd-a');
 
-      pubsub.publish('peek://cmd/', pubsub.scopes.GLOBAL, 'cmd:execute:cmd-b', {});
+      pubsub.publish('peek://cmd/', 'cmd:execute:cmd-b', {});
       assert.strictEqual(b, true, 'cmd-b stub should still work');
 
       pubsub.unsubscribe(stub2, 'cmd:execute:cmd-b');
@@ -141,7 +141,7 @@ describe('Lazy Loading Patterns', () => {
       let replayed: unknown = null;
       let pendingMsg: unknown = null;
 
-      pubsub.subscribe(interceptorSource, pubsub.scopes.GLOBAL, topic, async (msg: unknown) => {
+      pubsub.subscribe(interceptorSource, topic, async (msg: unknown) => {
         pendingMsg = msg;
 
         // Simulate async load
@@ -150,14 +150,14 @@ describe('Lazy Loading Patterns', () => {
         pubsub.unsubscribe(interceptorSource, topic);
 
         // Subscribe the "real" handler
-        pubsub.subscribe('peek://editor/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
+        pubsub.subscribe('peek://editor/', topic, (m: unknown) => {
           replayed = m;
         });
 
-        pubsub.publish(interceptorSource, pubsub.scopes.GLOBAL, topic, pendingMsg);
+        pubsub.publish(interceptorSource, topic, pendingMsg);
       });
 
-      pubsub.publish('peek://cmd/', pubsub.scopes.GLOBAL, topic, { file: 'test.txt' });
+      pubsub.publish('peek://cmd/', topic, { file: 'test.txt' });
 
       await Promise.resolve();
       await Promise.resolve();
@@ -177,7 +177,7 @@ describe('Lazy Loading Patterns', () => {
       let resolveLoad: () => void;
       const loadPromise = new Promise<void>(r => { resolveLoad = r; });
 
-      pubsub.subscribe(interceptorSource, pubsub.scopes.GLOBAL, topic, async (msg: unknown) => {
+      pubsub.subscribe(interceptorSource, topic, async (msg: unknown) => {
         const wasLoading = alreadyLoading;
         pendingMsg = msg;
 
@@ -188,15 +188,15 @@ describe('Lazy Loading Patterns', () => {
 
         pubsub.unsubscribe(interceptorSource, topic);
 
-        pubsub.subscribe('peek://editor2/', pubsub.scopes.GLOBAL, topic, (m: unknown) => {
+        pubsub.subscribe('peek://editor2/', topic, (m: unknown) => {
           replayed = m;
         });
 
-        pubsub.publish(interceptorSource, pubsub.scopes.GLOBAL, topic, pendingMsg);
+        pubsub.publish(interceptorSource, topic, pendingMsg);
       });
 
-      pubsub.publish('peek://cmd/', pubsub.scopes.GLOBAL, topic, { file: 'a.txt' });
-      pubsub.publish('peek://cmd/', pubsub.scopes.GLOBAL, topic, { file: 'b.txt' });
+      pubsub.publish('peek://cmd/', topic, { file: 'a.txt' });
+      pubsub.publish('peek://cmd/', topic, { file: 'b.txt' });
 
       resolveLoad!();
       await Promise.resolve();
@@ -212,12 +212,12 @@ describe('Lazy Loading Patterns', () => {
       const src2 = 'lazy-interceptor/topic-y';
       let x = false, y = false;
 
-      pubsub.subscribe(src1, pubsub.scopes.GLOBAL, 'topic-x', () => { x = true; });
-      pubsub.subscribe(src2, pubsub.scopes.GLOBAL, 'topic-y', () => { y = true; });
+      pubsub.subscribe(src1, 'topic-x', () => { x = true; });
+      pubsub.subscribe(src2, 'topic-y', () => { y = true; });
 
       pubsub.unsubscribe(src1, 'topic-x');
 
-      pubsub.publish('peek://test/', pubsub.scopes.GLOBAL, 'topic-y', {});
+      pubsub.publish('peek://test/', 'topic-y', {});
       assert.strictEqual(y, true);
 
       pubsub.unsubscribe(src2, 'topic-y');
@@ -228,7 +228,7 @@ describe('Lazy Loading Patterns', () => {
     it('should detect when all command subscribers are present', () => {
       const topics = ['cmd:execute:a', 'cmd:execute:b', 'cmd:execute:c'];
       for (const t of topics) {
-        pubsub.subscribe(`peek://test/${t}`, pubsub.scopes.GLOBAL, t, () => {});
+        pubsub.subscribe(`peek://test/${t}`, t, () => {});
       }
 
       const allPresent = topics.every(t => pubsub.hasSubscriber(t));
@@ -240,7 +240,7 @@ describe('Lazy Loading Patterns', () => {
     });
 
     it('should detect missing subscribers', () => {
-      pubsub.subscribe('peek://test/x', pubsub.scopes.GLOBAL, 'cmd:execute:present', () => {});
+      pubsub.subscribe('peek://test/x', 'cmd:execute:present', () => {});
 
       assert.strictEqual(pubsub.hasSubscriber('cmd:execute:present'), true);
       assert.strictEqual(pubsub.hasSubscriber('cmd:execute:missing'), false);

@@ -45,7 +45,7 @@ import {
   clearAllTokens,
   setTokenOwner,
 } from './tile-tokens.js';
-import { scopes, publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
+import { publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
 import { DEBUG, getTilePreloadPath } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getExtensionPath } from './protocol.js';
@@ -313,7 +313,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     }
     if (publishCrashEvent) {
       try {
-        publish(getSystemAddress(), scopes.GLOBAL, 'tile:crashed', {
+        publish(getSystemAddress(), 'tile:crashed', {
           tileId, entryId,
           reason: details.reason,
           exitCode: details.exitCode,

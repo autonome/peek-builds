@@ -147,31 +147,31 @@ const extension = {
       if (!msg.id) return;
       try {
         const result = await api.features.disable(msg.id);
-        api.pubsub.publish('feature:disable-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:disable-result', { id: msg.id, ...result });
       } catch (err) {
-        api.pubsub.publish('feature:disable-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:disable-result', { id: msg.id, error: err.message });
       }
-    }, api.scopes.GLOBAL);
+    });
 
     api.pubsub.subscribe('feature:enable-request', async (msg) => {
       if (!msg.id) return;
       try {
         const result = await api.features.enable(msg.id);
-        api.pubsub.publish('feature:enable-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:enable-result', { id: msg.id, ...result });
       } catch (err) {
-        api.pubsub.publish('feature:enable-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:enable-result', { id: msg.id, error: err.message });
       }
-    }, api.scopes.GLOBAL);
+    });
 
     api.pubsub.subscribe('feature:remove-request', async (msg) => {
       if (!msg.id) return;
       try {
         const result = await api.features.remove(msg.id);
-        api.pubsub.publish('feature:remove-result', { id: msg.id, ...result }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:remove-result', { id: msg.id, ...result });
       } catch (err) {
-        api.pubsub.publish('feature:remove-result', { id: msg.id, error: err.message }, api.scopes.GLOBAL);
+        api.pubsub.publish('feature:remove-result', { id: msg.id, error: err.message });
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Listen for lex session changes (used by publish flow)
     api.pubsub.subscribe('lex:session-changed', (msg) => {
@@ -182,7 +182,7 @@ const extension = {
         currentLexSession = null;
         console.log('[features-manager] Lex session cleared');
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // ── Update Checking ──
 
@@ -235,7 +235,7 @@ const extension = {
                 capabilitiesChanged: true,
                 added: applyResult.added,
                 removed: applyResult.removed,
-              }, api.scopes.GLOBAL);
+              });
             } else if (applyResult.error && !applyResult.capabilitiesChanged) {
               console.error(`[features-manager] Auto-update failed for ${update.id}:`, applyResult.error);
             } else if (applyResult.success) {
@@ -248,7 +248,7 @@ const extension = {
               currentVersion: update.currentVersion,
               availableVersion: update.availableVersion,
               capabilitiesChanged: false,
-            }, api.scopes.GLOBAL);
+            });
           }
         }
 
@@ -372,7 +372,7 @@ const extension = {
             atUri: msg.atUri,
             success: false,
             error: resolveResult.error,
-          }, api.scopes.GLOBAL);
+          });
           return;
         }
 
@@ -385,7 +385,7 @@ const extension = {
             success: !installResult.error,
             entry: installResult.entry,
             error: installResult.error,
-          }, api.scopes.GLOBAL);
+          });
           return;
         }
 
@@ -396,7 +396,7 @@ const extension = {
           phase: 'resolved',
           manifest: resolveResult.manifest,
           source: resolveResult.source,
-        }, api.scopes.GLOBAL);
+        });
 
       } catch (err) {
         console.error('[features-manager] install-request error:', err);
@@ -404,9 +404,9 @@ const extension = {
           atUri: msg.atUri,
           success: false,
           error: err.message,
-        }, api.scopes.GLOBAL);
+        });
       }
-    }, api.scopes.GLOBAL);
+    });
   },
 
   uninit() {

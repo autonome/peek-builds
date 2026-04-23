@@ -94,9 +94,9 @@ const init = async () => {
   });
 
   // Refresh on window focus changes
-  api.subscribe('window:focused', () => refreshMode(), api.scopes.GLOBAL);
-  api.subscribe('window:opened', () => refreshMode(), api.scopes.GLOBAL);
-  api.subscribe('window:closed', () => refreshMode(), api.scopes.GLOBAL);
+  api.subscribe('window:focused', () => refreshMode());
+  api.subscribe('window:opened', () => refreshMode());
+  api.subscribe('window:closed', () => refreshMode());
 
   // Periodic fallback
   setInterval(refreshMode, 5000);

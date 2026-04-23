@@ -115,7 +115,7 @@ api.subscribe('settings:changed', (payload) => {
     showUrlsInResults = payload.prefs.showUrlsInResults;
     log('cmd:panel', 'showUrlsInResults updated:', showUrlsInResults);
   }
-}, api.scopes.GLOBAL);
+});
 
 // Listen for URL mode activation (from Cmd+L shortcut in background.js)
 api.subscribe('cmd:url-mode', () => {
@@ -125,7 +125,7 @@ api.subscribe('cmd:url-mode', () => {
   if (!document.hidden && !urlModeActive) {
     enterUrlMode();
   }
-}, api.scopes.GLOBAL);
+});
 
 // Close the panel when the user focuses another Peek window.
 //
@@ -151,7 +151,7 @@ api.subscribe('window:focused', async (msg) => {
   } catch (err) {
     log.error('cmd:panel', 'Failed to hide panel on other-window focus:', err);
   }
-}, api.scopes.GLOBAL);
+});
 
 // Chain popup state (module-level for cleanup)
 let chainPopupWindowId = null;
@@ -761,7 +761,7 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
       data: msg.data,
       mimeType: msg.mimeType || mimeType,
     });
-  }, api.scopes.GLOBAL);
+  });
 
   const panelBounds = await api.window.getBounds();
   const editorHeight = 400;
@@ -793,7 +793,7 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
     data,
     mimeType,
     title: title || 'Edit'
-  }, api.scopes.GLOBAL);
+  });
 }
 
 // ===== Chain Steps UI =====
@@ -875,7 +875,7 @@ function doSelectOutputItem() {
 
   if (mimeType === 'item' && selectedItem.id) {
     log('cmd:panel', 'Opening editor for selected item:', selectedItem.id);
-    api.publish('editor:open', { itemId: selectedItem.id }, api.scopes.GLOBAL);
+    api.publish('editor:open', { itemId: selectedItem.id });
     machine.setState(States.CLOSING);
     setTimeout(shutdown, 100);
     return;
@@ -2352,11 +2352,11 @@ function actionHandlers() {
       const outputMimeType = result.output.mimeType;
 
       if (outputMimeType === 'new-item') {
-        api.publish('editor:add', { type: outputData.type || 'text' }, api.scopes.GLOBAL);
+        api.publish('editor:add', { type: outputData.type || 'text' });
       } else if (outputData.id) {
-        api.publish('editor:open', { itemId: outputData.id }, api.scopes.GLOBAL);
+        api.publish('editor:open', { itemId: outputData.id });
         if (result.output.isNew) {
-          api.publish('editor:changed', { action: 'add', itemId: outputData.id }, api.scopes.GLOBAL);
+          api.publish('editor:changed', { action: 'add', itemId: outputData.id });
         }
       }
     },

@@ -419,7 +419,7 @@ const moveSelection = (action) => {
       api.pubsub.publish('page:navigate', {
         windowId: state.openWindowId,
         url: entry.item.content
-      }, api.scopes.GLOBAL);
+      });
     }
   }
 };
@@ -429,7 +429,7 @@ const moveSelection = (action) => {
 // is safe to call any time, it just no-ops if nothing is open)
 api.pubsub.subscribe('pagestream:nav', (msg) => {
   if (msg.action) moveSelection(msg.action);
-}, api.scopes.GLOBAL);
+});
 
 const onPageHostClosed = async (closedWindowId) => {
   if (closedWindowId !== state.openWindowId) return;
@@ -477,7 +477,7 @@ const createVisitCard = (visit, item, index) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       try {
         await api.datastore.deleteItem(item.id);
-        api.pubsub.publish('item:deleted', { id: item.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('item:deleted', { id: item.id });
       } catch (err) {
         console.error('[pagestream] Failed to delete item:', err);
       }
@@ -485,7 +485,7 @@ const createVisitCard = (visit, item, index) => {
     onTagRemove: async (item, tag) => {
       try {
         await api.datastore.untagItem(item.id, tag.id);
-        api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id });
       } catch (err) {
         console.error('[pagestream] Failed to remove tag:', err);
       }
@@ -573,7 +573,7 @@ const createVisitCard = (visit, item, index) => {
           chip.remove();
           try {
             await api.datastore.untagItem(item.id, tag.id);
-            api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id }, api.scopes.GLOBAL);
+            api.pubsub.publish('tag:item-removed', { itemId: item.id, tagId: tag.id });
           } catch (err) {
             console.error('[pagestream] Failed to remove tag:', err);
           }
@@ -706,13 +706,13 @@ const init = async () => {
   api.pubsub.subscribe('window:closed', (msg) => {
     const closedId = msg?.id;
     if (closedId) onPageHostClosed(closedId);
-  }, api.scopes.GLOBAL);
+  });
 
-  api.pubsub.subscribe('item:created', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('item:deleted', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('tag:item-added', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('tag:item-removed', () => debouncedRefresh(), api.scopes.GLOBAL);
-  api.pubsub.subscribe('sync:pull-completed', () => debouncedRefresh(), api.scopes.GLOBAL);
+  api.pubsub.subscribe('item:created', () => debouncedRefresh());
+  api.pubsub.subscribe('item:deleted', () => debouncedRefresh());
+  api.pubsub.subscribe('tag:item-added', () => debouncedRefresh());
+  api.pubsub.subscribe('tag:item-removed', () => debouncedRefresh());
+  api.pubsub.subscribe('sync:pull-completed', () => debouncedRefresh());
 
   setInterval(() => {
     const timeElements = document.querySelectorAll('.card-time');

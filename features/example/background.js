@@ -87,7 +87,7 @@ async function handleImageReceived(ctx) {
 
   // Notify that a new image was added
   if (hasPeekAPI) {
-    api.pubsub.publish('example:image-added', { id: imageId, ...imageData }, api.scopes.GLOBAL);
+    api.pubsub.publish('example:image-added', { id: imageId, ...imageData });
   }
 
   // Open the gallery to show the new image

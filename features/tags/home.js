@@ -468,7 +468,7 @@ const setupEventListeners = () => {
       state.itemTags.set(msg.itemId, currentTags);
     }
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('tag:item-removed', (msg) => {
     debug && console.log('[tags] tag:item-removed event received:', msg);
@@ -476,7 +476,7 @@ const setupEventListeners = () => {
     const currentTags = state.itemTags.get(msg.itemId) || [];
     state.itemTags.set(msg.itemId, currentTags.filter(t => t.id !== msg.tagId));
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('tag:created', (msg) => {
     debug && console.log('[tags] tag:created event received:', msg);
@@ -485,23 +485,23 @@ const setupEventListeners = () => {
       state.tags.push({ id: msg.tagId, name: msg.tagName });
     }
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('tag:renamed', (msg) => {
     debug && console.log('[tags] tag:renamed event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('tag:deleted', (msg) => {
     debug && console.log('[tags] tag:deleted event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to item events for reactive updates
   api.pubsub.subscribe('item:created', (msg) => {
     debug && console.log('[tags] item:created event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('item:deleted', (msg) => {
     debug && console.log('[tags] item:deleted event received:', msg);
@@ -509,25 +509,25 @@ const setupEventListeners = () => {
     state.items = state.items.filter(i => i.id !== msg.itemId);
     state.itemTags.delete(msg.itemId);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('item:updated', (msg) => {
     debug && console.log('[tags] item:updated event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to sync events — sync operations bypass per-item events,
   // so we need this to refresh when new data arrives via sync
   api.pubsub.subscribe('sync:pull-completed', (msg) => {
     debug && console.log('[tags] sync:pull-completed event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to entity extraction events to update entity filter bar
   api.pubsub.subscribe('entities:extracted', (msg) => {
     debug && console.log('[tags] entities:extracted event received:', msg);
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Search input
   searchInput.addEventListener('input', (e) => {
@@ -578,7 +578,7 @@ const setupEventListeners = () => {
 
   // Add item button
   document.querySelector('.add-item-btn').addEventListener('click', () => {
-    api.pubsub.publish('editor:add', {}, api.scopes.GLOBAL);
+    api.pubsub.publish('editor:add', {});
   });
 
   // Keyboard navigation
@@ -613,7 +613,7 @@ const setupEventListeners = () => {
         }
         debug && console.log('[tags] Updated embedded editor vimMode:', editorVimMode);
       }
-    }, api.scopes.GLOBAL);
+    });
   }
 };
 
@@ -1300,7 +1300,7 @@ const performEditorAutosave = async (content) => {
 
       // Publish change event for other extensions
       if (api?.pubsub?.publish) {
-        api.pubsub.publish('editor:changed', { action: 'update', itemId: state.editingItem.id }, api.scopes.GLOBAL);
+        api.pubsub.publish('editor:changed', { action: 'update', itemId: state.editingItem.id });
       }
     } else {
       console.error('[tags] Editor autosave failed:', result.error);

@@ -57,9 +57,9 @@ const init = async () => {
   await refreshWindowInfo();
 
   // Refresh on window events
-  api.subscribe('window:focused', () => refreshWindowInfo(), api.scopes.GLOBAL);
-  api.subscribe('window:opened', () => refreshWindowInfo(), api.scopes.GLOBAL);
-  api.subscribe('window:closed', () => refreshWindowInfo(), api.scopes.GLOBAL);
+  api.subscribe('window:focused', () => refreshWindowInfo());
+  api.subscribe('window:opened', () => refreshWindowInfo());
+  api.subscribe('window:closed', () => refreshWindowInfo());
 
   // Periodic fallback
   setInterval(refreshWindowInfo, 5000);

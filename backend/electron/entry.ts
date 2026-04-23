@@ -46,7 +46,6 @@ import {
   unregisterLocalShortcut,
   handleLocalShortcut,
   // PubSub
-  scopes,
   publish,
   subscribe,
   getSystemAddress,
@@ -464,14 +463,14 @@ function registerChromeExtensionCommands(): void {
     // Publish :result back immediately so the cmd panel proxy resolves instead
     // of waiting for its 30s timeout (openChromeExtensionPage is fire-and-forget
     // from the cmd panel's perspective).
-    subscribe(systemAddress, scopes.GLOBAL, execTopic, () => {
+    subscribe(systemAddress, execTopic, () => {
       DEBUG && console.log(`[chrome-ext] Executing command: ${cmd.commandName}`);
       openChromeExtensionPage(cmd.extensionId, 'options');
-      publish(systemAddress, scopes.GLOBAL, `${execTopic}:result`, { success: true });
+      publish(systemAddress, `${execTopic}:result`, { success: true });
     });
 
     // Register the command with the cmd registry.
-    publish(systemAddress, scopes.GLOBAL, 'cmd:register', {
+    publish(systemAddress, 'cmd:register', {
       name: cmd.commandName,
       description: `Open ${cmd.extensionName} options page`,
       source: systemAddress,
@@ -715,7 +714,7 @@ const onReady = async () => {
 
   // listen for app prefs to configure ourself
   // TODO: kinda janky, needs rethink
-  subscribe(systemAddress, scopes.SYSTEM, strings.topics.prefs, async (msg: unknown) => {
+  subscribe(systemAddress, strings.topics.prefs, async (msg: unknown) => {
     const prefsMsg = msg as { prefs: Record<string, unknown> };
     DEBUG && console.log('PREFS', prefsMsg);
 
@@ -731,7 +730,7 @@ const onReady = async () => {
       initTray(ROOT_DIR, {
         tooltip: labels.tray.tooltip,
         onClick: () => {
-          publish(WEB_CORE_ADDRESS, scopes.GLOBAL, 'open', {
+          publish(WEB_CORE_ADDRESS, 'open', {
             address: SETTINGS_ADDRESS
           });
         }
@@ -792,12 +791,12 @@ const onReady = async () => {
             // Nothing restored (user declined, or snapshot was empty).
             // The startup feature was suppressed, so open it now.
             DEBUG && console.log('[session] No windows restored, opening startup feature');
-            publish(systemAddress, scopes.GLOBAL, 'session:open-startup', {});
+            publish(systemAddress, 'session:open-startup', {});
           }
         } catch (err) {
           console.error('[session] Session restore failed:', err);
           _sessionRestorePending = false;
-          publish(systemAddress, scopes.GLOBAL, 'session:open-startup', {});
+          publish(systemAddress, 'session:open-startup', {});
         }
         // Signal that session restore is done (success or failure)
         // so pending external URLs can now be processed.

@@ -215,7 +215,7 @@ export const initializeSources = async (addCommand, batchApi = {}) => {
           }
         });
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Handle URL deletions
     api.subscribe('item:deleted', (msg) => {
@@ -232,13 +232,13 @@ export const initializeSources = async (addCommand, batchApi = {}) => {
           _registeredUrls.delete(url);
         }
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Re-sync after sync pull (history may have changed)
     api.subscribe('sync:pull-completed', async () => {
       debug && console.log('[history] sync pull completed, re-syncing history commands');
       await initializeSources(_addCommand, _batchApi);
-    }, api.scopes.GLOBAL);
+    });
   }
 };
 

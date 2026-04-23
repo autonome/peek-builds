@@ -28,7 +28,7 @@
  */
 
 import {
-  publish, scopes, registerPrePublishHook, getSystemAddress,
+  publish, registerPrePublishHook, getSystemAddress,
   type PrePublishHookResult,
 } from './pubsub.js';
 import {
@@ -138,7 +138,6 @@ export function registerLazyTile(
   if (Array.isArray(manifest.commands) && manifest.commands.length > 0) {
     publish(
       `peek://${tileId}/lazy-stub`,
-      scopes.GLOBAL,
       'cmd:register-batch',
       {
         commands: manifest.commands.map(cmd => ({
@@ -249,7 +248,7 @@ async function handleCommandDispatch(
   // the original publish.
   if (cmd.action?.type === 'window' && cmd.action.url) {
     DEBUG && console.log(`[tile-lazy] Declarative window action for ${name}, opening directly`);
-    publish(getSystemAddress(), scopes.GLOBAL, 'window:reopen-request', {
+    publish(getSystemAddress(), 'window:reopen-request', {
       url: cmd.action.url,
       options: {
         ...(cmd.action.options || {}),
@@ -259,7 +258,7 @@ async function handleCommandDispatch(
     });
     const typed = msg as { resultTopic?: string } | null;
     if (typed?.resultTopic) {
-      publish(getSystemAddress(), scopes.GLOBAL, typed.resultTopic, { success: true });
+      publish(getSystemAddress(), typed.resultTopic, { success: true });
     }
     return 'skip';
   }

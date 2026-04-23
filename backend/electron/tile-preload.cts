@@ -145,24 +145,17 @@ function buildAPI(): Record<string, unknown> {
     }
   };
 
-  // ── Scopes (always available for reference) ──
-
-  api.scopes = {
-    SYSTEM: 1,
-    SELF: 2,
-    GLOBAL: 3,
-  };
-
   // ── PubSub (if granted) ──
   //
   // Publish supports two call shapes:
-  //   api.publish(topic, data, scope?)        // v1-style
-  //   api.pubsub.publish(topic, data, scope?) // v2-style (kept for clarity)
-  // Subscribe supports an optional scope tail argument — callers like editor use
-  // `api.subscribe('editor:open', handler, api.scopes.GLOBAL)`. Scope is only
-  // advisory for the client — capability-based enforcement happens in main.
+  //   api.publish(topic, data)        // v1-style
+  //   api.pubsub.publish(topic, data) // v2-style (kept for clarity)
+  //
+  // Scope (SYSTEM / SELF / GLOBAL) was removed in Phase 6 (see
+  // docs/pubsub-state-machine.md). Privilege is enforced by the
+  // capability grant's topic allowlist in main.
 
-  async function publishImpl(topic: string, data: unknown, scope?: number) {
+  async function publishImpl(topic: string, data: unknown) {
     const valid = await validationPromise;
     if (!valid) {
       console.warn('[tile-preload] publish called but token validation failed');
@@ -171,13 +164,12 @@ function buildAPI(): Record<string, unknown> {
     ipcRenderer.send('tile:pubsub:publish', {
       token: tileToken,
       source: sourceAddress,
-      scope: scope || 2,
       topic,
       data,
     });
   }
 
-  function subscribeImpl(topic: string, callback: (data: unknown) => void, _scope?: number) {
+  function subscribeImpl(topic: string, callback: (data: unknown) => void) {
     // Attach the IPC listener AND send the upstream subscribe synchronously
     // in the same tick. Deferring the upstream send behind validationPromise
     // created a race: publishers (e.g. tag:item-added from command execution)
@@ -339,7 +331,6 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.send('tile:pubsub:publish', {
         token: tileToken,
         source: sourceAddress,
-        scope: 3, // GLOBAL
         topic: 'cmd:register',
         data: registerPayload,
       });
@@ -371,7 +362,6 @@ function buildAPI(): Record<string, unknown> {
           ipcRenderer.send('tile:pubsub:publish', {
             token: tileToken,
             source: sourceAddress,
-            scope: 3,
             topic: msg.resultTopic,
             data: error ? { error } : result,
           });
@@ -410,7 +400,6 @@ function buildAPI(): Record<string, unknown> {
         ipcRenderer.send('tile:pubsub:publish', {
           token: tileToken,
           source: sourceAddress,
-          scope: 3, // GLOBAL
           topic: 'cmd:unregister',
           data: { name },
         });
@@ -463,7 +452,6 @@ function buildAPI(): Record<string, unknown> {
         ipcRenderer.send('tile:pubsub:publish', {
           token: tileToken,
           source: sourceAddress,
-          scope: 3, // GLOBAL
           topic: 'cmd:query-commands',
           data: {},
         });

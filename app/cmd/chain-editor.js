@@ -60,7 +60,7 @@ function publishResult() {
     sessionId,
     data,
     mimeType
-  }, api.scopes.GLOBAL);
+  });
 }
 
 /**
@@ -186,7 +186,7 @@ function init() {
 
     console.log('[chain-editor] Received content, length:', (msg.data || '').length);
     createEditor(msg.data || '');
-  }, api.scopes.GLOBAL);
+  });
 }
 
 init();

@@ -183,9 +183,9 @@ const createTimerCard = (timer) => {
       pauseBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (meta.status === 'paused') {
-          api.pubsub.publish('timer:resume', { id: timer.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('timer:resume', { id: timer.id });
         } else {
-          api.pubsub.publish('timer:pause', { id: timer.id }, api.scopes.GLOBAL);
+          api.pubsub.publish('timer:pause', { id: timer.id });
         }
       });
       btnContainer.appendChild(pauseBtn);
@@ -198,7 +198,7 @@ const createTimerCard = (timer) => {
     stopBtn.textContent = 'Stop';
     stopBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      api.pubsub.publish('timer:stop', { id: timer.id }, api.scopes.GLOBAL);
+      api.pubsub.publish('timer:stop', { id: timer.id });
     });
     btnContainer.appendChild(stopBtn);
 
@@ -215,7 +215,7 @@ const createTimerCard = (timer) => {
     deleteBtn.textContent = 'Delete';
     deleteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      api.pubsub.publish('timer:delete', { id: timer.id }, api.scopes.GLOBAL);
+      api.pubsub.publish('timer:delete', { id: timer.id });
     });
     footer.appendChild(deleteBtn);
   }
@@ -325,23 +325,23 @@ const init = async () => {
       allTimers = msg.timers;
       render();
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to tick events for live display updates
-  api.pubsub.subscribe('timer:tick', handleTick, api.scopes.GLOBAL);
+  api.pubsub.subscribe('timer:tick', handleTick);
 
   // Subscribe to state changes (pause, resume, stop, delete, complete)
   api.pubsub.subscribe('timer:state-changed', () => {
     // Re-request full state to re-render
-    api.pubsub.publish('timer:request-state', {}, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:request-state', {});
+  });
 
   api.pubsub.subscribe('timer:completed', () => {
-    api.pubsub.publish('timer:request-state', {}, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('timer:request-state', {});
+  });
 
   // Request initial state
-  api.pubsub.publish('timer:request-state', {}, api.scopes.GLOBAL);
+  api.pubsub.publish('timer:request-state', {});
 };
 
 document.addEventListener('DOMContentLoaded', init);

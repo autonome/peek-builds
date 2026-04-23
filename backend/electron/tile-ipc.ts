@@ -31,7 +31,7 @@ import {
 } from './tile-launcher.js';
 import { verifyTokenSender } from './tile-ipc-sender-check.js';
 import { parseManifestFile } from './tile-manifest.js';
-import { publish, subscribe, unsubscribe, scopes, type Scope } from './pubsub.js';
+import { publish, subscribe, unsubscribe } from './pubsub.js';
 import { DEBUG, TILE_STRICT, isHeadless } from './config.js';
 import { publishCapabilityViolation } from './tile-violations.js';
 import { getFeatureRegistry } from './feature-startup.js';
@@ -232,16 +232,6 @@ function hasCapability(grant: CapabilityGrant, capability: keyof TileCapabilitie
 }
 
 /**
- * Check if a pubsub scope level is granted. Trusted-builtin core
- * renderers bypass the scope allowlist.
- */
-function hasPubSubScope(grant: CapabilityGrant, scope: 'self' | 'global' | 'system'): boolean {
-  if (grant.trustedBuiltin) return true;
-  if (!grant.capabilities.pubsub) return false;
-  return grant.capabilities.pubsub.scopes.includes(scope);
-}
-
-/**
  * Check if a network domain is allowed
  * Supports wildcard matching (e.g., '*.example.com' matches 'api.example.com').
  * Trusted-builtin core renderers bypass the domain allowlist.
@@ -295,17 +285,6 @@ function isFilesystemPathAllowed(
   }
 
   return false;
-}
-
-/**
- * Map pubsub scope number to name for capability checking
- */
-function scopeNumberToName(scopeNum: number): 'self' | 'global' | 'system' {
-  switch (scopeNum) {
-    case scopes.SYSTEM: return 'system';
-    case scopes.GLOBAL: return 'global';
-    default: return 'self';
-  }
 }
 
 // ─── Semver Comparison Helper ───────────────────────────────────────
@@ -484,21 +463,12 @@ export function registerTileIpcHandlers(): void {
   ipcMain.on('tile:pubsub:publish', (event, args: {
     token: string;
     source: string;
-    scope: number;
     topic: string;
     data: unknown;
   }) => {
     const grant = verifyTokenSender(event, args.token, 'tile:pubsub:publish');
     if (!grant) {
       DEBUG && console.log('[tile-ipc] pubsub:publish rejected: invalid token or sender mismatch');
-      return;
-    }
-
-    // Check pubsub scope capability
-    const scopeName = scopeNumberToName(args.scope);
-    if (!hasPubSubScope(grant, scopeName)) {
-      const reason = `scope ${scopeName} not granted for ${grant.tileId}`;
-      handleViolation(grant, 'pubsub', 'pubsub:publish', reason, args.token);
       return;
     }
 
@@ -549,7 +519,7 @@ export function registerTileIpcHandlers(): void {
       }
     }
 
-    publish(args.source, args.scope as Scope, args.topic, args.data);
+    publish(args.source, args.topic, args.data);
   });
 
   ipcMain.on('tile:pubsub:subscribe', (event, args: {
@@ -560,8 +530,7 @@ export function registerTileIpcHandlers(): void {
     const grant = verifyTokenSender(event, args.token, 'tile:pubsub:subscribe');
     if (!grant) return;
 
-    // Subscribe at GLOBAL scope (main process will filter via scopeCheck)
-    subscribe(args.source, scopes.GLOBAL, args.topic, (msg) => {
+    subscribe(args.source, args.topic, (msg) => {
       // Message delivery handled by extension broadcaster in main.ts
     });
   });
@@ -604,7 +573,6 @@ export function registerTileIpcHandlers(): void {
     // full publish arrives second and overwrites the minimal.
     publish(
       `peek://${args.tileId}/background`,
-      scopes.GLOBAL,
       'cmd:register-batch',
       {
         commands: [{
@@ -807,7 +775,6 @@ export function registerTileIpcHandlers(): void {
       // the legacy context-set handler in ipc.ts).
       publish(
         source,
-        scopes.GLOBAL,
         'context:changed',
         {
           key: args.key,
@@ -1260,7 +1227,7 @@ export function registerTileIpcHandlers(): void {
         }
       }
 
-      publish('feature-registry', scopes.GLOBAL, 'feature:enabled', { id: args.id });
+      publish('feature-registry', 'feature:enabled', { id: args.id });
     }
     return { success: result };
   });
@@ -1304,7 +1271,7 @@ export function registerTileIpcHandlers(): void {
         }
       }
 
-      publish('feature-registry', scopes.GLOBAL, 'feature:disabled', { id: args.id });
+      publish('feature-registry', 'feature:disabled', { id: args.id });
     }
     return { success: result };
   });
@@ -1368,7 +1335,7 @@ export function registerTileIpcHandlers(): void {
         entry.grantedCapabilities as unknown as Record<string, unknown>
       );
 
-      publish('feature-registry', scopes.GLOBAL, 'feature:removed', { id: args.id });
+      publish('feature-registry', 'feature:removed', { id: args.id });
     }
     return { success: result };
   });
@@ -1472,7 +1439,7 @@ export function registerTileIpcHandlers(): void {
         result.entry!.grantedCapabilities as unknown as Record<string, unknown>
       );
 
-      publish('feature-registry', scopes.GLOBAL, 'feature:installed', {
+      publish('feature-registry', 'feature:installed', {
         id: result.entry!.id,
         name: result.entry!.name,
         source: metadata.source,
@@ -1731,7 +1698,7 @@ export function registerTileIpcHandlers(): void {
         installResult.entry?.grantedCapabilities as unknown as Record<string, unknown>,
       );
 
-      publish('feature-registry', scopes.GLOBAL, 'feature:updated', {
+      publish('feature-registry', 'feature:updated', {
         id: args.id,
         name: entry.name,
         previousVersion: currentVersion,
@@ -2065,7 +2032,7 @@ export function registerTileIpcHandlers(): void {
 
       writeFeatureHistory(featureId, 'install', '0.1.0', 'dev');
 
-      publish('feature-registry', scopes.GLOBAL, 'feature:installed', {
+      publish('feature-registry', 'feature:installed', {
         id: featureId,
         name: featureName,
         source: { type: 'dev' },
@@ -3489,7 +3456,6 @@ export function registerTileIpcHandlers(): void {
     }
     publish(
       `peek://${grant.tileId}/background`,
-      scopes.GLOBAL,
       'cmd:unregister',
       { name: args.name },
     );
@@ -4174,7 +4140,7 @@ export function registerTileIpcHandlers(): void {
       // Notify all windows that sync pulled new data so they can refresh.
       // Mirrors the behaviour of the legacy `sync-full` handler.
       if (result.pulled > 0) {
-        publish('system', scopes.GLOBAL, 'sync:pull-completed', {
+        publish('system', 'sync:pull-completed', {
           pulled: result.pulled,
           pushed: result.pushed,
           conflicts: result.conflicts,
@@ -4345,7 +4311,7 @@ export function registerTileIpcHandlers(): void {
     try {
       // dsAddItem takes ItemType; trust the caller to pass a valid one.
       const result = dsAddItem(args.type as Parameters<typeof dsAddItem>[0], (args.options as Parameters<typeof dsAddItem>[1]) || {});
-      publish('system', scopes.GLOBAL, 'item:created', {
+      publish('system', 'item:created', {
         itemId: result.id,
         itemType: args.type,
         content: (args.options as Record<string, unknown> | undefined)?.content,
@@ -4386,7 +4352,7 @@ export function registerTileIpcHandlers(): void {
       if (result) {
         const db = getDb();
         const item = db.prepare('SELECT type FROM items WHERE id = ?').get(args.id) as { type: string } | undefined;
-        publish('system', scopes.GLOBAL, 'item:updated', {
+        publish('system', 'item:updated', {
           itemId: args.id,
           itemType: item?.type,
         });
@@ -4410,7 +4376,7 @@ export function registerTileIpcHandlers(): void {
       const item = db.prepare('SELECT type FROM items WHERE id = ?').get(args.id) as { type: string } | undefined;
       const result = dsDeleteItem(args.id);
       if (result) {
-        publish('system', scopes.GLOBAL, 'item:deleted', {
+        publish('system', 'item:deleted', {
           itemId: args.id,
           itemType: item?.type,
         });
@@ -4490,7 +4456,7 @@ export function registerTileIpcHandlers(): void {
         const db = getDb();
         const tag = db.prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
         const item = db.prepare('SELECT type FROM items WHERE id = ?').get(args.itemId) as { type: string } | undefined;
-        publish('system', scopes.GLOBAL, 'tag:item-added', {
+        publish('system', 'tag:item-added', {
           tagId: args.tagId,
           tagName: tag?.name,
           itemId: args.itemId,
@@ -4516,7 +4482,7 @@ export function registerTileIpcHandlers(): void {
       const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
       const result = dsUntagItem(args.itemId, args.tagId);
       if (result) {
-        publish('system', scopes.GLOBAL, 'tag:item-removed', {
+        publish('system', 'tag:item-removed', {
           tagId: args.tagId,
           tagName: tag?.name,
           itemId: args.itemId,
@@ -4941,7 +4907,7 @@ export function registerTileIpcHandlers(): void {
       if (opts.favicon) {
         getDb().prepare('UPDATE items SET favicon = ? WHERE id = ?').run(opts.favicon as string, result.id);
       }
-      publish('system', scopes.GLOBAL, 'item:created', {
+      publish('system', 'item:created', {
         itemId: result.id, itemType: 'url', content: normalizedUri,
       });
       return { success: true, data: result, id: result.id };
@@ -5113,7 +5079,7 @@ export function registerTileIpcHandlers(): void {
       const result = dsTagItemAndPublish(args.addressId, args.tagId);
       if (!result.alreadyExists) {
         const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
-        publish('system', scopes.GLOBAL, 'tag:address-added', {
+        publish('system', 'tag:address-added', {
           tagId: args.tagId, tagName: tag?.name, addressId: args.addressId,
         });
       }
@@ -5136,10 +5102,10 @@ export function registerTileIpcHandlers(): void {
       const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
       const result = dsUntagItem(args.addressId, args.tagId);
       if (result) {
-        publish('system', scopes.GLOBAL, 'tag:address-removed', {
+        publish('system', 'tag:address-removed', {
           tagId: args.tagId, tagName: tag?.name, addressId: args.addressId,
         });
-        publish('system', scopes.GLOBAL, 'tag:item-removed', {
+        publish('system', 'tag:item-removed', {
           tagId: args.tagId, tagName: tag?.name, itemId: args.addressId,
         });
       }
@@ -5673,7 +5639,7 @@ export function registerTileIpcHandlers(): void {
       );
 
       // Publish event
-      publish('feature-registry', scopes.GLOBAL, 'feature:updated', {
+      publish('feature-registry', 'feature:updated', {
         id: args.id,
         name: entry.name,
         previousVersion: currentVersion,
@@ -5859,11 +5825,11 @@ export function registerTileIpcHandlers(): void {
       id: '${featureId}',
       registeredTopics: Object.keys(window._cmdHandlers || {}).map(n => \`cmd:execute:\${n}\`),
       manifest: { id: '${featureId}', version: '0.1.0' }
-    }, api.scopes.SYSTEM);
+    });
 
     api.subscribe('app:shutdown', () => {
       if (uninit) uninit();
-    }, api.scopes.SYSTEM);
+    });
   }
 <${'/'}script>
 </body>
@@ -6074,7 +6040,7 @@ body {
       writeFeatureHistory(featureId, 'install', '0.1.0', 'dev');
 
       // Publish installed event
-      publish('feature-registry', scopes.GLOBAL, 'feature:installed', {
+      publish('feature-registry', 'feature:installed', {
         id: featureId,
         name: featureName,
         source: { type: 'dev' },

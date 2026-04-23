@@ -5,17 +5,17 @@
  * publish `reproduce:response` with a fixed payload on GLOBAL scope.
  *
  * Mirrors websearch background.js pattern: api.pubsub.subscribe/publish
- * with api.scopes.GLOBAL via onChannel/emitChannel helpers.
+ * via onChannel/emitChannel helpers.
  */
 
 const api = window.app;
 
 function onChannel(topic, handler) {
-  api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
+  api.pubsub.subscribe(topic, handler);
 }
 
 function emitChannel(topic, data) {
-  api.pubsub.publish(topic, data, api.scopes.GLOBAL);
+  api.pubsub.publish(topic, data);
 }
 
 const handleRequest = (msg) => {

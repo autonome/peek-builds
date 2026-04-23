@@ -112,7 +112,7 @@ const init = async () => {
     uninitShortcut();
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
-  }, api.scopes.GLOBAL);
+  });
 
   // Listen for settings updates from Settings UI
   api.pubsub.subscribe('lists:settings-update', async (msg) => {
@@ -135,11 +135,11 @@ const init = async () => {
       uninitShortcut();
       initShortcut(currentSettings.prefs.shortcutKey);
 
-      api.pubsub.publish('lists:settings-changed', currentSettings, api.scopes.GLOBAL);
+      api.pubsub.publish('lists:settings-changed', currentSettings);
     } catch (err) {
       console.error('[ext:lists] settings-update error:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 };
 
 const uninitShortcut = () => {

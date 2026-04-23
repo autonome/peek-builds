@@ -246,7 +246,7 @@ function handlePageLoad(msg) {
             confidence: e.confidence,
             isNew: e.isNew
           }))
-        }, api.scopes.GLOBAL);
+        });
 
         // Update context with the latest extracted entities for this window.
         // The `context` capability is declared in the manifest with
@@ -307,7 +307,7 @@ async function extractCurrentPage() {
       confidence: e.confidence,
       isNew: e.isNew
     }))
-  }, api.scopes.GLOBAL);
+  });
 
   return entities;
 }
@@ -394,7 +394,7 @@ const extension = {
       if (msg.itemType === 'url') {
         handlePageLoad(msg);
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Listen for page content ready events from the main process.
     // Fires when page-title-updated occurs, meaning the page has loaded
@@ -404,7 +404,7 @@ const extension = {
       if (msg.url && msg.url.startsWith('http')) {
         handlePageLoad({ content: msg.url, title: msg.title || '' });
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Listen for manual extraction requests via pubsub
     api.pubsub.subscribe('entities:extract', async (msg) => {
@@ -428,14 +428,14 @@ const extension = {
             confidence: e.confidence,
             isNew: e.isNew
           }))
-        }, api.scopes.GLOBAL);
+        });
 
         api.pubsub.publish('entities:extract:response', {
           url: msg.url,
           entities
-        }, api.scopes.GLOBAL);
+        });
       }
-    }, api.scopes.GLOBAL);
+    });
 
     // Listen for entity queries
     api.pubsub.subscribe('entities:search', async (msg) => {
@@ -447,8 +447,8 @@ const extension = {
       api.pubsub.publish('entities:search:response', {
         query: msg.query,
         entities
-      }, api.scopes.GLOBAL);
-    }, api.scopes.GLOBAL);
+      });
+    });
 
     // Listen for get-for-url requests
     api.pubsub.subscribe('entities:get-for-url', async (msg) => {
@@ -475,9 +475,9 @@ const extension = {
         api.pubsub.publish('entities:get-for-url:response', {
           url: msg.url,
           entities
-        }, api.scopes.GLOBAL);
+        });
       }
-    }, api.scopes.GLOBAL);
+    });
 
   },
 

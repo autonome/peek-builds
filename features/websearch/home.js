@@ -396,7 +396,7 @@ const discoverEngine = async (opensearchUrl, pageUrl) => {
     // Publish discovery event for UI notifications
     api.pubsub.publish('websearch:engine-discovered', {
       engine: { id: engine.id, name: engine.name, searchUrl: engine.searchUrl }
-    }, api.scopes.GLOBAL);
+    });
 
     debug && console.log('[ext:websearch] Discovered search engine:', engine.name, 'from', pageUrl);
     return engine;
@@ -1040,14 +1040,14 @@ const initUi = () => {
     syncEnginesToUi();
     updateEngineIndicator();
     render();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to settings changes to refresh UI
   api.pubsub.subscribe('websearch:settings-changed', () => {
     syncEnginesToUi();
     updateEngineIndicator();
     render();
-  }, api.scopes.SELF);
+  });
 
   // Set up search input
   const searchInput = document.getElementById('search-input');
@@ -1115,7 +1115,7 @@ const initUi = () => {
   initCommands();
 
   // Listen for page load events for OpenSearch discovery
-  api.pubsub.subscribe('page:loaded', handlePageLoaded, api.scopes.GLOBAL);
+  api.pubsub.subscribe('page:loaded', handlePageLoaded);
 
   // Listen for settings updates from Settings UI
   api.pubsub.subscribe('websearch:settings-update', async (msg) => {
@@ -1144,11 +1144,11 @@ const initUi = () => {
       await loadEngines();
       initCommands();
 
-      api.pubsub.publish('websearch:settings-changed', currentSettings, api.scopes.SELF);
+      api.pubsub.publish('websearch:settings-changed', currentSettings);
     } catch (err) {
       console.error('[ext:websearch] settings-update error:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // Register shutdown handler
   api.onShutdown(() => {

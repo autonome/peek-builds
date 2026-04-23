@@ -203,7 +203,7 @@ function handlePageLoad(msg) {
             confidence: e.confidence,
             isNew: e.isNew
           }))
-        }, api.scopes.GLOBAL);
+        });
 
         try {
           await api.context.set('entities', entities.map(e => ({
@@ -253,7 +253,7 @@ async function extractCurrentPage() {
       confidence: e.confidence,
       isNew: e.isNew
     }))
-  }, api.scopes.GLOBAL);
+  });
 
   return entities;
 }
@@ -323,13 +323,13 @@ function initBackground() {
     if (msg.itemType === 'url') {
       handlePageLoad(msg);
     }
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('page:content-ready', (msg) => {
     if (msg.url && msg.url.startsWith('http')) {
       handlePageLoad({ content: msg.url, title: msg.title || '' });
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // External API: manual extraction request (used by page widget in app/page/page.js)
   api.pubsub.subscribe('entities:extract', async (msg) => {
@@ -351,14 +351,14 @@ function initBackground() {
           confidence: e.confidence,
           isNew: e.isNew
         }))
-      }, api.scopes.GLOBAL);
+      });
 
       api.pubsub.publish('entities:extract:response', {
         url: msg.url,
         entities
-      }, api.scopes.GLOBAL);
+      });
     }
-  }, api.scopes.GLOBAL);
+  });
 
   // External API: entity search (used by external consumers)
   api.pubsub.subscribe('entities:search', async (msg) => {
@@ -370,8 +370,8 @@ function initBackground() {
     api.pubsub.publish('entities:search:response', {
       query: msg.query,
       entities
-    }, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    });
+  });
 
   // External API: get entities for URL (used by page widget in app/page/page.js)
   api.pubsub.subscribe('entities:get-for-url', async (msg) => {
@@ -397,9 +397,9 @@ function initBackground() {
       api.pubsub.publish('entities:get-for-url:response', {
         url: msg.url,
         entities
-      }, api.scopes.GLOBAL);
+      });
     }
-  }, api.scopes.GLOBAL);
+  });
 }
 
 function uninitBackground() {
@@ -987,12 +987,12 @@ document.getElementById('extractBtn').addEventListener('click', async () => {
 if (api) {
   api.pubsub.subscribe('entities:extracted', () => {
     if (currentView === VIEW_LIST) renderEntities();
-  }, api.scopes.GLOBAL);
+  });
 
   // Also listen for editor changes that might affect entities
   api.pubsub.subscribe('editor:changed', () => {
     if (currentView === VIEW_LIST) renderEntities();
-  }, api.scopes.GLOBAL);
+  });
 
   // Subscribe to sync and item events for reactive updates
   const debouncedRefresh = (() => {
@@ -1007,15 +1007,15 @@ if (api) {
 
   api.pubsub.subscribe('sync:pull-completed', () => {
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('item:created', () => {
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   api.pubsub.subscribe('item:deleted', () => {
     debouncedRefresh();
-  }, api.scopes.GLOBAL);
+  });
 
   // Register escape handler for back-navigation from detail view
   if (api.escape) {

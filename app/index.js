@@ -70,7 +70,7 @@ const openSettingsWindow = async (prefs, section) => {
     // publish navigate event (createWindow may have just focused existing window)
     if (section) {
       setTimeout(() => {
-        api.publish('settings:navigate', { section }, api.scopes.GLOBAL);
+        api.publish('settings:navigate', { section });
       }, 100);
     }
   } catch (error) {
@@ -615,7 +615,7 @@ export const init = async () => {
     } catch (err) {
       log.error('core', 'registerExtensionCommands threw:', err);
     }
-  }, api.scopes.GLOBAL);
+  });
 
   const p = prefs();
 
@@ -623,7 +623,7 @@ export const init = async () => {
   api.publish(topicCorePrefs, {
     id: id,
     prefs: p
-  }, api.scopes.SYSTEM);
+  });
 
   log('timing', `core init: ${Date.now() - initStart}ms`);
 
@@ -681,7 +681,7 @@ export const init = async () => {
       if (win && win.id) {
         // Small delay to ensure the page host has loaded and subscribed
         setTimeout(() => {
-          api.publish('page:show-navbar', { windowId: win.id, focusUrl: true }, api.scopes.GLOBAL);
+          api.publish('page:show-navbar', { windowId: win.id, focusUrl: true });
         }, 200);
       }
     } catch (error) {
@@ -709,9 +709,9 @@ export const init = async () => {
   api.subscribe('cmd:execute:reopen closed window', async (msg) => {
     const result = await api.session.reopenLastClosed();
     if (msg.expectResult && msg.resultTopic) {
-      api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+      api.publish(msg.resultTopic, result || { success: true });
     }
-  }, api.scopes.GLOBAL);
+  });
   api.publish('cmd:register', {
     name: 'reopen closed window',
     description: 'Reopen the last closed window (Cmd+Shift+T)',
@@ -720,7 +720,7 @@ export const init = async () => {
     accepts: [],
     produces: [],
     params: []
-  }, api.scopes.GLOBAL);
+  });
 
   // Signal to main process that frontend subscribers are ready.
   // This unblocks pending external URLs that arrived during startup.
@@ -774,7 +774,7 @@ export const init = async () => {
   api.subscribe('session:open-startup', () => {
     log('core', 'Session restore declined/failed, opening startup feature');
     openStartupFeature();
-  }, api.scopes.GLOBAL);
+  });
 
   // Feature enable/disable handler
   // Extensions are now managed by main process ExtensionManager via IPC
@@ -825,7 +825,7 @@ export const init = async () => {
       log('core', 'prefs changed, updating settings shortcut');
       initSettingsShortcut(msg.prefs);
     }
-  }, api.scopes.SYSTEM);
+  });
 
   // Initialize core features (non-extension features only)
   features().forEach(initFeature);

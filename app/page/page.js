@@ -1572,14 +1572,14 @@ api.subscribe('page:show-navbar', (msg) => {
   console.log('[page] page:show-navbar received, windowId:', msg.windowId, 'myWindowId:', myWindowId);
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
   show({ focusUrl: true, source: 'shortcut' });
-}, api.scopes.GLOBAL);
+});
 
 // Cmd+R: reload the webview
 api.subscribe('page:reload', (msg) => {
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
   DEBUG && console.log('[page] Cmd+R: reloading webview');
   webview.reload();
-}, api.scopes.GLOBAL);
+});
 
 // Cmd+[ / Cmd+Left: go back
 api.subscribe('page:go-back', (msg) => {
@@ -1589,7 +1589,7 @@ api.subscribe('page:go-back', (msg) => {
     webview.goBack();
     updateState();
   }
-}, api.scopes.GLOBAL);
+});
 
 // Cmd+] / Cmd+Right: go forward
 api.subscribe('page:go-forward', (msg) => {
@@ -1599,7 +1599,7 @@ api.subscribe('page:go-forward', (msg) => {
     webview.goForward();
     updateState();
   }
-}, api.scopes.GLOBAL);
+});
 
 // Navigate to a new URL (used by pagestream to flip between cards).
 // Tracks the original URL so Escape can skip accumulated history.
@@ -1614,7 +1614,7 @@ api.subscribe('page:navigate', (msg) => {
     webview.loadURL(url);
     navbar.setUrl(url);
   }
-}, api.scopes.GLOBAL);
+});
 
 // Forward card-navigation keys to pagestream (only fires when webview is NOT focused,
 // e.g., after pressing Escape which blurs to the page chrome level)
@@ -1638,7 +1638,7 @@ document.addEventListener('keydown', (e) => {
   const action = NAV_MAP[e.key];
   if (action) {
     e.preventDefault();
-    api.publish('pagestream:nav', { action }, api.scopes.GLOBAL);
+    api.publish('pagestream:nav', { action });
     return;
   }
 
@@ -1748,7 +1748,7 @@ findCloseBtn.addEventListener('click', () => hideFindBar());
 api.subscribe('page:find', (msg) => {
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
   showFindBar();
-}, api.scopes.GLOBAL);
+});
 
 api.subscribe('page:find-next', (msg) => {
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
@@ -1757,7 +1757,7 @@ api.subscribe('page:find-next', (msg) => {
   } else {
     showFindBar();
   }
-}, api.scopes.GLOBAL);
+});
 
 api.subscribe('page:find-prev', (msg) => {
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
@@ -1766,7 +1766,7 @@ api.subscribe('page:find-prev', (msg) => {
   } else {
     showFindBar();
   }
-}, api.scopes.GLOBAL);
+});
 
 // --- Escape handling ---
 
@@ -1977,7 +1977,7 @@ webview.addEventListener('did-finish-load', async () => {
     url: pageUrl,
     title: pageTitle,
     opensearchUrl
-  }, api.scopes.GLOBAL);
+  });
 
   DEBUG && console.log('[page] page:loaded published:', pageUrl, opensearchUrl ? `(OpenSearch: ${opensearchUrl})` : '');
 
@@ -2081,7 +2081,7 @@ api.commands.register({
 api.subscribe('page:maximize', (msg) => {
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
   toggleMaximize();
-}, api.scopes.GLOBAL);
+});
 
 // Navbar double-click to toggle maximize
 navbar.addEventListener('dblclick', (e) => {
@@ -2411,7 +2411,7 @@ api.subscribe('websearch:engine-discovered', (msg) => {
     content: contentEl,
     autoDismiss: 8000,
   });
-}, api.scopes.GLOBAL);
+});
 
 // --- Popup-to-opener postMessage bridge: receiver side (Level 3) ---
 // When main process routes a postMessage from a popup to this opener window,
@@ -2736,7 +2736,7 @@ api.subscribe('entities:extracted', (msg) => {
   } catch {
     // webview not ready
   }
-}, api.scopes.GLOBAL);
+});
 
 // Also listen for get-for-url responses
 api.subscribe('entities:get-for-url:response', (msg) => {
@@ -2760,7 +2760,7 @@ api.subscribe('entities:get-for-url:response', (msg) => {
   } catch {
     // webview not ready
   }
-}, api.scopes.GLOBAL);
+});
 
 // Rescan button — triggers re-extraction of entities for current page
 if (entitiesRescanBtn) {
@@ -2780,7 +2780,7 @@ if (entitiesRescanBtn) {
     }
 
     // Request re-extraction from entities extension
-    api.publish('entities:extract', { url: currentUrl }, api.scopes.GLOBAL);
+    api.publish('entities:extract', { url: currentUrl });
   });
 }
 
@@ -2794,7 +2794,7 @@ webview.addEventListener('did-navigate', (e) => {
 
     // Request entities for this URL from the entities extension
     if (e.url && e.url.startsWith('http')) {
-      api.publish('entities:get-for-url', { url: e.url }, api.scopes.GLOBAL);
+      api.publish('entities:get-for-url', { url: e.url });
     }
 
     // Load notes for the new URL
@@ -3164,7 +3164,7 @@ api.subscribe('tag:item-added', async (msg) => {
     } catch { /* ignore */ }
   }
   loadAllTags();
-}, api.scopes.GLOBAL);
+});
 
 api.subscribe('tag:item-removed', async (msg) => {
   if (msg && msg.itemId === currentItemId) {
@@ -3180,11 +3180,11 @@ api.subscribe('tag:item-removed', async (msg) => {
       }
     } catch { /* ignore */ }
   }
-}, api.scopes.GLOBAL);
+});
 
 api.subscribe('tag:created', () => {
   loadAllTags();
-}, api.scopes.GLOBAL);
+});
 
 // --- Load tags on navigation ---
 
@@ -3249,7 +3249,7 @@ api.subscribe('page:cmd:request', async (msg) => {
       requestId,
       data: data || null,
       error: error || null
-    }, api.scopes.GLOBAL);
+    });
   };
 
   try {
@@ -3580,7 +3580,7 @@ api.subscribe('page:cmd:request', async (msg) => {
     console.error('[page] page:cmd:request error:', err);
     respond(null, err.message || 'Failed to execute page command');
   }
-}, api.scopes.GLOBAL);
+});
 
 // --- Extensions Panel: show loaded chrome extensions and adblocker ---
 

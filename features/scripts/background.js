@@ -40,14 +40,14 @@ try {
 function onChannel(topic, handler) {
   if (!scriptsChannelHandlers[topic]) scriptsChannelHandlers[topic] = [];
   scriptsChannelHandlers[topic].push(handler);
-  if (!scriptsChannel) api.pubsub.subscribe(topic, handler, api.scopes.GLOBAL);
+  if (!scriptsChannel) api.pubsub.subscribe(topic, handler);
 }
 
 function emitChannel(topic, data) {
   if (scriptsChannel) {
     scriptsChannel.postMessage({ topic, data });
   } else {
-    api.pubsub.publish(topic, data, api.scopes.GLOBAL);
+    api.pubsub.publish(topic, data);
   }
 }
 
@@ -199,7 +199,7 @@ const executeScript = async (scriptId, executionContext) => {
       scriptId,
       result,
       url: executionContext.url
-    }, api.scopes.GLOBAL);
+    });
 
     return { success: true, data: result };
   } catch (error) {
@@ -337,8 +337,8 @@ const init = async () => {
   // Keep scripts:execute on IPC for cross-extension access
   api.pubsub.subscribe('scripts:execute', async (msg) => {
     const result = await executeScript(msg.scriptId, msg.context);
-    api.pubsub.publish('scripts:execute:response', result, api.scopes.GLOBAL);
-  }, api.scopes.GLOBAL);
+    api.pubsub.publish('scripts:execute:response', result);
+  });
 
 };
 

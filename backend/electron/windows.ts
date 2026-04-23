@@ -27,7 +27,7 @@ import {
   getIzuiCoordinator,
 } from './izui-state.js';
 
-import { publish, scopes } from './pubsub.js';
+import { publish } from './pubsub.js';
 
 /**
  * Get the appropriate background color based on system theme
@@ -185,7 +185,7 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
     const unhandledAction = escUnhandledPolicy(sessionState, role);
     DEBUG && console.log(`[esc] escUnhandledPolicy(${sessionState}, ${role}) -> ${unhandledAction}`);
     if (unhandledAction === 'open-switcher') {
-      publish('peek://system/', scopes.GLOBAL, 'cmd:execute:windows', {});
+      publish('peek://system/', 'cmd:execute:windows', {});
     }
   }
 }

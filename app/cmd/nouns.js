@@ -23,7 +23,7 @@ function flush() {
   const batch = pending;
   pending = [];
   timer = null;
-  api.publish('noun:register-batch', { nouns: batch }, api.scopes.GLOBAL);
+  api.publish('noun:register-batch', { nouns: batch });
 }
 
 /**
@@ -63,15 +63,15 @@ export function registerNoun(nounDef) {
       try {
         const result = await handler(msg);
         if (msg.expectResult && msg.resultTopic) {
-          api.publish(msg.resultTopic, result || { success: true }, api.scopes.GLOBAL);
+          api.publish(msg.resultTopic, result || { success: true });
         }
       } catch (err) {
         console.error('[nouns] Error in', cap, nounDef.name, err);
         if (msg.expectResult && msg.resultTopic) {
-          api.publish(msg.resultTopic, { error: err.message }, api.scopes.GLOBAL);
+          api.publish(msg.resultTopic, { error: err.message });
         }
       }
-    }, api.scopes.GLOBAL);
+    });
   }
 
   // Queue metadata (booleans, not functions) for batched publish
@@ -100,7 +100,7 @@ export function registerNoun(nounDef) {
  */
 export function unregisterNoun(name) {
   delete nounHandlers[name];
-  api.publish('noun:unregister', { name }, api.scopes.GLOBAL);
+  api.publish('noun:unregister', { name });
 }
 
 /**
