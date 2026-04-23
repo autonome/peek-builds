@@ -31,6 +31,7 @@ describe('checkWindowAllowed — extended manage-gated ops', () => {
     'center-all',
     'maximize',
     'fullscreen',
+    'focus',
     'set-overlay-focus-target',
     'set-visible-on-all-workspaces',
   ];

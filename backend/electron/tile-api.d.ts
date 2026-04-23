@@ -135,6 +135,13 @@ interface TileWindow {
   hide(id: number): Promise<{ success: boolean; error?: string }>;
 
   /**
+   * Raise a window to the front.
+   * Requires `window.manage` capability.
+   * No-op under headless test runs.
+   */
+  focus(id: number): Promise<{ success: boolean; error?: string }>;
+
+  /**
    * Center a window on its display. Omit id for calling window.
    * Requires `window.manage` capability.
    */

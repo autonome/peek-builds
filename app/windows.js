@@ -89,15 +89,13 @@ const createWindow = async (address, params = {}) => {
     throw new Error('API window.open not available. Cannot open window.');
   }
 
-  // Return an API for the window
+  // Return an API for the window. Only id + focus are used by callers
+  // today (settings open in app/index.js). close/hide/show/blur/move
+  // were never called externally — dropped to avoid exposing broken
+  // `{ id: ... }` payload shapes against the plain-number strict surface.
   return {
     id: windowId,
-    close: () => api.window.close({ id: windowId }),
-    hide: () => api.window.hide({ id: windowId }),
-    show: () => api.window.show({ id: windowId }),
-    focus: () => api.window.focus({ id: windowId }),
-    blur: () => api.window.blur({ id: windowId }),
-    move: (x, y) => api.window.move({ id: windowId, x, y })
+    focus: () => api.window.focus(windowId)
   };
 };
 

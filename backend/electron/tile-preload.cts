@@ -645,6 +645,20 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Raise a window to the front. Strict path requires `window.manage`;
+     * otherwise falls back to the un-gated legacy `window-focus` channel.
+     */
+    focus: (id: number) => {
+      if (hasWindowCapability()) {
+        return ipcRenderer.invoke('tile:window:focus', {
+          token: tileToken,
+          id,
+        });
+      }
+      return ipcRenderer.invoke('window-focus', { id });
+    },
+
+    /**
      * Toggle click-through on a window. Strict path requires
      * `window.manage`; otherwise falls back to the un-gated legacy
      * `window-set-ignore-mouse-events` channel.

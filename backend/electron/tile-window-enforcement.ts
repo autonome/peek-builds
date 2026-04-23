@@ -32,6 +32,7 @@ import type { CapabilityGrant, WindowCapability } from './tile-manifest.js';
  * - `exists` — check whether a window id is still open; gated by `manage`.
  * - `show` — make a hidden window visible; gated by `manage`.
  * - `hide` — hide a visible window; gated by `manage`.
+ * - `focus` — raise a window to front; gated by `manage`.
  * - `set-ignore-mouse` — toggle click-through on a window; gated by `manage`.
  * - `center` — center a window on its display; gated by `manage`.
  * - `center-all` — center every visible window; gated by `manage`.
@@ -52,6 +53,7 @@ export type WindowOp =
   | 'exists'
   | 'show'
   | 'hide'
+  | 'focus'
   | 'set-ignore-mouse'
   | 'center'
   | 'center-all'
@@ -158,6 +160,7 @@ export function checkWindowAllowed(
     case 'exists':
     case 'show':
     case 'hide':
+    case 'focus':
     case 'set-ignore-mouse':
     case 'center':
     case 'center-all':

@@ -2699,6 +2699,40 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── tile:window:focus ─────────────────────────────────────────────
+  //
+  // Raise a window to the front. Gated by `window.manage`. No-op under
+  // headless test runs to avoid stealing focus between parallel Electron
+  // instances.
+  registerTileIpc('tile:window:focus', { mode: 'handle' }, async (event, args: {
+    token: string;
+    id: number;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'focus');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:focus', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      if (typeof args.id !== 'number') {
+        return { success: false, error: 'Window ID is required' };
+      }
+      const win = BrowserWindow.fromId(args.id);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      if (!isHeadless()) {
+        win.focus();
+      }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
   // ── tile:window:show-self ─────────────────────────────────────────
   //
   // Show the tile's own BrowserWindow. No `window` capability required —
