@@ -19,7 +19,6 @@ import {
   updateItemThumbnail,
   hardDeleteItem,
   trackWindowLoad,
-  normalizeUrl,
   // Context operations
   addContextEntry,
   getContextEntry,
@@ -279,81 +278,10 @@ function itemToAddress(item: Item): Record<string, unknown> {
  * Register datastore IPC handlers
  */
 export function registerDatastoreHandlers(): void {
-  // Extract page content from a live webContents by URL
-  ipcMain.handle('extract-page-content', async (ev, data) => {
-    try {
-      const { url } = data;
-      if (!url) return { success: false, error: 'URL required' };
-
-      const normalizedTarget = normalizeUrl(url);
-      const allContents = webContents.getAllWebContents();
-
-      // Phase 1: Exact match (direct URL or normalized URL)
-      let target = allContents.find(wc => {
-        try {
-          const wcUrl = wc.getURL();
-          if (!wcUrl || wcUrl.startsWith('peek://') || wcUrl === 'about:blank') return false;
-          return wcUrl === url || normalizeUrl(wcUrl) === normalizedTarget;
-        } catch { return false; }
-      });
-
-      // Phase 2: If no exact match, try matching by origin+pathname (ignoring query/hash)
-      // This handles cases where the page redirected or query params changed
-      if (!target) {
-        try {
-          const targetParsed = new URL(url);
-          const targetOriginPath = targetParsed.origin + targetParsed.pathname;
-          target = allContents.find(wc => {
-            try {
-              const wcUrl = wc.getURL();
-              if (!wcUrl || wcUrl.startsWith('peek://') || wcUrl === 'about:blank') return false;
-              const wcParsed = new URL(wcUrl);
-              return wcParsed.origin + wcParsed.pathname === targetOriginPath;
-            } catch { return false; }
-          });
-        } catch { /* invalid URL, skip phase 2 */ }
-      }
-
-      // Phase 3: If still no match, try matching by domain (for redirects like http->https, www->non-www)
-      if (!target) {
-        try {
-          const targetDomain = new URL(url).hostname.replace(/^www\./, '');
-          // Find any http/https webContents with matching base domain
-          const candidates = allContents.filter(wc => {
-            try {
-              const wcUrl = wc.getURL();
-              if (!wcUrl || !wcUrl.startsWith('http')) return false;
-              const wcDomain = new URL(wcUrl).hostname.replace(/^www\./, '');
-              return wcDomain === targetDomain;
-            } catch { return false; }
-          });
-          // Pick the most recently created one (likely the active page)
-          if (candidates.length === 1) {
-            target = candidates[0];
-          }
-        } catch { /* invalid URL, skip phase 3 */ }
-      }
-
-      if (!target) {
-        return { success: false, error: 'No webContents found for URL' };
-      }
-
-      const result = await target.executeJavaScript(`
-        (function() {
-          return {
-            html: document.documentElement.outerHTML,
-            text: document.body ? document.body.innerText.slice(0, 50000) : '',
-            title: document.title || ''
-          };
-        })();
-      `);
-
-      return { success: true, data: result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // Legacy `extract-page-content` removed (v1 removal Phase 3.7c). Tile-
+  // preload's api.datastore.extractPageContent uses
+  // `tile:datastore:extract-page-content` (capability-gated). Was the
+  // preload.js v1 surface only.
 }
 
 /**
@@ -368,92 +296,10 @@ export function registerDatastoreHandlers(): void {
  * tile:extensions:* channels registered in tile-ipc.ts.
  */
 export function registerExtensionHandlers(): void {
-  // Feature settings handlers (renamed from extension-settings)
-  // Note: preload sends { extId } but we accept both extId and id for compatibility
-  ipcMain.handle('feature-settings-get', async (ev, data) => {
-    try {
-      const db = getDb();
-      const extId = data.extId || data.id;
-      const settings = db.prepare(
-        'SELECT * FROM feature_settings WHERE featureId = ?'
-      ).all(extId) as Array<{ key: string; value: string }>;
-
-      const result: Record<string, unknown> = {};
-      for (const s of settings) {
-        try {
-          result[s.key] = JSON.parse(s.value);
-        } catch {
-          result[s.key] = s.value;
-        }
-      }
-      return { success: true, data: result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  ipcMain.handle('feature-settings-set', async (ev, data) => {
-    try {
-      const db = getDb();
-      const extId = data.extId || data.id;
-      const settings = data.settings || {};
-
-      for (const [key, value] of Object.entries(settings)) {
-        const jsonValue = JSON.stringify(value);
-        db.prepare(`
-          INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(`${extId}_${key}`, extId, key, jsonValue, Date.now());
-      }
-
-      return { success: true, data: settings };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  ipcMain.handle('feature-settings-get-key', async (ev, data) => {
-    try {
-      const db = getDb();
-      const extId = data.extId || data.id;
-      const setting = db.prepare(
-        'SELECT * FROM feature_settings WHERE featureId = ? AND key = ?'
-      ).get(extId, data.key) as { value: string } | undefined;
-
-      if (!setting) {
-        return { success: true, data: null };
-      }
-
-      try {
-        return { success: true, data: JSON.parse(setting.value) };
-      } catch {
-        return { success: true, data: setting.value };
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  ipcMain.handle('feature-settings-set-key', async (ev, data) => {
-    try {
-      const db = getDb();
-      const extId = data.extId || data.id;
-      const jsonValue = JSON.stringify(data.value);
-      db.prepare(`
-        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(`${extId}_${data.key}`, extId, data.key, jsonValue, Date.now());
-
-      return { success: true, data: { key: data.key, value: data.value } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
+  // Legacy `feature-settings-{get,set,get-key,set-key}` handlers removed
+  // (v1 removal Phase 3.7d). Tile-preload's api.settings.{get,set,getKey,
+  // setKey} routes through `tile:settings:*` (capability-gated). Was the
+  // preload.js v1 surface only.
 }
 
 
@@ -2880,54 +2726,10 @@ export function registerMiscHandlers(onQuit: () => void): void {
   // was stolen). Don't re-evaluate here - by this point the requesting window
   // (e.g., cmd panel) has already stolen focus from other windows, making
   // isFocused() checks unreliable.
-  ipcMain.handle('izui-is-transient', (ev) => {
-    const coordinator = getIzuiCoordinator();
-    const requestingWindow = BrowserWindow.fromWebContents(ev.sender);
-    // Use session entry mode if available (set correctly at show time)
-    const session = coordinator.getSession();
-    if (session) {
-      const result = coordinator.isTransient();
-      DEBUG && console.log('[izui] izui-is-transient (session):', result, 'windowId:', requestingWindow?.id, 'entryMode:', session.entryMode);
-      return result;
-    }
-    // No session yet - evaluate fresh (excluding requesting window)
-    const entryMode = coordinator.evaluateOnShow(requestingWindow?.id);
-    const result = entryMode === 'transient';
-    DEBUG && console.log('[izui] izui-is-transient (fresh):', result, 'windowId:', requestingWindow?.id);
-    return result;
-  });
-
-  // Get the effective mode for display
-  // Returns 'default' for transient sessions, 'active' otherwise (caller resolves actual mode)
-  ipcMain.handle('izui-get-effective-mode', () => {
-    const coordinator = getIzuiCoordinator();
-    return coordinator.getEffectiveMode();
-  });
-
-  // Get the current IZUI state (idle, transient, active, overlay)
-  ipcMain.handle('izui-get-state', () => {
-    const coordinator = getIzuiCoordinator();
-    return coordinator.getState();
-  });
-
-  // Get the pre-overlay focus target (the window that was focused before overlay opened)
-  // Used by the windows switcher to highlight the correct window on init
-  ipcMain.handle('izui-get-pre-overlay-focus-target', () => {
-    const coordinator = getIzuiCoordinator();
-    return coordinator.getPreOverlayFocusTarget();
-  });
-
-  // IZUI: renderer requests its own window to close/hide (navigate mode)
-  // Goes through closeOrHideWindow for proper keepLive/modal/child handling
-  ipcMain.handle('izui-close-self', (ev) => {
-    const win = BrowserWindow.fromWebContents(ev.sender);
-    if (win && !win.isDestroyed()) {
-      console.log('[izui] izui-close-self for window:', win.id);
-      closeOrHideWindow(win.id);
-      return { success: true };
-    }
-    return { success: false, error: 'Window not found' };
-  });
+  // Legacy `izui-*` handlers (is-transient, get-effective-mode, get-state,
+  // get-pre-overlay-focus-target, close-self) removed (v1 removal Phase 3.7d).
+  // Tile-preload routes everything through `tile:izui:*` (capability-gated).
+  // The only callers were in deleted preload.js.
 
   // Legacy `window-get-position` removed (v1 removal Phase 3.7b). Tile-
   // preload's drag uses `tile:window:get-bounds` (returns x/y/w/h for
@@ -2965,253 +2767,13 @@ export function registerMiscHandlers(onQuit: () => void): void {
   // deleted `preload.js`. Tile-preload uses strict `tile:*` IPC paths
   // instead (tile:shortcuts:register, tile:pubsub:publish, etc.).
 
-  // File save dialog - shows native save dialog and writes file
-  ipcMain.handle('file-save-dialog', async (ev, data: {
-    content: string;
-    filename?: string;
-    mimeType?: string;
-  }) => {
-    try {
-      // Determine file filters based on MIME type
-      const filters: Electron.FileFilter[] = [];
-      if (data.mimeType) {
-        const extMap: Record<string, { name: string; extensions: string[] }> = {
-          'application/json': { name: 'JSON', extensions: ['json'] },
-          'text/csv': { name: 'CSV', extensions: ['csv'] },
-          'text/plain': { name: 'Text', extensions: ['txt'] },
-          'text/html': { name: 'HTML', extensions: ['html', 'htm'] },
-        };
-        const filter = extMap[data.mimeType];
-        if (filter) {
-          filters.push(filter);
-        }
-      }
-      filters.push({ name: 'All Files', extensions: ['*'] });
+  // Legacy `file-save-dialog` removed (v1 removal Phase 3.7d). api.dialogs.save
+  // uses tile:dialogs:save (capability-gated).
 
-      // Parent the dialog to a visible window to avoid showing hidden background pages.
-      // Prefer the focused window; fall back to sender's window only if it's visible.
-      const senderWindow = BrowserWindow.fromWebContents(ev.sender);
-      const focusedWindow = BrowserWindow.getFocusedWindow();
-      const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
-        ? focusedWindow
-        : (senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null);
-
-      const dialogOpts: Electron.SaveDialogOptions = {
-        defaultPath: data.filename,
-        filters,
-      };
-      const result = parentWindow
-        ? await dialog.showSaveDialog(parentWindow, dialogOpts)
-        : await dialog.showSaveDialog(dialogOpts);
-
-      if (result.canceled || !result.filePath) {
-        return { success: false, canceled: true };
-      }
-
-      // Write the file
-      fs.writeFileSync(result.filePath, data.content, 'utf-8');
-
-      return { success: true, path: result.filePath };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // File open dialog - shows native open dialog, reads file, returns content + metadata
-  ipcMain.handle('file-open-dialog', async (ev) => {
-    try {
-      // Parent the dialog to a visible window to avoid showing hidden background pages.
-      const senderWindow = BrowserWindow.fromWebContents(ev.sender);
-      const focusedWindow = BrowserWindow.getFocusedWindow();
-      const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
-        ? focusedWindow
-        : (senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null);
-
-      const openDialogOpts: Electron.OpenDialogOptions = {
-        properties: ['openFile'],
-        filters: [
-          { name: 'All Files', extensions: ['*'] },
-          { name: 'Text Files', extensions: ['txt', 'md', 'json', 'html', 'csv', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log'] },
-          { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'rtf'] },
-        ]
-      };
-      const result = parentWindow
-        ? await dialog.showOpenDialog(parentWindow, openDialogOpts)
-        : await dialog.showOpenDialog(openDialogOpts);
-
-      if (result.canceled || result.filePaths.length === 0) {
-        return { success: false, canceled: true };
-      }
-
-      const filePath = result.filePaths[0];
-      const stats = fs.statSync(filePath);
-      const fileName = path.basename(filePath);
-      const ext = path.extname(filePath).toLowerCase();
-
-      // MIME type detection from extension
-      const extToMime: Record<string, string> = {
-        '.md': 'text/markdown',
-        '.markdown': 'text/markdown',
-        '.txt': 'text/plain',
-        '.text': 'text/plain',
-        '.json': 'application/json',
-        '.html': 'text/html',
-        '.htm': 'text/html',
-        '.csv': 'text/csv',
-        '.xml': 'application/xml',
-        '.yaml': 'text/yaml',
-        '.yml': 'text/yaml',
-        '.toml': 'text/plain',
-        '.ini': 'text/plain',
-        '.cfg': 'text/plain',
-        '.log': 'text/plain',
-        '.js': 'text/javascript',
-        '.ts': 'text/typescript',
-        '.css': 'text/css',
-        '.py': 'text/x-python',
-        '.rb': 'text/x-ruby',
-        '.sh': 'text/x-shellscript',
-        '.bash': 'text/x-shellscript',
-        '.zsh': 'text/x-shellscript',
-        '.c': 'text/x-c',
-        '.cpp': 'text/x-c++',
-        '.h': 'text/x-c',
-        '.java': 'text/x-java',
-        '.go': 'text/x-go',
-        '.rs': 'text/x-rust',
-        '.swift': 'text/x-swift',
-        '.svg': 'image/svg+xml',
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp',
-        '.pdf': 'application/pdf',
-      };
-
-      const mimeType = extToMime[ext] || 'application/octet-stream';
-
-      // Only read text files (don't try to read binary files as UTF-8)
-      const isText = mimeType.startsWith('text/') ||
-                     mimeType === 'application/json' ||
-                     mimeType === 'application/xml' ||
-                     mimeType === 'image/svg+xml';
-
-      let content: string | null = null;
-      if (isText) {
-        content = fs.readFileSync(filePath, 'utf-8');
-      }
-
-      return {
-        success: true,
-        data: {
-          name: fileName,
-          path: filePath,
-          size: stats.size,
-          mimeType,
-          content,
-          isText
-        }
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // File read from path - reads content directly from a known file path (no dialog)
-  ipcMain.handle('file-read-from-path', async (_ev, data: {
-    filePath: string;
-  }) => {
-    try {
-      if (!data.filePath || typeof data.filePath !== 'string') {
-        return { success: false, error: 'filePath is required' };
-      }
-      if (!fs.existsSync(data.filePath)) {
-        return { success: false, error: 'File not found' };
-      }
-      const content = fs.readFileSync(data.filePath, 'utf-8');
-      const fileName = path.basename(data.filePath);
-      return { success: true, data: { content, name: fileName, path: data.filePath } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // File write to path - writes content directly to a known file path (no dialog)
-  ipcMain.handle('file-write-to-path', async (_ev, data: {
-    filePath: string;
-    content: string;
-  }) => {
-    try {
-      if (!data.filePath || typeof data.filePath !== 'string') {
-        return { success: false, error: 'filePath is required' };
-      }
-      if (typeof data.content !== 'string') {
-        return { success: false, error: 'content must be a string' };
-      }
-      fs.writeFileSync(data.filePath, data.content, 'utf-8');
-      return { success: true, path: data.filePath };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // App info handler - returns app version and other metadata
-  ipcMain.handle('app-info', async () => {
-    return {
-      success: true,
-      data: {
-        version: app.getVersion(),
-        name: app.getName(),
-        isPackaged: app.isPackaged
-      }
-    };
-  });
-
-  // Net fetch handler - proxies HTTP requests through main process to bypass CORS
-  // Used by extensions that need to fetch from external APIs (e.g., search suggestions)
-  ipcMain.handle('net-fetch', async (_ev, data: { url: string; options?: { method?: string; headers?: Record<string, string>; timeout?: number } }) => {
-    try {
-      const { url, options = {} } = data;
-
-      // Only allow http/https URLs
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        return { success: false, error: 'Only http/https URLs are allowed' };
-      }
-
-      const controller = new AbortController();
-      const timeout = options.timeout || 5000;
-      const timer = setTimeout(() => controller.abort(), timeout);
-
-      try {
-        const response = await net.fetch(url, {
-          method: options.method || 'GET',
-          headers: options.headers || {},
-          signal: controller.signal,
-        });
-
-        clearTimeout(timer);
-
-        if (!response.ok) {
-          return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
-        }
-
-        const text = await response.text();
-        return { success: true, data: text, status: response.status };
-      } catch (fetchErr) {
-        clearTimeout(timer);
-        const fetchMessage = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-        return { success: false, error: fetchMessage };
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // Legacy `file-open-dialog`, `file-read-from-path`, `file-write-to-path`,
+  // `app-info`, `net-fetch` removed (v1 removal Phase 3.7d). Their only
+  // callers were in deleted preload.js. Tile-preload uses tile:dialogs:open,
+  // tile:filesystem:read/write, tile:network:fetch, etc.
 
 }
 
@@ -3495,106 +3057,10 @@ export function registerProfileHandlers(): void {
  * New code should use the context API (api.context) instead.
  */
 export function registerModesHandlers(): void {
-  // Mode definitions
-  const MODES = [
-    { id: 'default', name: 'Default', description: 'Standard browsing mode' },
-    { id: 'page', name: 'Page', description: 'Viewing a web page' },
-    { id: 'space', name: 'Space', description: 'Working in a space' },
-  ];
-
-  // Get mode state for a window (uses context API)
-  ipcMain.handle('modes:getWindowMode', async (ev, data: { windowId?: number | null }) => {
-    try {
-      let windowId = data.windowId;
-
-      if (windowId === undefined || windowId === null) {
-        const callingWin = BrowserWindow.fromWebContents(ev.sender);
-        windowId = callingWin?.id ?? lastFocusedVisibleWindowId;
-      }
-
-      if (windowId === null || windowId === undefined) {
-        return { success: false, error: 'No target window' };
-      }
-
-      const entry = getContextEntry('mode', windowId);
-      const state = {
-        major: (entry?.value as MajorModeId) || 'default'
-      };
-      return { success: true, data: state };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Set major mode for a window (uses context API)
-  ipcMain.handle('modes:setMajorMode', async (ev, data: { mode: MajorModeId; windowId?: number | null }) => {
-    try {
-      let windowId = data.windowId;
-      let source = '';
-
-      if (windowId === undefined || windowId === null) {
-        const callingWin = BrowserWindow.fromWebContents(ev.sender);
-        windowId = callingWin?.id ?? lastFocusedVisibleWindowId;
-        source = callingWin?.webContents.getURL() ?? '';
-      }
-
-      if (windowId === null || windowId === undefined) {
-        return { success: false, error: 'No target window' };
-      }
-
-      addContextEntry('mode', data.mode, { windowId, source });
-
-      // Publish mode change for backwards compatibility
-      publish(getSystemAddress(), 'modes:changed', {
-        windowId,
-        major: data.mode,
-      });
-
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // List all available modes
-  ipcMain.handle('modes:listModes', async () => {
-    return { success: true, data: MODES };
-  });
-
-  // Get command context for current state
-  ipcMain.handle('modes:getCommandContext', async () => {
-    try {
-      const windowId = lastFocusedVisibleWindowId;
-      const entry = getContextEntry('mode', windowId);
-
-      let url: string | null = null;
-      let title: string | null = null;
-
-      if (windowId !== null) {
-        const win = BrowserWindow.fromId(windowId);
-        if (win && !win.isDestroyed()) {
-          url = win.webContents.getURL();
-          title = win.getTitle();
-        }
-      }
-
-      const context = {
-        windowId,
-        mode: {
-          major: (entry?.value as MajorModeId) || 'default'
-        },
-        url,
-        title,
-        hasSelection: false
-      };
-      return { success: true, data: context };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // Legacy `modes:*` handlers (getWindowMode, setMajorMode, listModes,
+  // getCommandContext) removed (v1 removal Phase 3.7d). Tile-preload's
+  // api.modes.* and api.context.* route through `tile:context:*`
+  // (capability-gated). Only callers were in deleted preload.js.
 }
 
 

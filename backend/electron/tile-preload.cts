@@ -1264,6 +1264,16 @@ function buildAPI(): Record<string, unknown> {
       const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
       return ipcRenderer.invoke('tile:theme:getAll', { token: tileToken });
     },
+
+    // Theme directory management — Settings UI uses these to install
+    // user-supplied themes from disk. Thin wrappers over the existing
+    // legacy `theme:*` ipcMain handlers; consumed by settings.js.
+    // Same pattern as api.profiles / api.adblocker / api.darkMode shims.
+    pickFolder: () => ipcRenderer.invoke('theme:pickFolder'),
+    validateFolder: (folderPath: string) => ipcRenderer.invoke('theme:validateFolder', { folderPath }),
+    add: (folderPath: string) => ipcRenderer.invoke('theme:add', { folderPath }),
+    remove: (themeId: string) => ipcRenderer.invoke('theme:remove', { themeId }),
+    reload: (themeId: string) => ipcRenderer.invoke('theme:reload', { themeId }),
   };
 
   // ── Settings (if granted) ──
