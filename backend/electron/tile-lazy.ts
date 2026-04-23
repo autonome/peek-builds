@@ -28,7 +28,7 @@
  */
 
 import {
-  publish, registerPrePublishHook, getSystemAddress,
+  publish, subscribe, registerPrePublishHook, getSystemAddress,
   type PrePublishHookResult,
 } from './pubsub.js';
 import {
@@ -80,7 +80,9 @@ export function __resetTileLazyStateForTest(): void {
   lazyTileRegistry.clear();
   loadingTiles.clear();
   declaredLazyEventTopics.clear();
+  pendingDispatchesByTile.clear();
   _hookInstalled = false;
+  _crashObserverInstalled = false;
 }
 
 // ─── State ───────────────────────────────────────────────────────────
@@ -104,6 +106,100 @@ const declaredLazyEventTopics = new Set<string>();
 
 /** Timeout for lazy load (ms) */
 const LAZY_LOAD_TIMEOUT_MS = 10000;
+
+/**
+ * Phase 7 — Timeout UX for load-on-dispatch.
+ *
+ * Each entry in this map tracks a `cmd:execute:{name}` publish that was
+ * routed through the hook while its target tile was in `registered`. If
+ * the tile never reaches `ready` — either because the load timer fires
+ * or because the render process crashes during boot — we reject every
+ * pending dispatch for that tile with a user-visible notification
+ * instead of letting the cmd panel's 30s proxy timeout absorb the
+ * failure silently.
+ *
+ * Keyed by tileId. A tile can have multiple concurrent dispatches
+ * (user fires command, navigates, fires another while the first is
+ * still loading); each one is a separate `PendingDispatch` entry.
+ */
+interface PendingDispatch {
+  cmdName: string;
+  resultTopic: string | null;
+}
+const pendingDispatchesByTile = new Map<string, Set<PendingDispatch>>();
+
+function registerPendingDispatch(tileId: string, entry: PendingDispatch): void {
+  let set = pendingDispatchesByTile.get(tileId);
+  if (!set) {
+    set = new Set();
+    pendingDispatchesByTile.set(tileId, set);
+  }
+  set.add(entry);
+}
+
+function clearPendingDispatch(tileId: string, entry: PendingDispatch): void {
+  const set = pendingDispatchesByTile.get(tileId);
+  if (!set) return;
+  set.delete(entry);
+  if (set.size === 0) pendingDispatchesByTile.delete(tileId);
+}
+
+function drainPendingDispatches(tileId: string): PendingDispatch[] {
+  const set = pendingDispatchesByTile.get(tileId);
+  if (!set) return [];
+  const entries = Array.from(set);
+  pendingDispatchesByTile.delete(tileId);
+  return entries;
+}
+
+/**
+ * Publish a user-visible error notification and resolve the caller's
+ * result topic (if any) with a structured error — so the cmd panel's
+ * proxy promise settles immediately and the state machine returns to
+ * IDLE instead of hanging on the 30s proxy fallback timeout.
+ *
+ * The notification topic is `notification:show` per docs/pubsub-state-machine.md
+ * §Load-on-dispatch — timeout UX. No dedicated notification subscriber
+ * exists yet in Peek; any future notification surface (HUD overlay,
+ * toast, OS notification) listens to this topic.
+ */
+function reportDispatchFailure(
+  tileId: string,
+  entry: PendingDispatch,
+  reason: 'timeout' | 'crashed',
+  timeoutMs: number,
+): void {
+  const body =
+    reason === 'timeout'
+      ? `Command "${entry.cmdName}" couldn't run because its tile failed to load within ${timeoutMs}ms.`
+      : `Command "${entry.cmdName}" couldn't run because its tile crashed while loading.`;
+
+  try {
+    publish(getSystemAddress(), 'notification:show', {
+      type: 'error',
+      title: "Tile didn't load",
+      body,
+      context: { tileId, cmdName: entry.cmdName, reason },
+    });
+  } catch (err) {
+    console.error('[tile-lazy] notification:show publish threw:', err);
+  }
+
+  // Resolve the proxy's result topic with an error shape so the cmd
+  // panel returns to IDLE immediately. This mirrors the "error result"
+  // contract other handlers use (see app/cmd/commands.js proxy
+  // subscribe of `cmd:execute:{name}:result`).
+  if (entry.resultTopic) {
+    try {
+      publish(getSystemAddress(), entry.resultTopic, { error: body });
+    } catch (err) {
+      console.error(
+        `[tile-lazy] resultTopic publish threw for ${entry.resultTopic}:`,
+        err,
+      );
+    }
+  }
+}
 
 // ─── Registration ────────────────────────────────────────────────────
 
@@ -181,10 +277,36 @@ function collectLazyEventTopics(manifest: TileManifestV2): string[] {
  * Call once at app init, before any command can fire. Idempotent.
  */
 let _hookInstalled = false;
+let _crashObserverInstalled = false;
 export function installLoadOnDispatchHook(): void {
-  if (_hookInstalled) return;
-  registerPrePublishHook(dispatchHookPredicate, dispatchHookBody);
-  _hookInstalled = true;
+  if (!_hookInstalled) {
+    registerPrePublishHook(dispatchHookPredicate, dispatchHookBody);
+    _hookInstalled = true;
+  }
+  installCrashObserver();
+}
+
+/**
+ * Subscribe to the lifecycle observer topic `tile:state-changed` and
+ * reject any pending dispatches when a tile transitions `loading →
+ * crashed`. Rejecting eagerly (not waiting for the 10s timeout) is
+ * the whole point of Phase 7's crashed-during-load path.
+ */
+function installCrashObserver(): void {
+  if (_crashObserverInstalled) return;
+  _crashObserverInstalled = true;
+  subscribe('peek://tile-lazy/crash-observer', 'tile:state-changed', (msg: unknown) => {
+    const t = msg as { tileId?: string; from?: string; to?: string } | null;
+    if (!t || typeof t.tileId !== 'string') return;
+    // Only the `loading → crashed` edge matters here. A crash from
+    // ready/visible is not a load failure — those are regular runtime
+    // crashes and aren't the concern of this path.
+    if (t.from !== 'loading' || t.to !== 'crashed') return;
+    const pending = drainPendingDispatches(t.tileId);
+    for (const entry of pending) {
+      reportDispatchFailure(t.tileId, entry, 'crashed', LAZY_LOAD_TIMEOUT_MS);
+    }
+  });
 }
 
 /**
@@ -266,13 +388,33 @@ async function handleCommandDispatch(
   // Programmatic command: load the tile (if needed), then let the
   // publish continue — by which point the tile's background has
   // subscribed its real handler.
+  const typedMsg = msg as { resultTopic?: string } | null;
+  const pending: PendingDispatch = {
+    cmdName: name,
+    resultTopic: typedMsg?.resultTopic ?? null,
+  };
+  registerPendingDispatch(tileId, pending);
   try {
     await ensureTileLoaded(tileId);
+    // Load succeeded — drop the pending entry so a later crash or
+    // timeout on a sibling dispatch doesn't fire a stale notification
+    // for this one.
+    clearPendingDispatch(tileId, pending);
   } catch (err) {
+    // If the crash observer already drained this entry (loading →
+    // crashed fired before the load timer), don't double-report. The
+    // observer removes drained entries from the map.
+    const set = pendingDispatchesByTile.get(tileId);
+    const stillPending = set?.has(pending) === true;
+    if (stillPending) {
+      clearPendingDispatch(tileId, pending);
+      reportDispatchFailure(tileId, pending, 'timeout', LAZY_LOAD_TIMEOUT_MS);
+    }
     console.error(`[tile-lazy] Failed to load tile ${tileId} for command ${name}:`, err);
-    // Delivery continues anyway so that any already-registered
-    // fallback subscriber sees the message. If none exist, the cmd
-    // panel's result-timeout will eventually surface the failure.
+    // Skip delivery of the original cmd:execute publish. No handler
+    // is alive to receive it, and the notification + resultTopic
+    // error publish above have already settled the caller's promise.
+    return 'skip';
   }
   return 'continue';
 }
