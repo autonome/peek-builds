@@ -4,7 +4,7 @@
  * The central invariant tested here: every `tile:*` IPC handler routes
  * through `verifyTokenSender()`. If the `event.sender` WebContents id
  * differs from the WebContents id bound to `payload.token`, the frame
- * is dropped and a `tile:drift` event is published. Without this check,
+ * is dropped and a `gate:rejected` event is published. Without this check,
  * a tile with an XSS bug that leaked its token could be impersonated
  * by any other tile that learned the leaked token — the capability
  * gate would trust the token field and let the forged frame through.
@@ -29,7 +29,7 @@ import {
 } from './tile-tokens.js';
 import { resolveCapabilities } from './tile-manifest.js';
 import { subscribe, unsubscribe } from './pubsub.js';
-import { verifyTokenSender } from './tile-ipc-sender-check.js';
+import { verifyTokenSender, __resetRejectBucketsForTest } from './tile-ipc-gate.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -49,29 +49,30 @@ function mintToken(tileId: string): string {
 }
 
 /**
- * Subscribe to the `tile:drift` topic and collect every payload
+ * Subscribe to the `gate:rejected` topic and collect every payload
  * delivered during the test. Callers inspect `events` after calling
  * `verifyTokenSender` to assert drift emission shape.
  */
 function captureDriftEvents(): { events: Array<Record<string, unknown>>; stop: () => void } {
   const events: Array<Record<string, unknown>> = [];
   const source = `test-drift-listener-${Math.random().toString(36).slice(2, 8)}`;
-  subscribe(source, 'tile:drift', (msg) => {
+  subscribe(source, 'gate:rejected', (msg) => {
     events.push(msg as Record<string, unknown>);
   });
   return {
     events,
-    stop: () => { unsubscribe(source, 'tile:drift'); },
+    stop: () => { unsubscribe(source, 'gate:rejected'); },
   };
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────
 
-describe('verifyTokenSender (Phase 2: sender-frame cross-check)', () => {
+describe('verifyTokenSender (back-compat shim over tile-ipc-gate — Phase 8)', () => {
   let drift: ReturnType<typeof captureDriftEvents>;
 
   beforeEach(() => {
     clearAllTokens();
+    __resetRejectBucketsForTest();
     drift = captureDriftEvents();
   });
 
@@ -106,7 +107,7 @@ describe('verifyTokenSender (Phase 2: sender-frame cross-check)', () => {
     const evt = drift.events[0];
     assert.strictEqual(evt.reason, 'sender-mismatch');
     assert.strictEqual(evt.op, 'tile:pubsub:publish');
-    assert.strictEqual(evt.tokenTileId, 'tile-a');
+    assert.strictEqual(evt.tileId, 'tile-a');
     assert.strictEqual(evt.ownerWcId, 100);
     assert.strictEqual(evt.senderWcId, 200);
     assert.ok(typeof evt.ts === 'number', 'drift event carries timestamp');

@@ -29,7 +29,7 @@ import {
   launchTile,
   getTileManifest,
 } from './tile-launcher.js';
-import { verifyTokenSender } from './tile-ipc-sender-check.js';
+import { registerTileIpc } from './tile-ipc-gate.js';
 import { parseManifestFile } from './tile-manifest.js';
 import { publish, subscribe, unsubscribe } from './pubsub.js';
 import { DEBUG, TILE_STRICT, isHeadless } from './config.js';
@@ -176,14 +176,15 @@ function handleDatastoreViolation(token: string | undefined, op: string, reason:
   handleViolation(grant, 'datastore', op, reason, token);
 }
 
-// ─── Phase 2: Sender-frame cross-check (security hardening) ──────────
+// ─── Phase 8: IPC chokepoint (tile-ipc-gate.ts) ──────────────────────
 //
-// Every `tile:*` IPC handler routes through `verifyTokenSender()`
-// instead of a bare `getGrantForToken(token)` lookup. The helper lives
-// in `./tile-ipc-sender-check.ts` — a small pure module with no
-// Electron imports so it can be unit-tested under
-// `ELECTRON_RUN_AS_NODE=1`. See that module's header for the full
-// threat model and binding rules.
+// Every `tile:*` IPC handler is registered through `registerTileIpc`,
+// which runs the six-step validation pipeline (§The IPC chokepoint in
+// docs/pubsub-state-machine.md) before invoking the handler. The
+// validated grant is injected as the handler's third argument — the
+// pre-Phase-8 inline `const grant = verifyTokenSender(...)` calls have
+// been removed; every handler aliases `const grant = _grant` to keep
+// the body mechanically unchanged.
 
 /**
  * Convert an Item to an Address-compatible shape for backward-compat shims.
@@ -422,18 +423,15 @@ export function registerTileIpcHandlers(): void {
 
   // ── Token Validation ──
 
-  ipcMain.handle('tile:validate-token', (event, args: {
+  registerTileIpc('tile:validate-token', { mode: 'handle' }, (event, args: {
     tileId: string;
     tileEntry: string;
     token: string;
-  }) => {
+  }, _grant) => {
     // Sender-frame cross-check: same rules as every other tile:*
     // handler. This is also the TOFU bind point for renderers we
     // couldn't bind eagerly (webview guests).
-    const grant = verifyTokenSender(event, args.token, 'tile:validate-token');
-    if (!grant) {
-      return { valid: false };
-    }
+    const grant = _grant;
     const record = validateToken(args.token);
     if (!record) {
       return { valid: false };
@@ -460,17 +458,13 @@ export function registerTileIpcHandlers(): void {
 
   // ── PubSub ──
 
-  ipcMain.on('tile:pubsub:publish', (event, args: {
+  registerTileIpc('tile:pubsub:publish', { mode: 'on' }, (event, args: {
     token: string;
     source: string;
     topic: string;
     data: unknown;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:pubsub:publish');
-    if (!grant) {
-      DEBUG && console.log('[tile-ipc] pubsub:publish rejected: invalid token or sender mismatch');
-      return;
-    }
+  }, _grant) => {
+    const grant = _grant;
 
     // Topic enforcement: if topics allowlist is set, check it.
     // Trusted-builtin core renderers bypass the topic allowlist.
@@ -522,39 +516,36 @@ export function registerTileIpcHandlers(): void {
     publish(args.source, args.topic, args.data);
   });
 
-  ipcMain.on('tile:pubsub:subscribe', (event, args: {
+  registerTileIpc('tile:pubsub:subscribe', { mode: 'on' }, (event, args: {
     token: string;
     source: string;
     topic: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:pubsub:subscribe');
-    if (!grant) return;
+  }, _grant) => {
+    const grant = _grant;
 
     subscribe(args.source, args.topic, (msg) => {
       // Message delivery handled by extension broadcaster in main.ts
     });
   });
 
-  ipcMain.on('tile:pubsub:unsubscribe', (event, args: {
+  registerTileIpc('tile:pubsub:unsubscribe', { mode: 'on' }, (event, args: {
     token: string;
     source: string;
     topic: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:pubsub:unsubscribe');
-    if (!grant) return;
+  }, _grant) => {
+    const grant = _grant;
 
     unsubscribe(args.source, args.topic);
   });
 
   // ── Commands ──
 
-  ipcMain.on('tile:command:register', (event, args: {
+  registerTileIpc('tile:command:register', { mode: 'on' }, (event, args: {
     token: string;
     tileId: string;
     name: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:command:register');
-    if (!grant) return;
+  }, _grant) => {
+    const grant = _grant;
     if (!hasCapability(grant, 'commands')) {
       handleViolation(grant, 'commands', 'command:register', 'commands not granted', args.token);
       return;
@@ -602,7 +593,7 @@ export function registerTileIpcHandlers(): void {
   // if provided so the renderer can surface the rejection; we still
   // return early (no registration performed).
 
-  ipcMain.on('tile:shortcuts:register', (ev, args: {
+  registerTileIpc('tile:shortcuts:register', { mode: 'on' }, (ev, args: {
     token: string;
     source?: string;
     shortcut: string;
@@ -610,7 +601,7 @@ export function registerTileIpcHandlers(): void {
     global?: boolean;
     mode?: string;
     options?: { global?: boolean; mode?: string };
-  }) => {
+  }, _grant) => {
     // Accept either top-level global/mode or nested options.{global,mode}
     // so renderer callers can pick whichever shape they want.
     const opts = args.options || {};
@@ -629,11 +620,7 @@ export function registerTileIpcHandlers(): void {
       }
     };
 
-    const grant = verifyTokenSender(ev, args.token, 'tile:shortcuts:register');
-    if (!grant) {
-      replyError('invalid token or sender mismatch');
-      return;
-    }
+    const grant = _grant;
     const check = checkShortcutAllowed(grant, args.shortcut);
     if (!check.ok) {
       handleViolation(grant, 'shortcuts', 'shortcuts:register', check.error, args.token);
@@ -668,20 +655,19 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.on('tile:shortcuts:unregister', (ev, args: {
+  registerTileIpc('tile:shortcuts:unregister', { mode: 'on' }, (ev, args: {
     token: string;
     source?: string;
     shortcut: string;
     global?: boolean;
     mode?: string;
     options?: { global?: boolean; mode?: string };
-  }) => {
+  }, _grant) => {
     const opts = args.options || {};
     const isGlobal = args.global === true || opts.global === true;
     const modeStr = args.mode ?? opts.mode;
 
-    const grant = verifyTokenSender(ev, args.token, 'tile:shortcuts:unregister');
-    if (!grant) return;
+    const grant = _grant;
     const check = checkShortcutAllowed(grant, args.shortcut);
     if (!check.ok) {
       handleViolation(grant, 'shortcuts', 'shortcuts:unregister', check.error, args.token);
@@ -717,13 +703,12 @@ export function registerTileIpcHandlers(): void {
   //      - windowsWithValue/windowsInSpace: require `queryWindows: true`.
   //      - snapshot: no per-op gate beyond the capability itself.
 
-  ipcMain.handle('tile:context:get', async (ev, args: {
+  registerTileIpc('tile:context:get', { mode: 'handle' }, async (ev, args: {
     token: string;
     key: string;
     windowId?: number | null;
-  }) => {
-    const grant = verifyTokenSender(ev, args.token, 'tile:context:get');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkContextAllowed(grant, 'get', args.key);
     if (!check.ok) {
       handleViolation(grant, 'context', 'context:get', check.error, args.token);
@@ -743,15 +728,14 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:context:set', async (ev, args: {
+  registerTileIpc('tile:context:set', { mode: 'handle' }, async (ev, args: {
     token: string;
     key: string;
     value: unknown;
     metadata?: Record<string, unknown>;
     windowId?: number | null;
-  }) => {
-    const grant = verifyTokenSender(ev, args.token, 'tile:context:set');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkContextAllowed(grant, 'set', args.key);
     if (!check.ok) {
       handleViolation(grant, 'context', 'context:set', check.error, args.token);
@@ -792,7 +776,7 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:context:history', async (ev, args: {
+  registerTileIpc('tile:context:history', { mode: 'handle' }, async (ev, args: {
     token: string;
     key?: string;
     windowId?: number | null;
@@ -800,9 +784,8 @@ export function registerTileIpcHandlers(): void {
     until?: number;
     limit?: number;
     order?: 'asc' | 'desc';
-  }) => {
-    const grant = verifyTokenSender(ev, args.token, 'tile:context:history');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     // history has a key-scoped gate only when the caller specified a
     // key. Unscoped history queries still require the capability but
     // not a specific allowlist entry — the datastore query itself
@@ -834,13 +817,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:context:snapshot', async (ev, args: {
+  registerTileIpc('tile:context:snapshot', { mode: 'handle' }, async (ev, args: {
     token: string;
     timestamp?: number;
     keys?: string[];
-  }) => {
-    const grant = verifyTokenSender(ev, args.token, 'tile:context:snapshot');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkContextAllowed(grant, 'snapshot');
     if (!check.ok) {
       handleViolation(grant, 'context', 'context:snapshot', check.error, args.token);
@@ -856,13 +838,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:context:windows-with-value', async (ev, args: {
+  registerTileIpc('tile:context:windows-with-value', { mode: 'handle' }, async (ev, args: {
     token: string;
     key: string;
     value: unknown;
-  }) => {
-    const grant = verifyTokenSender(ev, args.token, 'tile:context:windows-with-value');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkContextAllowed(grant, 'windowsWithValue', args.key);
     if (!check.ok) {
       handleViolation(grant, 'context', 'context:windows-with-value', check.error, args.token);
@@ -877,12 +858,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:context:windows-in-space', async (ev, args: {
+  registerTileIpc('tile:context:windows-in-space', { mode: 'handle' }, async (ev, args: {
     token: string;
     spaceId: string;
-  }) => {
-    const grant = verifyTokenSender(ev, args.token, 'tile:context:windows-in-space');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkContextAllowed(grant, 'windowsInSpace');
     if (!check.ok) {
       handleViolation(grant, 'context', 'context:windows-in-space', check.error, args.token);
@@ -909,14 +889,13 @@ export function registerTileIpcHandlers(): void {
   // flow while requiring a declared capability + optional type
   // allowlist. See docs/tile-preload-trimming-plan.md §2.4.
 
-  ipcMain.handle('tile:dialogs:save', async (ev, args: {
+  registerTileIpc('tile:dialogs:save', { mode: 'handle' }, async (ev, args: {
     token: string;
     content: string;
     filename?: string;
     mimeType?: string;
-  }) => {
-    const grant = verifyTokenSender(ev, args.token, 'tile:dialogs:save');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkDialogAllowed(grant, 'save');
     if (!check.ok) {
       handleViolation(grant, 'dialogs', 'dialogs:save', check.error, args.token);
@@ -962,11 +941,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:dialogs:open', async (ev, args: {
+  registerTileIpc('tile:dialogs:open', { mode: 'handle' }, async (ev, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(ev, args.token, 'tile:dialogs:open');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkDialogAllowed(grant, 'open');
     if (!check.ok) {
       handleViolation(grant, 'dialogs', 'dialogs:open', check.error, args.token);
@@ -1061,13 +1039,12 @@ export function registerTileIpcHandlers(): void {
   //      - enable/disable/remove: `manage` (must be true).
   //   4. If `sources` allowlist is set, entry/source must be in the list.
 
-  ipcMain.handle('tile:features:list', async (event, args: {
+  registerTileIpc('tile:features:list', { mode: 'handle' }, async (event, args: {
     token: string;
     /** Optional filter by source type (rejected if not in sources allowlist). */
     sourceType?: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:list');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'read');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:list', check.error, args.token);
@@ -1105,12 +1082,11 @@ export function registerTileIpcHandlers(): void {
     return { entries };
   });
 
-  ipcMain.handle('tile:features:get', async (event, args: {
+  registerTileIpc('tile:features:get', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:get');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'read');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:get', check.error, args.token);
@@ -1131,13 +1107,12 @@ export function registerTileIpcHandlers(): void {
     return { entry };
   });
 
-  ipcMain.handle('tile:features:history', async (event, args: {
+  registerTileIpc('tile:features:history', { mode: 'handle' }, async (event, args: {
     token: string;
     featureId?: string;
     limit?: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:history');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'read');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:history', check.error, args.token);
@@ -1181,13 +1156,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:enable', async (event, args: {
+  registerTileIpc('tile:features:enable', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
     tilePreloadPath?: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:enable');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'manage');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:enable', check.error, args.token);
@@ -1232,12 +1206,11 @@ export function registerTileIpcHandlers(): void {
     return { success: result };
   });
 
-  ipcMain.handle('tile:features:disable', async (event, args: {
+  registerTileIpc('tile:features:disable', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:disable');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'manage');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:disable', check.error, args.token);
@@ -1276,12 +1249,11 @@ export function registerTileIpcHandlers(): void {
     return { success: result };
   });
 
-  ipcMain.handle('tile:features:remove', async (event, args: {
+  registerTileIpc('tile:features:remove', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:remove');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'manage');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:remove', check.error, args.token);
@@ -1340,12 +1312,11 @@ export function registerTileIpcHandlers(): void {
     return { success: result };
   });
 
-  ipcMain.handle('tile:features:install-resolve', async (event, args: {
+  registerTileIpc('tile:features:install-resolve', { mode: 'handle' }, async (event, args: {
     token: string;
     atUri: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:install-resolve');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     // Resolve is a pre-install read against the atproto source. Gate on
     // `install` since it's only meaningful as a step toward installing.
     // Source-type check: always 'atproto' for this endpoint.
@@ -1367,13 +1338,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:preview-capabilities', async (event, args: {
+  registerTileIpc('tile:features:preview-capabilities', { mode: 'handle' }, async (event, args: {
     token: string;
     manifestCapabilities: TileCapabilities;
     featureId: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:preview-capabilities');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'install');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:preview-capabilities', check.error, args.token);
@@ -1389,13 +1359,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:install', async (event, args: {
+  registerTileIpc('tile:features:install', { mode: 'handle' }, async (event, args: {
     token: string;
     atUri: string;
     userApproved: boolean;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:install');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'install', 'atproto');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:install', check.error, args.token);
@@ -1452,12 +1421,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:browse-resolve-publisher', async (event, args: {
+  registerTileIpc('tile:features:browse-resolve-publisher', { mode: 'handle' }, async (event, args: {
     token: string;
     query: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:browse-resolve-publisher');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'install', 'atproto');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:browse-resolve-publisher', check.error, args.token);
@@ -1508,11 +1476,10 @@ export function registerTileIpcHandlers(): void {
   // that do not take a specific source type, we gate on the per-action
   // flag only. For update/apply we gate on `update` + source `atproto`.
 
-  ipcMain.handle('tile:features:update-check-all', async (event, args: {
+  registerTileIpc('tile:features:update-check-all', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:update-check-all');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'update');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:update-check-all', check.error, args.token);
@@ -1620,13 +1587,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:update-apply', async (event, args: {
+  registerTileIpc('tile:features:update-apply', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
     userApproved?: boolean;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:update-apply');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'update', 'atproto');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:update-apply', check.error, args.token);
@@ -1716,13 +1682,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:update-set-policy', async (event, args: {
+  registerTileIpc('tile:features:update-set-policy', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
     policy: 'auto' | 'notify' | 'pinned';
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:update-set-policy');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'update');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:update-set-policy', check.error, args.token);
@@ -1753,12 +1718,11 @@ export function registerTileIpcHandlers(): void {
     return { success: true, policy: entry.updatePolicy, pinnedVersion: entry.pinnedVersion };
   });
 
-  ipcMain.handle('tile:features:dev-reload', async (event, args: {
+  registerTileIpc('tile:features:dev-reload', { mode: 'handle' }, async (event, args: {
     token: string;
     featureId: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:dev-reload');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'dev');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:dev-reload', check.error, args.token);
@@ -1820,12 +1784,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:dev-validate', async (event, args: {
+  registerTileIpc('tile:features:dev-validate', { mode: 'handle' }, async (event, args: {
     token: string;
     featureId: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:dev-validate');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'dev');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:dev-validate', check.error, args.token);
@@ -1898,11 +1861,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:dev-pick-directory', async (event, args: {
+  registerTileIpc('tile:features:dev-pick-directory', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:dev-pick-directory');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'dev');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:dev-pick-directory', check.error, args.token);
@@ -1923,14 +1885,13 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:dev-create', async (event, args: {
+  registerTileIpc('tile:features:dev-create', { mode: 'handle' }, async (event, args: {
     token: string;
     directoryPath: string;
     featureId: string;
     featureName: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:dev-create');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'dev');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:dev-create', check.error, args.token);
@@ -2045,11 +2006,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:publish-list-local', async (event, args: {
+  registerTileIpc('tile:features:publish-list-local', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:publish-list-local');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'publish');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:publish-list-local', check.error, args.token);
@@ -2076,12 +2036,11 @@ export function registerTileIpcHandlers(): void {
     };
   });
 
-  ipcMain.handle('tile:features:publish-read-feature-files', async (event, args: {
+  registerTileIpc('tile:features:publish-read-feature-files', { mode: 'handle' }, async (event, args: {
     token: string;
     featureId: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:publish-read-feature-files');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'publish');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:publish-read-feature-files', check.error, args.token);
@@ -2140,13 +2099,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:devtools-open', async (event, args: {
+  registerTileIpc('tile:features:devtools-open', { mode: 'handle' }, async (event, args: {
     token: string;
     featureId: string;
     entryId?: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:devtools-open');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'devtools');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:devtools-open', check.error, args.token);
@@ -2200,14 +2158,13 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:features:browse-list-by-publisher', async (event, args: {
+  registerTileIpc('tile:features:browse-list-by-publisher', { mode: 'handle' }, async (event, args: {
     token: string;
     did: string;
     pdsUrl: string;
     cursor?: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:browse-list-by-publisher');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'browse', 'atproto');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:browse-list-by-publisher', check.error, args.token);
@@ -2284,12 +2241,11 @@ export function registerTileIpcHandlers(): void {
   // `args.id` — the feature/extension id whose schema to fetch.
   // Returns `{ success: true, data: schema }` (data may be null when
   // the feature declares no settingsSchema or the file is absent).
-  ipcMain.handle('tile:features:settings-schema', async (event, args: {
+  registerTileIpc('tile:features:settings-schema', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:features:settings-schema');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkFeaturesAllowed(grant, 'read');
     if (!check.ok) {
       handleViolation(grant, 'features', 'features:settings-schema', check.error, args.token);
@@ -2332,10 +2288,7 @@ export function registerTileIpcHandlers(): void {
   // the test-mode path — izui-state pulls in BrowserWindow helpers
   // that assume Electron is running.
 
-  ipcMain.handle('tile:izui:is-transient', async (ev, args: { token: string }) => {
-    const _phase2Grant = verifyTokenSender(ev, args?.token, 'tile:izui:is-transient');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const grant = getGrantForToken(args?.token);
+  registerTileIpc('tile:izui:is-transient', { mode: 'handle' }, async (ev, args: { token: string }, _grant) => {    const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
     if (!check.ok) {
       handleViolation(grant, 'izui', 'izui:is-transient', check.error, args?.token);
@@ -2357,10 +2310,7 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:izui:get-effective-mode', async (event, args: { token: string }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:izui:get-effective-mode');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const grant = getGrantForToken(args?.token);
+  registerTileIpc('tile:izui:get-effective-mode', { mode: 'handle' }, async (event, args: { token: string }, _grant) => {    const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
     if (!check.ok) { handleViolation(grant, 'izui', 'izui:get-effective-mode', check.error, args?.token); return { error: check.error }; }
     try {
@@ -2372,10 +2322,7 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:izui:get-state', async (event, args: { token: string }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:izui:get-state');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const grant = getGrantForToken(args?.token);
+  registerTileIpc('tile:izui:get-state', { mode: 'handle' }, async (event, args: { token: string }, _grant) => {    const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
     if (!check.ok) { handleViolation(grant, 'izui', 'izui:get-state', check.error, args?.token); return { error: check.error }; }
     try {
@@ -2387,10 +2334,7 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:izui:get-pre-overlay-focus-target', async (event, args: { token: string }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:izui:get-pre-overlay-focus-target');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const grant = getGrantForToken(args?.token);
+  registerTileIpc('tile:izui:get-pre-overlay-focus-target', { mode: 'handle' }, async (event, args: { token: string }, _grant) => {    const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
     if (!check.ok) { handleViolation(grant, 'izui', 'izui:get-pre-overlay-focus-target', check.error, args?.token); return { error: check.error }; }
     try {
@@ -2402,10 +2346,7 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:izui:close-self', async (ev, args: { token: string }) => {
-    const _phase2Grant = verifyTokenSender(ev, args?.token, 'tile:izui:close-self');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const grant = getGrantForToken(args?.token);
+  registerTileIpc('tile:izui:close-self', { mode: 'handle' }, async (ev, args: { token: string }, _grant) => {    const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
     if (!check.ok) { handleViolation(grant, 'izui', 'izui:close-self', check.error, args?.token); return { error: check.error }; }
     const win = BrowserWindow.fromWebContents(ev.sender);
@@ -2433,12 +2374,11 @@ export function registerTileIpcHandlers(): void {
   // gate because the op is effectively read-only and entities is the
   // only consumer.
 
-  ipcMain.handle('tile:datastore:extract-page-content', async (event, args: {
+  registerTileIpc('tile:datastore:extract-page-content', { mode: 'handle' }, async (event, args: {
     token: string;
     url: string;
-  }) => {
-    const grant = verifyTokenSender(event, args?.token, 'tile:datastore:extract-page-content');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     // Trusted-builtin core renderers bypass the datastore gate.
     if (!grant.trustedBuiltin && !grant.capabilities.datastore) {
       return { success: false, error: 'Datastore capability not granted' };
@@ -2528,13 +2468,12 @@ export function registerTileIpcHandlers(): void {
   //        another window requires `manage: true`.
   //      - list / info: require `query: true`.
 
-  ipcMain.handle('tile:window:open', async (event, args: {
+  registerTileIpc('tile:window:open', { mode: 'handle' }, async (event, args: {
     token: string;
     url: string;
     options?: Record<string, unknown>;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:open');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'open', { url: args.url });
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:open', check.error, args.token);
@@ -2571,12 +2510,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.on('tile:window:close', (event, args: {
+  registerTileIpc('tile:window:close', { mode: 'on' }, (event, args: {
     token: string;
     id?: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:close');
-    if (!grant) return;
+  }, _grant) => {
+    const grant = _grant;
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     // ownWindow: closing with no id OR id matching the sender's window
     // is treated as the tile closing its own context.
@@ -2598,11 +2536,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:window:info', async (event, args: {
+  registerTileIpc('tile:window:info', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:info');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'info');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:info', check.error, args.token);
@@ -2623,12 +2560,11 @@ export function registerTileIpcHandlers(): void {
     };
   });
 
-  ipcMain.handle('tile:window:list', async (event, args: {
+  registerTileIpc('tile:window:list', { mode: 'handle' }, async (event, args: {
     token: string;
     includeInternal?: boolean;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:list');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'list');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:list', check.error, args.token);
@@ -2677,12 +2613,11 @@ export function registerTileIpcHandlers(): void {
   //   - `exists.exists`                     (spaces, groups, slides)
   //   - `exists.success && exists.data`     (pagestream, helpdocs, windows feature)
   // Keeping both keys lets us migrate callers without a renaming pass.
-  ipcMain.handle('tile:window:exists', async (event, args: {
+  registerTileIpc('tile:window:exists', { mode: 'handle' }, async (event, args: {
     token: string;
     id: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:exists');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'exists');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:exists', check.error, args.token);
@@ -2707,12 +2642,11 @@ export function registerTileIpcHandlers(): void {
   // ── tile:window:show ──────────────────────────────────────────────
   //
   // Show a hidden window. Gated by `window.manage`.
-  ipcMain.handle('tile:window:show', async (event, args: {
+  registerTileIpc('tile:window:show', { mode: 'handle' }, async (event, args: {
     token: string;
     id: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:show');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'show');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:show', check.error, args.token);
@@ -2738,12 +2672,11 @@ export function registerTileIpcHandlers(): void {
   // ── tile:window:hide ──────────────────────────────────────────────
   //
   // Hide a visible window. Gated by `window.manage`.
-  ipcMain.handle('tile:window:hide', async (event, args: {
+  registerTileIpc('tile:window:hide', { mode: 'handle' }, async (event, args: {
     token: string;
     id: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:hide');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'hide');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:hide', check.error, args.token);
@@ -2772,12 +2705,9 @@ export function registerTileIpcHandlers(): void {
   // the token identifies the calling tile, and the tile can only affect its
   // own window. This is the primary mechanism for tiles that start hidden at
   // boot (resident: true) and reveal themselves on command invocation.
-  ipcMain.handle('tile:window:show-self', async (event, args: {
+  registerTileIpc('tile:window:show-self', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:window:show-self');
-    if (!_phase2Grant) return { success: false, error: 'invalid token or sender mismatch' };
-    const record = validateToken(args.token);
+  }, _grant) => {    const record = validateToken(args.token);
     if (!record) return { success: false, error: 'Invalid token' };
 
     try {
@@ -2807,12 +2737,9 @@ export function registerTileIpcHandlers(): void {
   // own window. A hidden tile preserves all state (DOM, JS heap, registered
   // commands) — it is not unloaded. Use for "dismiss" UX where re-opening
   // should be instant without the cost of re-initializing a new window.
-  ipcMain.handle('tile:window:hide-self', async (event, args: {
+  registerTileIpc('tile:window:hide-self', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:window:hide-self');
-    if (!_phase2Grant) return { success: false, error: 'invalid token or sender mismatch' };
-    const record = validateToken(args.token);
+  }, _grant) => {    const record = validateToken(args.token);
     if (!record) return { success: false, error: 'Invalid token' };
 
     try {
@@ -2834,14 +2761,13 @@ export function registerTileIpcHandlers(): void {
   // `options.forward` matches the Electron `setIgnoreMouseEvents`
   // second-argument shape (only `{ forward: true }` is honoured, per
   // the legacy `window-set-ignore-mouse-events` handler).
-  ipcMain.handle('tile:window:set-ignore-mouse', async (event, args: {
+  registerTileIpc('tile:window:set-ignore-mouse', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
     ignore: boolean;
     options?: { forward?: boolean };
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:set-ignore-mouse');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'set-ignore-mouse');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:set-ignore-mouse', check.error, args.token);
@@ -2867,12 +2793,11 @@ export function registerTileIpcHandlers(): void {
   // ── tile:window:center ────────────────────────────────────────────
   //
   // Center a window on its display. Gated by `window.manage`.
-  ipcMain.handle('tile:window:center', async (event, args: {
+  registerTileIpc('tile:window:center', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:center');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'center');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:center', check.error, args.token);
@@ -2906,11 +2831,10 @@ export function registerTileIpcHandlers(): void {
   //
   // Center every visible window on its nearest display. Gated by
   // `window.manage`.
-  ipcMain.handle('tile:window:center-all', async (event, args: {
+  registerTileIpc('tile:window:center-all', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:center-all');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'center-all');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:center-all', check.error, args.token);
@@ -2943,12 +2867,11 @@ export function registerTileIpcHandlers(): void {
   // ── tile:window:maximize ──────────────────────────────────────────
   //
   // Toggle maximize on a window. Gated by `window.manage`.
-  ipcMain.handle('tile:window:maximize', async (event, args: {
+  registerTileIpc('tile:window:maximize', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:maximize');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'maximize');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:maximize', check.error, args.token);
@@ -2977,12 +2900,11 @@ export function registerTileIpcHandlers(): void {
   // ── tile:window:fullscreen ────────────────────────────────────────
   //
   // Toggle fullscreen on a window. Gated by `window.manage`.
-  ipcMain.handle('tile:window:fullscreen', async (event, args: {
+  registerTileIpc('tile:window:fullscreen', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:fullscreen');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'fullscreen');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:fullscreen', check.error, args.token);
@@ -3014,11 +2936,10 @@ export function registerTileIpcHandlers(): void {
   // Rather than importing the internal variable, we delegate to the
   // un-gated legacy `get-focused-visible-window-id` channel. The strict
   // surface just adds the capability gate.
-  ipcMain.handle('tile:window:get-focused-visible-id', async (event, args: {
+  registerTileIpc('tile:window:get-focused-visible-id', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:get-focused-visible-id');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'get-focused-visible-id');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:get-focused-visible-id', check.error, args.token);
@@ -3063,12 +2984,11 @@ export function registerTileIpcHandlers(): void {
   //
   // Set the focus target for an overlay window (used on restore after
   // the overlay closes). Gated by `window.manage`.
-  ipcMain.handle('tile:window:set-overlay-focus-target', async (event, args: {
+  registerTileIpc('tile:window:set-overlay-focus-target', { mode: 'handle' }, async (event, args: {
     token: string;
     targetWindowId: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:set-overlay-focus-target');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'set-overlay-focus-target');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:set-overlay-focus-target', check.error, args.token);
@@ -3108,14 +3028,13 @@ export function registerTileIpcHandlers(): void {
   // ── tile:window:set-visible-on-all-workspaces ─────────────────────
   //
   // macOS Spaces: pin a window across workspaces. Gated by `window.manage`.
-  ipcMain.handle('tile:window:set-visible-on-all-workspaces', async (event, args: {
+  registerTileIpc('tile:window:set-visible-on-all-workspaces', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
     visible: boolean;
     options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean };
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:set-visible-on-all-workspaces');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'set-visible-on-all-workspaces');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:set-visible-on-all-workspaces', check.error, args.token);
@@ -3142,13 +3061,12 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `opener-postmessage` channel.
   // Routes a postMessage from a popup tile to its opener window.
   // Gated by `window.manage`.
-  ipcMain.handle('tile:window:opener-postmessage', async (event, args: {
+  registerTileIpc('tile:window:opener-postmessage', { mode: 'handle' }, async (event, args: {
     token: string;
     message: unknown;
     origin?: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:opener-postmessage');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'opener-postmessage');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:opener-postmessage', check.error, args.token);
@@ -3186,11 +3104,10 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `opener-close` channel.
   // Closes the opener window from a popup tile.
   // Gated by `window.manage`.
-  ipcMain.handle('tile:window:opener-close', async (event, args: {
+  registerTileIpc('tile:window:opener-close', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:opener-close');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'opener-close');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:opener-close', check.error, args.token);
@@ -3225,11 +3142,10 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `opener-focus` channel.
   // Focuses the opener window from a popup tile.
   // Gated by `window.manage`.
-  ipcMain.handle('tile:window:opener-focus', async (event, args: {
+  registerTileIpc('tile:window:opener-focus', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:opener-focus');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkWindowAllowed(grant, 'opener-focus');
     if (!check.ok) {
       handleViolation(grant, 'window', 'window:opener-focus', check.error, args.token);
@@ -3261,11 +3177,10 @@ export function registerTileIpcHandlers(): void {
   // to know its own window id (mirrors the un-gated legacy `get-window-id`
   // channel). Token validity is still enforced so un-initialised callers
   // cannot probe the id.
-  ipcMain.handle('tile:window:get-id', (event, args: {
+  registerTileIpc('tile:window:get-id', { mode: 'handle' }, (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:get-id');
-    if (!grant) return { success: false, error: 'Invalid token' };
+  }, _grant) => {
+    const grant = _grant;
 
     const win = BrowserWindow.fromWebContents(event.sender);
     return win ? { success: true, id: win.id } : { success: false, error: 'Window not found' };
@@ -3277,11 +3192,10 @@ export function registerTileIpcHandlers(): void {
   // window. No `window` capability required — a tile always has an inherent
   // right to know its own bounds. Token validity is still enforced so
   // un-initialised callers cannot probe bounds.
-  ipcMain.handle('tile:window:get-bounds', (event, args: {
+  registerTileIpc('tile:window:get-bounds', { mode: 'handle' }, (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:get-bounds');
-    if (!grant) return { success: false, error: 'Invalid token' };
+  }, _grant) => {
+    const grant = _grant;
 
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) {
@@ -3296,11 +3210,10 @@ export function registerTileIpcHandlers(): void {
   // Return display info (workArea, bounds, scaleFactor) for the display
   // that contains the calling window. No `window` capability required —
   // a tile can always query the display it lives on.
-  ipcMain.handle('tile:window:get-display-info', (event, args: {
+  registerTileIpc('tile:window:get-display-info', { mode: 'handle' }, (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:get-display-info');
-    if (!grant) return { success: false, error: 'Invalid token' };
+  }, _grant) => {
+    const grant = _grant;
 
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) {
@@ -3321,15 +3234,14 @@ export function registerTileIpcHandlers(): void {
   // Set the position and/or size of the calling window. No `window`
   // capability required — a tile can always reposition its own window.
   // (Cannot target other windows through this channel.)
-  ipcMain.handle('tile:window:set-bounds', (event, args: {
+  registerTileIpc('tile:window:set-bounds', { mode: 'handle' }, (event, args: {
     token: string;
     x?: number;
     y?: number;
     width?: number;
     height?: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:set-bounds');
-    if (!grant) return { success: false, error: 'Invalid token' };
+  }, _grant) => {
+    const grant = _grant;
 
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) {
@@ -3351,13 +3263,12 @@ export function registerTileIpcHandlers(): void {
   // based on content (cmd panel shows results list, HUD widgets adjust to
   // content height, etc.). No capability gate — a tile can always resize
   // its own window (cannot target other windows through this channel).
-  ipcMain.handle('tile:window:resize', (event, args: {
+  registerTileIpc('tile:window:resize', { mode: 'handle' }, (event, args: {
     token: string;
     width: number;
     height: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:window:resize');
-    if (!grant) return { success: false, error: 'Invalid token' };
+  }, _grant) => {
+    const grant = _grant;
 
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) {
@@ -3377,15 +3288,12 @@ export function registerTileIpcHandlers(): void {
   // Read-only display metadata. No capability gate — this is equivalent
   // to reading a bundled theme token and tiles use it for initial
   // window placement.
-  ipcMain.handle('tile:screen:get-primary-display', async (event, args: {
+  registerTileIpc('tile:screen:get-primary-display', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     // Token presence still validated so we don't serve callers who
     // never invoked initialize(), but no capability check is performed.
-    const grant = verifyTokenSender(event, args.token, 'tile:screen:get-primary-display');
-    if (!grant) {
-      return { success: false, error: 'Invalid token' };
-    }
+    const grant = _grant;
 
     try {
       const display = screen.getPrimaryDisplay();
@@ -3416,11 +3324,10 @@ export function registerTileIpcHandlers(): void {
   // window's webContents. This channel just signals opt-in so the
   // preload knows to relay the event to the user's handler. No
   // per-tile state is maintained in main.
-  ipcMain.on('tile:escape:on-escape', (event, args: {
+  registerTileIpc('tile:escape:on-escape', { mode: 'on' }, (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:escape:on-escape');
-    if (!grant) return;
+  }, _grant) => {
+    const grant = _grant;
     const check = checkEscapeAllowed(grant);
     if (!check.ok) {
       handleViolation(grant, 'escape', 'escape:on-escape', check.error, args.token);
@@ -3440,12 +3347,11 @@ export function registerTileIpcHandlers(): void {
   // Counterpart to `tile:command:register`. Gated by the same `commands`
   // capability. Publishes `cmd:unregister` on GLOBAL scope so the cmd
   // panel drops the command from its registry.
-  ipcMain.on('tile:commands:unregister', (event, args: {
+  registerTileIpc('tile:commands:unregister', { mode: 'on' }, (event, args: {
     token: string;
     name: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:commands:unregister');
-    if (!grant) return;
+  }, _grant) => {
+    const grant = _grant;
     if (!grant || !hasCapability(grant, 'commands')) {
       handleViolation(grant, 'commands', 'commands:unregister', 'commands not granted', args.token);
       return;
@@ -3466,11 +3372,10 @@ export function registerTileIpcHandlers(): void {
   // Persist the per-space window-layout snapshot. Used by
   // features/spaces and features/groups. Gated by the new `session`
   // capability.
-  ipcMain.handle('tile:session:save-space-workspaces', async (event, args: {
+  registerTileIpc('tile:session:save-space-workspaces', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:session:save-space-workspaces');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkSessionAllowed(grant, 'save-space-workspaces');
     if (!check.ok) {
       handleViolation(grant, 'session', 'session:save-space-workspaces', check.error, args.token);
@@ -3489,13 +3394,12 @@ export function registerTileIpcHandlers(): void {
 
   // ── Network Fetch ──
 
-  ipcMain.handle('tile:network:fetch', async (event, args: {
+  registerTileIpc('tile:network:fetch', { mode: 'handle' }, async (event, args: {
     token: string;
     url: string;
     options?: Record<string, unknown>;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:network:fetch');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     if (!grant || !hasCapability(grant, 'network')) {
       handleViolation(grant, 'network', 'network:fetch', 'network capability not granted', args.token);
       return { error: 'Network capability not granted' };
@@ -3543,12 +3447,11 @@ export function registerTileIpcHandlers(): void {
 
   // ── Filesystem ──
 
-  ipcMain.handle('tile:filesystem:read', async (event, args: {
+  registerTileIpc('tile:filesystem:read', { mode: 'handle' }, async (event, args: {
     token: string;
     path: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:filesystem:read');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     if (!grant || !hasCapability(grant, 'filesystem')) {
       return { error: 'Filesystem capability not granted' };
     }
@@ -3565,13 +3468,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:filesystem:write', async (event, args: {
+  registerTileIpc('tile:filesystem:write', { mode: 'handle' }, async (event, args: {
     token: string;
     path: string;
     content: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:filesystem:write');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     if (!grant || !hasCapability(grant, 'filesystem')) {
       return { error: 'Filesystem capability not granted' };
     }
@@ -3590,11 +3492,10 @@ export function registerTileIpcHandlers(): void {
 
   // ── Theme ──
 
-  ipcMain.handle('tile:theme:info', async (event, args: {
+  registerTileIpc('tile:theme:info', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:theme:info');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     if (!grant || !hasCapability(grant, 'theme')) {
       return { error: 'Theme capability not granted' };
     }
@@ -3615,12 +3516,11 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `theme:get` channel.
   // Returns current theme id, color scheme preference and effective scheme.
   // Requires trustedBuiltin — non-core tiles use tile:theme:info instead.
-  ipcMain.handle('tile:theme:get', (event, args: {
+  registerTileIpc('tile:theme:get', { mode: 'handle' }, (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:theme:get');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'theme', 'tile:theme:get', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:theme:get' };
@@ -3642,13 +3542,12 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `theme:setColorScheme` channel.
   // Sets the global color scheme preference (system/light/dark).
   // Requires trustedBuiltin.
-  ipcMain.handle('tile:theme:setColorScheme', (event, args: {
+  registerTileIpc('tile:theme:setColorScheme', { mode: 'handle' }, (event, args: {
     token: string;
     colorScheme: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:theme:setColorScheme');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'theme', 'tile:theme:setColorScheme', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:theme:setColorScheme' };
@@ -3688,14 +3587,13 @@ export function registerTileIpcHandlers(): void {
   //      `background.html` URLs). This last branch is the headless-test
   //      fallback — in headless mode all windows have `show:false` so
   //      `isVisible()` is false and no focus events fire.
-  ipcMain.handle('tile:theme:setWindowColorScheme', (event, args: {
+  registerTileIpc('tile:theme:setWindowColorScheme', { mode: 'handle' }, (event, args: {
     token: string;
     windowId?: number | null;
     colorScheme: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:theme:setWindowColorScheme');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'theme', 'tile:theme:setWindowColorScheme', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:theme:setWindowColorScheme' };
@@ -3775,13 +3673,12 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `theme:setTheme` channel.
   // Sets the active theme by id and broadcasts to all windows.
   // Requires trustedBuiltin.
-  ipcMain.handle('tile:theme:setTheme', (event, args: {
+  registerTileIpc('tile:theme:setTheme', { mode: 'handle' }, (event, args: {
     token: string;
     themeId: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:theme:setTheme');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'theme', 'tile:theme:setTheme', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:theme:setTheme' };
@@ -3805,12 +3702,11 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `theme:list` channel.
   // Returns metadata for all registered (builtin) themes.
   // Requires trustedBuiltin.
-  ipcMain.handle('tile:theme:list', (event, args: {
+  registerTileIpc('tile:theme:list', { mode: 'handle' }, (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:theme:list');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'theme', 'tile:theme:list', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:theme:list' };
@@ -3849,12 +3745,11 @@ export function registerTileIpcHandlers(): void {
   // Strict counterpart of the legacy `theme:getAll` channel.
   // Returns all themes (builtin + external from DB).
   // Requires trustedBuiltin.
-  ipcMain.handle('tile:theme:getAll', async (event, args: {
+  registerTileIpc('tile:theme:getAll', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:theme:getAll');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'theme', 'tile:theme:getAll', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:theme:getAll' };
@@ -3941,12 +3836,11 @@ export function registerTileIpcHandlers(): void {
 
   // ── Settings ──
 
-  ipcMain.handle('tile:settings:get', async (event, args: {
+  registerTileIpc('tile:settings:get', { mode: 'handle' }, async (event, args: {
     token: string;
     key: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:settings:get');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     if (!grant || !hasCapability(grant, 'settings')) {
       return { error: 'Settings capability not granted' };
     }
@@ -3976,13 +3870,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:settings:set', async (event, args: {
+  registerTileIpc('tile:settings:set', { mode: 'handle' }, async (event, args: {
     token: string;
     key: string;
     value: unknown;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:settings:set');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     if (!grant || !hasCapability(grant, 'settings')) {
       return { error: 'Settings capability not granted' };
     }
@@ -4009,13 +3902,12 @@ export function registerTileIpcHandlers(): void {
   // (or the top-level `settingsForeign` fallback). Mirrors the legacy
   // `feature-settings-get-key` handler but with capability enforcement.
   // See `tile-settings-foreign-enforcement.ts` for the pure check.
-  ipcMain.handle('tile:settings:get-foreign', async (event, args: {
+  registerTileIpc('tile:settings:get-foreign', { mode: 'handle' }, async (event, args: {
     token: string;
     foreignExtId: string;
     key: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:settings:get-foreign');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkSettingsForeignAllowed(grant, args?.foreignExtId);
     if (!check.ok) {
       handleViolation(grant, 'settings', 'settings:get-foreign', check.error, args.token);
@@ -4057,14 +3949,13 @@ export function registerTileIpcHandlers(): void {
     cancel: () => void;
   }>();
 
-  ipcMain.handle('tile:oauth:start-loopback', async (event, args: {
+  registerTileIpc('tile:oauth:start-loopback', { mode: 'handle' }, async (event, args: {
     token: string;
     provider?: string;
     callbackPath?: string;
     timeoutMs?: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:oauth:start-loopback');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkOAuthAllowed(grant, 'start-loopback', args?.provider);
     if (!check.ok) {
       handleViolation(grant, 'oauth', 'oauth:start-loopback', check.error, args.token);
@@ -4086,12 +3977,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:oauth:await-callback', async (event, args: {
+  registerTileIpc('tile:oauth:await-callback', { mode: 'handle' }, async (event, args: {
     token: string;
     port: number;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:oauth:await-callback');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkOAuthAllowed(grant, 'await-callback');
     if (!check.ok) {
       handleViolation(grant, 'oauth', 'oauth:await-callback', check.error, args.token);
@@ -4120,11 +4010,10 @@ export function registerTileIpcHandlers(): void {
   // sync.ts — same behaviour as the legacy `sync-full` channel in
   // ipc.ts, but capability-gated for the strict tile surface. See
   // `tile-sync-enforcement.ts` for the pure check.
-  ipcMain.handle('tile:sync:sync-all', async (event, args: {
+  registerTileIpc('tile:sync:sync-all', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:sync:sync-all');
-    if (!grant) return { success: false, error: 'invalid token or sender mismatch' };
+  }, _grant) => {
+    const grant = _grant;
     const check = checkSyncAllowed(grant);
     if (!check.ok) {
       handleViolation(grant, 'sync', 'sync:sync-all', check.error, args.token);
@@ -4167,14 +4056,11 @@ export function registerTileIpcHandlers(): void {
 
   // Generic row/table operations — the operand table must be granted.
 
-  ipcMain.handle('tile:datastore:get-table', async (event, args: {
+  registerTileIpc('tile:datastore:get-table', { mode: 'handle' }, async (event, args: {
     token: string;
     table?: string;
     tableName?: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-table');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const table = args?.tableName ?? args?.table;
+  }, _grant) => {    const table = args?.tableName ?? args?.table;
     const check = validateTileDatastoreRequest(args?.token, [table as string]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-table', check.error); return { error: check.error }; }
     try {
@@ -4185,15 +4071,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-row', async (event, args: {
+  registerTileIpc('tile:datastore:get-row', { mode: 'handle' }, async (event, args: {
     token: string;
     table?: string;
     tableName?: string;
     rowId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-row');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const table = args?.tableName ?? args?.table;
+  }, _grant) => {    const table = args?.tableName ?? args?.table;
     const check = validateTileDatastoreRequest(args?.token, [table as string]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-row', check.error); return { error: check.error }; }
     try {
@@ -4204,16 +4087,13 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:set-row', async (event, args: {
+  registerTileIpc('tile:datastore:set-row', { mode: 'handle' }, async (event, args: {
     token: string;
     table?: string;
     tableName?: string;
     rowId: string;
     rowData: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:set-row');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const table = args?.tableName ?? args?.table;
+  }, _grant) => {    const table = args?.tableName ?? args?.table;
     const check = validateTileDatastoreRequest(args?.token, [table as string]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:set-row', check.error); return { error: check.error }; }
     try {
@@ -4230,14 +4110,11 @@ export function registerTileIpcHandlers(): void {
   // These exist because tile-preload.ts currently invokes them; the preload
   // cleanup is a separate task.
 
-  ipcMain.handle('tile:datastore:get', async (event, args: {
+  registerTileIpc('tile:datastore:get', { mode: 'handle' }, async (event, args: {
     token: string;
     table: string;
     key: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get', check.error); return { error: check.error }; }
     try {
       const data = dsGetRow(args.table as TableName, args.key);
@@ -4247,15 +4124,12 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:set', async (event, args: {
+  registerTileIpc('tile:datastore:set', { mode: 'handle' }, async (event, args: {
     token: string;
     table: string;
     key: string;
     value: unknown;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:set');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:set', check.error); return { error: check.error }; }
     try {
       // If the caller passed an object, write it as a row; otherwise store
@@ -4270,14 +4144,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:query', async (event, args: {
+  registerTileIpc('tile:datastore:query', { mode: 'handle' }, async (event, args: {
     token: string;
     table: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:query');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, [args?.table]);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query', check.error); return { error: check.error }; }
     try {
       const table = dsGetTable(args.table as TableName);
@@ -4299,14 +4170,11 @@ export function registerTileIpcHandlers(): void {
 
   // ── Item operations (require 'items' in tables) ──
 
-  ipcMain.handle('tile:datastore:add-item', async (event, args: {
+  registerTileIpc('tile:datastore:add-item', { mode: 'handle' }, async (event, args: {
     token: string;
     type: string;
     options?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:add-item');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-item', check.error); return { error: check.error }; }
     try {
       // dsAddItem takes ItemType; trust the caller to pass a valid one.
@@ -4322,13 +4190,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-item', async (event, args: {
+  registerTileIpc('tile:datastore:get-item', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-item');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item', check.error); return { error: check.error }; }
     try {
       const data = dsGetItem(args.id);
@@ -4338,14 +4203,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:update-item', async (event, args: {
+  registerTileIpc('tile:datastore:update-item', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
     options: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:update-item');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-item', check.error); return { error: check.error }; }
     try {
       const result = dsUpdateItem(args.id, args.options as Parameters<typeof dsUpdateItem>[1]);
@@ -4363,13 +4225,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:delete-item', async (event, args: {
+  registerTileIpc('tile:datastore:delete-item', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:delete-item');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-item', check.error); return { error: check.error }; }
     try {
       const db = getDb();
@@ -4387,13 +4246,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:query-items', async (event, args: {
+  registerTileIpc('tile:datastore:query-items', { mode: 'handle' }, async (event, args: {
     token: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:query-items');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-items', check.error); return { error: check.error }; }
     try {
       const data = dsQueryItems(args.filter as Parameters<typeof dsQueryItems>[0]);
@@ -4405,13 +4261,10 @@ export function registerTileIpcHandlers(): void {
 
   // ── Tag operations ──
 
-  ipcMain.handle('tile:datastore:get-or-create-tag', async (event, args: {
+  registerTileIpc('tile:datastore:get-or-create-tag', { mode: 'handle' }, async (event, args: {
     token: string;
     name: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-or-create-tag');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-or-create-tag', check.error); return { error: check.error }; }
     try {
       const data = dsGetOrCreateTag(args.name);
@@ -4421,13 +4274,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-tags-by-frecency', async (event, args: {
+  registerTileIpc('tile:datastore:get-tags-by-frecency', { mode: 'handle' }, async (event, args: {
     token: string;
     domain?: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-tags-by-frecency');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-tags-by-frecency', check.error); return { error: check.error }; }
     try {
       const data = dsGetTagsByFrecency(args.domain);
@@ -4439,14 +4289,11 @@ export function registerTileIpcHandlers(): void {
 
   // ── Item-tag link operations (multi-table) ──
 
-  ipcMain.handle('tile:datastore:tag-item', async (event, args: {
+  registerTileIpc('tile:datastore:tag-item', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
     tagId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:tag-item');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    // Writes to item_tags, reads/updates tags frequency, reads items implicitly.
+  }, _grant) => {    // Writes to item_tags, reads/updates tags frequency, reads items implicitly.
     // Require both 'tags' and 'item_tags' to be granted (matching feature manifests).
     const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:tag-item', check.error); return { error: check.error }; }
@@ -4469,14 +4316,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:untag-item', async (event, args: {
+  registerTileIpc('tile:datastore:untag-item', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
     tagId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:untag-item');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:untag-item', check.error); return { error: check.error }; }
     try {
       const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
@@ -4494,13 +4338,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-item-tags', async (event, args: {
+  registerTileIpc('tile:datastore:get-item-tags', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-item-tags');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    // Joins tags × item_tags — require both.
+  }, _grant) => {    // Joins tags × item_tags — require both.
     const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item-tags', check.error); return { error: check.error }; }
     try {
@@ -4511,13 +4352,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-items-by-tag', async (event, args: {
+  registerTileIpc('tile:datastore:get-items-by-tag', { mode: 'handle' }, async (event, args: {
     token: string;
     tagId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-items-by-tag');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    // Joins items × item_tags — require both.
+  }, _grant) => {    // Joins items × item_tags — require both.
     const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-items-by-tag', check.error); return { error: check.error }; }
     try {
@@ -4530,14 +4368,11 @@ export function registerTileIpcHandlers(): void {
 
   // ── Item event operations (series & feeds) ──
 
-  ipcMain.handle('tile:datastore:add-item-event', async (event, args: {
+  registerTileIpc('tile:datastore:add-item-event', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
     options?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:add-item-event');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-item-event', check.error); return { error: check.error }; }
     try {
       const data = dsAddItemEvent(args.itemId, args.options as Parameters<typeof dsAddItemEvent>[1]);
@@ -4547,13 +4382,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-item-event', async (event, args: {
+  registerTileIpc('tile:datastore:get-item-event', { mode: 'handle' }, async (event, args: {
     token: string;
     eventId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-item-event');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item-event', check.error); return { error: check.error }; }
     try {
       const data = dsGetItemEvent(args.eventId);
@@ -4563,13 +4395,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:query-item-events', async (event, args: {
+  registerTileIpc('tile:datastore:query-item-events', { mode: 'handle' }, async (event, args: {
     token: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:query-item-events');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-item-events', check.error); return { error: check.error }; }
     try {
       const data = dsQueryItemEvents(args.filter as Parameters<typeof dsQueryItemEvents>[0]);
@@ -4579,13 +4408,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-latest-item-event', async (event, args: {
+  registerTileIpc('tile:datastore:get-latest-item-event', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-latest-item-event');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-latest-item-event', check.error); return { error: check.error }; }
     try {
       const data = dsGetLatestItemEvent(args.itemId);
@@ -4595,14 +4421,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:count-item-events', async (event, args: {
+  registerTileIpc('tile:datastore:count-item-events', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
     filter?: { since?: number; until?: number };
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:count-item-events');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:count-item-events', check.error); return { error: check.error }; }
     try {
       const data = dsCountItemEvents(args.itemId, args.filter || {});
@@ -4612,13 +4435,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:delete-item-event', async (event, args: {
+  registerTileIpc('tile:datastore:delete-item-event', { mode: 'handle' }, async (event, args: {
     token: string;
     eventId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:delete-item-event');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-item-event', check.error); return { error: check.error }; }
     try {
       const data = dsDeleteItemEvent(args.eventId);
@@ -4628,13 +4448,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:delete-item-events', async (event, args: {
+  registerTileIpc('tile:datastore:delete-item-events', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:delete-item-events');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_events']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-item-events', check.error); return { error: check.error }; }
     try {
       const data = dsDeleteItemEvents(args.itemId);
@@ -4646,14 +4463,11 @@ export function registerTileIpcHandlers(): void {
 
   // ── Additional tag operations ──
 
-  ipcMain.handle('tile:datastore:rename-tag', async (event, args: {
+  registerTileIpc('tile:datastore:rename-tag', { mode: 'handle' }, async (event, args: {
     token: string;
     tagId: string;
     newName: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:rename-tag');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:rename-tag', check.error); return { error: check.error }; }
     try {
       const data = dsRenameTag(args.tagId, args.newName);
@@ -4663,14 +4477,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:update-tag-color', async (event, args: {
+  registerTileIpc('tile:datastore:update-tag-color', { mode: 'handle' }, async (event, args: {
     token: string;
     tagId: string;
     color: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:update-tag-color');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-tag-color', check.error); return { error: check.error }; }
     try {
       const data = dsUpdateTagColor(args.tagId, args.color);
@@ -4680,13 +4491,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:delete-tag', async (event, args: {
+  registerTileIpc('tile:datastore:delete-tag', { mode: 'handle' }, async (event, args: {
     token: string;
     tagId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:delete-tag');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:delete-tag', check.error); return { error: check.error }; }
     try {
       const data = dsDeleteTag(args.tagId);
@@ -4698,12 +4506,9 @@ export function registerTileIpcHandlers(): void {
 
   // ── Stats (no table restriction) ──
 
-  ipcMain.handle('tile:datastore:get-stats', async (event, args: {
+  registerTileIpc('tile:datastore:get-stats', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-stats');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, []);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, []);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-stats', check.error); return { error: check.error }; }
     try {
       const data = dsGetStats();
@@ -4715,13 +4520,10 @@ export function registerTileIpcHandlers(): void {
 
   // ── Additional item operations ──
 
-  ipcMain.handle('tile:datastore:hard-delete-item', async (event, args: {
+  registerTileIpc('tile:datastore:hard-delete-item', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:hard-delete-item');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:hard-delete-item', check.error); return { error: check.error }; }
     try {
       const data = dsHardDeleteItem(args.id);
@@ -4731,14 +4533,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:update-item-title', async (event, args: {
+  registerTileIpc('tile:datastore:update-item-title', { mode: 'handle' }, async (event, args: {
     token: string;
     url: string;
     title: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:update-item-title');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-item-title', check.error); return { error: check.error }; }
     try {
       const data = dsUpdateItemTitle(args.url, args.title);
@@ -4748,14 +4547,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:update-item-favicon', async (event, args: {
+  registerTileIpc('tile:datastore:update-item-favicon', { mode: 'handle' }, async (event, args: {
     token: string;
     url: string;
     faviconUrl: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:update-item-favicon');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-item-favicon', check.error); return { error: check.error }; }
     try {
       const data = dsUpdateItemFavicon(args.url, args.faviconUrl);
@@ -4767,14 +4563,11 @@ export function registerTileIpcHandlers(): void {
 
   // ── Visit / history operations (require 'items') ──
 
-  ipcMain.handle('tile:datastore:record-item-visit', async (event, args: {
+  registerTileIpc('tile:datastore:record-item-visit', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
     options?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:record-item-visit');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:record-item-visit', check.error); return { error: check.error }; }
     try {
       const data = dsRecordItemVisit(args.itemId, args.options as Parameters<typeof dsRecordItemVisit>[1]);
@@ -4784,14 +4577,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-item-visits', async (event, args: {
+  registerTileIpc('tile:datastore:get-item-visits', { mode: 'handle' }, async (event, args: {
     token: string;
     itemId: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-item-visits');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item-visits', check.error); return { error: check.error }; }
     try {
       const data = dsGetItemVisits(args.itemId, args.filter as Parameters<typeof dsGetItemVisits>[1]);
@@ -4801,13 +4591,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:query-item-visits', async (event, args: {
+  registerTileIpc('tile:datastore:query-item-visits', { mode: 'handle' }, async (event, args: {
     token: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:query-item-visits');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-item-visits', check.error); return { error: check.error }; }
     try {
       const data = dsQueryItemVisits(args.filter as Parameters<typeof dsQueryItemVisits>[0]);
@@ -4817,13 +4604,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-history', async (event, args: {
+  registerTileIpc('tile:datastore:get-history', { mode: 'handle' }, async (event, args: {
     token: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-history');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-history', check.error); return { error: check.error }; }
     try {
       const filter = (args.filter as Parameters<typeof dsQueryItemVisits>[0]) || {};
@@ -4846,14 +4630,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:track-navigation', async (event, args: {
+  registerTileIpc('tile:datastore:track-navigation', { mode: 'handle' }, async (event, args: {
     token: string;
     uri: string;
     options?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:track-navigation');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:track-navigation', check.error); return { error: check.error }; }
     try {
       const data = dsTrackNavigation(args.uri, args.options as Parameters<typeof dsTrackNavigation>[1]);
@@ -4863,13 +4644,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:query-items-by-frecency', async (event, args: {
+  registerTileIpc('tile:datastore:query-items-by-frecency', { mode: 'handle' }, async (event, args: {
     token: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:query-items-by-frecency');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-items-by-frecency', check.error); return { error: check.error }; }
     try {
       const data = dsQueryItemsByFrecency(args.filter as Parameters<typeof dsQueryItemsByFrecency>[0]);
@@ -4881,14 +4659,11 @@ export function registerTileIpcHandlers(): void {
 
   // ── Address compat shims (redirect to items + backward-compat shape) ──
 
-  ipcMain.handle('tile:datastore:add-address', async (event, args: {
+  registerTileIpc('tile:datastore:add-address', { mode: 'handle' }, async (event, args: {
     token: string;
     uri: string;
     options?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:add-address');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-address', check.error); return { error: check.error }; }
     try {
       const opts = args.options || {};
@@ -4916,13 +4691,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-address', async (event, args: {
+  registerTileIpc('tile:datastore:get-address', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-address');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-address', check.error); return { error: check.error }; }
     try {
       const item = dsGetItem(args.id);
@@ -4933,14 +4705,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:update-address', async (event, args: {
+  registerTileIpc('tile:datastore:update-address', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
     updates: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:update-address');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:update-address', check.error); return { error: check.error }; }
     try {
       const updates = args.updates || {};
@@ -4964,13 +4733,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:query-addresses', async (event, args: {
+  registerTileIpc('tile:datastore:query-addresses', { mode: 'handle' }, async (event, args: {
     token: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:query-addresses');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-addresses', check.error); return { error: check.error }; }
     try {
       const filter = args.filter || {};
@@ -4987,14 +4753,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:add-visit', async (event, args: {
+  registerTileIpc('tile:datastore:add-visit', { mode: 'handle' }, async (event, args: {
     token: string;
     addressId: string;
     options?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:add-visit');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_visits']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_visits']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-visit', check.error); return { error: check.error }; }
     try {
       const opts = args.options || {};
@@ -5010,13 +4773,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:query-visits', async (event, args: {
+  registerTileIpc('tile:datastore:query-visits', { mode: 'handle' }, async (event, args: {
     token: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:query-visits');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['item_visits']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['item_visits']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-visits', check.error); return { error: check.error }; }
     try {
       const filter = args.filter || {};
@@ -5034,13 +4794,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:add-content', async (event, args: {
+  registerTileIpc('tile:datastore:add-content', { mode: 'handle' }, async (event, args: {
     token: string;
     options?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:add-content');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['content']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['content']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:add-content', check.error); return { error: check.error }; }
     try {
       const data = dsAddContent(args.options as Parameters<typeof dsAddContent>[0]);
@@ -5050,13 +4807,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:query-content', async (event, args: {
+  registerTileIpc('tile:datastore:query-content', { mode: 'handle' }, async (event, args: {
     token: string;
     filter?: Record<string, unknown>;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:query-content');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['content']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['content']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:query-content', check.error); return { error: check.error }; }
     try {
       const data = dsQueryContent(args.filter as Parameters<typeof dsQueryContent>[0]);
@@ -5066,14 +4820,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:tag-address', async (event, args: {
+  registerTileIpc('tile:datastore:tag-address', { mode: 'handle' }, async (event, args: {
     token: string;
     addressId: string;
     tagId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:tag-address');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:tag-address', check.error); return { error: check.error }; }
     try {
       const result = dsTagItemAndPublish(args.addressId, args.tagId);
@@ -5089,14 +4840,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:untag-address', async (event, args: {
+  registerTileIpc('tile:datastore:untag-address', { mode: 'handle' }, async (event, args: {
     token: string;
     addressId: string;
     tagId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:untag-address');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:untag-address', check.error); return { error: check.error }; }
     try {
       const tag = getDb().prepare('SELECT name FROM tags WHERE id = ?').get(args.tagId) as { name: string } | undefined;
@@ -5115,13 +4863,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-address-tags', async (event, args: {
+  registerTileIpc('tile:datastore:get-address-tags', { mode: 'handle' }, async (event, args: {
     token: string;
     addressId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-address-tags');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-address-tags', check.error); return { error: check.error }; }
     try {
       const data = dsGetItemTags(args.addressId);
@@ -5131,13 +4876,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-addresses-by-tag', async (event, args: {
+  registerTileIpc('tile:datastore:get-addresses-by-tag', { mode: 'handle' }, async (event, args: {
     token: string;
     tagId: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-addresses-by-tag');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-addresses-by-tag', check.error); return { error: check.error }; }
     try {
       const items = dsGetItemsByTag(args.tagId);
@@ -5147,12 +4889,9 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('tile:datastore:get-untagged-addresses', async (event, args: {
+  registerTileIpc('tile:datastore:get-untagged-addresses', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
-    const _phase2Grant = verifyTokenSender(event, args?.token, 'tile:datastore:get-untagged-addresses');
-    if (!_phase2Grant) return { error: 'invalid token or sender mismatch' };
-    const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items', 'item_tags']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-untagged-addresses', check.error); return { error: check.error }; }
     try {
       const items = getDb().prepare(`
@@ -6359,12 +6098,11 @@ body {
   // Wave 3.6c will flip tile-preload.cts to call these channels and
   // remove the legacy `extension-*` invocations.
 
-  ipcMain.handle('tile:extensions:pickFolder', async (event, args: {
+  registerTileIpc('tile:extensions:pickFolder', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:pickFolder');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:pickFolder', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:pickFolder' };
@@ -6380,13 +6118,12 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:validateFolder', async (event, args: {
+  registerTileIpc('tile:extensions:validateFolder', { mode: 'handle' }, async (event, args: {
     token: string;
     folderPath: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:validateFolder');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:validateFolder', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:validateFolder' };
@@ -6412,15 +6149,14 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:add', async (event, args: {
+  registerTileIpc('tile:extensions:add', { mode: 'handle' }, async (event, args: {
     token: string;
     folderPath: string;
     manifest?: unknown;
     enabled?: boolean;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:add');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:add', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:add' };
@@ -6460,13 +6196,12 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:remove', async (event, args: {
+  registerTileIpc('tile:extensions:remove', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:remove');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:remove', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:remove' };
@@ -6486,14 +6221,13 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:update', async (event, args: {
+  registerTileIpc('tile:extensions:update', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
     updates: Record<string, unknown>;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:update');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:update', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:update' };
@@ -6525,12 +6259,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:getAll', async (event, args: {
+  registerTileIpc('tile:extensions:getAll', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:getAll');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:getAll', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:getAll' };
@@ -6544,13 +6277,12 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:get', async (event, args: {
+  registerTileIpc('tile:extensions:get', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:get');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:get', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:get' };
@@ -6567,12 +6299,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:windowList', async (event, args: {
+  registerTileIpc('tile:extensions:windowList', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:windowList');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:windowList', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:windowList' };
@@ -6585,12 +6316,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:listAllRegistered', async (event, args: {
+  registerTileIpc('tile:extensions:listAllRegistered', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:listAllRegistered');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:listAllRegistered', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:listAllRegistered' };
@@ -6603,13 +6333,12 @@ body {
     }
   });
 
-  ipcMain.handle('tile:extensions:windowDevtools', async (event, args: {
+  registerTileIpc('tile:extensions:windowDevtools', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:windowDevtools');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:windowDevtools', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:windowDevtools' };
@@ -6618,13 +6347,12 @@ body {
     return { success: false, error: `Extension ${args.id} is not running as a legacy window` };
   });
 
-  ipcMain.handle('tile:extensions:reload', async (event, args: {
+  registerTileIpc('tile:extensions:reload', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:extensions:reload');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'extensions', 'tile:extensions:reload', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:reload' };
@@ -6652,12 +6380,11 @@ body {
   // Wave 3.6d will flip tile-preload.cts to call these channels and
   // remove the legacy `chrome-ext:*` invocations.
 
-  ipcMain.handle('tile:chrome-extensions:list', async (event, args: {
+  registerTileIpc('tile:chrome-extensions:list', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:chrome-extensions:list');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:list', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:list' };
@@ -6671,13 +6398,12 @@ body {
     }
   });
 
-  ipcMain.handle('tile:chrome-extensions:enable', async (event, args: {
+  registerTileIpc('tile:chrome-extensions:enable', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:chrome-extensions:enable');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:enable', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:enable' };
@@ -6691,13 +6417,12 @@ body {
     }
   });
 
-  ipcMain.handle('tile:chrome-extensions:disable', async (event, args: {
+  registerTileIpc('tile:chrome-extensions:disable', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:chrome-extensions:disable');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:disable', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:disable' };
@@ -6711,12 +6436,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:chrome-extensions:getStatus', async (event, args: {
+  registerTileIpc('tile:chrome-extensions:getStatus', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:chrome-extensions:getStatus');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:getStatus', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:getStatus' };
@@ -6730,12 +6454,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:chrome-extensions:getUiEntries', async (event, args: {
+  registerTileIpc('tile:chrome-extensions:getUiEntries', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:chrome-extensions:getUiEntries');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:getUiEntries', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:getUiEntries' };
@@ -6749,14 +6472,13 @@ body {
     }
   });
 
-  ipcMain.handle('tile:chrome-extensions:openPage', async (event, args: {
+  registerTileIpc('tile:chrome-extensions:openPage', { mode: 'handle' }, async (event, args: {
     token: string;
     id: string;
     type: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:chrome-extensions:openPage');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'chrome-extensions', 'tile:chrome-extensions:openPage', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:chrome-extensions:openPage' };
@@ -6779,17 +6501,13 @@ body {
   // Any tile with a valid token may log — no capability check beyond a
   // valid token (all tiles can log). Prints forwarded renderer output to
   // the main-process terminal, matching the legacy shortSource format.
-  ipcMain.on('tile:log:write', (event, args: {
+  registerTileIpc('tile:log:write', { mode: 'on' }, (event, args: {
     token: string;
     args?: unknown[];
     source?: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return;
-    const grant = verifyTokenSender(event, args.token, 'tile:log:write');
-    if (!grant) {
-      handleViolation(null, 'log', 'tile:log:write', 'invalid token', args.token);
-      return;
-    }
+    const grant = _grant;
     const shortSource = (args.source ?? grant.tileId)
       .replace('peek://app/', '')
       .replace('peek://', '');
@@ -6800,16 +6518,12 @@ body {
   //
   // Strict shim for the legacy `app-quit` channel. Requires trustedBuiltin
   // (only core tiles — cmd, hud, page — may quit the application).
-  ipcMain.on('tile:app:quit', (event, args: {
+  registerTileIpc('tile:app:quit', { mode: 'on' }, (event, args: {
     token: string;
     source?: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return;
-    const grant = verifyTokenSender(event, args.token, 'tile:app:quit');
-    if (!grant) {
-      handleViolation(null, 'app', 'tile:app:quit', 'invalid token', args.token);
-      return;
-    }
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'app', 'tile:app:quit', 'trustedBuiltin required', args.token);
       return;
@@ -6822,16 +6536,12 @@ body {
   //
   // Strict shim for the legacy `app-restart` channel. Requires trustedBuiltin.
   // Calls app.relaunch() then app.quit() matching the legacy ipc.ts pattern.
-  ipcMain.on('tile:app:restart', (event, args: {
+  registerTileIpc('tile:app:restart', { mode: 'on' }, (event, args: {
     token: string;
     source?: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return;
-    const grant = verifyTokenSender(event, args.token, 'tile:app:restart');
-    if (!grant) {
-      handleViolation(null, 'app', 'tile:app:restart', 'invalid token', args.token);
-      return;
-    }
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'app', 'tile:app:restart', 'trustedBuiltin required', args.token);
       return;
@@ -6847,12 +6557,11 @@ body {
   // All handlers require trustedBuiltin — settings/diagnostic/page-host
   // tiles will consume these once they migrate off preload.js.
 
-  ipcMain.handle('tile:backup:create', async (event, args: {
+  registerTileIpc('tile:backup:create', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:backup:create');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'backup', 'tile:backup:create', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:backup:create' };
@@ -6865,12 +6574,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:backup:list', async (event, args: {
+  registerTileIpc('tile:backup:list', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:backup:list');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'backup', 'tile:backup:list', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:backup:list' };
@@ -6890,12 +6598,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:backup:get-config', async (event, args: {
+  registerTileIpc('tile:backup:get-config', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:backup:get-config');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'backup', 'tile:backup:get-config', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:backup:get-config' };
@@ -6913,13 +6620,12 @@ body {
   // Strict counterpart of the legacy `shell-open-path` channel.
   // Requires trustedBuiltin — opens a path in the OS file manager.
 
-  ipcMain.handle('tile:shell:open-path', async (event, args: {
+  registerTileIpc('tile:shell:open-path', { mode: 'handle' }, async (event, args: {
     token: string;
     path: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:shell:open-path');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'shell', 'tile:shell:open-path', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:shell:open-path' };
@@ -6943,12 +6649,11 @@ body {
   // `set-default-browser`, and `get-app-prefs` channels.
   // All require trustedBuiltin.
 
-  ipcMain.handle('tile:app:default-browser-status', async (event, args: {
+  registerTileIpc('tile:app:default-browser-status', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:app:default-browser-status');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'app', 'tile:app:default-browser-status', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:app:default-browser-status' };
@@ -6962,12 +6667,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:app:set-default-browser', async (event, args: {
+  registerTileIpc('tile:app:set-default-browser', { mode: 'handle' }, async (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:app:set-default-browser');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'app', 'tile:app:set-default-browser', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:app:set-default-browser' };
@@ -6987,12 +6691,11 @@ body {
     }
   });
 
-  ipcMain.handle('tile:app:get-prefs', (event, args: {
+  registerTileIpc('tile:app:get-prefs', { mode: 'handle' }, (event, args: {
     token: string;
-  }) => {
+  }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:app:get-prefs');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'app', 'tile:app:get-prefs', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:app:get-prefs' };
@@ -7015,10 +6718,9 @@ body {
     return win;
   };
 
-  ipcMain.handle('tile:nav:back', (event, args: { token: string; windowId?: number }) => {
+  registerTileIpc('tile:nav:back', { mode: 'handle' }, (event, args: { token: string; windowId?: number }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:nav:back');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'nav', 'tile:nav:back', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:nav:back' };
@@ -7030,10 +6732,9 @@ body {
     return { success: false, error: 'Cannot go back' };
   });
 
-  ipcMain.handle('tile:nav:forward', (event, args: { token: string; windowId?: number }) => {
+  registerTileIpc('tile:nav:forward', { mode: 'handle' }, (event, args: { token: string; windowId?: number }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:nav:forward');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'nav', 'tile:nav:forward', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:nav:forward' };
@@ -7045,10 +6746,9 @@ body {
     return { success: false, error: 'Cannot go forward' };
   });
 
-  ipcMain.handle('tile:nav:reload', (event, args: { token: string; windowId?: number }) => {
+  registerTileIpc('tile:nav:reload', { mode: 'handle' }, (event, args: { token: string; windowId?: number }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:nav:reload');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'nav', 'tile:nav:reload', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:nav:reload' };
@@ -7059,10 +6759,9 @@ body {
     return { success: true };
   });
 
-  ipcMain.handle('tile:nav:state', (event, args: { token: string; windowId?: number }) => {
+  registerTileIpc('tile:nav:state', { mode: 'handle' }, (event, args: { token: string; windowId?: number }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:nav:state');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'nav', 'tile:nav:state', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:nav:state' };
@@ -7087,10 +6786,9 @@ body {
   // `session-restore-interactive`, and `window-reopen-last-closed` channels.
   // All require trustedBuiltin.
 
-  ipcMain.handle('tile:session:save', async (event, args: { token: string }) => {
+  registerTileIpc('tile:session:save', { mode: 'handle' }, async (event, args: { token: string }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:session:save');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'session', 'tile:session:save', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:session:save' };
@@ -7104,10 +6802,9 @@ body {
     }
   });
 
-  ipcMain.handle('tile:session:restore-interactive', async (event, args: { token: string }) => {
+  registerTileIpc('tile:session:restore-interactive', { mode: 'handle' }, async (event, args: { token: string }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:session:restore-interactive');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'session', 'tile:session:restore-interactive', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:session:restore-interactive' };
@@ -7142,10 +6839,9 @@ body {
     }
   });
 
-  ipcMain.handle('tile:session:reopen-last-closed', (event, args: { token: string }) => {
+  registerTileIpc('tile:session:reopen-last-closed', { mode: 'handle' }, (event, args: { token: string }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
-    const grant = verifyTokenSender(event, args.token, 'tile:session:reopen-last-closed');
-    if (!grant) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
     if (!grant.trustedBuiltin) {
       handleViolation(grant, 'session', 'tile:session:reopen-last-closed', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:session:reopen-last-closed' };

@@ -26,6 +26,7 @@ import { installLoadOnDispatchHook } from './tile-lazy.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
 import { publish, subscribe, unsubscribe, hasSubscriber, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
+import { installDirectSendGuard, installOffPathWindowGuard, unguardedWebContentsSend } from './tile-ipc-gate.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
@@ -185,6 +186,13 @@ export async function initialize(): Promise<void> {
   // lazily from `loadV2Tile()` which runs after core glue.
   ensureTileIpcHandlers();
 
+  // Phase 8 — install dev-mode bypass detectors. These monkey-patch
+  // WebContents.prototype.send and BrowserWindow.prototype.loadURL to
+  // catch code paths that bypass the gate. Idempotent + safe to ship
+  // in release; intended primarily for test / dev feedback.
+  installDirectSendGuard();
+  installOffPathWindowGuard();
+
   // Register the private `tile:lifecycle:ready` IPC handler. Must also
   // run before any BrowserWindow is created; the core background
   // renderer launched by `initCore()` sends `tile:lifecycle:ready` from
@@ -241,10 +249,7 @@ export async function initialize(): Promise<void> {
       try {
         const winUrl = bgWindow.webContents.getURL();
         if (winUrl !== source) {
-          bgWindow.webContents.send(`pubsub:${topic}`, {
-            ...(msg as object),
-            source
-          });
+          unguardedWebContentsSend(bgWindow.webContents, `pubsub:${topic}`, { ...(msg as object), source });
         }
       } catch {
         // Window may have been destroyed between check and send
@@ -272,10 +277,7 @@ export async function initialize(): Promise<void> {
       try {
         const winUrl = tileWin.webContents.getURL();
         if (winUrl !== source) {
-          tileWin.webContents.send(`pubsub:${topic}`, {
-            ...(msg as object),
-            source
-          });
+          unguardedWebContentsSend(tileWin.webContents, `pubsub:${topic}`, { ...(msg as object), source });
         }
       } catch {
         // Window may have been destroyed between check and send
@@ -297,10 +299,7 @@ export async function initialize(): Promise<void> {
         const url = wc.getURL();
         if (!url.startsWith('peek://')) continue;
         if (url !== source) {
-          wc.send(`pubsub:${topic}`, {
-            ...(msg as object),
-            source
-          });
+          unguardedWebContentsSend(wc, `pubsub:${topic}`, { ...(msg as object), source });
         }
       } catch {
         // WebContents may have been destroyed mid-iteration
