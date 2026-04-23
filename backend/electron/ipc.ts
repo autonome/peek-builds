@@ -85,6 +85,7 @@ import {
 } from './config.js';
 
 import { getTileWebPreferencesForUrl, registerTrustedBuiltinWindow, createTileBrowserWindow } from './tile-launcher.js';
+import { lookupPseudoTile } from './pseudo-tiles.js';
 import { getLazyTileManifest } from './tile-lazy.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
@@ -1057,151 +1058,24 @@ export function registerWindowHandlers(): void {
       getLazyTileManifest,
     );
 
-    // Normalized URL for the special-case exact-match checks below.
-    // Without stripping the hash/query, a restored window with a URL like
-    // `peek://app/settings/settings.html#extensions` fails every `url === '…'`
-    // comparison → no tile-preload → `window.app` is undefined → the
-    // renderer throws on first access and the settings window renders
-    // blank. Session restore repros this; manual Cmd+, does not.
-    const urlNoHash = url.split('#')[0].split('?')[0];
-
-    // When a special-case URL mints an ad-hoc trustedBuiltin token below, we
+    // When a pseudo-tile URL mints an ad-hoc trustedBuiltin token below, we
     // must also register the resulting BrowserWindow with the tile broadcaster
     // after creation so pubsub events (cmd:register, tag:item-added, …) are
-    // forwarded to it. Capture the token + ids here; register after new BrowserWindow.
+    // forwarded to it. Capture the token here; register after new BrowserWindow.
     let specialCaseToken: string | null = null;
 
-    // Diagnostic is a developer-only utility; not a registered v2 tile but
-    // needs tile-preload so api.backup.* / api.shell.openPath strict shims work.
-    // Mint a trustedBuiltin token on-the-fly (same pattern as hud-glue / cmd-glue).
-    if (!tileWebPrefs && urlNoHash === 'peek://app/diagnostic.html') {
-      const DIAG_ID = 'diagnostic';
-      const DIAG_ENTRY = 'main';
-      const diagGrant = createTrustedBuiltinGrant(DIAG_ID);
-      const diagToken = generateToken(DIAG_ID, DIAG_ENTRY, diagGrant);
-      tileWebPrefs = {
-        preload: getTilePreloadPath(),
-        additionalArguments: [
-          `--tile-id=${DIAG_ID}`,
-          `--tile-entry=${DIAG_ENTRY}`,
-          `--tile-token=${diagToken}`,
-        ],
-        tileId: DIAG_ID,
-        entryId: DIAG_ENTRY,
-      };
-      specialCaseToken = diagToken;
-    }
-
-    // Special-case: peek://app/settings/settings.html is not a registered v2
-    // tile (no manifest), but it must load via tile-preload so its api.<ns>.*
-    // calls reach the strict tile:* IPC handlers.
-    if (!tileWebPrefs && urlNoHash === 'peek://app/settings/settings.html') {
-      const settingsGrant = createTrustedBuiltinGrant('settings');
-      const settingsToken = generateToken('settings', 'main', settingsGrant);
-      tileWebPrefs = {
-        preload: getTilePreloadPath(),
-        additionalArguments: [
-          '--tile-id=settings',
-          '--tile-entry=main',
-          `--tile-token=${settingsToken}`,
-        ],
-        tileId: 'settings',
-        entryId: 'main',
-      };
-      specialCaseToken = settingsToken;
-      DEBUG && console.log('[window-open] settings window: assigned trustedBuiltin tile-preload token');
-    }
-
-    // Special-case: peek://hud/hud.html is the HUD overlay BrowserWindow
-    // opened on-demand by app/hud/background.js via api.window.open(). It
-    // hosts webview widget cards (app/hud/hud.js) and needs tile-preload for
-    // api.settings.get / api.window.resize. No v2 manifest — trustedBuiltin.
-    if (!tileWebPrefs && urlNoHash === 'peek://hud/hud.html') {
-      const HUD_OVERLAY_ID = 'hud-overlay';
-      const HUD_OVERLAY_ENTRY = 'main';
-      const hudOverlayGrant = createTrustedBuiltinGrant(HUD_OVERLAY_ID);
-      const hudOverlayToken = generateToken(HUD_OVERLAY_ID, HUD_OVERLAY_ENTRY, hudOverlayGrant);
-      tileWebPrefs = {
-        preload: getTilePreloadPath(),
-        additionalArguments: [
-          `--tile-id=${HUD_OVERLAY_ID}`,
-          `--tile-entry=${HUD_OVERLAY_ENTRY}`,
-          `--tile-token=${hudOverlayToken}`,
-        ],
-        tileId: HUD_OVERLAY_ID,
-        entryId: HUD_OVERLAY_ENTRY,
-      };
-      specialCaseToken = hudOverlayToken;
-      DEBUG && console.log('[window-open] hud-overlay window: assigned trustedBuiltin tile-preload token');
-    }
-
-    // Special-case: peek://app/datastore/viewer.html uses api.datastore.* to
-    // display raw DB tables — not a registered v2 tile but needs tile-preload.
-    if (!tileWebPrefs && urlNoHash === 'peek://app/datastore/viewer.html') {
-      const VIEWER_ID = 'datastore-viewer';
-      const VIEWER_ENTRY = 'main';
-      const viewerGrant = createTrustedBuiltinGrant(VIEWER_ID);
-      const viewerToken = generateToken(VIEWER_ID, VIEWER_ENTRY, viewerGrant);
-      tileWebPrefs = {
-        preload: getTilePreloadPath(),
-        additionalArguments: [
-          `--tile-id=${VIEWER_ID}`,
-          `--tile-entry=${VIEWER_ENTRY}`,
-          `--tile-token=${viewerToken}`,
-        ],
-        tileId: VIEWER_ID,
-        entryId: VIEWER_ENTRY,
-      };
-      specialCaseToken = viewerToken;
-      DEBUG && console.log('[window-open] datastore-viewer window: assigned trustedBuiltin tile-preload token');
-    }
-
-    // Special-case: peek://cmd/panel.html is the cmd palette UI, opened
-    // on-demand from the cmd resident renderer. peek://cmd/chain-editor.html
-    // is the chain editor opened from the panel. Both need tile-preload to call
-    // api.window.*, api.context.*, api.datastore.*, api.publish/subscribe, etc.
-    if (!tileWebPrefs && (urlNoHash === 'peek://cmd/panel.html' || urlNoHash === 'peek://cmd/chain-editor.html')) {
-      const CMD_UI_ID = 'cmd-ui';
-      const cmdUiEntry = url.endsWith('panel.html') ? 'panel' : 'chain-editor';
-      const cmdUiGrant = createTrustedBuiltinGrant(CMD_UI_ID);
-      const cmdUiToken = generateToken(CMD_UI_ID, cmdUiEntry, cmdUiGrant);
-      tileWebPrefs = {
-        preload: getTilePreloadPath(),
-        additionalArguments: [
-          `--tile-id=${CMD_UI_ID}`,
-          `--tile-entry=${cmdUiEntry}`,
-          `--tile-token=${cmdUiToken}`,
-        ],
-        tileId: CMD_UI_ID,
-        entryId: cmdUiEntry,
-      };
-      specialCaseToken = cmdUiToken;
-      DEBUG && console.log(`[window-open] cmd-ui window (${cmdUiEntry}): assigned trustedBuiltin tile-preload token`);
-    }
-
-    // Special-case: about:blank is opened by IZUI tests (and potentially other
-    // callers) as an empty child window. Under v1 preload.js, all windows
-    // received a preload unconditionally. Now that preload.js is deleted,
-    // about:blank gets nothing — window.app is undefined in the renderer.
-    // Mint a trustedBuiltin token so tile-preload is injected and window.app
-    // is available (matches the same pattern as diagnostic, settings, hud-overlay, cmd-ui).
-    if (!tileWebPrefs && url === 'about:blank') {
-      const BLANK_ID = 'about-blank';
-      const BLANK_ENTRY = 'main';
-      const blankGrant = createTrustedBuiltinGrant(BLANK_ID);
-      const blankToken = generateToken(BLANK_ID, BLANK_ENTRY, blankGrant);
-      tileWebPrefs = {
-        preload: getTilePreloadPath(),
-        additionalArguments: [
-          `--tile-id=${BLANK_ID}`,
-          `--tile-entry=${BLANK_ENTRY}`,
-          `--tile-token=${blankToken}`,
-        ],
-        tileId: BLANK_ID,
-        entryId: BLANK_ENTRY,
-      };
-      specialCaseToken = blankToken;
-      DEBUG && console.log('[window-open] about:blank window: assigned trustedBuiltin tile-preload token');
+    // Pseudo-tile lookup: settings / diagnostic / hud-overlay / cmd panel /
+    // chain editor / about:blank — URLs that need tile-preload but don't
+    // ship a v2 manifest. Registry is in pseudo-tiles.ts; see comments
+    // there for extension. Match handles hash/query fragments so URLs
+    // restored from session snapshots still resolve.
+    if (!tileWebPrefs) {
+      const pseudoTile = lookupPseudoTile(url);
+      if (pseudoTile) {
+        tileWebPrefs = pseudoTile.webPrefs;
+        specialCaseToken = pseudoTile.token;
+        DEBUG && console.log(`[window-open] pseudo-tile ${pseudoTile.webPrefs.tileId}:${pseudoTile.webPrefs.entryId} assigned trustedBuiltin tile-preload token for ${url}`);
+      }
     }
 
     // Canvas page host windows use tile-preload with a trustedBuiltin grant so
