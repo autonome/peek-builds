@@ -185,7 +185,7 @@ enforces the full state-based policy. Rules:
 | System (in-process main) | any publish | always allow; never subscribes |
 | Tile with valid token | publish to topic T | grant includes `publish` for T's class (subject to per-class rules below) |
 | Tile with valid token | subscribe to topic T | grant includes `subscribe` for T's class |
-| Tile with revoked/missing token | any op | reject — logged as `tile:drift` telemetry, never silently dropped |
+| Tile with revoked/missing token | any op | reject — logged as `gate:rejected` telemetry, never silently dropped |
 
 Per-class rules (the capability-grant shape implements these):
 
@@ -217,25 +217,25 @@ sequence before any handler executes:
 
 1. **Channel allowlisted?** `registerTileIpc(channel, handler, descriptor)`
    is the only way to attach a `tile:*` listener. An unregistered
-   channel receives a default handler that logs `tile:drift` and drops.
+   channel receives a default handler that logs `gate:rejected` and drops.
 2. **Sender identity verified?** `event.sender` (the `WebContents` that
    sent the frame) must match the `WebContents` that owns the
    `payload.token`. This closes the "forged token" hole — a tile with
    XSS cannot smuggle out another tile's leaked token because the
    sender frame wouldn't match.
 3. **Payload schema valid?** Each channel descriptor declares its
-   expected shape. Malformed frames log `tile:drift` and drop.
+   expected shape. Malformed frames log `gate:rejected` and drop.
 4. **Token valid & grant consistent with channel?** The channel
    descriptor names the capabilities required; absent ones → reject.
 5. **State-at-receive matches channel's expected transition window?**
    E.g., `tile:lifecycle:ready` may only arrive while the tile is in
-   `loading`; arrival in any other state → reject + `tile:drift`.
+   `loading`; arrival in any other state → reject + `gate:rejected`.
 6. **Sender role allowlisted for this channel?** E.g.,
    `tile:lifecycle:ready` must come from a tile's own preload, never
    from Core or System.
 
 Only after all six pass does the handler run. Rejections are never
-silent; every drop emits `tile:drift` with a structured reason so CI
+silent; every drop emits `gate:rejected` with a structured reason so CI
 can fail on regressions.
 
 **Performance budget**: schema validation (step 3) uses hand-rolled
@@ -351,7 +351,7 @@ must already be registered.
 - **Tile publishes are gated by token existence.** A tile in `loading`
   has no token yet (the token is minted on `loading → ready`). Any
   publish attempt from a `loading` tile fails the chokepoint's token
-  check and is rejected + logged as `tile:drift`. No capability check
+  check and is rejected + logged as `gate:rejected`. No capability check
   is needed — there's no token to consult.
 - **No replay needed.** Because subscribers exist before any publisher
   fires, `cmd:request-registers` and the `registeredPayloads` cache in
@@ -381,7 +381,7 @@ cmd panel surfaces as a spinner hang):
 ## Bypass detection
 
 Everything routed through the FSM is enforced at the gate; rejections
-emit `tile:drift` telemetry (see §Authorization rules). The only way
+emit `gate:rejected` telemetry (see §Authorization rules). The only way
 for a message to escape the FSM is for code to call a lower-level
 Electron API directly, sidestepping the gate entirely. The FSM cannot
 prevent this — anyone writing main-process code can do anything —
@@ -395,24 +395,23 @@ Two bypass categories:
   `webContents.send` that throws on the same pattern.
 - **Off-path window creation** — `new BrowserWindow()` with a
   `peek://{tileId}/...` URL outside the tile launcher. Mitigation: lint
-  rule + dev-mode assertion in the FSM that every BrowserWindow with a
-  tile URL has a corresponding `registered → loading` transition.
-  (Inherited from tile-lifecycle-fsm.md §Drift detectors.)
+  rule + dev-mode assertion that every BrowserWindow with a tile URL has
+  a corresponding `registered → loading` transition. (Inherited from
+  tile-lifecycle-fsm.md.)
 
 Both are dev/CI-only assertions. Production has nothing to check —
-correct code can't trip them, and incorrect code is caught at review
-or in dev.
+correct code can't trip them, and incorrect code is caught at review or
+in dev.
 
-What is explicitly **not** a drift detector:
-- Gate rejections (enforcement, already covered).
+What is explicitly **not** tracked as rejection telemetry:
 - Startup races (if they occur, the FSM design is wrong — fix the design,
   don't paper over it with a detector).
 - Unrouted publishes (legitimate for domain events with no listeners).
 
-**Drift emission rate limit**: `tile:drift` publishes are themselves
+**Rejection emission rate limit**: `gate:rejected` publishes are
 rate-limited to one event per `(tileId, reason)` tuple per second, with
 a dropped-count aggregator. A buggy or malicious tile spamming rejected
-frames cannot amplify into a drift-publish storm that saturates the
+frames cannot amplify into a telemetry storm that saturates the
 broadcaster.
 
 ## Module layout
@@ -432,27 +431,31 @@ state transition.
   wiring, pre-publish hooks. Imports `pubsub-fsm.ts` only. Exposes
   `unsubscribeAllByPrefix(tileId)` for lifecycle cleanup.
 - **`backend/electron/tile-ipc-gate.ts`** (new) — the single IPC
-  chokepoint (see §The IPC chokepoint). Exposes `registerTileIpc(channel,
-  handler, descriptor)`. Runs channel allowlist check, sender-frame
-  cross-check against token owner, payload schema validation, token
-  validation, state-at-receive assertion, sender-role allowlist.
-  Every drop emits `tile:drift`. No `tile:*` IPC handler is attached
-  except through this gate.
+  chokepoint AND the rejection-telemetry surface AND the bypass
+  detectors. One module owns the whole gate boundary:
+  - `registerTileIpc(channel, handler, descriptor)` — the only way to
+    attach a `tile:*` IPC handler. Runs the six-step validation
+    sequence (see §The IPC chokepoint).
+  - `emitGateRejected(reason, ctx)` — rate-limited publish of
+    `gate:rejected` (one event per `(tileId, reason)` per second,
+    dropped-count aggregator). Used by the gate itself.
+  - `installDirectSendGuard()` + `installOffPathWindowGuard()` —
+    dev-mode monkey-patches catching the two bypass categories
+    (§Bypass detection). Called at app init.
+  - Subsumes what Phase 2 scaffolded as `tile-ipc-sender-check.ts` —
+    the sender-frame check becomes step 2 of the pipeline, not a
+    separate helper module.
 - **`backend/electron/tile-ipc.ts`** — individual channel handlers,
   registered via `registerTileIpc`. On `tile:pubsub:publish` /
   `tile:pubsub:subscribe`: the gate has already validated the frame, so
   the handler just calls `pubsubFsm.allow(...)` for per-topic
-  authorization → publish or reject+drift. This is where the
-  lifecycle↔pubsub boundary sits.
+  authorization → publish or reject. This is where the lifecycle↔pubsub
+  boundary sits.
 - **`backend/electron/tile-lifecycle.ts`** — state store + token
   lifecycle. On `loading → ready`: mint token. On `→ unloading` /
   `→ crashed`: revoke token, call `pubsub.unsubscribeAllByPrefix()`.
   Publishes `tile:state-changed` for observers. Imports from
   `pubsub.ts` (one-way); never imported by it.
-- **`backend/electron/tile-drift.ts`** (new) — bypass detectors (the
-  two from §Bypass detection) + dev-mode wrap of `webContents.send`.
-  Owns the `tile:drift` GLOBAL topic used by the gate's rejection
-  telemetry.
 - **`backend/electron/tile-lazy.ts`** — load-on-dispatch pre-publish
   hook. Already lives on the lifecycle side (it triggers
   `registered → loading`). Continues to register as a pre-publish hook
@@ -483,7 +486,7 @@ Test boundaries:
    prepares for it — this check is worth landing early because it's
    security, not cleanup.
    **Test**: new unit test that simulates a mismatched sender + valid
-   token → rejected with `tile:drift`.
+   token → rejected with `gate:rejected`.
 3. **Phase 3 — Collapse to one command-result path.** Delete the
    `tile:command:result` IPC (preload send site + main-process
    handler). All command results flow through capability-gated pubsub
@@ -513,17 +516,20 @@ Test boundaries:
    load-on-dispatch. **Test**: dispatcher to a tile whose preload throws
    → user-visible notification within 10s.
 8. **Phase 8 — IPC chokepoint + bypass detectors.** Introduce
-   `tile-ipc-gate.ts` with `registerTileIpc(channel, handler,
-   descriptor)`. Migrate every existing `tile:*` `ipcMain.on` through
-   the gate. Gate runs the six-step validation sequence (§The IPC
-   chokepoint). Add lint rules + dev-mode wraps for the two bypass
-   categories (direct `webContents.send('pubsub:...')`, off-path
-   `new BrowserWindow` for tile URLs). Wire gate rejections to the
-   `tile:drift` topic with structured reasons so CI can fail on any
-   drift event.
+   `tile-ipc-gate.ts` as the single module owning the gate boundary:
+   `registerTileIpc(channel, handler, descriptor)` with the six-step
+   validation pipeline (§The IPC chokepoint); rate-limited
+   `gate:rejected` rejection telemetry; dev-mode bypass detectors
+   (direct `webContents.send('pubsub:...')`, off-path `new BrowserWindow`
+   for tile URLs). Subsumes Phase 2's `tile-ipc-sender-check.ts` (folded
+   in as step 2 of the pipeline). Migrate every existing `tile:*`
+   `ipcMain.on` through `registerTileIpc`. Add ESLint rules for the two
+   bypass categories. Wire rejection events so CI fails on any
+   `gate:rejected` publish during test.
    **Test**: regression suite stays green; a deliberately-seeded
-   bypass in a test fixture trips the detector; every `tile:*`
-   channel has at least one passing + one rejecting gate test.
+   bypass in a test fixture trips the detector; every `tile:*` channel
+   has at least one passing + one rejecting gate test; rate limiter
+   test (100 rejections with same reason → one publish).
 
 Each phase is independently shippable and each has a narrow failure mode.
 
@@ -553,9 +559,8 @@ Each phase is independently shippable and each has a narrow failure mode.
   matrix.
 - `backend/electron/tile-ipc.ts` — individual `tile:*` channel handlers.
 - `backend/electron/tile-ipc-gate.ts` (new, Phase 8) — single IPC
-  chokepoint.
-- `backend/electron/tile-drift.ts` (new, Phase 8) — bypass detectors +
-  `tile:drift` topic owner.
+  chokepoint + rejection telemetry + bypass detectors. Owns the
+  `gate:rejected` topic.
 - `backend/electron/tile-preload.cts` — renderer-side publish/subscribe
   API + command registration.
 - `backend/electron/main.ts:216` — broadcaster registration site
