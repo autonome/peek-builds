@@ -2463,7 +2463,7 @@ contextBridge.exposeInMainWorld('app', api);
     if (shouldBlockDrag(e.target)) return;
     if (cachedWindowId == null) return;
 
-    positionPromise = ipcRenderer.invoke('window-get-position', { id: cachedWindowId })
+    positionPromise = ipcRenderer.invoke('tile:window:get-bounds', { token: tileToken })
       .catch(() => null);
 
     holdTimer = setTimeout(async () => {
@@ -2523,7 +2523,7 @@ contextBridge.exposeInMainWorld('app', api);
       requestAnimationFrame(() => {
         rafPending = false;
         if (isDragging && cachedWindowId != null) {
-          ipcRenderer.invoke('window-move', { id: cachedWindowId, x: rafX, y: rafY });
+          ipcRenderer.invoke('tile:window:set-bounds', { token: tileToken, x: rafX, y: rafY });
         }
       });
     }

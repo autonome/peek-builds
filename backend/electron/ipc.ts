@@ -2451,13 +2451,8 @@ export function registerWindowHandlers(): void {
   });
 
 
-  // Return full bounds (position + size) for any window
-  ipcMain.handle('window-get-bounds', (ev, msg) => {
-    const win = msg?.id ? BrowserWindow.fromId(msg.id) : BrowserWindow.fromWebContents(ev.sender);
-    if (!win || win.isDestroyed()) return { success: false };
-    const bounds = win.getBounds();
-    return { success: true, ...bounds };
-  });
+  // Legacy `window-get-bounds` removed (v1 removal Phase 3.7b). Tile-
+  // preload's api.window.getBounds uses tile:window:get-bounds.
 
   // Set a focus target on the calling window (used by overlay windows to specify
   // which window should be focused after the overlay closes and restores hidden windows)
@@ -2564,37 +2559,9 @@ export function registerWindowHandlers(): void {
     }
   });
 
-  ipcMain.handle('window-move', async (_ev, msg) => {
-    DEBUG && console.log('window-move', msg);
-
-    try {
-      if (!msg.id) {
-        return { success: false, error: 'Window ID is required' };
-      }
-
-      const winData = getWindowInfo(msg.id);
-      if (!winData) {
-        return { success: false, error: 'Window not found in window manager' };
-      }
-
-      const win = BrowserWindow.fromId(msg.id);
-      if (!win) {
-        removeWindow(msg.id);
-        return { success: false, error: 'Window not found' };
-      }
-
-      if (typeof msg.x !== 'number' || typeof msg.y !== 'number') {
-        return { success: false, error: 'Valid x and y coordinates are required' };
-      }
-
-      win.setPosition(msg.x, msg.y);
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to move window:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // Legacy `window-move` removed (v1 removal Phase 3.7b). Tile-preload's
+  // click-and-hold drag now uses `tile:window:set-bounds` (token-scoped,
+  // targets the sender's own window).
 
   ipcMain.handle('window-center', async (ev, msg) => {
     DEBUG && console.log('window-center', msg);
@@ -2719,42 +2686,8 @@ export function registerWindowHandlers(): void {
     }
   });
 
-  ipcMain.handle('window-resize', async (ev, msg) => {
-    DEBUG && console.log('window-resize', msg);
-
-    try {
-      // If no ID provided, resize the sender's window
-      let win: BrowserWindow | null = null;
-      if (msg.id) {
-        const winData = getWindowInfo(msg.id);
-        if (!winData) {
-          return { success: false, error: 'Window not found in window manager' };
-        }
-        win = BrowserWindow.fromId(msg.id);
-        if (!win) {
-          removeWindow(msg.id);
-          return { success: false, error: 'Window not found' };
-        }
-      } else {
-        // Get window from sender
-        win = BrowserWindow.fromWebContents(ev.sender);
-        if (!win) {
-          return { success: false, error: 'Could not determine sender window' };
-        }
-      }
-
-      if (typeof msg.width !== 'number' || typeof msg.height !== 'number') {
-        return { success: false, error: 'Valid width and height are required' };
-      }
-
-      win.setSize(msg.width, msg.height);
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to resize window:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // Legacy `window-resize` removed (v1 removal Phase 3.7b). Tile-preload's
+  // api.window.resize uses `tile:window:resize`.
 
   ipcMain.handle('window-focus', async (_ev, msg) => {
     DEBUG && console.log('window-focus', msg);
@@ -2816,61 +2749,10 @@ export function registerWindowHandlers(): void {
     }
   });
 
-  ipcMain.handle('window-blur', async (_ev, msg) => {
-    DEBUG && console.log('window-blur', msg);
-
-    try {
-      if (!msg.id) {
-        return { success: false, error: 'Window ID is required' };
-      }
-
-      const winData = getWindowInfo(msg.id);
-      if (!winData) {
-        return { success: false, error: 'Window not found in window manager' };
-      }
-
-      const win = BrowserWindow.fromId(msg.id);
-      if (!win) {
-        removeWindow(msg.id);
-        return { success: false, error: 'Window not found' };
-      }
-
-      win.blur();
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to blur window:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  ipcMain.handle('get-display-info', (ev) => {
-    const win = BrowserWindow.fromWebContents(ev.sender);
-    if (!win || win.isDestroyed()) return { success: false, error: 'Window not found' };
-    const display = screen.getDisplayMatching(win.getBounds());
-    // Return workArea/bounds/scaleFactor both at top-level (for tests & direct invoke callers)
-    // and under `data` (preserved for existing page.js code which checks `.success`/`.data`).
-    return {
-      success: true,
-      workArea: display.workArea,
-      bounds: display.bounds,
-      scaleFactor: display.scaleFactor,
-      data: { workArea: display.workArea, bounds: display.bounds, scaleFactor: display.scaleFactor },
-    };
-  });
-
-  ipcMain.handle('window-set-bounds', (ev, msg) => {
-    const win = BrowserWindow.fromWebContents(ev.sender);
-    if (!win || win.isDestroyed()) return { success: false, error: 'Window not found' };
-    const bounds = win.getBounds();
-    win.setBounds({
-      x: msg.x ?? bounds.x,
-      y: msg.y ?? bounds.y,
-      width: msg.width ?? bounds.width,
-      height: msg.height ?? bounds.height,
-    });
-    return { success: true };
-  });
+  // Legacy `window-blur`, `get-display-info`, `window-set-bounds` removed
+  // (v1 removal Phase 3.7b). All previously called from preload.js (now
+  // deleted); tile-preload uses tile:window:get-display-info / set-bounds /
+  // (no blur — was never wrapped in tile-preload).
 
   ipcMain.handle('window-exists', async (_ev, msg) => {
     DEBUG && console.log('window-exists', msg);
@@ -2983,14 +2865,9 @@ export function registerWindowHandlers(): void {
  * Register miscellaneous IPC handlers (shortcuts, pubsub, commands, etc.)
  */
 export function registerMiscHandlers(onQuit: () => void): void {
-  // Check if current window is transient (opened when app wasn't focused)
-  // Used for IZUI policy: transient windows have different escape/mode behavior
-  ipcMain.handle('window-is-transient', (ev) => {
-    const win = BrowserWindow.fromWebContents(ev.sender);
-    if (!win) return false;
-    const windowData = getWindowInfo(win.id);
-    return windowData?.params?.transient === true;
-  });
+  // Legacy `window-is-transient` removed (v1 removal Phase 3.7b). Tile-
+  // preload's api.izui.isTransient uses tile:izui:is-transient. Remaining
+  // callers were all in deleted preload.js.
 
   // ============================================================================
   // IZUI State Coordinator IPC Handlers
@@ -3052,44 +2929,13 @@ export function registerMiscHandlers(onQuit: () => void): void {
     return { success: false, error: 'Window not found' };
   });
 
-  // Get window position
-  ipcMain.handle('window-get-position', (ev, msg) => {
-    try {
-      let win: BrowserWindow | null = null;
-      if (msg?.id) {
-        win = BrowserWindow.fromId(msg.id);
-      } else {
-        win = BrowserWindow.fromWebContents(ev.sender);
-      }
-      if (!win) {
-        return { success: false, error: 'Window not found' };
-      }
-      const [x, y] = win.getPosition();
-      return { success: true, x, y };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // Legacy `window-get-position` removed (v1 removal Phase 3.7b). Tile-
+  // preload's drag uses `tile:window:get-bounds` (returns x/y/w/h for
+  // the sender's own window).
 
-  // Store scroll position from page.js for undo-close-window restoration
-  ipcMain.handle('window-set-scroll-position', (ev, msg) => {
-    try {
-      const win = BrowserWindow.fromWebContents(ev.sender);
-      if (!win) {
-        return { success: false, error: 'Window not found' };
-      }
-      const winInfo = getWindowInfo(win.id);
-      if (winInfo) {
-        winInfo.params.scrollX = msg.x ?? 0;
-        winInfo.params.scrollY = msg.y ?? 0;
-      }
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // Legacy `window-set-scroll-position` removed (v1 removal Phase 3.7b).
+  // Was called from preload.js (deleted). page.js' undo-close-window scroll
+  // restoration would need a strict tile:* equivalent if reintroduced.
 
   // Get last focused visible window ID (for per-window commands)
   // Returns the most recently focused window that isn't a background/internal window
