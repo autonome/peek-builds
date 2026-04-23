@@ -627,25 +627,6 @@ export function registerTileIpcHandlers(): void {
     );
   });
 
-  ipcMain.on('tile:command:result', (event, args: {
-    token: string;
-    name: string;
-    result?: unknown;
-    error?: string;
-  }) => {
-    const grant = verifyTokenSender(event, args.token, 'tile:command:result');
-    if (!grant) return;
-
-    // Publish result so cmd panel can resolve
-    const topic = `${args.name}:result`;
-    publish(
-      `peek://${grant.tileId}/background`,
-      scopes.GLOBAL,
-      topic,
-      args.error ? { error: args.error } : { result: args.result }
-    );
-  });
-
   // ── Shortcuts (strict) ────────────────────────────────────────────
   //
   // Strict tile:shortcuts:* handlers that enforce the `shortcuts`

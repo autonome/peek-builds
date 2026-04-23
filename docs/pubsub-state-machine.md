@@ -268,14 +268,13 @@ The allowlist's `cmd:execute:*` infra carve-out for tiles holding the
 every tile to explicitly declare every possible UUID-suffixed topic in
 its manifest.
 
-**Legacy side-channel to remove**: tile-preload currently also sends a
-parallel `ipcRenderer.send('tile:command:result', ...)` frame
-(tile-preload.cts:411) that hits an unrestricted main-process publish
-handler (tile-ipc.ts `ipcMain.on('tile:command:result', ...)`). This
-duplicate path predates the allowlist carve-out and bypasses the gate
-entirely. It is redundant with the pubsub publish above and must be
-deleted — one auth path, one code path, one place to reason about who
-can emit a command result.
+**Legacy side-channel removed (Phase 3, 2026-04-23)**: tile-preload
+previously also sent a parallel `ipcRenderer.send('tile:command:result',
+...)` frame that hit an unrestricted main-process publish handler
+(`ipcMain.on('tile:command:result', ...)` in tile-ipc.ts). That
+duplicate path predated the allowlist carve-out and bypassed the gate
+entirely. Both sites are gone — one auth path, one code path, one
+place to reason about who can emit a command result.
 
 ```
   Dispatcher                             Owning tile
@@ -300,11 +299,12 @@ can emit a command result.
   resolve proxy promise
 ```
 
-**Concrete removals**:
+**Concrete removals (done Phase 3)**:
 - `ipcRenderer.send('tile:command:result', ...)` call in
-  `api.commands.register` handler (tile-preload.cts:411). Keep the
-  `tile:pubsub:publish` call at line 401.
-- `ipcMain.on('tile:command:result', ...)` handler in tile-ipc.ts.
+  `api.commands.register` handler — removed from tile-preload.cts.
+  The `tile:pubsub:publish` to `msg.resultTopic` is now the sole path.
+- `ipcMain.on('tile:command:result', ...)` handler in tile-ipc.ts —
+  removed.
 
 ## Scope semantics — delete
 

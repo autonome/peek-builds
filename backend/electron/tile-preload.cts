@@ -406,14 +406,6 @@ function buildAPI(): Record<string, unknown> {
             data: error ? { error } : result,
           });
         }
-
-        // Also notify tile:command:result (useful for tile-level bookkeeping)
-        ipcRenderer.send('tile:command:result', {
-          token: tileToken,
-          name,
-          result,
-          error: error || undefined,
-        });
       });
     },
 

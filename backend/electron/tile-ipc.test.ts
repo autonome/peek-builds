@@ -17,6 +17,9 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import * as assert from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 import {
   generateToken,
@@ -140,5 +143,24 @@ describe('verifyTokenSender (Phase 2: sender-frame cross-check)', () => {
     assert.strictEqual(grant2, null);
     assert.strictEqual(drift.events.length, 1);
     assert.strictEqual(drift.events[0].reason, 'sender-mismatch');
+  });
+});
+
+describe('Phase 3: tile:command:result is gone', () => {
+  // At runtime under ELECTRON_RUN_AS_NODE=1 the test file lives at
+  // dist/backend/electron/tile-ipc.test.js and the compiled handler
+  // module is its sibling tile-ipc.js. We assert the compiled output
+  // contains no reference to the legacy side-channel — neither the
+  // preload send site nor the main-process handler registration can
+  // leave a stub behind without this failing.
+  const hereDir = dirname(fileURLToPath(import.meta.url));
+  const compiledTileIpc = join(hereDir, 'tile-ipc.js');
+
+  it('compiled tile-ipc.js does not register a tile:command:result handler', () => {
+    const src = readFileSync(compiledTileIpc, 'utf8');
+    assert.ok(
+      !src.includes("'tile:command:result'") && !src.includes('"tile:command:result"'),
+      'tile-ipc.js still contains a tile:command:result reference — Phase 3 removed that channel'
+    );
   });
 });
