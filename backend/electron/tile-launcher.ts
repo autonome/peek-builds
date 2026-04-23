@@ -43,6 +43,7 @@ import {
   getGrantForToken,
   revokeTokensForTile,
   clearAllTokens,
+  setTokenOwner,
 } from './tile-tokens.js';
 import { scopes, publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
 import { DEBUG, getTilePreloadPath } from './config.js';
@@ -261,6 +262,15 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
 
   const BrowserWindow = getBrowserWindowCtor();
   const win = new BrowserWindow(windowOptions);
+
+  // Phase 2 pubsub hardening: bind the capability token to its owning
+  // WebContents so every `tile:*` IPC handler can cross-check
+  // `event.sender.id === ownerWebContentsId`. Without this a compromised
+  // tile that leaks another tile's token could forge IPC frames using
+  // it. The token was minted before the window existed (it's injected
+  // via additionalArguments), so binding happens here — the first
+  // moment `win.webContents.id` is known.
+  setTokenOwner(token, win.webContents.id);
 
   const key = `${tileId}:${entryId}`;
   tileWindows.set(key, win);
@@ -537,6 +547,12 @@ export function registerTrustedBuiltinWindow(
 ): void {
   const key = `${tileId}:${entryId}`;
   tileWindows.set(key, win);
+
+  // Phase 2 pubsub hardening: bind the trustedBuiltin token to its
+  // owning WebContents so the IPC gate's sender-frame cross-check
+  // passes for this core renderer. See createTileBrowserWindow for
+  // the full rationale.
+  setTokenOwner(token, win.webContents.id);
 
   win.on('closed', () => {
     tileWindows.delete(key);
