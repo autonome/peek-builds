@@ -92,7 +92,8 @@ test.afterAll(async () => {
   await closeSharedApp();
 });
 
-test.describe('HUD Extension @desktop', () => {
+// HUD disabled 2026-04-23 — feature unused, initHud() no longer called in app/index.js.
+test.describe.skip('HUD Extension @desktop', () => {
   test('HUD extension loads', async () => {
     // Verify the HUD extension loaded by executing its command.
     // The command was registered by the HUD extension's init, so a successful

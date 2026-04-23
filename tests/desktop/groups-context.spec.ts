@@ -333,7 +333,7 @@ test.describe('Group Mode Context @desktop', () => {
     }
   });
 
-  test('HUD displays group mode with name', async () => {
+  test.skip('HUD displays group mode with name', async () => {
     // This test verifies HUD rendering of group mode.
     // The existing HUD test in hud.spec.ts sets mode directly via context API.
     // Here we verify it works through the actual groups navigation flow.
