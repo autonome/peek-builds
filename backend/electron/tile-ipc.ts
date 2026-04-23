@@ -120,7 +120,7 @@ import {
   createBackup,
   listBackups,
 } from './backup.js';
-import { getPrefs } from './windows.js';
+import { getPrefs, closeOrHideWindow } from './windows.js';
 import {
   saveSessionSnapshot,
   restoreSessionSnapshot,
@@ -2532,7 +2532,14 @@ export function registerTileIpcHandlers(): void {
       target = senderWin;
     }
     if (target && !target.isDestroyed()) {
-      target.close();
+      // Route through closeOrHideWindow so windows with keepLive:true are
+      // HIDDEN rather than destroyed — the api.window.open key-reuse path
+      // in ipc.ts then finds the window in findWindowByKey and calls
+      // win.show() + dispatches tile:lifecycle:visible. Without this, a
+      // raw target.close() destroys the window regardless of keepLive,
+      // defeating the reuse path and causing cmd panel-like "rapid
+      // invocation stalls" that the repeat-invocation spec catches.
+      closeOrHideWindow(target.id);
     }
   });
 

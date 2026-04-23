@@ -1507,7 +1507,7 @@ function openUrlModeItem(index) {
   updateMatchCount(url);
 
   // Close panel
-  setTimeout(() => window.close(), 100);
+  setTimeout(() => api.window.close(), 100);
 }
 
 /**
@@ -1823,7 +1823,17 @@ function updateResultsUI() {
 // ===== Shutdown =====
 
 async function shutdown() {
-  window.close();
+  // Route through api.window.close() so the panel's keepLive:true flag
+  // HIDES the window (closeOrHideWindow in windows.ts:411) instead of
+  // destroying it. Raw native `window.close()` bypasses keepLive and
+  // destroys, forcing a fresh window on every Cmd+K — and races with
+  // the next open call's key-based reuse lookup.
+  try {
+    await api.window.close();
+  } catch {
+    // Fall through: worst case the window stays open momentarily until
+    // the next user action. Better than throwing mid-shutdown.
+  }
 }
 
 // ===== Action Handlers =====
@@ -2552,7 +2562,7 @@ async function render() {
             log.error('cmd:panel', 'Failed to open typed URL:', error);
           });
           updateMatchCount(urlResult.url);
-          setTimeout(() => window.close(), 100);
+          setTimeout(() => api.window.close(), 100);
         }
         return;
       }
@@ -2667,20 +2677,24 @@ async function render() {
     commandInput.focus();
   });
 
-  // Handle visibility changes — single handler for panel show/hide
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      // Panel is now visible — dispatch visibility:shown
-      // If we're in CLOSING state, this resets everything
-      if (machine.getState() === States.CLOSING) {
-        machine.dispatch(Events.VISIBILITY_SHOWN);
-      } else {
-        // Force reset on re-show regardless (keepLive reuse)
-        machine.setState(States.CLOSING);
-        machine.dispatch(Events.VISIBILITY_SHOWN);
-      }
-    }
-  });
+  // Reset state when the panel is re-shown via keepLive reuse.
+  //
+  // `api.onVisible` fires from a private `tile:lifecycle:visible` IPC
+  // that main sends from api.window.open's reuse path (ipc.ts:~949).
+  // The IPC is queued before the open call resolves, so by the time any
+  // subsequent user input reaches the renderer, this handler has already
+  // dispatched VISIBILITY_SHOWN and the FSM is in IDLE.
+  //
+  // Previously this was wired to the DOM `visibilitychange` event, which
+  // races with input arrival — keystrokes could land on a CLOSING state
+  // and be silently absorbed. The FSM's per-state VISIBILITY_SHOWN
+  // handlers (state-machine.js) make the reset a first-class transition
+  // from any state, not a setState() backdoor.
+  if (typeof api.onVisible === 'function') {
+    api.onVisible(() => {
+      machine.dispatch(Events.VISIBILITY_SHOWN);
+    });
+  }
 
   // Initial focus
   setTimeout(() => commandInput.focus(), 50);

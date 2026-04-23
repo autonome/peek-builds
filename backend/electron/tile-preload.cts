@@ -145,6 +145,35 @@ function buildAPI(): Record<string, unknown> {
     }
   };
 
+  /**
+   * Register a callback that fires when an existing (hidden) tile window
+   * is re-shown via the keepLive-reuse path in api.window.open. Same
+   * install-once semantics as api.onShutdown.
+   *
+   * Purpose: give renderers a deterministic hook for "I'm being shown
+   * again" state-reset. Previously this relied on the DOM
+   * `visibilitychange` event, which races with user input — by the time
+   * the DOM event handler ran, input had already landed on a stale
+   * (CLOSING) state and was silently absorbed. The private IPC fires
+   * before api.window.open resolves to the caller, so by the time the
+   * next user interaction arrives, the renderer has already reset.
+   */
+  let visibleCallback: (() => void) | null = null;
+  let visibleListenerInstalled = false;
+  api.onVisible = (callback: () => void) => {
+    visibleCallback = typeof callback === 'function' ? callback : null;
+    if (!visibleListenerInstalled) {
+      visibleListenerInstalled = true;
+      ipcRenderer.on('tile:lifecycle:visible', () => {
+        try {
+          visibleCallback?.();
+        } catch (err) {
+          console.error('[tile-preload] onVisible callback threw:', err);
+        }
+      });
+    }
+  };
+
   // ── PubSub (if granted) ──
   //
   // Publish supports two call shapes:

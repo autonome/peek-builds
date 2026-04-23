@@ -150,7 +150,11 @@ function createProxyCommand(cmdData) {
   // Regular command proxy — dispatch via cmd:execute:{name}
   base.execute = async (ctx) => {
     return new Promise((resolve) => {
-      const resultTopic = `cmd:execute:${cmdData.name}:result`;
+      // Unique per-invocation topic. A static topic races across repeats:
+      // iteration N's fire-and-forget `tile:pubsub:unsubscribe` can arrive
+      // at main AFTER iteration N+1's `tile:pubsub:subscribe`, deleting the
+      // new subscription and dropping the result publish.
+      const resultTopic = `cmd:execute:${cmdData.name}:result:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
       let settled = false;
 
       const unsubscribe = api.subscribe(resultTopic, (result) => {

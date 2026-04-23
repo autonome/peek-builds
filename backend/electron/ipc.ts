@@ -974,6 +974,18 @@ export function registerWindowHandlers(): void {
           existingWindow.window.show();
           existingWindow.window.focus();
         }
+        // Signal keepLive-reuse to the renderer BEFORE returning so the
+        // renderer's `api.onVisible` handler dispatches its FSM reset
+        // ahead of any user input that might arrive on the next turn.
+        // IPC is queued in order — this message is processed before any
+        // subsequent input event on the renderer's event loop.
+        try {
+          if (!existingWindow.window.isDestroyed()) {
+            existingWindow.window.webContents.send('tile:lifecycle:visible');
+          }
+        } catch (err) {
+          console.error('[window-open] tile:lifecycle:visible send threw:', err);
+        }
         return { success: true, id: existingWindow.id, reused: true };
       }
 

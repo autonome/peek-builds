@@ -53,17 +53,21 @@ async function openCmdPanel(): Promise<{ cmdWindow: Page; windowId: number | nul
 }
 
 /**
- * Helper: Close cmd panel
+ * Helper: Close cmd panel.
+ *
+ * Uses native window.close() rather than api.window.close() because the
+ * latter now routes through closeOrHideWindow (tile-ipc.ts ~2537) which
+ * honors the panel's keepLive:true — would HIDE the window instead of
+ * destroying it. Hidden panels accumulate across tests and the next
+ * test's getWindow('cmd/panel.html') matches the wrong one by URL.
+ * Native close bypasses keepLive and guarantees destruction.
  */
-async function closeCmdPanel(windowId: number | null) {
+async function closeCmdPanel(_windowId: number | null) {
   try {
-    if (windowId) {
-      await sharedBgWindow.evaluate(async (id: number) => {
-        return await (window as any).app.window.close(id);
-      }, windowId);
-    }
+    const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 1000);
+    await cmdWindow.evaluate(() => window.close());
   } catch {
-    // Panel may have already closed via shutdown()
+    // Panel already gone
   }
 }
 

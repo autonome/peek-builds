@@ -686,6 +686,22 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     },
   };
 
+  // VISIBILITY_SHOWN from ANY state resets the panel to IDLE. The keepLive
+  // reuse path (api.window.open with key → win.show() on an existing hidden
+  // panel) delivers this event via `api.onVisible` (tile:lifecycle:visible
+  // IPC from main). Handling it in every state means the reset is a
+  // first-class FSM transition, not a DOM-event backdoor via setState().
+  // The CLOSING handler above is preserved — it's the natural post-
+  // shutdown reset path. The loop adds the same handler to every OTHER
+  // state.
+  for (const state of Object.values(States)) {
+    if (!transitions[state]) continue;
+    if (transitions[state][Events.VISIBILITY_SHOWN]) continue;
+    transitions[state][Events.VISIBILITY_SHOWN] = [
+      { target: States.IDLE, actions: ['resetAllState'] },
+    ];
+  }
+
   // ===== Dispatch =====
 
   /**

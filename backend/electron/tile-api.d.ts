@@ -568,6 +568,14 @@ interface TileAPI {
   /** Register a shutdown handler. */
   onShutdown(callback: () => void): void;
 
+  /**
+   * Register a handler that fires when the tile's window is re-shown
+   * via the keepLive-reuse path in api.window.open. Delivered via
+   * private `tile:lifecycle:visible` IPC before the open call resolves
+   * to the caller, so state-reset handlers land ahead of any user input.
+   */
+  onVisible(callback: () => void): void;
+
   /** Whether the app is running in debug mode. */
   readonly debug: boolean;
 
