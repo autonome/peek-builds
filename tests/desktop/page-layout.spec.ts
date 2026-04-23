@@ -177,8 +177,7 @@ test.describe('Page Layout Regression @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -222,8 +221,7 @@ test.describe('Page Layout Regression @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -255,8 +253,7 @@ test.describe('Page Layout Regression @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -416,8 +413,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -452,8 +448,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -468,8 +463,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -501,8 +495,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -533,8 +526,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -548,8 +540,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -590,8 +581,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -605,8 +595,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -644,8 +633,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -684,8 +672,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -699,8 +686,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -765,8 +751,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:maximize',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -799,8 +784,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 

@@ -49,7 +49,7 @@ test.describe('Lists Extension @desktop', () => {
 
     // Execute the lists command
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {});
     });
 
     // Wait for search window to appear
@@ -81,7 +81,7 @@ test.describe('Lists Extension @desktop', () => {
 
     // Open lists window
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {});
     });
 
     const searchWindow = await windowPromise;
@@ -117,7 +117,7 @@ test.describe('Lists Extension @desktop', () => {
 
     // Open search window
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {});
     });
 
     const searchWindow = await windowPromise;
@@ -171,7 +171,7 @@ test.describe('Lists Extension @desktop', () => {
 
     // Open search window
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {});
     });
 
     const searchWindow = await windowPromise;
@@ -212,7 +212,7 @@ test.describe('Lists Extension @desktop', () => {
 
     // Open search window
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:lists', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:lists', {});
     });
 
     const searchWindow = await windowPromise;

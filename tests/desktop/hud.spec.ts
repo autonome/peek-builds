@@ -76,7 +76,7 @@ async function waitForHudModeValue(
 // Helper to toggle HUD and wait for the window to appear/disappear
 const toggleHUD = async () => {
   await sharedBgWindow.evaluate(async () => {
-    (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
+    (window as any).app.publish('cmd:execute:hud', {});
   });
   // Allow the command to be processed and window to open/close
   await sleep(500);
@@ -99,7 +99,7 @@ test.describe.skip('HUD Extension @desktop', () => {
     // The command was registered by the HUD extension's init, so a successful
     // toggle proves the extension loaded, initialized, and registered its command.
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:hud', {});
     });
     const hudWindow = await sharedApp.getWindow('hud/hud.html', 5000);
     expect(hudWindow).toBeTruthy();
@@ -109,7 +109,7 @@ test.describe.skip('HUD Extension @desktop', () => {
 
     // Clean up - toggle off
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:hud', {});
     });
     await sleep(500);
   });
@@ -118,7 +118,7 @@ test.describe.skip('HUD Extension @desktop', () => {
     // Verify the hud command works by executing it and checking for the HUD window
     // The command is registered via api.commands.register() in the HUD extension's init
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:hud', {});
     });
     await sleep(1000);
 
@@ -128,7 +128,7 @@ test.describe.skip('HUD Extension @desktop', () => {
 
     // Clean up - toggle off
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:hud', {});
     });
     await sleep(500);
   });

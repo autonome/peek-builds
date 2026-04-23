@@ -342,7 +342,7 @@ test.describe('Group Mode Context @desktop', () => {
     // window-creation event if the command resolves faster than this test resumes.
     const hudWindowPromise = sharedApp.getWindow('hud/hud.html', 5000);
     await sharedBgWindow.evaluate(async () => {
-      (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
+      (window as any).app.publish('cmd:execute:hud', {});
     });
     const hudWindow = await hudWindowPromise;
     expect(hudWindow).toBeTruthy();
@@ -402,7 +402,7 @@ test.describe('Group Mode Context @desktop', () => {
 
       // Close HUD
       await sharedBgWindow.evaluate(async () => {
-        (window as any).app.publish('cmd:execute:hud', {}, (window as any).app.scopes.GLOBAL);
+        (window as any).app.publish('cmd:execute:hud', {});
       });
     }
   });

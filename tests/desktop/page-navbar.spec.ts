@@ -147,8 +147,7 @@ test.describe('Page Navbar @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 
@@ -182,8 +181,7 @@ test.describe('Page Navbar @desktop', () => {
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
-        { windowId: wid },
-        (window as any).app.scopes.GLOBAL
+        { windowId: wid }
       );
     }, windowId);
 

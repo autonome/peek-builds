@@ -81,7 +81,7 @@ test.describe('Cmd Palette @desktop', () => {
       (window as any).__editorOpenCaptured = [];
       (window as any).__editorOpenUnsub = (window as any).app.subscribe('editor:open', (data: any) => {
         (window as any).__editorOpenCaptured.push(data);
-      }, (window as any).app.scopes.GLOBAL);
+      });
     });
 
     // Open cmd panel
