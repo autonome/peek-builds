@@ -16,7 +16,12 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 - [x] **Consolidate command-result paths into one.** DONE 2026-04-23 as Phase 3 of pubsub-state-machine.md. The `tile:command:result` side-channel (preload send site + main-process unrestricted `publish()` handler) is gone; all command results now flow through the capability-gated `tile:pubsub:publish` of `cmd:execute:{name}:result:{uuid}` via the infra carve-out (commit `f32063db`).
 
-- [ ] **UI-level tests for cmd-panel repeat invocation.** The 2026-04-23 repro (`tests/desktop/cmd-execute-twice.spec.ts`) fires on the pubsub bus directly and passes 3/3. Manual testing caught a 3rd-invocation stall that the bus test misses — the difference must be panel UI state (`state.executionTimeout`, `urlSearchTimer`, command subscription lifetime) leaking across repeats. Add Playwright tests that drive Cmd+K → type → Enter 3-5x in a row and assert panel closes + no spinner.
+- [x] **UI-level tests for cmd-panel repeat invocation.** DONE 2026-04-23. `tests/desktop-serial/cmd-panel-repeat.spec.ts` drives 20 sequential `openCmdPanel → type "hello" → Enter` cycles via the production keepLive+key path, then verifies the panel leaves EXECUTING every iteration. Caught 4 distinct bugs on first run:
+  1. **panel state leaks across keepLive reopens** — fixed by private `tile:lifecycle:visible` IPC (tile-preload.cts `api.onVisible`, sent from ipc.ts key-reuse path), which dispatches the FSM's `VISIBILITY_SHOWN` event (now handled from every state, not just CLOSING) to reset synchronously before user input can land. Replaces the DOM `visibilitychange` handler that raced with input.
+  2. **`waitForPanelCommandsLoaded` too weak** — test helper now waits for a specific command (`hello`) rather than a `length > 0` count threshold.
+  3. **window destroyed mid-test** — root cause: `tile:window:close` was calling `target.close()` raw, bypassing `closeOrHideWindow` which is the only thing that honors `keepLive:true`. Fix: route `tile:window:close` through `closeOrHideWindow`. Panel's `shutdown()` now calls `api.window.close()` instead of native `window.close()` — keepLive panels now genuinely hide-then-reuse across Cmd+K cycles.
+  4. **static `cmd:execute:X:result` topic race** — proxy command in `app/cmd/commands.js:153` reused the same topic across invocations, so iteration N+1's subscribe could be undone by iteration N's late-arriving unsubscribe. Topic is now per-invocation `:result:${Date.now()}:${uuid}` (matches `cmd-execute-twice.spec.ts` pattern).
+  Regression-guard test passes 20 × 5 = 100 invocations cleanly in ~750ms each. Full suite 208/0 + 21/0 serial (229 green, 0 failed).
 
 ---
 
