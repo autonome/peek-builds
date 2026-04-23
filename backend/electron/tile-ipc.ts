@@ -3705,7 +3705,7 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'Window not found' };
     }
 
-    win.webContents.send('theme:windowChanged', { colorScheme });
+    win.webContents.send('tile:theme:changed', { kind: 'window', colorScheme });
     return { success: true, windowId: resolvedId, colorScheme };
   });
 
@@ -3733,7 +3733,7 @@ export function registerTileIpcHandlers(): void {
 
     const windows = BrowserWindow.getAllWindows();
     for (const win of windows) {
-      win.webContents.send('theme:themeChanged', { themeId });
+      win.webContents.send('tile:theme:changed', { kind: 'theme', themeId });
     }
     return { success: true, themeId };
   });
@@ -6932,7 +6932,7 @@ function tileSetThemeSetting(key: string, value: string): void {
 function tileBroadcastThemeChange(colorScheme: string): void {
   const windows = BrowserWindow.getAllWindows();
   for (const win of windows) {
-    win.webContents.send('theme:changed', { colorScheme });
+    win.webContents.send('tile:theme:changed', { kind: 'colorScheme', colorScheme });
   }
 }
 

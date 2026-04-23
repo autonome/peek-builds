@@ -2380,4 +2380,49 @@ function buildAPI(): Record<string, unknown> {
 const api = buildAPI();
 contextBridge.exposeInMainWorld('app', api);
 
+// ─── Theme Live-Reload ───────────────────────────────────────────────
+//
+// Tiles use `@import url('peek://theme/variables.css')` in their CSS to
+// pull in theme CSS variables. The @import is resolved ONCE when the
+// owning stylesheet loads — switching theme via settings updates what
+// peek://theme/variables.css serves, but already-loaded tiles keep the
+// cached CSSOM and don't pick up the new values.
+//
+// Fix: subscribe to `tile:theme:changed` (the same IPC that `api.theme.
+// onChange` exposes) at preload level and inject a cache-busted
+// `<link>` into `<head>`. The link's `:root { --* : ... }` rules
+// override the cached @import rules via cascade order (later === higher
+// priority for same specificity). When the new link's CSS finishes
+// loading, the previous override link is removed so we don't accumulate
+// stylesheets across many theme switches.
+//
+// Lives in the preload (rather than per-tile code) so every tile gets
+// live theme updates for free — no per-feature wiring.
+{
+  let prevOverrideId: string | null = null;
+  const applyThemeOverride = () => {
+    try {
+      if (!document || !document.head) return;
+      const id = `peek-theme-live-${Date.now()}`;
+      const link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      link.href = `peek://theme/variables.css?v=${Date.now()}`;
+      const prevId = prevOverrideId;
+      link.addEventListener('load', () => {
+        if (prevId) {
+          const prev = document.getElementById(prevId);
+          if (prev) prev.remove();
+        }
+      });
+      document.head.appendChild(link);
+      prevOverrideId = id;
+    } catch (err) {
+      console.error('[tile-preload] theme live-reload threw:', err);
+    }
+  };
+
+  ipcRenderer.on('tile:theme:changed', applyThemeOverride);
+}
+
 } // end else (tileId/tileEntry/tileToken present)

@@ -513,7 +513,11 @@ function setThemeSetting(key: string, value: string): void {
 function broadcastThemeChange(colorScheme: string): void {
   const windows = BrowserWindow.getAllWindows();
   for (const win of windows) {
-    win.webContents.send('theme:changed', { colorScheme });
+    // Channel is `tile:theme:changed` so tile-preload's live-reload
+    // listener (and api.theme.onChange consumers) fire. The old
+    // `theme:changed` name predated the tile: namespace and had no
+    // subscribers left — see task queue "Theme live-reload" entry.
+    win.webContents.send('tile:theme:changed', { kind: 'colorScheme', colorScheme });
   }
 }
 
