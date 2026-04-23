@@ -116,7 +116,7 @@ test.describe('Page Widgets @desktop', () => {
         widgetId: 'test-widget',
         title: 'Test Widget',
         position: 'right',
-      }, api.scopes.GLOBAL);
+      });
     });
 
     // Verify registration
@@ -144,14 +144,14 @@ test.describe('Page Widgets @desktop', () => {
         extensionId: 'test-ext',
         widgetId: 'render-test',
         title: 'Render Test',
-      }, api.scopes.GLOBAL);
+      });
 
       api.publish('widget:render', {
         extensionId: 'test-ext',
         widgetId: 'render-test',
         title: 'Rendered Widget',
         html: '<p class="test-content">Widget content here</p>',
-      }, api.scopes.GLOBAL);
+      });
     });
 
     // Verify widget DOM was created
@@ -193,13 +193,13 @@ test.describe('Page Widgets @desktop', () => {
       api.publish('widget:register', {
         extensionId: 'test-ext',
         widgetId: 'update-test',
-      }, api.scopes.GLOBAL);
+      });
 
       api.publish('widget:render', {
         extensionId: 'test-ext',
         widgetId: 'update-test',
         html: '<p>Original</p>',
-      }, api.scopes.GLOBAL);
+      });
     });
 
     // Wait for initial render
@@ -217,7 +217,7 @@ test.describe('Page Widgets @desktop', () => {
         widgetId: 'update-test',
         html: '<p>Updated content</p>',
         title: 'New Title',
-      }, api.scopes.GLOBAL);
+      });
     });
 
     // Verify update
@@ -246,13 +246,13 @@ test.describe('Page Widgets @desktop', () => {
       api.publish('widget:register', {
         extensionId: 'test-ext',
         widgetId: 'close-test',
-      }, api.scopes.GLOBAL);
+      });
 
       api.publish('widget:render', {
         extensionId: 'test-ext',
         widgetId: 'close-test',
         html: '<p>To be closed</p>',
-      }, api.scopes.GLOBAL);
+      });
     });
 
     // Wait for render
@@ -268,7 +268,7 @@ test.describe('Page Widgets @desktop', () => {
       api.publish('widget:close', {
         extensionId: 'test-ext',
         widgetId: 'close-test',
-      }, api.scopes.GLOBAL);
+      });
     });
 
     // Wait for removal (animation takes 300ms)
@@ -324,7 +324,7 @@ test.describe('Page Widgets @desktop', () => {
           if (msg.requestId !== rid) return;
           clearTimeout(timer);
           resolve(msg);
-        }, api.scopes.GLOBAL);
+        });
       });
     }, requestId);
 
@@ -335,7 +335,7 @@ test.describe('Page Widgets @desktop', () => {
         extensionId: 'test-ext',
         requestId: rid,
         script: 'document.title',
-      }, api.scopes.GLOBAL);
+      });
     }, requestId);
 
     const result = await resultPromise;
@@ -374,7 +374,7 @@ test.describe('Page Widgets @desktop', () => {
           if (msg.requestId !== rid) return;
           clearTimeout(timer);
           resolve(msg);
-        }, api.scopes.GLOBAL);
+        });
       });
     }, requestId);
 
@@ -385,7 +385,7 @@ test.describe('Page Widgets @desktop', () => {
         extensionId: 'test-ext',
         requestId: rid,
         script: 'throw new Error("intentional test error")',
-      }, api.scopes.GLOBAL);
+      });
     }, requestId);
 
     const result = await resultPromise;

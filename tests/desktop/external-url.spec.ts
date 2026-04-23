@@ -297,7 +297,7 @@ test.describe('External URL Opening @desktop', () => {
         if (msg?.url && (msg.url.includes(url) || msg.url.includes(encodeURIComponent(url)))) {
           (window as any).__externalUrlWindowOpened = msg;
         }
-      }, api.scopes.GLOBAL);
+      });
     }, testUrl);
 
     // Trigger external:open-url event directly (simulates what handleExternalUrl does)
@@ -311,7 +311,7 @@ test.describe('External URL Opening @desktop', () => {
         trackingSource: 'external',
         trackingSourceId: 'os',
         timestamp: Date.now()
-      }, api.scopes.GLOBAL);
+      });
     }, testUrl);
 
     // Wait for the window:opened event for our URL — deterministic.

@@ -191,7 +191,7 @@ test.describe('IZUI Behavior @desktop', () => {
               content: msg.content
             });
           }
-        }, api.scopes.GLOBAL);
+        });
 
         // Open a window with an external URL - this triggers trackWindowLoad
         // which emits item:created if the URL is new

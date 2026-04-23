@@ -36,7 +36,7 @@ test.describe('Item Events @desktop', () => {
               content: msg.content
             });
           }
-        }, api.scopes.GLOBAL);
+        });
 
         // Create item to trigger the event
         api.datastore.addItem('url', {
@@ -82,7 +82,7 @@ test.describe('Item Events @desktop', () => {
               itemType: msg.itemType
             });
           }
-        }, api.scopes.GLOBAL);
+        });
 
         // Update item to trigger the event
         api.datastore.updateItem(itemId, {
@@ -126,7 +126,7 @@ test.describe('Item Events @desktop', () => {
               itemType: msg.itemType
             });
           }
-        }, api.scopes.GLOBAL);
+        });
 
         // Delete item to trigger the event
         api.datastore.deleteItem(itemId);

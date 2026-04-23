@@ -52,12 +52,6 @@
   api.debugLevels = { BASIC: 1, FIRST_RUN: 2 };
   api.debugLevel = 1;
 
-  api.scopes = {
-    SYSTEM: 1,
-    SELF: 2,
-    GLOBAL: 3
-  };
-
   // ==================== Shortcuts ====================
 
   api.shortcuts = {
@@ -169,7 +163,7 @@
 
   // ==================== PubSub ====================
 
-  api.publish = (topic, msg, scope = api.scopes.SELF) => {
+  api.publish = (topic, msg) => {
     console.log('[mock] publish:', topic);
     const callbacks = store.subscriptions.get(topic) || [];
     callbacks.forEach(cb => {
@@ -181,7 +175,7 @@
     });
   };
 
-  api.subscribe = (topic, callback, scope = api.scopes.SELF) => {
+  api.subscribe = (topic, callback) => {
     console.log('[mock] subscribe:', topic);
     if (!store.subscriptions.has(topic)) {
       store.subscriptions.set(topic, []);

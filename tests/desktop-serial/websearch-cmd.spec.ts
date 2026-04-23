@@ -88,7 +88,7 @@ async function ensureWebsearchLoaded(bgWindow: Page) {
     }
 
     // Trigger lazy load via a non-hanging command
-    api.publish('cmd:execute:open web search', {}, api.scopes.GLOBAL);
+    api.publish('cmd:execute:open web search', {});
 
     // Wait for it to be running
     const start = Date.now();
@@ -292,7 +292,7 @@ test.describe('Websearch Cmd Panel Execution @desktop', () => {
           if (settled) return;
           settled = true;
           resolve({ success: true, result });
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish('cmd:execute:kagi', {
           typed: 'kagi test',
@@ -301,7 +301,7 @@ test.describe('Websearch Cmd Panel Execution @desktop', () => {
           search: 'test',
           expectResult: true,
           resultTopic,
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => {
           if (settled) return;

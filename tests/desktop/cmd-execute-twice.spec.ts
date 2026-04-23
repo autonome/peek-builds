@@ -52,8 +52,8 @@ test.beforeAll(async () => {
         unsubscribe?.();
         const cmds = (msg as { commands?: Array<{ name: string }> })?.commands || [];
         resolve(cmds.some(c => c.name === 'hello'));
-      }, api.scopes.GLOBAL);
-      api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+      });
+      api.publish('cmd:query-commands', {});
       setTimeout(() => { unsubscribe?.(); resolve(false); }, 200);
     });
   }, null, { timeout: 15000 });
@@ -79,8 +79,8 @@ async function invoke(bg: Page, name: string, timeoutMs = 5000): Promise<unknown
         settled = true;
         unsubscribe?.();
         resolve(result);
-      }, api.scopes.GLOBAL);
-      api.publish(`cmd:execute:${cmdName}`, { expectResult: true, resultTopic }, api.scopes.GLOBAL);
+      });
+      api.publish(`cmd:execute:${cmdName}`, { expectResult: true, resultTopic });
       setTimeout(() => {
         if (settled) return;
         settled = true;

@@ -538,7 +538,7 @@ describe('createPageWidgetHost', () => {
         extensionId: 'ext-pubsub',
         widgetId: 'w-pubsub',
         title: 'Pubsub Widget',
-      }, api.scopes.GLOBAL);
+      });
 
       assert.equal(host.getWidgets().size, 1);
       assert.ok(host.getWidgets().has('ext-pubsub:w-pubsub'));
@@ -551,13 +551,13 @@ describe('createPageWidgetHost', () => {
       api.publish('widget:register', {
         extensionId: 'ext1',
         widgetId: 'w1',
-      }, api.scopes.GLOBAL);
+      });
 
       api.publish('widget:render', {
         extensionId: 'ext1',
         widgetId: 'w1',
         html: '<p>Pubsub rendered</p>',
-      }, api.scopes.GLOBAL);
+      });
 
       assert.equal(widgetFns._added.length, 1);
     });
@@ -569,26 +569,26 @@ describe('createPageWidgetHost', () => {
       // Register
       api.publish('widget:register', {
         extensionId: 'ext1', widgetId: 'w1', title: 'Lifecycle'
-      }, api.scopes.GLOBAL);
+      });
       assert.equal(host.getWidgets().size, 1);
 
       // Render
       api.publish('widget:render', {
         extensionId: 'ext1', widgetId: 'w1', html: '<p>V1</p>'
-      }, api.scopes.GLOBAL);
+      });
       assert.equal(widgetFns._added.length, 1);
       assert.equal(host.getActiveWidgets().size, 1);
 
       // Update
       api.publish('widget:update', {
         extensionId: 'ext1', widgetId: 'w1', html: '<p>V2</p>', title: 'Updated'
-      }, api.scopes.GLOBAL);
+      });
       assert.equal(widgetFns._updated.length, 1);
 
       // Close
       api.publish('widget:close', {
         extensionId: 'ext1', widgetId: 'w1'
-      }, api.scopes.GLOBAL);
+      });
       assert.equal(host.getActiveWidgets().size, 0);
     });
   });

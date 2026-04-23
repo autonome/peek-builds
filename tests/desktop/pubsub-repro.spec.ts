@@ -39,7 +39,7 @@ test.describe('Pubsub Repro @desktop', () => {
     // Mirrors the websearch pattern at websearch.spec.ts:91-126.
     const extensionLoaded = await sharedBgWindow.evaluate(async () => {
       const api = (window as any).app;
-      api.publish('cmd:execute:pubsub repro', {}, api.scopes.GLOBAL);
+      api.publish('cmd:execute:pubsub repro', {});
       const start = Date.now();
       while (Date.now() - start < 15000) {
         const result = await api.extensions.list();

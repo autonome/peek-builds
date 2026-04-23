@@ -35,7 +35,7 @@ test.describe('Tag Events @desktop', () => {
               tagName: msg.tagName
             });
           }
-        }, api.scopes.GLOBAL);
+        });
 
         // Create new tag to trigger the event
         api.datastore.getOrCreateTag(name);
@@ -86,7 +86,7 @@ test.describe('Tag Events @desktop', () => {
               itemType: msg.itemType
             });
           }
-        }, api.scopes.GLOBAL);
+        });
 
         // Tag the item to trigger the event
         api.datastore.tagItem(itemId, tagId);
@@ -142,7 +142,7 @@ test.describe('Tag Events @desktop', () => {
               itemId: msg.itemId
             });
           }
-        }, api.scopes.GLOBAL);
+        });
 
         // Untag the item to trigger the event
         api.datastore.untagItem(itemId, tagId);
@@ -196,7 +196,7 @@ test.describe('Tag Events @desktop', () => {
             clearTimeout(timeout);
             resolve({ received: true }); // This would be unexpected
           }
-        }, api.scopes.GLOBAL);
+        });
 
         // Try to tag the same item with the same tag again
         api.datastore.tagItem(itemId, tagId);

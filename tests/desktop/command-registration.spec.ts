@@ -29,7 +29,7 @@ test.describe('Command Registration Performance @desktop', () => {
           { name: 'test-batch-cmd-2', description: 'Test batch command 2', source: 'test' },
           { name: 'test-batch-cmd-3', description: 'Test batch command 3', source: 'test' }
         ]
-      }, api.scopes.GLOBAL);
+      });
 
       // Poll for commands to appear (deterministic retry instead of fixed timeout)
       const maxAttempts = 20;
@@ -42,8 +42,8 @@ test.describe('Command Registration Performance @desktop', () => {
           const unsub = api.subscribe('cmd:query-commands-response', (msg: any) => {
             unsub?.();
             resolve(msg.commands || []);
-          }, api.scopes.GLOBAL);
-          api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+          });
+          api.publish('cmd:query-commands', {});
           setTimeout(() => resolve([]), 500);
         });
 

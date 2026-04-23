@@ -68,13 +68,11 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
     (window as any).__reproDiag = {
       apiExists: !!api,
       hasSubscribe: !!(api && api.subscribe),
-      hasScopes: !!(api && api.scopes),
-      scopeGlobal: api && api.scopes && api.scopes.GLOBAL,
     };
-    if (api && api.subscribe && api.scopes) {
+    if (api && api.subscribe) {
       api.subscribe('repro:v2-v2-hello', (msg: unknown) => {
         (window as any).__reproReceived = msg;
-      }, api.scopes.GLOBAL);
+      });
       (window as any).__reproDiag.subscribed = true;
     }
   });
@@ -88,10 +86,9 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
     const diag: any = {
       apiExists: !!api,
       hasPublish: !!(api && api.publish),
-      scopeGlobal: api && api.scopes && api.scopes.GLOBAL,
     };
-    if (api && api.publish && api.scopes) {
-      api.publish('repro:v2-v2-hello', { from: 'core', ts: Date.now() }, api.scopes.GLOBAL);
+    if (api && api.publish) {
+      api.publish('repro:v2-v2-hello', { from: 'core', ts: Date.now() });
       diag.published = true;
     }
     return diag;

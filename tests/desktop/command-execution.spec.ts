@@ -61,14 +61,14 @@ test.describe('Command Execution @desktop', () => {
         const resultTopic = `cmd:execute:${args.name}:result`;
         api.subscribe(resultTopic, (result: any) => {
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(`cmd:execute:${args.name}`, {
           search: args.search,
           params: [],
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => resolve({ error: 'timeout' }), 10000);
       });
@@ -106,14 +106,14 @@ test.describe('Command Execution @desktop', () => {
         const resultTopic = `cmd:execute:${args.name}:result`;
         api.subscribe(resultTopic, (result: any) => {
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(`cmd:execute:${args.name}`, {
           search: args.search,
           params: [],
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => resolve({ error: 'timeout' }), 10000);
       });
@@ -160,14 +160,14 @@ test.describe('Command Execution @desktop', () => {
         const resultTopic = `cmd:execute:${args.name}:result`;
         api.subscribe(resultTopic, (result: any) => {
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(`cmd:execute:${args.name}`, {
           search: args.search,
           params: [],
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => resolve({ error: 'timeout' }), 10000);
       });
@@ -220,14 +220,14 @@ test.describe('Command Execution @desktop', () => {
         const resultTopic = `cmd:execute:${args.name}:result`;
         api.subscribe(resultTopic, (result: any) => {
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(`cmd:execute:${args.name}`, {
           search: args.search,
           params: [],
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => resolve({ error: 'timeout' }), 10000);
       });
@@ -254,14 +254,14 @@ test.describe('Command Execution @desktop', () => {
         const resultTopic = `cmd:execute:${args.name}:result`;
         api.subscribe(resultTopic, (result: any) => {
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(`cmd:execute:${args.name}`, {
           search: args.search,
           params: [],
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => resolve({ error: 'timeout' }), 10000);
       });
@@ -329,13 +329,13 @@ test.describe('Command Execution @desktop', () => {
           const resultTopic = `cmd:execute:${args.name}:result`;
           api.subscribe(resultTopic, (result: any) => {
             resolve(result);
-          }, api.scopes.GLOBAL);
+          });
           api.publish(`cmd:execute:${args.name}`, {
             search: args.search,
             params: [],
             expectResult: true,
             resultTopic
-          }, api.scopes.GLOBAL);
+          });
           setTimeout(() => resolve({ error: 'timeout' }), 10000);
         });
       }, { name: 'tag', search: tag });
@@ -448,14 +448,14 @@ test.describe('Command Execution @desktop', () => {
         const resultTopic = `cmd:execute:${args.name}:result`;
         api.subscribe(resultTopic, (result: any) => {
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(`cmd:execute:${args.name}`, {
           search: args.search,
           params: [],
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => resolve({ error: 'timeout' }), 10000);
       });
@@ -470,14 +470,14 @@ test.describe('Command Execution @desktop', () => {
         const resultTopic = `cmd:execute:${args.name}:result`;
         api.subscribe(resultTopic, (result: any) => {
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(`cmd:execute:${args.name}`, {
           search: '',
           params: [],
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => resolve({ error: 'timeout' }), 10000);
       });
@@ -503,14 +503,14 @@ test.describe('Command Execution @desktop', () => {
         const resultTopic = `cmd:execute:${args.name}:result`;
         api.subscribe(resultTopic, (result: any) => {
           resolve(result);
-        }, api.scopes.GLOBAL);
+        });
 
         api.publish(`cmd:execute:${args.name}`, {
           search: args.search,
           params: [],
           expectResult: true,
           resultTopic
-        }, api.scopes.GLOBAL);
+        });
 
         setTimeout(() => resolve({ error: 'timeout' }), 10000);
       });

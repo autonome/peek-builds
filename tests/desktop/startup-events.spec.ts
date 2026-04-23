@@ -27,7 +27,7 @@ test.describe('Startup Phase Events @desktop', () => {
       // Subscribe to startup phase events
       api.subscribe('ext:startup:phase', (msg: any) => {
         received = true;
-      }, api.scopes.GLOBAL);
+      });
 
       // The subscription should be set up without error
       return { subscriptionCreated: true };
@@ -66,8 +66,8 @@ test.describe('Startup Phase Events @desktop', () => {
       const queryCommands = () => new Promise((resolve) => {
         api.subscribe('cmd:query-commands-response', (msg: any) => {
           resolve(msg.commands || []);
-        }, api.scopes.GLOBAL);
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+        });
+        api.publish('cmd:query-commands', {});
         setTimeout(() => resolve([]), 1000);
       });
 

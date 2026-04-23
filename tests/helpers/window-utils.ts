@@ -225,11 +225,8 @@ interface AppApi {
   extensions: {
     list(): Promise<ExtensionListResult>;
   };
-  subscribe(event: string, callback: (msg: unknown) => void, scope: unknown): () => void;
-  publish(event: string, data: unknown, scope: unknown): void;
-  scopes: {
-    GLOBAL: unknown;
-  };
+  subscribe(event: string, callback: (msg: unknown) => void): () => void;
+  publish(event: string, data: unknown): void;
 }
 
 interface WindowWithApp extends Window {
@@ -290,8 +287,7 @@ export async function waitForPubsubEvent(
             resolved = true;
             clearTimeout(t);
             resolve(msg);
-          },
-          api.scopes.GLOBAL
+          }
         );
       });
     },
@@ -328,11 +324,10 @@ export async function waitForCommand(
             resolved = true;
             const response = msg as QueryCommandsResponse;
             resolve(response.commands?.some((c) => c.name === cmd) || false);
-          },
-          api.scopes.GLOBAL
+          }
         );
 
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+        api.publish('cmd:query-commands', {});
         setTimeout(() => { if (!resolved) { resolved = true; resolve(false); } }, 500);
       });
     }, commandName);
@@ -365,11 +360,10 @@ export async function queryCommandsWithRetry(
               resolved = true;
               const response = msg as QueryCommandsResponse;
               resolve((response.commands as CommandInfo[]) || []);
-            },
-            api.scopes.GLOBAL
+            }
           );
 
-          api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+          api.publish('cmd:query-commands', {});
           setTimeout(() => { if (!resolved) { resolved = true; resolve(null); } }, 1000);
         });
 

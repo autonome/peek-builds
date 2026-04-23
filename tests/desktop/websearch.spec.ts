@@ -93,7 +93,7 @@ test.describe('Web Search Extension @desktop', () => {
     const extensionLoaded = await sharedBgWindow.evaluate(async () => {
       const api = (window as any).app;
       // Trigger the lazy stub — this loads the extension
-      api.publish('cmd:execute:open web search', {}, api.scopes.GLOBAL);
+      api.publish('cmd:execute:open web search', {});
 
       // Wait for the extension to be running
       const start = Date.now();

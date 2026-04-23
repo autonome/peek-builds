@@ -48,8 +48,8 @@ test.describe('Core Functionality @desktop', () => {
       const queryCommands = () => new Promise((resolve) => {
         api.subscribe('cmd:query-commands-response', (msg: any) => {
           resolve(msg.commands || []);
-        }, api.scopes.GLOBAL);
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+        });
+        api.publish('cmd:query-commands', {});
         setTimeout(() => resolve([]), 1000);
       });
 
@@ -90,8 +90,8 @@ test.describe('Core Functionality @desktop', () => {
             quitCmd: commands.find((c: any) => c.name === 'quit'),
             restartCmd: commands.find((c: any) => c.name === 'restart')
           });
-        }, api.scopes.GLOBAL);
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+        });
+        api.publish('cmd:query-commands', {});
         setTimeout(() => resolve({ hasQuit: false, hasRestart: false }), 2000);
       });
     });
@@ -114,8 +114,8 @@ test.describe('Core Functionality @desktop', () => {
             hasReloadExtension: !!reloadCmd,
             description: reloadCmd?.description
           });
-        }, api.scopes.GLOBAL);
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+        });
+        api.publish('cmd:query-commands', {});
         setTimeout(() => resolve({ hasReloadExtension: false }), 2000);
       });
     });

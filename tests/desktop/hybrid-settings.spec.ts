@@ -44,12 +44,12 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
             shortcutKey: msg?.prefs?.shortcutKey,
             isDefault: msg?.prefs?.shortcutKey === defaultShortcut
           });
-        }, api.scopes.GLOBAL);
+        });
 
         // Poke cmd to report its settings - use the default to not change it
         api.publish('cmd:settings-update', {
           data: { prefs: { shortcutKey: defaultShortcut } }
-        }, api.scopes.GLOBAL);
+        });
       });
     });
 
@@ -90,12 +90,12 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
             receivedShortcut: msg?.prefs?.shortcutKey,
             matchesExpected: msg?.prefs?.shortcutKey === shortcut
           });
-        }, api.scopes.GLOBAL);
+        });
 
         // Update cmd settings via pubsub (this is how Settings UI does it)
         api.publish('cmd:settings-update', {
           data: { prefs: { shortcutKey: shortcut } }
-        }, api.scopes.GLOBAL);
+        });
       });
     }, customShortcut);
 
@@ -193,12 +193,12 @@ test.describe('Extension Settings in Hybrid Mode @desktop', () => {
               // Check if it's NOT the default (Option+Space)
               isNotDefault: msg?.prefs?.shortcutKey !== 'Option+Space'
             });
-          }, api.scopes.GLOBAL);
+          });
 
           // Poke cmd to report its current settings (update with same value)
           api.publish('cmd:settings-update', {
             data: { prefs: { shortcutKey: expectedShortcut } }
-          }, api.scopes.GLOBAL);
+          });
         });
       }, customShortcut);
 

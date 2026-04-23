@@ -79,9 +79,9 @@ test.describe('Hybrid Extension Mode @desktop', () => {
             // settings comes from core (via consolidated cmd)
             hasSettingsCommand: msg.commands?.some((c: any) => c.name === 'settings')
           });
-        }, api.scopes.GLOBAL);
+        });
 
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+        api.publish('cmd:query-commands', {});
       });
     });
 
@@ -110,9 +110,9 @@ test.describe('Hybrid Extension Mode @desktop', () => {
             received: true,
             commandCount: msg.commands?.length || 0
           });
-        }, api.scopes.GLOBAL);
+        });
 
-        api.publish('cmd:query-commands', {}, api.scopes.GLOBAL);
+        api.publish('cmd:query-commands', {});
       });
     });
 
