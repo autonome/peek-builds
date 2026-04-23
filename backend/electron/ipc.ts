@@ -1053,6 +1053,14 @@ export function registerWindowHandlers(): void {
       getLazyTileManifest,
     );
 
+    // Normalized URL for the special-case exact-match checks below.
+    // Without stripping the hash/query, a restored window with a URL like
+    // `peek://app/settings/settings.html#extensions` fails every `url === '…'`
+    // comparison → no tile-preload → `window.app` is undefined → the
+    // renderer throws on first access and the settings window renders
+    // blank. Session restore repros this; manual Cmd+, does not.
+    const urlNoHash = url.split('#')[0].split('?')[0];
+
     // When a special-case URL mints an ad-hoc trustedBuiltin token below, we
     // must also register the resulting BrowserWindow with the tile broadcaster
     // after creation so pubsub events (cmd:register, tag:item-added, …) are
@@ -1062,7 +1070,7 @@ export function registerWindowHandlers(): void {
     // Diagnostic is a developer-only utility; not a registered v2 tile but
     // needs tile-preload so api.backup.* / api.shell.openPath strict shims work.
     // Mint a trustedBuiltin token on-the-fly (same pattern as hud-glue / cmd-glue).
-    if (!tileWebPrefs && url === 'peek://app/diagnostic.html') {
+    if (!tileWebPrefs && urlNoHash === 'peek://app/diagnostic.html') {
       const DIAG_ID = 'diagnostic';
       const DIAG_ENTRY = 'main';
       const diagGrant = createTrustedBuiltinGrant(DIAG_ID);
@@ -1083,7 +1091,7 @@ export function registerWindowHandlers(): void {
     // Special-case: peek://app/settings/settings.html is not a registered v2
     // tile (no manifest), but it must load via tile-preload so its api.<ns>.*
     // calls reach the strict tile:* IPC handlers.
-    if (!tileWebPrefs && url === 'peek://app/settings/settings.html') {
+    if (!tileWebPrefs && urlNoHash === 'peek://app/settings/settings.html') {
       const settingsGrant = createTrustedBuiltinGrant('settings');
       const settingsToken = generateToken('settings', 'main', settingsGrant);
       tileWebPrefs = {
@@ -1104,7 +1112,7 @@ export function registerWindowHandlers(): void {
     // opened on-demand by app/hud/background.js via api.window.open(). It
     // hosts webview widget cards (app/hud/hud.js) and needs tile-preload for
     // api.settings.get / api.window.resize. No v2 manifest — trustedBuiltin.
-    if (!tileWebPrefs && url === 'peek://hud/hud.html') {
+    if (!tileWebPrefs && urlNoHash === 'peek://hud/hud.html') {
       const HUD_OVERLAY_ID = 'hud-overlay';
       const HUD_OVERLAY_ENTRY = 'main';
       const hudOverlayGrant = createTrustedBuiltinGrant(HUD_OVERLAY_ID);
@@ -1125,7 +1133,7 @@ export function registerWindowHandlers(): void {
 
     // Special-case: peek://app/datastore/viewer.html uses api.datastore.* to
     // display raw DB tables — not a registered v2 tile but needs tile-preload.
-    if (!tileWebPrefs && url === 'peek://app/datastore/viewer.html') {
+    if (!tileWebPrefs && urlNoHash === 'peek://app/datastore/viewer.html') {
       const VIEWER_ID = 'datastore-viewer';
       const VIEWER_ENTRY = 'main';
       const viewerGrant = createTrustedBuiltinGrant(VIEWER_ID);
@@ -1148,7 +1156,7 @@ export function registerWindowHandlers(): void {
     // on-demand from the cmd resident renderer. peek://cmd/chain-editor.html
     // is the chain editor opened from the panel. Both need tile-preload to call
     // api.window.*, api.context.*, api.datastore.*, api.publish/subscribe, etc.
-    if (!tileWebPrefs && (url === 'peek://cmd/panel.html' || url === 'peek://cmd/chain-editor.html')) {
+    if (!tileWebPrefs && (urlNoHash === 'peek://cmd/panel.html' || urlNoHash === 'peek://cmd/chain-editor.html')) {
       const CMD_UI_ID = 'cmd-ui';
       const cmdUiEntry = url.endsWith('panel.html') ? 'panel' : 'chain-editor';
       const cmdUiGrant = createTrustedBuiltinGrant(CMD_UI_ID);
@@ -1466,11 +1474,23 @@ export function registerWindowHandlers(): void {
     // catches page host errors. The label uses the original url for clarity.
     const consoleLabel = useCanvas ? `page-host:${url.substring(0, 60)}` : url.replace('peek://', '');
     win.webContents.on('console-message', (event) => {
-      const level = parseInt(String(event.level), 10);
-      if (level >= 2) {
-        console.error(`[${consoleLabel}] ${event.message}`);
-      } else if (DEBUG && url.startsWith('peek://')) {
-        console.log(`[${consoleLabel}] ${event.message}`);
+      // Electron 40 changed console-message event shape: `level` is a string
+      // literal ('info'|'warning'|'error'|...), not an integer. The old
+      // `parseInt(level) >= 2` numeric filter silently dropped ALL renderer
+      // output here (same bug fixed for core-glue.ts in 2026-04-21). Forward
+      // warnings and errors via console.error; debug-level via console.log
+      // under DEBUG.
+      try {
+        const asAny = event as unknown as { level?: unknown; message?: unknown };
+        const level = String(asAny.level ?? '');
+        const message = String(asAny.message ?? '');
+        if (level === 'warning' || level === 'error') {
+          console.error(`[${consoleLabel}] ${level}: ${message}`);
+        } else if (DEBUG && url.startsWith('peek://')) {
+          console.log(`[${consoleLabel}] ${level}: ${message}`);
+        }
+      } catch {
+        /* logging must never throw */
       }
     });
 

@@ -280,14 +280,17 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   // stdout. Errors/warnings always forwarded; info/debug only under DEBUG.
   win.webContents.on('console-message', (event) => {
     try {
-      const level = parseInt(String((event as { level?: unknown }).level), 10);
-      const message = String((event as { message?: unknown }).message ?? '');
-      const levelLabels = ['verbose', 'info', 'warning', 'error'];
-      const levelLabel = levelLabels[level] || 'info';
-      if (level >= 2) {
-        console.error(`[tile:${tileId}:${entryId}] [${levelLabel}] ${message}`);
+      // Electron 40: `level` is a string literal ('info'|'warning'|'error'|
+      // 'verbose'), not an integer. The old `parseInt(level) >= 2` numeric
+      // filter returned NaN and silently dropped ALL tile renderer output
+      // (same bug fixed for core-glue.ts in 2026-04-21 and ipc.ts here).
+      const asAny = event as unknown as { level?: unknown; message?: unknown };
+      const level = String(asAny.level ?? '');
+      const message = String(asAny.message ?? '');
+      if (level === 'warning' || level === 'error') {
+        console.error(`[tile:${tileId}:${entryId}] [${level}] ${message}`);
       } else if (DEBUG) {
-        console.log(`[tile:${tileId}:${entryId}] [${levelLabel}] ${message}`);
+        console.log(`[tile:${tileId}:${entryId}] [${level}] ${message}`);
       }
     } catch {
       // Logging must never throw.

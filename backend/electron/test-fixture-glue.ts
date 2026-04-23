@@ -110,14 +110,15 @@ export async function initTestFixture(opts: InitTestFixtureOptions): Promise<voi
 
   win.webContents.on('console-message', (event) => {
     try {
-      const level = parseInt(String((event as { level?: unknown }).level), 10);
-      const message = String((event as { message?: unknown }).message ?? '');
-      const levelLabels = ['verbose', 'info', 'warning', 'error'];
-      const levelLabel = levelLabels[level] || 'info';
-      if (level >= 2) {
-        console.error(`[test-fixture:resident] [${levelLabel}] ${message}`);
+      // Electron 40: `level` is a string literal, not an integer.
+      // See core-glue.ts / ipc.ts / tile-launcher.ts for the same fix.
+      const asAny = event as unknown as { level?: unknown; message?: unknown };
+      const level = String(asAny.level ?? '');
+      const message = String(asAny.message ?? '');
+      if (level === 'warning' || level === 'error') {
+        console.error(`[test-fixture:resident] [${level}] ${message}`);
       } else if (DEBUG) {
-        console.log(`[test-fixture:resident] [${levelLabel}] ${message}`);
+        console.log(`[test-fixture:resident] [${level}] ${message}`);
       }
     } catch {
       /* logging must never throw */
