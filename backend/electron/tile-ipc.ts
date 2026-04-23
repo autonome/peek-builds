@@ -3,7 +3,6 @@
  *
  * Handles:
  * - tile:validate-token — validate a capability token and return grants
- * - tile:ready — tile signals initialization complete
  * - tile:pubsub:* — scoped pubsub operations
  * - tile:command:* — command registration and results
  * - tile:window:* — window management
@@ -24,7 +23,6 @@ import path from 'node:path';
 import {
   validateToken,
   getGrantForToken,
-  signalTileReady,
   getTileWindow,
   isTileLoaded,
   unloadTile,
@@ -476,20 +474,10 @@ export function registerTileIpcHandlers(): void {
   });
 
   // ── Tile Ready ──
-
-  ipcMain.on('tile:ready', (_event, args: {
-    tileId: string;
-    tileEntry: string;
-  }) => {
-    // tile:ready does not carry a capability token (the renderer
-    // signals readiness by tile id + entry id only — the launcher
-    // already knows which window sent it via the tileWindows map).
-    // Phase 8 will tighten this: lifecycle becomes private IPC, not
-    // a pubsub-reachable surface, at which point the sender-frame
-    // check applies there too. For Phase 2 there is no token on the
-    // wire to cross-check against.
-    signalTileReady(args.tileId, args.tileEntry);
-  });
+  //
+  // Private lifecycle IPC (`tile:lifecycle:ready` / `tile:lifecycle:shutdown`)
+  // moved to tile-lifecycle.ts in Phase 4. See
+  // docs/pubsub-state-machine.md §Topics that are NOT pubsub.
 
   // ── PubSub ──
 

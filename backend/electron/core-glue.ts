@@ -52,6 +52,7 @@ import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
 import { registerTrustedBuiltinWindow } from './tile-launcher.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
+import { registerBgWindow } from './tile-lifecycle.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession } from './session-partition.js';
 
@@ -93,6 +94,13 @@ export async function initCore(opts: InitCoreOptions): Promise<BrowserWindow> {
   // Belt-and-suspenders: main.ts::initialize() already calls this
   // centrally, but the helper is idempotent. Documents the dependency.
   ensureTileIpcHandlers();
+
+  // Declare this renderer as bgWindow so the subscribe-before-publish
+  // latch in tile-lifecycle.ts knows which `tile:lifecycle:ready`
+  // arrival unlatches feature-tile loads. Must happen BEFORE the
+  // BrowserWindow is created — the tile's preload sends ready on the
+  // next event-loop tick after `api.initialize()` resolves.
+  registerBgWindow(CORE_ID, CORE_ENTRY_ID);
 
   const electron = requireElectron('electron') as typeof import('electron');
   const BrowserWindowCtor = electron.BrowserWindow;

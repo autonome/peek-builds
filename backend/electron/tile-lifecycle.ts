@@ -2,23 +2,31 @@
  * tile-lifecycle — Main-process enforcement engine for the tile FSM.
  *
  * Owns the authoritative `tileId → state` map. Wires renderer events
- * (`tile:ready` pubsub, `render-process-gone` on BrowserWindow
- * webContents, window close) to state transitions. All callers that
- * mutate tile lifecycle go through this module rather than poking
- * BrowserWindow / tileWindows / token registries directly.
+ * (`tile:lifecycle:ready` private IPC, `render-process-gone` on
+ * BrowserWindow webContents, window close) to state transitions. All
+ * callers that mutate tile lifecycle go through this module rather
+ * than poking BrowserWindow / tileWindows / token registries directly.
  *
  * The transition table lives in `./tile-fsm.ts` as a pure module
  * (no electron / node imports). This file is the side-effectful
  * engine that applies those transitions against concrete electron
  * primitives.
  *
- * Phase A (this commit): exports + state store + transition helper.
- * No callers are wired yet. Phase D replaces the direct uses of
- * `launchTile` / `registerTrustedBuiltinWindow` / ad-hoc token revoke
- * calls with `requestLoad()` / `requestShow()` / `requestShutdown()`.
+ * Phase 4: ownership of the private lifecycle IPC channels
+ * (`tile:lifecycle:ready` / `tile:lifecycle:shutdown`) moves here
+ * from tile-ipc.ts. Also introduces:
+ *   - `registerBgWindow()` + bgWindow-ready latch: the subscribe-
+ *     before-publish invariant. No non-bgWindow tile may transition
+ *     REGISTERED→LOADING until bgWindow signals `tile:lifecycle:ready`.
+ *   - `tile:state-changed` System pubsub topic: a read-only mirror of
+ *     every lifecycle transition. Observers (drift detectors, HUD
+ *     widgets) subscribe; publishers must not publish it directly.
  *
- * See docs/tile-lifecycle-fsm.md.
+ * See docs/pubsub-state-machine.md §Topics that are NOT pubsub
+ * (private lifecycle IPC) and §Subscribe-before-publish invariant.
  */
+
+import { createRequire } from 'node:module';
 
 import {
   STATES,
@@ -27,8 +35,44 @@ import {
   isDispatchable,
   acceptsDynamicRegistration,
 } from './tile-fsm.js';
+import { publish, scopes, getSystemAddress } from './pubsub.js';
+
+// Lazy-load ipcMain via CommonJS require so this module can be imported
+// under ELECTRON_RUN_AS_NODE=1 (where electron's named ESM exports are
+// empty). Consumers that never actually call `registerTileLifecycleIpc`
+// (e.g. unit tests) don't trigger the require. Same pattern as
+// tile-launcher.ts::getBrowserWindowCtor.
+const requireElectron = createRequire(import.meta.url);
+let _ipcMain: typeof import('electron').ipcMain | null = null;
+function getIpcMain(): typeof import('electron').ipcMain {
+  if (_ipcMain) return _ipcMain;
+  const electron = requireElectron('electron') as typeof import('electron');
+  _ipcMain = electron.ipcMain;
+  return _ipcMain;
+}
 
 export { STATES, TRIGGERS, isDispatchable, acceptsDynamicRegistration };
+
+/**
+ * Injected side-effect callback for the private `tile:lifecycle:ready`
+ * IPC handler. Called with `(tileId, entryId)` after the bgWindow-gate
+ * latch (if applicable) has been resolved.
+ *
+ * Historically this was `tile-launcher.signalTileReady`. Registering it
+ * via a setter rather than a direct import keeps the dependency arrow
+ * tile-launcher → tile-lifecycle (one-way) and avoids a circular
+ * import — see docs/pubsub-state-machine.md §Module layout.
+ */
+type ReadyCallback = (tileId: string, entryId: string) => void;
+let onReadyCallback: ReadyCallback | null = null;
+
+/**
+ * Inject the `signalTileReady` callback. Called once at startup from
+ * `main.ts::initialize()` before `registerTileLifecycleIpc()`.
+ */
+export function setReadyCallback(cb: ReadyCallback): void {
+  onReadyCallback = cb;
+}
 
 // ---------------------------------------------------------------------------
 // State store
@@ -66,6 +110,97 @@ function key(tileId: string, entryId: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// bgWindow readiness gate — subscribe-before-publish invariant
+// ---------------------------------------------------------------------------
+//
+// Core subscribers (cmd registry, noun registry, core domain topics) live
+// inside the bgWindow renderer (`app/background.html` → `app/index.js`).
+// Those subscribers are registered synchronously during `init()`. Until
+// bgWindow's `tile:lifecycle:ready` IPC arrives, we MUST hold off any
+// other tile's REGISTERED→LOADING transition — otherwise the other
+// tile's first publishes (`cmd:register`, etc.) race the subscribers
+// and are silently dropped.
+//
+// Implementation: a simple one-shot latch. Once bgWindow signals ready,
+// the latch resolves and stays resolved for the rest of the process
+// lifetime. Crashing bgWindow mid-boot is a separate concern (Phase 7
+// timeout UX) — for Phase 4 a permanent latch is sufficient.
+
+interface BgWindowRegistration {
+  tileId: string;
+  entryId: string;
+}
+let bgWindow: BgWindowRegistration | null = null;
+let bgWindowReady = false;
+let bgWindowReadyResolve: (() => void) | null = null;
+let bgWindowReadyPromise: Promise<void> = new Promise<void>((resolve) => {
+  bgWindowReadyResolve = resolve;
+});
+
+/**
+ * Declare which tile entry is the core bgWindow. Called once at startup
+ * from `core-glue.ts::initCore()` (before the window signals ready).
+ *
+ * A second registration replaces the first — tests exercise this by
+ * calling `resetForTests()` between scenarios. In production there is
+ * exactly one bgWindow.
+ */
+export function registerBgWindow(tileId: string, entryId: string): void {
+  bgWindow = { tileId, entryId };
+}
+
+/** True iff bgWindow has signaled `tile:lifecycle:ready`. */
+export function isBgWindowReady(): boolean {
+  return bgWindowReady;
+}
+
+/** Promise that resolves when bgWindow signals ready. Never rejects. */
+export function waitForBgWindowReady(): Promise<void> {
+  return bgWindowReadyPromise;
+}
+
+/**
+ * Check whether a tile is the registered bgWindow.
+ * Returns false if bgWindow has not been registered yet.
+ */
+function isBgWindow(tileId: string, entryId: string): boolean {
+  return !!bgWindow && bgWindow.tileId === tileId && bgWindow.entryId === entryId;
+}
+
+/**
+ * Resolve the latch. Called when bgWindow's `tile:lifecycle:ready`
+ * IPC lands. Idempotent.
+ */
+function markBgWindowReady(): void {
+  if (bgWindowReady) return;
+  bgWindowReady = true;
+  if (bgWindowReadyResolve) {
+    const r = bgWindowReadyResolve;
+    bgWindowReadyResolve = null;
+    r();
+  }
+}
+
+/**
+ * Async gate for `REGISTERED → LOADING` transitions.
+ *
+ * - bgWindow itself: resolves immediately (bgWindow must be allowed
+ *   to load before it can signal ready).
+ * - Any other tile: awaits the latch.
+ * - If no bgWindow has been registered yet we resolve immediately.
+ *   This preserves backwards compatibility with unit tests /
+ *   trustedBuiltin paths that never call `registerBgWindow()`.
+ *   Production always registers bgWindow before launching any feature
+ *   tile (see `main.ts` wiring).
+ */
+export async function requestLoad(tileId: string, entryId: string): Promise<TransitionResult> {
+  if (bgWindow && !isBgWindow(tileId, entryId) && !bgWindowReady) {
+    await bgWindowReadyPromise;
+  }
+  return transition(tileId, entryId, TRIGGERS.LOAD, { source: 'requestLoad' });
+}
+
+// ---------------------------------------------------------------------------
 // Transition — the only way state changes
 // ---------------------------------------------------------------------------
 
@@ -79,9 +214,10 @@ export interface TransitionResult {
 /**
  * Request a transition. Returns a result object. Never throws.
  *
- * On success, updates the internal state map and records the
- * transition. On failure, leaves the state map unchanged and returns
- * an error — caller decides whether to log, surface, or ignore.
+ * On success, updates the internal state map, records the transition,
+ * and publishes the observer-mirror `tile:state-changed` System topic.
+ * On failure, leaves the state map unchanged and returns an error —
+ * caller decides whether to log, surface, or ignore.
  *
  * Rationale for never throwing: the enforcement engine is called from
  * IPC handlers, event listeners, and renderer-driven requests. Throws
@@ -113,15 +249,115 @@ export function transition(
     records.set(k, { tileId, entryId, state: result.to });
   }
 
+  const now = Date.now();
   lastTransition.set(k, {
     from,
     to: result.to,
     trigger,
-    timestamp: Date.now(),
+    timestamp: now,
     context,
   });
 
+  // Publish the System-owned observer-mirror topic. Every transition
+  // fires this — drift detectors (Phase 8) and HUD widgets that want
+  // to display tile state subscribe to it. Publishers must not publish
+  // `tile:state-changed` directly; the authorization-rules table
+  // restricts writes to System.
+  try {
+    publish(getSystemAddress(), scopes.GLOBAL, 'tile:state-changed', {
+      tileId,
+      entryId,
+      from,
+      to: result.to,
+      trigger,
+      ts: now,
+    });
+  } catch (err) {
+    // Observer-topic publish failures must not corrupt the transition —
+    // the FSM state is authoritative regardless of whether observers
+    // got the mirror event. Log and move on.
+    console.error('[tile-lifecycle] tile:state-changed publish threw:', err);
+  }
+
   return { ok: true, from, to: result.to };
+}
+
+// ---------------------------------------------------------------------------
+// Private lifecycle IPC — tile:lifecycle:ready / tile:lifecycle:shutdown
+// ---------------------------------------------------------------------------
+//
+// These are NOT pubsub topics. They're private IPC between a tile's
+// preload and this module. See docs/pubsub-state-machine.md §Topics
+// that are NOT pubsub.
+//
+// `tile:lifecycle:ready`: preload → main, sent once after the tile
+//   has called `api.initialize()`. Causes the LOADING → READY
+//   transition (via the injected ready callback). If the signaller is
+//   the registered bgWindow, also resolves the subscribe-before-publish
+//   latch.
+//
+// `tile:lifecycle:shutdown`: main → preload, sent during the unload
+//   grace window. Lives here as a channel name constant; the actual
+//   sends live in tile-launcher.ts where the BrowserWindow handle
+//   is in scope.
+
+/** Channel name constants — exported so tile-launcher / tile-preload stay in sync. */
+export const TILE_LIFECYCLE_READY_CHANNEL = 'tile:lifecycle:ready';
+export const TILE_LIFECYCLE_SHUTDOWN_CHANNEL = 'tile:lifecycle:shutdown';
+
+let lifecycleIpcRegistered = false;
+
+/**
+ * Register the private lifecycle IPC handlers. Called once from
+ * `main.ts::initialize()` (alongside `ensureTileIpcHandlers()`).
+ * Idempotent.
+ */
+export function registerTileLifecycleIpc(): void {
+  if (lifecycleIpcRegistered) return;
+  lifecycleIpcRegistered = true;
+
+  const ipcMain = getIpcMain();
+  ipcMain.on(TILE_LIFECYCLE_READY_CHANNEL, (_event, args: {
+    tileId: string;
+    tileEntry: string;
+  }) => {
+    // tile:lifecycle:ready does not carry a capability token (the
+    // renderer signals readiness by tile id + entry id only — the
+    // launcher already knows which window sent it via the tileWindows
+    // map). Phase 8 introduces a main-process IPC gate that will add
+    // sender-frame verification here too.
+    if (!args || typeof args.tileId !== 'string' || typeof args.tileEntry !== 'string') {
+      console.error('[tile-lifecycle] tile:lifecycle:ready dropped: malformed payload');
+      return;
+    }
+
+    // If the signaller is the registered bgWindow, unlatch first. Doing
+    // this BEFORE the ready callback ensures any observer that reacts
+    // to the LOADING → READY transition on bgWindow already sees
+    // bgWindow marked ready in the same tick.
+    if (isBgWindow(args.tileId, args.tileEntry)) {
+      markBgWindowReady();
+    }
+
+    if (onReadyCallback) {
+      onReadyCallback(args.tileId, args.tileEntry);
+    } else {
+      console.error('[tile-lifecycle] tile:lifecycle:ready arrived before setReadyCallback() — dropping');
+    }
+  });
+}
+
+/** @internal Test hook: simulate a `tile:lifecycle:ready` IPC arrival without wiring ipcMain. */
+export function __simulateLifecycleReadyForTest(tileId: string, entryId: string): void {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('[tile-lifecycle] __simulateLifecycleReadyForTest called outside NODE_ENV=test');
+  }
+  if (isBgWindow(tileId, entryId)) {
+    markBgWindowReady();
+  }
+  if (onReadyCallback) {
+    onReadyCallback(tileId, entryId);
+  }
 }
 
 // Deliberately no `setStateUnchecked()` — every state change MUST go
@@ -178,4 +414,10 @@ export function resetForTests(): void {
   }
   records.clear();
   lastTransition.clear();
+  bgWindow = null;
+  bgWindowReady = false;
+  bgWindowReadyPromise = new Promise<void>((resolve) => {
+    bgWindowReadyResolve = resolve;
+  });
+  onReadyCallback = null;
 }

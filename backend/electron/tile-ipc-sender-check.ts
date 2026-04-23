@@ -24,7 +24,7 @@
  *     `will-attach-webview` where Electron doesn't surface the guest
  *     wc id), the first IPC frame that carries the token binds
  *     `event.sender.id` atomically. Legitimate renderers always send
- *     their own first frame (tile:validate-token or tile:ready during
+ *     their own first frame (tile:validate-token or tile:lifecycle:ready during
  *     preload) before any other code can access the token, so TOFU is
  *     race-free in practice.
  *

@@ -17,7 +17,11 @@ import { initTestFixture } from './test-fixture-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled, type ExtensionManifest, type ManifestCommand, type ManifestShortcut } from './extensions.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
-import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
+import {
+  registerTileLifecycleIpc,
+  setReadyCallback as setLifecycleReadyCallback,
+} from './tile-lifecycle.js';
+import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, relaunchTile, configureTileLauncher } from './tile-launcher.js';
 import { installLoadOnDispatchHook } from './tile-lazy.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
@@ -180,6 +184,16 @@ export async function initialize(): Promise<void> {
   // `tile:pubsub:*` IPC sends — handlers were historically registered
   // lazily from `loadV2Tile()` which runs after core glue.
   ensureTileIpcHandlers();
+
+  // Register the private `tile:lifecycle:ready` IPC handler. Must also
+  // run before any BrowserWindow is created; the core background
+  // renderer launched by `initCore()` sends `tile:lifecycle:ready` from
+  // its preload `api.initialize()` resolution tick. `setReadyCallback`
+  // injects the tile-launcher's `signalTileReady` so the lifecycle
+  // module can drive LOADING→READY without importing tile-launcher
+  // (one-way dependency: tile-launcher → tile-lifecycle).
+  setLifecycleReadyCallback(signalTileReady);
+  registerTileLifecycleIpc();
 
   // Resolve & cache the tile-preload path early (also used by `initCore`
   // from entry.ts before `loadExtensions` runs). Preload source is
@@ -1563,8 +1577,8 @@ export function loadClosedWindowStack(): void {
 /**
  * Shutdown the application
  *
- * Fires the `app:shutdown` pubsub event, then broadcasts `tile:shutdown` to
- * every live v2 tile and waits one grace period so tile `api.onShutdown()`
+ * Fires the `app:shutdown` pubsub event, then broadcasts `tile:lifecycle:shutdown`
+ * to every live v2 tile and waits one grace period so tile `api.onShutdown()`
  * callbacks can run before the BrowserWindows are closed. Finally closes the
  * database.
  *

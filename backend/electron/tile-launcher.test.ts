@@ -103,13 +103,13 @@ describe('shutdownTile (registry-backed)', () => {
     __clearTileStateForTest();
   });
 
-  it('sends tile:shutdown to the registered window and then closes it', async () => {
+  it('sends tile:lifecycle:shutdown to the registered window and then closes it', async () => {
     const win = makeFakeWin();
     __setTileWindowForTest('fx-tile', 'bg', win);
 
     await shutdownTile('fx-tile', 'bg');
 
-    assert.deepStrictEqual(win._sends, ['tile:shutdown']);
+    assert.deepStrictEqual(win._sends, ['tile:lifecycle:shutdown']);
     assert.strictEqual(win._closed, true);
   });
 
@@ -124,14 +124,14 @@ describe('unloadTile (registry-backed)', () => {
     __clearTileStateForTest();
   });
 
-  it('sends tile:shutdown before closing and clears registry entry', async () => {
+  it('sends tile:lifecycle:shutdown before closing and clears registry entry', async () => {
     const win = makeFakeWin();
     __setTileWindowForTest('unload-tile', 'bg', win);
     assert.strictEqual(isTileLoaded('unload-tile', 'bg'), true);
 
     await unloadTile('unload-tile', 'bg');
 
-    assert.deepStrictEqual(win._sends, ['tile:shutdown']);
+    assert.deepStrictEqual(win._sends, ['tile:lifecycle:shutdown']);
     assert.strictEqual(win._closed, true);
     assert.strictEqual(isTileLoaded('unload-tile', 'bg'), false);
   });
@@ -145,9 +145,9 @@ describe('unloadTile (registry-backed)', () => {
 // ordering via a unit-friendly replica:
 
 describe('shutdownTile ordering contract', () => {
-  it('sends tile:shutdown IPC, then closes after the grace delay', async () => {
+  it('sends tile:lifecycle:shutdown IPC, then closes after the grace delay', async () => {
     // This test mirrors the exact sequence shutdownTile follows:
-    //   webContents.send('tile:shutdown')   (immediate)
+    //   webContents.send('tile:lifecycle:shutdown')   (immediate)
     //   await sleep(grace)
     //   win.close()                         (after)
     // It guards against regressions that move win.close() before the IPC send
@@ -168,7 +168,7 @@ describe('shutdownTile ordering contract', () => {
     async function shutdown(win: typeof fakeWin): Promise<void> {
       if (!win || win.isDestroyed()) return;
       if (!win.webContents.isDestroyed()) {
-        win.webContents.send('tile:shutdown');
+        win.webContents.send('tile:lifecycle:shutdown');
       }
       await new Promise<void>((resolve) => setTimeout(resolve, grace));
       if (!win.isDestroyed()) {
@@ -180,7 +180,7 @@ describe('shutdownTile ordering contract', () => {
     await shutdown(fakeWin);
     const elapsed = Date.now() - t0;
 
-    assert.deepStrictEqual(events, ['send:tile:shutdown', 'close']);
+    assert.deepStrictEqual(events, ['send:tile:lifecycle:shutdown', 'close']);
     assert.ok(elapsed >= grace - 10, `should have waited at least ~${grace}ms, waited ${elapsed}ms`);
   });
 
@@ -198,7 +198,7 @@ describe('shutdownTile ordering contract', () => {
     async function shutdown(win: typeof fakeWin): Promise<void> {
       if (!win || win.isDestroyed()) return;
       if (!win.webContents.isDestroyed()) {
-        win.webContents.send('tile:shutdown');
+        win.webContents.send('tile:lifecycle:shutdown');
       }
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
       if (!win.isDestroyed()) {

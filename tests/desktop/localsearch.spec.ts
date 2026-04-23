@@ -38,13 +38,13 @@ test.describe('Lists Extension @desktop', () => {
   test('lists window opens via command', async () => {
     // Ensure the lists command is registered before executing it.
     // The lists tile is lazy-loaded — the background tile must be loaded and
-    // tile:ready received before the execute handler is registered.
+    // tile:lifecycle:ready received before the execute handler is registered.
     await waitForCommand(sharedBgWindow, 'lists', 15000);
 
     // Start waiting for the window BEFORE publishing the command so we don't
     // miss a fast creation (getWindow polls every 200ms and returns immediately
     // when the window appears — the 15s cap handles the full lazy-load chain:
-    // background-tile launch → tile:ready → execute replay → tile:window:open).
+    // background-tile launch → tile:lifecycle:ready → execute replay → tile:window:open).
     const windowPromise = sharedApp.getWindow('lists/home.html', 15000);
 
     // Execute the lists command
@@ -71,7 +71,7 @@ test.describe('Lists Extension @desktop', () => {
   test('lists input renders and is auto-focused', async () => {
     // Ensure the lists command is registered before executing it.
     // The lists tile is lazy-loaded — the background tile must be loaded and
-    // tile:ready received before the execute handler is registered.
+    // tile:lifecycle:ready received before the execute handler is registered.
     await waitForCommand(sharedBgWindow, 'lists', 15000);
 
     // Start waiting for the window BEFORE publishing the command so we don't

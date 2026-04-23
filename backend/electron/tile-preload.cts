@@ -106,13 +106,16 @@ function buildAPI(): Record<string, unknown> {
       throw new Error('Tile token validation failed. Tile may have been revoked.');
     }
 
-    // Defer tile:ready to the next event-loop tick so any synchronous
-    // post-initialize code in background.html (e.g. extension.init() +
-    // api.commands.register()) has a chance to complete before the lazy
-    // system's hasSubscriber check fires.
+    // Defer tile:lifecycle:ready to the next event-loop tick so any
+    // synchronous post-initialize code in background.html (e.g.
+    // extension.init() + api.commands.register()) has a chance to
+    // complete before the lazy system's hasSubscriber check fires.
+    //
+    // Channel is private lifecycle IPC — not pubsub. See
+    // docs/pubsub-state-machine.md §Topics that are NOT pubsub.
     const result = { capabilities: grantedCapabilities };
     setTimeout(() => {
-      ipcRenderer.send('tile:ready', { tileId, tileEntry });
+      ipcRenderer.send('tile:lifecycle:ready', { tileId, tileEntry });
     }, 0);
     return result;
   };
@@ -122,8 +125,9 @@ function buildAPI(): Record<string, unknown> {
    *
    * The underlying IPC listener is installed exactly once. Subsequent calls
    * replace the stored callback — repeated `api.onShutdown(cb)` invocations
-   * do NOT accumulate listeners on the `tile:shutdown` channel. This matters
-   * for hot-reload scenarios and features that re-register on every init.
+   * do NOT accumulate listeners on the `tile:lifecycle:shutdown` channel.
+   * This matters for hot-reload scenarios and features that re-register on
+   * every init.
    */
   let shutdownCallback: (() => void) | null = null;
   let shutdownListenerInstalled = false;
@@ -131,7 +135,7 @@ function buildAPI(): Record<string, unknown> {
     shutdownCallback = typeof callback === 'function' ? callback : null;
     if (!shutdownListenerInstalled) {
       shutdownListenerInstalled = true;
-      ipcRenderer.on('tile:shutdown', () => {
+      ipcRenderer.on('tile:lifecycle:shutdown', () => {
         try {
           shutdownCallback?.();
         } catch (err) {

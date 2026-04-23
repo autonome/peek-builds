@@ -7,7 +7,7 @@
  * - Creating hidden windows for background tiles
  * - Generating capability tokens (opaque string encoding tile ID + granted capabilities)
  * - Passing tokens to tiles via additionalArguments in WebPreferences
- * - Lifecycle: load manifest -> grant capabilities -> create context -> tile calls initialize() -> tile:ready
+ * - Lifecycle: load manifest -> grant capabilities -> create context -> tile calls initialize() -> tile:lifecycle:ready
  */
 
 import type { BrowserWindow } from 'electron';
@@ -717,9 +717,9 @@ export function getTileWebPreferencesForWebviewUrl(
 }
 
 /**
- * Send the `tile:shutdown` IPC to a single tile window, wait a short grace
- * period for its `api.onShutdown()` callbacks to run, and then close the
- * BrowserWindow.
+ * Send the `tile:lifecycle:shutdown` IPC to a single tile window, wait a
+ * short grace period for its `api.onShutdown()` callbacks to run, and then
+ * close the BrowserWindow.
  *
  * Tiles register shutdown callbacks via `api.onShutdown(cb)` in tile-preload.
  * Without this signal the callback never fires, so intervals / timers /
@@ -739,10 +739,10 @@ export async function shutdownTile(tileId: string, entryId: string): Promise<voi
   try {
     // Notify the tile so `api.onShutdown()` callbacks can run.
     if (!win.webContents.isDestroyed()) {
-      win.webContents.send('tile:shutdown');
+      win.webContents.send('tile:lifecycle:shutdown');
     }
   } catch (err) {
-    console.error(`[tile-launcher:${tileId}:${entryId}] Failed to send tile:shutdown:`, err);
+    console.error(`[tile-launcher:${tileId}:${entryId}] Failed to send tile:lifecycle:shutdown:`, err);
   }
 
   // Give the tile a short grace period to clean up. We intentionally don't
@@ -869,9 +869,9 @@ export function __clearTileStateForTest(): void {
 /**
  * Unload all tiles — called during app shutdown.
  *
- * Broadcasts `tile:shutdown` to every tile in parallel, waits the shared grace
- * period once, then closes all windows. This keeps quit latency bounded to
- * TILE_SHUTDOWN_GRACE_MS regardless of how many tiles are active.
+ * Broadcasts `tile:lifecycle:shutdown` to every tile in parallel, waits the
+ * shared grace period once, then closes all windows. This keeps quit latency
+ * bounded to TILE_SHUTDOWN_GRACE_MS regardless of how many tiles are active.
  */
 export async function unloadAllTiles(): Promise<void> {
   // Phase 1: fan out shutdown signal to every tile.
@@ -879,10 +879,10 @@ export async function unloadAllTiles(): Promise<void> {
     if (win.isDestroyed()) continue;
     try {
       if (!win.webContents.isDestroyed()) {
-        win.webContents.send('tile:shutdown');
+        win.webContents.send('tile:lifecycle:shutdown');
       }
     } catch (err) {
-      console.error('[tile-launcher] Failed to send tile:shutdown during unloadAllTiles:', err);
+      console.error('[tile-launcher] Failed to send tile:lifecycle:shutdown during unloadAllTiles:', err);
     }
   }
 
