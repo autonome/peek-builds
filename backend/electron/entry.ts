@@ -96,6 +96,7 @@ import {
 } from './profiles.js';
 import {
   initSessionPartition,
+  registerDownloadHandler,
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval } from './session.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
@@ -181,6 +182,20 @@ try {
 // Also inject Proton Pass webauthn.js into http/https webviews for passkey support.
 // The script overrides navigator.credentials.create/get in the main world.
 app.on('web-contents-created', (_event, contents) => {
+  // Blanket-register the will-download handler on this webContents' session.
+  // `will-download` fires on the session that owns the downloading contents,
+  // which may be a webview-partition session (persist:<profileId>) distinct
+  // from the profileSession object — or another on-the-fly session we didn't
+  // anticipate. Attaching here catches every webContents (top-level window,
+  // webview guest, popup, extension background page). registerDownloadHandler
+  // is idempotent via WeakSet so the multiple explicit registration sites in
+  // ipc.ts and session-partition.ts remain harmless belt-and-suspenders.
+  try {
+    registerDownloadHandler(contents.session);
+  } catch (err) {
+    console.error('[download] Failed to register handler on new webContents session:', err);
+  }
+
   contents.on('will-attach-webview', (_wvEvent, webPreferences, params) => {
     if (params.src && params.src.startsWith('peek://')) {
       const tilePreloadPath = getTilePreloadPath();
