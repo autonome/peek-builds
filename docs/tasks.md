@@ -51,6 +51,7 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 - [x] **Commands for browser-extension options pages.** Registered `<name> options` command per installed Chromium extension that declares `options_page`/`options_ui.page`.
 - [x] **Bundle TWP (Translate Web Pages) as a default browser extension.** TWP v10.1.1.0 vendored at `chrome-extensions/twp/` (~2.1MB). Auto-loads on startup.
+- [ ] **Restore bundled-extension links in page host widget.** Regression — at some point we lost the affordance where each bundled Chromium extension (TWP, Proton Pass, etc.) surfaced links in the page host widget to open its popup / options page / extension UI directly from the page canvas. Commands for options pages still exist (see above) but the in-widget links are gone. Investigate when this was lost (git log on the page widget / extension-host widget), restore the UI, and confirm it works for all bundled extensions.
 
 ---
 

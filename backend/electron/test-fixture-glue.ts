@@ -102,7 +102,7 @@ export async function initTestFixture(opts: InitTestFixtureOptions): Promise<voi
 
   testFixtureWindow = win;
 
-  // Register with the tile launcher so the main-process extensionBroadcaster
+  // Register with the tile launcher so the main-process pubsubBroadcaster
   // forwards pubsub messages to this window. Tests subscribe to topics
   // (e.g. `editor:open`) and assert on the data received — without this
   // registration, the broadcaster would skip the fixture and tests hang.

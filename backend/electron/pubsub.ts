@@ -4,7 +4,7 @@
  * Handles:
  * - Topic-based publish/subscribe
  * - Scope-based message filtering (SYSTEM, SELF, GLOBAL)
- * - Extension window broadcasting (via callback)
+ * - Renderer window broadcasting (via callback)
  *
  * NOTE: The scope/topic logic is mirrored in app/lib/pubsub.js (the shared
  * renderer-layer PubSub engine). This file stays separate because the main
@@ -27,8 +27,8 @@ const SYSTEM_ADDRESS = 'peek://system/';
 // Topic subscribers: topic -> Map<source, callback>
 const topics = new Map<string, Map<string, (msg: unknown) => void>>();
 
-// Callback for broadcasting to extension windows
-let extensionBroadcaster: ((topic: string, msg: unknown, source: string) => void) | null = null;
+// Callback for broadcasting to renderer windows (bgWindow, tile windows, webview guests)
+let pubsubBroadcaster: ((topic: string, msg: unknown, source: string) => void) | null = null;
 
 /**
  * Pre-publish hooks let a module intercept publish calls before delivery.
@@ -89,13 +89,13 @@ function scopeCheck(pubSource: string, subSource: string, scope: Scope): boolean
 }
 
 /**
- * Set the callback for broadcasting to extension windows
+ * Set the callback for broadcasting to renderer windows
  * This is called from the main process to inject the window broadcasting logic
  */
-export function setExtensionBroadcaster(
+export function setPubsubBroadcaster(
   broadcaster: (topic: string, msg: unknown, source: string) => void
 ): void {
-  extensionBroadcaster = broadcaster;
+  pubsubBroadcaster = broadcaster;
 }
 
 /**
@@ -170,9 +170,9 @@ function deliver(source: string, scope: Scope, topic: string, msg: unknown): voi
     }
   }
 
-  // Route to extension windows (GLOBAL scope only)
-  if (scope === scopes.GLOBAL && extensionBroadcaster) {
-    extensionBroadcaster(topic, msg, source);
+  // Route to renderer windows (GLOBAL scope only)
+  if (scope === scopes.GLOBAL && pubsubBroadcaster) {
+    pubsubBroadcaster(topic, msg, source);
   }
 }
 

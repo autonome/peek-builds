@@ -57,7 +57,7 @@ import * as tileLifecycle from './tile-lifecycle.js';
 // where electron's named ESM exports are empty. Unit tests load
 // tile-launcher.js under that mode and would crash at module parse
 // time. We inject the getters at app startup instead — same pattern
-// as `setExtensionBroadcaster` in pubsub.ts. Tests that stub the
+// as `setPubsubBroadcaster` in pubsub.ts. Tests that stub the
 // launcher never call createTileBrowserWindow, so the hooks stay
 // null and the baseline helpers fall back cleanly.
 let _getProfileSession: (() => Electron.Session) | null = null;
@@ -524,7 +524,7 @@ export function getAllTileWindows(): BrowserWindow[] {
  * page-glue call this helper after creating their BrowserWindow to:
  *
  *  - Add the window to the `tileWindows` registry so the pubsub
- *    extensionBroadcaster in main.ts forwards messages to it.
+ *    broadcaster in main.ts forwards messages to it.
  *  - Wire the same close/revoke cleanup the regular launcher uses.
  *
  * See docs/v1-removal-plan.md — Phase 1a/1b.

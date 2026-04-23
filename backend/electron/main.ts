@@ -21,7 +21,7 @@ import { getLoadedTileIds, getTileManifest, getAllTileWindows, unloadAllTiles, r
 import { installLoadOnDispatchHook } from './tile-lazy.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
-import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setExtensionBroadcaster, getSystemAddress } from './pubsub.js';
+import { scopes, publish, subscribe, unsubscribe, hasSubscriber, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
@@ -209,14 +209,42 @@ export async function initialize(): Promise<void> {
   const dbPath = path.join(config.userDataPath, config.profile, 'datastore.sqlite');
   initDatabase(dbPath);
 
-  // Set up extension broadcaster for pubsub
-  // Hybrid mode: broadcast to BOTH consolidated (iframes) AND separate windows
+  // Set up pubsub broadcaster.
+  // Forwards GLOBAL publishes to every renderer that needs to see them:
+  // bgWindow (core), tile BrowserWindows, and peek:// webview guests.
   // All send() calls are wrapped in try-catch to prevent errors during shutdown
   // when windows are being destroyed concurrently (race between isDestroyed check and send).
-  setExtensionBroadcaster((topic, msg, source) => {
+  setPubsubBroadcaster((topic, msg, source) => {
+    // Broadcast to bgWindow (core orchestrator).
+    // bgWindow hosts app/index.js which runs cmd/page/hud registries and is a
+    // first-class pubsub subscriber. Every publish must reach it — historical
+    // omissions from this loop were directly responsible for "hello-world-only
+    // commands visible in cmd panel" and "v2 tile cmd:execute:*:result never
+    // reaches core subscribers" bug classes. bgWindow is NOT a tile; it is
+    // broadcast to explicitly rather than via getAllTileWindows().
+    const bgWindow = getCoreBackgroundWindow();
+    if (bgWindow && !bgWindow.isDestroyed()) {
+      try {
+        const winUrl = bgWindow.webContents.getURL();
+        if (winUrl !== source) {
+          bgWindow.webContents.send(`pubsub:${topic}`, {
+            ...(msg as object),
+            source
+          });
+        }
+      } catch {
+        // Window may have been destroyed between check and send
+      }
+    }
+
     // Broadcast to v2 tile BrowserWindows (launched by tile-launcher).
     // Without this, v2 tiles that subscribe to global pubsub events (editor:open,
     // item:created, etc.) never receive them.
+    //
+    // Skip bgWindow if it appears in the tile registry — it is registered there
+    // via `registerTrustedBuiltinWindow` for lifecycle/cleanup bookkeeping, but
+    // we already sent to it above. Without this guard, bgWindow would receive
+    // each frame twice.
     //
     // Echo-prevention compares FULL source URL against FULL window URL rather
     // than just the peek host. One feature tile can have multiple
@@ -226,6 +254,7 @@ export async function initialize(): Promise<void> {
     // intra-feature pubsub round-trips. Full-URL compare only excludes the
     // exact originating window, allowing sibling entries to receive.
     for (const tileWin of getAllTileWindows()) {
+      if (tileWin === bgWindow) continue;
       try {
         const winUrl = tileWin.webContents.getURL();
         if (winUrl !== source) {

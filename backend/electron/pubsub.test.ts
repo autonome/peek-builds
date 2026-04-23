@@ -146,4 +146,52 @@ describe('PubSub Module Tests', () => {
       pubsub.unsubscribe('peek://real/', 'test:has:excl');
     });
   });
+
+  describe('setPubsubBroadcaster', () => {
+    it('GLOBAL publishes invoke the registered broadcaster with topic/msg/source', () => {
+      const calls: Array<{ topic: string; msg: unknown; source: string }> = [];
+      pubsub.setPubsubBroadcaster((topic, msg, source) => {
+        calls.push({ topic, msg, source });
+      });
+      pubsub.publish('peek://tile-foo/entry', pubsub.scopes.GLOBAL, 'test:broadcaster:fanout', { n: 1 });
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0].topic, 'test:broadcaster:fanout');
+      assert.deepStrictEqual(calls[0].msg, { n: 1 });
+      assert.strictEqual(calls[0].source, 'peek://tile-foo/entry');
+      // Tear down so other tests aren't affected.
+      pubsub.setPubsubBroadcaster(() => {});
+    });
+
+    it('SELF-scoped publishes do NOT invoke the broadcaster (broadcaster is for GLOBAL fan-out only)', () => {
+      let called = false;
+      pubsub.setPubsubBroadcaster(() => { called = true; });
+      pubsub.publish('peek://tile-foo/entry', pubsub.scopes.SELF, 'test:broadcaster:self', {});
+      assert.strictEqual(called, false);
+      pubsub.setPubsubBroadcaster(() => {});
+    });
+
+    it('broadcaster receives a v2-tile publish of cmd:execute:*:result so bgWindow-subscriber dispatchers can resolve', () => {
+      // This is the Phase-1 regression guard. A v2 tile publishes a command
+      // result topic via GLOBAL scope. The main.ts broadcaster callback is
+      // responsible for forwarding this to bgWindow (core), which is where
+      // the dispatcher that set `resultTopic` lives. If the broadcaster is
+      // not invoked for GLOBAL publishes, bgWindow never resolves the
+      // pending result promise and tag/untag/widget-update smoke tests
+      // time out at 10s.
+      const received: Array<{ topic: string; source: string }> = [];
+      pubsub.setPubsubBroadcaster((topic, _msg, source) => {
+        received.push({ topic, source });
+      });
+      pubsub.publish(
+        'peek://tags/background',
+        pubsub.scopes.GLOBAL,
+        'cmd:execute:tag:result:abc-123',
+        { ok: true },
+      );
+      assert.strictEqual(received.length, 1);
+      assert.strictEqual(received[0].topic, 'cmd:execute:tag:result:abc-123');
+      assert.strictEqual(received[0].source, 'peek://tags/background');
+      pubsub.setPubsubBroadcaster(() => {});
+    });
+  });
 });

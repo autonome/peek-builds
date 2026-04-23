@@ -1411,7 +1411,7 @@ export function registerWindowHandlers(): void {
 
     // Register canvas page host windows with the tile broadcaster so pubsub
     // messages (tag:item-added, sync:pull-completed, etc.) are forwarded to
-    // page.js via the same extensionBroadcaster path used by feature tiles.
+    // page.js via the same pubsubBroadcaster path used by feature tiles.
     // Token cleanup (revokeToken) happens automatically on 'closed'.
     if (useCanvas && pageHostToken && pageHostEntryId) {
       registerTrustedBuiltinWindow(PAGE_HOST_TILE_ID, pageHostEntryId, win, pageHostToken);

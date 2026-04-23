@@ -131,7 +131,7 @@ export {
   subscribe,
   unsubscribe,
   unsubscribeAll,
-  setExtensionBroadcaster,
+  setPubsubBroadcaster,
   getSystemAddress,
 } from './pubsub.js';
 
