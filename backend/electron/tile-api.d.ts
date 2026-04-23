@@ -490,6 +490,21 @@ interface TileSync {
    * Trigger a full sync. Requires `sync` capability (builtin tiles only).
    */
   syncAll(): Promise<{ success: boolean; pushed?: number; pulled?: number; error?: string }>;
+
+  /** Read sync configuration. Used by Settings (trustedBuiltin only in practice). */
+  getConfig(): Promise<{ success: boolean; config?: unknown; error?: string }>;
+
+  /** Update sync configuration. */
+  setConfig(config: unknown): Promise<{ success: boolean; error?: string }>;
+
+  /** Read live sync status. */
+  getStatus(): Promise<{ success: boolean; status?: unknown; error?: string }>;
+
+  /** Pull from server. */
+  pull(options?: unknown): Promise<{ success: boolean; pulled?: number; error?: string }>;
+
+  /** Push to server. */
+  push(options?: unknown): Promise<{ success: boolean; pushed?: number; error?: string }>;
 }
 
 // ─── IZUI ────────────────────────────────────────────────────────────
@@ -566,6 +581,32 @@ interface TileProfiles {
   getPartition(): Promise<TileProfileResult>;
 }
 
+// ─── Ad blocker ──────────────────────────────────────────────────────
+
+interface TileAdblockerResult {
+  success: boolean;
+  data?: unknown;
+  error?: string;
+}
+
+interface TileAdblocker {
+  getStatus(): Promise<TileAdblockerResult>;
+  enable(): Promise<TileAdblockerResult>;
+  disable(): Promise<TileAdblockerResult>;
+  getBlockedCount(): Promise<TileAdblockerResult>;
+  getAllowlist(): Promise<TileAdblockerResult>;
+  isSiteAllowed(hostname: string): Promise<TileAdblockerResult>;
+  allowSite(hostname: string): Promise<TileAdblockerResult>;
+  disallowSite(hostname: string): Promise<TileAdblockerResult>;
+}
+
+// ─── Dark mode ───────────────────────────────────────────────────────
+
+interface TileDarkMode {
+  get(): Promise<{ mode: string } | { error: string }>;
+  set(mode: string): Promise<{ success: boolean } | { error: string }>;
+}
+
 // ─── Full window.app API ─────────────────────────────────────────────
 
 interface TileAPI {
@@ -606,6 +647,8 @@ interface TileAPI {
   screen: TileScreen;
   escape: TileEscape;
   profiles: TileProfiles;
+  adblocker: TileAdblocker;
+  darkMode: TileDarkMode;
 
   // ── Removed v1 shims (Phase 4) — these throw if called ────────────
 

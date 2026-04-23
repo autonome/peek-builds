@@ -1844,6 +1844,40 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('tile:sync:sync-all', { token: tileToken });
     },
+    // Thin wrappers over the existing legacy `sync-*` ipcMain handlers
+    // (ipc.ts:3624+). Settings uses these to show current config + live
+    // status. Not capability-gated — Settings has trustedBuiltin grant
+    // and these are read-only status/config reads + user-initiated
+    // push/pull. Matches the `api.profiles` pattern from 58ef736e.
+    getConfig: () => ipcRenderer.invoke('sync-get-config'),
+    setConfig: (config: unknown) => ipcRenderer.invoke('sync-set-config', config),
+    getStatus: () => ipcRenderer.invoke('sync-status'),
+    pull: (options?: unknown) => ipcRenderer.invoke('sync-pull', options ?? {}),
+    push: (options?: unknown) => ipcRenderer.invoke('sync-push', options ?? {}),
+  };
+
+  // ── Ad blocker ────────────────────────────────────────────────────
+  //
+  // Thin wrappers over the `adblocker:*` ipcMain handlers. Same
+  // rationale as api.profiles / api.sync read-wrappers above: Settings
+  // is the primary consumer and it has trustedBuiltin.
+  api.adblocker = {
+    getStatus: () => ipcRenderer.invoke('adblocker:getStatus'),
+    enable: () => ipcRenderer.invoke('adblocker:enable'),
+    disable: () => ipcRenderer.invoke('adblocker:disable'),
+    getBlockedCount: () => ipcRenderer.invoke('adblocker:getBlockedCount'),
+    getAllowlist: () => ipcRenderer.invoke('adblocker:getAllowlist'),
+    isSiteAllowed: (hostname: string) => ipcRenderer.invoke('adblocker:isSiteAllowed', { hostname }),
+    allowSite: (hostname: string) => ipcRenderer.invoke('adblocker:allowSite', { hostname }),
+    disallowSite: (hostname: string) => ipcRenderer.invoke('adblocker:disallowSite', { hostname }),
+  };
+
+  // ── Dark mode ─────────────────────────────────────────────────────
+  //
+  // Thin wrappers over `darkMode:*` ipcMain handlers.
+  api.darkMode = {
+    get: () => ipcRenderer.invoke('darkMode:get'),
+    set: (mode: string) => ipcRenderer.invoke('darkMode:set', mode),
   };
 
   // ── closeWindow (Phase 4: REMOVED — was unused per trimming plan §1 row 8) ──
