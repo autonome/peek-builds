@@ -179,44 +179,45 @@ const registerExtensionCommands = () => {
     }
   });
 
-  // Reload extension command (uses main process IPC)
+  // Reload feature command (uses main process IPC)
   api.commands.register({
-    name: 'extension reload',
-    description: 'Reload an extension by name',
+    name: 'feature reload',
+    description: 'Reload a feature by id',
     execute: async (ctx) => {
-      const extName = ctx.search?.trim();
-      if (!extName) {
-        log('core', 'extension reload: no extension name provided');
+      const featureId = ctx.search?.trim();
+      if (!featureId) {
+        log('core', 'feature reload: no feature id provided');
         return;
       }
 
-      log('core', `Reloading extension: ${extName}`);
-      const result = await api.extensions.reload(extName.toLowerCase());
-      if (result.success) {
-        log('core', `Extension reloaded: ${extName}`);
+      log('core', `Reloading feature: ${featureId}`);
+      const result = await api.features.devReload(featureId.toLowerCase());
+      if (result && !result.error) {
+        log('core', `Feature reloaded: ${featureId}`);
       } else {
-        log.error('core', `Failed to reload extension: ${result.error}`);
+        log.error('core', `Failed to reload feature: ${result?.error || 'unknown error'}`);
       }
     }
   });
 
-  // List extensions command (uses main process IPC)
+  // List features command (uses main process IPC)
   api.commands.register({
-    name: 'extensions',
-    description: 'List running extensions',
-    execute: async (ctx) => {
-      const listResult = await api.extensions.list();
-      if (listResult.success && listResult.data) {
-        log('core', 'Running extensions:');
-        listResult.data.forEach(ext => {
-          const manifest = ext.manifest || {};
-          log('core', `  - ${manifest.name || ext.id} (${ext.id}) v${manifest.version || '?'}`);
+    name: 'features',
+    description: 'List installed features',
+    execute: async () => {
+      const listResult = await api.features.list();
+      const entries = listResult?.entries || [];
+      if (entries.length > 0) {
+        log('core', 'Installed features:');
+        entries.forEach(entry => {
+          const version = entry.source?.version || '?';
+          log('core', `  - ${entry.name || entry.id} (${entry.id}) v${version}`);
         });
       } else {
-        log('core', 'No extensions running');
+        log('core', 'No features installed');
       }
 
-      // Open settings to Extensions section
+      // Open settings to Features section
       const p = prefs();
       await openSettingsWindow(p);
     }
@@ -448,41 +449,38 @@ const registerExtensionCommands = () => {
     }
   });
 
-  // ---- Extension Commands ----
+  // ---- Feature Commands ----
 
   api.commands.register({
-    name: 'reload extension',
-    description: 'Reload an external extension by ID',
+    name: 'reload feature',
+    description: 'Reload an installed feature by ID',
     execute: async (ctx) => {
-      // Get running extensions to show which can be reloaded
-      const result = await api.extensions.list();
-      if (!result.success) {
-        return { output: 'Failed to get extensions list', mimeType: 'text/plain' };
-      }
-
-      // Filter to only external extensions (not consolidated)
-      const external = result.data.running?.filter(ext => !ext.isConsolidated) || [];
+      // Get features list to show which can be reloaded
+      const result = await api.features.list();
+      const entries = result?.entries || [];
+      // Filter out builtins — only externally-installed features can usefully be reloaded.
+      const external = entries.filter(e => e.source?.type !== 'builtin');
       if (external.length === 0) {
-        return { output: 'No external extensions running to reload', mimeType: 'text/plain' };
+        return { output: 'No external features installed to reload', mimeType: 'text/plain' };
       }
 
-      // If input provided, try to reload that extension
+      // If input provided, try to reload that feature
       const input = ctx?.input?.trim();
       if (input) {
-        const ext = external.find(e => e.id === input || e.id.includes(input));
-        if (ext) {
-          const reloadResult = await api.extensions.reload(ext.id);
-          if (reloadResult.success) {
-            return { output: `Reloaded extension: ${ext.id}`, mimeType: 'text/plain' };
+        const feature = external.find(e => e.id === input || e.id.includes(input));
+        if (feature) {
+          const reloadResult = await api.features.devReload(feature.id);
+          if (reloadResult && !reloadResult.error) {
+            return { output: `Reloaded feature: ${feature.id}`, mimeType: 'text/plain' };
           }
-          return { output: `Failed to reload: ${reloadResult.error}`, mimeType: 'text/plain' };
+          return { output: `Failed to reload: ${reloadResult?.error || 'unknown error'}`, mimeType: 'text/plain' };
         }
-        return { output: `Extension not found: ${input}`, mimeType: 'text/plain' };
+        return { output: `Feature not found: ${input}`, mimeType: 'text/plain' };
       }
 
-      // No input - show available extensions
+      // No input - show available features
       const list = external.map(e => e.id).join('\n');
-      return { output: `External extensions (type ID to reload):\n${list}`, mimeType: 'text/plain' };
+      return { output: `External features (type ID to reload):\n${list}`, mimeType: 'text/plain' };
     }
   });
 
@@ -780,11 +778,11 @@ export const init = async () => {
   });
 
   // Feature enable/disable handler
-  // Extensions are now managed by main process ExtensionManager via IPC
+  // Features are managed by main process via the strict tile:features:* IPC.
   api.subscribe(topicFeatureToggle, async msg => {
     log('core', 'feature toggle', msg)
 
-    // Find feature by ID (UUID) or by name (extension ID like "groups")
+    // Find feature by ID (UUID) or by name (feature ID like "groups")
     const f = features().find(f =>
       f.id == msg.featureId ||
       f.name.toLowerCase() === msg.featureId?.toLowerCase()
@@ -792,24 +790,22 @@ export const init = async () => {
     if (f) {
       log('core', 'feature toggle', f);
 
-      // Check if this feature is backed by an extension
-      const extId = f.name.toLowerCase();
-      const isExtension = builtinExtensions.includes(extId);
+      // Check if this feature is backed by a tile-feature
+      const featureId = f.name.toLowerCase();
+      const isFeatureTile = builtinExtensions.includes(featureId);
 
       if (msg.enabled == false) {
         log('core', 'disabling', f.name);
-        if (isExtension) {
-          // Use main process IPC to unload extension
-          await api.extensions.unload(extId);
+        if (isFeatureTile) {
+          await api.features.disable(featureId);
         } else {
-          log('core', 'uninit non-extension feature not implemented:', f.name);
+          log('core', 'uninit non-feature toggle not implemented:', f.name);
         }
       }
       else if (msg.enabled == true) {
         log('core', 'enabling', f.name);
-        if (isExtension) {
-          // Use main process IPC to load extension
-          await api.extensions.load(extId);
+        if (isFeatureTile) {
+          await api.features.enable(featureId);
         } else {
           initFeature(f);
         }

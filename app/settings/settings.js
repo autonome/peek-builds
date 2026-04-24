@@ -180,10 +180,10 @@ const createBackupDirInput = (label, value, onChange, options = {}) => {
   browseBtn.textContent = 'Browse';
   browseBtn.addEventListener('click', async () => {
     try {
-      const result = await api.extensions.pickFolder();
-      if (result.success && result.data && result.data.path) {
-        input.value = result.data.path;
-        onChange(result.data.path);
+      const result = await api.features.devPickDirectory();
+      if (result && !result.canceled && !result.error && result.path) {
+        input.value = result.path;
+        onChange(result.path);
       }
     } catch (err) {
       console.error('Folder picker error:', err);
@@ -1733,206 +1733,91 @@ const renderSyncSettings = async () => {
   return container;
 };
 
-// Render features settings (Peek's own extensions: cmd, groups, peeks, slides, windows)
+// Render features settings (Peek's own features: cmd, groups, peeks, slides, windows)
 const renderExtensionsSettings = async () => {
   const container = document.createElement('div');
 
-  // Add Extension button at top
-  const addSection = document.createElement('div');
-  addSection.className = 'form-section';
-  addSection.style.marginBottom = '24px';
+  // Note: feature install (Add Feature) is now handled by the dedicated
+  // features-manager UI, which uses tile:features:install (atproto) +
+  // tile:features:dev-create (local scaffold). The settings pane only
+  // surfaces enable/disable/reload/remove for already-registered features.
+  const installNote = document.createElement('div');
+  installNote.className = 'help-text';
+  installNote.style.cssText = 'margin-bottom: 16px;';
+  installNote.textContent = 'To install or develop new features, open the Features Manager.';
+  container.appendChild(installNote);
 
-  const addBtn = document.createElement('button');
-  addBtn.textContent = '+ Add Feature';
-  addBtn.style.cssText = `
-    padding: 10px 16px;
-    font-size: 13px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: 6px;
-    color: var(--text-primary);
-    cursor: pointer;
-    width: 100%;
-  `;
-  addBtn.addEventListener('mouseenter', () => {
-    addBtn.style.background = 'var(--bg-hover)';
-  });
-  addBtn.addEventListener('mouseleave', () => {
-    addBtn.style.background = 'var(--bg-tertiary)';
-  });
-  addBtn.addEventListener('click', async () => {
-    addBtn.textContent = 'Selecting folder...';
-    addBtn.disabled = true;
-
-    try {
-      // Open folder picker
-      const pickResult = await api.extensions.pickFolder();
-      if (!pickResult.success || pickResult.canceled) {
-        addBtn.textContent = '+ Add Feature';
-        addBtn.disabled = false;
-        return;
-      }
-
-      const folderPath = pickResult.data.path;
-      addBtn.textContent = 'Validating...';
-
-      // Validate folder
-      const validateResult = await api.extensions.validateFolder(folderPath);
-
-      // Add even if invalid (disabled), so user can fix and retry
-      // Handle both Electron format (data.manifest) and flat format
-      const manifest = validateResult.data?.manifest || validateResult.manifest || {};
-      const isValid = validateResult.success && !validateResult.error;
-      const validationError = !isValid ? (validateResult.error || 'Unknown validation error') : null;
-
-      addBtn.textContent = 'Adding...';
-
-      // Add to datastore (disabled if invalid, with error message)
-      const addResult = await api.extensions.add(folderPath, manifest, false, validationError);
-
-      if (addResult.success) {
-        addBtn.textContent = isValid ? 'Added!' : 'Added (disabled - has errors)';
-
-        // Refresh the list
-        setTimeout(() => {
-          addBtn.textContent = '+ Add Feature';
-          addBtn.disabled = false;
-          refreshExtensionsList();
-        }, 1500);
-      } else {
-        addBtn.textContent = `Error: ${addResult.error}`;
-        setTimeout(() => {
-          addBtn.textContent = '+ Add Feature';
-          addBtn.disabled = false;
-        }, 3000);
-      }
-    } catch (err) {
-      console.error('Add extension error:', err);
-      addBtn.textContent = 'Error adding extension';
-      setTimeout(() => {
-        addBtn.textContent = '+ Add Feature';
-        addBtn.disabled = false;
-      }, 2000);
-    }
-  });
-  addSection.appendChild(addBtn);
-  container.appendChild(addSection);
-
-  // Extensions list container (for refresh)
+  // Features list container (for refresh)
   const listContainer = document.createElement('div');
   listContainer.id = 'extensions-list-container';
   container.appendChild(listContainer);
 
-  // Function to refresh extensions list
+  // Function to refresh features list
   const refreshExtensionsList = async () => {
     listContainer.innerHTML = '';
 
     const loading = document.createElement('div');
     loading.className = 'help-text';
-    loading.textContent = 'Loading extensions...';
+    loading.textContent = 'Loading features...';
     listContainer.appendChild(loading);
 
     try {
-      // Get features list to check enabled state for builtins
-      // Use pre-loaded core store if available, otherwise load fresh
+      // The features storage list still drives builtin enable/disable persistence
+      // (the toggle handler in app/index.js subscribes to core:feature:toggle and
+      // reads from this list to decide whether the feature is currently enabled).
       const coreStore = _coreStore || await createDatastoreStore('core', appConfig.defaults);
       const features = coreStore.get(appConfig.storageKeys.ITEMS) || [];
 
-      // Get running, all registered (discovered), and datastore extensions
-      const [runningResult, registeredResult, datastoreResult] = await Promise.all([
-        api.extensions.list(),
-        api.extensions.listAllRegistered(),
-        api.extensions.getAll()
+      // Pull non-builtin features (default filter) and builtins separately,
+      // then merge. tile:features:list filters out builtins unless an
+      // explicit sourceType is passed, so we issue both calls.
+      const [nonBuiltinResult, builtinResult] = await Promise.all([
+        api.features.list(),
+        api.features.list('builtin'),
       ]);
 
       loading.remove();
 
-      const runningExts = runningResult.success ? runningResult.data || [] : [];
-      const registeredExts = registeredResult.success ? registeredResult.data || [] : [];
-      const datastoreExts = datastoreResult.success ? datastoreResult.data || [] : [];
+      const allEntries = [
+        ...(nonBuiltinResult?.entries || []),
+        ...(builtinResult?.entries || []),
+      ];
 
-      // Merge: builtin registered + datastore external
-      // Registered extensions include ALL discovered builtins (running or not)
-      const runningById = new Map(runningExts.map(e => [e.id, e]));
+      const allExtensions = allEntries.map(entry => {
+        const isBuiltin = entry.source?.type === 'builtin';
+        const feature = features.find(f => f.name.toLowerCase() === entry.id);
+        // Builtins respect the local features-list "enabled" flag
+        // (defaults true). Non-builtins use the registry's `disabled` flag.
+        const enabled = isBuiltin
+          ? (feature ? feature.enabled !== false : true)
+          : !entry.disabled;
 
-      // Build combined list
-      const allExtensions = [];
-
-      // Use all registered (discovered) extensions as builtins, excluding datastore externals
-      const datastoreIds = new Set(datastoreExts.map(e => e.id));
-      const builtinExtIds = registeredExts
-        .filter(e => !datastoreIds.has(e.id))
-        .map(e => e.id);
-
-      // Build a map of registered extensions for manifest lookup
-      const registeredById = new Map(registeredExts.map(e => [e.id, e]));
-
-      // Add builtin extensions (whether running or not)
-      builtinExtIds.forEach(extId => {
-        const running = runningById.get(extId);
-        const registered = registeredById.get(extId);
-        // Find matching feature to get enabled state
-        // For builtins: if running, they're enabled. Otherwise check stored state, default true.
-        const feature = features.find(f => f.name.toLowerCase() === extId);
-        const isEnabled = running ? true : (feature ? feature.enabled !== false : true);
-
-        // Use manifest from running or registered data (registered always has it from discovery)
-        const manifest = (running && running.manifest) || (registered && registered.manifest) || {
-          id: extId,
-          name: extId.charAt(0).toUpperCase() + extId.slice(1),
-          shortname: extId,
-          builtin: true
+        // The registry stores a flat entry — adapt to the manifest-shaped
+        // object the renderer below expects.
+        const manifest = {
+          id: entry.id,
+          name: entry.name || entry.id,
+          shortname: entry.id,
+          description: '',
+          version: entry.source?.version || '',
+          builtin: isBuiltin,
+          author: entry.source?.publisherName || entry.source?.publisher || '',
         };
 
-        allExtensions.push({
-          ...(running || {}),
-          id: extId,
+        return {
+          id: entry.id,
           manifest,
-          source: 'builtin',
-          isRunning: !!running,
-          enabled: isEnabled
-        });
-      });
-
-      // Add datastore extensions (external)
-      // Handle both Electron format (flat fields) and Tauri format (with manifest object)
-      datastoreExts.forEach(ext => {
-        const running = runningById.get(ext.id);
-        // Tauri returns manifest object, Electron returns flat fields
-        const manifestData = ext.manifest || {};
-        const name = ext.name || manifestData.name || ext.id;
-        const description = ext.description || manifestData.description || '';
-        const version = ext.version || manifestData.version || '';
-        const shortname = (ext.metadata ? JSON.parse(ext.metadata).shortname : manifestData.shortname) || ext.id;
-        const builtin = ext.builtin === 1 || ext.builtin === true || manifestData.builtin;
-        const author = ext.author || manifestData.author || '';
-        // Handle both snake_case (Tauri JSON) and direct field names
-        const lastError = ext.lastError || ext.last_error || null;
-
-        // If running, merge schemas/storageKeys/defaults from running manifest
-        const runningManifest = running?.manifest || {};
-        allExtensions.push({
-          id: ext.id,
-          manifest: {
-            id: ext.id,
-            name,
-            shortname,
-            description,
-            version,
-            builtin,
-            author: author || runningManifest.author,
-            schemas: runningManifest.schemas,
-            storageKeys: runningManifest.storageKeys,
-            defaults: runningManifest.defaults,
-            labels: runningManifest.labels
-          },
-          path: ext.path,
-          source: 'datastore',
-          isRunning: !!running,
-          enabled: ext.enabled === 1 || ext.enabled === true,
-          status: ext.status,
-          lastError
-        });
+          path: entry.path,
+          source: isBuiltin ? 'builtin' : 'datastore',
+          // Without windowList we can't tell whether the feature has a live
+          // tile window — surface it as not-running so we don't show a
+          // misleading Reload button. Reload still works on demand via the
+          // dev-reload IPC, which gracefully reports "no active tiles".
+          isRunning: false,
+          enabled,
+          status: entry.disabled ? 'disabled' : 'installed',
+          lastError: null,
+        };
       });
 
       if (allExtensions.length === 0) {
@@ -1996,32 +1881,15 @@ const renderExtensionsSettings = async () => {
               enabled: newEnabled
             });
           } else if (ext.source === 'datastore') {
-            // Load or unload the extension first
-            let loadResult = { success: true };
-            if (newEnabled) {
-              loadResult = await api.extensions.load(ext.id);
-            } else {
-              loadResult = await api.extensions.unload(ext.id);
-            }
-
-            if (loadResult.success) {
-              // Update in datastore only if load/unload succeeded
-              await api.extensions.update(ext.id, {
-                enabled: newEnabled ? 1 : 0,
-                status: newEnabled ? 'installed' : 'disabled',
-                lastError: '',
-                lastErrorAt: 0
-              });
-            } else {
-              // Load/unload failed - store the error and keep disabled
-              const errorMsg = loadResult.error || 'Failed to load extension';
-              await api.extensions.update(ext.id, {
-                enabled: 0,
-                status: 'error',
-                lastError: errorMsg,
-                lastErrorAt: Date.now()
-              });
-              console.error(`[settings] Extension ${ext.id} load failed:`, errorMsg);
+            // Toggle via the unified registry — enable / disable mark the
+            // entry in registry.json and broadcast feature:enabled /
+            // feature:disabled. Tile windows are launched / unloaded by
+            // the main process side-effect inside the strict handler.
+            const toggleResult = newEnabled
+              ? await api.features.enable(ext.id)
+              : await api.features.disable(ext.id);
+            if (toggleResult?.error) {
+              console.error(`[settings] Feature ${ext.id} toggle failed:`, toggleResult.error);
             }
           }
 
@@ -2085,8 +1953,8 @@ const renderExtensionsSettings = async () => {
             reloadBtn.textContent = '...';
             reloadBtn.disabled = true;
             try {
-              const result = await api.extensions.reload(ext.id);
-              reloadBtn.textContent = result.success ? '✓' : '✗';
+              const result = await api.features.devReload(ext.id);
+              reloadBtn.textContent = result && !result.error ? '✓' : '✗';
             } catch (err) {
               reloadBtn.textContent = '✗';
             }
@@ -2113,19 +1981,15 @@ const renderExtensionsSettings = async () => {
             cursor: pointer;
           `;
           removeBtn.addEventListener('click', async () => {
-            if (!confirm(`Remove extension "${manifest.name || ext.id}"?`)) return;
+            if (!confirm(`Remove feature "${manifest.name || ext.id}"?`)) return;
 
             removeBtn.textContent = '...';
             removeBtn.disabled = true;
 
-            // Unload if running
-            if (ext.isRunning) {
-              await api.extensions.unload(ext.id);
-            }
-
-            // Remove from datastore
-            const result = await api.extensions.remove(ext.id);
-            if (result.success) {
+            // Remove from the unified registry — the strict handler
+            // tears down any running tile windows before deleting files.
+            const result = await api.features.remove(ext.id);
+            if (result && !result.error) {
               refreshExtensionsList();
             } else {
               removeBtn.textContent = 'Error';
