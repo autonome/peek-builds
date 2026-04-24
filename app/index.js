@@ -227,7 +227,7 @@ const registerCoreCommands = () => {
 
   const SETTINGS_PANES = [
     { value: 'core', title: 'Core', subtitle: 'General application settings' },
-    { value: 'extensions', title: 'Features', subtitle: 'Manage peek features and extensions' },
+    { value: 'features', title: 'Features', subtitle: 'Manage Peek features' },
     { value: 'privacy', title: 'Extensions', subtitle: 'Browser extensions (ad blocker, etc.)' },
     { value: 'dark-mode', title: 'Dark Mode', subtitle: 'Dark mode settings' },
     { value: 'sync', title: 'Sync', subtitle: 'Sync configuration and status' },

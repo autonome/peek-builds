@@ -1734,7 +1734,7 @@ const renderSyncSettings = async () => {
 };
 
 // Render features settings (Peek's own features: cmd, groups, peeks, slides, windows)
-const renderExtensionsSettings = async () => {
+const renderFeaturesSettings = async () => {
   const container = document.createElement('div');
 
   // Note: feature install (Add Feature) is now handled by the dedicated
@@ -1749,11 +1749,11 @@ const renderExtensionsSettings = async () => {
 
   // Features list container (for refresh)
   const listContainer = document.createElement('div');
-  listContainer.id = 'extensions-list-container';
+  listContainer.id = 'features-list-container';
   container.appendChild(listContainer);
 
   // Function to refresh features list
-  const refreshExtensionsList = async () => {
+  const refreshFeaturesList = async () => {
     listContainer.innerHTML = '';
 
     const loading = document.createElement('div');
@@ -1783,7 +1783,7 @@ const renderExtensionsSettings = async () => {
         ...(builtinResult?.entries || []),
       ];
 
-      const allExtensions = allEntries.map(entry => {
+      const allFeatures = allEntries.map(entry => {
         const isBuiltin = entry.source?.type === 'builtin';
         const feature = features.find(f => f.name.toLowerCase() === entry.id);
         // Builtins respect the local features-list "enabled" flag
@@ -1820,7 +1820,7 @@ const renderExtensionsSettings = async () => {
         };
       });
 
-      if (allExtensions.length === 0) {
+      if (allFeatures.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'help-text';
         empty.textContent = 'No features installed. Click "Add Feature" to install one.';
@@ -1828,17 +1828,17 @@ const renderExtensionsSettings = async () => {
         return;
       }
 
-      const extSection = document.createElement('div');
-      extSection.className = 'form-section';
+      const featuresSection = document.createElement('div');
+      featuresSection.className = 'form-section';
 
       const title = document.createElement('h3');
       title.className = 'form-section-title';
       title.textContent = 'Installed Features';
-      extSection.appendChild(title);
+      featuresSection.appendChild(title);
 
-      allExtensions.filter(ext => !(ext.manifest || {}).hidden).forEach(ext => {
-        const manifest = ext.manifest || {};
-        const isBuiltin = manifest.builtin || ext.source === 'builtin';
+      allFeatures.filter(feat => !(feat.manifest || {}).hidden).forEach(feat => {
+        const manifest = feat.manifest || {};
+        const isBuiltin = manifest.builtin || feat.source === 'builtin';
 
         const card = document.createElement('div');
         card.className = 'item-card no-collapse';
@@ -1851,15 +1851,15 @@ const renderExtensionsSettings = async () => {
         const leftSide = document.createElement('div');
         leftSide.style.cssText = 'display: flex; align-items: center; gap: 12px;';
 
-        // Enable/disable checkbox
-        // cmd extension cannot be disabled - it's required infrastructure
-        const isCmdExtension = ext.id === 'cmd';
+        // Enable/disable checkbox.
+        // The cmd feature is required infrastructure — can't be disabled.
+        const isCmdFeature = feat.id === 'cmd';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.checked = ext.enabled;
-        checkbox.disabled = isCmdExtension;
-        checkbox.title = isCmdExtension ? 'Required - cannot be disabled' : '';
-        checkbox.style.cssText = `width: 16px; height: 16px; cursor: ${isCmdExtension ? 'not-allowed' : 'pointer'}; ${isCmdExtension ? 'opacity: 0.5;' : ''}`;
+        checkbox.checked = feat.enabled;
+        checkbox.disabled = isCmdFeature;
+        checkbox.title = isCmdFeature ? 'Required - cannot be disabled' : '';
+        checkbox.style.cssText = `width: 16px; height: 16px; cursor: ${isCmdFeature ? 'not-allowed' : 'pointer'}; ${isCmdFeature ? 'opacity: 0.5;' : ''}`;
         checkbox.addEventListener('change', async (e) => {
           const newEnabled = e.target.checked;
           checkbox.disabled = true;
@@ -1868,7 +1868,7 @@ const renderExtensionsSettings = async () => {
             // Update features storage for persistence
             const coreStore = _coreStore || await createDatastoreStore('core', appConfig.defaults);
             const featuresList = coreStore.get(appConfig.storageKeys.ITEMS) || [];
-            const featureIndex = featuresList.findIndex(f => f.name.toLowerCase() === ext.id);
+            const featureIndex = featuresList.findIndex(f => f.name.toLowerCase() === feat.id);
             if (featureIndex >= 0) {
               featuresList[featureIndex].enabled = newEnabled;
               await coreStore.set(appConfig.storageKeys.ITEMS, featuresList);
@@ -1877,25 +1877,25 @@ const renderExtensionsSettings = async () => {
             // Use the feature toggle mechanism to load/unload
             // This triggers the core:feature:toggle handler in app/index.js
             api.publish('core:feature:toggle', {
-              featureId: ext.id,
+              featureId: feat.id,
               enabled: newEnabled
             });
-          } else if (ext.source === 'datastore') {
+          } else if (feat.source === 'datastore') {
             // Toggle via the unified registry — enable / disable mark the
             // entry in registry.json and broadcast feature:enabled /
             // feature:disabled. Tile windows are launched / unloaded by
             // the main process side-effect inside the strict handler.
             const toggleResult = newEnabled
-              ? await api.features.enable(ext.id)
-              : await api.features.disable(ext.id);
+              ? await api.features.enable(feat.id)
+              : await api.features.disable(feat.id);
             if (toggleResult?.error) {
-              console.error(`[settings] Feature ${ext.id} toggle failed:`, toggleResult.error);
+              console.error(`[settings] Feature ${feat.id} toggle failed:`, toggleResult.error);
             }
           }
 
           checkbox.disabled = false;
           // Refresh to show current state
-          setTimeout(refreshExtensionsList, 300);
+          setTimeout(refreshFeaturesList, 300);
         });
         leftSide.appendChild(checkbox);
 
@@ -1904,7 +1904,7 @@ const renderExtensionsSettings = async () => {
         cardTitle.style.margin = '0';
 
         const nameSpan = document.createElement('span');
-        nameSpan.textContent = manifest.name || ext.id;
+        nameSpan.textContent = manifest.name || feat.id;
         cardTitle.appendChild(nameSpan);
 
         if (manifest.version) {
@@ -1921,8 +1921,8 @@ const renderExtensionsSettings = async () => {
           cardTitle.appendChild(authorSpan);
         }
 
-        // Show "required" badge for cmd extension (cannot be disabled)
-        if (isCmdExtension) {
+        // Show "required" badge for the cmd feature (cannot be disabled).
+        if (isCmdFeature) {
           const requiredBadge = document.createElement('span');
           requiredBadge.style.cssText = 'margin-left: 8px; font-size: 10px; padding: 2px 6px; background: var(--base0E, #c678dd); border-radius: 4px; color: white;';
           requiredBadge.textContent = 'required';
@@ -1937,7 +1937,7 @@ const renderExtensionsSettings = async () => {
         actions.style.cssText = 'display: flex; gap: 8px; align-items: center;';
 
         // Reload button (only when running)
-        if (ext.isRunning) {
+        if (feat.isRunning) {
           const reloadBtn = document.createElement('button');
           reloadBtn.textContent = 'Reload';
           reloadBtn.style.cssText = `
@@ -1953,7 +1953,7 @@ const renderExtensionsSettings = async () => {
             reloadBtn.textContent = '...';
             reloadBtn.disabled = true;
             try {
-              const result = await api.features.devReload(ext.id);
+              const result = await api.features.devReload(feat.id);
               reloadBtn.textContent = result && !result.error ? '✓' : '✗';
             } catch (err) {
               reloadBtn.textContent = '✗';
@@ -1961,13 +1961,13 @@ const renderExtensionsSettings = async () => {
             setTimeout(() => {
               reloadBtn.textContent = 'Reload';
               reloadBtn.disabled = false;
-              refreshExtensionsList();
+              refreshFeaturesList();
             }, 1000);
           });
           actions.appendChild(reloadBtn);
         }
 
-        // Remove button (only for external extensions)
+        // Remove button (only for external features).
         if (!isBuiltin) {
           const removeBtn = document.createElement('button');
           removeBtn.textContent = 'Remove';
@@ -1981,16 +1981,16 @@ const renderExtensionsSettings = async () => {
             cursor: pointer;
           `;
           removeBtn.addEventListener('click', async () => {
-            if (!confirm(`Remove feature "${manifest.name || ext.id}"?`)) return;
+            if (!confirm(`Remove feature "${manifest.name || feat.id}"?`)) return;
 
             removeBtn.textContent = '...';
             removeBtn.disabled = true;
 
             // Remove from the unified registry — the strict handler
             // tears down any running tile windows before deleting files.
-            const result = await api.features.remove(ext.id);
+            const result = await api.features.remove(feat.id);
             if (result && !result.error) {
-              refreshExtensionsList();
+              refreshFeaturesList();
             } else {
               removeBtn.textContent = 'Error';
               setTimeout(() => {
@@ -2016,25 +2016,25 @@ const renderExtensionsSettings = async () => {
           body.appendChild(desc);
         }
 
-        // Show path for external extensions
-        if (ext.path && !isBuiltin) {
+        // Show path for external features.
+        if (feat.path && !isBuiltin) {
           const pathInfo = document.createElement('div');
           pathInfo.className = 'help-text';
           pathInfo.style.cssText = 'font-family: monospace; font-size: 11px; margin-bottom: 4px;';
-          pathInfo.textContent = ext.path;
+          pathInfo.textContent = feat.path;
           body.appendChild(pathInfo);
         }
 
-        // Show error if any
-        if (ext.lastError) {
+        // Show error if any.
+        if (feat.lastError) {
           const errorInfo = document.createElement('div');
-          errorInfo.className = 'extension-error';
+          errorInfo.className = 'feature-error';
           errorInfo.style.cssText = 'margin-top: 8px; padding: 8px; background: var(--error-bg, #fef2f2); border: 1px solid var(--error-border, #fecaca); border-radius: 4px; font-size: 12px; color: var(--error-text, #dc2626);';
-          errorInfo.textContent = `Error: ${ext.lastError}`;
+          errorInfo.textContent = `Error: ${feat.lastError}`;
           body.appendChild(errorInfo);
         }
 
-        // Inline Options accordion for extensions with settings schemas
+        // Inline Options accordion for features with settings schemas.
         if (manifest.schemas && (manifest.schemas.prefs || manifest.schemas.item)) {
           const optionsAccordion = document.createElement('div');
           optionsAccordion.className = 'ext-options-accordion';
@@ -2068,7 +2068,7 @@ const renderExtensionsSettings = async () => {
                 try {
                   const feature = {
                     id: manifest.id,
-                    shortname: manifest.shortname || ext.id || manifest.id,
+                    shortname: manifest.shortname || feat.id || manifest.id,
                     labels: { name: manifest.name, ...(manifest.labels || {}) },
                     schemas: manifest.schemas,
                     storageKeys: manifest.storageKeys || { PREFS: 'prefs', ITEMS: 'items' },
@@ -2077,7 +2077,7 @@ const renderExtensionsSettings = async () => {
                   const settingsContent = await renderFeatureSettings(feature);
                   optionsContent.appendChild(settingsContent);
                 } catch (err) {
-                  console.error(`[settings] Failed to load options for ${ext.id}:`, err);
+                  console.error(`[settings] Failed to load options for ${feat.id}:`, err);
                   const errorMsg = document.createElement('div');
                   errorMsg.className = 'help-text';
                   errorMsg.style.color = 'var(--error-text, #dc2626)';
@@ -2092,24 +2092,24 @@ const renderExtensionsSettings = async () => {
         }
 
         card.appendChild(body);
-        extSection.appendChild(card);
+        featuresSection.appendChild(card);
       });
 
-      listContainer.appendChild(extSection);
+      listContainer.appendChild(featuresSection);
     } catch (err) {
       loading.remove();
       const error = document.createElement('div');
       error.className = 'help-text';
-      error.textContent = `Error loading extensions: ${err.message}`;
+      error.textContent = `Error loading features: ${err.message}`;
       listContainer.appendChild(error);
     }
   };
 
-  // Initial load (may be incomplete if extensions still loading)
-  await refreshExtensionsList();
+  // Initial load (may be incomplete if features are still loading).
+  await refreshFeaturesList();
 
   // Store refresh function for external access (feature:all-loaded is subscribed once in main init)
-  window._refreshExtensionsList = refreshExtensionsList;
+  window._refreshFeaturesList = refreshFeaturesList;
 
   return container;
 };
@@ -2119,21 +2119,21 @@ const renderExtensionsSettings = async () => {
 const renderFeatureSettings = async (feature) => {
   const { id, labels, schemas, storageKeys, defaults } = feature;
 
-  // Use extension shortname for datastore key (e.g., 'peeks', 'slides', 'websearch')
-  // This must match what api.settings uses (derived from peek://{shortname}/... URL)
-  const extId = feature.shortname || labels.name.toLowerCase();
+  // Use the feature's shortname for the datastore key (e.g. 'peeks', 'slides', 'websearch').
+  // Must match what api.settings uses (derived from peek://{shortname}/... URL).
+  const featureId = feature.shortname || labels.name.toLowerCase();
 
-  // Load from datastore
-  const store = await createDatastoreStore(extId, defaults);
+  // Load from datastore.
+  const store = await createDatastoreStore(featureId, defaults);
 
   let prefs = store.get(storageKeys.PREFS);
   let items = store.get(storageKeys.ITEMS);
 
   const container = document.createElement('div');
 
-  // Topic for notifying feature of settings changes (e.g., 'peeks:settings-changed')
-  // Use extId (shortname) so the topic matches what extensions subscribe to
-  const settingsChangedTopic = `${extId}:settings-changed`;
+  // Topic for notifying the feature of settings changes (e.g. 'peeks:settings-changed').
+  // Uses the feature's shortname so the topic matches what features subscribe to.
+  const settingsChangedTopic = `${featureId}:settings-changed`;
 
   const save = async () => {
     // Save to datastore
@@ -3102,49 +3102,48 @@ const init = async () => {
 
   // Listen for feature toggle events (refresh Features list when toggled)
   api.subscribe('core:feature:toggle', () => {
-    if (window._refreshExtensionsList) {
-      window._refreshExtensionsList();
+    if (window._refreshFeaturesList) {
+      window._refreshFeaturesList();
     }
   });
 
-  // Add Features management section (Peek extensions like peeks, slides, groups)
-  const extNav = document.createElement('a');
-  extNav.className = 'nav-item';
-  extNav.textContent = 'Features';
-  extNav.dataset.section = 'extensions';
-  extNav.addEventListener('click', () => showSection('extensions'));
-  sidebarNav.appendChild(extNav);
+  // Add Features management section (tile-backed features: peeks, slides, groups, etc.).
+  const featuresNav = document.createElement('a');
+  featuresNav.className = 'nav-item';
+  featuresNav.textContent = 'Features';
+  featuresNav.dataset.section = 'features';
+  featuresNav.addEventListener('click', () => showSection('features'));
+  sidebarNav.appendChild(featuresNav);
 
-  // Create features section with async content
-  const extSection = document.createElement('div');
-  extSection.className = 'section';
-  extSection.id = 'section-extensions';
+  // Create features section with async content.
+  const featuresSection = document.createElement('div');
+  featuresSection.className = 'section';
+  featuresSection.id = 'section-features';
 
-  const extTitle = document.createElement('h2');
-  extTitle.className = 'section-title';
-  extTitle.textContent = 'Features';
-  extSection.appendChild(extTitle);
+  const featuresTitle = document.createElement('h2');
+  featuresTitle.className = 'section-title';
+  featuresTitle.textContent = 'Features';
+  featuresSection.appendChild(featuresTitle);
 
-  // Load extensions content async
-  renderExtensionsSettings().then(content => {
-    extSection.appendChild(content);
+  // Load features content async.
+  renderFeaturesSettings().then(content => {
+    featuresSection.appendChild(content);
   });
 
-  contentArea.appendChild(extSection);
+  contentArea.appendChild(featuresSection);
 
-  // Extension settings schemas are loaded inline in the Features pane (via Options accordion)
+  // Feature settings schemas are loaded inline in the Features pane (via Options accordion).
   // No separate nav items or panes needed.
 
-  // Listen for all extensions loaded event to refresh the Extensions list
-  // NOTE: Only ONE feature:all-loaded subscription per source - pubsub overwrites duplicates
+  // Listen for feature:all-loaded to refresh the Features list.
+  // NOTE: Only ONE feature:all-loaded subscription per source — pubsub overwrites duplicates.
   api.subscribe('feature:all-loaded', () => {
-    // Refresh the Extensions list if it's been rendered
-    if (window._refreshExtensionsList) {
-      window._refreshExtensionsList();
+    if (window._refreshFeaturesList) {
+      window._refreshFeaturesList();
     }
   });
 
-  // Add Extensions section (bundled webextensions: ad blocker, consent-o-matic, etc.)
+  // Add Extensions section (bundled chrome browser extensions: ad blocker, consent-o-matic, etc.)
   const privacyNav = document.createElement('a');
   privacyNav.className = 'nav-item';
   privacyNav.textContent = 'Extensions';
