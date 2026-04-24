@@ -10,7 +10,6 @@ import {
   validateTileManifest,
   parseManifestJSON,
   resolveCapabilities,
-  convertV1ToV2,
   type TileCapabilities,
 } from './tile-manifest.js';
 
@@ -395,49 +394,3 @@ describe('resolveCapabilities', () => {
   });
 });
 
-// ─── V1 to V2 Conversion ────────────────────────────────────────────
-
-describe('convertV1ToV2', () => {
-  it('should convert basic v1 manifest', () => {
-    const v2 = convertV1ToV2(VALID_V1_MANIFEST as Record<string, unknown>);
-    assert.strictEqual(v2.manifestVersion, 3);
-    assert.strictEqual(v2.id, 'legacy-ext');
-    assert.strictEqual(v2.name, 'Legacy Extension');
-    assert.strictEqual(v2.builtin, true);
-    assert.strictEqual(v2.tiles.length, 1);
-    assert.strictEqual(v2.tiles[0].resident, true);
-    assert.strictEqual(v2.tiles[0].url, 'background.html');
-  });
-
-  it('should convert manifest with no background', () => {
-    const v1 = { id: 'no-bg', name: 'No Background', background: false };
-    const v2 = convertV1ToV2(v1 as Record<string, unknown>);
-    assert.strictEqual(v2.tiles.length, 0);
-  });
-
-  it('should carry over commands', () => {
-    const v2 = convertV1ToV2(VALID_V1_MANIFEST as Record<string, unknown>);
-    assert.ok(v2.commands);
-    assert.strictEqual(v2.commands!.length, 1);
-    assert.strictEqual(v2.commands![0].name, 'legacy cmd');
-  });
-
-  it('should infer pubsub capabilities', () => {
-    const v2 = convertV1ToV2(VALID_V1_MANIFEST as Record<string, unknown>);
-    assert.ok(v2.capabilities.pubsub);
-    assert.ok(v2.capabilities.pubsub.scopes.includes('self'));
-    assert.ok(v2.capabilities.pubsub.scopes.includes('global'));
-  });
-
-  it('should infer commands capability from commands array', () => {
-    const v2 = convertV1ToV2(VALID_V1_MANIFEST as Record<string, unknown>);
-    assert.strictEqual(v2.capabilities.commands, true);
-  });
-
-  it('should mark lazy if v1 was lazy', () => {
-    const v1 = { ...VALID_V1_MANIFEST, lazy: true };
-    const v2 = convertV1ToV2(v1 as Record<string, unknown>);
-    assert.strictEqual(v2.tiles[0].lazy, true);
-    assert.strictEqual(v2.tiles[0].resident, false);
-  });
-});
