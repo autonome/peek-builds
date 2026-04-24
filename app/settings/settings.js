@@ -2687,7 +2687,7 @@ const renderDatastoreSettings = async () => {
   const tableGroups = [
     { label: 'Core Data', tables: ['items', 'tags', 'content', 'blobs'] },
     { label: 'Relationships', tables: ['item_tags', 'item_visits', 'item_events', 'item_groups', 'item_group_members'] },
-    { label: 'Extensions', tables: ['extensions', 'feature_settings', 'scripts_data', 'feeds'] },
+    { label: 'Features', tables: ['feature_settings', 'scripts_data', 'feeds'] },
     { label: 'System', tables: ['settings', 'migrations', 'themes'] },
   ];
 
@@ -2701,9 +2701,8 @@ const renderDatastoreSettings = async () => {
     item_group_members: 'Group membership associations',
     content: 'Cached page content (legacy)',
     blobs: 'Binary data storage',
-    scripts_data: 'Script extension data',
+    scripts_data: 'Script feature data',
     feeds: 'Feed subscription data',
-    extensions: 'Installed extension metadata',
     feature_settings: 'Per-feature settings and preferences',
     settings: 'Global application settings',
     migrations: 'Schema migration history',

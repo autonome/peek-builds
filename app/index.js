@@ -33,9 +33,9 @@ const settingsAddress = 'peek://app/settings/settings.html';
 const topicCorePrefs = 'topic:core:prefs';
 const topicFeatureToggle = 'core:feature:toggle';
 
-// Built-in extensions (now loaded by main process ExtensionManager)
-// cmd is first so it's ready to receive command registrations from other extensions
-const builtinExtensions = ['cmd', 'editor', 'groups', 'peeks', 'slides'];
+// Builtin feature tiles loaded by the main-process tile launcher.
+// cmd is first so it's ready to receive command registrations from other tiles.
+const builtinFeatureTiles = ['cmd', 'editor', 'groups', 'peeks', 'slides'];
 
 let _settingsWin = null;
 
@@ -102,10 +102,10 @@ const initFeature = f => {
     return;
   }
 
-  // Skip extension-based features (they're loaded by main process ExtensionManager)
-  const extId = f.name.toLowerCase();
-  if (builtinExtensions.includes(extId)) {
-    log('core', 'skipping extension-based feature (loaded by main process):', f.name);
+  // Skip tile-backed features (they're loaded by the main-process tile launcher).
+  const tileId = f.name.toLowerCase();
+  if (builtinFeatureTiles.includes(tileId)) {
+    log('core', 'skipping tile-backed feature (loaded by main process):', f.name);
     return;
   }
 
@@ -167,8 +167,8 @@ async function cycleTheme() {
   }
 }
 
-// Register extension management commands for cmd palette
-const registerExtensionCommands = () => {
+// Register the core cmd-palette commands the app ships with.
+const registerCoreCommands = () => {
   // Settings command
   api.commands.register({
     name: 'settings',
@@ -558,7 +558,7 @@ const registerExtensionCommands = () => {
 
   // ---- Chrome Extension Entry Point Commands ----
   // Register commands for each openable entry point of loaded chrome extensions
-  // (async, fire-and-forget since registerExtensionCommands is not async)
+  // (async, fire-and-forget since registerCoreCommands is not async)
   api.chromeExtensions.getUiEntries().then(uiResult => {
     if (!uiResult.success || !uiResult.data) return;
     const entryTypeLabels = {
@@ -612,9 +612,9 @@ export const init = async () => {
   // after the IPC message had already been sent and dropped.
   api.subscribe('feature:all-loaded', () => {
     try {
-      registerExtensionCommands();
+      registerCoreCommands();
     } catch (err) {
-      log.error('core', 'registerExtensionCommands threw:', err);
+      log.error('core', 'registerCoreCommands threw:', err);
     }
   });
 
@@ -790,9 +790,9 @@ export const init = async () => {
     if (f) {
       log('core', 'feature toggle', f);
 
-      // Check if this feature is backed by a tile-feature
+      // Check if this feature is backed by a builtin tile.
       const featureId = f.name.toLowerCase();
-      const isFeatureTile = builtinExtensions.includes(featureId);
+      const isFeatureTile = builtinFeatureTiles.includes(featureId);
 
       if (msg.enabled == false) {
         log('core', 'disabling', f.name);
@@ -826,7 +826,8 @@ export const init = async () => {
     }
   });
 
-  // Initialize core features (non-extension features only)
+  // Initialize core features (non-tile-backed only — tile-backed features
+  // are loaded by the main-process tile launcher).
   features().forEach(initFeature);
 
   // Features (tiles) are loaded by the main process feature pipeline.
