@@ -32,11 +32,11 @@ test.describe('Slides @desktop', () => {
       expect(result.success).toBe(true);
     }
 
-    // Verify slides extension is loaded (hybrid mode: may be iframe or separate window)
+    // Verify slides feature is registered (v3 strict registry)
     const runningExts = await bgWindow.evaluate(async () => {
-      return await (window as any).app.extensions.list();
+      return await (window as any).app.features.list('builtin');
     });
-    const slidesRunning = runningExts.data?.some((ext: any) => ext.id === 'slides');
+    const slidesRunning = runningExts.entries?.some((ext: any) => ext.id === 'slides');
     expect(slidesRunning).toBe(true);
 
     // Query addresses to verify they were added

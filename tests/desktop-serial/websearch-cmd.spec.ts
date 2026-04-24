@@ -126,12 +126,14 @@ test.describe('Websearch Cold-Start Lazy Loading @desktop', () => {
     //   stub fires → load extension → verify → replay → execute
     // The websearch extension must NOT be pre-loaded.
 
-    // Verify websearch is NOT loaded yet (it's lazy, not eager)
+    // Verify websearch is NOT loaded yet (it's lazy, not eager).
+    // In v3 there's no "running" status on the registry — registered ≠ loaded.
+    // The real signal for "loaded" is a live websearch tile window.
     const isLoaded = await sharedBgWindow.evaluate(async () => {
-      const result = await (window as any).app.extensions.list();
-      if (!result.success) return false;
-      return result.data.some(
-        (e: { id: string; status: string }) => e.id === 'websearch' && e.status === 'running'
+      const result = await (window as any).app.window.list({ includeInternal: true });
+      if (!result?.success || !Array.isArray(result.windows)) return false;
+      return result.windows.some(
+        (w: { url?: string }) => (w.url || '').includes('peek://websearch/'),
       );
     });
     // If it's already loaded (e.g., test order changed), skip gracefully
@@ -181,12 +183,13 @@ test.describe('Websearch Cold-Start Lazy Loading @desktop', () => {
       expect(result.completed).toBe(true);
       expect(result.finalState).not.toBe('ERROR');
 
-      // Verify the extension is now loaded after the lazy load
+      // Verify the extension is now loaded after the lazy load:
+      // a live websearch tile window should exist.
       const nowLoaded = await sharedBgWindow.evaluate(async () => {
-        const result = await (window as any).app.extensions.list();
-        if (!result.success) return false;
-        return result.data.some(
-          (e: { id: string; status: string }) => e.id === 'websearch' && e.status === 'running'
+        const result = await (window as any).app.window.list({ includeInternal: true });
+        if (!result?.success || !Array.isArray(result.windows)) return false;
+        return result.windows.some(
+          (w: { url?: string }) => (w.url || '').includes('peek://websearch/'),
         );
       });
       expect(nowLoaded).toBe(true);

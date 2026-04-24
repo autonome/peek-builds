@@ -24,11 +24,11 @@ test.describe('Peeks @desktop', () => {
     });
     expect(addResult.success).toBe(true);
 
-    // Verify peeks extension is loaded (hybrid mode: may be iframe or separate window)
+    // Verify peeks feature is registered (v3 strict registry)
     const runningExts = await bgWindow.evaluate(async () => {
-      return await (window as any).app.extensions.list();
+      return await (window as any).app.features.list('builtin');
     });
-    const peeksRunning = runningExts.data?.some((ext: any) => ext.id === 'peeks');
+    const peeksRunning = runningExts.entries?.some((ext: any) => ext.id === 'peeks');
     expect(peeksRunning).toBe(true);
 
     // Open a peek window for the address we created
