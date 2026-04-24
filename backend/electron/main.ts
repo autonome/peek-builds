@@ -765,10 +765,10 @@ export async function loadFeatures(): Promise<number> {
   }
 
   // Phase 1: Early
-  publish('system', 'ext:startup:phase', { phase: 'early' });
+  publish('system', 'feature:startup:phase', { phase: 'early' });
 
   // Phase 2: Commands
-  publish('system', 'ext:startup:phase', { phase: 'commands' });
+  publish('system', 'feature:startup:phase', { phase: 'commands' });
 
   // Lazy command stubs and lazy event interceptors live in `tile-lazy.ts` —
   // `registerLazyTile()` (called from tile-compat) publishes
@@ -780,11 +780,11 @@ export async function loadFeatures(): Promise<number> {
   DEBUG && console.log(`[feature:timing] startup total: ${Date.now() - featStart}ms`);
 
   // Phase 3: UI
-  publish('system', 'ext:startup:phase', { phase: 'ui' });
+  publish('system', 'feature:startup:phase', { phase: 'ui' });
 
   // Phase 4: Complete
-  publish('system', 'ext:startup:phase', { phase: 'complete' });
-  publish('system', 'ext:all-loaded', { count: 0 });
+  publish('system', 'feature:startup:phase', { phase: 'complete' });
+  publish('system', 'feature:all-loaded', { count: 0 });
 
   return 0;
 }

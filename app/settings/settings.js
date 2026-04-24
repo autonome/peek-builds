@@ -2244,7 +2244,7 @@ const renderExtensionsSettings = async () => {
   // Initial load (may be incomplete if extensions still loading)
   await refreshExtensionsList();
 
-  // Store refresh function for external access (ext:all-loaded is subscribed once in main init)
+  // Store refresh function for external access (feature:all-loaded is subscribed once in main init)
   window._refreshExtensionsList = refreshExtensionsList;
 
   return container;
@@ -3273,8 +3273,8 @@ const init = async () => {
   // No separate nav items or panes needed.
 
   // Listen for all extensions loaded event to refresh the Extensions list
-  // NOTE: Only ONE ext:all-loaded subscription per source - pubsub overwrites duplicates
-  api.subscribe('ext:all-loaded', () => {
+  // NOTE: Only ONE feature:all-loaded subscription per source - pubsub overwrites duplicates
+  api.subscribe('feature:all-loaded', () => {
     // Refresh the Extensions list if it's been rendered
     if (window._refreshExtensionsList) {
       window._refreshExtensionsList();

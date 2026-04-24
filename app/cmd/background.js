@@ -514,7 +514,7 @@ const init = async () => {
 
   // 1b. Load cached commands if versions match
   // This pre-populates the registry so panel can open immediately
-  // Note: full version validation (isCacheValid) runs at ext:all-loaded when all
+  // Note: full version validation (isCacheValid) runs at feature:all-loaded when all
   // extension versions are available. Here we do a quick app-version check to
   // reject clearly stale caches without blocking startup.
   const cache = await loadCommandCache();
@@ -584,8 +584,8 @@ const init = async () => {
   });
 
   // 4b. Save command cache after all extensions have loaded
-  api.pubsub.subscribe('ext:all-loaded', async () => {
-    log('ext:cmd', 'ext:all-loaded - saving command cache');
+  api.pubsub.subscribe('feature:all-loaded', async () => {
+    log('ext:cmd', 'feature:all-loaded - saving command cache');
     // Small delay to ensure all commands are registered
     setTimeout(async () => {
       // Purge stale cached commands that were NOT re-registered by live extensions

@@ -606,13 +606,13 @@ export const init = async () => {
   await initPage();
   // await initHud(); // disabled — see import comment above
 
-  // Register ext:all-loaded subscriber BEFORE publishing topicCorePrefs.
+  // Register feature:all-loaded subscriber BEFORE publishing topicCorePrefs.
   // Main subscribes to topicCorePrefs and kicks off loadFeatures() which
-  // publishes ext:all-loaded. Because loadFeatures runs in parallel with
+  // publishes feature:all-loaded. Because loadFeatures runs in parallel with
   // the rest of this init(), subscribing later in init() would race and
   // miss the publish — the renderer's subscriber would be registered
   // after the IPC message had already been sent and dropped.
-  api.subscribe('ext:all-loaded', () => {
+  api.subscribe('feature:all-loaded', () => {
     try {
       registerExtensionCommands();
     } catch (err) {
@@ -836,7 +836,7 @@ export const init = async () => {
   // Features (tiles) are loaded by the main process feature pipeline.
   // The main-process startup (entry.ts -> loadFeatures()) runs the v2
   // tile pipeline (tile-compat / tile-loader); core background just
-  // initializes in-process features and waits for `ext:all-loaded`.
+  // initializes in-process features and waits for `feature:all-loaded`.
   log('core', 'Core features initialized. Tiles loaded by main process.');
 
 };

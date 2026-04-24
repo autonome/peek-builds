@@ -17,7 +17,7 @@ test.describe('Startup Phase Events @desktop', () => {
     if (app) await app.close();
   });
 
-  test('ext:startup:phase events are available for subscription', async () => {
+  test('feature:startup:phase events are available for subscription', async () => {
     // Test that extensions can subscribe to startup phase events
     // Since app is already started, we test that the subscription mechanism works
     const result = await bgWindow.evaluate(async () => {
@@ -25,7 +25,7 @@ test.describe('Startup Phase Events @desktop', () => {
       let received = false;
 
       // Subscribe to startup phase events
-      api.subscribe('ext:startup:phase', (msg: any) => {
+      api.subscribe('feature:startup:phase', (msg: any) => {
         received = true;
       });
 
@@ -36,12 +36,12 @@ test.describe('Startup Phase Events @desktop', () => {
     expect(result.subscriptionCreated).toBe(true);
   });
 
-  test('ext:all-loaded event was published during startup', async () => {
-    // Verify that the ext:all-loaded event was published by checking extensions are running
+  test('feature:all-loaded event was published during startup', async () => {
+    // Verify that the feature:all-loaded event was published by checking extensions are running
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
 
-      // Get running extensions - if they're running, ext:all-loaded was published
+      // Get running extensions - if they're running, feature:all-loaded was published
       const extResult = await api.extensions.list();
       const extensions = extResult.data || [];
       return {
