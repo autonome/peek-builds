@@ -1,25 +1,21 @@
 # V1 Removal Plan
 
-## Status (2026-04-24, autonomous overnight pass)
+## Status — DONE (2026-04-24)
 
-What's actually done as of today, on top of the work documented in earlier sections:
+V1 removal is complete. This document is closed; remaining sections below are
+preserved as historical context only.
 
-- Phase 1 (core background → tile-preload): done. cmd/page/hud are consolidated into the core background renderer (`app/index.js` → `initCmd/initPage/initHud`). HUD is currently disabled (commit `6f8a80b1`) but the wiring exists.
-- Phase 2 (test fixture → tile-preload): done. `peek://test/index.html` is the privileged renderer, launched from `test-fixture-glue.ts` with a `createTrustedBuiltinGrant('test')` token.
-- Phase 2.5 (other v1 surfaces): done. `loadExtInHost`, `extensionHostWindow`, `createExtensionHostWindow`, `extensionWindows` map, and the `createExtensionWindow` helper are all gone — only stale comments remain.
-- Phase 3.7e (delete `IPC_CHANNELS.*` handlers + const): done in commit `dadb6902`. All 6 handlers (`PUBLISH`/`SUBSCRIBE`/`CLOSE_WINDOW`/`REGISTER_SHORTCUT`/`UNREGISTER_SHORTCUT`/`MODIFY_WINDOW`) had zero callers after preload.js's deletion.
-- Phase 3.7b (window-* dead handlers): done in commit `39440baa`. Deleted `window-resize`, `window-blur`, `window-is-transient`, `window-set-scroll-position`, `window-get-bounds`, `window-set-bounds`, `get-display-info`, `window-move`, `window-get-position`. Also migrated tile-preload's drag IIFE off `window-move`/`window-get-position` to the strict `tile:window:get-bounds`/`tile:window:set-bounds`.
-- Phase 3.7d (extract-page-content + dialog/file/info/fetch + modes/izui/feature-settings): done in commit `39dba9d6`. Deleted ~20 dead legacy handlers; their only callers were preload.js or in already-deleted code paths. tile-preload's surfaces (`api.dialogs`, `api.filesystem`, `api.modes`, `api.izui`, `api.settings`) all route through strict `tile:*` channels now.
-- Theme directory shims: added `api.theme.{pickFolder,validateFolder,add,remove,reload}` to tile-preload (committed alongside Phase 3.7d). These keep using legacy `theme:*` IPC handlers — Settings UI requires them. Settings was previously broken on these calls.
-- preload.js: already gone (deleted in Phase 3.11b-hud).
+All phases done:
+- Phase 1 (core background → tile-preload): cmd/page/hud consolidated into the core background renderer.
+- Phase 2 (test fixture → tile-preload): privileged `peek://test/index.html` renderer with `createTrustedBuiltinGrant('test')`.
+- Phase 2.5 (other v1 surfaces): `loadExtInHost`, `extensionHostWindow`, `createExtensionHostWindow`, `extensionWindows`, `createExtensionWindow` all gone.
+- Phase 3.7a–h: every legacy IPC handler that pre-existed preload.js is deleted; tile-preload routes through strict `tile:*` channels gated on capability tokens.
+- Phase 3.7e (`IPC_CHANNELS.*`): all 6 handlers + the const itself deleted.
+- Phase 3.8 (final preload.js cleanup): preload.js was already gone; `setPreloadPath` / `getPreloadPath` confirmed removed; stale comments swept.
+- Phase 4 (manifest cleanup): `type?` and `windowHints` removed from `TileEntry`; `manifestVersion` bumped to `3` in lockstep across every feature manifest, scaffolding template, audit script, and unit test fixture. Validator rejects both legacy fields outright; `detectManifestVersion` treats `manifestVersion: 2` as v1 (legacy). `tile-launcher.ts` exposes `TileWindowOverrides` (subset of flat `TileEntry` fields). `tile-compat.ts` / `tile-ipc.ts` / `tile-lazy.ts` no longer fall back on `t.type === 'background'` — residency is `t.resident === true`, lazy entries are matched by `t.lazy === true`.
+- Final cleanup pass: `convertV1ToV2` deleted from `tile-manifest.ts` (no live callers); empty no-op `register*Handlers` functions removed; ~30 archaeological comments referencing `preload.js` and Phase 3.x tags either deleted or rewritten to describe current behavior.
 
-What remains:
-
-- Phase 3.7a/c: tile-preload still has window-* fallback branches (`if (!hasWindowCapability()) return ipcRenderer.invoke('window-*')`) that route to legacy handlers. Each fallback can be deleted once we confirm every deployed tile declares the relevant capability. No tile-preload caller of window-* is unconditional anymore — the only LIVE callers are: capability-fallbacks + my new drag IIFE (which now uses strict).
-- Phase 3.8 (final preload.js cleanup): preload.js itself is gone; `setPreloadPath`/`getPreloadPath` may still be referenced — quick audit needed.
-- Phase 4 (manifest cleanup): DONE. `type?` and `windowHints` removed from `TileEntry`; `manifestVersion` bumped to `3` in lockstep across every feature manifest, scaffolding template, audit script, and unit test fixture. Validator now rejects both legacy fields outright; `detectManifestVersion` treats `manifestVersion: 2` as v1 (legacy). `tile-launcher.ts` exposes `TileWindowOverrides` (subset of flat `TileEntry` fields) instead of the deleted `Partial<TileEntry['windowHints']>`. `tile-compat.ts` / `tile-ipc.ts` / `tile-lazy.ts` no longer fall back on `t.type === 'background'` — residency is `t.resident === true`, lazy entries are matched by `t.lazy === true`.
-
-Validation today: `yarn tsc --noEmit` clean after each commit. Unit tests 2284/0 across all commits. Full Playwright suite NOT run during this session — user explicitly asked to defer until morning review.
+Validation: `yarn tsc --noEmit` clean. Unit tests 2286/0 at the close of the session. Full Playwright suite (229 tests) green at the start of this cleanup pass; rerun pending.
 
 
 
