@@ -45,7 +45,8 @@ function trackVisibleWindowFocus(win: MockWindow): void {
 }
 
 /**
- * Mirrors the getter from ipc.ts (IPC handler 'get-focused-visible-window-id').
+ * Mirrors `getLastFocusedVisibleWindowId()` exported from ipc.ts and used by
+ * the strict tile:window:get-focused-visible-id handler in tile-ipc.ts.
  */
 function getFocusedVisibleWindowId(): number | null {
   return lastFocusedVisibleWindowId;

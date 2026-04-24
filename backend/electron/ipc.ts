@@ -94,7 +94,6 @@ import {
   publish,
   subscribe,
   getSystemAddress,
-  getStats as getPubSubStats,
 } from './pubsub.js';
 
 import {
@@ -155,6 +154,16 @@ let lastFocusedVisibleWindowId: number | null = null;
 /** Returns the last focused visible window ID, for use by tile-ipc.ts nav shims. */
 export function getLastFocusedVisibleWindowId(): number | null {
   return lastFocusedVisibleWindowId;
+}
+
+/** Returns the last focused content (http/https) window ID. Used by tile:window:devtools. */
+export function getLastContentWindowId(): number | null {
+  return lastContentWindowId;
+}
+
+/** Clears the last-focused content window tracker. Called when the target is destroyed. */
+export function clearLastContentWindowId(): void {
+  lastContentWindowId = null;
 }
 
 /**
@@ -2332,35 +2341,9 @@ export function registerWindowHandlers(): void {
     }
   });
 
-  ipcMain.handle('window-devtools', async (_ev, msg) => {
-    DEBUG && console.log('window-devtools', msg, 'lastContentWindowId:', lastContentWindowId);
-
-    try {
-      // If no ID provided, use the last content window
-      const targetId = msg?.id || lastContentWindowId;
-
-      if (!targetId) {
-        return { success: false, error: 'No content window available' };
-      }
-
-      const win = BrowserWindow.fromId(targetId);
-      if (!win || win.isDestroyed()) {
-        // Clear tracking if the window is gone
-        if (targetId === lastContentWindowId) {
-          lastContentWindowId = null;
-        }
-        return { success: false, error: 'Window not found or destroyed' };
-      }
-
-      // Open devtools for the target window
-      win.webContents.openDevTools({ mode: 'detach' });
-      return { success: true, id: targetId, url: win.webContents.getURL() };
-    } catch (error) {
-      console.error('Failed to open devtools:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // window-devtools removed (v1 removal Phase 3.7g). Strict
+  // tile:window:devtools handler lives in tile-ipc.ts; cmd panel now
+  // calls api.window.devtools().
 
   // Legacy `window-blur`, `get-display-info`, `window-set-bounds` removed
   // (v1 removal Phase 3.7b). All previously called from preload.js (now
@@ -2467,11 +2450,8 @@ export function registerWindowHandlers(): void {
     }
   });
 
-  // PubSub stats
-  ipcMain.handle('pubsub-stats', async () => {
-    return { success: true, data: getPubSubStats() };
-  });
-
+  // pubsub-stats removed (v1 removal Phase 3.7g). Strict
+  // tile:pubsub:stats handler lives in tile-ipc.ts (trustedBuiltin only).
 }
 
 /**
@@ -2506,11 +2486,9 @@ export function registerMiscHandlers(onQuit: () => void): void {
   // Was called from preload.js (deleted). page.js' undo-close-window scroll
   // restoration would need a strict tile:* equivalent if reintroduced.
 
-  // Get last focused visible window ID (for per-window commands)
-  // Returns the most recently focused window that isn't a background/internal window
-  ipcMain.handle('get-focused-visible-window-id', () => {
-    return lastFocusedVisibleWindowId;
-  });
+  // Legacy `get-focused-visible-window-id` removed (v1 removal Phase 3.7g).
+  // Tile-preload routes through strict `tile:window:get-focused-visible-id`
+  // which uses `getLastFocusedVisibleWindowId()` from this file.
 
   // Register shortcut
   //
@@ -2610,7 +2588,7 @@ export function registerModesHandlers(): void {
  * Persist adBlockerEnabled pref in the datastore.
  * Reads current core prefs, updates adBlockerEnabled, writes back.
  */
-function persistAdBlockerPref(enabled: boolean): void {
+export function persistAdBlockerPref(enabled: boolean): void {
   try {
     const db = getDb();
     const CORE_EXT_ID = 'core';
@@ -2635,147 +2613,12 @@ function persistAdBlockerPref(enabled: boolean): void {
 
 /**
  * Register IPC handlers for bundled web extensions (adblocker + chrome extensions)
+ *
+ * Strict tile:adblocker:* counterparts live in tile-ipc.ts (Phase 3.7f).
+ * Settings UI + page widget consume them via api.adblocker.*.
  */
 export function registerWebExtensionHandlers(): void {
-  const DEBUG = !!process.env.DEBUG;
-
-  // ========== Adblocker Handlers ==========
-
-  // Get adblocker status
-  ipcMain.handle('adblocker:getStatus', async () => {
-    try {
-      const { getAdblockerStatus } = await import('./adblocker.js');
-      const status = getAdblockerStatus();
-      return { success: true, data: status };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Enable adblocker
-  ipcMain.handle('adblocker:enable', async () => {
-    try {
-      const { applyAdblockerConfig } = await import('./adblocker.js');
-      await applyAdblockerConfig({ enabled: true });
-      persistAdBlockerPref(true);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Disable adblocker
-  ipcMain.handle('adblocker:disable', async () => {
-    try {
-      const { disableBlocking } = await import('./adblocker.js');
-      disableBlocking();
-      persistAdBlockerPref(false);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Get blocked count
-  ipcMain.handle('adblocker:getBlockedCount', async () => {
-    try {
-      const { getBlockedCount } = await import('./adblocker.js');
-      const count = getBlockedCount();
-      return { success: true, data: count };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // ========== Per-Site Adblocker Handlers ==========
-
-  // Get per-site adblocker allowlist (sites where blocking is disabled)
-  ipcMain.handle('adblocker:getAllowlist', async () => {
-    try {
-      const db = getDb();
-      const CORE_EXT_ID = 'core';
-      const KEY = 'adblocker_allowlist';
-      const row = db.prepare(
-        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
-      ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
-      const allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
-      return { success: true, data: allowlist };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Check if a specific site is in the adblocker allowlist
-  ipcMain.handle('adblocker:isSiteAllowed', async (_ev, data: { hostname: string }) => {
-    try {
-      const db = getDb();
-      const CORE_EXT_ID = 'core';
-      const KEY = 'adblocker_allowlist';
-      const row = db.prepare(
-        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
-      ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
-      const allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
-      return { success: true, data: allowlist.includes(data.hostname) };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Add a site to the adblocker allowlist (disable blocking for that site)
-  ipcMain.handle('adblocker:allowSite', async (_ev, data: { hostname: string }) => {
-    try {
-      const db = getDb();
-      const CORE_EXT_ID = 'core';
-      const KEY = 'adblocker_allowlist';
-      const row = db.prepare(
-        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
-      ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
-      let allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
-      if (!allowlist.includes(data.hostname)) {
-        allowlist.push(data.hostname);
-      }
-      const timestamp = Date.now();
-      db.prepare(`
-        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(`${CORE_EXT_ID}_${KEY}`, CORE_EXT_ID, KEY, JSON.stringify(allowlist), timestamp);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Remove a site from the adblocker allowlist (re-enable blocking for that site)
-  ipcMain.handle('adblocker:disallowSite', async (_ev, data: { hostname: string }) => {
-    try {
-      const db = getDb();
-      const CORE_EXT_ID = 'core';
-      const KEY = 'adblocker_allowlist';
-      const row = db.prepare(
-        'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
-      ).get(CORE_EXT_ID, KEY) as { value: string } | undefined;
-      let allowlist: string[] = row?.value ? JSON.parse(row.value) : [];
-      allowlist = allowlist.filter(h => h !== data.hostname);
-      const timestamp = Date.now();
-      db.prepare(`
-        INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(`${CORE_EXT_ID}_${KEY}`, CORE_EXT_ID, KEY, JSON.stringify(allowlist), timestamp);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  DEBUG && console.log('[ipc] Web extension handlers registered');
+  // No-op — see tile-ipc.ts for the strict tile:adblocker:* handlers.
 }
 
 /**

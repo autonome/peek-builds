@@ -31,7 +31,7 @@ import {
 } from './tile-launcher.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
 import { parseManifestFile } from './tile-manifest.js';
-import { publish, subscribe, unsubscribe } from './pubsub.js';
+import { publish, subscribe, unsubscribe, getStats as getPubSubStats } from './pubsub.js';
 import { DEBUG, TILE_STRICT, isHeadless } from './config.js';
 import { publishCapabilityViolation } from './tile-violations.js';
 import { getFeatureRegistry } from './feature-startup.js';
@@ -86,7 +86,7 @@ import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
-import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting } from './ipc.js';
+import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getLastContentWindowId, clearLastContentWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
 import {
   getRunningExtensions,
   getAllRegisteredExtensions,
@@ -549,6 +549,24 @@ export function registerTileIpcHandlers(): void {
     const grant = _grant;
 
     unsubscribe(args.source, args.topic);
+  });
+
+  // ── tile:pubsub:stats (Phase 3.7g) ────────────────────────────────
+  //
+  // Pubsub telemetry for the HUD stats widget + developer diagnostics.
+  // trustedBuiltin only — exposes raw subscription counts which a
+  // third-party tile shouldn't need to introspect. Replaces legacy
+  // un-gated `pubsub-stats` ipcMain handler.
+  registerTileIpc('tile:pubsub:stats', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'pubsub', 'tile:pubsub:stats', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:pubsub:stats' };
+    }
+    return { success: true, data: getPubSubStats() };
   });
 
   // ── Commands ──
@@ -2983,14 +3001,14 @@ export function registerTileIpcHandlers(): void {
   // ── tile:window:get-focused-visible-id ────────────────────────────
   //
   // Read-only: return the last-focused visible window id. Tracked by
-  // the main-process window manager (see `ipc.ts::lastFocusedVisibleWindowId`).
-  // Gated by `window.query` — treated as a read.
+  // the main-process window manager via `getLastFocusedVisibleWindowId()`
+  // exported from ipc.ts. Gated by `window.query`.
   //
-  // Implementation note: the actual tracking state lives in ipc.ts.
-  // Rather than importing the internal variable, we delegate to the
-  // un-gated legacy `get-focused-visible-window-id` channel. The strict
-  // surface just adds the capability gate.
-  registerTileIpc('tile:window:get-focused-visible-id', { mode: 'handle' }, async (event, args: {
+  // Resolution chain:
+  //   1. The tracked id (set on focus events excluding modals + bg windows)
+  //   2. BrowserWindow.getFocusedWindow() if no tracked id
+  //   3. First visible, focusable, non-destroyed window
+  registerTileIpc('tile:window:get-focused-visible-id', { mode: 'handle' }, (event, args: {
     token: string;
   }, _grant) => {
     const grant = _grant;
@@ -3001,26 +3019,15 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
-      // Delegate to the existing un-gated handler registered by ipc.ts.
-      // We call ipcMain._events? No — simpler: replicate by asking
-      // BrowserWindow.getFocusedWindow, but the semantic differs (it
-      // tracks "last visible" even after focus left). The ipc.ts handler
-      // reads the tracked variable. Since we cannot reach it without an
-      // import, we call through to the same handler name.
-      // Wait: inside main process we ARE the handler host. The safest
-      // approach: expose a getter from ipc.ts. But the task scope is to
-      // add strict surfaces without touching ipc.ts. Use a two-hop:
-      // invoke via the IPC event loop is not possible inside main.
-      //
-      // Pragmatic path: use BrowserWindow.getFocusedWindow() as a best
-      // approximation — the feature callers use this to target "the
-      // window I last interacted with", and the focused window matches
-      // for typical usage.
+      const tracked = getLastFocusedVisibleWindowId();
+      if (typeof tracked === 'number' && tracked > 0) {
+        const win = BrowserWindow.fromId(tracked);
+        if (win && !win.isDestroyed()) return { success: true, data: tracked };
+      }
       const focused = BrowserWindow.getFocusedWindow();
       if (focused && !focused.isDestroyed()) {
         return { success: true, data: focused.id };
       }
-      // Fallback: first visible, focusable, non-destroyed window.
       for (const w of BrowserWindow.getAllWindows()) {
         if (w.isDestroyed()) continue;
         if (!w.isVisible()) continue;
@@ -3031,6 +3038,41 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:devtools (Phase 3.7g) ─────────────────────────────
+  //
+  // Open devtools (detached) on the last-focused content window
+  // (http/https). With an explicit id, opens devtools on that window.
+  // trustedBuiltin only — devtools is a developer surface; third-party
+  // tiles must not trigger it on arbitrary windows. Replaces legacy
+  // `window-devtools` ipcMain handler.
+  registerTileIpc('tile:window:devtools', { mode: 'handle' }, (event, args: {
+    token: string;
+    id?: number;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'window', 'tile:window:devtools', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:window:devtools' };
+    }
+    try {
+      const targetId = args.id ?? getLastContentWindowId();
+      if (!targetId) {
+        return { success: false, error: 'No content window available' };
+      }
+      const win = BrowserWindow.fromId(targetId);
+      if (!win || win.isDestroyed()) {
+        if (targetId === getLastContentWindowId()) clearLastContentWindowId();
+        return { success: false, error: 'Window not found or destroyed' };
+      }
+      win.webContents.openDevTools({ mode: 'detach' });
+      return { success: true, id: targetId, url: win.webContents.getURL() };
+    } catch (error) {
+      console.error('Failed to open devtools:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 
@@ -4632,6 +4674,176 @@ export function registerTileIpcHandlers(): void {
       if (!profileId) return { success: false, error: 'No profile session initialized' };
       const partition = getPartitionString(profileId);
       return { success: true, data: { profileId, partition } };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // ── tile:adblocker:* (Phase 3.7f) ──────────────────────────────────
+  //
+  // Strict counterparts of the legacy `adblocker:*` channels in ipc.ts
+  // (deleted in Phase 3.7f). Settings + page widget consume via
+  // api.adblocker.*. trustedBuiltin only — global blocker state +
+  // per-site allowlist persisted to feature_settings.
+  //
+  // Per-site allowlist storage helpers — keep DRY across the four
+  // handlers that touch it.
+
+  function _readAdblockerAllowlist(): string[] {
+    const db = getDb();
+    const row = db.prepare(
+      'SELECT value FROM feature_settings WHERE featureId = ? AND key = ?'
+    ).get('core', 'adblocker_allowlist') as { value: string } | undefined;
+    return row?.value ? JSON.parse(row.value) : [];
+  }
+
+  function _writeAdblockerAllowlist(list: string[]): void {
+    const db = getDb();
+    db.prepare(`
+      INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('core_adblocker_allowlist', 'core', 'adblocker_allowlist', JSON.stringify(list), Date.now());
+  }
+
+  registerTileIpc('tile:adblocker:getStatus', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'adblocker', 'tile:adblocker:getStatus', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:adblocker:getStatus' };
+    }
+    try {
+      const { getAdblockerStatus } = await import('./adblocker.js');
+      return { success: true, data: getAdblockerStatus() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:adblocker:enable', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'adblocker', 'tile:adblocker:enable', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:adblocker:enable' };
+    }
+    try {
+      const { applyAdblockerConfig } = await import('./adblocker.js');
+      await applyAdblockerConfig({ enabled: true });
+      persistAdBlockerPref(true);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:adblocker:disable', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'adblocker', 'tile:adblocker:disable', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:adblocker:disable' };
+    }
+    try {
+      const { disableBlocking } = await import('./adblocker.js');
+      disableBlocking();
+      persistAdBlockerPref(false);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:adblocker:getBlockedCount', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'adblocker', 'tile:adblocker:getBlockedCount', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:adblocker:getBlockedCount' };
+    }
+    try {
+      const { getBlockedCount } = await import('./adblocker.js');
+      return { success: true, data: getBlockedCount() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:adblocker:getAllowlist', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'adblocker', 'tile:adblocker:getAllowlist', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:adblocker:getAllowlist' };
+    }
+    try {
+      return { success: true, data: _readAdblockerAllowlist() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:adblocker:isSiteAllowed', { mode: 'handle' }, (event, args: {
+    token: string;
+    hostname: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'adblocker', 'tile:adblocker:isSiteAllowed', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:adblocker:isSiteAllowed' };
+    }
+    try {
+      return { success: true, data: _readAdblockerAllowlist().includes(args.hostname) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:adblocker:allowSite', { mode: 'handle' }, (event, args: {
+    token: string;
+    hostname: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'adblocker', 'tile:adblocker:allowSite', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:adblocker:allowSite' };
+    }
+    try {
+      const list = _readAdblockerAllowlist();
+      if (!list.includes(args.hostname)) list.push(args.hostname);
+      _writeAdblockerAllowlist(list);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:adblocker:disallowSite', { mode: 'handle' }, (event, args: {
+    token: string;
+    hostname: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'adblocker', 'tile:adblocker:disallowSite', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:adblocker:disallowSite' };
+    }
+    try {
+      const list = _readAdblockerAllowlist().filter(h => h !== args.hostname);
+      _writeAdblockerAllowlist(list);
+      return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }

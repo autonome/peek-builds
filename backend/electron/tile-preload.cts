@@ -265,10 +265,9 @@ function buildAPI(): Record<string, unknown> {
   api.pubsub = {
     publish: publishImpl,
     subscribe: subscribeImpl,
-    // stats() is unrestricted — returns pubsub telemetry for the HUD stats
-    // widget and developer diagnostics. Delegates to the legacy pubsub-stats
-    // channel (already registered in ipc.ts registerMiscHandlers).
-    stats: () => ipcRenderer.invoke('pubsub-stats'),
+    // Pubsub telemetry for the HUD stats widget + developer diagnostics.
+    // Strict path: tile:pubsub:stats (trustedBuiltin only — see tile-ipc.ts).
+    stats: () => ipcRenderer.invoke('tile:pubsub:stats', { token: tileToken }),
   };
 
   // ── Commands (if granted) ──
@@ -791,17 +790,31 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * Get the last-focused visible window id. Read-only — strict path
-     * requires `window.query`; otherwise falls back to legacy
-     * `get-focused-visible-window-id`.
+     * Get the last-focused visible window id. Read-only — requires
+     * `window.query` capability (or trustedBuiltin). Returns the bare
+     * window id (number) or null, matching the v1 contract callers
+     * already rely on (e.g. `if (!focusedId) ...`). Strict handler
+     * returns `{success, data}`; we unwrap here.
      */
-    getFocusedVisibleWindowId: () => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:get-focused-visible-id', {
-          token: tileToken,
-        });
-      }
-      return ipcRenderer.invoke('get-focused-visible-window-id');
+    getFocusedVisibleWindowId: async () => {
+      const result = await ipcRenderer.invoke('tile:window:get-focused-visible-id', {
+        token: tileToken,
+      }) as { success?: boolean; data?: number | null } | undefined;
+      if (!result || result.success !== true) return null;
+      return typeof result.data === 'number' ? result.data : null;
+    },
+
+    /**
+     * Open devtools (detached) on the last-focused content window
+     * (http/https). With an explicit id, opens on that window.
+     * Strict-only — requires trustedBuiltin (devtools is a developer
+     * surface).
+     */
+    devtools: (id?: number) => {
+      return ipcRenderer.invoke('tile:window:devtools', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
@@ -1863,18 +1876,18 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Ad blocker ────────────────────────────────────────────────────
   //
-  // Thin wrappers over the `adblocker:*` ipcMain handlers. Same
-  // rationale as api.profiles / api.sync read-wrappers above: Settings
-  // is the primary consumer and it has trustedBuiltin.
+  // Strict tile:adblocker:* counterparts of the legacy `adblocker:*`
+  // handlers live in tile-ipc.ts (Phase 3.7f). trustedBuiltin only —
+  // global blocker state + per-site allowlist persisted to feature_settings.
   api.adblocker = {
-    getStatus: () => ipcRenderer.invoke('adblocker:getStatus'),
-    enable: () => ipcRenderer.invoke('adblocker:enable'),
-    disable: () => ipcRenderer.invoke('adblocker:disable'),
-    getBlockedCount: () => ipcRenderer.invoke('adblocker:getBlockedCount'),
-    getAllowlist: () => ipcRenderer.invoke('adblocker:getAllowlist'),
-    isSiteAllowed: (hostname: string) => ipcRenderer.invoke('adblocker:isSiteAllowed', { hostname }),
-    allowSite: (hostname: string) => ipcRenderer.invoke('adblocker:allowSite', { hostname }),
-    disallowSite: (hostname: string) => ipcRenderer.invoke('adblocker:disallowSite', { hostname }),
+    getStatus: () => ipcRenderer.invoke('tile:adblocker:getStatus', { token: tileToken }),
+    enable: () => ipcRenderer.invoke('tile:adblocker:enable', { token: tileToken }),
+    disable: () => ipcRenderer.invoke('tile:adblocker:disable', { token: tileToken }),
+    getBlockedCount: () => ipcRenderer.invoke('tile:adblocker:getBlockedCount', { token: tileToken }),
+    getAllowlist: () => ipcRenderer.invoke('tile:adblocker:getAllowlist', { token: tileToken }),
+    isSiteAllowed: (hostname: string) => ipcRenderer.invoke('tile:adblocker:isSiteAllowed', { token: tileToken, hostname }),
+    allowSite: (hostname: string) => ipcRenderer.invoke('tile:adblocker:allowSite', { token: tileToken, hostname }),
+    disallowSite: (hostname: string) => ipcRenderer.invoke('tile:adblocker:disallowSite', { token: tileToken, hostname }),
   };
 
   // ── Dark mode ─────────────────────────────────────────────────────
@@ -2196,7 +2209,10 @@ function buildAPI(): Record<string, unknown> {
       // enumeration) so it can still resolve a target when the hint is
       // null — critical for headless tests where `show:false` windows
       // never emit focus events and the tracker may be stale.
-      const hint = await ipcRenderer.invoke('get-focused-visible-window-id');
+      const hintResult = await ipcRenderer.invoke('tile:window:get-focused-visible-id', {
+        token: tileToken,
+      }) as { success?: boolean; data?: number | null } | undefined;
+      const hint = hintResult?.success === true ? hintResult.data : null;
       if (typeof hint === 'number' && hint > 0) {
         windowId = hint;
       }

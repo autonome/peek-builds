@@ -143,9 +143,10 @@ const viewCommand = {
     const mode = subcommand.toLowerCase();
 
     if (mode === 'devtools') {
-      // DevTools is handled via IPC directly, not via page.js
+      // DevTools is opened on the last-focused content window via the
+      // strict tile:window:devtools handler (trustedBuiltin only).
       try {
-        const result = await api.invoke('window-devtools', {});
+        const result = await api.window.devtools();
         if (result && result.success) {
           return { success: true, message: 'DevTools opened' };
         } else {
