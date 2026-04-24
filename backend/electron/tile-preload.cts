@@ -1886,8 +1886,8 @@ function buildAPI(): Record<string, unknown> {
   //
   // Thin wrappers over `darkMode:*` ipcMain handlers.
   api.darkMode = {
-    get: () => ipcRenderer.invoke('darkMode:get'),
-    set: (mode: string) => ipcRenderer.invoke('darkMode:set', mode),
+    get: () => ipcRenderer.invoke('tile:darkMode:get', { token: tileToken }),
+    set: (mode: string) => ipcRenderer.invoke('tile:darkMode:set', { token: tileToken, mode }),
   };
 
   // ── closeWindow (Phase 4: REMOVED — was unused per trimming plan §1 row 8) ──

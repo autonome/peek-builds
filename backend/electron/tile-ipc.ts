@@ -86,12 +86,13 @@ import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
-import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId } from './ipc.js';
+import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting } from './ipc.js';
 import {
   getRunningExtensions,
   getAllRegisteredExtensions,
   reloadExtension,
   getWindowInfo,
+  validateThemeCSS,
 } from './main.js';
 import {
   registerGlobalShortcut,
@@ -6742,6 +6743,63 @@ body {
       return { success: false, error: 'trustedBuiltin required for tile:app:get-prefs' };
     }
     return getPrefs();
+  });
+
+  // ── tile:darkMode:* (Phase 3.7f) ─────────────────────────────────────
+  //
+  // Strict counterparts of the legacy `darkMode:get` / `darkMode:set`
+  // channels in ipc.ts (deleted in Phase 3.7f). Settings UI consumes
+  // these via api.darkMode.{get,set} in tile-preload. trustedBuiltin
+  // only — dark mode is global app state.
+
+  registerTileIpc('tile:darkMode:get', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'darkMode', 'tile:darkMode:get', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:darkMode:get' };
+    }
+    const mode = getDarkModeSetting();
+    return {
+      success: true,
+      data: {
+        mode,
+        // Tier 2 (WebContentsForceDark) requires app restart to take effect.
+        tier2Active: app.commandLine.hasSwitch('enable-features') &&
+          (app.commandLine.getSwitchValue('enable-features') || '').includes('WebContentsForceDark'),
+      },
+    };
+  });
+
+  registerTileIpc('tile:darkMode:set', { mode: 'handle' }, (event, args: {
+    token: string;
+    mode: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'darkMode', 'tile:darkMode:set', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:darkMode:set' };
+    }
+    const mode = args.mode;
+    if (!['off', 'system', 'force'].includes(mode)) {
+      return { success: false, error: 'Invalid dark mode value. Must be "off", "system", or "force".' };
+    }
+
+    const previousMode = getDarkModeSetting();
+    setDarkModeSetting(mode);
+    applyDarkModeSetting(mode);
+
+    const tier2Changed = (previousMode === 'force') !== (mode === 'force');
+
+    // Broadcast change to all windows.
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('darkMode:changed', { mode });
+    }
+
+    return { success: true, data: { mode, restartRequired: tier2Changed } };
   });
 
   // ── tile:nav:* strict shims (Phase 3.11b-nav-session) ────────────────

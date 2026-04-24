@@ -590,7 +590,7 @@ export function getDarkModeSetting(): string {
 /**
  * Set the dark mode setting in datastore
  */
-function setDarkModeSetting(value: string): void {
+export function setDarkModeSetting(value: string): void {
   setThemeSetting(DARK_MODE_KEY, value);
 }
 
@@ -605,51 +605,12 @@ export function applyDarkModeSetting(mode: string): void {
 
 /**
  * Register dark mode setting IPC handlers
+ *
+ * Strict `tile:darkMode:*` handlers live in tile-ipc.ts (Phase 3.7f).
+ * Legacy `darkMode:*` ipc handlers were removed there too.
  */
 function registerDarkModeSettingHandlers(): void {
-  // Get current dark mode setting
-  ipcMain.handle('darkMode:get', () => {
-    const mode = getDarkModeSetting();
-    return {
-      success: true,
-      data: {
-        mode,
-        // Tier 2 (WebContentsForceDark) requires app restart to take effect
-        tier2Active: app.commandLine.hasSwitch('enable-features') &&
-          (app.commandLine.getSwitchValue('enable-features') || '').includes('WebContentsForceDark'),
-      }
-    };
-  });
-
-  // Set dark mode setting
-  ipcMain.handle('darkMode:set', (_ev, mode: string) => {
-    if (!['off', 'system', 'force'].includes(mode)) {
-      return { success: false, error: 'Invalid dark mode value. Must be "off", "system", or "force".' };
-    }
-
-    const previousMode = getDarkModeSetting();
-    setDarkModeSetting(mode);
-
-    // Apply Tier 1 immediately (nativeTheme)
-    applyDarkModeSetting(mode);
-
-    // Check if Tier 2 change requires restart
-    const tier2Changed = (previousMode === 'force') !== (mode === 'force');
-
-    // Broadcast change to all windows
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      win.webContents.send('darkMode:changed', { mode });
-    }
-
-    return {
-      success: true,
-      data: {
-        mode,
-        restartRequired: tier2Changed,
-      }
-    };
-  });
+  // No-op — tile:darkMode:get / tile:darkMode:set live in tile-ipc.ts.
 }
 
 /**
