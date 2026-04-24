@@ -503,7 +503,7 @@ export async function initialize(): Promise<void> {
             const isModal = windowData.params.modal === true;
             const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
             const isPeekUrl = address && address.startsWith('peek://');
-            const isBackgroundPage = address && (address.includes('background.html') || address.includes('extension-host.html'));
+            const isBackgroundPage = address && address.includes('background.html');
             const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
             const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
 

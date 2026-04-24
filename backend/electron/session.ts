@@ -174,11 +174,6 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       continue;
     }
 
-    // Skip the extension host
-    if (url.includes('peek://app/extension-host.html')) {
-      continue;
-    }
-
     // Skip modal windows
     if (winData.params.modal) {
       continue;
@@ -297,7 +292,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       for (const descriptor of windowDescriptors) {
         const isWebUrl = descriptor.url.startsWith('http://') || descriptor.url.startsWith('https://');
         const isPeekUrl = descriptor.url.startsWith('peek://');
-        const isBackgroundPage = descriptor.url.includes('background.html') || descriptor.url.includes('extension-host.html');
+        const isBackgroundPage = descriptor.url.includes('background.html');
         const isReopenable = isWebUrl || (isPeekUrl && !isBackgroundPage);
         if (!isReopenable) continue;
 
@@ -331,7 +326,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       DEBUG && console.log(`[session] Pushed ${windowDescriptors.filter(d => {
         const isWeb = d.url.startsWith('http://') || d.url.startsWith('https://');
         const isPeek = d.url.startsWith('peek://');
-        const isBg = d.url.includes('background.html') || d.url.includes('extension-host.html');
+        const isBg = d.url.includes('background.html');
         return isWeb || (isPeek && !isBg);
       }).length} open window(s) to closed window stack`);
     }
@@ -885,7 +880,7 @@ export function saveSpaceWorkspaces(): void {
     if (!win || win.isDestroyed() || !win.isVisible()) continue;
 
     const rawUrl = win.webContents.getURL();
-    if (rawUrl.includes('peek://app/background.html') || rawUrl.includes('peek://app/extension-host.html')) continue;
+    if (rawUrl.includes('peek://app/background.html')) continue;
 
     // Check if this window is in space mode
     let modeEntry;

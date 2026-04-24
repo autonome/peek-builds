@@ -47,7 +47,6 @@ export const RESTORE_STRIP_KEYS = new Set([
  */
 export const SYSTEM_WINDOW_URLS = [
   'peek://app/background.html',
-  'peek://app/extension-host.html',
 ];
 
 // ============================================================================

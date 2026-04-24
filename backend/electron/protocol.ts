@@ -575,8 +575,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
 
     // Backwards-compat: peek://cmd/{path} resolves to app/cmd/
     // cmd used to be a consolidated extension served from features/cmd/; it's
-    // now core app code in app/cmd/. The extension-host iframe still uses this
-    // origin (peek://cmd/background.html) for isolation.
+    // now core app code in app/cmd/.
     if (host === 'cmd') {
       const cmdPath = pathname || 'background.html';
       const absolutePath = path.resolve(rootDir, 'app', 'cmd', cmdPath);
@@ -591,8 +590,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
 
     // Backwards-compat: peek://hud/{path} resolves to app/hud/
     // HUD used to be a consolidated extension served from features/hud/; it's
-    // now core app code in app/hud/. The extension-host iframe uses this
-    // origin (peek://hud/background.html) for isolation.
+    // now core app code in app/hud/.
     if (host === 'hud') {
       const hudPath = pathname || 'background.html';
       const absolutePath = path.resolve(rootDir, 'app', 'hud', hudPath);
@@ -607,8 +605,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
 
     // Backwards-compat: peek://page/{path} resolves to app/page/
     // page used to be a consolidated extension served from features/page/; it's
-    // now core app code in app/page/. The extension-host iframe uses this
-    // origin (peek://page/background.html) for isolation.
+    // now core app code in app/page/.
     if (host === 'page') {
       const pagePath = pathname || 'background.html';
       const absolutePath = path.resolve(rootDir, 'app', 'page', pagePath);

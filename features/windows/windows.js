@@ -191,8 +191,6 @@ const loadWindows = async () => {
       if (url.includes('windows.html')) return false;
       // Skip background pages
       if (url.includes('background.html')) return false;
-      // Skip extension host
-      if (url.includes('extension-host.html')) return false;
       // Include everything else (content windows and peek:// UI pages)
       return true;
     });

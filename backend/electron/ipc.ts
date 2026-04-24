@@ -1008,7 +1008,7 @@ export function registerWindowHandlers(): void {
 
       // Phase 2: Promote 'content' to 'child-content' when opened from a real parent.
       // Extensions may explicitly pass role:'content' for web pages, but if the IPC
-      // sender is a visible window (not background/extension-host), the opened page
+      // sender is a visible window (not the background renderer), the opened page
       // is semantically a child — ESC should close it and return to the parent.
       if (role === 'content' && parentWindowId != null) {
         console.log(`[izui] Promoting content -> child-content (parent: ${parentWindowId})`);

@@ -32,7 +32,7 @@ interface MockWindow {
  * Excludes background, non-focusable, and overlay windows.
  */
 function trackVisibleWindowFocus(win: MockWindow): void {
-  if (win.url === 'peek://app/background.html' || win.url === 'peek://app/extension-host.html') {
+  if (win.url === 'peek://app/background.html') {
     return;
   }
   if (!win.focusable) {
@@ -80,11 +80,6 @@ describe('Visible window focus tracking', () => {
 
   it('does not track background windows', () => {
     trackVisibleWindowFocus({ id: 1, url: 'peek://app/background.html', focusable: true });
-    assert.strictEqual(getFocusedVisibleWindowId(), null);
-  });
-
-  it('does not track extension-host windows', () => {
-    trackVisibleWindowFocus({ id: 1, url: 'peek://app/extension-host.html', focusable: true });
     assert.strictEqual(getFocusedVisibleWindowId(), null);
   });
 

@@ -1426,7 +1426,6 @@ describe('Session Integration Tests', () => {
       if (isDestroyed) return true;
       if (!isVisible) return true;
       if (url.includes('peek://app/background.html')) return true;
-      if (url.includes('peek://app/extension-host.html')) return true;
       if (params.modal) return true;
       if (params.role === 'utility' && params.focusable === false) return true;
       return false;
@@ -1480,16 +1479,6 @@ describe('Session Integration Tests', () => {
         false
       );
       assert.strictEqual(skip, true, 'Background window should be skipped');
-    });
-
-    it('skips extension host window', () => {
-      const skip = shouldSkipWindow(
-        'peek://app/extension-host.html',
-        {},
-        true,
-        false
-      );
-      assert.strictEqual(skip, true, 'Extension host should be skipped');
     });
 
     it('skips invisible windows', () => {

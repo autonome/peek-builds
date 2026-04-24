@@ -85,7 +85,7 @@ function createClosedWindowEntry(
   const isModal = params.modal === true;
   const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
   const isPeekUrl = address && address.startsWith('peek://');
-  const isBackgroundPage = address && (address.includes('background.html') || address.includes('extension-host.html'));
+  const isBackgroundPage = address && address.includes('background.html');
   const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
   const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
 
@@ -327,16 +327,6 @@ describe('Entry creation logic', () => {
   it('does NOT save peek://app/background.html', () => {
     const entry = createClosedWindowEntry(
       { address: 'peek://app/background.html' },
-      null,
-      null,
-      'test-ext',
-    );
-    assert.strictEqual(entry, null);
-  });
-
-  it('does NOT save peek://app/extension-host.html', () => {
-    const entry = createClosedWindowEntry(
-      { address: 'peek://app/extension-host.html' },
       null,
       null,
       'test-ext',

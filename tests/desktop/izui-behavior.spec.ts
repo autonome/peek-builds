@@ -42,7 +42,7 @@ test.describe('IZUI Behavior @desktop', () => {
     expect(groupsListBefore.params.parentWindowId).toBeNull();
 
     // Step 2: Open a child window FROM the groups content window.
-    // Since groups/home.html is a real content window (not background/extension-host),
+    // Since groups/home.html is a real content window (not the background renderer),
     // the child should get parentWindowId set to the groups window's ID.
     const childResult = await groupsWindow.evaluate(async () => {
       return await (window as any).app.window.open('https://child-parent-test.example.com', {
