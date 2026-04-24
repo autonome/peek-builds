@@ -17,7 +17,7 @@ import {
 // ─── Fixtures ────────────────────────────────────────────────────────
 
 const VALID_V2_MANIFEST = {
-  manifestVersion: 2,
+  manifestVersion: 3,
   id: 'test-tile',
   name: 'Test Tile',
   description: 'A test tile',
@@ -26,8 +26,8 @@ const VALID_V2_MANIFEST = {
   tiles: [
     {
       id: 'background',
-      type: 'background',
       url: 'background.html',
+      resident: true,
     },
   ],
   capabilities: {
@@ -60,8 +60,8 @@ const VALID_V1_MANIFEST = {
 // ─── Version Detection ───────────────────────────────────────────────
 
 describe('detectManifestVersion', () => {
-  it('should detect v2 by manifestVersion field', () => {
-    assert.strictEqual(detectManifestVersion({ manifestVersion: 2 }), 'v2');
+  it('should detect v2 by manifestVersion field (current schema = 3)', () => {
+    assert.strictEqual(detectManifestVersion({ manifestVersion: 3 }), 'v2');
   });
 
   it('should detect v2 by tiles + capabilities', () => {
@@ -99,6 +99,10 @@ describe('detectManifestVersion', () => {
   it('should detect v1 for manifestVersion 1', () => {
     assert.strictEqual(detectManifestVersion({ manifestVersion: 1 }), 'v1');
   });
+
+  it('should detect v1 for legacy manifestVersion 2 (pre-v1-removal compat fields)', () => {
+    assert.strictEqual(detectManifestVersion({ manifestVersion: 2 }), 'v1');
+  });
 });
 
 // ─── Validation ──────────────────────────────────────────────────────
@@ -129,7 +133,7 @@ describe('validateTileManifest', () => {
 
   it('should reject too many tiles', () => {
     const tiles = Array.from({ length: 11 }, (_, i) => ({
-      id: `tile-${i}`, type: 'window', url: 'index.html',
+      id: `tile-${i}`, url: 'index.html',
     }));
     const manifest = { ...VALID_V2_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
@@ -138,23 +142,30 @@ describe('validateTileManifest', () => {
 
   it('should reject duplicate tile ids', () => {
     const tiles = [
-      { id: 'dup', type: 'window', url: 'a.html' },
-      { id: 'dup', type: 'background', url: 'b.html' },
+      { id: 'dup', url: 'a.html' },
+      { id: 'dup', url: 'b.html', resident: true },
     ];
     const manifest = { ...VALID_V2_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.message.includes('duplicate')));
   });
 
-  it('should reject invalid tile type', () => {
-    const tiles = [{ id: 'bad', type: 'invalid', url: 'index.html' }];
+  it('should reject removed tile.type field (compat dropped in manifestVersion 3)', () => {
+    const tiles = [{ id: 'bad', type: 'background', url: 'index.html' }];
     const manifest = { ...VALID_V2_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
-    assert.ok(errors.some(e => e.message.includes('type')));
+    assert.ok(errors.some(e => e.path.endsWith('.type')));
+  });
+
+  it('should reject removed tile.windowHints field (compat dropped in manifestVersion 3)', () => {
+    const tiles = [{ id: 'bad', url: 'index.html', windowHints: { width: 100 } }];
+    const manifest = { ...VALID_V2_MANIFEST, tiles };
+    const errors = validateTileManifest(manifest as Record<string, unknown>);
+    assert.ok(errors.some(e => e.path.endsWith('.windowHints')));
   });
 
   it('should reject tile without url', () => {
-    const tiles = [{ id: 'no-url', type: 'window' }];
+    const tiles = [{ id: 'no-url' }];
     const manifest = { ...VALID_V2_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.message.includes('url')));
@@ -236,7 +247,7 @@ describe('parseManifestJSON', () => {
 
   it('should return null for invalid v2 manifest', () => {
     const result = parseManifestJSON({
-      manifestVersion: 2,
+      manifestVersion: 3,
       // missing required fields
     });
     assert.strictEqual(result, null);
@@ -389,12 +400,12 @@ describe('resolveCapabilities', () => {
 describe('convertV1ToV2', () => {
   it('should convert basic v1 manifest', () => {
     const v2 = convertV1ToV2(VALID_V1_MANIFEST as Record<string, unknown>);
-    assert.strictEqual(v2.manifestVersion, 2);
+    assert.strictEqual(v2.manifestVersion, 3);
     assert.strictEqual(v2.id, 'legacy-ext');
     assert.strictEqual(v2.name, 'Legacy Extension');
     assert.strictEqual(v2.builtin, true);
     assert.strictEqual(v2.tiles.length, 1);
-    assert.strictEqual(v2.tiles[0].type, 'background');
+    assert.strictEqual(v2.tiles[0].resident, true);
     assert.strictEqual(v2.tiles[0].url, 'background.html');
   });
 
@@ -427,5 +438,6 @@ describe('convertV1ToV2', () => {
     const v1 = { ...VALID_V1_MANIFEST, lazy: true };
     const v2 = convertV1ToV2(v1 as Record<string, unknown>);
     assert.strictEqual(v2.tiles[0].lazy, true);
+    assert.strictEqual(v2.tiles[0].resident, false);
   });
 });

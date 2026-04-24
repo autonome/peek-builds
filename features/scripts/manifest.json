@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "scripts",
   "shortname": "scripts",
   "name": "Scripts",
@@ -10,20 +10,16 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "manager",
-      "type": "window",
       "url": "manager.html",
-      "windowHints": {
-        "key": "scripts-manager",
-        "width": 1200,
-        "height": 800,
-        "title": "Scripts Manager"
-      }
+      "key": "scripts-manager",
+      "width": 1200,
+      "height": 800,
+      "title": "Scripts Manager"
     }
   ],
   "capabilities": {

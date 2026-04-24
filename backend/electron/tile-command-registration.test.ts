@@ -76,12 +76,12 @@ function flushMicrotasks(): Promise<void> {
 
 function makeManifestWithCommands(id: string, commands: TileCommand[]): TileManifestV2 {
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id,
     name: id,
     builtin: true,
     tiles: [
-      { id: 'background', type: 'background', url: 'background.html', lazy: true },
+      { id: 'background', url: 'background.html', lazy: true },
     ],
     capabilities: { pubsub: { scopes: ['self', 'global'] }, commands: true },
     commands,

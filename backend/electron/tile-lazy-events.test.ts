@@ -78,14 +78,13 @@ function signalReady(state: FakeLauncherState, tileId: string, entryId: string):
 
 function makeManifest(id: string, lazyEvents: string[]): TileManifestV2 {
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id,
     name: id,
     builtin: true,
     tiles: [
       {
         id: 'background',
-        type: 'background',
         url: 'background.html',
         lazy: true,
         lazyEvents,
@@ -307,7 +306,7 @@ describe('tile manifest lazyEvents validation', () => {
   });
 
   const base = {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id: 't',
     name: 'T',
     capabilities: {},
@@ -319,7 +318,6 @@ describe('tile manifest lazyEvents validation', () => {
       tiles: [
         {
           id: 'background',
-          type: 'background',
           url: 'bg.html',
           lazy: true,
           lazyEvents: ['editor:open', 'editor:add'],
@@ -332,7 +330,7 @@ describe('tile manifest lazyEvents validation', () => {
   it('accepts omitted lazyEvents', () => {
     const errors = validateTileManifest({
       ...base,
-      tiles: [{ id: 'background', type: 'background', url: 'bg.html', lazy: true }],
+      tiles: [{ id: 'background', url: 'bg.html', lazy: true }],
     } as Record<string, unknown>);
     assert.strictEqual(errors.length, 0);
   });
@@ -343,7 +341,6 @@ describe('tile manifest lazyEvents validation', () => {
       tiles: [
         {
           id: 'background',
-          type: 'background',
           url: 'bg.html',
           lazyEvents: 'editor:open',
         },
@@ -358,7 +355,6 @@ describe('tile manifest lazyEvents validation', () => {
       tiles: [
         {
           id: 'background',
-          type: 'background',
           url: 'bg.html',
           lazyEvents: ['editor:open', 42, ''],
         },

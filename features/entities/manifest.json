@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "entities",
   "shortname": "entities",
   "name": "Entity Recognition",

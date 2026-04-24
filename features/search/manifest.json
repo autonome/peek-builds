@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "search",
   "shortname": "search",
   "name": "Search",
@@ -9,21 +9,17 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "search-home",
-        "width": 700,
-        "height": 768,
-        "title": "Search"
-      }
+      "role": "workspace",
+      "key": "search-home",
+      "width": 700,
+      "height": 768,
+      "title": "Search"
     }
   ],
   "capabilities": {

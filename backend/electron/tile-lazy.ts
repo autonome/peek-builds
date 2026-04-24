@@ -501,9 +501,9 @@ async function loadLazyTile(tileId: string): Promise<void> {
 
   loadingTiles.add(tileId);
   try {
-    const bgTile = config.manifest.tiles.find(t => t.type === 'background');
+    const bgTile = config.manifest.tiles.find(t => t.lazy === true) ?? config.manifest.tiles[0];
     if (!bgTile) {
-      throw new Error(`[tile-lazy] No background tile entry in ${tileId}`);
+      throw new Error(`[tile-lazy] No tile entry to launch in ${tileId}`);
     }
 
     launcher.launchTile({
@@ -538,7 +538,7 @@ async function loadLazyTile(tileId: string): Promise<void> {
 function getBackgroundEntry(tileId: string): string | null {
   const config = lazyTileRegistry.get(tileId);
   if (!config) return null;
-  const bgTile = config.manifest.tiles.find(t => t.type === 'background');
+  const bgTile = config.manifest.tiles.find(t => t.lazy === true) ?? config.manifest.tiles[0];
   return bgTile ? bgTile.id : null;
 }
 

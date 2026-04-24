@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "features-manager",
   "shortname": "features-manager",
   "name": "Features Manager",
@@ -9,45 +9,35 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "manage",
-      "type": "window",
       "url": "manage.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "features-manage",
-        "width": 900,
-        "height": 650,
-        "title": "Features"
-      }
+      "role": "workspace",
+      "key": "features-manage",
+      "width": 900,
+      "height": 650,
+      "title": "Features"
     },
     {
       "id": "browse",
-      "type": "window",
       "url": "browse.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "features-browse",
-        "width": 960,
-        "height": 720,
-        "title": "Browse Features"
-      }
+      "role": "workspace",
+      "key": "features-browse",
+      "width": 960,
+      "height": 720,
+      "title": "Browse Features"
     },
     {
       "id": "publish",
-      "type": "window",
       "url": "publish.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "features-publish",
-        "width": 700,
-        "height": 600,
-        "title": "Publish Feature"
-      }
+      "role": "workspace",
+      "key": "features-publish",
+      "width": 700,
+      "height": 600,
+      "title": "Publish Feature"
     }
   ],
   "capabilities": {

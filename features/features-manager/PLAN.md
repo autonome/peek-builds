@@ -203,7 +203,7 @@ A new source type alongside `builtin`, `local`, `atproto`, `url`. Dev features:
 The manifest.json scaffold:
 ```json
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "{feature-id}",
   "name": "{Feature Name}",
   "version": "0.1.0",
@@ -211,19 +211,15 @@ The manifest.json scaffold:
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "width": 800,
-        "height": 600,
-        "title": "{Feature Name}"
-      }
+      "width": 800,
+      "height": 600,
+      "title": "{Feature Name}"
     }
   ],
   "capabilities": {

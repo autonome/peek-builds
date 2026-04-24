@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "hello-world",
   "shortname": "hello-world",
   "name": "Hello World",

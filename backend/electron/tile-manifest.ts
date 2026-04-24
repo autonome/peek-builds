@@ -347,50 +347,23 @@ export interface TileCapabilities {
 // ─── Tile Definition Types ───────────────────────────────────────────
 
 /**
- * Window hints for a tile's UI
- */
-export interface TileWindowHints {
-  width?: number;
-  height?: number;
-  minWidth?: number;
-  minHeight?: number;
-  alwaysOnTop?: boolean;
-  transparent?: boolean;
-  focusable?: boolean;
-  frame?: boolean;
-  resizable?: boolean;
-  /** Window role for the IZUI system */
-  role?: string;
-  /** Unique key for window deduplication */
-  key?: string;
-  title?: string;
-}
-
-/**
- * A tile entry point — each tile in the manifest creates one context
+ * A tile entry point — each tile in the manifest creates one context.
  *
- * New shape (preferred): use `resident` and flat window fields.
- * Old shape (compat): `type` and `windowHints` are still accepted.
+ * Window properties are flat on this interface; there is no nested hints
+ * object. Residency is declared via `resident: true` (loaded at startup
+ * and kept live) — there is no `type` field.
  */
 export interface TileEntry {
   /** Tile entry ID (unique within the manifest) */
   id: string;
-  /**
-   * Tile type — accepted for backwards compatibility only.
-   * - `"background"` is treated as an alias for `resident: true`.
-   * - `"window"` and `"panel"` are tolerated as no-ops.
-   * New manifests should omit this field and use `resident` instead.
-   */
-  type?: 'window' | 'background' | 'panel';
   /** HTML file to load (relative to extension directory) */
   url: string;
   /**
    * If true, this tile is loaded at startup and kept live for the session.
    * If false/absent, the tile is loaded lazily on first use.
-   * Replaces `type: "background"` as the canonical residency marker.
    */
   resident?: boolean;
-  // ── Flat window properties (preferred over windowHints) ──────────────
+  // ── Flat window properties ────────────────────────────────────────────
   width?: number;
   height?: number;
   minWidth?: number;
@@ -405,11 +378,6 @@ export interface TileEntry {
   /** Unique key for window deduplication */
   key?: string;
   title?: string;
-  /**
-   * Window hints — accepted for backwards compatibility.
-   * Top-level fields win if both are set.
-   */
-  windowHints?: TileWindowHints;
   /** If true, this tile is loaded lazily on first use */
   lazy?: boolean;
   /**
@@ -460,11 +428,12 @@ export interface TileShortcut {
 // ─── Manifest Types ──────────────────────────────────────────────────
 
 /**
- * V2 Tile Manifest format
+ * Tile Manifest format (the v2 architecture, schema bumped to v3 with the
+ * v1-removal milestone — `type`/`windowHints` compat fields dropped).
  */
 export interface TileManifestV2 {
-  /** Manifest version — must be 2 for tile manifests */
-  manifestVersion: 2;
+  /** Manifest version — must be 3 for tile manifests */
+  manifestVersion: 3;
   /** Unique tile ID */
   id: string;
   /** Short name for display */
@@ -574,14 +543,20 @@ const BUILTIN_ONLY_CAPABILITIES = new Set<string>([
 // ─── Detection ───────────────────────────────────────────────────────
 
 /**
- * Detect whether a manifest JSON is v1 (legacy extension) or v2 (tile)
+ * Detect whether a manifest JSON is v1 (legacy extension) or v2 (tile).
  *
- * v2 manifests are identified by having:
- * - `manifestVersion: 2`, OR
+ * The v2 architecture's schema is currently version 3 (bumped with the
+ * v1-removal milestone). v2 manifests are identified by having:
+ * - `manifestVersion: 3`, OR
  * - Both `tiles` array AND `capabilities` object present
+ *
+ * `manifestVersion: 2` is rejected — pre-v3 tile manifests carried the
+ * `type` / `windowHints` compat fields that have since been removed; we
+ * treat them as legacy and force authors to migrate (lockstep cutover).
  */
 export function detectManifestVersion(json: Record<string, unknown>): ManifestVersion {
-  if (json.manifestVersion === 2) return 'v2';
+  if (json.manifestVersion === 3) return 'v2';
+  if (json.manifestVersion === 2) return 'v1';
   if (Array.isArray(json.tiles) && typeof json.capabilities === 'object' && json.capabilities !== null) {
     return 'v2';
   }
@@ -633,9 +608,14 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
         tileIds.add(tile.id as string);
       }
 
-      // type is optional — when present it must be one of the known values
-      if (tile.type !== undefined && !['window', 'background', 'panel'].includes(tile.type as string)) {
-        errors.push({ path: `${prefix}.type`, message: 'tile type must be window, background, or panel' });
+      // `type` and `windowHints` were removed in manifestVersion 3 — reject
+      // them so stale manifests fail loudly instead of silently dropping
+      // their declared shape.
+      if (tile.type !== undefined) {
+        errors.push({ path: `${prefix}.type`, message: 'tile.type was removed in manifestVersion 3 — use `resident: true` instead of `type: "background"`, drop `type: "window"`/`"panel"`' });
+      }
+      if (tile.windowHints !== undefined) {
+        errors.push({ path: `${prefix}.windowHints`, message: 'tile.windowHints was removed in manifestVersion 3 — hoist its fields onto the tile entry directly' });
       }
 
       if (!tile.url || typeof tile.url !== 'string') {
@@ -1258,8 +1238,8 @@ export function convertV1ToV2(v1: Record<string, unknown>): TileManifestV2 {
   if (v1.background && typeof v1.background === 'string') {
     tiles.push({
       id: 'background',
-      type: 'background',
       url: v1.background as string,
+      resident: v1.lazy !== true,
       lazy: v1.lazy === true,
     });
   }
@@ -1272,7 +1252,7 @@ export function convertV1ToV2(v1: Record<string, unknown>): TileManifestV2 {
   };
 
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id,
     shortname: (v1.shortname as string) || undefined,
     name,

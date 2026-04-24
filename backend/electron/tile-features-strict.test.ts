@@ -418,7 +418,7 @@ describe('tile-manifest validation — features capability shape', () => {
     const { validateTileManifest } = await import('./tile-manifest.js');
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: { features: true },
     });
     assert.deepStrictEqual(errors, []);
@@ -428,7 +428,7 @@ describe('tile-manifest validation — features capability shape', () => {
     const { validateTileManifest } = await import('./tile-manifest.js');
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: {
         features: {
           read: true, install: true, manage: true,
@@ -443,7 +443,7 @@ describe('tile-manifest validation — features capability shape', () => {
     const { validateTileManifest } = await import('./tile-manifest.js');
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: {
         features: {
           update: true, dev: true, publish: true, devtools: true, browse: true,
@@ -457,7 +457,7 @@ describe('tile-manifest validation — features capability shape', () => {
     const { validateTileManifest } = await import('./tile-manifest.js');
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: {
         features: { update: 'yes' as unknown as boolean },
       },
@@ -472,7 +472,7 @@ describe('tile-manifest validation — features capability shape', () => {
     const { validateTileManifest } = await import('./tile-manifest.js');
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: {
         features: { sources: ['atproto', 'unknown-source'] as unknown as string[] },
       },
@@ -487,7 +487,7 @@ describe('tile-manifest validation — features capability shape', () => {
     const { validateTileManifest } = await import('./tile-manifest.js');
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: {
         features: { read: 'yes' as unknown as boolean },
       },
@@ -502,7 +502,7 @@ describe('tile-manifest validation — features capability shape', () => {
     const { validateTileManifest } = await import('./tile-manifest.js');
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: {
         features: 'yes' as unknown as boolean,
       },

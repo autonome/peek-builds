@@ -2,7 +2,7 @@
 /**
  * audit-tile-caps.js
  *
- * Scans every v2 feature (manifestVersion === 2) under features/ and detects
+ * Scans every v2 feature (manifestVersion === 3) under features/ and detects
  * all `api.*` call patterns in source files. Produces a markdown matrix of
  * which features use which shim surfaces, with per-method counts.
  *
@@ -139,7 +139,7 @@ function analyzeFeature(featureId) {
   const featureDir = path.join(FEATURES_DIR, featureId);
   const manifestPath = path.join(featureDir, 'manifest.json');
   const manifest = readJsonSafe(manifestPath);
-  if (!manifest || manifest.manifestVersion !== 2) {
+  if (!manifest || manifest.manifestVersion !== 3) {
     return null;
   }
 
@@ -192,7 +192,7 @@ function listV2Features() {
     if (!ent.isDirectory()) continue;
     if (ent.name.startsWith('.')) continue;
     const manifest = readJsonSafe(path.join(FEATURES_DIR, ent.name, 'manifest.json'));
-    if (manifest && manifest.manifestVersion === 2) {
+    if (manifest && manifest.manifestVersion === 3) {
       out.push(ent.name);
     }
   }

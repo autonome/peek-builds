@@ -330,12 +330,12 @@ describe('getBlob (mocked)', () => {
 describe('manifest validation for atproto records', () => {
   it('validates a correct v2 manifest', () => {
     const manifest = {
-      manifestVersion: 2,
+      manifestVersion: 3,
       id: 'test-feature',
       name: 'Test Feature',
       version: '1.0.0',
       tiles: [
-        { id: 'background', type: 'background', url: 'background.html' },
+        { id: 'background', url: 'background.html', resident: true },
       ],
       capabilities: {
         pubsub: { scopes: ['self', 'global'] },
@@ -353,7 +353,7 @@ describe('manifest validation for atproto records', () => {
 
   it('rejects manifest missing id', () => {
     const manifest = {
-      manifestVersion: 2,
+      manifestVersion: 3,
       name: 'Test Feature',
       tiles: [],
       capabilities: {},
@@ -363,7 +363,7 @@ describe('manifest validation for atproto records', () => {
 
   it('rejects manifest missing tiles', () => {
     const manifest = {
-      manifestVersion: 2,
+      manifestVersion: 3,
       id: 'test',
       name: 'Test',
       capabilities: {},

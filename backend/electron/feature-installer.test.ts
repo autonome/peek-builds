@@ -38,12 +38,12 @@ function writeManifest(dir: string, manifest: Record<string, unknown>): void {
 
 function makeV2Manifest(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id,
     name: `Feature ${id}`,
     version: '1.0.0',
     tiles: [
-      { id: 'background', type: 'background', url: 'background.html' },
+      { id: 'background', url: 'background.html', resident: true },
     ],
     capabilities: {
       pubsub: { scopes: ['self', 'global'] },
@@ -136,7 +136,7 @@ describe('scanBuiltinFeatures', () => {
 
   it('should skip invalid manifests', () => {
     const invalidDir = path.join(featuresDir, 'broken');
-    writeManifest(invalidDir, { manifestVersion: 2 }); // missing required fields
+    writeManifest(invalidDir, { manifestVersion: 3 }); // missing required fields
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();
@@ -239,7 +239,7 @@ describe('installFromLocalDirectory', () => {
 
   it('should reject invalid manifests', () => {
     const sourceDir = path.join(tmpDir, 'invalid-source');
-    writeManifest(sourceDir, { manifestVersion: 2 }); // missing id, name, etc.
+    writeManifest(sourceDir, { manifestVersion: 3 }); // missing id, name, etc.
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();

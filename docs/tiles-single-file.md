@@ -41,7 +41,7 @@ launch, session restore logic shows it. That is outside the manifest.
 
 ```json
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "my-tile",
   "name": "My Tile",
   "tiles": [{
@@ -77,32 +77,32 @@ launch, session restore logic shows it. That is outside the manifest.
 | `lazy` | boolean | false | explicit lazy flag (legacy compat) |
 | `lazyEvents` | string[] | — | topics that trigger lazy load |
 
-**No `type` field.** The old `type: "window" | "background" | "panel"` is gone from
-the design. It is still accepted for backwards compatibility (see below) but has no
-behavioral effect except as an alias for `resident`.
+**No `type` field.** The old `type: "window" | "background" | "panel"` was
+removed in `manifestVersion: 3`. Use `resident: true` to mark a tile that
+must be loaded at startup; omit it (or set `lazy: true`) for lazy-loaded
+tiles. `type: "window"` and `type: "panel"` were no-ops — drop them.
 
-**No `windowHints` nested object.** Window properties are flat on `TileEntry`. This
-removes one level of indirection for the common case.
+**No `windowHints` nested object.** Window properties are flat on `TileEntry`.
+This removes one level of indirection for the common case. The validator
+rejects `windowHints` outright in `manifestVersion: 3`.
 
 ---
 
-## Backwards compatibility (transition period)
+## Migration from manifestVersion 2 → 3
 
-Existing manifests keep working. The runtime applies these normalizations on load:
+The v1-removal milestone bumped `manifestVersion` from 2 to 3 and dropped
+the legacy `type` / `windowHints` compat fields in lockstep. To migrate a
+v2 manifest:
 
-1. **`type: "background"` → `resident: true`** — A background tile was always
-   resident (loaded at startup). Now it's expressed as `resident: true`. The
-   forced 0×0 geometry quirk is dropped — dimensions come from `width`/`height`.
+1. Bump `manifestVersion` to `3`.
+2. Replace `type: "background"` with `resident: true` (drop `type` either
+   way — `type: "window"`/`"panel"` were no-ops).
+3. Hoist every `windowHints` inner field up to the tile entry directly,
+   then delete the `windowHints` object.
 
-2. **`type: "window"` → tolerated no-op** — Window tiles were just tiles with
-   visible windows. The `type: "window"` field is accepted and ignored.
-
-3. **`windowHints.width` / `windowHints.height` → merged onto entry** — Legacy
-   `windowHints` object is merged in the launcher; top-level fields win if both
-   are set.
-
-No migration is required. A manifest using `type: "background"` and `windowHints`
-continues to work exactly as before.
+`manifestVersion: 2` is now treated as a legacy/v1 manifest by the
+detector — there is no compat layer. Re-installing a v2 feature without
+migration will fail validation.
 
 ---
 
@@ -177,26 +177,25 @@ Lazy tiles (default) follow the existing lazy stub/replay system — unchanged.
 
 ### `tile-manifest.ts`
 
-- Added `resident?: boolean` and flat window fields (`width`, `height`, etc.) to
-  `TileEntry`.
-- Kept `windowHints?: TileWindowHints` and `type?: string` in `TileEntry` for
-  backwards compat.
-- Updated `validateTileManifest` to accept the new shape — `type` is now optional
-  (tolerated but no longer required).
+- `TileEntry` carries `resident?: boolean` and flat window fields
+  (`width`, `height`, etc.). The legacy `type?: 'window' | 'background' |
+  'panel'` field and the `windowHints?: TileWindowHints` nested object
+  were removed in `manifestVersion: 3`.
+- `validateTileManifest` rejects both `tile.type` and `tile.windowHints`
+  outright — there is no normalization layer.
+- `detectManifestVersion` recognises `manifestVersion: 3` as v2 (the
+  current schema); `manifestVersion: 2` is now classified as v1 (legacy).
 
 ### `tile-launcher.ts`
 
-- Merged top-level window fields with `windowHints` (top-level wins on conflict).
-- Dropped the `type === 'background'` → 0×0/skipTaskbar block. All tiles use
-  declared dimensions (default 800×600).
-- `show: false` is the default for all tiles (not just background tiles).
-- Dropped the `type === 'window'` URL match preference; plain `url === pathPart`
-  match is used.
+- Window options come from the entry's flat fields; `TileWindowOverrides`
+  exposes the same subset to `windowOverrides`.
+- `show: false` is the default for all tiles.
 
 ### `tile-compat.ts`
 
-- Residency decision: `t.resident === true || t.type === 'background'` (compat).
-- Eager launch reads the resident entry instead of the background-typed entry.
+- Residency decision: `t.resident === true` (no `type` fallback).
+- Eager launch reads the resident entry directly.
 
 ### `tile-ipc.ts`
 

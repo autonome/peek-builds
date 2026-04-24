@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "lex",
   "shortname": "lex",
   "name": "Lexicon Studio",
@@ -19,14 +19,11 @@
     },
     {
       "id": "chain-form",
-      "type": "window",
       "url": "chain-form.html",
-      "windowHints": {
-        "role": "panel",
-        "width": 520,
-        "height": 560,
-        "title": "New Record"
-      }
+      "role": "panel",
+      "width": 520,
+      "height": 560,
+      "title": "New Record"
     }
   ],
   "capabilities": {

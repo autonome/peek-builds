@@ -137,8 +137,8 @@ export function loadV2Tile(
   const manifest = ext.v2Manifest;
   const isEager = config.eagerIds?.has(ext.id) ?? false;
 
-  // A tile is resident if any entry declares `resident: true` OR `type: "background"` (compat).
-  const residentEntry = manifest.tiles.find(t => t.resident === true || t.type === 'background');
+  // A tile is resident if any entry declares `resident: true`.
+  const residentEntry = manifest.tiles.find(t => t.resident === true);
   const hasLazyEntries = manifest.tiles.some(t => t.lazy === true);
   const hasLazyEvents = manifest.tiles.some(t => Array.isArray(t.lazyEvents) && t.lazyEvents.length > 0);
   // Non-eager tiles with no resident entry are lazy-loaded on first use.

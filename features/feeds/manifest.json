@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "feeds",
   "shortname": "feeds",
   "name": "Feed Reader",
@@ -10,20 +10,16 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "feeds-reader",
-      "type": "window",
       "url": "feeds.html",
-      "windowHints": {
-        "key": "feeds-reader",
-        "width": 900,
-        "height": 700,
-        "title": "Feed Reader"
-      }
+      "key": "feeds-reader",
+      "width": 900,
+      "height": 700,
+      "title": "Feed Reader"
     }
   ],
   "capabilities": {

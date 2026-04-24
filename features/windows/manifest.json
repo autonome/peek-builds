@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "windows",
   "shortname": "windows",
   "name": "Windows",
@@ -9,20 +9,16 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "windows-overlay",
-      "type": "window",
       "url": "windows.html",
-      "windowHints": {
-        "role": "overlay",
-        "transparent": true,
-        "alwaysOnTop": true,
-        "resizable": false
-      }
+      "role": "overlay",
+      "transparent": true,
+      "alwaysOnTop": true,
+      "resizable": false
     }
   ],
   "capabilities": {

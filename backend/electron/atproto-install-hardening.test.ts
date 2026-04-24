@@ -36,12 +36,12 @@ function makeTmpDir(): string {
 
 function makeManifest(id: string, overrides: Record<string, unknown> = {}): TileManifestV2 {
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id,
     name: `Feature ${id}`,
     version: '1.0.0',
     tiles: [
-      { id: 'background', type: 'background', url: 'background.html' },
+      { id: 'background', url: 'background.html', resident: true },
     ],
     capabilities: {
       pubsub: { scopes: ['self', 'global'] },

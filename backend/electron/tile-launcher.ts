@@ -115,9 +115,20 @@ export interface TileLaunchOptions {
   preloadPath: string;
   /** Which tile entry to launch (defaults to first) */
   entryId?: string;
-  /** Override window hints */
-  windowOverrides?: Partial<TileEntry['windowHints']>;
+  /** Override window hints (subset of TileEntry's flat window fields) */
+  windowOverrides?: TileWindowOverrides;
 }
+
+/**
+ * Subset of `TileEntry`'s flat window fields that can be overridden at
+ * launch time. Mirrors the fields the launcher actually feeds to
+ * `BrowserWindowConstructorOptions`.
+ */
+export type TileWindowOverrides = Partial<Pick<TileEntry,
+  | 'width' | 'height' | 'minWidth' | 'minHeight'
+  | 'alwaysOnTop' | 'transparent' | 'focusable' | 'frame' | 'resizable'
+  | 'role' | 'key' | 'title'
+>>;
 
 /**
  * Result of launching a tile
@@ -178,7 +189,7 @@ export interface CreateTileBrowserWindowSpec {
  *     per-entry pubsub cleanup are wired identically every time.
  *
  * Merge order (later wins):
- *   baseline defaults ◁ manifest-entry windowHints ◁ caller overrides
+ *   baseline defaults ◁ manifest-entry flat fields ◁ caller overrides
  *
  * Returns the BrowserWindow. Caller is responsible for `loadURL` (the
  * URL is not part of this helper so the window-open IPC branch can do
@@ -200,15 +211,13 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.LOAD,
     { source: 'createTileBrowserWindow' });
 
-  // Hints from the manifest entry (windowHints + flat fields on the
-  // entry itself, which we treat as shorthand for the same thing).
-  let hints: Partial<TileEntry['windowHints']> & Partial<TileEntry> = {};
+  // Hints from the manifest entry (flat window fields on the entry).
+  let hints: TileWindowOverrides = {};
   if (entry) {
     const { width, height, minWidth, minHeight, alwaysOnTop, transparent,
             focusable, frame, resizable, role, key: entryKey, title } = entry;
-    const entryFlat = { width, height, minWidth, minHeight, alwaysOnTop, transparent,
-                        focusable, frame, resizable, role, key: entryKey, title };
-    hints = { ...entry.windowHints, ...entryFlat };
+    hints = { width, height, minWidth, minHeight, alwaysOnTop, transparent,
+              focusable, frame, resizable, role, key: entryKey, title };
   }
 
   const transparentResolved = browserWindowOverrides?.transparent ?? hints?.transparent === true;
@@ -390,11 +399,10 @@ export function launchTile(options: TileLaunchOptions): TileLaunchResult {
   // Generate token
   const token = generateToken(manifest.id, entry.id, grant);
 
-  // Apply per-launch windowOverrides by merging them onto the entry
-  // before we hand it to the helper. windowOverrides are defined as
-  // `Partial<TileEntry['windowHints']>` so they're semantically hints.
+  // Apply per-launch windowOverrides by merging them onto the entry's
+  // flat window fields before we hand it to the helper.
   const entryWithOverrides: TileEntry = windowOverrides
-    ? { ...entry, windowHints: { ...entry.windowHints, ...windowOverrides } }
+    ? { ...entry, ...windowOverrides }
     : entry;
 
   const win = createTileBrowserWindow({

@@ -41,7 +41,7 @@ let datastore: typeof import('./datastore.js');
 
 function makeManifest(id: string, defaults?: Record<string, unknown>): TileManifestV2 {
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id,
     name: id,
     tiles: [],

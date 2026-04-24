@@ -70,14 +70,13 @@ function makeFakeLauncher(state: FakeLauncherState) {
 
 function makeCommandManifest(id: string, cmdName: string): TileManifestV2 {
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id,
     name: id,
     builtin: true,
     tiles: [
       {
         id: 'background',
-        type: 'background',
         url: 'background.html',
         lazy: true,
       },

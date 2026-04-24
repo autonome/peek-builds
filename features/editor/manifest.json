@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "editor",
   "shortname": "editor",
   "name": "Editor",
@@ -9,21 +9,17 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true,
       "lazyEvents": ["editor:open", "editor:add"]
     },
     {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "width": 1024,
-        "height": 1000,
-        "title": "Editor"
-      }
+      "role": "workspace",
+      "width": 1024,
+      "height": 1000,
+      "title": "Editor"
     }
   ],
   "capabilities": {

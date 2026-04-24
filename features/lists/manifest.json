@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "lists",
   "shortname": "lists",
   "name": "Lists",
@@ -9,21 +9,17 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "lists-home",
-        "width": 700,
-        "height": 768,
-        "title": "Lists"
-      }
+      "role": "workspace",
+      "key": "lists-home",
+      "width": 700,
+      "height": 768,
+      "title": "Lists"
     }
   ],
   "capabilities": {

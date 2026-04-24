@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "sheets",
   "shortname": "sheets",
   "name": "Sheets",
@@ -9,17 +9,13 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "sheet",
-      "type": "window",
       "url": "sheet.html",
-      "windowHints": {
-        "title": "Sheet"
-      }
+      "title": "Sheet"
     }
   ],
   "capabilities": {

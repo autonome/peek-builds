@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "spaces",
   "shortname": "spaces",
   "name": "Spaces",
@@ -9,32 +9,25 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "width": 800,
-        "height": 600,
-        "title": "Spaces"
-      }
+      "role": "workspace",
+      "width": 800,
+      "height": 600,
+      "title": "Spaces"
     },
     {
       "id": "border",
-      "type": "window",
       "url": "border.html",
-      "windowHints": {
-        "role": "overlay",
-        "transparent": true,
-        "frame": false,
-        "focusable": false,
-        "alwaysOnTop": true
-      }
+      "role": "overlay",
+      "transparent": true,
+      "frame": false,
+      "focusable": false,
+      "alwaysOnTop": true
     }
   ],
   "capabilities": {

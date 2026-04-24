@@ -1217,7 +1217,7 @@ export function registerTileIpcHandlers(): void {
           const manifestPath = path.join(entry.path, 'manifest.json');
           const parsed = parseManifestFile(manifestPath);
           if (parsed?.version === 'v2' && parsed.v2) {
-            const residentTile = parsed.v2.tiles.find(t => t.resident === true || t.type === 'background');
+            const residentTile = parsed.v2.tiles.find(t => t.resident === true);
             if (residentTile && !isTileLoaded(args.id, residentTile.id)) {
               launchTile({
                 tilePath: entry.path,
@@ -1969,16 +1969,16 @@ export function registerTileIpcHandlers(): void {
       const featureName = args.featureName.trim();
 
       const manifestContent = JSON.stringify({
-        manifestVersion: 2,
+        manifestVersion: 3,
         id: featureId,
         name: featureName,
         version: '0.1.0',
         description: '',
         tiles: [
-          { id: 'background', type: 'background', url: 'background.html', lazy: true },
+          { id: 'background', url: 'background.html', lazy: true },
           {
-            id: 'home', type: 'window', url: 'home.html',
-            windowHints: { width: 800, height: 600, title: featureName },
+            id: 'home', url: 'home.html',
+            width: 800, height: 600, title: featureName,
           },
         ],
         capabilities: {
@@ -6298,7 +6298,7 @@ export function registerTileIpcHandlers(): void {
 
       // Write scaffold files
       const manifestContent = JSON.stringify({
-        manifestVersion: 2,
+        manifestVersion: 3,
         id: featureId,
         name: featureName,
         version: '0.1.0',
@@ -6306,19 +6306,15 @@ export function registerTileIpcHandlers(): void {
         tiles: [
           {
             id: 'background',
-            type: 'background',
             url: 'background.html',
             lazy: true,
           },
           {
             id: 'home',
-            type: 'window',
             url: 'home.html',
-            windowHints: {
-              width: 800,
-              height: 600,
-              title: featureName,
-            },
+            width: 800,
+            height: 600,
+            title: featureName,
           },
         ],
         capabilities: {

@@ -70,7 +70,7 @@ describe('tile-manifest validation — izui capability shape', () => {
   it('accepts izui: true', () => {
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: { izui: true },
     });
     assert.deepStrictEqual(errors, []);
@@ -79,7 +79,7 @@ describe('tile-manifest validation — izui capability shape', () => {
   it('accepts izui: false (declared but off)', () => {
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: { izui: false },
     });
     assert.deepStrictEqual(errors, []);
@@ -88,7 +88,7 @@ describe('tile-manifest validation — izui capability shape', () => {
   it('rejects non-boolean izui value', () => {
     const errors = validateTileManifest({
       id: 't', name: 'T',
-      tiles: [{ id: 'bg', type: 'background', url: 'bg.html' }],
+      tiles: [{ id: 'bg', url: 'bg.html', resident: true }],
       capabilities: { izui: 'yes' as unknown as boolean },
     });
     assert.ok(

@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "tags",
   "shortname": "tags",
   "name": "Tags",
@@ -9,21 +9,17 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "home",
-      "type": "window",
       "url": "home.html",
-      "windowHints": {
-        "role": "workspace",
-        "key": "tags-home",
-        "width": 900,
-        "height": 700,
-        "title": "Tags"
-      }
+      "role": "workspace",
+      "key": "tags-home",
+      "width": 900,
+      "height": 700,
+      "title": "Tags"
     }
   ],
   "capabilities": {

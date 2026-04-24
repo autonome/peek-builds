@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "pagewidgets-sample",
   "shortname": "pagewidgets-sample",
   "name": "Page Widgets Sample",
@@ -9,7 +9,6 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     }

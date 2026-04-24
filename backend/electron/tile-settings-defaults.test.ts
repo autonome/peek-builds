@@ -36,7 +36,7 @@ function makeManifest(
   settingsSchema?: string
 ): TileManifestV2 {
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     id,
     name: id,
     tiles: [],

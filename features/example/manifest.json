@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "example",
   "shortname": "example",
   "name": "Example Gallery",
@@ -9,20 +9,16 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
       "url": "background.html",
       "lazy": true
     },
     {
       "id": "gallery",
-      "type": "window",
       "url": "gallery.html",
-      "windowHints": {
-        "key": "example-gallery",
-        "width": 1024,
-        "height": 768,
-        "title": "Image Gallery"
-      }
+      "key": "example-gallery",
+      "width": 1024,
+      "height": 768,
+      "title": "Image Gallery"
     }
   ],
   "capabilities": {

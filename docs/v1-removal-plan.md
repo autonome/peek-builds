@@ -17,7 +17,7 @@ What remains:
 
 - Phase 3.7a/c: tile-preload still has window-* fallback branches (`if (!hasWindowCapability()) return ipcRenderer.invoke('window-*')`) that route to legacy handlers. Each fallback can be deleted once we confirm every deployed tile declares the relevant capability. No tile-preload caller of window-* is unconditional anymore — the only LIVE callers are: capability-fallbacks + my new drag IIFE (which now uses strict).
 - Phase 3.8 (final preload.js cleanup): preload.js itself is gone; `setPreloadPath`/`getPreloadPath` may still be referenced — quick audit needed.
-- Phase 4 (manifest cleanup): NOT started. Drop `type?` field, drop `windowHints`, decide manifestVersion bump, update 26 feature manifests.
+- Phase 4 (manifest cleanup): DONE. `type?` and `windowHints` removed from `TileEntry`; `manifestVersion` bumped to `3` in lockstep across every feature manifest, scaffolding template, audit script, and unit test fixture. Validator now rejects both legacy fields outright; `detectManifestVersion` treats `manifestVersion: 2` as v1 (legacy). `tile-launcher.ts` exposes `TileWindowOverrides` (subset of flat `TileEntry` fields) instead of the deleted `Partial<TileEntry['windowHints']>`. `tile-compat.ts` / `tile-ipc.ts` / `tile-lazy.ts` no longer fall back on `t.type === 'background'` — residency is `t.resident === true`, lazy entries are matched by `t.lazy === true`.
 
 Validation today: `yarn tsc --noEmit` clean after each commit. Unit tests 2284/0 across all commits. Full Playwright suite NOT run during this session — user explicitly asked to defer until morning review.
 

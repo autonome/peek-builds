@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "id": "peeks",
   "shortname": "peeks",
   "name": "Peeks",
@@ -10,8 +10,8 @@
   "tiles": [
     {
       "id": "background",
-      "type": "background",
-      "url": "background.html"
+      "url": "background.html",
+      "resident": true
     }
   ],
   "capabilities": {
