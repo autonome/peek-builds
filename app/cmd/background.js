@@ -156,11 +156,9 @@ const saveCommandCache = async (appVersion, extensionVersions) => {
 /**
  * Get current app and extension versions.
  *
- * Under the v2 resident-renderer flow, `api.app` / `api.extensions`
- * (v1 preload) are no longer present. Use `api.features.list()` — its
- * `{ entries }` response carries per-feature manifest versions. The app
- * version is resolved via the injected build-number constant so we
- * don't need a separate app-info IPC.
+ * Uses `api.features.list()` — its `{ entries }` response carries
+ * per-feature manifest versions. The app version is resolved via the
+ * injected build-number constant so we don't need a separate app-info IPC.
  *
  * @returns {Promise<{appVersion: string, extensionVersions: Object}>}
  */

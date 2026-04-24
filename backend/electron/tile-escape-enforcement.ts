@@ -2,16 +2,13 @@
  * Strict Escape Forwarding — Pure module (no Electron deps)
  *
  * Escape is a UX primitive: every window gets it, regardless of declared
- * capabilities. The v1 preload exposes `api.escape.onEscape(handler)` by
- * listening to the `escape-pressed` IPC that the main-process window
- * escape handler dispatches (see `windows.ts::askRendererToHandleEscape`).
+ * capabilities. tile-preload exposes `api.escape.onEscape(handler)` which
+ * registers via `tile:escape:on-escape` and receives `tile:escape:pressed`
+ * dispatches from the main-process window escape handler (see
+ * `windows.ts::askRendererToHandleEscape`).
  *
- * The strict tile path mirrors this without a capability check: a tile
- * that declares nothing still needs ESC to close dialogs or navigate
- * back. We add `tile:escape:on-escape` as a registration channel — the
- * tile sends once to opt-in, then receives `tile:escape:pressed`
- * dispatches with a reply channel identical to the v1 `escape-pressed`
- * protocol.
+ * No capability check: a tile that declares nothing still needs ESC to
+ * close dialogs or navigate back.
  *
  * This module is intentionally tiny — the check always returns `ok`.
  * It exists to mirror the pure-module pattern used by the other

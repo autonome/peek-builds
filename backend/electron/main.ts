@@ -780,17 +780,15 @@ function executeDeclarativeAction(cmd: ManifestCommand, ctx: Record<string, unkn
 
 /**
  * Load a lazy extension on demand.
- * Phase 3.10: extensionHostWindow deleted — all consolidated extensions are
- * now v2 tiles launched eagerly. The lazy-load path is a no-op; it resolves
- * immediately so callers don't hang. If a true lazy-load mechanism is needed
- * in future it should target the v2 tile launcher, not the v1 iframe host.
+ * All consolidated extensions are now tiles launched eagerly, so this path
+ * is a no-op that resolves immediately. If a true lazy-load mechanism is
+ * needed in future it should target the tile launcher.
  */
 function loadLazyExtension(extId: string): Promise<void> {
   if (lazyExtensionLoaded.has(extId)) {
     return Promise.resolve();
   }
-  // No extension host window — resolve immediately (v2 tiles load eagerly).
-  console.warn(`[ext:lazy] loadLazyExtension('${extId}') called but extensionHostWindow has been removed. If this extension needs lazy loading, migrate it to a v2 tile.`);
+  console.warn(`[ext:lazy] loadLazyExtension('${extId}') called but no lazy-load mechanism exists. If this extension needs lazy loading, migrate it to a tile.`);
   lazyExtensionLoaded.add(extId);
   return Promise.resolve();
 }
@@ -1143,10 +1141,8 @@ export async function loadExtensions(): Promise<number> {
   // a live registry.
 
   // Launch the privileged test-fixture renderer when running under
-  // Playwright (E2E_TEST=true). This is the v2 replacement for the v1
-  // `bgWindow` iframe inside `extensionHostWindow`; tests access it via
-  // `getBackgroundWindow()` in `tests/fixtures/desktop-app.ts`. A no-op
-  // in production. See docs/v1-removal-plan.md — Phase 2.
+  // Playwright (E2E_TEST=true). Tests access it via `getBackgroundWindow()`
+  // in `tests/fixtures/desktop-app.ts`. A no-op in production.
   if (process.env.E2E_TEST === 'true') {
     try {
       await initTestFixture({ tilePreloadPath });
@@ -1717,7 +1713,7 @@ export function handleExternalUrl(url: string, sourceId = 'os'): void {
  */
 function publishExternalUrl(url: string, sourceId: string): void {
   const processUrl = () => {
-    // Note: Using trackingSource/trackingSourceId because preload.js overwrites msg.source
+    // Note: Using trackingSource/trackingSourceId because tile-preload overwrites msg.source
     publish(getSystemAddress(), 'external:open-url', {
       url,
       trackingSource: 'external',

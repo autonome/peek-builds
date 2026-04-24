@@ -117,7 +117,7 @@ describe('tile command registration', () => {
       { name: 'bar', description: 'Bar command', action: { type: 'execute' } },
     ]);
 
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     // Phase E emits one batch per tile, not per command.
     assert.strictEqual(registered.length, 1, 'expected a single batch publish per tile');
@@ -142,7 +142,7 @@ describe('tile command registration', () => {
         params: [{ name: 'query', required: true }],
       } as TileCommand,
     ]);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     assert.strictEqual(received.length, 1);
     const batch = received[0] as { commands: Array<{ name: string; params?: unknown[] }> };
@@ -157,7 +157,7 @@ describe('tile command registration', () => {
     const manifest = makeManifestWithCommands('cmd-test-4', [
       { name: 'doit', action: { type: 'execute' } },
     ]);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     const realHandlerReceived: unknown[] = [];
     launcherState.onLaunch = () => {
@@ -198,7 +198,7 @@ describe('tile command registration', () => {
         action: { type: 'window', url: 'peek://cmd-test-5/home.html' },
       } as TileCommand,
     ]);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     assert.strictEqual(received.length, 1);
     const batch = received[0] as { commands: Array<{ name: string; action?: { type: string } }> };

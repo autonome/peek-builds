@@ -1,10 +1,7 @@
 /**
  * Electron-specific plumbing for the Playwright test fixture renderer.
  *
- * This is the v2 replacement for the v1 `bgWindow` (an iframe inside
- * `extensionHostWindow` loading `peek://app/background.html` with
- * `preload.js`). Launched ONLY when `E2E_TEST=true`; a no-op in normal
- * application startup.
+ * Launched ONLY when `E2E_TEST=true`; a no-op in normal application startup.
  *
  * The test renderer lives at `app/_test/index.html` and uses the same
  * tile mechanics as cmd/hud/page core renderers:
@@ -19,8 +16,6 @@
  * After the window finishes loading, the renderer sets `window.__testReady`
  * to true. `initTestFixture()` blocks on that flag so test code never
  * observes a partially-constructed `window.app` surface.
- *
- * See docs/v1-removal-plan.md — Phase 2.
  */
 
 import { BrowserWindow } from 'electron';

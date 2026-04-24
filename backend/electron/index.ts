@@ -183,11 +183,8 @@ export type { AppConfig } from './main.js';
 
 // IPC handlers
 export {
-  registerDatastoreHandlers,
-  registerExtensionHandlers,
   registerDarkModeHandlers,
   registerWindowHandlers,
-  registerMiscHandlers,
   registerAllHandlers,
   restoreSavedTheme,
   getDarkModeSetting,

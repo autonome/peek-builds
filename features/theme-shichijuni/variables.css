@@ -4,7 +4,7 @@
  * Colors change every ~5 days following the traditional Japanese calendar,
  * using colors from the 伝統色 (dentōshoku) palette.
  *
- * The preload.js sets data-microseason="0"–"71" on <html> based on the current date.
+ * The host sets data-microseason="0"–"71" on <html> based on the current date.
  * Each micro-season has a unique primary accent; supporting accents shift
  * gradually through 6 seasonal arcs.
  *

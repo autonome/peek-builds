@@ -6,8 +6,8 @@
  * token with the main process, and builds an API object with ONLY the
  * granted capabilities. Injected via contextBridge.exposeInMainWorld('app', api).
  *
- * NOTE: This file is written as a CommonJS module (like preload.js) because
- * Electron preload scripts must use require(), not import.
+ * NOTE: This file is written as a CommonJS module because Electron preload
+ * scripts must use require(), not import.
  */
 
 const { contextBridge, ipcRenderer } = require('electron');
@@ -177,7 +177,7 @@ function buildAPI(): Record<string, unknown> {
   // ── Profiles (admin surface) ──
   //
   // Strict tile:profiles:* counterparts of the legacy `profiles:*`
-  // handlers live in tile-ipc.ts (Phase 3.7f). trustedBuiltin only
+  // handlers live in tile-ipc.ts. trustedBuiltin only
   // — touches profiles.db, can relaunch the app, holds sync creds.
   // Settings UI is the only real consumer.
   api.profiles = {
@@ -272,15 +272,14 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Commands (if granted) ──
   //
-  // Supports two registration shapes to match existing feature code:
+  // Supports two registration shapes:
   //
   //   api.commands.register(name, handler)
-  //     Minimal v2 signature — just attaches a handler for cmd:execute:{name}.
+  //     Minimal signature — attaches a handler for cmd:execute:{name}.
   //
   //   api.commands.register({name, description, execute, scope, modes, params, ...})
-  //     v1-compatible signature. Re-publishes cmd:register so the cmd panel
-  //     picks it up (matches preload.js behaviour) and wires the execute
-  //     handler identically.
+  //     Descriptor signature. Re-publishes cmd:register so the cmd panel
+  //     picks it up and wires the execute handler identically.
   //
   // Both flow through the shared pubsub-based cmd:execute:{name} / :result
   // protocol, so lazy-tile replay and the cmd panel proxy work unchanged.
@@ -427,8 +426,8 @@ function buildAPI(): Record<string, unknown> {
      * Dual-path:
      *   - STRICT: when the tile declared the `commands` capability,
      *     route through the gated `tile:commands:unregister` channel.
-     *   - V1-COMPAT: fall back to a direct `publish(cmd:unregister)`
-     *     on GLOBAL scope — matches the v1 preload.js behaviour.
+     *   - FALLBACK: publish `cmd:unregister` on GLOBAL scope so tiles
+     *     without the capability can still unhook from the registry.
      */
     unregister: (name: unknown) => {
       if (typeof name !== 'string' || name.length === 0) {
@@ -445,7 +444,7 @@ function buildAPI(): Record<string, unknown> {
         });
         return;
       }
-      // V1-compat path: publish cmd:unregister on GLOBAL scope.
+      // Fallback path: publish cmd:unregister on GLOBAL scope.
       if (tokenValid) {
         ipcRenderer.send('tile:pubsub:publish', {
           token: tileToken,
@@ -457,10 +456,9 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * List all registered commands. Mirrors the v1 preload.js behaviour
-     * — publishes `cmd:query-commands` on GLOBAL scope, listens for the
-     * `cmd:query-commands-response` reply. The cmd resident renderer
-     * answers with the full registry.
+     * List all registered commands. Publishes `cmd:query-commands` on
+     * GLOBAL scope, listens for the `cmd:query-commands-response` reply.
+     * The cmd resident renderer answers with the full registry.
      *
      * Resolves with `{ success: true, data: Array<{name, description,
      * source, scope?, modes?}> }` on success, or
@@ -1188,7 +1186,7 @@ function buildAPI(): Record<string, unknown> {
 
     // Theme directory management — Settings UI uses these to install
     // user-supplied themes from disk. Strict tile:theme:* counterparts
-    // live in tile-ipc.ts (Phase 3.7f). trustedBuiltin only.
+    // live in tile-ipc.ts. trustedBuiltin only.
     pickFolder: () => ipcRenderer.invoke('tile:theme:pickFolder', { token: tileToken }),
     validateFolder: (folderPath: string) => ipcRenderer.invoke('tile:theme:validateFolder', { token: tileToken, folderPath }),
     add: (folderPath: string) => ipcRenderer.invoke('tile:theme:add', { token: tileToken, folderPath }),
@@ -1476,8 +1474,8 @@ function buildAPI(): Record<string, unknown> {
 
     // ── Convenience aliases ──────────────────────────────────────────
     // These wrap the generic get/set/subscribe surface for the common
-    // 'mode' key, mirroring v1 preload.js api.context.setMode / getMode
-    // / watchMode / getWindowsInSpace.
+    // 'mode' key — api.context.setMode / getMode / watchMode /
+    // getWindowsInSpace.
 
     setMode: (mode: unknown, options?: { metadata?: Record<string, unknown>; windowId?: number | null }) => {
       const metadata = options?.metadata;
@@ -1775,7 +1773,7 @@ function buildAPI(): Record<string, unknown> {
       return ipcRenderer.invoke('tile:sync:sync-all', { token: tileToken });
     },
     // Strict tile:sync:* counterparts of the legacy `sync-*` handlers
-    // live in tile-ipc.ts (Phase 3.7f). trustedBuiltin only — sync
+    // live in tile-ipc.ts. trustedBuiltin only — sync
     // touches network, server creds, and profile state.
     getConfig: () => ipcRenderer.invoke('tile:sync:get-config', { token: tileToken }),
     setConfig: (config: unknown) => ipcRenderer.invoke('tile:sync:set-config', { token: tileToken, config }),
@@ -1787,7 +1785,7 @@ function buildAPI(): Record<string, unknown> {
   // ── Ad blocker ────────────────────────────────────────────────────
   //
   // Strict tile:adblocker:* counterparts of the legacy `adblocker:*`
-  // handlers live in tile-ipc.ts (Phase 3.7f). trustedBuiltin only —
+  // handlers live in tile-ipc.ts. trustedBuiltin only —
   // global blocker state + per-site allowlist persisted to feature_settings.
   api.adblocker = {
     getStatus: () => ipcRenderer.invoke('tile:adblocker:getStatus', { token: tileToken }),
@@ -1858,10 +1856,9 @@ function buildAPI(): Record<string, unknown> {
   // to tell the backend "I handled the ESC, don't close the window",
   // or `{ handled: false }` (or undefined) to let the backend decide.
   //
-  // Implementation: the existing `escape-pressed` IPC is shared with
-  // the v1 preload (windows.ts dispatches the same channel per-window
-  // regardless of preload variant). We listen to it here and invoke
-  // the tile's callback, replying on the provided responseChannel.
+  // Implementation: windows.ts dispatches `escape-pressed` per-window.
+  // We listen to it here and invoke the tile's callback, replying on
+  // the provided responseChannel.
   let tileEscapeCallback: (() => unknown) | null = null;
   let tileEscapeInstalled = false;
   api.escape = {
@@ -1933,19 +1930,15 @@ function buildAPI(): Record<string, unknown> {
   // renderers: cmd, hud, page, _test). Feature tiles never see this
   // method — their api.invoke is a no-op that returns an error object.
   //
-  // The v1 preload.js exposed `api.invoke` gated on `isCore` (i.e.
-  // `sourceAddress.startsWith('peek://app/')`). The test fixture and
-  // core diagnostics rely on it to talk to main-process handlers that
-  // don't (yet) have a tile-surfaced wrapper (backup-*, get-display-
-  // info, extension-*). Under v2 tile mechanics, trustedBuiltin is the
-  // renderer-level equivalent of v1's isCore.
+  // The test fixture and core diagnostics rely on it to talk to
+  // main-process handlers that don't (yet) have a tile-surfaced wrapper.
   //
   // Two behaviours are possible:
   //   - trustedBuiltin grant present → forward raw
   //   - no trustedBuiltin            → return failure
   // The boolean is populated by the `tile:validate-token` IPC response.
-  // Validation is now kicked off at module load time; callers no longer
-  // need to call api.initialize() before using api.invoke.
+  // Validation is kicked off at module load time; callers don't need to
+  // call api.initialize() before using api.invoke.
   api.invoke = async (channel: unknown, data?: unknown) => {
     const _valid = await validationPromise;
     if (!_valid) {
@@ -1969,7 +1962,7 @@ function buildAPI(): Record<string, unknown> {
     return ipcRenderer.invoke(channel, data);
   };
 
-  // ── Extensions management (Phase 3.6c) ────────────────────────────────
+  // ── Extensions management ────────────────────────────────────────────
   //
   // All methods now route through tile:extensions:* strict channels in
   // tile-ipc.ts (trustedBuiltin enforcement + capability-token validation).
@@ -2054,11 +2047,11 @@ function buildAPI(): Record<string, unknown> {
 
   // ── App control (trustedBuiltin only) ────────────────────────────────
   //
-  // v1 preload exposed `api.quit` / `api.restart` (fire-and-forget IPC
-  // sends). The core background renderer (app/index.js) registers
-  // `quit` / `restart` cmd palette commands that invoke these. The
-  // channels are `ipcMain.on` (not .handle), so `api.invoke` cannot
-  // replace them — a dedicated `.send` wrapper is required.
+  // `api.quit` / `api.restart` are fire-and-forget IPC sends. The core
+  // background renderer (app/index.js) registers `quit` / `restart` cmd
+  // palette commands that invoke these. The channels are `ipcMain.on`
+  // (not .handle), so `api.invoke` cannot replace them — a dedicated
+  // `.send` wrapper is required.
   api.quit = () => {
     if (!trustedBuiltin) {
       console.warn('[tile-preload] api.quit requires trustedBuiltin — ignored');
@@ -2132,16 +2125,14 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Chrome Extensions (trustedBuiltin only) ──────────────────────────
   //
-  // v1 preload exposed `api.chromeExtensions.*` for the core background
-  // renderer to enumerate bundled chrome extensions + their UI entry
-  // points (popup, options, new-tab, etc.) and register cmd palette
-  // commands for each openable entry. Gated on trustedBuiltin — feature
-  // tiles must not enumerate or launch chrome extensions.
+  // `api.chromeExtensions.*` lets the core background renderer enumerate
+  // bundled chrome extensions + their UI entry points (popup, options,
+  // new-tab, etc.) and register cmd palette commands for each openable
+  // entry. Gated on trustedBuiltin — feature tiles must not enumerate or
+  // launch chrome extensions.
   //
-  // Phase 3.5d: strict shims added as tile:chrome-extensions:* channels in
-  // tile-ipc.ts (trustedBuiltin enforcement + capability-token validation).
-  // The legacy chrome-ext:* invocations below are preserved; Wave 3.6d
-  // will flip these to tile:chrome-extensions:* and delete the legacy handlers.
+  // Routes through tile:chrome-extensions:* channels in tile-ipc.ts
+  // (trustedBuiltin enforcement + capability-token validation).
   api.chromeExtensions = {
     list: () => {
       if (!trustedBuiltin) {
@@ -2183,8 +2174,7 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Backup (trustedBuiltin only) ─────────────────────────────────────
   //
-  // Strict counterparts of the legacy `backup-*` channels. Consumed by the
-  // settings tile once it migrates off preload.js (Phase 3.11b).
+  // Backup create/list/restore for the settings tile.
   api.backup = {
     create: () => {
       if (!trustedBuiltin) {
@@ -2246,9 +2236,9 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Nav (trustedBuiltin only) ─────────────────────────────────────────
   //
-  // Strict counterparts of the legacy `web-nav-*` channels. Consumed by the
-  // core background renderer (app/index.js) for the back/forward/reload/copy-url
-  // cmd palette commands (Phase 3.11b-nav-session).
+  // Web nav handlers consumed by the core background renderer
+  // (app/index.js) for the back/forward/reload/copy-url cmd palette
+  // commands.
   api.nav = {
     back: (windowId?: number) => {
       if (!trustedBuiltin) {
@@ -2278,10 +2268,8 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Session (trustedBuiltin only) ─────────────────────────────────────
   //
-  // Strict counterparts of the legacy `session-save`,
-  // `session-restore-interactive`, and `window-reopen-last-closed` channels.
-  // Consumed by the core background renderer (app/index.js)
-  // (Phase 3.11b-nav-session).
+  // Session save / restore-interactive / reopen-last-closed handlers,
+  // consumed by the core background renderer (app/index.js).
   api.session = {
     save: () => {
       if (!trustedBuiltin) {
@@ -2321,9 +2309,8 @@ contextBridge.exposeInMainWorld('app', api);
 // hold-drag system that pipes through the webview console-message
 // bridge).
 //
-// Ported from the deleted v1 preload.js (Phase 3.11b-hud removal lost
-// it). Settings, cmd panel, hud overlay, and other pseudo-tile windows
-// all relied on this for window movement; without it, drag was dead.
+// Settings, cmd panel, hud overlay, and other pseudo-tile windows all
+// rely on this for window movement.
 {
   const MOVE_THRESHOLD = 3;     // px of movement after hold to engage drag
   const JITTER_TOLERANCE = 3;   // px allowed during hold without cancelling

@@ -9,15 +9,11 @@
  * these checks can be unit-tested without pulling in `tile-ipc`'s
  * Electron dependencies.
  *
- * Background: the existing `sync-full` / `sync-push` / `sync-pull` IPC
- * channels are only reachable from the v1 preload (the main desktop
- * `preload.js`), not from the tile preload. The sync feature currently
- * calls `api.sync.syncAll()` — provided for v1 but missing from the
- * tile-preload surface. The strict handler provides the same syncAll
- * entry point gated on a declared `sync` capability. Sync is already
- * tagged as a `BUILTIN_ONLY_CAPABILITIES` member in
- * `tile-manifest.ts`, so `resolveCapabilities` will deny it for
- * external tiles automatically.
+ * The sync feature calls `api.sync.syncAll()` from tile-preload; the
+ * strict handler routes that to the syncAll implementation gated on a
+ * declared `sync` capability. Sync is tagged as a
+ * `BUILTIN_ONLY_CAPABILITIES` member in `tile-manifest.ts`, so
+ * `resolveCapabilities` denies it for external tiles automatically.
  */
 
 import type { CapabilityGrant } from './tile-manifest.js';

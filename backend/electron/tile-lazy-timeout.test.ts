@@ -136,7 +136,7 @@ describe('tile-lazy load-on-dispatch timeout UX (Phase 7)', () => {
 
   it('publishes a structured notification and resolves the resultTopic with error on load timeout', async () => {
     const manifest = makeCommandManifest('tile-timeout-1', 'slow-cmd');
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     // Collect whatever comes back on the resultTopic so we can assert
     // the proxy's promise settles (rather than hanging 30s).
@@ -201,7 +201,7 @@ describe('tile-lazy load-on-dispatch timeout UX (Phase 7)', () => {
 
   it('rejects pending dispatches immediately when the tile transitions loading → crashed', async () => {
     const manifest = makeCommandManifest('tile-crash-2', 'crashy-cmd');
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     const resultTopic = 'cmd:execute:crashy-cmd:result:unit-test-2';
     let resultPayload: unknown = null;

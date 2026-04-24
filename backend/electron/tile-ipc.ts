@@ -551,7 +551,7 @@ export function registerTileIpcHandlers(): void {
     unsubscribe(args.source, args.topic);
   });
 
-  // ── tile:pubsub:stats (Phase 3.7g) ────────────────────────────────
+  // ── tile:pubsub:stats ────────────────────────────────────────────
   //
   // Pubsub telemetry for the HUD stats widget + developer diagnostics.
   // trustedBuiltin only — exposes raw subscription counts which a
@@ -3041,7 +3041,7 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  // ── tile:window:devtools (Phase 3.7g) ─────────────────────────────
+  // ── tile:window:devtools ─────────────────────────────────────────
   //
   // Open devtools (detached) on the last-focused content window
   // (http/https). With an explicit id, opens devtools on that window.
@@ -3930,12 +3930,10 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  // ── tile:theme:pickFolder / validateFolder / add / remove / reload (Phase 3.7f) ─
+  // ── tile:theme:pickFolder / validateFolder / add / remove / reload ──
   //
-  // Strict counterparts of the legacy `theme:pickFolder`/`theme:validateFolder`/
-  // `theme:add`/`theme:remove`/`theme:reload` channels in ipc.ts (deleted in
-  // Phase 3.7f). Settings UI uses these to install user-supplied themes from
-  // disk. trustedBuiltin only — touches filesystem and theme registration.
+  // Settings UI uses these to install user-supplied themes from disk.
+  // trustedBuiltin only — touches filesystem and theme registration.
 
   registerTileIpc('tile:theme:pickFolder', { mode: 'handle' }, async (event, args: {
     token: string;
@@ -4354,13 +4352,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  // ── tile:sync:get-config / set-config / status / pull / push (Phase 3.7f) ──
+  // ── tile:sync:get-config / set-config / status / pull / push ────────
   //
-  // Strict counterparts of the legacy `sync-get-config`, `sync-set-config`,
-  // `sync-status`, `sync-pull`, `sync-push` channels in ipc.ts (deleted in
-  // Phase 3.7f). Settings UI consumes these via api.sync.{getConfig,setConfig,
-  // getStatus,pull,push}. trustedBuiltin only — sync touches network, server
-  // creds, and profile state.
+  // Settings UI consumes these via api.sync.{getConfig,setConfig,
+  // getStatus,pull,push}. trustedBuiltin only — sync touches network,
+  // server creds, and profile state.
 
   registerTileIpc('tile:sync:get-config', { mode: 'handle' }, (event, args: {
     token: string;
@@ -4484,12 +4480,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  // ── tile:profiles:* (Phase 3.7f) ──────────────────────────────────
+  // ── tile:profiles:* ──────────────────────────────────────────────
   //
-  // Strict counterparts of the legacy `profiles:*` channels in ipc.ts
-  // (deleted in Phase 3.7f). Settings UI consumes via api.profiles.
-  // trustedBuiltin only — admin surface (touches profiles.db, can
-  // relaunch app, holds sync creds).
+  // Settings UI consumes via api.profiles. trustedBuiltin only —
+  // admin surface (touches profiles.db, can relaunch app, holds sync
+  // creds).
 
   registerTileIpc('tile:profiles:list', { mode: 'handle' }, (event, args: {
     token: string;
@@ -4679,12 +4674,11 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
-  // ── tile:adblocker:* (Phase 3.7f) ──────────────────────────────────
+  // ── tile:adblocker:* ────────────────────────────────────────────
   //
-  // Strict counterparts of the legacy `adblocker:*` channels in ipc.ts
-  // (deleted in Phase 3.7f). Settings + page widget consume via
-  // api.adblocker.*. trustedBuiltin only — global blocker state +
-  // per-site allowlist persisted to feature_settings.
+  // Settings + page widget consume via api.adblocker.*. trustedBuiltin
+  // only — global blocker state + per-site allowlist persisted to
+  // feature_settings.
   //
   // Per-site allowlist storage helpers — keep DRY across the four
   // handlers that touch it.
@@ -6892,7 +6886,7 @@ body {
     }
   });
 
-  // ── tile:extensions:* strict shims (Phase 3.5c) ────────────────────
+  // ── tile:extensions:* strict shims ────────────────────────────────
   //
   // Strict counterparts of the legacy `extension-*` channels in ipc.ts.
   // All handlers require trustedBuiltin — feature tiles must not be able
@@ -7145,8 +7139,9 @@ body {
       handleViolation(grant, 'extensions', 'tile:extensions:windowDevtools', 'trustedBuiltin required', args.token);
       return { success: false, error: 'trustedBuiltin required for tile:extensions:windowDevtools' };
     }
-    // extensionWindows map was removed in Phase 3.2; v2 tiles have their own devtools path.
-    return { success: false, error: `Extension ${args.id} is not running as a legacy window` };
+    // Tiles have their own devtools path; this handler exists only for
+    // backward shape compatibility and always returns failure.
+    return { success: false, error: `Extension ${args.id} is not running as a tile window` };
   });
 
   registerTileIpc('tile:extensions:reload', { mode: 'handle' }, async (event, args: {
@@ -7174,7 +7169,7 @@ body {
     }
   });
 
-  // ── tile:chrome-extensions:* strict shims (Phase 3.5d) ──────────────
+  // ── tile:chrome-extensions:* strict shims ────────────────────────
   //
   // Strict counterparts of the legacy `chrome-ext:*` channels in ipc.ts.
   // All handlers require trustedBuiltin — feature tiles must not be able
@@ -7353,11 +7348,10 @@ body {
     app.quit();
   });
 
-  // ── tile:backup:* strict shims (Phase 3.11b) ─────────────────────────
+  // ── tile:backup:* strict shims ───────────────────────────────────────
   //
-  // Strict counterparts of the legacy `backup-*` channels in ipc.ts.
-  // All handlers require trustedBuiltin — settings/diagnostic/page-host
-  // tiles will consume these once they migrate off preload.js.
+  // Backup create/list/restore handlers. All require trustedBuiltin —
+  // settings/diagnostic/page-host tiles consume these.
 
   registerTileIpc('tile:backup:create', { mode: 'handle' }, async (event, args: {
     token: string;
@@ -7417,7 +7411,7 @@ body {
     }
   });
 
-  // ── tile:shell:open-path strict shim (Phase 3.11b) ───────────────────
+  // ── tile:shell:open-path strict shim ────────────────────────────────
   //
   // Strict counterpart of the legacy `shell-open-path` channel.
   // Requires trustedBuiltin — opens a path in the OS file manager.
@@ -7505,12 +7499,10 @@ body {
     return getPrefs();
   });
 
-  // ── tile:darkMode:* (Phase 3.7f) ─────────────────────────────────────
+  // ── tile:darkMode:* ──────────────────────────────────────────────
   //
-  // Strict counterparts of the legacy `darkMode:get` / `darkMode:set`
-  // channels in ipc.ts (deleted in Phase 3.7f). Settings UI consumes
-  // these via api.darkMode.{get,set} in tile-preload. trustedBuiltin
-  // only — dark mode is global app state.
+  // Settings UI consumes these via api.darkMode.{get,set} in
+  // tile-preload. trustedBuiltin only — dark mode is global app state.
 
   registerTileIpc('tile:darkMode:get', { mode: 'handle' }, (event, args: {
     token: string;
@@ -7562,7 +7554,7 @@ body {
     return { success: true, data: { mode, restartRequired: tier2Changed } };
   });
 
-  // ── tile:nav:* strict shims (Phase 3.11b-nav-session) ────────────────
+  // ── tile:nav:* strict shims ──────────────────────────────────────
   //
   // Strict counterparts of the legacy `web-nav-*` channels in ipc.ts.
   // All require trustedBuiltin — only the core background renderer uses these.
@@ -7639,7 +7631,7 @@ body {
     };
   });
 
-  // ── tile:session:* strict shims (Phase 3.11b-nav-session) ─────────────
+  // ── tile:session:* strict shims ──────────────────────────────────
   //
   // Strict counterparts of the legacy `session-save`,
   // `session-restore-interactive`, and `window-reopen-last-closed` channels.

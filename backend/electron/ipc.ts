@@ -265,34 +265,6 @@ function itemToAddress(item: Item): Record<string, unknown> {
 }
 
 
-/**
- * Register datastore IPC handlers
- */
-export function registerDatastoreHandlers(): void {
-  // Legacy `extract-page-content` removed (v1 removal Phase 3.7c). Tile-
-  // preload's api.datastore.extractPageContent uses
-  // `tile:datastore:extract-page-content` (capability-gated). Was the
-  // preload.js v1 surface only.
-}
-
-/**
- * Register extension IPC handlers
- *
- * Note (Phase 3.6c): The 10 legacy extension-* handlers
- * (extension-pick-folder, extension-validate-folder, extension-add,
- * extension-remove, extension-update, extension-get-all, extension-get,
- * extension-window-list, extension-list-all-registered,
- * extension-window-devtools, extension-reload) have been deleted.
- * tile-preload now routes all api.extensions.* calls through the strict
- * tile:extensions:* channels registered in tile-ipc.ts.
- */
-export function registerExtensionHandlers(): void {
-  // Legacy `feature-settings-{get,set,get-key,set-key}` handlers removed
-  // (v1 removal Phase 3.7d). Tile-preload's api.settings.{get,set,getKey,
-  // setKey} routes through `tile:settings:*` (capability-gated). Was the
-  // preload.js v1 surface only.
-}
-
 
 /**
  * Theme settings storage keys
@@ -376,9 +348,9 @@ export function registerThemeHandlers(): void {
     }
   });
 
-  // ===== Theme management (add/remove/reload) — Phase 3.7f =====
+  // ===== Theme management (add/remove/reload) =====
   //
-  // Strict `tile:theme:pickFolder` / `tile:theme:validateFolder` /
+  // The `tile:theme:pickFolder` / `tile:theme:validateFolder` /
   // `tile:theme:add` / `tile:theme:remove` / `tile:theme:reload` handlers
   // live in tile-ipc.ts. Settings UI consumes them via api.theme.{pickFolder,
   // validateFolder, add, remove, reload}.
@@ -387,7 +359,6 @@ export function registerThemeHandlers(): void {
 // Keep old function name for compatibility but call new one
 export function registerDarkModeHandlers(): void {
   registerThemeHandlers();
-  registerDarkModeSettingHandlers();
 }
 
 /**
@@ -419,15 +390,6 @@ export function applyDarkModeSetting(mode: string): void {
   nativeTheme.themeSource = (mode === 'force') ? 'dark' : 'system';
 }
 
-/**
- * Register dark mode setting IPC handlers
- *
- * Strict `tile:darkMode:*` handlers live in tile-ipc.ts (Phase 3.7f).
- * Legacy `darkMode:*` ipc handlers were removed there too.
- */
-function registerDarkModeSettingHandlers(): void {
-  // No-op — tile:darkMode:get / tile:darkMode:set live in tile-ipc.ts.
-}
 
 /**
  * Reopen the most recently closed window.
@@ -658,13 +620,12 @@ export function registerWindowHandlers(): void {
     // Use profile-specific session for isolation
     const profileSession = getProfileSession();
 
-    // If this URL points to a registered v2 tile, use the tile preload
-    // (tile-preload.js) with a capability token so the feature's home.html
-    // gets `api.initialize()`, `api.pubsub.subscribe/publish`, strict
-    // `api.datastore.*` routing, and every other v2 surface.
+    // If this URL points to a registered tile, use tile-preload.cjs with
+    // a capability token so the feature's home.html gets `api.initialize()`,
+    // `api.pubsub.subscribe/publish`, strict `api.datastore.*` routing, and
+    // every other api.* surface.
     //
-    // Non-tile URLs (web pages, legacy extension content, new-tab, etc.)
-    // fall back to the legacy preload.js.
+    // Non-tile URLs (web pages, new-tab, etc.) get no preload.
     let tileWebPrefs = getTileWebPreferencesForUrl(
       url,
       getTilePreloadPath(),
@@ -720,8 +681,8 @@ export function registerWindowHandlers(): void {
       webPreferences: {
         ...options.webPreferences,
         // Canvas page host windows get tile-preload with a trustedBuiltin grant;
-        // other v2 tile URLs get their manifest-derived preload; everything else
-        // gets no preload (v1 preload.js has been deleted — Phase 3.11b-hud).
+        // other tile URLs get their manifest-derived preload; everything else
+        // gets no preload.
         preload: useCanvas
           ? getTilePreloadPath()
           : tileWebPrefs ? tileWebPrefs.preload : undefined,
@@ -2061,93 +2022,10 @@ export function registerWindowHandlers(): void {
       return { success: false, error: message };
     }
   };
-  // Legacy `window-open` ipcMain handler removed (v1 removal Phase 3.7h).
   // The strict `tile:window:open` handler in tile-ipc.ts delegates to
-  // `invokeWindowOpen` (the same implementation) — it's the single
-  // source of truth for window creation.
+  // `windowOpenHandler` (this implementation) — it's the single source of
+  // truth for window creation.
   invokeWindowOpen = windowOpenHandler;
-
-  // Legacy `window-*` handlers removed (v1 removal Phase 3.7h). All
-  // tile-preload methods route through strict `tile:window:*` channels
-  // gated on the tile's `window` capability shape (or trustedBuiltin).
-  // Removed: window-open, window-close, window-hide, window-show,
-  // window-focus, window-exists, window-list, window-center,
-  // window-center-all, window-maximize, window-fullscreen,
-  // window-set-ignore-mouse-events, window-set-overlay-focus-target.
-  // Earlier removals (Phase 3.7b/g): window-blur, window-resize,
-  // window-move, window-get-bounds, window-set-bounds, window-get-position,
-  // get-display-info, window-devtools, get-focused-visible-window-id.
-
-  // pubsub-stats removed (v1 removal Phase 3.7g). Strict
-  // tile:pubsub:stats handler lives in tile-ipc.ts (trustedBuiltin only).
-}
-
-/**
- * Register miscellaneous IPC handlers (shortcuts, pubsub, commands, etc.)
- */
-export function registerMiscHandlers(onQuit: () => void): void {
-  // Legacy `window-is-transient` removed (v1 removal Phase 3.7b). Tile-
-  // preload's api.izui.isTransient uses tile:izui:is-transient. Remaining
-  // callers were all in deleted preload.js.
-
-  // ============================================================================
-  // IZUI State Coordinator IPC Handlers
-  // ============================================================================
-  // Centralized IZUI state management for consistent transient detection,
-  // mode display, and ESC behavior across all windows.
-
-  // Check if IZUI session is in transient mode (app wasn't focused when invoked)
-  // Uses the session's entry mode which was set at window show time (before focus
-  // was stolen). Don't re-evaluate here - by this point the requesting window
-  // (e.g., cmd panel) has already stolen focus from other windows, making
-  // isFocused() checks unreliable.
-  // Legacy `izui-*` handlers (is-transient, get-effective-mode, get-state,
-  // get-pre-overlay-focus-target, close-self) removed (v1 removal Phase 3.7d).
-  // Tile-preload routes everything through `tile:izui:*` (capability-gated).
-  // The only callers were in deleted preload.js.
-
-  // Legacy `window-get-position` removed (v1 removal Phase 3.7b). Tile-
-  // preload's drag uses `tile:window:get-bounds` (returns x/y/w/h for
-  // the sender's own window).
-
-  // Legacy `window-set-scroll-position` removed (v1 removal Phase 3.7b).
-  // Was called from preload.js (deleted). page.js' undo-close-window scroll
-  // restoration would need a strict tile:* equivalent if reintroduced.
-
-  // Legacy `get-focused-visible-window-id` removed (v1 removal Phase 3.7g).
-  // Tile-preload routes through strict `tile:window:get-focused-visible-id`
-  // which uses `getLastFocusedVisibleWindowId()` from this file.
-
-  // Register shortcut
-  //
-  // The callback closure captures the IpcMainEvent so ev.reply() can route
-  // the response back to the correct sender frame at callback time.
-  //
-  // ev.reply() internally uses sender.sendToFrame(frameId, ...) which correctly
-  // handles both:
-  //   - Normal BrowserWindow senders (main frame)
-  //   - Sub-frame senders (for forward compatibility)
-  //
-  // We guard against destroyed senders (extension reload)
-  // to prevent uncaught exceptions. The previous approaches that failed:
-  //   - BrowserWindow.fromId(ev.sender.id): wrong ID space (WebContents vs Window)
-  //   - BrowserWindow.fromWebContents(ev.sender): returns null for iframe senders
-  //   - webContents.fromId(id): does not find sub-frame WebContents
-  //   - sender.send(): sends to main frame only, not the specific iframe
-  // IPC_CHANNELS.* handlers (REGISTER_SHORTCUT, UNREGISTER_SHORTCUT,
-  // CLOSE_WINDOW, PUBLISH, SUBSCRIBE, MODIFY_WINDOW) were removed as
-  // part of the v1 removal (Phase 3.7e). Their only caller was the
-  // deleted `preload.js`. Tile-preload uses strict `tile:*` IPC paths
-  // instead (tile:shortcuts:register, tile:pubsub:publish, etc.).
-
-  // Legacy `file-save-dialog` removed (v1 removal Phase 3.7d). api.dialogs.save
-  // uses tile:dialogs:save (capability-gated).
-
-  // Legacy `file-open-dialog`, `file-read-from-path`, `file-write-to-path`,
-  // `app-info`, `net-fetch` removed (v1 removal Phase 3.7d). Their only
-  // callers were in deleted preload.js. Tile-preload uses tile:dialogs:open,
-  // tile:filesystem:read/write, tile:network:fetch, etc.
-
 }
 
 /**
@@ -2182,35 +2060,9 @@ export function registerSyncHandlers(): void {
     }
   });
 
-  // sync-get-config / sync-set-config / sync-pull / sync-push / sync-status
-  // were here. Strict counterparts live in tile-ipc.ts (Phase 3.7f) as
-  // tile:sync:get-config / set-config / pull / push / status.
+  // The tile:sync:get-config / set-config / pull / push / status
+  // handlers live in tile-ipc.ts.
 }
-
-/**
- * Register profile-related IPC handlers
- *
- * Strict tile:profiles:* counterparts live in tile-ipc.ts (Phase 3.7f).
- * Legacy `profiles:*` ipcMain handlers were removed there too. Settings
- * UI consumes these via api.profiles.*.
- */
-export function registerProfileHandlers(): void {
-  // No-op — see tile-ipc.ts for the strict tile:profiles:* handlers.
-}
-
-/**
- * Register modes-related IPC handlers
- *
- * These handlers provide backwards compatibility with the old modes API.
- * New code should use the context API (api.context) instead.
- */
-export function registerModesHandlers(): void {
-  // Legacy `modes:*` handlers (getWindowMode, setMajorMode, listModes,
-  // getCommandContext) removed (v1 removal Phase 3.7d). Tile-preload's
-  // api.modes.* and api.context.* route through `tile:context:*`
-  // (capability-gated). Only callers were in deleted preload.js.
-}
-
 
 /**
  * Persist adBlockerEnabled pref in the datastore.
@@ -2240,26 +2092,10 @@ export function persistAdBlockerPref(enabled: boolean): void {
 }
 
 /**
- * Register IPC handlers for bundled web extensions (adblocker + chrome extensions)
- *
- * Strict tile:adblocker:* counterparts live in tile-ipc.ts (Phase 3.7f).
- * Settings UI + page widget consume them via api.adblocker.*.
- */
-export function registerWebExtensionHandlers(): void {
-  // No-op — see tile-ipc.ts for the strict tile:adblocker:* handlers.
-}
-
-/**
  * Register all IPC handlers
  */
-export function registerAllHandlers(onQuit: () => void): void {
+export function registerAllHandlers(_onQuit: () => void): void {
   registerDarkModeHandlers();
-  registerDatastoreHandlers();
-  registerExtensionHandlers();
   registerWindowHandlers();
   registerSyncHandlers();
-  registerProfileHandlers();
-  registerModesHandlers();
-  registerWebExtensionHandlers();
-  registerMiscHandlers(onQuit);
 }

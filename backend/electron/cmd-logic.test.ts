@@ -4,7 +4,7 @@
  * Tests extracted pure functions from:
  * - extensions/cmd/panel.js: ESC behavior, shift-tab cycling, frecency sorting
  * - extensions/cmd/commands/note.js: parseTagset, detectType
- * - preload.js: shouldBlockDrag
+ * - tile-preload.cts drag IIFE: shouldBlockDrag
  *
  * These are logic-only tests -- no DOM, no Electron, no extensions runtime.
  */
@@ -50,7 +50,7 @@ function extractInlineHashtags(text: string): string[] {
 }
 
 // ============================================================================
-// shouldBlockDrag (from preload.js)
+// shouldBlockDrag (from tile-preload.cts drag IIFE)
 // ============================================================================
 
 interface MockElement {

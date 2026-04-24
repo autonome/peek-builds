@@ -121,13 +121,13 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
   it('registers lazy tile', () => {
     const manifest = makeManifest('test-tile-1', ['test1:open']);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
     assert.ok(isLazyTileRegistered('test-tile-1'));
   });
 
   it('loads tile when a declared lazyEvent topic is published', async () => {
     const manifest = makeManifest('test-tile-2', ['test2:open']);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     // On launch, simulate the tile registering its real handler and signaling ready.
     launcherState.onLaunch = () => {
@@ -152,7 +152,7 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
   it('the real handler receives the deferred message after load', async () => {
     const manifest = makeManifest('test-tile-3', ['test3:open']);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     const received: unknown[] = [];
     launcherState.onLaunch = () => {
@@ -174,7 +174,7 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
   it('subsequent events after load do not re-launch the tile', async () => {
     const manifest = makeManifest('test-tile-4', ['test4:open']);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     const received: unknown[] = [];
     launcherState.onLaunch = () => {
@@ -204,7 +204,7 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
   it('multiple lazyEvents on one tile share a single launch', async () => {
     const manifest = makeManifest('test-tile-5', ['test5:open', 'test5:add']);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     const received: Array<{ topic: string; msg: unknown }> = [];
     launcherState.onLaunch = () => {
@@ -239,7 +239,7 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
 
   it('concurrent fires during load: one launch, every message is delivered', async () => {
     const manifest = makeManifest('test-tile-6', ['test6:open']);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     // Defer ready so we can fire multiple publishes while still loading.
     let readyTrigger: (() => void) | null = null;
@@ -276,7 +276,7 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
     // Register a tile with a specific lazyEvent topic — an unrelated
     // publish must not go through the dispatch hook (no launch, no defer).
     const manifest = makeManifest('test-tile-7', ['test7:only-this-topic']);
-    registerLazyTile(manifest, '/fake/path', '/fake/preload.js');
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
 
     const received: unknown[] = [];
     subscribe('peek://unrelated', 'unrelated:topic', (msg) => {

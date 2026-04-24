@@ -583,18 +583,17 @@ export function registerTrustedBuiltinWindow(
 }
 
 /**
- * Resolve a peek:// URL to v2 tile web preferences (preload + token).
+ * Resolve a peek:// URL to tile web preferences (preload + token).
  *
- * Used by the `window-open` IPC handler so that windows opened via
- * `api.window.open('peek://<tile>/<entry.url>')` get the strict tile
- * preload with a capability token, instead of the legacy `preload.js`
- * (which has the old v1 API surface and no `api.initialize()`).
+ * Used by the window-open path so that windows opened via
+ * `api.window.open('peek://<tile>/<entry.url>')` get tile-preload with
+ * a capability token.
  *
  * Returns null when:
  *   - the URL isn't a `peek://` tile URL
- *   - the feature isn't a registered v2 tile
+ *   - the feature isn't a registered tile
  *   - no tile entry matches the URL's path
- * In those cases the caller should fall back to the legacy preload.
+ * In those cases the caller should open the window with no preload.
  *
  * The returned `additionalArguments` are formatted as Electron web-pref
  * args: `--tile-id=X --tile-entry=Y --tile-token=Z`. tile-preload.ts
@@ -672,9 +671,8 @@ export function getTileWebPreferencesForUrl(
  *  - Otherwise, fall back to the manifest's first tile entry — webview
  *    children inherit the parent tile's full capability grant
  *
- * Returns null when the URL isn't peek:// or the tile-id isn't a v2
- * tile. Callers should fall back to the legacy preload in that case
- * (e.g. for v1 extensions like HUD).
+ * Returns null when the URL isn't peek:// or the tile-id isn't a
+ * registered tile. Callers should inject no preload in that case.
  */
 export function getTileWebPreferencesForWebviewUrl(
   url: string,

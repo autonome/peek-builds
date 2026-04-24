@@ -169,15 +169,14 @@ try {
 // This gives internal widget pages (e.g., HUD widgets, widget-demo cards)
 // access to window.app API while leaving external web content webviews untouched.
 //
-// Resolution order (Phase 3.11b-hud — v1 preload.js removed):
+// Resolution order:
 //   1. HUD widget webviews: peek://hud/widgets/*.html get a dedicated
-//      trustedBuiltin token (hud-widget). HUD has no v2 manifest but
+//      trustedBuiltin token (hud-widget). HUD has no tile manifest but
 //      widgets use api.window/context/izui/pubsub — all covered by
 //      trustedBuiltin grant.
-//   2. v2 tiles: URL resolves to a registered v2 tile manifest — use
+//   2. Tile-backed URLs: URL resolves to a registered tile manifest — use
 //      tile-preload.cjs with manifest-derived capability token.
-//   3. Unrecognised peek:// URL: log a warning and skip preload injection
-//      (no v1 fallback — preload.js has been deleted).
+//   3. Unrecognised peek:// URL: log a warning and skip preload injection.
 //
 // Also inject Proton Pass webauthn.js into http/https webviews for passkey support.
 // The script overrides navigator.credentials.create/get in the main world.
@@ -232,10 +231,10 @@ app.on('web-contents-created', (_event, contents) => {
           `[webview] Injecting v2 tile-preload for ${params.src} (tile=${tileWebPrefs.tileId}, entry=${tileWebPrefs.entryId})`
         );
       } else {
-        // No v1 preload fallback — preload.js has been deleted. Any peek://
-        // URL that reaches here is either a developer-extension webview that
-        // needs a v2 manifest, or a bug. Log a warning so it surfaces.
-        console.warn(`[webview] No tile-preload found for peek:// webview ${params.src} — no preload injected (v1 preload.js removed)`);
+        // Any peek:// URL that reaches here is either a developer-extension
+        // webview that needs a tile manifest, or a bug. Log a warning so it
+        // surfaces.
+        console.warn(`[webview] No tile-preload found for peek:// webview ${params.src} — no preload injected`);
       }
     }
   });

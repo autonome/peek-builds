@@ -15,9 +15,7 @@
  *     features via `core:feature:toggle` pubsub.
  *   - Settings shortcut registration (Cmd+,).
  *
- * Pre-Phase-2.5, this window was created by `createBackgroundWindow()`
- * with the v1 `preload.js` and node integration. This module replaces
- * that path with the same mechanics used by cmd/hud/page/test fixture:
+ * Uses the same mechanics as cmd/hud/page/test fixture:
  *
  *   - `tile-preload.cjs` as preload, reading `--tile-id=core`,
  *     `--tile-entry=background`, and `--tile-token=<...>` from
