@@ -30,7 +30,7 @@ Built-in capabilities that form the foundation of Peek.
 
 - **IZUI Navigation** — Inverted Zooming User Interface. ESC-key-based navigation model that provides consistent "zoom out" behavior across all interfaces. Enter from anywhere, ESC to go back — predictable at every level.
 - **Window Management** — Heterogeneous windowing: chromeless modals, overlays, slides, workspaces and content windows, each with role-specific behavior.
-- **Feature System** — Features are not extensions of a monolithic core — they *are* the functionality, built on a minimal foundation. Each feature declares its own commands, shortcuts, and settings. Features can be eager, lazy-loaded, or fully declarative.
+- **Feature Tiles** — Every feature is a **tile**: an HTML file running in its own capability-gated BrowserWindow, talking to the main process over a strict `tile:*` IPC surface. There's no "tile type" or "role" — tiles are resident or lazy, shown or hidden, and that's it. Each declares its own commands, shortcuts, settings, and the capabilities it needs. See [docs/architecture.md](docs/architecture.md).
 - **PubSub Messaging** — Cross-window event system for communication between features and windows.
 - **Data Persistence** — SQLite datastore with schema management, history tracking, and cross-device sync support.
 - **peek:// Protocol** — Custom protocol for internal navigation and cross-origin access.
@@ -38,7 +38,7 @@ Built-in capabilities that form the foundation of Peek.
 
 ## Features
 
-Peek uses the language of "features" over "extensions". "Extend" implies a larger core that you cannot change. Peek inverts that to small core, with as much changeable as possible. Peek features are modular - they are not *extending* core functionality, they *are* the functionality, built on a small-as-possible core.
+Peek uses the language of "features" (and, at the implementation level, "tiles") over "extensions". "Extend" implies a larger core that you cannot change. Peek inverts that to small core, with as much changeable as possible. Peek features are modular — they are not *extending* core functionality, they *are* the functionality, each one a **tile** running on a small-as-possible core.
 
 - **Commands** — Global-hotkey-activated graphical command bar (GCLI) for opening pages and features, executing commands, chaining commands. `Opt/Alt+space` (global) and Cmd/Ctrl+k (local)
 - **Groups** — Categorize, recall and interact with groups of pages. Groups are tags that've been "promoted" intentionally to a group. Groups are also an app-global "mode" (which isn't entirely implemented yet...) `Cmd/Ctrl+G`
@@ -200,7 +200,7 @@ For example:
 
 ### Feature architecture
 
-Peek inverts the traditional browser model. Instead of a large monolithic core with an extension API bolted on, Peek has a minimal core with features that *are* the functionality. Features are not extending something — they are the thing.
+Peek inverts the traditional browser model. Instead of a large monolithic core with an extension API bolted on, Peek has a minimal core with features that *are* the functionality. A feature is a **tile** — an HTML file in its own BrowserWindow, loaded through a capability-gated preload, talking to the main process over a strict `tile:*` IPC surface. Tiles are not extending something — they are the thing. For a full walkthrough of the tile model, the three runtime state machines, and a comparison to the [webtil.es / DASL Tiles](https://dasl.ing/tiles.html) spec, see [docs/architecture.md](docs/architecture.md).
 
 A modular feature system for achieving "personal web workbench" requires a few things:
 - UI modularity requires OS-level window capabilities beyond what the web allows today (also a baby step towards a minimal OS user interface)
@@ -211,17 +211,18 @@ The current implementation has gone through a few iterations:
 - first proof of concept was all Electron — privileged JS
 - second experiment moved each feature to a separate web app running in own window scope, with access to smallest possible custom API, with one main web app loading and orchestrating the others, using pubsub for cross-app communication
 - third approach bundled all features into one web app, with access to smallest possible custom API for platform-level capabilities
-- fourth and current approach implements minimum viable core in a single web app which loads "features" into an opaque origin
+- fourth approach implemented a minimum viable core in a single web app which loaded "features" into an opaque origin
+- fifth and current approach: each feature is a **tile** — its own BrowserWindow on its own `peek://{tileId}/` origin, with a capability-gated preload and a strict `tile:*` IPC surface. One renderer mechanic for every feature and for the core renderers themselves. See [docs/architecture.md](docs/architecture.md).
 
-Features are loaded into the custom `peek` scheme, which provides access to a few special APIs noted in the next section, allows cross-origin network access and other things.
+Features are loaded into the custom `peek` scheme, which provides access to a few special APIs noted in the next section, allows cross-origin network access (gated by the tile's declared `network` capability), and other things.
 
 The API surface area is small and portable — features built on it could run in other environments with minimal adaptation.
 
 ### Feature API
 
-Features are web apps running in the `peek://` scheme. The question driving the API design: what's the minimum capability set a web app needs to build these features?
+Features are tiles running in the `peek://` scheme. Each tile gets its own per-window capability token at load time; every call on `window.app` routes through [`backend/electron/tile-preload.cts`](backend/electron/tile-preload.cts) over the strict `tile:*` IPC surface, and is gated on the capabilities the tile declared in its manifest. The question driving the API design: what's the minimum capability set a tile needs to build a feature?
 
-The API is exposed as `window.app` in the feature's execution context:
+The API is exposed as `window.app` in the tile's execution context:
 
 - **Windows** — open, close, modify, and track windows with role-based behavior
 - **Shortcuts** — register global and local keyboard shortcuts
@@ -238,7 +239,7 @@ The API is exposed as `window.app` in the feature's execution context:
 - **Net** — network requests (fetch with cross-origin access)
 - **Session** — session state and restore
 
-The API surface is intentionally small and portable — features built on it could run in other environments with minimal adaptation. See [docs/api.md](docs/api.md) for the full reference.
+The API surface is intentionally small and portable — features built on it could run in other environments with minimal adaptation. See [docs/tile-api.md](docs/tile-api.md) for the current preload surface and [docs/architecture.md](docs/architecture.md) for the tile model, capability system, and state machines. [docs/api.md](docs/api.md) contains older API notes that are still largely accurate but may lag.
 
 ### Desktop App
 
@@ -317,14 +318,14 @@ Peek supports multiple backends sharing the same storage/api approach:
 
 ```
 peek/
-├── app/                    # Renderer (backend-agnostic)
-├── features/               # Built-in features
+├── app/                    # Core renderer (backend-agnostic): bgWindow, cmd, hud, page
+├── features/               # Feature tiles (one directory per tile, each with manifest.json)
 ├── backend/
-│   ├── electron/           # Desktop (primary)
+│   ├── electron/           # Desktop (primary) — tile-lifecycle, tile-ipc-gate, tile-preload.cts
 │   ├── tauri/              # Desktop (Rust alternative)
 │   ├── tauri-mobile/       # iOS/Android
 │   └── server/             # Sync server (Node.js/Hono)
-└── docs/                   # Documentation
+└── docs/                   # Documentation (architecture.md, tile-api.md, *-state-machine.md)
 ```
 
 ### Documentation
@@ -332,7 +333,9 @@ peek/
 | Doc | Description |
 |-----|-------------|
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Development setup, commands, architecture |
-| [docs/api.md](docs/api.md) | Peek API reference (`window.app`) |
+| [docs/architecture.md](docs/architecture.md) | **Start here.** Tile model, state machines, and comparison to webtil.es / DASL Tiles spec |
+| [docs/tile-api.md](docs/tile-api.md) | Current tile preload surface (`window.app`) |
+| [docs/api.md](docs/api.md) | Older API reference (some content still accurate) |
 | [docs/features.md](docs/features.md) | Feature development |
 | [docs/cmd.md](docs/cmd.md) | Command palette feature |
 | [docs/themes.md](docs/themes.md) | Theme system |

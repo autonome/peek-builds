@@ -10,7 +10,12 @@ Peek is a web user agent application that provides alternative ways to interact 
 - Tangled: `git@tangled.sh:burrito.space/peek` (primary)
 - GitHub: `git@github.com:autonome/peek` (Railway deploy only — not for general use)
 
-**Documentation:** `docs/api.md` (API reference), `docs/mobile.md` (iOS/Android), `docs/sync.md` (sync architecture)
+**Documentation:**
+- [docs/architecture.md](docs/architecture.md) — tile model, state machines, comparison to webtil.es / DASL Tiles spec. **Start here if you're new.**
+- [docs/api.md](docs/api.md) — API reference (legacy `window.app` surface)
+- [docs/tile-api.md](docs/tile-api.md) — current tile preload surface (`window.app`)
+- [docs/mobile.md](docs/mobile.md) — iOS/Android
+- [docs/sync.md](docs/sync.md) — sync architecture
 
 ## Requirements
 
@@ -62,28 +67,54 @@ yarn test:grep "pattern"  # Run specific test by name
 
 ## Architecture Overview
 
+For the full picture (tile model, three runtime state machines, comparison to
+the webtil.es / DASL Tiles spec) read [docs/architecture.md](docs/architecture.md).
+The summary below is just enough to orient you.
+
 ### Core Structure
 
-1. **Main Process** (`index.js`):
+1. **Main Process** (`backend/electron/main.ts` and friends):
    - Manages app lifecycle, windows, shortcuts, IPC communication
    - Implements custom `peek://` protocol for internal navigation
-   - Handles profile management and data persistence
-   - Hosts the TinyBase datastore with IPC handlers for renderer access
+   - Handles profile management and SQLite datastore
+   - Owns the **tile lifecycle FSM** (`tile-lifecycle.ts`) and the
+     **`tile:*` IPC chokepoint** (`tile-ipc-gate.ts`) — every tile renderer
+     talks to the main process exclusively through capability-token-gated
+     `tile:*` channels
 
-2. **Renderer Process** (`app/`):
-   - Core app logic loads from `peek://app/background.html`
-   - Extension loader at `app/extensions/loader.js`
-   - Feature modules: scripts, cmd (registered in `app/features.js`)
-   - Built-in extensions: groups, peeks, slides, tags, editor (in `./features/`)
+2. **Core renderer** (`app/`) — backend-agnostic, runs identically under
+   any backend:
+   - **bgWindow** = `peek://app/background.html` → `app/index.js` is the core
+     orchestrator. Initialises cmd registry, page canvas, and HUD via
+     `initCmd()` / `initPage()` / `initHud()`. Always loaded at startup.
+     Carries a `trustedBuiltin` capability grant — same tile mechanics as
+     any feature tile, but capability checks short-circuit.
+   - **cmd panel** (`app/cmd/`) — interactive command bar; pure state
+     machine in `app/cmd/state-machine.js`
+   - **page canvas** (`app/page/`) — fullscreen transparent canvas for
+     content windows (FROZEN architecture — see "Page View Canvas
+     Architecture" below)
+   - **HUD** (`app/hud/`) — always-on-top overlay
    - Settings UI at `peek://app/settings/settings.html`
+   - The legacy `app/extensions/loader.js` and the consolidated
+     extension-host iframe model are **gone** as of April 2026 (v1 removal).
 
-3. **Peek API** (`window.app`):
-   - `api.window.*` for window management
-   - `api.shortcuts.*` for hotkeys (local by default, `{ global: true }` for OS-level)
-   - `api.datastore.*` for data persistence
+3. **Feature tiles** (`features/<id>/`) — every feature is a tile. Each
+   loads through the same `tile-preload.cts` and the same `tile:*` IPC,
+   gated on the capabilities declared in its `manifest.json` (schema
+   version 3). See [docs/architecture.md](docs/architecture.md) and
+   [docs/tiles-single-file.md](docs/tiles-single-file.md).
+
+4. **Peek API** (`window.app`) — exposed to every tile renderer by
+   [`backend/electron/tile-preload.cts`](backend/electron/tile-preload.cts).
+   The full surface is documented in [docs/tile-api.md](docs/tile-api.md).
+   The headline namespaces:
+   - `api.window.*` for window management (gated on the `window` capability)
+   - `api.shortcuts.*` for hotkeys (local by default, `{ global: true }` for OS-level; gated on `shortcuts`)
+   - `api.datastore.*` for data persistence (gated on per-table allowlist)
    - `api.commands.*` for command palette integration
    - `api.theme.*` for theme management
-   - `api.publish()`/`api.subscribe()` for cross-window messaging
+   - `api.publish()` / `api.subscribe()` / `api.pubsub.*` for cross-tile messaging
 
 ### Backend Structure
 ```
@@ -120,17 +151,25 @@ backend/
 **Data Sync**: Both backends use the same SQLite database path (`~/.config/Peek/{profile}/datastore.sqlite`). Only one backend should run at a time (file lock).
 
 ### Custom Protocol
-- `peek://app/...` - Core application files (from `app/` directory)
-- `peek://ext/{shortname}/...` - Extension files
-- `peek://tauri/...` - Tauri backend files (only in Tauri)
+- `peek://app/...` — core renderer files (from `app/` directory)
+- `peek://{tileId}/...` — feature tile files (one origin per tile)
+- `peek://tauri/...` — Tauri backend files (only in Tauri)
 
-### Extensions Architecture
+### Tile architecture
 
-Extensions run in isolated BrowserWindow processes at `peek://ext/{id}/background.html`.
+Every feature is a **tile** — an HTML file that runs in its own
+BrowserWindow with `tile-preload.cts` and a capability-gated `tile:*` IPC
+surface. There is no "tile type", no "tile role", no separate "background
+tile" concept; residency (`resident: true`) and visibility (`showSelf()` /
+`hideSelf()`) are independent runtime properties. See
+[docs/architecture.md#the-tile-model](docs/architecture.md#the-tile-model)
+for the full picture and [docs/tiles-single-file.md](docs/tiles-single-file.md)
+for the single-file tile rationale.
 
 ```
 features/
-├── cmd/                  # Command palette
+├── hello-world/          # Tutorial / diagnostic tile (read this first)
+├── cmd/                  # (Note: cmd panel UI is now in app/cmd; commands live here)
 │   └── commands/         # Built-in command modules (note, url, tagset, tag, etc.)
 ├── editor/               # Item CRUD: add, edit content, delete
 ├── example/              # Hello world example
@@ -139,33 +178,63 @@ features/
 ├── peeks/
 ├── slides/
 └── tags/                 # Tag browsing, filtering, tag editing on items
-    ├── manifest.json           # Extension metadata
+    ├── manifest.json           # v3 tile manifest (id, tiles[], capabilities)
     ├── settings-schema.json    # Settings UI schema (optional)
-    ├── background.html         # Entry point
-    └── background.js           # Main logic (ES module export)
+    ├── home.html               # Entry point (single-file tile target)
+    └── home.js                 # Main logic (ES module)
 ```
 
-**Background script pattern:**
+**Tile entry pattern** (single-file tile — preferred):
+
 ```javascript
 const api = window.app;
 
-const extension = {
-  id: 'example',
-  labels: { name: 'Example' },
+api.commands.register({ name: 'my-cmd', description: '...', execute: fn });
+api.shortcuts.register('Option+x', handler, { global: true });
+api.subscribe('some:topic', (data) => { /* … */ });
 
-  init() {
-    api.shortcuts.register('Option+x', handler, { global: true });
-    api.commands.register({ name: 'my-cmd', description: '...', execute: fn });
-  },
-
-  uninit() {
-    api.shortcuts.unregister('Option+x', { global: true });
-    api.commands.unregister('my-cmd');
-  }
-};
-
-export default extension;
+// Tile starts hidden; show on demand:
+async function open() {
+  await api.window.showSelf();
+}
 ```
+
+The legacy `init()` / `uninit()` background-script pattern (loaded into a
+shared extension-host iframe) was removed as part of v1 removal. Each tile
+now owns its own BrowserWindow lifetime and the per-tile capability token
+is revoked automatically on window close — no manual `unregister`
+bookkeeping needed for shutdown.
+
+### State machines
+
+Peek runs three explicit state machines. Each has a design doc; the
+summaries here tell you what each FSM owns so you know which one to read
+when you hit a bug.
+
+- **Tile lifecycle FSM** ([docs/tile-lifecycle-fsm.md](docs/tile-lifecycle-fsm.md),
+  [`backend/electron/tile-lifecycle.ts`](backend/electron/tile-lifecycle.ts),
+  [`backend/electron/tile-fsm.ts`](backend/electron/tile-fsm.ts))
+  — owns *when a tile is alive*. States: `unregistered → registered →
+  loading → ready → visible` plus `unloading` and `crashed`. Static
+  declarations (commands, shortcuts, nouns, lazyEvents) are wired on
+  `unregistered → registered` and visible in the cmd panel without the
+  tile running. The capability token is minted on `loading → ready` and
+  revoked on `→ unloading` / `→ crashed`.
+
+- **PubSub state machine** ([docs/pubsub-state-machine.md](docs/pubsub-state-machine.md),
+  [`backend/electron/pubsub.ts`](backend/electron/pubsub.ts), gated through
+  [`backend/electron/tile-ipc-gate.ts`](backend/electron/tile-ipc-gate.ts))
+  — owns *what messages can flow in each state*. Every `tile:*` IPC frame
+  runs through a 6-step validation pipeline (channel / sender-frame /
+  schema / token+grant / tile-state / sender-role) before any handler
+  fires. Dropped publishes are impossible by construction: if a message
+  doesn't flow, the pipeline says exactly which step rejected it.
+
+- **Cmd panel state machine** ([docs/cmd-state-machine.md](docs/cmd-state-machine.md),
+  [`app/cmd/state-machine.js`](app/cmd/state-machine.js)) — owns the
+  interactive command-bar UI states (10 states from `IDLE` to `CLOSING`).
+  Pure module, no DOM or IPC; the DOM adapter in `app/cmd/panel.js` is
+  the only thing that talks to electron.
 
 ### Noun Registration API
 
