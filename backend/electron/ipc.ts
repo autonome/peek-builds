@@ -35,18 +35,6 @@ import {
   loadExtensionManifest,
 } from './extensions.js';
 
-import type { Profile } from './profiles.js';
-import {
-  listProfiles,
-  createProfile,
-  getProfileByFolder,
-  deleteProfile,
-  getActiveProfile,
-  setActiveProfile,
-  enableSync,
-  disableSync,
-  getSyncConfig as getProfileSyncConfig,
-} from './profiles.js';
 
 import {
   getExtensionPath,
@@ -2595,155 +2583,13 @@ export function registerSyncHandlers(): void {
 
 /**
  * Register profile-related IPC handlers
+ *
+ * Strict tile:profiles:* counterparts live in tile-ipc.ts (Phase 3.7f).
+ * Legacy `profiles:*` ipcMain handlers were removed there too. Settings
+ * UI consumes these via api.profiles.*.
  */
 export function registerProfileHandlers(): void {
-  // List all profiles
-  ipcMain.handle('profiles:list', async () => {
-    try {
-      const profiles = listProfiles();
-      return { success: true, data: profiles };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Create a new profile
-  ipcMain.handle('profiles:create', async (_ev, data: { name: string }) => {
-    try {
-      const profile = createProfile(data.name);
-      return { success: true, data: profile };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Get a specific profile by slug
-  ipcMain.handle('profiles:get', async (_ev, data: { slug: string }) => {
-    try {
-      const profile = getProfileByFolder(data.slug);
-      if (!profile) {
-        return { success: false, error: 'Profile not found' };
-      }
-      return { success: true, data: profile };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Delete a profile
-  ipcMain.handle('profiles:delete', async (_ev, data: { id: string }) => {
-    try {
-      deleteProfile(data.id);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Get the currently active profile
-  ipcMain.handle('profiles:getCurrent', async () => {
-    try {
-      const profile = getActiveProfile();
-      return { success: true, data: profile };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Switch to a different profile (causes app restart)
-  ipcMain.handle('profiles:switch', async (_ev, data: { slug: string }) => {
-    try {
-      DEBUG && console.log(`[ipc:profiles] Switch requested to profile: ${data.slug}`);
-
-      const currentProfile = getActiveProfile();
-      DEBUG && console.log(`[ipc:profiles] Current profile: ${currentProfile.folder}`);
-
-      // Check if already on this profile
-      if (currentProfile.folder === data.slug) {
-        DEBUG && console.log('[ipc:profiles] Already on requested profile, no-op');
-        return { success: true, message: 'Already on this profile' };
-      }
-
-      const profile = getProfileByFolder(data.slug);
-      if (!profile) {
-        return { success: false, error: 'Profile not found' };
-      }
-
-      // Set as active profile
-      DEBUG && console.log(`[ipc:profiles] Setting active profile to: ${data.slug}`);
-      setActiveProfile(data.slug);
-
-      DEBUG && console.log('[ipc:profiles] Relaunching app...');
-      // Relaunch the app with the new profile
-      // The app will pick up the new active profile from profiles.db on restart
-      app.relaunch();
-      app.quit();
-
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Enable sync for a profile
-  ipcMain.handle('profiles:enableSync', async (_ev, data: {
-    profileId: string;
-    apiKey: string;
-    serverProfileSlug: string;
-  }) => {
-    try {
-      enableSync(data.profileId, data.apiKey, data.serverProfileSlug);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Disable sync for a profile
-  ipcMain.handle('profiles:disableSync', async (_ev, data: { profileId: string }) => {
-    try {
-      disableSync(data.profileId);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Get sync configuration for a profile
-  ipcMain.handle('profiles:getSyncConfig', async (_ev, data: { profileId: string }) => {
-    try {
-      const syncConfig = getProfileSyncConfig(data.profileId);
-      return { success: true, data: syncConfig };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Get the partition string for the current profile's session
-  // Used by renderers to set webview partition attribute
-  ipcMain.handle('profiles:getPartition', async () => {
-    try {
-      const { getPartitionString, getCurrentProfileId } = await import('./session-partition.js');
-      const profileId = getCurrentProfileId();
-      if (!profileId) {
-        return { success: false, error: 'No profile session initialized' };
-      }
-      const partition = getPartitionString(profileId);
-      return { success: true, data: { profileId, partition } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // No-op — see tile-ipc.ts for the strict tile:profiles:* handlers.
 }
 
 /**

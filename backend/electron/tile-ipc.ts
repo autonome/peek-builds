@@ -110,7 +110,18 @@ import { checkOAuthAllowed } from './tile-oauth-enforcement.js';
 import { checkSyncAllowed } from './tile-sync-enforcement.js';
 import { createLoopbackServer } from './oauth-loopback.js';
 import { syncAll, getSyncConfig, setSyncConfig, getSyncStatus, pullFromServer, pushToServer } from './sync.js';
-import { getActiveProfile, updateLastSyncTime } from './profiles.js';
+import {
+  listProfiles,
+  createProfile,
+  getProfileByFolder,
+  deleteProfile,
+  getActiveProfile,
+  setActiveProfile,
+  enableSync,
+  disableSync,
+  getSyncConfig as getProfileSyncConfig,
+  updateLastSyncTime,
+} from './profiles.js';
 import { checkEscapeAllowed } from './tile-escape-enforcement.js';
 import { checkSessionAllowed } from './tile-session-enforcement.js';
 import { checkIzuiAllowed } from './tile-izui-enforcement.js';
@@ -4428,6 +4439,201 @@ export function registerTileIpcHandlers(): void {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
+    }
+  });
+
+  // ── tile:profiles:* (Phase 3.7f) ──────────────────────────────────
+  //
+  // Strict counterparts of the legacy `profiles:*` channels in ipc.ts
+  // (deleted in Phase 3.7f). Settings UI consumes via api.profiles.
+  // trustedBuiltin only — admin surface (touches profiles.db, can
+  // relaunch app, holds sync creds).
+
+  registerTileIpc('tile:profiles:list', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:list', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:list' };
+    }
+    try {
+      return { success: true, data: listProfiles() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:create', { mode: 'handle' }, (event, args: {
+    token: string;
+    name: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:create', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:create' };
+    }
+    try {
+      return { success: true, data: createProfile(args.name) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:get', { mode: 'handle' }, (event, args: {
+    token: string;
+    slug: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:get', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:get' };
+    }
+    try {
+      const profile = getProfileByFolder(args.slug);
+      if (!profile) return { success: false, error: 'Profile not found' };
+      return { success: true, data: profile };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:delete', { mode: 'handle' }, (event, args: {
+    token: string;
+    id: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:delete', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:delete' };
+    }
+    try {
+      deleteProfile(args.id);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:getCurrent', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:getCurrent', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:getCurrent' };
+    }
+    try {
+      return { success: true, data: getActiveProfile() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:switch', { mode: 'handle' }, (event, args: {
+    token: string;
+    slug: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:switch', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:switch' };
+    }
+    try {
+      DEBUG && console.log(`[tile:profiles] Switch requested to profile: ${args.slug}`);
+      const currentProfile = getActiveProfile();
+      if (currentProfile.folder === args.slug) {
+        return { success: true, message: 'Already on this profile' };
+      }
+      const profile = getProfileByFolder(args.slug);
+      if (!profile) return { success: false, error: 'Profile not found' };
+      setActiveProfile(args.slug);
+      app.relaunch();
+      app.quit();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:enableSync', { mode: 'handle' }, (event, args: {
+    token: string;
+    profileId: string;
+    apiKey: string;
+    serverProfileSlug: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:enableSync', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:enableSync' };
+    }
+    try {
+      enableSync(args.profileId, args.apiKey, args.serverProfileSlug);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:disableSync', { mode: 'handle' }, (event, args: {
+    token: string;
+    profileId: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:disableSync', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:disableSync' };
+    }
+    try {
+      disableSync(args.profileId);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:getSyncConfig', { mode: 'handle' }, (event, args: {
+    token: string;
+    profileId: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:getSyncConfig', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:getSyncConfig' };
+    }
+    try {
+      return { success: true, data: getProfileSyncConfig(args.profileId) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:profiles:getPartition', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'profiles', 'tile:profiles:getPartition', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:profiles:getPartition' };
+    }
+    try {
+      const { getPartitionString, getCurrentProfileId } = await import('./session-partition.js');
+      const profileId = getCurrentProfileId();
+      if (!profileId) return { success: false, error: 'No profile session initialized' };
+      const partition = getPartitionString(profileId);
+      return { success: true, data: { profileId, partition } };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 

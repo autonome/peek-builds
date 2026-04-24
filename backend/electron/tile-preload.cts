@@ -176,26 +176,24 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Profiles (admin surface) ──
   //
-  // Thin wrappers over the existing `profiles:*` ipcMain handlers in
-  // ipc.ts. No capability gate — Settings is the only real consumer
-  // and it has a trustedBuiltin grant. The whole namespace went
-  // missing during the v1→v2 migration; without it, settings.js
-  // calls (`api.profiles.list()`, etc.) throw before the try/catch
-  // and the Profiles section renders empty.
+  // Strict tile:profiles:* counterparts of the legacy `profiles:*`
+  // handlers live in tile-ipc.ts (Phase 3.7f). trustedBuiltin only
+  // — touches profiles.db, can relaunch the app, holds sync creds.
+  // Settings UI is the only real consumer.
   api.profiles = {
-    list: () => ipcRenderer.invoke('profiles:list'),
-    create: (name: string) => ipcRenderer.invoke('profiles:create', { name }),
-    get: (slug: string) => ipcRenderer.invoke('profiles:get', { slug }),
-    delete: (id: string) => ipcRenderer.invoke('profiles:delete', { id }),
-    getCurrent: () => ipcRenderer.invoke('profiles:getCurrent'),
-    switch: (slug: string) => ipcRenderer.invoke('profiles:switch', { slug }),
-    enableSync: (profileId: string, apiKey: string, serverProfileId: string) =>
-      ipcRenderer.invoke('profiles:enableSync', { profileId, apiKey, serverProfileId }),
+    list: () => ipcRenderer.invoke('tile:profiles:list', { token: tileToken }),
+    create: (name: string) => ipcRenderer.invoke('tile:profiles:create', { token: tileToken, name }),
+    get: (slug: string) => ipcRenderer.invoke('tile:profiles:get', { token: tileToken, slug }),
+    delete: (id: string) => ipcRenderer.invoke('tile:profiles:delete', { token: tileToken, id }),
+    getCurrent: () => ipcRenderer.invoke('tile:profiles:getCurrent', { token: tileToken }),
+    switch: (slug: string) => ipcRenderer.invoke('tile:profiles:switch', { token: tileToken, slug }),
+    enableSync: (profileId: string, apiKey: string, serverProfileSlug: string) =>
+      ipcRenderer.invoke('tile:profiles:enableSync', { token: tileToken, profileId, apiKey, serverProfileSlug }),
     disableSync: (profileId: string) =>
-      ipcRenderer.invoke('profiles:disableSync', { profileId }),
+      ipcRenderer.invoke('tile:profiles:disableSync', { token: tileToken, profileId }),
     getSyncConfig: (profileId: string) =>
-      ipcRenderer.invoke('profiles:getSyncConfig', { profileId }),
-    getPartition: () => ipcRenderer.invoke('profiles:getPartition'),
+      ipcRenderer.invoke('tile:profiles:getSyncConfig', { token: tileToken, profileId }),
+    getPartition: () => ipcRenderer.invoke('tile:profiles:getPartition', { token: tileToken }),
   };
 
   // ── PubSub (if granted) ──
