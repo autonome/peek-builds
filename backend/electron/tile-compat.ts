@@ -16,7 +16,7 @@ import { parseManifestFile, detectManifestVersion, type TileManifestV2, type Par
 import { launchTile, type TileLaunchResult } from './tile-launcher.js';
 import { registerLazyTile } from './tile-lazy.js';
 import { registerTileIpcHandlers } from './tile-ipc.js';
-import { registerExtensionPath } from './protocol.js';
+import { registerTilePath } from './protocol.js';
 import { DEBUG } from './config.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ export function loadV2Tile(
   }
 
   // Register with protocol handler so peek://{tileId}/ URLs resolve
-  registerExtensionPath(ext.id, ext.path);
+  registerTilePath(ext.id, ext.path);
 
   const manifest = ext.v2Manifest;
   const isEager = config.eagerIds?.has(ext.id) ?? false;

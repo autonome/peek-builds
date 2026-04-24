@@ -17,7 +17,7 @@ import { BrowserWindow, dialog, screen } from 'electron';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
-import { getRegisteredExtensionIds } from './protocol.js';
+import { getRegisteredTileIds } from './protocol.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
@@ -189,13 +189,13 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     // Extract real URL from page containers
     const realUrl = extractRealUrl(url);
 
-    // Skip windows for unknown extensions (stale from renames/removals)
+    // Skip windows for unknown tiles (stale from renames/removals)
     const extMatch = realUrl.match(/^peek:\/\/ext\/([^/]+)/);
     if (extMatch) {
       const extId = extMatch[1];
-      const knownIds = getRegisteredExtensionIds();
+      const knownIds = getRegisteredTileIds();
       if (!knownIds.includes(extId)) {
-        DEBUG && console.log(`[session:save] Skipping stale extension window ${id}: ${extId}`);
+        DEBUG && console.log(`[session:save] Skipping stale tile window ${id}: ${extId}`);
         continue;
       }
     }
@@ -423,9 +423,9 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
     }
   } catch { /* unparseable URL */ }
   if (extIdFromUrl) {
-    const knownIds = getRegisteredExtensionIds();
+    const knownIds = getRegisteredTileIds();
     if (!knownIds.includes(extIdFromUrl)) {
-      DEBUG && console.log(`[session] Filtering stale extension window: ${extIdFromUrl}`);
+      DEBUG && console.log(`[session] Filtering stale tile window: ${extIdFromUrl}`);
       return false;
     }
   }

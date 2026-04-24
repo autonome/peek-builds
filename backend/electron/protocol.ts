@@ -3,8 +3,8 @@
  *
  * Handles:
  * - peek://app/{path} - Core app files
- * - peek://ext/{ext-id}/{path} - Extension content
- * - peek://extensions/{path} - Shared extension infrastructure
+ * - peek://ext/{tile-id}/{path} - Tile content (legacy URL prefix; tiles ARE the unit of a feature)
+ * - peek://extensions/{path} - Shared tile infrastructure (resolves under features/)
  * - peek://theme/{path} - Current theme files (vars.css, manifest.json)
  * - peek://theme/{themeId}/{path} - Specific theme files
  * - peek://thumbnail/{hash} - Page screenshot thumbnails (JPEG)
@@ -27,8 +27,8 @@ export const APP_PROTOCOL = `${APP_SCHEME}:`;
 
 // Lazy-load `protocol` and `net` via CommonJS require so this module can be
 // imported under ELECTRON_RUN_AS_NODE=1 (where electron's named ESM exports
-// are empty). Unit tests that only consume pure helpers (e.g. extension path
-// resolution via getExtensionPath) never touch the lazy binding.
+// are empty). Unit tests that only consume pure helpers (e.g. tile path
+// resolution via getTilePath) never touch the lazy binding.
 const requireElectron = createRequire(import.meta.url);
 let _electron: typeof import('electron') | null = null;
 function getElectron(): typeof import('electron') {
@@ -45,8 +45,11 @@ const net: typeof import('electron').net = new Proxy(
   { get: (_t, prop) => (getElectron().net as any)[prop] }
 );
 
-// Extension path cache: extensionId -> filesystem path
-const extensionPaths = new Map<string, string>();
+// Tile path cache: tileId -> filesystem path. Populated when a v2 tile
+// is registered (tile-compat) or when a dev tile is loaded via
+// --load-extension. Used by the per-tile origin resolver below
+// (`peek://{tileId}/...`) and by anyone needing a tile's on-disk path.
+const tilePaths = new Map<string, string>();
 
 // Theme path cache: themeId -> filesystem path
 const themePaths = new Map<string, string>();
@@ -175,18 +178,18 @@ export function registerScheme(): void {
 }
 
 /**
- * Register a built-in extension path
+ * Register a built-in tile path
  */
-export function registerExtensionPath(id: string, fsPath: string): void {
-  extensionPaths.set(id, fsPath);
-  DEBUG && console.log('Registered extension path:', id, fsPath);
+export function registerTilePath(id: string, fsPath: string): void {
+  tilePaths.set(id, fsPath);
+  DEBUG && console.log('Registered tile path:', id, fsPath);
 }
 
 /**
- * Get all registered built-in extension IDs
+ * Get all registered built-in tile IDs
  */
-export function getRegisteredExtensionIds(): string[] {
-  return Array.from(extensionPaths.keys());
+export function getRegisteredTileIds(): string[] {
+  return Array.from(tilePaths.keys());
 }
 
 /**
@@ -239,15 +242,15 @@ export function setActiveThemeId(id: string): boolean {
 }
 
 /**
- * Get extension filesystem path by ID
- * First checks built-in extensions, then datastore for external extensions
+ * Get tile filesystem path by ID.
+ * First checks built-in tiles, then the datastore for installed (external) tiles.
  */
-export function getExtensionPath(id: string): string | null {
-  // Check built-in extensions first
-  const builtinPath = extensionPaths.get(id);
+export function getTilePath(id: string): string | null {
+  // Check built-in tiles first
+  const builtinPath = tilePaths.get(id);
   if (builtinPath) return builtinPath;
 
-  // Check datastore for external extensions
+  // Check datastore for installed (external) tiles
   try {
     const db = getDb();
     const ext = db.prepare('SELECT * FROM extensions WHERE id = ?').get(id) as { path?: string } | undefined;
@@ -317,7 +320,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       return fetchFile(absolutePath, req.url);
     }
 
-    // Handle extension content: peek://ext/{ext-id}/{path}
+    // Handle tile content: peek://ext/{tile-id}/{path}
+    // (The `ext/` URL prefix is a legacy shape; the resolver routes to tiles.)
     if (host === 'ext') {
       const parts = pathname.split('/');
       const extId = parts[0];
@@ -369,16 +373,16 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         return fetchFile(absolutePath, req.url);
       }
 
-      const extBasePath = getExtensionPath(extId);
-      if (!extBasePath) {
-        DEBUG && console.log('Extension not found:', extId);
-        return new Response('Extension not found', { status: 404 });
+      const tileBasePath = getTilePath(extId);
+      if (!tileBasePath) {
+        DEBUG && console.log('Tile not found:', extId);
+        return new Response('Tile not found', { status: 404 });
       }
 
-      const absolutePath = path.resolve(extBasePath, extPath);
+      const absolutePath = path.resolve(tileBasePath, extPath);
 
-      // Security: ensure path stays within extension folder
-      const normalizedBase = path.normalize(extBasePath);
+      // Security: ensure path stays within tile folder
+      const normalizedBase = path.normalize(tileBasePath);
       if (!absolutePath.startsWith(normalizedBase)) {
         console.error('Path traversal attempt blocked:', absolutePath);
         return new Response('Forbidden', { status: 403 });
@@ -389,8 +393,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       return fetchFile(absolutePath, req.url);
     }
 
-    // Handle extensions infrastructure: peek://extensions/{path}
-    // This serves the extension loader and other shared extension code
+    // Handle shared tile infrastructure: peek://extensions/{path}
+    // Resolves under features/ — used to serve cross-tile shared code.
     if (host === 'extensions') {
       const absolutePath = path.resolve(rootDir, 'features', pathname);
 
@@ -633,25 +637,22 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       return fetchFile(absolutePath, req.url);
     }
 
-    // Handle per-extension hosts: peek://{ext-id}/{path}
-    // This gives each extension a unique origin for iframe isolation
-    // Check if host matches a registered extension
-    const extBasePath = getExtensionPath(host);
-    if (extBasePath) {
-      const extPath = pathname || 'background.html';
-      const absolutePath = path.resolve(extBasePath, extPath);
+    // Handle per-tile hosts: peek://{tile-id}/{path}
+    // Each tile gets a unique origin for iframe isolation and CSP scoping.
+    const tileBasePath = getTilePath(host);
+    if (tileBasePath) {
+      const tilePathSuffix = pathname || 'background.html';
+      const absolutePath = path.resolve(tileBasePath, tilePathSuffix);
 
       // A v2 tile origin is identified by having either a loaded manifest
       // (eager tiles) or a registered lazy manifest (not yet instantiated).
-      // V1 extensions share the same per-extension host path but are not
-      // tiles — we do not inject a tile CSP for them.
       const tileManifest = getTileManifest(host);
       const isTileOrigin = tileManifest !== null || isLazyTileRegistered(host);
 
-      // Security: ensure path stays within extension folder. For tile origins
+      // Security: ensure path stays within the tile folder. For tile origins
       // we still want CSP on the 403, so we synthesize the forbidden response
       // and fall through to the CSP-injection tail instead of returning early.
-      const normalizedBase = path.normalize(extBasePath);
+      const normalizedBase = path.normalize(tileBasePath);
       let response: Response;
       if (!absolutePath.startsWith(normalizedBase)) {
         console.error('Path traversal attempt blocked:', absolutePath);

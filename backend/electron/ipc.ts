@@ -37,7 +37,6 @@ import {
 
 
 import {
-  getExtensionPath,
   getRegisteredThemeIds,
   getThemePath,
   getActiveThemeId,

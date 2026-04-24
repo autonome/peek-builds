@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, getContextEntry } from './datastore.js';
-import { registerScheme, initProtocol, registerExtensionPath, getExtensionPath, getRegisteredExtensionIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
+import { registerScheme, initProtocol, registerTilePath, getTilePath, getRegisteredTileIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
 import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled } from './extensions.js';
@@ -595,7 +595,7 @@ export async function initialize(): Promise<void> {
 export function discoverBuiltinExtensions(extensionsDir: string): void {
   const discovered = discoverExtensions(extensionsDir);
   for (const ext of discovered) {
-    registerExtensionPath(ext.id, ext.path);
+    registerTilePath(ext.id, ext.path);
   }
 }
 
@@ -813,7 +813,7 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
   // Add core renderers (cmd, hud, page) — always running once app is up
   for (const extId of CORE_RENDERER_IDS) {
     if (!isBuiltinExtensionEnabled(extId)) continue;
-    const extPath = getExtensionPath(extId);
+    const extPath = getTilePath(extId);
     const manifest = extPath ? loadExtensionManifest(extPath) : null;
     running.push({
       id: extId,
@@ -842,10 +842,10 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
  * Used by the Settings Features pane to show ALL extensions from the extensions/ directory.
  */
 export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unknown; status: string }> {
-  const registeredIds = getRegisteredExtensionIds();
+  const registeredIds = getRegisteredTileIds();
   const result: Array<{ id: string; manifest: unknown; status: string }> = [];
 
-  // Build a set of running extension IDs for status info.
+  // Build a set of running tile IDs for status info.
   // Sources: core renderers (always up) and loaded v2 tiles.
   const runningSet = new Set<string>(CORE_RENDERER_IDS);
   for (const tileId of getLoadedTileIds()) {
@@ -853,7 +853,7 @@ export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unkn
   }
 
   for (const extId of registeredIds) {
-    const extPath = getExtensionPath(extId);
+    const extPath = getTilePath(extId);
     const manifest = extPath ? loadExtensionManifest(extPath) : null;
     result.push({
       id: extId,
@@ -879,8 +879,8 @@ export function isDevExtension(extId: string): boolean {
  */
 export function registerDevExtension(extId: string, extPath: string): void {
   devExtensions.set(extId, { path: extPath });
-  // Also register the path so protocol handler can find it
-  registerExtensionPath(extId, extPath);
+  // Also register the path so the protocol handler can resolve peek://{extId}/...
+  registerTilePath(extId, extPath);
   DEBUG && console.log(`[ext:dev] Registered dev extension: ${extId} from ${extPath}`);
 }
 
@@ -1601,7 +1601,7 @@ export {
   handleLocalShortcut,
   initTray,
   getDb,
-  getExtensionPath,
-  getRegisteredExtensionIds,
+  getTilePath,
+  getRegisteredTileIds,
   loadExtensionManifest,
 };

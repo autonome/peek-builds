@@ -48,7 +48,7 @@ import {
 import { publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
 import { DEBUG, getTilePreloadPath } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
-import { getExtensionPath } from './protocol.js';
+import { getTilePath } from './protocol.js';
 import * as tileLifecycle from './tile-lifecycle.js';
 
 // Config hooks for values sourced from electron-heavy modules
@@ -800,7 +800,7 @@ export async function unloadTile(tileId: string, entryId: string): Promise<void>
  *  - `getTilePreloadPath()` not configured: returns null (logs error).
  */
 export async function relaunchTile(tileId: string): Promise<TileLaunchResult | null> {
-  const tilePath = getExtensionPath(tileId);
+  const tilePath = getTilePath(tileId);
   if (!tilePath) {
     console.error(`[tile-launcher] relaunchTile: no path registered for tile ${tileId}`);
     return null;
