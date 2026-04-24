@@ -211,30 +211,31 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
   // v2 replacement for the v1 bgWindow iframe. It uses tile-preload.cjs
   // with a `createTrustedBuiltinGrant('test')` token and exposes the same
   // `window.app.*` surface tests expect (api.publish/subscribe,
-  // api.datastore, api.window, api.invoke, api.extensions, etc.).
+  // api.datastore, api.window, api.invoke, api.features, etc.).
   //
   // Use 30s timeout to handle slow launches after previous test cleanup.
   const bgWindow = await waitForWindowHelper(() => electronApp.windows(), 'peek://test/', 30000);
   await waitForAppReady(bgWindow, 15000);
 
-  // Wait for extensions to be ready via the API (checks actual extension system state).
-  // Gates on v2 tile readiness via the extensions API — no host window dependency.
+  // Wait for features to be ready via the unified registry.
+  // Gates on v2 tile readiness via api.features.list — no host window dependency.
   const waitForHybridExtensions = async (timeout: number): Promise<void> => {
     const start = Date.now();
     while (Date.now() - start < timeout) {
-      // Check via API that critical extensions are loaded
       try {
         const ready = await bgWindow.evaluate(async () => {
           const api = (window as any).app;
-          if (!api || !api.extensions) return false;
-          const result = await api.extensions.list();
-          if (!result.success || !result.data) return false;
-          // cmd must be running + at least 3 total extensions
-          const hasCmd = result.data.some((e: any) => e.id === 'cmd' && e.status === 'running');
-          return hasCmd && result.data.length >= 3;
+          if (!api || !api.features) return false;
+          // Builtins are filtered out of the default list; explicitly request them.
+          const result = await api.features.list('builtin');
+          const entries = result?.entries;
+          if (!Array.isArray(entries)) return false;
+          // cmd must be registered + at least 3 total builtins discovered.
+          const hasCmd = entries.some((e: any) => e.id === 'cmd');
+          return hasCmd && entries.length >= 3;
         });
         if (ready) {
-          return; // Success
+          return;
         }
       } catch {
         // API not ready yet
@@ -246,7 +247,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
     // Timeout reached - throw error with diagnostic info
     const windows = electronApp.windows();
     const urls = windows.map(w => w.url());
-    throw new Error(`Extensions failed to load within ${timeout}ms. Windows: ${JSON.stringify(urls)}`);
+    throw new Error(`Features failed to load within ${timeout}ms. Windows: ${JSON.stringify(urls)}`);
   };
   await waitForHybridExtensions(15000);
 

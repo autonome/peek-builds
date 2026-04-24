@@ -40,13 +40,15 @@ test.describe('Pubsub Repro @desktop', () => {
     const extensionLoaded = await sharedBgWindow.evaluate(async () => {
       const api = (window as any).app;
       api.publish('cmd:execute:pubsub repro', {});
+      // Detect lazy load by polling for a pubsub-repro tile window.
       const start = Date.now();
       while (Date.now() - start < 15000) {
-        const result = await api.extensions.list();
-        if (result.success && result.data) {
-          if (result.data.some(
-            (e: { id: string; status: string }) => e.id === 'pubsub-repro' && e.status === 'running'
-          )) return true;
+        const result = await api.window.list({ includeInternal: true });
+        if (result?.success && Array.isArray(result.windows)) {
+          const hit = result.windows.some(
+            (w: { url?: string }) => (w.url || '').includes('peek://pubsub-repro/'),
+          );
+          if (hit) return true;
         }
         await new Promise(r => setTimeout(r, 200));
       }

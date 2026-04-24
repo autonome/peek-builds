@@ -24,25 +24,25 @@ test.beforeAll(async () => {
   await waitForExtensionsReady(sharedBg);
 
   // Wait for hello-world's command registration to actually reach the
-  // main-process pubsub bus. `waitForExtensionsReady` gates on extension
+  // main-process pubsub bus. `waitForExtensionsReady` gates on feature
   // *load* but not on the `cmd:register`/`cmd:register-batch` round-
   // trip that announces `hello` to the cmd panel. Firing before that
   // round-trip means zero subscribers exist for `cmd:execute:hello`.
   //
-  // Approach: poll `api.extensions.list()` for hello-world === running,
-  // THEN do a single pubsub query-round-trip to confirm the command is
-  // registered.
+  // Approach: poll `api.features.list('builtin')` for hello-world
+  // presence, THEN do a single pubsub query-round-trip to confirm the
+  // command is registered.
   await sharedBg.waitForFunction(async () => {
     const api = (window as { app?: Record<string, unknown> }).app as unknown as {
-      extensions: { list: () => Promise<{ success: boolean; data?: Array<{ id: string; status: string }> }> };
+      features: { list: (sourceType?: string) => Promise<{ entries?: Array<{ id: string }> }> };
       subscribe: (topic: string, cb: (msg: unknown) => void, scope: number) => () => void;
       publish: (topic: string, data: unknown, scope: number) => void;
       scopes: { GLOBAL: number };
     };
     try {
-      const list = await api.extensions.list();
-      const running = list?.data?.some(e => e.id === 'hello-world' && e.status === 'running');
-      if (!running) return false;
+      const list = await api.features.list('builtin');
+      const registered = list?.entries?.some(e => e.id === 'hello-world');
+      if (!registered) return false;
     } catch {
       return false;
     }

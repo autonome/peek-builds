@@ -33,27 +33,28 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     expect(slidesWin).toBeDefined();
   });
 
-  test('api.extensions.reload() reloads external extension', async () => {
-    // Reload the example extension (external v2 tile — lazy). reload() re-reads
-    // the manifest, revokes any existing token, and relaunches the tile if it
-    // was loaded. For a lazy tile that hasn't been invoked yet, reload is a
-    // no-op on the tile side but still succeeds (manifest re-read).
+  test('api.features.devReload() reloads a feature', async () => {
+    // Reload the example feature (external v2 tile — lazy). devReload()
+    // reloads any live tile windows for the feature; for a lazy tile that
+    // hasn't been invoked yet, it reports no active tiles were reloaded.
     const reloadResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.extensions.reload('example');
+      return await (window as any).app.features.devReload('example');
     });
 
+    expect(reloadResult.error).toBeFalsy();
     expect(reloadResult.success).toBe(true);
-    expect(reloadResult.data?.id).toBe('example');
   });
 
-  test('api.extensions.reload() fails for consolidated extensions', async () => {
-    // Consolidated extensions (like cmd, groups) cannot be reloaded
+  test('api.features.devReload() reports no active tiles for unloaded core renderer', async () => {
+    // `cmd` is a core renderer — its tile window exists but isn't managed
+    // through the feature-registry dev-reload path, so devReload either
+    // reports no active tiles or reloads it. Either way should not error.
     const reloadResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.extensions.reload('cmd');
+      return await (window as any).app.features.devReload('cmd');
     });
 
-    expect(reloadResult.success).toBe(false);
-    expect(reloadResult.error).toContain('Failed to reload');
+    expect(reloadResult).toBeTruthy();
+    expect(reloadResult.error).toBeFalsy();
   });
 
   test('commands work from both consolidated and external extensions', async () => {

@@ -37,23 +37,21 @@ test.describe('Startup Phase Events @desktop', () => {
   });
 
   test('feature:all-loaded event was published during startup', async () => {
-    // Verify that the feature:all-loaded event was published by checking extensions are running
+    // Verify that the feature:all-loaded event was published by checking features are registered.
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
 
-      // Get running extensions - if they're running, feature:all-loaded was published
-      const extResult = await api.extensions.list();
-      const extensions = extResult.data || [];
+      // tile:features:list hides builtins by default; pass 'builtin' to get the core set.
+      const extResult = await api.features.list('builtin');
+      const entries = extResult?.entries || [];
       return {
-        success: extResult.success,
-        extensionCount: extensions.length,
-        hasCmd: extensions.some((e: any) => e.id === 'cmd'),
-        hasGroups: extensions.some((e: any) => e.id === 'groups')
+        entryCount: entries.length,
+        hasCmd: entries.some((e: any) => e.id === 'cmd'),
+        hasGroups: entries.some((e: any) => e.id === 'groups'),
       };
     });
 
-    expect(result.success).toBe(true);
-    expect(result.extensionCount).toBeGreaterThan(0);
+    expect(result.entryCount).toBeGreaterThan(0);
     expect(result.hasCmd).toBe(true);
   });
 
@@ -89,21 +87,24 @@ test.describe('Startup Phase Events @desktop', () => {
     expect(hasGalleryCommand).toBe(true);
   });
 
-  test('cmd extension is always running (cannot be disabled)', async () => {
-    // cmd is required infrastructure - verify it's always in the running extensions list
+  test('cmd feature is always registered (cannot be disabled)', async () => {
+    // cmd is required infrastructure — verify it's always in the registered feature list
+    // and that a cmd tile window exists.
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
-      const runningExts = await api.extensions.list();
+      const list = await api.features.list('builtin');
+      const entries = list?.entries || [];
+      const windowList = await api.window.list({ includeInternal: true });
+      const hasCmdWindow = windowList?.windows?.some(
+        (w: any) => (w.url || '').includes('peek://cmd/'),
+      ) || false;
       return {
-        success: runningExts.success,
-        extensions: runningExts.data || [],
-        cmdRunning: runningExts.data?.some((ext: any) => ext.id === 'cmd'),
-        cmdStatus: runningExts.data?.find((ext: any) => ext.id === 'cmd')?.status
+        cmdRegistered: entries.some((e: any) => e.id === 'cmd'),
+        hasCmdWindow,
       };
     });
 
-    expect(result.success).toBe(true);
-    expect(result.cmdRunning).toBe(true);
-    expect(result.cmdStatus).toBe('running');
+    expect(result.cmdRegistered).toBe(true);
+    expect(result.hasCmdWindow).toBe(true);
   });
 });

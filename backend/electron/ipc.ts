@@ -39,9 +39,6 @@ import {
 } from './protocol.js';
 
 import {
-  getRunningTiles,
-  getAllRegisteredTiles,
-  reloadTile,
   registerWindow,
   getWindowInfo,
   removeWindow,

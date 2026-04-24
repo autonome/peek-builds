@@ -79,26 +79,24 @@ async function ensureWebsearchLoaded(bgWindow: Page) {
   const loaded = await bgWindow.evaluate(async () => {
     const api = (window as any).app;
 
-    // Check if already loaded
-    const extResult = await api.extensions.list();
-    if (extResult.success && extResult.data.some(
-      (e: { id: string; status: string }) => e.id === 'websearch' && e.status === 'running'
-    )) {
-      return true;
-    }
+    // Probe: is a websearch tile window already live?
+    const hasWebsearchWindow = async () => {
+      const result = await api.window.list({ includeInternal: true });
+      if (!result?.success || !Array.isArray(result.windows)) return false;
+      return result.windows.some(
+        (w: { url?: string }) => (w.url || '').includes('peek://websearch/'),
+      );
+    };
+
+    if (await hasWebsearchWindow()) return true;
 
     // Trigger lazy load via a non-hanging command
     api.publish('cmd:execute:open web search', {});
 
-    // Wait for it to be running
+    // Wait for a websearch tile window to appear
     const start = Date.now();
     while (Date.now() - start < 15000) {
-      const result = await api.extensions.list();
-      if (result.success && result.data.some(
-        (e: { id: string; status: string }) => e.id === 'websearch' && e.status === 'running'
-      )) {
-        return true;
-      }
+      if (await hasWebsearchWindow()) return true;
       await new Promise(r => setTimeout(r, 200));
     }
     return false;

@@ -208,22 +208,16 @@ export async function waitForSelectionChange(
 }
 
 // ============================================================================
-// Extension Waiting Helpers
+// Feature Waiting Helpers
 // ============================================================================
 
-interface ExtensionInfo {
-  id: string;
-  status: string;
-}
-
-interface ExtensionListResult {
-  success: boolean;
-  data?: ExtensionInfo[];
+interface FeatureListResult {
+  entries?: Array<{ id: string }>;
 }
 
 interface AppApi {
-  extensions: {
-    list(): Promise<ExtensionListResult>;
+  features: {
+    list(sourceType?: string): Promise<FeatureListResult>;
   };
   subscribe(event: string, callback: (msg: unknown) => void): () => void;
   publish(event: string, data: unknown): void;
@@ -234,7 +228,7 @@ interface WindowWithApp extends Window {
 }
 
 /**
- * Wait for all extensions to be initialized and ready
+ * Wait for all features to be initialized and ready
  */
 export async function waitForExtensionsReady(
   bgWindow: Page,
@@ -243,18 +237,17 @@ export async function waitForExtensionsReady(
   await bgWindow.waitForFunction(
     async () => {
       const api = (window as unknown as WindowWithApp).app;
-      if (!api || !api.extensions) return false;
+      if (!api || !api.features) return false;
 
-      const result = await api.extensions.list();
-      if (!result.success || !result.data) return false;
+      // api.features.list() with no arg hides builtins by default; pass
+      // 'builtin' to get the set we actually want to see here.
+      const result = await api.features.list('builtin');
+      const entries = result?.entries;
+      if (!Array.isArray(entries)) return false;
 
-      // Check if critical extensions are running
-      const hasCmd = result.data.some(
-        (e: ExtensionInfo) => e.id === 'cmd' && e.status === 'running'
-      );
-      const extensionCount = result.data.length;
-
-      return hasCmd && extensionCount >= 3; // At least cmd + 2 others
+      // Check if critical features are registered (cmd + at least 2 others).
+      const hasCmd = entries.some((e: { id: string }) => e.id === 'cmd');
+      return hasCmd && entries.length >= 3;
     },
     { timeout }
   );

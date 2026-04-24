@@ -95,14 +95,16 @@ test.describe('Web Search Extension @desktop', () => {
       // Trigger the lazy stub — this loads the extension
       api.publish('cmd:execute:open web search', {});
 
-      // Wait for the extension to be running
+      // Wait for a websearch tile window to appear. Opening the search
+      // window is the visible side-effect of the lazy launch.
       const start = Date.now();
       while (Date.now() - start < 15000) {
-        const result = await api.extensions.list();
-        if (result.success && result.data) {
-          if (result.data.some(
-            (e: { id: string; status: string }) => e.id === 'websearch' && e.status === 'running'
-          )) return true;
+        const result = await api.window.list({ includeInternal: true });
+        if (result?.success && Array.isArray(result.windows)) {
+          const hit = result.windows.some(
+            (w: { url?: string }) => (w.url || '').includes('peek://websearch/'),
+          );
+          if (hit) return true;
         }
         await new Promise(r => setTimeout(r, 200));
       }
