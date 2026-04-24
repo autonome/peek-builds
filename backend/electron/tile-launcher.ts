@@ -547,8 +547,6 @@ export function getAllTileWindows(): BrowserWindow[] {
  *  - Add the window to the `tileWindows` registry so the pubsub
  *    broadcaster in main.ts forwards messages to it.
  *  - Wire the same close/revoke cleanup the regular launcher uses.
- *
- * See docs/v1-removal-plan.md — Phase 1a/1b.
  */
 export function registerTrustedBuiltinWindow(
   tileId: string,

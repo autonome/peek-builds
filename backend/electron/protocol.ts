@@ -623,8 +623,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     }
 
     // peek://test/{path} resolves to app/_test/ — the privileged test
-    // fixture renderer used by the Playwright suite (v1-removal Phase 2).
-    // Only launched when E2E_TEST=true, via test-fixture-glue.ts.
+    // fixture renderer used by the Playwright suite. Only launched when
+    // E2E_TEST=true, via test-fixture-glue.ts.
     if (host === 'test') {
       const testPath = pathname || 'index.html';
       const absolutePath = path.resolve(rootDir, 'app', '_test', testPath);

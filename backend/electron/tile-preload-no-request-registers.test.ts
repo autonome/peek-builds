@@ -1,15 +1,10 @@
 /**
- * Phase 5: replay machinery removal.
- *
  * Asserts the compiled tile-preload.cjs carries no reference to the
  * deleted `cmd:request-registers` replay topic, the `registeredPayloads`
- * cache, or the `ensureCmdRequestRegistersListener` installer. Phase 4
- * made the subscribe-before-publish invariant load-bearing (Core's
- * subscribers are live before any tile reaches `ready`), so the replay
- * topic has no job and must not linger as dead code.
- *
- * Mirrors the "tile-ipc.js does not register a tile:command:result
- * handler" style assertion from tile-ipc.test.ts (Phase 3).
+ * cache, or the `ensureCmdRequestRegistersListener` installer. The
+ * subscribe-before-publish invariant is load-bearing (Core's subscribers
+ * are live before any tile reaches `ready`), so the replay topic has
+ * no job and must not linger as dead code.
  */
 
 import { describe, it } from 'node:test';

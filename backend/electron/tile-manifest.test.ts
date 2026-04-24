@@ -99,7 +99,7 @@ describe('detectManifestVersion', () => {
     assert.strictEqual(detectManifestVersion({ manifestVersion: 1 }), 'v1');
   });
 
-  it('should detect v1 for legacy manifestVersion 2 (pre-v1-removal compat fields)', () => {
+  it('should detect v1 for legacy manifestVersion 2 (pre-v3 compat fields)', () => {
     assert.strictEqual(detectManifestVersion({ manifestVersion: 2 }), 'v1');
   });
 });

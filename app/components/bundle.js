@@ -133,7 +133,7 @@ export const MODULES = {
     component: true
   },
 
-  // Phase 4 components
+  // Form controls / overlays
   'peek-select': {
     path: './peek-select.js',
     exports: ['PeekSelect'],

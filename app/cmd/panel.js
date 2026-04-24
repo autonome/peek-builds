@@ -18,8 +18,8 @@ log('cmd:panel', 'loaded');
 const api = window.app;
 
 // Initialize the tile-preload surface before any API calls. Without this,
-// `tokenValid` is false and api.settings/api.subscribe/api.commands all
-// silently no-op or reject — see docs/v1-removal-smoke-regressions.md §1.
+// `tokenValid` is false and api.settings / api.subscribe / api.commands
+// all silently no-op or reject.
 if (api.initialize) {
   await api.initialize();
 }
@@ -35,8 +35,8 @@ const ADAPTIVE_VERSION = 2;
 let adaptiveDataCache = null;
 
 /**
- * Load persisted adaptive data from extension settings.
- * Phase 4 API: each key fetched individually via api.settings.get(key).
+ * Load persisted adaptive data from tile settings. Each key is fetched
+ * individually via api.settings.get(key).
  */
 const loadAdaptiveData = async () => {
   if (adaptiveDataCache) {
@@ -100,8 +100,8 @@ loadAdaptiveData().then(data => {
 // Cached prefs for URL search behavior
 let showUrlsInResults = defaults.prefs.showUrlsInResults;
 
-// Load prefs on startup. Phase 4: api.settings.get(key) — request the
-// 'prefs' row directly rather than the (now removed) no-arg whole-object form.
+// Load prefs on startup. api.settings.get(key) requires the per-row key;
+// the legacy no-arg whole-object form was removed.
 api.settings.get('prefs').then(result => {
   if (result.success && result.data) {
     showUrlsInResults = result.data.showUrlsInResults ?? defaults.prefs.showUrlsInResults;

@@ -1,14 +1,10 @@
 /**
  * Session Snapshot — Save/Restore window state
  *
- * Phase 1: Save session snapshot on quit.
- * Phase 2: Restore session snapshot on startup.
- * Phase 3: Periodic autosave timer + manual save/restore commands.
- * Phase 4: Crash recovery dialog, snapshot validation, error handling.
- *
- * Captures all visible user windows and writes to feature_settings
- * using synchronous better-sqlite3 APIs (safe for before-quit handler).
- * On startup, reads the snapshot and recreates windows.
+ * Captures all visible user windows and writes to feature_settings using
+ * synchronous better-sqlite3 APIs (safe for before-quit handler). On startup,
+ * reads the snapshot and recreates windows. Periodic autosave timer + manual
+ * save/restore commands; crash recovery dialog with snapshot validation.
  *
  * NOTE: Pure logic shared copy lives in app/lib/session.js for frontend/Tauri use.
  */

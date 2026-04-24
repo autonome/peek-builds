@@ -95,7 +95,7 @@ export { PeekPopover } from './peek-popover.js';
 export { PeekTabs, PeekTab, PeekTabPanel } from './peek-tabs.js';
 export { PeekDetails } from './peek-details.js';
 
-// Components - Phase 4
+// Components - Form controls / overlays
 export { PeekSelect } from './peek-select.js';
 export { PeekDropdown, PeekDropdownItem, PeekDropdownDivider } from './peek-dropdown.js';
 export { PeekSwitch } from './peek-switch.js';

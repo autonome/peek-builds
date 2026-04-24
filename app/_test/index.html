@@ -7,12 +7,12 @@
 </head>
 <body>
 <!--
-  Privileged test renderer (v1-removal Phase 2).
+  Privileged test renderer.
 
   This is a hidden resident BrowserWindow launched by
   `backend/electron/test-fixture-glue.ts` only when `E2E_TEST=true`. It
-  replaces the v1 `peek://app/background.html` iframe that Playwright
-  tests previously used as `bgWindow` for pub/sub + datastore calls.
+  is the test fixture that Playwright tests use as `bgWindow` for
+  pub/sub + datastore calls.
 
   Mechanics are identical to cmd/hud/page core renderers:
     - Loaded with `tile-preload.cjs` + a `createTrustedBuiltinGrant('test')`

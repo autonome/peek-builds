@@ -12,9 +12,8 @@
  * engine that applies those transitions against concrete electron
  * primitives.
  *
- * Phase 4: ownership of the private lifecycle IPC channels
- * (`tile:lifecycle:ready` / `tile:lifecycle:shutdown`) moves here
- * from tile-ipc.ts. Also introduces:
+ * Owns the private lifecycle IPC channels
+ * (`tile:lifecycle:ready` / `tile:lifecycle:shutdown`). Also provides:
  *   - `registerBgWindow()` + bgWindow-ready latch: the subscribe-
  *     before-publish invariant. No non-bgWindow tile may transition
  *     REGISTERED→LOADING until bgWindow signals `tile:lifecycle:ready`.
@@ -123,8 +122,9 @@ function key(tileId: string, entryId: string): string {
 //
 // Implementation: a simple one-shot latch. Once bgWindow signals ready,
 // the latch resolves and stays resolved for the rest of the process
-// lifetime. Crashing bgWindow mid-boot is a separate concern (Phase 7
-// timeout UX) — for Phase 4 a permanent latch is sufficient.
+// lifetime. Crashing bgWindow mid-boot is a separate concern (handled
+// by the load-on-dispatch timeout UX in tile-lazy); a permanent latch
+// is sufficient here.
 
 interface BgWindowRegistration {
   tileId: string;

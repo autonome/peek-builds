@@ -428,8 +428,8 @@ export interface TileShortcut {
 // ─── Manifest Types ──────────────────────────────────────────────────
 
 /**
- * Tile Manifest format (the v2 architecture, schema bumped to v3 with the
- * v1-removal milestone — `type`/`windowHints` compat fields dropped).
+ * Tile Manifest format. Current schema version is 3; legacy `type` and
+ * `windowHints` compat fields are no longer accepted by the validator.
  */
 export interface TileManifestV2 {
   /** Manifest version — must be 3 for tile manifests */
@@ -545,8 +545,8 @@ const BUILTIN_ONLY_CAPABILITIES = new Set<string>([
 /**
  * Detect whether a manifest JSON is v1 (legacy extension) or v2 (tile).
  *
- * The v2 architecture's schema is currently version 3 (bumped with the
- * v1-removal milestone). v2 manifests are identified by having:
+ * The v2 architecture's schema is currently version 3. v2 manifests are
+ * identified by having:
  * - `manifestVersion: 3`, OR
  * - Both `tiles` array AND `capabilities` object present
  *
@@ -1164,9 +1164,9 @@ export function resolveCapabilities(
  * that could be non-exhaustive is omitted — when the bypass is
  * respected, the allowlist is never consulted.
  *
- * See `docs/v1-removal-plan.md` for the rationale: core renderers
- * participate in the same tile mechanics as feature tiles, but do not
- * require capability gating because they are trusted code.
+ * Core renderers (cmd, hud, page) participate in the same tile mechanics
+ * as feature tiles, but do not require capability gating because they
+ * are trusted bundled code.
  */
 export function createTrustedBuiltinGrant(rendererId: string): CapabilityGrant {
   const capabilities: TileCapabilities = {

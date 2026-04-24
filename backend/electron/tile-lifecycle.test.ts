@@ -1,5 +1,5 @@
 /**
- * Unit tests for tile-lifecycle.ts — Phase 4.
+ * Unit tests for tile-lifecycle.ts.
  *
  * Covers:
  *  - `tile:state-changed` System-topic emission on every transition.
@@ -246,8 +246,8 @@ describe('tile-lifecycle: subscribe-before-publish invariant', () => {
   it('a subscriber registered at t=0 boot receives a cmd:register published immediately after', () => {
     // This simulates the core subscriber (inside app/index.js → cmd
     // background) landing synchronously during core init, BEFORE any
-    // tile fires its first `cmd:register`. With the Phase 4 gate in
-    // place, tiles can't transition REGISTERED→LOADING until bgWindow
+    // tile fires its first `cmd:register`. With the bgWindow-ready gate
+    // in place, tiles can't transition REGISTERED→LOADING until bgWindow
     // signals ready — by that time these subscribers exist, so the
     // first publishes are never dropped.
     const received: unknown[] = [];

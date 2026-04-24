@@ -39,8 +39,6 @@
  * depends on the renderer being initialized (e.g. the
  * `core:ready` subscriber that kicks off extension loading) can trust
  * the renderer's subscribers are in place.
- *
- * See docs/v1-removal-plan.md — Phase 2.5 #1.
  */
 
 import { BrowserWindow } from 'electron';

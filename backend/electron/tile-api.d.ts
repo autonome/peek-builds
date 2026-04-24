@@ -10,7 +10,7 @@
  *   - docs/tile-api.md                  (reference documentation)
  *
  * This file does NOT auto-generate — update manually when tile-preload.ts or
- * tile-ipc.ts adds/removes surfaces. The surface is stable post-Phase 4.
+ * tile-ipc.ts adds/removes surfaces.
  *
  * Usage in a tile:
  *   /// <reference path="../../backend/electron/tile-api.d.ts" />
@@ -650,13 +650,13 @@ interface TileAPI {
   adblocker: TileAdblocker;
   darkMode: TileDarkMode;
 
-  // ── Removed v1 shims (Phase 4) — these throw if called ────────────
+  // ── Removed v1 shims — these throw if called ──────────────────────
 
-  /** @deprecated Removed in Phase 4. Use api.pubsub.publish. */
+  /** @deprecated Removed. Use api.pubsub.publish. */
   publish(...args: unknown[]): never;
-  /** @deprecated Removed in Phase 4. Use api.pubsub.subscribe. */
+  /** @deprecated Removed. Use api.pubsub.subscribe. */
   subscribe(...args: unknown[]): never;
-  /** @deprecated Removed in Phase 4. Use api.window.close(). */
+  /** @deprecated Removed. Use api.window.close(). */
   closeWindow(...args: unknown[]): never;
 
   // ── Capability-gated surfaces ──────────────────────────────────────

@@ -466,8 +466,8 @@ export function registerTileIpcHandlers(): void {
   // ── Tile Ready ──
   //
   // Private lifecycle IPC (`tile:lifecycle:ready` / `tile:lifecycle:shutdown`)
-  // moved to tile-lifecycle.ts in Phase 4. See
-  // docs/pubsub-state-machine.md §Topics that are NOT pubsub.
+  // lives in tile-lifecycle.ts. See docs/pubsub-state-machine.md
+  // §Topics that are NOT pubsub.
 
   // ── PubSub ──
 

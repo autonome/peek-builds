@@ -73,11 +73,9 @@ function validateToken(): Promise<boolean> {
   return validationPromise;
 }
 
-// ─── Phase 4: v1-compat violation logger REMOVED ─────────────────────
-// The wrapCompat / wrapCompatObject helpers and the compatSeen set were
-// used during Phases 1-3 to log first-use of v1 shims. All shims have
-// now been replaced with hard-fail stubs or strict-only paths, so the
-// logger infrastructure is no longer needed.
+// V1 shims are gone; every legacy api.* surface is either a strict-only
+// path through capability-gated `tile:*` IPC or a hard-fail stub that
+// throws with a migration hint. No first-use violation logger is needed.
 
 // ─── API Builder ─────────────────────────────────────────────────────
 
@@ -202,7 +200,7 @@ function buildAPI(): Record<string, unknown> {
   //   api.publish(topic, data)        // v1-style
   //   api.pubsub.publish(topic, data) // v2-style (kept for clarity)
   //
-  // Scope (SYSTEM / SELF / GLOBAL) was removed in Phase 6 (see
+  // The legacy SYSTEM / SELF / GLOBAL scope param is gone (see
   // docs/pubsub-state-machine.md). Privilege is enforced by the
   // capability grant's topic allowlist in main.
 
@@ -253,12 +251,11 @@ function buildAPI(): Record<string, unknown> {
     };
   }
 
-  // Phase 4 intent was to remove top-level api.publish / api.subscribe as
-  // hard-fail stubs, but several shared libraries in app/ (app/index.js,
-  // app/hud/widgets/*, app/lib/tag-action-affordances.js, app/settings/
-  // settings.js) still call them directly. Restored as thin aliases to
-  // api.pubsub.publish / api.pubsub.subscribe so those shared libs work
-  // under tile-preload without touching every call site.
+  // Top-level api.publish / api.subscribe are kept as thin aliases for
+  // api.pubsub.publish / api.pubsub.subscribe — several shared libraries
+  // in app/ (app/index.js, app/hud/widgets/*, app/lib/
+  // tag-action-affordances.js, app/settings/settings.js) call them
+  // directly and the alias avoids touching every call site.
   api.publish = publishImpl;
   api.subscribe = subscribeImpl;
 
@@ -537,11 +534,10 @@ function buildAPI(): Record<string, unknown> {
   //
   // Strict-only: every call routes through `tile:window:*` and is
   // gated on the tile's `window` capability shape (or trustedBuiltin).
-  // Legacy `window-*` IPC handlers were removed in v1-removal Phase
-  // 3.7h. Tiles that call api.window.* must declare a `window`
-  // capability in their manifest. `showSelf`/`hideSelf` and `resize`
-  // (caller's own window only) remain ungated since the token itself
-  // is the authority.
+  // Tiles that call api.window.* must declare a `window` capability
+  // in their manifest. `showSelf`/`hideSelf` and `resize` (caller's
+  // own window only) remain ungated since the token itself is the
+  // authority.
 
   api.window = {
     /**
@@ -891,7 +887,7 @@ function buildAPI(): Record<string, unknown> {
   //
   // Strict surfaces (get/set/query/extractPageContent) route through
   // `tile:datastore:*` which enforces per-table capability. The v1-compat
-  // helper methods were removed in Phase 4 and replaced with hard-fail stubs.
+  // helper methods were replaced with hard-fail stubs.
 
   const datastoreStrict = {
     /**
@@ -947,10 +943,8 @@ function buildAPI(): Record<string, unknown> {
   };
 
   // Named datastore methods that features rely on. Each routes to the
-  // corresponding legacy `datastore-*` IPC channel in ipc.ts. Phase 4
-  // originally turned these into hard-fail stubs, but feature code was
-  // never migrated off them (Phase 3 explicitly said "keep API name"),
-  // so the stubs broke every tile UI. Restored as thin routing wrappers.
+  // corresponding legacy `datastore-*` IPC channel in ipc.ts. These are
+  // thin routing wrappers, not strict capability-gated paths.
   //
   // Follow-up (tracked in docs/tasks.md): build equivalent strict
   // `tile:datastore:*` handlers for the methods that don't have them
@@ -1241,50 +1235,37 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * Phase 4: getKey REMOVED. Use api.settings.get(key) instead.
+     * Removed: use api.settings.get(key) instead.
      */
     getKey: (..._args: unknown[]) => {
-      throw new Error('[tile-preload] api.settings.getKey removed in Phase 4; use api.settings.get');
+      throw new Error('[tile-preload] api.settings.getKey removed; use api.settings.get');
     },
 
     /**
-     * Phase 4: setKey REMOVED. Use api.settings.set(key, value) instead.
+     * Removed: use api.settings.set(key, value) instead.
      */
     setKey: (..._args: unknown[]) => {
-      throw new Error('[tile-preload] api.settings.setKey removed in Phase 4; use api.settings.set');
+      throw new Error('[tile-preload] api.settings.setKey removed; use api.settings.set');
     },
 
     /**
-     * Cross-tile foreign-read: fetch another tile's stored setting
-     * value (read-only). Dual-path routing:
+     * Cross-tile foreign-read: fetch another tile's stored setting value
+     * (read-only). Strict path only — the tile's manifest must declare
+     * `settings.readForeign` (or top-level `settingsForeign`). Routes
+     * through `tile:settings:get-foreign`; the main-process handler
+     * checks the allowlist and scopes the DB query to the named foreign
+     * tile.
      *
-     *   - STRICT: when the tile's manifest declared
-     *     `settings.readForeign` or `settingsForeign`, route through
-     *     `tile:settings:get-foreign`. The main-process handler checks
-     *     the allowlist and scopes the DB query to the named foreign
-     *     tile.
-     *
-     *   - V1-COMPAT: otherwise fall back to the legacy un-gated
-     *     `feature-settings-get-key` channel. Preserves behaviour for
-     *     manifests that haven't declared the new allowlist yet.
-     *
-     * The decision is made per-call because `grantedCapabilities` is
-     * populated asynchronously by `initialize()`.
-     */
-    /**
-     * Phase 4: getExtKey v1-compat fallback REMOVED. Strict path only.
-     * Tile manifest must declare settings.readForeign to use this.
-     *
-     * Returns a normalised `{success, data, value, error}` object so that
-     * callers using either the legacy `{success, data}` shape or the strict
-     * `{value, error}` shape both work correctly.
+     * Returns a normalised `{success, data, value, error}` object so
+     * that callers using either the legacy `{success, data}` shape or
+     * the strict `{value, error}` shape both work correctly.
      */
     getExtKey: async (extId: unknown, key: unknown) => {
       if (!extId || !key) {
         return { success: false, data: undefined, value: undefined, error: 'extId and key are required' };
       }
       if (!hasSettingsForeignCapability()) {
-        throw new Error('[tile-preload] api.settings.getExtKey requires settings.readForeign capability in manifest (Phase 4: v1-compat fallback removed)');
+        throw new Error('[tile-preload] api.settings.getExtKey requires settings.readForeign capability in manifest');
       }
       // Handler returns { success, data } (native shape) — normalise into the
       // legacy { success, data, value } envelope so callers using either
@@ -1325,21 +1306,13 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Shortcuts ─────────────────────────────────────────────────────
   //
-  // Dual-path implementation:
+  // Strict-only: route through `tile:shortcuts:*`. The main-process
+  // handlers validate the token + capability + keys allowlist. Tiles
+  // that call api.shortcuts.* must declare a `shortcuts` capability
+  // (`true` or `{ keys: [...] }`) in their manifest; missing capability
+  // throws.
   //
-  //   - STRICT: when the tile's manifest declared a `shortcuts` capability
-  //     (`true` or `{ keys: [...] }`), route through `tile:shortcuts:*`.
-  //     The main-process handlers validate the token + capability + keys
-  //     allowlist. This is the path consuming features get automatically
-  //     once their manifest declares `capabilities.shortcuts`.
-  //
-  //   - V1-COMPAT: when no shortcuts capability was declared (or the token
-  //     hasn't been validated yet), fall back to the legacy
-  //     `registershortcut` / `unregistershortcut` IPC channels. Those
-  //     channels remain available for the Phase 3/4 migration per the
-  //     tile-preload trimming plan.
-  //
-  // The decision is made per-call (not at API-build time) because
+  // The capability check is per-call (not at API-build time) because
   // `grantedCapabilities` is populated asynchronously by `initialize()`.
 
   function rndm(): string {
@@ -1398,43 +1371,41 @@ function buildAPI(): Record<string, unknown> {
     });
   }
 
-  // Phase 4: registerShortcutCompat / unregisterShortcutCompat REMOVED.
-
-// Phase 4: v1-compat shortcuts fallback REMOVED. Strict path only.
-  // Tiles must declare `shortcuts` in their manifest capabilities.
+  // Strict-only shortcuts surface. Tiles must declare `shortcuts` in
+  // their manifest capabilities.
   api.shortcuts = {
     register: (shortcut: unknown, cb: unknown, options: unknown) => {
       if (!hasShortcutsCapability()) {
-        throw new Error('[tile-preload] api.shortcuts.register requires shortcuts capability in manifest (Phase 4: v1-compat fallback removed)');
+        throw new Error('[tile-preload] api.shortcuts.register requires shortcuts capability in manifest');
       }
       registerShortcutStrict(shortcut, cb, options);
     },
     unregister: (shortcut: unknown, options: unknown) => {
       if (!hasShortcutsCapability()) {
-        throw new Error('[tile-preload] api.shortcuts.unregister requires shortcuts capability in manifest (Phase 4: v1-compat fallback removed)');
+        throw new Error('[tile-preload] api.shortcuts.unregister requires shortcuts capability in manifest');
       }
       unregisterShortcutStrict(shortcut, options);
     },
   };
 
-  // ── Files (Phase 4: v1-compat REMOVED) ───────────────────────────
+  // ── Files (removed v1-compat) ────────────────────────────────────
   // Use api.dialogs.save / api.dialogs.open for file dialogs,
   // and api.filesystem.read / api.filesystem.write for path operations.
   api.files = {
-    save: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.save removed in Phase 4; use api.dialogs.save'); },
-    open: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.open removed in Phase 4; use api.dialogs.open'); },
-    readFromPath: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.readFromPath removed in Phase 4; use api.filesystem.read'); },
-    writeToPath: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.writeToPath removed in Phase 4; use api.filesystem.write'); },
+    save: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.save removed; use api.dialogs.save'); },
+    open: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.open removed; use api.dialogs.open'); },
+    readFromPath: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.readFromPath removed; use api.filesystem.read'); },
+    writeToPath: (..._args: unknown[]) => { throw new Error('[tile-preload] api.files.writeToPath removed; use api.filesystem.write'); },
   };
 
-  // ── Modes (Phase 4: REMOVED — was unused per trimming plan §1 row 6) ──
+  // ── Modes (removed — was unused) ─────────────────────────────────
   // api.modes was confirmed zero-usage. Hard-fail stubs catch any survivor.
   api.modes = {
-    getWindowMode: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused); use api.context.*'); },
-    setMajorMode: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused)'); },
-    listModes: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused)'); },
-    getCommandContext: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused)'); },
-    onModeChange: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed in Phase 4 (was unused)'); },
+    getWindowMode: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed (was unused); use api.context.*'); },
+    setMajorMode: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed (was unused)'); },
+    listModes: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed (was unused)'); },
+    getCommandContext: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed (was unused)'); },
+    onModeChange: (..._args: unknown[]) => { throw new Error('[tile-preload] api.modes removed (was unused)'); },
   };
 
   // ── Context ───────────────────────────────────────────────────────
@@ -1527,11 +1498,8 @@ function buildAPI(): Record<string, unknown> {
   // through `tile:dialogs:*` when the tile declared a `dialogs`
   // capability (`true` or `{ types: [...] }`). When the capability is
   // not declared the strict handler rejects with `dialogs capability
-  // not granted`.
-  //
-  // v1-compat continues through `api.files.save` / `api.files.open`,
-  // which directly hit the un-gated `file-save-dialog` / `file-open-
-  // dialog` channels. The two surfaces coexist until Phase 4 removal.
+  // not granted`. The v1 `api.files.save` / `api.files.open` surface
+  // is a hard-fail stub directing callers here.
 
   api.dialogs = {
     save: (content: unknown, options: unknown = {}) => {
@@ -1806,10 +1774,10 @@ function buildAPI(): Record<string, unknown> {
     set: (mode: string) => ipcRenderer.invoke('tile:darkMode:set', { token: tileToken, mode }),
   };
 
-  // ── closeWindow (Phase 4: REMOVED — was unused per trimming plan §1 row 8) ──
+  // ── closeWindow (removed — was unused) ───────────────────────────
   // Use api.window.close() instead.
   api.closeWindow = (..._args: unknown[]) => {
-    throw new Error('[tile-preload] api.closeWindow removed in Phase 4 (was unused); use api.window.close()');
+    throw new Error('[tile-preload] api.closeWindow removed (was unused); use api.window.close()');
   };
 
   // ── Screen (always available; read-only) ──────────────────────────

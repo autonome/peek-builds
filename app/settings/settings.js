@@ -3212,9 +3212,9 @@ const renderDiagnosticsSettings = async () => {
 // Initialize
 const init = async () => {
   // Initialize the tile-preload surface before any API calls. Without this,
-  // `tokenValid` is false and api.datastore/api.theme/api.subscribe all silently
-  // no-op or reject — createDatastoreStore returns empty, theme CSS is never
-  // injected, and --theme-font-sans is absent (see docs/v1-removal-smoke-regressions.md §7).
+  // `tokenValid` is false and api.datastore / api.theme / api.subscribe all
+  // silently no-op or reject — createDatastoreStore returns empty, theme
+  // CSS is never injected, and --theme-font-sans is absent.
   if (api.initialize) {
     await api.initialize();
   }
