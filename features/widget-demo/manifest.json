@@ -27,7 +27,10 @@
       ]
     },
     "commands": true,
-    "settings": true
+    "settings": true,
+    "window": {
+      "create": true
+    }
   },
   "commands": [
     {

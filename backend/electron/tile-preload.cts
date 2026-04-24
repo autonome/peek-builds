@@ -537,47 +537,25 @@ function buildAPI(): Record<string, unknown> {
 
   // ── Window ────────────────────────────────────────────────────────
   //
-  // Dual-path implementation mirroring api.shortcuts / api.context:
-  //
-  //   - STRICT: when the tile's manifest declared a `window` capability
-  //     (`true` or `{ create?, query?, manage?, urls? }`), route through
-  //     `tile:window:*`. The main-process handlers validate the token +
-  //     capability shape + per-op gates + URL allowlist.
-  //
-  //   - V1-COMPAT: when no window capability was declared, fall back to
-  //     the legacy `window-open` / `window-close` / `window-list` IPC
-  //     channels. Those channels remain available for the Phase 3/4
-  //     migration per the tile-preload trimming plan.
-  //
-  // The decision is made per-call because `grantedCapabilities` is
-  // populated asynchronously by `initialize()`.
-
-  function hasWindowCapability(): boolean {
-    const wc = grantedCapabilities?.window;
-    if (wc === true) return true;
-    if (wc && typeof wc === 'object') return true;
-    return false;
-  }
+  // Strict-only: every call routes through `tile:window:*` and is
+  // gated on the tile's `window` capability shape (or trustedBuiltin).
+  // Legacy `window-*` IPC handlers were removed in v1-removal Phase
+  // 3.7h. Tiles that call api.window.* must declare a `window`
+  // capability in their manifest. `showSelf`/`hideSelf` and `resize`
+  // (caller's own window only) remain ungated since the token itself
+  // is the authority.
 
   api.window = {
     /**
-     * Open a new window. Routes through strict IPC when the tile has
-     * declared a `window` capability; otherwise falls back to the
-     * un-gated legacy `window-open` channel.
+     * Open a new window. Requires `window.create` (or trustedBuiltin).
+     * Strict handler in tile-ipc.ts validates URL prefix allowlist.
      */
     open: async (url: string, options?: Record<string, unknown>) => {
       const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:open', {
-          token: tileToken,
-          url,
-          options,
-        });
-      }
-      return ipcRenderer.invoke('window-open', {
-        source: sourceAddress,
+      return ipcRenderer.invoke('tile:window:open', {
+        token: tileToken,
         url,
-        options: options || {},
+        options,
       });
     },
 
@@ -598,195 +576,136 @@ function buildAPI(): Record<string, unknown> {
 
     /**
      * Close a window. With no id, closes the caller's own tile window.
-     * With an id, closes the target window (requires `window.manage`
-     * under strict mode). Falls back to legacy `window-close` when no
-     * window capability is declared.
+     * With an id, closes the target window (requires `window.manage`).
+     * Honors keepLive — routes through `closeOrHideWindow` in main.
      */
     close: (id?: number) => {
-      if (hasWindowCapability()) {
-        ipcRenderer.send('tile:window:close', {
-          token: tileToken,
-          id,
-        });
-        return;
-      }
-      if (id == null) {
-        // No strict grant, no id — best-effort: try legacy close on the
-        // caller's own window via window-close is unsafe without an id,
-        // so drop the call silently (matches previous behavior).
-        return;
-      }
-      ipcRenderer.invoke('window-close', { id });
+      ipcRenderer.send('tile:window:close', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
-     * Get info about the current window. Routes through strict IPC when
-     * the tile has declared the capability; otherwise falls back to a
-     * best-effort minimal object (v1 tiles did not have this API).
+     * Get info about the current window. Requires the `window`
+     * capability (or trustedBuiltin).
      */
     getInfo: () => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:info', {
-          token: tileToken,
-        });
-      }
-      // No legacy equivalent — return an error consistent with the
-      // strict path's shape.
-      return Promise.resolve({ error: 'window capability not granted' });
+      return ipcRenderer.invoke('tile:window:info', {
+        token: tileToken,
+      });
     },
 
     /**
-     * List open windows. Strict-only — requires `window.query`. In
-     * v1-compat mode this falls back to `window-list` for parity.
+     * List open windows. Requires `window.query` (or trustedBuiltin).
      */
     list: (opts?: { includeInternal?: boolean }) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:list', {
-          token: tileToken,
-          includeInternal: opts?.includeInternal,
-        });
-      }
-      return ipcRenderer.invoke('window-list', {});
+      return ipcRenderer.invoke('tile:window:list', {
+        token: tileToken,
+        includeInternal: opts?.includeInternal,
+      });
     },
 
     /**
-     * Check if a window with the given id is still open. Strict path
-     * requires `window.manage`; otherwise falls back to the un-gated
-     * legacy `window-exists` channel.
+     * Check if a window with the given id is still open. Requires
+     * `window.manage` (or trustedBuiltin).
      */
     exists: (id: number) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:exists', {
-          token: tileToken,
-          id,
-        });
-      }
-      return ipcRenderer.invoke('window-exists', { id });
+      return ipcRenderer.invoke('tile:window:exists', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
-     * Show a hidden window. Strict path requires `window.manage`;
-     * otherwise falls back to the un-gated legacy `window-show`
-     * channel.
+     * Show a hidden window. Requires `window.manage` (or trustedBuiltin).
      */
     show: (id: number) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:show', {
-          token: tileToken,
-          id,
-        });
-      }
-      return ipcRenderer.invoke('window-show', { id });
+      return ipcRenderer.invoke('tile:window:show', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
-     * Hide a visible window. Strict path requires `window.manage`;
-     * otherwise falls back to the un-gated legacy `window-hide`
-     * channel.
+     * Hide a visible window. Requires `window.manage` (or trustedBuiltin).
      */
     hide: (id: number) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:hide', {
-          token: tileToken,
-          id,
-        });
-      }
-      return ipcRenderer.invoke('window-hide', { id });
+      return ipcRenderer.invoke('tile:window:hide', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
-     * Raise a window to the front. Strict path requires `window.manage`;
-     * otherwise falls back to the un-gated legacy `window-focus` channel.
+     * Raise a window to the front. Requires `window.manage` (or
+     * trustedBuiltin).
      */
     focus: (id: number) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:focus', {
-          token: tileToken,
-          id,
-        });
-      }
-      return ipcRenderer.invoke('window-focus', { id });
+      return ipcRenderer.invoke('tile:window:focus', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
-     * Toggle click-through on a window. Strict path requires
-     * `window.manage`; otherwise falls back to the un-gated legacy
-     * `window-set-ignore-mouse-events` channel.
+     * Toggle click-through on a window. Requires `window.manage` (or
+     * trustedBuiltin).
      */
     setIgnoreMouseEvents: (
       id: number | null | undefined,
       ignore: boolean,
       options?: { forward?: boolean },
     ) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:set-ignore-mouse', {
-          token: tileToken,
-          id: typeof id === 'number' ? id : undefined,
-          ignore,
-          options,
-        });
-      }
-      return ipcRenderer.invoke('window-set-ignore-mouse-events', {
+      return ipcRenderer.invoke('tile:window:set-ignore-mouse', {
+        token: tileToken,
         id: typeof id === 'number' ? id : undefined,
         ignore,
-        forward: options?.forward === true,
+        options,
       });
     },
 
     /**
-     * Center a window on its display. Strict path requires
-     * `window.manage`; otherwise falls back to legacy `window-center`.
+     * Center a window on its display. Requires `window.manage` (or
+     * trustedBuiltin).
      */
     center: (id?: number) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:center', {
-          token: tileToken,
-          id,
-        });
-      }
-      return ipcRenderer.invoke('window-center', { id });
+      return ipcRenderer.invoke('tile:window:center', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
-     * Center every visible window on its nearest display. Strict path
-     * requires `window.manage`; otherwise falls back to legacy
-     * `window-center-all`.
+     * Center every visible window on its nearest display. Requires
+     * `window.manage` (or trustedBuiltin).
      */
     centerAll: () => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:center-all', {
-          token: tileToken,
-        });
-      }
-      return ipcRenderer.invoke('window-center-all');
+      return ipcRenderer.invoke('tile:window:center-all', {
+        token: tileToken,
+      });
     },
 
     /**
-     * Toggle maximize on a window. Strict path requires `window.manage`;
-     * otherwise falls back to legacy `window-maximize`.
+     * Toggle maximize on a window. Requires `window.manage` (or
+     * trustedBuiltin).
      */
     maximize: (id?: number) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:maximize', {
-          token: tileToken,
-          id,
-        });
-      }
-      return ipcRenderer.invoke('window-maximize', { id });
+      return ipcRenderer.invoke('tile:window:maximize', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
-     * Toggle fullscreen on a window. Strict path requires `window.manage`;
-     * otherwise falls back to legacy `window-fullscreen`.
+     * Toggle fullscreen on a window. Requires `window.manage` (or
+     * trustedBuiltin).
      */
     fullscreen: (id?: number) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:fullscreen', {
-          token: tileToken,
-          id,
-        });
-      }
-      return ipcRenderer.invoke('window-fullscreen', { id });
+      return ipcRenderer.invoke('tile:window:fullscreen', {
+        token: tileToken,
+        id,
+      });
     },
 
     /**
@@ -819,18 +738,12 @@ function buildAPI(): Record<string, unknown> {
 
     /**
      * Set the overlay focus target — captures which window should be
-     * focused after an overlay closes. Strict path requires
-     * `window.manage`; otherwise falls back to legacy
-     * `window-set-overlay-focus-target`.
+     * focused after an overlay closes. Requires `window.manage` (or
+     * trustedBuiltin).
      */
     setOverlayFocusTarget: (targetWindowId: number) => {
-      if (hasWindowCapability()) {
-        return ipcRenderer.invoke('tile:window:set-overlay-focus-target', {
-          token: tileToken,
-          targetWindowId,
-        });
-      }
-      return ipcRenderer.invoke('window-set-overlay-focus-target', {
+      return ipcRenderer.invoke('tile:window:set-overlay-focus-target', {
+        token: tileToken,
         targetWindowId,
       });
     },
@@ -843,9 +756,6 @@ function buildAPI(): Record<string, unknown> {
       visible: boolean,
       options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
     ) => {
-      if (!hasWindowCapability()) {
-        return Promise.reject(new Error('[tile-preload] setVisibleOnAllWorkspaces requires the window capability'));
-      }
       return ipcRenderer.invoke('tile:window:set-visible-on-all-workspaces', {
         token: tileToken,
         id: typeof id === 'number' ? id : undefined,
