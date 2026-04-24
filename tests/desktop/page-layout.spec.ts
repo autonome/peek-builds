@@ -420,7 +420,7 @@ test.describe('Page Layout Maximize @desktop', () => {
     // Window bounds should match the display work area
     const result = await pageWindow.evaluate(async () => {
       const bounds = await (window as any).app.window.getBounds();
-      const displayInfo = await (window as any).app.invoke('get-display-info');
+      const displayInfo = await (window as any).app.window.getDisplayInfo();
       return { bounds, workArea: displayInfo.workArea };
     });
 
