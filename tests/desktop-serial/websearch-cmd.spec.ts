@@ -159,10 +159,10 @@ test.describe('Websearch Cold-Start Lazy Loading @desktop', () => {
       await cmdWindow.keyboard.press('Enter');
 
       // Wait for the command to complete.
-      // The full path is: stub intercepts → loadLazyExtension → iframe created →
-      // extension init() → ext:ready → handleLazyExtensionReady (assert-and-trust) →
-      // callbacks resolve → stub replays message → command executes → result published
-      // This should complete well within 20s even with the extension loading overhead.
+      // The full path is: tile-lazy dispatch hook intercepts cmd:execute →
+      // launchTile() → tile boot → tile-lifecycle ready signal → hook resumes
+      // delivery → tile's real handler runs → result published.
+      // This should complete well within 20s even with the tile load overhead.
       const executionResult = await cmdWindow.waitForFunction(
         () => {
           const state = (window as any)._cmdState;
