@@ -25,7 +25,7 @@ import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, 
 import { installLoadOnDispatchHook } from './tile-lazy.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
-import { publish, subscribe, unsubscribe, hasSubscriber, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
+import { publish, subscribe, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
 import { installDirectSendGuard, installOffPathWindowGuard, unguardedWebContentsSend } from './tile-ipc-gate.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
@@ -72,24 +72,10 @@ let _sessionRestoreDoneResolve: (() => void) | null = null;
 const _sessionRestoreDonePromise = new Promise<void>(resolve => { _sessionRestoreDoneResolve = resolve; });
 let _sessionRestoreDone = false;
 
-// Built-in extensions that load in consolidated mode (iframes)
-// External extensions (including 'example') load in separate windows
-//
-// NOTE: 'cmd', 'hud', and 'page' were removed from this list when they were
-// extracted from features/ into core app code (app/cmd/, app/hud/, app/page/).
-// cmd's registry + shortcut wiring and page's `open`/`modal` commands now
-// run inside the core background renderer (app/index.js calls initCmd()
-// and initPage() directly). hud still uses its own resident renderer
-// (hud-glue); pending consolidation into core next.
-const CONSOLIDATED_EXTENSION_IDS = ['editor', 'groups', 'lex', 'lists', 'peeks', 'search', 'slides', 'spaces', 'websearch', 'windows', 'files', 'pagestream', 'sheets', 'tags', 'feeds', 'entities', 'scripts', 'timers', 'wonderwall'];
-
-// Extensions that must load eagerly (not lazy) — needed at startup
-const EAGER_EXTENSION_IDS = new Set(['entities']);
-
-// Track which lazy extensions have been loaded
-const lazyExtensionLoaded = new Set<string>();
-// Pending lazy load callbacks (extId -> resolve[])
-const lazyLoadCallbacks = new Map<string, Array<() => void>>();
+// Tiles that must load eagerly (not lazy) — needed at startup.
+// Passed to the v2 tile-compat path via `eagerIds`; tile-compat checks
+// this set in addition to the manifest `resident: true` flag.
+const EAGER_TILE_IDS = new Set(['entities']);
 
 // Dev extensions loaded via --load-extension CLI flag
 // These are transient (not persisted) and always have devtools open
@@ -779,223 +765,6 @@ function executeDeclarativeAction(cmd: ManifestCommand, ctx: Record<string, unkn
 }
 
 /**
- * Load a lazy extension on demand.
- * All consolidated extensions are now tiles launched eagerly, so this path
- * is a no-op that resolves immediately. If a true lazy-load mechanism is
- * needed in future it should target the tile launcher.
- */
-function loadLazyExtension(extId: string): Promise<void> {
-  if (lazyExtensionLoaded.has(extId)) {
-    return Promise.resolve();
-  }
-  console.warn(`[ext:lazy] loadLazyExtension('${extId}') called but no lazy-load mechanism exists. If this extension needs lazy loading, migrate it to a tile.`);
-  lazyExtensionLoaded.add(extId);
-  return Promise.resolve();
-}
-
-/**
- * Get the expected pubsub topics for an extension's execute-type commands.
- */
-function getExpectedCommandTopics(extId: string): string[] {
-  const extPath = getExtensionPath(extId);
-  if (!extPath) return [];
-  const manifest = loadExtensionManifest(extPath);
-  if (!manifest) return [];
-  return (manifest.commands || [])
-    .filter((cmd: ManifestCommand) => cmd.action.type === 'execute')
-    .map((cmd: ManifestCommand) => `cmd:execute:${cmd.name}`);
-}
-
-function handleLazyExtensionReady(extId: string, registeredTopics?: string[]): void {
-  lazyExtensionLoaded.add(extId);
-
-  const callbacks = lazyLoadCallbacks.get(extId) || [];
-  lazyLoadCallbacks.delete(extId);
-
-  // Assert-and-trust: verify subscribers are registered, log errors but resolve immediately
-  const expectedTopics = getExpectedCommandTopics(extId);
-  if (expectedTopics.length > 0) {
-    const missing = expectedTopics.filter(t => !hasSubscriber(t, undefined, 'lazy-stub/'));
-    if (missing.length > 0) {
-      // Cross-check with registeredTopics from the extension if provided
-      if (registeredTopics && registeredTopics.length > 0) {
-        const extMissing = expectedTopics.filter(t => !registeredTopics.includes(t));
-        if (extMissing.length > 0) {
-          console.error(`[ext:lazy] Extension ${extId} did not register expected topics: ${extMissing.join(', ')}`);
-        }
-      }
-      console.error(`[ext:lazy] Extension ${extId} ready but missing subscribers: ${missing.join(', ')}`);
-    }
-  }
-
-  DEBUG && console.log(`[ext:lazy] Extension ${extId} ready, resolving ${callbacks.length} callbacks`);
-
-  // Resolve immediately — the extension said it's ready, trust it
-  for (const cb of callbacks) {
-    cb();
-  }
-}
-
-/**
- * Register a lazy command stub.
- * When the command is invoked, the extension is loaded first, then the
- * command is re-published for the extension's own handler to pick up.
- */
-// Track pending messages for lazy command stubs (cmd name -> buffered msg)
-const lazyCommandPending = new Map<string, unknown>();
-
-function registerLazyCommand(extId: string, cmd: ManifestCommand): void {
-  const stubSource = `lazy-stub/${cmd.name}`;
-  const topic = `cmd:execute:${cmd.name}`;
-
-  subscribe(stubSource, topic, async (msg: unknown) => {
-    // Extension already loaded — forward directly and clean up
-    if (lazyExtensionLoaded.has(extId)) {
-      unsubscribe(stubSource, topic);
-      publish(stubSource, topic, msg);
-      return;
-    }
-
-    // Buffer the message (latest wins for concurrent invocations)
-    const alreadyLoading = lazyCommandPending.has(cmd.name);
-    lazyCommandPending.set(cmd.name, msg);
-
-    if (alreadyLoading) {
-      return;
-    }
-
-    DEBUG && console.log(`[ext:lazy] Lazy command invoked: ${cmd.name}, loading extension: ${extId}`);
-    await loadLazyExtension(extId);
-
-    // Unsubscribe stub and replay buffered message exactly once
-    unsubscribe(stubSource, topic);
-    const bufferedMsg = lazyCommandPending.get(cmd.name);
-    lazyCommandPending.delete(cmd.name);
-    DEBUG && console.log(`[ext:lazy] Extension ${extId} loaded, re-publishing command: ${cmd.name}`);
-    publish(stubSource, topic, bufferedMsg);
-  });
-
-  // Register the command metadata with the cmd registry
-  const extSource = `peek://${extId}/`;
-  publish(extSource, 'cmd:register', {
-    name: cmd.name,
-    description: cmd.description || '',
-    source: extSource,
-    scope: cmd.scope || 'global',
-    modes: cmd.modes || [],
-    accepts: cmd.accepts || [],
-    produces: cmd.produces || [],
-    params: cmd.params || [],
-  });
-
-  DEBUG && console.log(`[ext:lazy] Registered lazy command: ${cmd.name} (extension: ${extId})`);
-}
-
-/**
- * Register declarative commands and shortcuts from lazy extension manifests.
- * For extensions marked as lazy, registers command stubs that load the extension
- * on first use. For declarative actions (window/publish), registers them directly.
- */
-export function registerLazyExtensionCommands(): void {
-  const registeredExtIds = getRegisteredExtensionIds();
-
-  for (const extId of registeredExtIds) {
-    if (!isBuiltinExtensionEnabled(extId)) continue;
-    if (declarativeExtensions.has(extId)) continue; // Already declarative (background: false)
-
-    const extPath = getExtensionPath(extId);
-    if (!extPath) continue;
-
-    const manifest = loadExtensionManifest(extPath);
-    if (!manifest) continue;
-
-    // Only process consolidated extensions that have declared commands
-    if (!CONSOLIDATED_EXTENSION_IDS.includes(extId)) continue;
-    const commands = manifest.commands || [];
-    const shortcuts = manifest.shortcuts || [];
-    if (commands.length === 0 && shortcuts.length === 0) continue;
-
-    // Eager extensions: register manifest shortcuts only (they handle their own commands)
-    if (EAGER_EXTENSION_IDS.has(extId)) {
-      DEBUG && console.log(`[ext:eager] Registering manifest shortcuts for ${extId}: ${shortcuts.length} shortcuts`);
-      for (const shortcut of shortcuts) {
-        registerDeclarativeShortcut(extId, shortcut, commands);
-      }
-      continue;
-    }
-
-    DEBUG && console.log(`[ext:lazy] Registering lazy commands for ${extId}: ${commands.length} commands, ${shortcuts.length} shortcuts`);
-
-    for (const cmd of commands) {
-      if (cmd.action.type === 'execute') {
-        // Execute type: register a lazy stub that loads the extension on first use
-        registerLazyCommand(extId, cmd);
-      } else {
-        // Window/publish type: register declaratively (no extension loading needed)
-        registerDeclarativeCommand(extId, cmd);
-      }
-    }
-
-    for (const shortcut of shortcuts) {
-      registerDeclarativeShortcut(extId, shortcut, commands);
-    }
-  }
-}
-
-/**
- * Register pubsub interceptors for lazy extension events.
- * Some events (like editor:open) are published by the cmd panel before
- * the target extension is loaded. These interceptors ensure the extension
- * is loaded first, then re-publish the event so the extension receives it.
- */
-// Track pending messages for lazy event interceptors (topic -> buffered msg)
-const lazyInterceptorPending = new Map<string, unknown>();
-
-export function registerLazyEventInterceptors(options?: { skipExtensions?: Set<string> }): void {
-  const skip = options?.skipExtensions;
-
-  // Legacy v1 editor interceptors. Under v2, editor is handled by the
-  // tile-lazy event interceptor system (see registerEventInterceptor in
-  // tile-lazy.ts), so we skip registering v1 stubs for it here.
-  if (!skip || !skip.has('editor')) {
-    const editorEvents = ['editor:open', 'editor:add'];
-
-    for (const topic of editorEvents) {
-      const interceptorSource = `lazy-interceptor/${topic}`;
-
-      subscribe(interceptorSource, topic, async (msg: unknown) => {
-        // If editor is already loaded, nothing to do — the extension's own handler
-        // will fire from the same publish (pubsub iterates all subscribers).
-        if (lazyExtensionLoaded.has('editor')) return;
-
-        // Buffer the message (latest wins for concurrent events)
-        const alreadyLoading = lazyInterceptorPending.has(topic);
-        lazyInterceptorPending.set(topic, msg);
-
-        if (alreadyLoading) {
-          DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired again during load, buffering`);
-          return;
-        }
-
-        DEBUG && console.log(`[ext:lazy-interceptor] ${topic} fired but editor not loaded, loading...`);
-        await loadLazyExtension('editor');
-
-        // Unsubscribe and replay buffered message exactly once
-        unsubscribe(interceptorSource, topic);
-        const bufferedMsg = lazyInterceptorPending.get(topic);
-        lazyInterceptorPending.delete(topic);
-        DEBUG && console.log(`[ext:lazy-interceptor] Editor loaded, re-publishing ${topic}`);
-        publish(interceptorSource, topic, bufferedMsg);
-      });
-    }
-
-    DEBUG && console.log('[ext:lazy-interceptor] Registered editor event interceptors');
-  } else {
-    DEBUG && console.log('[ext:lazy-interceptor] Editor is v2 — skipping legacy interceptor');
-  }
-}
-
-/**
  * Required CSS variables that every theme must define.
  * Used by validateThemeCSS() to verify theme completeness.
  */
@@ -1123,15 +892,6 @@ export async function loadExtensions(): Promise<number> {
   const v1FeatureIds = new Set<string>();
   const v2FeatureIds = new Set<string>();
 
-  // Subscribe to ext:ready — extensions publish this after registering their handlers.
-  subscribe(getSystemAddress(), 'ext:ready', (data: unknown) => {
-    const extId = (data as { id?: string })?.id;
-    const registeredTopics = (data as { registeredTopics?: string[] })?.registeredTopics;
-    if (extId) {
-      handleLazyExtensionReady(extId, registeredTopics);
-    }
-  });
-
   // cmd, hud, and page's command/shortcut wiring all run inside the
   // core background renderer (app/index.js awaits initCmd(), initHud(),
   // and initPage() at the top of its init). initCore — called earlier
@@ -1160,7 +920,7 @@ export async function loadExtensions(): Promise<number> {
       appDataDir: config.userDataPath,
       builtinFeaturesDir: featuresDir,
       tilePreloadPath,
-      eagerIds: EAGER_EXTENSION_IDS,
+      eagerIds: EAGER_TILE_IDS,
       onV1Feature: (id: string, _featurePath: string, _manifest: unknown) => {
         // Collect v1 feature IDs — they'll be loaded via the legacy path below
         v1FeatureIds.add(id);
@@ -1187,14 +947,10 @@ export async function loadExtensions(): Promise<number> {
   // Register declarative commands/shortcuts from manifests (after cmd is ready)
   registerDeclarativeCommands();
 
-  // Register lazy extension commands from manifests (after cmd is ready)
-  registerLazyExtensionCommands();
-
-  // Register event interceptors for lazy extensions (e.g. editor:open).
-  // V2 features get their event interceptors from tile-lazy (via manifest
-  // `lazyEvents`), so skip them here to avoid duplicate registration that
-  // would try to load the v2 tile through the v1 iframe path.
-  registerLazyEventInterceptors({ skipExtensions: v2FeatureIds });
+  // Lazy command stubs and lazy event interceptors live in `tile-lazy.ts`
+  // now — `registerLazyTile()` (called from tile-compat) publishes
+  // `cmd:register-batch` and the pre-publish dispatch hook handles
+  // load-on-dispatch for both `cmd:execute:*` and declared `lazyEvents`.
 
   DEBUG && console.log(`[ext:timing] hybrid total: ${Date.now() - extStart}ms`);
 
