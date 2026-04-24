@@ -651,6 +651,28 @@ describe('resolveImgSrc', () => {
   });
 });
 
+describe('resolveImgSrc - non-image file types', () => {
+  it('resolves PDF files with basePath', () => {
+    assert.equal(resolveImgSrc('document.pdf', '/Users/me/docs'), 'peek://local-file/Users/me/docs/document.pdf');
+  });
+
+  it('resolves CSS files with basePath', () => {
+    assert.equal(resolveImgSrc('styles.css', '/Users/me/docs'), 'peek://local-file/Users/me/docs/styles.css');
+  });
+
+  it('resolves font files with basePath', () => {
+    assert.equal(resolveImgSrc('font.woff2', '/Users/me/fonts'), 'peek://local-file/Users/me/fonts/font.woff2');
+  });
+
+  it('resolves video files with basePath', () => {
+    assert.equal(resolveImgSrc('video.mp4', '/Users/me/media'), 'peek://local-file/Users/me/media/video.mp4');
+  });
+
+  it('resolves audio files with basePath', () => {
+    assert.equal(resolveImgSrc('audio.mp3', '/Users/me/media'), 'peek://local-file/Users/me/media/audio.mp3');
+  });
+});
+
 // ===========================================================================
 // Highlight serialization/deserialization tests
 // ===========================================================================
