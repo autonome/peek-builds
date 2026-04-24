@@ -219,7 +219,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
 
   // Wait for features to be ready via the unified registry.
   // Gates on v2 tile readiness via api.features.list — no host window dependency.
-  const waitForHybridExtensions = async (timeout: number): Promise<void> => {
+  const waitForFeaturesReady = async (timeout: number): Promise<void> => {
     const start = Date.now();
     while (Date.now() - start < timeout) {
       try {
@@ -230,9 +230,10 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
           const result = await api.features.list('builtin');
           const entries = result?.entries;
           if (!Array.isArray(entries)) return false;
-          // cmd must be registered + at least 3 total builtins discovered.
-          const hasCmd = entries.some((e: any) => e.id === 'cmd');
-          return hasCmd && entries.length >= 3;
+          // Feature system is up once the registry has discovered a few
+          // builtins. (cmd is a core renderer in app/cmd/, not a feature
+          // tile, so it never appears in this list.)
+          return entries.length >= 3;
         });
         if (ready) {
           return;
@@ -249,7 +250,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
     const urls = windows.map(w => w.url());
     throw new Error(`Features failed to load within ${timeout}ms. Windows: ${JSON.stringify(urls)}`);
   };
-  await waitForHybridExtensions(15000);
+  await waitForFeaturesReady(15000);
 
   const state: ElectronState = { app: electronApp, tempDir, profile };
 
