@@ -88,9 +88,9 @@ import { resolveCapabilities, validateTileManifest, detectManifestVersion } from
 import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
 import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getLastContentWindowId, clearLastContentWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
 import {
-  getRunningExtensions,
-  getAllRegisteredExtensions,
-  reloadExtension,
+  getRunningTiles,
+  getAllRegisteredTiles,
+  reloadTile,
   getWindowInfo,
   validateThemeCSS,
 } from './main.js';
@@ -5931,7 +5931,7 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:extensions:windowList' };
     }
     try {
-      const running = getRunningExtensions();
+      const running = getRunningTiles();
       return { success: true, data: running };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
@@ -5948,7 +5948,7 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:extensions:listAllRegistered' };
     }
     try {
-      const all = getAllRegisteredExtensions();
+      const all = getAllRegisteredTiles();
       return { success: true, data: all };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
@@ -5981,15 +5981,15 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:extensions:reload' };
     }
     try {
-      const extId = args.id;
-      if (!extId) {
-        return { success: false, error: 'Missing extension id' };
+      const tileId = args.id;
+      if (!tileId) {
+        return { success: false, error: 'Missing tile id' };
       }
-      const win = await reloadExtension(extId);
+      const win = await reloadTile(tileId);
       if (!win) {
-        return { success: false, error: `Failed to reload extension: ${extId}` };
+        return { success: false, error: `Failed to reload tile: ${tileId}` };
       }
-      return { success: true, data: { id: extId } };
+      return { success: true, data: { id: tileId } };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }

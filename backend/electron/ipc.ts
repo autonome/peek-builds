@@ -32,11 +32,6 @@ import {
 import type { Item } from '../types/index.js';
 
 import {
-  loadExtensionManifest,
-} from './extensions.js';
-
-
-import {
   getRegisteredThemeIds,
   getThemePath,
   getActiveThemeId,
@@ -44,9 +39,9 @@ import {
 } from './protocol.js';
 
 import {
-  getRunningExtensions,
-  getAllRegisteredExtensions,
-  reloadExtension,
+  getRunningTiles,
+  getAllRegisteredTiles,
+  reloadTile,
   registerWindow,
   getWindowInfo,
   removeWindow,

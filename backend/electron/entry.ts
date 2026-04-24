@@ -16,13 +16,13 @@ import {
   // Main process orchestration
   configure,
   initialize,
-  discoverBuiltinExtensions,
+  discoverBuiltinFeatures,
   discoverBuiltinThemes,
-  loadExtensions,
-  // Dev extension support
-  registerDevExtension,
-  loadDevExtensions,
-  cleanupDevExtensions,
+  loadFeatures,
+  // Dev tile support (CLI --load-extension)
+  registerDevTile,
+  loadDevTiles,
+  cleanupDevTiles,
   // External URL handling
   setAppReady,
   notifyFrontendReady,
@@ -66,8 +66,8 @@ import {
   closeOrHideWindow,
   setPrefsGetter,
   applyDockPreference,
-  // Extension loading
-  loadExtensionManifest,
+  // Tile manifest loading
+  loadFeatureManifest,
   // Closed window stack persistence
   loadClosedWindowStack,
 } from './index.js';
@@ -131,21 +131,22 @@ const DEBUG = !!process.env.DEBUG;
 (globalThis as any).__peek_test = { handleLocalShortcut, handleExternalUrl };
 (globalThis as any).__peek_electron = { globalShortcut };
 
-// Parse --load-extension CLI arguments for dev workflow
-// Usage: yarn start -- --load-extension=/path/to/extension
-// Multiple extensions: yarn start -- --load-extension=/path1 --load-extension=/path2
-const devExtensionPaths: string[] = [];
+// Parse --load-extension CLI arguments for dev workflow.
+// (Flag name retained for backward compatibility; the loaded thing is a tile.)
+// Usage: yarn start -- --load-extension=/path/to/tile
+// Multiple tiles: yarn start -- --load-extension=/path1 --load-extension=/path2
+const devTilePaths: string[] = [];
 for (const arg of process.argv) {
   if (arg.startsWith('--load-extension=')) {
-    const extPath = arg.slice('--load-extension='.length);
+    const tilePath = arg.slice('--load-extension='.length);
     // Expand ~ to home directory
-    const expandedPath = extPath.startsWith('~')
-      ? path.join(app.getPath('home'), extPath.slice(1))
-      : extPath;
+    const expandedPath = tilePath.startsWith('~')
+      ? path.join(app.getPath('home'), tilePath.slice(1))
+      : tilePath;
     // Resolve to absolute path
     const absolutePath = path.resolve(expandedPath);
-    devExtensionPaths.push(absolutePath);
-    DEBUG && console.log(`[cli] Dev extension path: ${absolutePath}`);
+    devTilePaths.push(absolutePath);
+    DEBUG && console.log(`[cli] Dev tile path: ${absolutePath}`);
   }
 }
 
@@ -401,8 +402,8 @@ setPrefsGetter(() => _prefs);
 
 // Define onQuit for use in IPC handlers and shortcuts
 const onQuit = async () => {
-  // Clean up dev extensions before quitting
-  cleanupDevExtensions();
+  // Clean up dev tiles before quitting
+  cleanupDevTiles();
   // Clean up web extensions
   cleanupAdblocker();
   await cleanupChromeExtensions();
@@ -422,7 +423,7 @@ app.on('before-quit', () => {
   try { stopAutosaveTimer(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutosaveTimer error:', e); }
   try { cleanupDisplayWatcher(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDisplayWatcher error:', e); }
   try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }
-  try { cleanupDevExtensions(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevExtensions error:', e); }
+  try { cleanupDevTiles(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDevTiles error:', e); }
   try { cleanupAdblocker(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupAdblocker error:', e); }
   try { stopHotReload(); } catch (e) { DEBUG && console.error('[lifecycle] stopHotReload error:', e); }
   try { cleanupThumbnails(getActiveThumbnailHashes); } catch (e) { DEBUG && console.error('[lifecycle] cleanupThumbnails error:', e); }
@@ -640,21 +641,21 @@ const onReady = async () => {
   // are called early (before app.whenReady) for proper URL forwarding.
   // See the block after setProfile(PROFILE) above.
 
-  // Discover and register built-in extensions from features/ folder
-  discoverBuiltinExtensions(path.join(ROOT_DIR, 'features'));
+  // Discover and register built-in features (tiles) from features/ folder
+  discoverBuiltinFeatures(path.join(ROOT_DIR, 'features'));
 
-  // Register dev extensions from CLI arguments
+  // Register dev tiles from CLI arguments (--load-extension flag)
   // These are transient (not persisted) and load with devtools open
-  for (const extPath of devExtensionPaths) {
+  for (const tilePath of devTilePaths) {
     try {
-      const manifest = loadExtensionManifest(extPath);
+      const manifest = loadFeatureManifest(tilePath);
       if (manifest && manifest.id) {
-        registerDevExtension(manifest.id, extPath);
+        registerDevTile(manifest.id as string, tilePath);
       } else {
-        console.error(`[cli] Invalid extension at ${extPath}: missing id in manifest`);
+        console.error(`[cli] Invalid tile at ${tilePath}: missing id in manifest`);
       }
     } catch (err) {
-      console.error(`[cli] Failed to load extension manifest at ${extPath}:`, err);
+      console.error(`[cli] Failed to load tile manifest at ${tilePath}:`, err);
     }
   }
 
@@ -723,8 +724,8 @@ const onReady = async () => {
   // Handle CLI arguments (e.g., yarn start -- "https://example.com")
   handleCliUrl();
 
-  // Track if extensions have been loaded (only load once)
-  let extensionsLoaded = false;
+  // Track if features have been loaded (only load once)
+  let featuresLoaded = false;
 
   // listen for app prefs to configure ourself
   // TODO: kinda janky, needs rethink
@@ -763,16 +764,16 @@ const onReady = async () => {
       _quitShortcut = newQuitShortcut;
     }
 
-    // Load extensions after core app is ready (only once)
-    if (!extensionsLoaded) {
-      extensionsLoaded = true;
-      const extStart = Date.now();
-      await loadExtensions();
+    // Load features after core app is ready (only once)
+    if (!featuresLoaded) {
+      featuresLoaded = true;
+      const featStart = Date.now();
+      await loadFeatures();
 
-      // Load dev extensions after normal extensions (always with devtools)
-      if (devExtensionPaths.length > 0) {
-        const devCount = await loadDevExtensions();
-        DEBUG && console.log(`[ext:dev] Loaded ${devCount} dev extension(s)`);
+      // Load dev tiles after normal features (always with devtools)
+      if (devTilePaths.length > 0) {
+        const devCount = await loadDevTiles();
+        DEBUG && console.log(`[tile:dev] Loaded ${devCount} dev tile(s)`);
       }
 
       // Load bundled web extensions (chrome extensions + adblocker)
@@ -791,11 +792,11 @@ const onReady = async () => {
         console.error('[startup] Chrome extensions init failed:', err);
       });
 
-      const extTime = Date.now() - extStart;
+      const featTime = Date.now() - featStart;
       const totalTime = Date.now() - ((global as Record<string, unknown>).__startupStart as number);
-      DEBUG && console.log(`[startup] main: ${extStart - ((global as Record<string, unknown>).__startupStart as number)}ms, extensions: ${extTime}ms, total: ${totalTime}ms`);
+      DEBUG && console.log(`[startup] main: ${featStart - ((global as Record<string, unknown>).__startupStart as number)}ms, features: ${featTime}ms, total: ${totalTime}ms`);
 
-      // Restore session after extensions are loaded
+      // Restore session after features are loaded
       if (_sessionRestorePending) {
         try {
           const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs, _crashState);

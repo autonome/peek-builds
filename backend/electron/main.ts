@@ -14,7 +14,7 @@ import { initDatabase, closeDatabase, getDb, getContextEntry } from './datastore
 import { registerScheme, initProtocol, registerTilePath, getTilePath, getRegisteredTileIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
-import { discoverExtensions, loadExtensionManifest, isBuiltinExtensionEnabled } from './extensions.js';
+import { discoverFeatures, loadFeatureManifest, isBuiltinFeatureEnabled } from './tile-feature-state.js';
 import { initializeFeatures, type FeatureStartupResult } from './feature-startup.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
 import {
@@ -77,9 +77,9 @@ let _sessionRestoreDone = false;
 // this set in addition to the manifest `resident: true` flag.
 const EAGER_TILE_IDS = new Set(['entities']);
 
-// Dev extensions loaded via --load-extension CLI flag
+// Dev tiles loaded via --load-extension CLI flag
 // These are transient (not persisted) and always have devtools open
-const devExtensions = new Map<string, { path: string }>();
+const devTiles = new Map<string, { path: string }>();
 
 // Window manager: windowId -> { source, params }
 const windowRegistry = new Map<number, {
@@ -190,7 +190,7 @@ export async function initialize(): Promise<void> {
   registerTileLifecycleIpc();
 
   // Resolve & cache the tile-preload path early (also used by `initCore`
-  // from entry.ts before `loadExtensions` runs). Preload source is
+  // from entry.ts before `loadFeatures` runs). Preload source is
   // `tile-preload.cts` (CommonJS) so tsc emits `tile-preload.cjs` —
   // Electron preload scripts must be CommonJS under `sandbox: true`.
   const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.cjs');
@@ -210,7 +210,7 @@ export async function initialize(): Promise<void> {
   // `cmd:execute:{name}` or declared-lazyEvent publish passes through
   // this hook, which awaits the owning tile's boot before letting the
   // publish reach subscribers. Must run before any command can fire
-  // (i.e. before loadExtensions / initializeFeatures).
+  // (i.e. before loadFeatures / initializeFeatures).
   installLoadOnDispatchHook();
 
   // Initialize database
@@ -590,12 +590,12 @@ export async function initialize(): Promise<void> {
 }
 
 /**
- * Discover and register built-in extensions
+ * Discover and register built-in features (each feature is a tile in v2).
  */
-export function discoverBuiltinExtensions(extensionsDir: string): void {
-  const discovered = discoverExtensions(extensionsDir);
-  for (const ext of discovered) {
-    registerTilePath(ext.id, ext.path);
+export function discoverBuiltinFeatures(featuresDir: string): void {
+  const discovered = discoverFeatures(featuresDir);
+  for (const feat of discovered) {
+    registerTilePath(feat.id, feat.path);
   }
 }
 
@@ -712,20 +712,20 @@ export function discoverBuiltinThemes(extensionsDir: string, legacyThemesDir?: s
 
 
 /**
- * Load all enabled extensions (hybrid mode)
- * - Built-in extensions (cmd, groups, peeks, slides) → consolidated (iframes)
- * - External extensions (including example) → separate windows
+ * Load all enabled features. Each feature is a tile in v2.
+ * - Builtin features (cmd/hud/page core renderers) launch via core-glue.
+ * - Feature tiles in `features/` launch via the v2 tile launcher (eager
+ *   if `resident: true` or in `EAGER_TILE_IDS`, otherwise lazy stubs).
  */
-export async function loadExtensions(): Promise<number> {
-  const extStart = Date.now();
+export async function loadFeatures(): Promise<number> {
+  const featStart = Date.now();
 
   const featuresDir = path.join(config.rootDir, 'features');
   // `tilePreloadPath` is now resolved + cached in `initialize()`. Read
   // it via the config getter so the value stays consistent whether we
   // were reached from `initialize()` or directly from a test harness.
   const tilePreloadPath = getTilePreloadPath();
-  const v1FeatureIds = new Set<string>();
-  const v2FeatureIds = new Set<string>();
+  const loadedTileIds = new Set<string>();
 
   // cmd, hud, and page's command/shortcut wiring all run inside the
   // core background renderer (app/index.js awaits initCmd(), initHud(),
@@ -746,9 +746,8 @@ export async function loadExtensions(): Promise<number> {
     }
   }
 
-  // ── V2 Feature Startup ──
+  // ── Feature Startup ──
   // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
-  // V2 manifests are handled by the tile launcher; v1 manifests fall through to legacy loading below.
   // This runs AFTER initCmd so tile-lazy's cmd:register-batch publishes reach cmd.
   try {
     const featureResult: FeatureStartupResult = initializeFeatures({
@@ -756,21 +755,13 @@ export async function loadExtensions(): Promise<number> {
       builtinFeaturesDir: featuresDir,
       tilePreloadPath,
       eagerIds: EAGER_TILE_IDS,
-      onV1Feature: (id: string, _featurePath: string, _manifest: unknown) => {
-        // Collect v1 feature IDs — they'll be loaded via the legacy path below
-        v1FeatureIds.add(id);
-      },
     });
-    // Track which features the v2 tile system handled — skip these in legacy loading
     for (const r of featureResult.loadResults) {
-      if (r.loaded) v2FeatureIds.add(r.id);
+      if (r.loaded) loadedTileIds.add(r.id);
     }
-    DEBUG && console.log(
-      `[ext] Feature startup: ${v2FeatureIds.size} v2 loaded, ` +
-      `${v1FeatureIds.size} v1 deferred to legacy loader`
-    );
+    DEBUG && console.log(`[feature] Feature startup: ${loadedTileIds.size} tiles loaded`);
   } catch (err) {
-    console.error('[ext] Feature startup failed, falling back to legacy-only loading:', err);
+    console.error('[feature] Feature startup failed:', err);
   }
 
   // Phase 1: Early
@@ -786,7 +777,7 @@ export async function loadExtensions(): Promise<number> {
   // Declarative `type: 'window'` and `type: 'publish'` commands are
   // short-circuited inside the hook without loading the tile.
 
-  DEBUG && console.log(`[ext:timing] hybrid total: ${Date.now() - extStart}ms`);
+  DEBUG && console.log(`[feature:timing] startup total: ${Date.now() - featStart}ms`);
 
   // Phase 3: UI
   publish('system', 'ext:startup:phase', { phase: 'ui' });
@@ -799,25 +790,25 @@ export async function loadExtensions(): Promise<number> {
 }
 
 // Core renderers that are always considered "running" once the app has started.
-// These are not v2 tiles (no tile manifest) and not v1 iframe extensions, but
-// the Features pane should always show them as running.
+// These are not v2 feature tiles (no tile manifest in features/) but the
+// Features pane should always show them as running.
 const CORE_RENDERER_IDS = ['cmd', 'hud', 'page'];
 
 /**
- * Get running extensions info
- * Includes core renderers and v2 tiles.
+ * Get running tiles info.
+ * Includes core renderers and feature tiles launched by the tile-launcher.
  */
-export function getRunningExtensions(): Array<{ id: string; manifest: unknown; status: string }> {
+export function getRunningTiles(): Array<{ id: string; manifest: unknown; status: string }> {
   const running: Array<{ id: string; manifest: unknown; status: string }> = [];
 
   // Add core renderers (cmd, hud, page) — always running once app is up
-  for (const extId of CORE_RENDERER_IDS) {
-    if (!isBuiltinExtensionEnabled(extId)) continue;
-    const extPath = getTilePath(extId);
-    const manifest = extPath ? loadExtensionManifest(extPath) : null;
+  for (const tileId of CORE_RENDERER_IDS) {
+    if (!isBuiltinFeatureEnabled(tileId)) continue;
+    const tilePath = getTilePath(tileId);
+    const manifest = tilePath ? loadFeatureManifest(tilePath) : null;
     running.push({
-      id: extId,
-      manifest: manifest || { id: extId },
+      id: tileId,
+      manifest: manifest || { id: tileId },
       status: 'running'
     });
   }
@@ -825,7 +816,7 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
   // Add v2 tiles launched by the tile-launcher as separate BrowserWindows.
   for (const tileId of getLoadedTileIds()) {
     if (running.some(r => r.id === tileId)) continue;
-    if (!isBuiltinExtensionEnabled(tileId)) continue;
+    if (!isBuiltinFeatureEnabled(tileId)) continue;
     const tileManifest = getTileManifest(tileId);
     running.push({
       id: tileId,
@@ -838,10 +829,10 @@ export function getRunningExtensions(): Array<{ id: string; manifest: unknown; s
 }
 
 /**
- * Get all registered (discovered) builtin extensions, whether running or not.
- * Used by the Settings Features pane to show ALL extensions from the extensions/ directory.
+ * Get all registered (discovered) builtin tiles, whether running or not.
+ * Used by the Settings Features pane to show ALL tiles from the features/ directory.
  */
-export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unknown; status: string }> {
+export function getAllRegisteredTiles(): Array<{ id: string; manifest: unknown; status: string }> {
   const registeredIds = getRegisteredTileIds();
   const result: Array<{ id: string; manifest: unknown; status: string }> = [];
 
@@ -852,13 +843,13 @@ export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unkn
     runningSet.add(tileId);
   }
 
-  for (const extId of registeredIds) {
-    const extPath = getTilePath(extId);
-    const manifest = extPath ? loadExtensionManifest(extPath) : null;
+  for (const tileId of registeredIds) {
+    const tilePath = getTilePath(tileId);
+    const manifest = tilePath ? loadFeatureManifest(tilePath) : null;
     result.push({
-      id: extId,
-      manifest: manifest || { id: extId },
-      status: runningSet.has(extId) ? 'running' : 'registered'
+      id: tileId,
+      manifest: manifest || { id: tileId },
+      status: runningSet.has(tileId) ? 'running' : 'registered'
     });
   }
 
@@ -867,97 +858,97 @@ export function getAllRegisteredExtensions(): Array<{ id: string; manifest: unkn
 
 
 /**
- * Check if an extension is a dev extension (loaded via CLI)
+ * Check if a tile was loaded as a dev tile via the CLI --load-extension flag.
  */
-export function isDevExtension(extId: string): boolean {
-  return devExtensions.has(extId);
+export function isDevTile(tileId: string): boolean {
+  return devTiles.has(tileId);
 }
 
 /**
- * Register a dev extension path for CLI --load-extension
- * These are transient and not persisted to datastore
+ * Register a dev tile path for the CLI --load-extension flag.
+ * These are transient and not persisted to datastore.
  */
-export function registerDevExtension(extId: string, extPath: string): void {
-  devExtensions.set(extId, { path: extPath });
-  // Also register the path so the protocol handler can resolve peek://{extId}/...
-  registerTilePath(extId, extPath);
-  DEBUG && console.log(`[ext:dev] Registered dev extension: ${extId} from ${extPath}`);
+export function registerDevTile(tileId: string, tilePath: string): void {
+  devTiles.set(tileId, { path: tilePath });
+  // Also register the path so the protocol handler can resolve peek://{tileId}/...
+  registerTilePath(tileId, tilePath);
+  DEBUG && console.log(`[tile:dev] Registered dev tile: ${tileId} from ${tilePath}`);
 }
 
 /**
- * Load a dev extension with devtools always open
+ * Load a dev tile with devtools always open.
  */
-export async function loadDevExtension(extId: string): Promise<object | null> {
-  const devExt = devExtensions.get(extId);
-  if (!devExt) {
-    console.error(`[ext:dev] Dev extension not registered: ${extId}`);
+export async function loadDevTile(tileId: string): Promise<object | null> {
+  const devTile = devTiles.get(tileId);
+  if (!devTile) {
+    console.error(`[tile:dev] Dev tile not registered: ${tileId}`);
     return null;
   }
 
   // Relaunch as v2 tile: re-read manifest, revoke old token, close old window, launch fresh.
-  const result = await relaunchTile(extId);
+  const result = await relaunchTile(tileId);
   if (!result) {
     return null;
   }
 
-  // Always open devtools for dev extensions (regardless of debug mode)
+  // Always open devtools for dev tiles (regardless of debug mode)
   if (!isHeadless()) {
     result.window.webContents.openDevTools({ mode: 'detach', activate: false });
   }
 
-  DEBUG && console.log(`[ext:dev] Loaded dev extension: ${extId}`);
+  DEBUG && console.log(`[tile:dev] Loaded dev tile: ${tileId}`);
   return result;
 }
 
 /**
- * Load all registered dev extensions
+ * Load all registered dev tiles.
  */
-export async function loadDevExtensions(): Promise<number> {
+export async function loadDevTiles(): Promise<number> {
   let count = 0;
-  for (const [extId] of devExtensions) {
-    const win = await loadDevExtension(extId);
+  for (const [tileId] of devTiles) {
+    const win = await loadDevTile(tileId);
     if (win) count++;
   }
   return count;
 }
 
 /**
- * Unload and clean up all dev extensions
+ * Unload and clean up all dev tiles.
  */
-export function cleanupDevExtensions(): void {
-  for (const [extId] of devExtensions) {
-    DEBUG && console.log(`[ext:dev] Cleaned up dev extension: ${extId}`);
+export function cleanupDevTiles(): void {
+  for (const [tileId] of devTiles) {
+    DEBUG && console.log(`[tile:dev] Cleaned up dev tile: ${tileId}`);
   }
-  devExtensions.clear();
+  devTiles.clear();
 }
 
 /**
- * Get list of dev extension IDs
+ * Get list of dev tile IDs.
  */
-export function getDevExtensionIds(): string[] {
-  return Array.from(devExtensions.keys());
+export function getDevTileIds(): string[] {
+  return Array.from(devTiles.keys());
 }
 
 /**
- * Reload an extension by closing and relaunching its tile window.
+ * Reload a tile by closing and relaunching its window.
  * Returns a truthy result on success, null on failure.
  */
-export async function reloadExtension(extId: string): Promise<object | null> {
-  DEBUG && console.log(`[ext:reload] Reloading extension: ${extId}`);
+export async function reloadTile(tileId: string): Promise<object | null> {
+  DEBUG && console.log(`[tile:reload] Reloading tile: ${tileId}`);
 
   // Check if it's a core renderer (cmd/hud/page) — not reloadable without a full app restart
-  if (CORE_RENDERER_IDS.includes(extId)) {
-    console.error(`[ext:reload] Cannot reload core renderer: ${extId} (reload the app instead)`);
+  if (CORE_RENDERER_IDS.includes(tileId)) {
+    console.error(`[tile:reload] Cannot reload core renderer: ${tileId} (reload the app instead)`);
     return null;
   }
 
-  // For dev extensions, open devtools after relaunch
-  if (isDevExtension(extId)) {
-    return loadDevExtension(extId);
+  // For dev tiles, open devtools after relaunch
+  if (isDevTile(tileId)) {
+    return loadDevTile(tileId);
   }
 
   // Relaunch as v2 tile: re-read manifest, revoke old token, close old window, launch fresh.
-  return relaunchTile(extId);
+  return relaunchTile(tileId);
 }
 
 /**
@@ -1603,5 +1594,6 @@ export {
   getDb,
   getTilePath,
   getRegisteredTileIds,
-  loadExtensionManifest,
+  loadFeatureManifest,
 };
+

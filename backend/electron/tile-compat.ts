@@ -1,18 +1,10 @@
 /**
- * Tile Compatibility Layer
- *
- * Both v1 (legacy extension) and v2 (tile) manifests work side by side.
- * This module handles:
- * - Detecting manifest version during extension discovery
- * - Routing v1 manifests to the legacy extension loader
- * - Routing v2 manifests to the tile launcher
- * - Allowing incremental migration of extensions to tiles
+ * Tile loader bridge — registers `tile:*` IPC handlers and routes a
+ * parsed v2 tile manifest to either the eager `launchTile()` path or
+ * the lazy registration path in `tile-lazy.ts`.
  */
 
-import path from 'node:path';
-
-import { discoverExtensions, type DiscoveredExtension, type ExtensionManifest } from './extensions.js';
-import { parseManifestFile, detectManifestVersion, type TileManifestV2, type ParsedManifest } from './tile-manifest.js';
+import { type TileManifestV2 } from './tile-manifest.js';
 import { launchTile, type TileLaunchResult } from './tile-launcher.js';
 import { registerLazyTile } from './tile-lazy.js';
 import { registerTileIpcHandlers } from './tile-ipc.js';
@@ -22,16 +14,12 @@ import { DEBUG } from './config.js';
 // ─── Types ───────────────────────────────────────────────────────────
 
 /**
- * Discovered extension with manifest version annotation
+ * A tile annotated with its parsed v2 manifest, ready for loading.
  */
-export interface AnnotatedExtension {
+export interface AnnotatedTile {
   id: string;
   path: string;
-  manifestVersion: 'v1' | 'v2';
-  /** Original v1 manifest (always present) */
-  v1Manifest: ExtensionManifest;
-  /** Parsed v2 manifest (only if manifestVersion is 'v2') */
-  v2Manifest?: TileManifestV2;
+  v2Manifest: TileManifestV2;
 }
 
 // ─── State ───────────────────────────────────────────────────────────
@@ -55,76 +43,28 @@ export function ensureTileIpcHandlers(): void {
   ipcHandlersRegistered = true;
 }
 
-// ─── Discovery ───────────────────────────────────────────────────────
-
-/**
- * Discover and annotate all extensions with their manifest version
- *
- * This is the compatibility-aware replacement for discoverExtensions().
- * Returns all extensions with their detected manifest version, allowing
- * the caller to route them to the appropriate loader.
- */
-export function discoverAnnotatedExtensions(basePath: string): AnnotatedExtension[] {
-  // Use existing discovery to find all extensions
-  const extensions = discoverExtensions(basePath);
-  const annotated: AnnotatedExtension[] = [];
-
-  for (const ext of extensions) {
-    const manifestPath = path.join(ext.path, 'manifest.json');
-    const parsed = parseManifestFile(manifestPath);
-
-    if (!parsed) {
-      // Failed to parse — treat as v1 (legacy)
-      annotated.push({
-        id: ext.id,
-        path: ext.path,
-        manifestVersion: 'v1',
-        v1Manifest: ext.manifest,
-      });
-      continue;
-    }
-
-    annotated.push({
-      id: ext.id,
-      path: ext.path,
-      manifestVersion: parsed.version,
-      v1Manifest: ext.manifest,
-      v2Manifest: parsed.v2,
-    });
-  }
-
-  DEBUG && console.log(`[tile-compat] Discovered ${annotated.length} extensions: ${annotated.filter(e => e.manifestVersion === 'v2').length} v2, ${annotated.filter(e => e.manifestVersion === 'v1').length} v1`);
-
-  return annotated;
-}
-
 // ─── Loading ─────────────────────────────────────────────────────────
 
 /**
- * Configuration for loading extensions through the compatibility layer
+ * Configuration for loading tiles through the compatibility layer
  */
 export interface TileCompatConfig {
   /** Path to the tile preload script */
   tilePreloadPath: string;
-  /** Set of extension IDs that should load eagerly (not lazy) */
+  /** Set of tile IDs that should load eagerly (not lazy) */
   eagerIds?: Set<string>;
 }
 
 /**
- * Load a v2 tile extension
+ * Load a v2 tile.
  *
  * Registers the tile's path with the protocol handler (for peek://{tileId}/ URLs),
  * then either launches it eagerly or registers it for lazy loading.
  */
 export function loadV2Tile(
-  ext: AnnotatedExtension,
+  tile: AnnotatedTile,
   config: TileCompatConfig
 ): TileLaunchResult | null {
-  if (!ext.v2Manifest) {
-    console.error(`[tile-compat] Cannot load ${ext.id} as v2: no v2 manifest`);
-    return null;
-  }
-
   // Ensure IPC handlers are registered (once)
   if (!ipcHandlersRegistered) {
     registerTileIpcHandlers();
@@ -132,14 +72,13 @@ export function loadV2Tile(
   }
 
   // Register with protocol handler so peek://{tileId}/ URLs resolve
-  registerTilePath(ext.id, ext.path);
+  registerTilePath(tile.id, tile.path);
 
-  const manifest = ext.v2Manifest;
-  const isEager = config.eagerIds?.has(ext.id) ?? false;
+  const manifest = tile.v2Manifest;
+  const isEager = config.eagerIds?.has(tile.id) ?? false;
 
   // A tile is resident if any entry declares `resident: true`.
   const residentEntry = manifest.tiles.find(t => t.resident === true);
-  const hasLazyEntries = manifest.tiles.some(t => t.lazy === true);
   const hasLazyEvents = manifest.tiles.some(t => Array.isArray(t.lazyEvents) && t.lazyEvents.length > 0);
   // Non-eager tiles with no resident entry are lazy-loaded on first use.
   const shouldLazyLoad = !isEager && !residentEntry;
@@ -148,32 +87,25 @@ export function loadV2Tile(
   if (shouldLazyLoad && (hasCommands || hasLazyEvents)) {
     // Lazy load: register command stubs and/or event interceptors.
     // The tile is loaded on first command invocation or first lazy event publish.
-    registerLazyTile(manifest, ext.path, config.tilePreloadPath);
-    DEBUG && console.log(`[tile-compat] Registered ${ext.id} for lazy loading`);
+    registerLazyTile(manifest, tile.path, config.tilePreloadPath);
+    DEBUG && console.log(`[tile-compat] Registered ${tile.id} for lazy loading`);
     return null;
   }
 
   // Eager load: launch the resident entry immediately
   if (residentEntry) {
     const result = launchTile({
-      tilePath: ext.path,
+      tilePath: tile.path,
       manifest,
       preloadPath: config.tilePreloadPath,
       entryId: residentEntry.id,
     });
-    DEBUG && console.log(`[tile-compat] Eagerly launched ${ext.id} (resident entry: ${residentEntry.id})`);
+    DEBUG && console.log(`[tile-compat] Eagerly launched ${tile.id} (resident entry: ${residentEntry.id})`);
     return result;
   }
 
   // No resident entry — just register the protocol path.
   // Tiles will be launched on demand via commands.
-  DEBUG && console.log(`[tile-compat] Registered ${ext.id} (no resident entry, commands only)`);
+  DEBUG && console.log(`[tile-compat] Registered ${tile.id} (no resident entry, commands only)`);
   return null;
-}
-
-/**
- * Check if an extension should be loaded via the tile runtime
- */
-export function shouldUseTileRuntime(ext: AnnotatedExtension): boolean {
-  return ext.manifestVersion === 'v2' && ext.v2Manifest !== undefined;
 }

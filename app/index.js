@@ -607,8 +607,8 @@ export const init = async () => {
   // await initHud(); // disabled — see import comment above
 
   // Register ext:all-loaded subscriber BEFORE publishing topicCorePrefs.
-  // Main subscribes to topicCorePrefs and kicks off loadExtensions() which
-  // publishes ext:all-loaded. Because loadExtensions runs in parallel with
+  // Main subscribes to topicCorePrefs and kicks off loadFeatures() which
+  // publishes ext:all-loaded. Because loadFeatures runs in parallel with
   // the rest of this init(), subscribing later in init() would race and
   // miss the publish — the renderer's subscriber would be registered
   // after the IPC message had already been sent and dropped.
@@ -833,11 +833,11 @@ export const init = async () => {
   // Initialize core features (non-extension features only)
   features().forEach(initFeature);
 
-  // Extensions are now loaded by main process ExtensionManager.
-  // The main-process startup (entry.ts -> loadExtensions()) runs the v2
-  // feature pipeline (tile-compat / tile-loader); core background just
+  // Features (tiles) are loaded by the main process feature pipeline.
+  // The main-process startup (entry.ts -> loadFeatures()) runs the v2
+  // tile pipeline (tile-compat / tile-loader); core background just
   // initializes in-process features and waits for `ext:all-loaded`.
-  log('core', 'Core features initialized. Extensions loaded by main process.');
+  log('core', 'Core features initialized. Tiles loaded by main process.');
 
 };
 

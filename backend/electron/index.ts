@@ -85,18 +85,16 @@ export {
   initProtocol,
 } from './protocol.js';
 
-// Extension management
+// Feature/tile state queries
 export {
-  discoverExtensions,
-  loadExtensionManifest,
-  isBuiltinExtensionEnabled,
-  getExternalExtensions,
-} from './extensions.js';
+  discoverFeatures,
+  loadFeatureManifest,
+  isBuiltinFeatureEnabled,
+} from './tile-feature-state.js';
 
 export type {
-  ExtensionManifest,
-  DiscoveredExtension,
-} from './extensions.js';
+  DiscoveredFeature,
+} from './tile-feature-state.js';
 
 // System tray
 export {
@@ -138,18 +136,18 @@ export {
 export {
   configure,
   initialize,
-  discoverBuiltinExtensions,
+  discoverBuiltinFeatures,
   discoverBuiltinThemes,
-  loadExtensions,
-  getRunningExtensions,
-  // Dev extension support (CLI --load-extension)
-  registerDevExtension,
-  loadDevExtension,
-  loadDevExtensions,
-  cleanupDevExtensions,
-  isDevExtension,
-  getDevExtensionIds,
-  reloadExtension,
+  loadFeatures,
+  getRunningTiles,
+  // Dev tile support (CLI --load-extension)
+  registerDevTile,
+  loadDevTile,
+  loadDevTiles,
+  cleanupDevTiles,
+  isDevTile,
+  getDevTileIds,
+  reloadTile,
   registerWindow,
   getWindowInfo,
   findWindowByKey,

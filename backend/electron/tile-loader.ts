@@ -5,7 +5,7 @@
  * 1. Load registry
  * 2. Iterate features
  * 3. Load manifests
- * 4. Route to tile launcher (v2) or legacy loader (v1)
+ * 4. Route to tile launcher
  *
  * This module replaces the direct features/ scan pattern in main.ts.
  * It reads from the registry (populated by feature-installer) and
@@ -21,8 +21,7 @@ import {
   type TileManifestV2,
   type ParsedManifest,
 } from './tile-manifest.js';
-import { type AnnotatedExtension, loadV2Tile, type TileCompatConfig } from './tile-compat.js';
-import { type ExtensionManifest } from './extensions.js';
+import { type AnnotatedTile, loadV2Tile, type TileCompatConfig } from './tile-compat.js';
 import * as manifestCache from './manifest-cache.js';
 import { DEBUG } from './config.js';
 
@@ -34,7 +33,6 @@ import { DEBUG } from './config.js';
 export interface FeatureLoadResult {
   id: string;
   loaded: boolean;
-  manifestVersion: 'v1' | 'v2';
   error?: string;
 }
 
@@ -46,8 +44,6 @@ export interface TileLoaderConfig {
   tilePreloadPath: string;
   /** Set of feature IDs that should load eagerly */
   eagerIds?: Set<string>;
-  /** Callback for v1 features that need legacy loading */
-  onV1Feature?: (id: string, featurePath: string, manifest: ExtensionManifest) => void;
 }
 
 // ─── Loader ─────────────────────────────────────────────────────────
@@ -81,10 +77,9 @@ export function loadFeaturesFromRegistry(
 /**
  * Resolve a feature's manifest, preferring manifest_cache over disk.
  *
- * Phase C: the cache is the authoritative source. Disk fallback covers
- * two legitimate cases — v1 manifests (which the cache deliberately
- * doesn't store) and cache drift (e.g. ephemeral profile whose cache
- * was cleared mid-session between registry seed and feature load).
+ * The cache is the authoritative source. Disk fallback covers cache
+ * drift (e.g. ephemeral profile whose cache was cleared mid-session
+ * between registry seed and feature load).
  *
  * Returning `null` means both paths failed; caller surfaces an error.
  */
@@ -124,7 +119,6 @@ function loadSingleFeature(
     return {
       id: entry.id,
       loaded: false,
-      manifestVersion: 'v2',
       error: 'Feature is disabled',
     };
   }
@@ -132,17 +126,14 @@ function loadSingleFeature(
   const manifestPath = path.join(entry.path, 'manifest.json');
 
   // Cache-first read. feature-startup seeds manifest_cache from the
-  // registry at boot (Phase B), so every v2 feature that went through
-  // the installer is here. A miss means either a v1 feature (not
-  // cached — we don't extract v1 decls) or drift (cache cleared mid-
-  // session, disk-only manifest). Fall back to the disk parse so we
-  // don't hard-fail in either case.
+  // registry at boot, so every feature that went through the installer
+  // is here. A miss means cache drift (cleared mid-session, disk-only
+  // manifest). Fall back to the disk parse so we don't hard-fail.
   const parsed = loadParsedManifest(entry, manifestPath);
   if (!parsed) {
     return {
       id: entry.id,
       loaded: false,
-      manifestVersion: 'v2',
       error: `Manifest not available for ${entry.id} (cache miss + disk parse failed)`,
     };
   }
@@ -151,22 +142,12 @@ function loadSingleFeature(
     return loadV2Feature(entry, parsed.v2, config);
   }
 
-  // V1 manifest — delegate to legacy loader
-  if (config.onV1Feature) {
-    try {
-      config.onV1Feature(entry.id, entry.path, parsed.raw as unknown as ExtensionManifest);
-      return { id: entry.id, loaded: true, manifestVersion: 'v1' };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { id: entry.id, loaded: false, manifestVersion: 'v1', error: message };
-    }
-  }
-
+  // Legacy (pre-v3 manifestVersion) — rejected by parseManifestFile in
+  // practice, but we surface a clear error if one slips through.
   return {
     id: entry.id,
     loaded: false,
-    manifestVersion: 'v1',
-    error: 'No v1 handler configured',
+    error: `Feature ${entry.id} has a legacy manifest (manifestVersion < 3); reinstall or update the manifest.`,
   };
 }
 
@@ -183,17 +164,14 @@ function loadV2Feature(
     return {
       id: entry.id,
       loaded: false,
-      manifestVersion: 'v2',
       error: 'Feature not yet approved by user',
     };
   }
 
-  // Build the annotated extension object that tile-compat expects
-  const annotated: AnnotatedExtension = {
+  // Build the annotated tile object that tile-compat expects
+  const annotated: AnnotatedTile = {
     id: entry.id,
     path: entry.path,
-    manifestVersion: 'v2',
-    v1Manifest: manifest as unknown as ExtensionManifest,
     v2Manifest: manifest,
   };
 
@@ -204,9 +182,9 @@ function loadV2Feature(
 
   try {
     loadV2Tile(annotated, compatConfig);
-    return { id: entry.id, loaded: true, manifestVersion: 'v2' };
+    return { id: entry.id, loaded: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { id: entry.id, loaded: false, manifestVersion: 'v2', error: message };
+    return { id: entry.id, loaded: false, error: message };
   }
 }

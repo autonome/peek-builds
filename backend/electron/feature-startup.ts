@@ -31,8 +31,6 @@ export interface FeatureStartupConfig {
   tilePreloadPath: string;
   /** Feature IDs that should load eagerly */
   eagerIds?: Set<string>;
-  /** Callback for v1 features needing legacy loading */
-  onV1Feature?: (id: string, featurePath: string, manifest: unknown) => void;
   /** Current Peek app version (for minPeekVersion checks on installs) */
   peekVersion?: string;
 }
@@ -213,7 +211,6 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
   const loaderConfig: TileLoaderConfig = {
     tilePreloadPath: config.tilePreloadPath,
     eagerIds: config.eagerIds,
-    onV1Feature: config.onV1Feature as TileLoaderConfig['onV1Feature'],
   };
 
   const loadResults = loadFeaturesFromRegistry(registry, loaderConfig);
