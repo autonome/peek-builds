@@ -113,7 +113,7 @@ import { syncAll, getSyncConfig } from './sync.js';
 import { checkEscapeAllowed } from './tile-escape-enforcement.js';
 import { checkSessionAllowed } from './tile-session-enforcement.js';
 import { checkIzuiAllowed } from './tile-izui-enforcement.js';
-import { getActiveThemeId, setActiveThemeId, getRegisteredThemeIds, getThemePath } from './protocol.js';
+import { getActiveThemeId, setActiveThemeId, getRegisteredThemeIds, getThemePath, registerThemePath } from './protocol.js';
 import { validateTileDatastoreRequest } from './tile-datastore-scope.js';
 import { resolveSettingDefault } from './tile-settings-defaults.js';
 import {
@@ -3870,6 +3870,221 @@ export function registerTileIpcHandlers(): void {
       }
 
       return { success: true, data: themes };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:theme:pickFolder / validateFolder / add / remove / reload (Phase 3.7f) ─
+  //
+  // Strict counterparts of the legacy `theme:pickFolder`/`theme:validateFolder`/
+  // `theme:add`/`theme:remove`/`theme:reload` channels in ipc.ts (deleted in
+  // Phase 3.7f). Settings UI uses these to install user-supplied themes from
+  // disk. trustedBuiltin only — touches filesystem and theme registration.
+
+  registerTileIpc('tile:theme:pickFolder', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:pickFolder', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:pickFolder' };
+    }
+    try {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+      return { success: true, data: { path: result.filePaths[0] } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:theme:validateFolder', { mode: 'handle' }, async (event, args: {
+    token: string;
+    folderPath?: string;
+    path?: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:validateFolder', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:validateFolder' };
+    }
+    try {
+      const themePath = args.folderPath || args.path;
+      if (!themePath) return { success: false, error: 'No folder path provided' };
+      const manifestPath = path.join(themePath, 'manifest.json');
+
+      if (!fs.existsSync(manifestPath)) {
+        return { success: false, error: 'No manifest.json found in folder' };
+      }
+
+      const manifestContent = fs.readFileSync(manifestPath, 'utf-8');
+      const manifest = JSON.parse(manifestContent);
+
+      if (!manifest.id && !manifest.name) {
+        return { success: false, error: 'Manifest must have id or name' };
+      }
+
+      const variablesFile = manifest.variables || 'variables.css';
+      const variablesPath = path.join(themePath, variablesFile.replace(/^\.\//, ''));
+      if (!fs.existsSync(variablesPath)) {
+        return { success: false, error: `Theme CSS file not found: ${variablesFile}` };
+      }
+
+      const validation = validateThemeCSS(variablesPath);
+      if (!validation.valid) {
+        return {
+          success: false,
+          error: `Theme CSS missing required variables: ${validation.missing!.join(', ')}`,
+        };
+      }
+
+      return { success: true, data: { manifest, path: themePath } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:theme:add', { mode: 'handle' }, async (event, args: {
+    token: string;
+    folderPath?: string;
+    path?: string;
+    lastError?: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:add', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:add' };
+    }
+    try {
+      const db = getDb();
+      const themePath = args.folderPath || args.path;
+      if (!themePath) return { success: false, error: 'No folder path provided' };
+      const manifestPath = path.join(themePath, 'manifest.json');
+
+      if (!fs.existsSync(manifestPath)) {
+        return { success: false, error: 'No manifest.json found' };
+      }
+
+      const manifestContent = fs.readFileSync(manifestPath, 'utf-8');
+      const manifest = JSON.parse(manifestContent);
+      const id = manifest.id || manifest.name || `theme_${Date.now()}`;
+
+      const variablesFile = manifest.variables || 'variables.css';
+      const cssPath = path.join(themePath, variablesFile.replace(/^\.\//, ''));
+      const validation = validateThemeCSS(cssPath);
+      if (!validation.valid) {
+        return {
+          success: false,
+          error: `Theme CSS missing required variables: ${validation.missing!.join(', ')}`,
+        };
+      }
+
+      const existing = db.prepare('SELECT * FROM themes WHERE id = ?').get(id);
+      if (existing) {
+        return { success: false, error: `Theme ${id} already installed` };
+      }
+
+      const lastError = args.lastError || '';
+      const lastErrorAt = lastError ? Date.now() : 0;
+
+      db.prepare(`
+        INSERT INTO themes (id, name, description, version, author, path, builtin, enabled, installedAt, updatedAt, lastError, lastErrorAt, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        manifest.name || id,
+        manifest.description || '',
+        manifest.version || '1.0.0',
+        manifest.author || '',
+        themePath,
+        Date.now(),
+        Date.now(),
+        lastError,
+        lastErrorAt,
+        JSON.stringify(manifest),
+      );
+
+      registerThemePath(id, themePath);
+
+      return { success: true, data: { id, manifest, path: themePath, lastError: lastError || null } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:theme:remove', { mode: 'handle' }, (event, args: {
+    token: string;
+    themeId?: string;
+    id?: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:remove', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:remove' };
+    }
+    try {
+      const db = getDb();
+      const themeId = args.themeId || args.id;
+      if (!themeId) return { success: false, error: 'No themeId provided' };
+
+      const existing = db.prepare('SELECT * FROM themes WHERE id = ?').get(themeId) as { builtin?: number } | undefined;
+      if (!existing) {
+        return { success: false, error: `Theme ${themeId} not found` };
+      }
+
+      if (existing.builtin === 1) {
+        return { success: false, error: 'Cannot remove built-in theme' };
+      }
+
+      const activeId = getActiveThemeId();
+      if (themeId === activeId) {
+        return { success: false, error: 'Cannot remove the active theme. Switch to another theme first.' };
+      }
+
+      db.prepare('DELETE FROM themes WHERE id = ?').run(themeId);
+
+      return { success: true, data: { id: themeId } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:theme:reload', { mode: 'handle' }, (event, args: {
+    token: string;
+    themeId?: string;
+    id?: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'theme', 'tile:theme:reload', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:theme:reload' };
+    }
+    try {
+      const themeId = args.themeId || args.id;
+      if (!themeId) return { success: false, error: 'No themeId provided' };
+      const themePath = getThemePath(themeId);
+      if (!themePath) {
+        return { success: false, error: 'Theme not found' };
+      }
+
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('theme:reload', { themeId });
+      }
+
+      return { success: true, data: { id: themeId } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

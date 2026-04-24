@@ -1266,14 +1266,13 @@ function buildAPI(): Record<string, unknown> {
     },
 
     // Theme directory management — Settings UI uses these to install
-    // user-supplied themes from disk. Thin wrappers over the existing
-    // legacy `theme:*` ipcMain handlers; consumed by settings.js.
-    // Same pattern as api.profiles / api.adblocker / api.darkMode shims.
-    pickFolder: () => ipcRenderer.invoke('theme:pickFolder'),
-    validateFolder: (folderPath: string) => ipcRenderer.invoke('theme:validateFolder', { folderPath }),
-    add: (folderPath: string) => ipcRenderer.invoke('theme:add', { folderPath }),
-    remove: (themeId: string) => ipcRenderer.invoke('theme:remove', { themeId }),
-    reload: (themeId: string) => ipcRenderer.invoke('theme:reload', { themeId }),
+    // user-supplied themes from disk. Strict tile:theme:* counterparts
+    // live in tile-ipc.ts (Phase 3.7f). trustedBuiltin only.
+    pickFolder: () => ipcRenderer.invoke('tile:theme:pickFolder', { token: tileToken }),
+    validateFolder: (folderPath: string) => ipcRenderer.invoke('tile:theme:validateFolder', { token: tileToken, folderPath }),
+    add: (folderPath: string) => ipcRenderer.invoke('tile:theme:add', { token: tileToken, folderPath }),
+    remove: (themeId: string) => ipcRenderer.invoke('tile:theme:remove', { token: tileToken, themeId }),
+    reload: (themeId: string) => ipcRenderer.invoke('tile:theme:reload', { token: tileToken, themeId }),
   };
 
   // ── Settings (if granted) ──
