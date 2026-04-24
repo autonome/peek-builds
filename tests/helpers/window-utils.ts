@@ -245,9 +245,11 @@ export async function waitForExtensionsReady(
       const entries = result?.entries;
       if (!Array.isArray(entries)) return false;
 
-      // Check if critical features are registered (cmd + at least 2 others).
-      const hasCmd = entries.some((e: { id: string }) => e.id === 'cmd');
-      return hasCmd && entries.length >= 3;
+      // Check if critical features are registered. cmd is a core renderer
+      // (no features/cmd manifest) so it doesn't appear here — gate on
+      // `groups`, which is the canonical eager builtin tile-backed feature.
+      const hasGroups = entries.some((e: { id: string }) => e.id === 'groups');
+      return hasGroups && entries.length >= 3;
     },
     { timeout }
   );

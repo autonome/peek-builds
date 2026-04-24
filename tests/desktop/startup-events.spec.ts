@@ -38,6 +38,8 @@ test.describe('Startup Phase Events @desktop', () => {
 
   test('feature:all-loaded event was published during startup', async () => {
     // Verify that the feature:all-loaded event was published by checking features are registered.
+    // cmd is a core renderer (lives in app/cmd, no features/cmd manifest) and does NOT
+    // appear in the feature registry — assert against an actual builtin feature instead.
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
 
@@ -46,13 +48,12 @@ test.describe('Startup Phase Events @desktop', () => {
       const entries = extResult?.entries || [];
       return {
         entryCount: entries.length,
-        hasCmd: entries.some((e: any) => e.id === 'cmd'),
         hasGroups: entries.some((e: any) => e.id === 'groups'),
       };
     });
 
     expect(result.entryCount).toBeGreaterThan(0);
-    expect(result.hasCmd).toBe(true);
+    expect(result.hasGroups).toBe(true);
   });
 
   test('cmd extension loads before other extensions can register commands', async () => {
@@ -87,24 +88,22 @@ test.describe('Startup Phase Events @desktop', () => {
     expect(hasGalleryCommand).toBe(true);
   });
 
-  test('cmd feature is always registered (cannot be disabled)', async () => {
-    // cmd is required infrastructure — verify it's always in the registered feature list
-    // and that a cmd tile window exists.
+  test('cmd is always running (core renderer, cannot be disabled)', async () => {
+    // cmd is required infrastructure — it's a core renderer (NOT a registry feature
+    // and NOT a window at startup; the panel window is created on demand). Verify
+    // the cmd registry is alive by querying for any registered command.
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
-      const list = await api.features.list('builtin');
-      const entries = list?.entries || [];
-      const windowList = await api.window.list({ includeInternal: true });
-      const hasCmdWindow = windowList?.windows?.some(
-        (w: any) => (w.url || '').includes('peek://cmd/'),
-      ) || false;
-      return {
-        cmdRegistered: entries.some((e: any) => e.id === 'cmd'),
-        hasCmdWindow,
-      };
+      return new Promise((resolve) => {
+        api.subscribe('cmd:query-commands-response', (msg: any) => {
+          const commands = msg?.commands || [];
+          resolve({ commandCount: commands.length });
+        });
+        api.publish('cmd:query-commands', {});
+        setTimeout(() => resolve({ commandCount: 0 }), 2000);
+      });
     });
 
-    expect(result.cmdRegistered).toBe(true);
-    expect(result.hasCmdWindow).toBe(true);
+    expect(result.commandCount).toBeGreaterThan(0);
   });
 });

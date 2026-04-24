@@ -45,18 +45,6 @@ test.describe('Hybrid Extension Mode @desktop', () => {
     expect(reloadResult.success).toBe(true);
   });
 
-  test('api.features.devReload() reports no active tiles for unloaded core renderer', async () => {
-    // `cmd` is a core renderer — its tile window exists but isn't managed
-    // through the feature-registry dev-reload path, so devReload either
-    // reports no active tiles or reloads it. Either way should not error.
-    const reloadResult = await bgWindow.evaluate(async () => {
-      return await (window as any).app.features.devReload('cmd');
-    });
-
-    expect(reloadResult).toBeTruthy();
-    expect(reloadResult.error).toBeFalsy();
-  });
-
   test('commands work from both consolidated and external extensions', async () => {
     // Wait a bit for extensions to initialize and register commands
     await sleep(1000);

@@ -102,26 +102,26 @@ test.describe('Core Functionality @desktop', () => {
     expect(result.restartCmd?.description).toBe('Restart the application');
   });
 
-  test('reload extension command is registered', async () => {
+  test('reload feature command is registered', async () => {
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
 
       return new Promise((resolve) => {
         api.subscribe('cmd:query-commands-response', (msg: any) => {
           const commands = msg.commands || [];
-          const reloadCmd = commands.find((c: any) => c.name === 'reload extension');
+          const reloadCmd = commands.find((c: any) => c.name === 'reload feature');
           resolve({
-            hasReloadExtension: !!reloadCmd,
+            hasReloadFeature: !!reloadCmd,
             description: reloadCmd?.description
           });
         });
         api.publish('cmd:query-commands', {});
-        setTimeout(() => resolve({ hasReloadExtension: false }), 2000);
+        setTimeout(() => resolve({ hasReloadFeature: false }), 2000);
       });
     });
 
-    expect(result.hasReloadExtension).toBe(true);
-    expect(result.description).toBe('Reload an external extension by ID');
+    expect(result.hasReloadFeature).toBe(true);
+    expect(result.description).toBe('Reload an installed feature by ID');
   });
 
   test('api.quit and api.restart functions exist', async () => {
