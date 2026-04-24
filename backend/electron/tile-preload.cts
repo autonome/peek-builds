@@ -1853,16 +1853,14 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('tile:sync:sync-all', { token: tileToken });
     },
-    // Thin wrappers over the existing legacy `sync-*` ipcMain handlers
-    // (ipc.ts:3624+). Settings uses these to show current config + live
-    // status. Not capability-gated — Settings has trustedBuiltin grant
-    // and these are read-only status/config reads + user-initiated
-    // push/pull. Matches the `api.profiles` pattern from 58ef736e.
-    getConfig: () => ipcRenderer.invoke('sync-get-config'),
-    setConfig: (config: unknown) => ipcRenderer.invoke('sync-set-config', config),
-    getStatus: () => ipcRenderer.invoke('sync-status'),
-    pull: (options?: unknown) => ipcRenderer.invoke('sync-pull', options ?? {}),
-    push: (options?: unknown) => ipcRenderer.invoke('sync-push', options ?? {}),
+    // Strict tile:sync:* counterparts of the legacy `sync-*` handlers
+    // live in tile-ipc.ts (Phase 3.7f). trustedBuiltin only — sync
+    // touches network, server creds, and profile state.
+    getConfig: () => ipcRenderer.invoke('tile:sync:get-config', { token: tileToken }),
+    setConfig: (config: unknown) => ipcRenderer.invoke('tile:sync:set-config', { token: tileToken, config }),
+    getStatus: () => ipcRenderer.invoke('tile:sync:status', { token: tileToken }),
+    pull: (options?: { since?: number }) => ipcRenderer.invoke('tile:sync:pull', { token: tileToken, since: options?.since }),
+    push: (options?: { since?: number }) => ipcRenderer.invoke('tile:sync:push', { token: tileToken, since: options?.since }),
   };
 
   // ── Ad blocker ────────────────────────────────────────────────────

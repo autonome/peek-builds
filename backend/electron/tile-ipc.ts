@@ -109,7 +109,8 @@ import { checkSettingsForeignAllowed } from './tile-settings-foreign-enforcement
 import { checkOAuthAllowed } from './tile-oauth-enforcement.js';
 import { checkSyncAllowed } from './tile-sync-enforcement.js';
 import { createLoopbackServer } from './oauth-loopback.js';
-import { syncAll, getSyncConfig } from './sync.js';
+import { syncAll, getSyncConfig, setSyncConfig, getSyncStatus, pullFromServer, pushToServer } from './sync.js';
+import { getActiveProfile, updateLastSyncTime } from './profiles.js';
 import { checkEscapeAllowed } from './tile-escape-enforcement.js';
 import { checkSessionAllowed } from './tile-session-enforcement.js';
 import { checkIzuiAllowed } from './tile-izui-enforcement.js';
@@ -4292,6 +4293,136 @@ export function registerTileIpcHandlers(): void {
           conflicts: result.conflicts,
         });
       }
+
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:sync:get-config / set-config / status / pull / push (Phase 3.7f) ──
+  //
+  // Strict counterparts of the legacy `sync-get-config`, `sync-set-config`,
+  // `sync-status`, `sync-pull`, `sync-push` channels in ipc.ts (deleted in
+  // Phase 3.7f). Settings UI consumes these via api.sync.{getConfig,setConfig,
+  // getStatus,pull,push}. trustedBuiltin only — sync touches network, server
+  // creds, and profile state.
+
+  registerTileIpc('tile:sync:get-config', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:get-config', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:get-config' };
+    }
+    try {
+      const config = getSyncConfig();
+      return { success: true, data: config };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:sync:set-config', { mode: 'handle' }, (event, args: {
+    token: string;
+    config: unknown;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:set-config', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:set-config' };
+    }
+    try {
+      setSyncConfig(args.config as Parameters<typeof setSyncConfig>[0]);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:sync:status', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:status', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:status' };
+    }
+    try {
+      const status = getSyncStatus();
+      return { success: true, data: status };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:sync:pull', { mode: 'handle' }, async (event, args: {
+    token: string;
+    since?: number;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:pull', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:pull' };
+    }
+    try {
+      const config = getSyncConfig();
+      if (!config.serverUrl || !config.apiKey) {
+        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
+      }
+
+      const since = args.since !== undefined ? args.since : config.lastSyncTime;
+      const syncTime = Date.now();
+      const result = await pullFromServer(config.serverUrl, config.apiKey, since);
+
+      const activeProfile = getActiveProfile();
+      updateLastSyncTime(activeProfile.id, syncTime);
+
+      if (result.pulled > 0) {
+        publish('system', 'sync:pull-completed', {
+          pulled: result.pulled,
+          conflicts: result.conflicts,
+        });
+      }
+
+      return { success: true, data: result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  });
+
+  registerTileIpc('tile:sync:push', { mode: 'handle' }, async (event, args: {
+    token: string;
+    since?: number;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'sync', 'tile:sync:push', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:sync:push' };
+    }
+    try {
+      const config = getSyncConfig();
+      if (!config.serverUrl || !config.apiKey) {
+        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
+      }
+
+      const since = args.since !== undefined ? args.since : config.lastSyncTime;
+      const syncTime = Date.now();
+      const result = await pushToServer(config.serverUrl, config.apiKey, since);
+
+      const activeProfile = getActiveProfile();
+      updateLastSyncTime(activeProfile.id, syncTime);
 
       return { success: true, data: result };
     } catch (error) {

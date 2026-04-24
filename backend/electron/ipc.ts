@@ -46,7 +46,6 @@ import {
   enableSync,
   disableSync,
   getSyncConfig as getProfileSyncConfig,
-  updateLastSyncTime,
 } from './profiles.js';
 
 import {
@@ -112,11 +111,7 @@ import {
 
 import {
   getSyncConfig,
-  setSyncConfig,
-  pullFromServer,
-  pushToServer,
   syncAll,
-  getSyncStatus,
 } from './sync.js';
 
 import {
@@ -2593,92 +2588,9 @@ export function registerSyncHandlers(): void {
     }
   });
 
-  // Get sync configuration
-  ipcMain.handle('sync-get-config', async () => {
-    try {
-      const config = getSyncConfig();
-      return { success: true, data: config };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Set sync configuration
-  ipcMain.handle('sync-set-config', async (_ev, data) => {
-    try {
-      setSyncConfig(data);
-      return { success: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Pull items from server
-  ipcMain.handle('sync-pull', async (_ev, data = {}) => {
-    try {
-      const config = getSyncConfig();
-      if (!config.serverUrl || !config.apiKey) {
-        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
-      }
-
-      const since = data.since !== undefined ? data.since : config.lastSyncTime;
-      const syncTime = Date.now();
-      const result = await pullFromServer(config.serverUrl, config.apiKey, since);
-
-      // Update lastSyncTime after successful pull
-      const activeProfile = getActiveProfile();
-      updateLastSyncTime(activeProfile.id, syncTime);
-
-      // Notify all windows that sync pulled new data so they can refresh
-      if (result.pulled > 0) {
-        publish('system', 'sync:pull-completed', {
-          pulled: result.pulled,
-          conflicts: result.conflicts
-        });
-      }
-
-      return { success: true, data: result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Push items to server
-  ipcMain.handle('sync-push', async (_ev, data = {}) => {
-    try {
-      const config = getSyncConfig();
-      if (!config.serverUrl || !config.apiKey) {
-        return { success: false, error: 'Sync not configured. Set serverUrl and apiKey first.' };
-      }
-
-      const since = data.since !== undefined ? data.since : config.lastSyncTime;
-      const syncTime = Date.now();
-      const result = await pushToServer(config.serverUrl, config.apiKey, since);
-
-      // Update lastSyncTime after successful push
-      const activeProfile = getActiveProfile();
-      updateLastSyncTime(activeProfile.id, syncTime);
-
-      return { success: true, data: result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
-
-  // Get sync status
-  ipcMain.handle('sync-status', async () => {
-    try {
-      const status = getSyncStatus();
-      return { success: true, data: status };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  });
+  // sync-get-config / sync-set-config / sync-pull / sync-push / sync-status
+  // were here. Strict counterparts live in tile-ipc.ts (Phase 3.7f) as
+  // tile:sync:get-config / set-config / pull / push / status.
 }
 
 /**
