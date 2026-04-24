@@ -242,39 +242,10 @@ export function setActiveThemeId(id: string): boolean {
 }
 
 /**
- * Get tile filesystem path by ID.
- * First checks built-in tiles, then the datastore for installed (external) tiles.
+ * Get tile filesystem path by ID. Built-in + dev-loaded tiles only.
  */
 export function getTilePath(id: string): string | null {
-  // Check built-in tiles first
-  const builtinPath = tilePaths.get(id);
-  if (builtinPath) return builtinPath;
-
-  // Check datastore for installed (external) tiles
-  try {
-    const db = getDb();
-    const ext = db.prepare('SELECT * FROM extensions WHERE id = ?').get(id) as { path?: string } | undefined;
-    if (ext && ext.path) {
-      return ext.path;
-    }
-
-    // Also check by shortname (stored in metadata)
-    const allExts = db.prepare('SELECT * FROM extensions').all() as Array<{ path?: string; metadata?: string }>;
-    for (const extData of allExts) {
-      try {
-        const metadata = JSON.parse(extData.metadata || '{}');
-        if (metadata.shortname === id && extData.path) {
-          return extData.path;
-        }
-      } catch {
-        // Ignore JSON parse errors
-      }
-    }
-  } catch {
-    // Database not initialized yet
-  }
-
-  return null;
+  return tilePaths.get(id) ?? null;
 }
 
 /**

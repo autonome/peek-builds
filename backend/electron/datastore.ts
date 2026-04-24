@@ -153,28 +153,6 @@ const createTableStatements = `
   CREATE INDEX IF NOT EXISTS idx_feeds_type ON feeds(type);
   CREATE INDEX IF NOT EXISTS idx_feeds_enabled ON feeds(enabled);
 
-  CREATE TABLE IF NOT EXISTS extensions (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    description TEXT DEFAULT '',
-    version TEXT DEFAULT '1.0.0',
-    path TEXT,
-    backgroundUrl TEXT DEFAULT '',
-    settingsUrl TEXT DEFAULT '',
-    iconPath TEXT DEFAULT '',
-    builtin INTEGER DEFAULT 0,
-    enabled INTEGER DEFAULT 1,
-    status TEXT DEFAULT 'installed',
-    installedAt INTEGER,
-    updatedAt INTEGER,
-    lastErrorAt INTEGER DEFAULT 0,
-    lastError TEXT DEFAULT '',
-    metadata TEXT DEFAULT '{}'
-  );
-  CREATE INDEX IF NOT EXISTS idx_extensions_enabled ON extensions(enabled);
-  CREATE INDEX IF NOT EXISTS idx_extensions_status ON extensions(status);
-  CREATE INDEX IF NOT EXISTS idx_extensions_builtin ON extensions(builtin);
-
   CREATE TABLE IF NOT EXISTS feature_settings (
     id TEXT PRIMARY KEY,
     featureId TEXT NOT NULL,
