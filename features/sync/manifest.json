@@ -6,7 +6,6 @@
   "description": "Sync commands and functionality",
   "builtin": true,
   "hidden": true,
-  "background": false,
   "tiles": [],
   "capabilities": {
     "pubsub": {

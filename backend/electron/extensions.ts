@@ -61,7 +61,6 @@ export interface ExtensionManifest {
   name?: string;
   description?: string;
   version?: string;
-  background?: string | false;
   builtin?: boolean;
   lazy?: boolean;  // If true, extension iframe is not loaded at startup; loaded on first command use
   commands?: ManifestCommand[];

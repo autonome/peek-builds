@@ -21,10 +21,12 @@
  *     boot; that's gone. The hook is the one and only dispatch-site
  *     intercept, scoped by topic predicate.
  *
- *   - Declarative `type: 'window'` commands bypass tile load — the
- *     hook publishes `window:reopen-request` directly and returns
- *     'skip' so the cmd:execute publish never reaches a handler
- *     (there wouldn't have been one anyway; the tile never loads).
+ *   - Declarative `type: 'window'` and `type: 'publish'` commands
+ *     bypass tile load — the hook publishes `window:reopen-request`
+ *     (window) or the declared action topic (publish) directly and
+ *     returns 'skip' so the cmd:execute publish never reaches a
+ *     handler (there wouldn't have been one anyway; the tile never
+ *     loads). Only `type: 'execute'` commands force a tile load.
  */
 
 import {
@@ -378,6 +380,23 @@ async function handleCommandDispatch(
         trackingSourceId: name,
       },
     });
+    const typed = msg as { resultTopic?: string } | null;
+    if (typed?.resultTopic) {
+      publish(getSystemAddress(), typed.resultTopic, { success: true });
+    }
+    return 'skip';
+  }
+
+  // Declarative `type: 'publish'` commands: the main process emits the
+  // declared topic directly with merged action.data + invocation msg,
+  // then resolves the result topic. No tile load required — the topic's
+  // real subscribers (tiles, core, etc.) handle it. Short-circuit and
+  // skip the original cmd:execute publish.
+  if (cmd.action?.type === 'publish' && cmd.action.topic) {
+    DEBUG && console.log(`[tile-lazy] Declarative publish action for ${name}, emitting ${cmd.action.topic}`);
+    const ctx = (msg && typeof msg === 'object') ? msg as Record<string, unknown> : {};
+    const data = { ...(cmd.action.data || {}), ...ctx };
+    publish(getSystemAddress(), cmd.action.topic, data);
     const typed = msg as { resultTopic?: string } | null;
     if (typed?.resultTopic) {
       publish(getSystemAddress(), typed.resultTopic, { success: true });
