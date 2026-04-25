@@ -66,20 +66,31 @@ let currentActions = []; // derived from pairs
 // ==================== Settings ====================
 
 const loadSettings = async () => {
-  const result = await api.settings.get('data');
-  if (result.success && result.data) {
-    // Support new pairs format
-    if (Array.isArray(result.data.pairs)) {
-      currentPairs = result.data.pairs;
-    }
-    // Migration: convert old actions format to pairs
-    else if (Array.isArray(result.data.actions) && result.data.actions.length > 0) {
-      currentPairs = migrateActionsToToPairs(result.data.actions);
+  // Canonical storage is the schema-declared 'pairs' key (array of pair objects).
+  // Prior versions wrote a combined object under 'data' ({ pairs: [...] }
+  // or legacy { actions: [...] }). When both rows exist, 'data' is the
+  // authoritative source — it's where the buggy code persisted the user's
+  // most recent state — so migrate from 'data' first if present, then
+  // re-save under 'pairs'. The stale 'data' row is left in place
+  // (harmless; no foreign reads).
+  const legacy = await api.settings.get('data');
+  if (legacy.success && legacy.data) {
+    if (Array.isArray(legacy.data.pairs)) {
+      currentPairs = legacy.data.pairs;
+    } else if (Array.isArray(legacy.data.actions) && legacy.data.actions.length > 0) {
+      currentPairs = migrateActionsToToPairs(legacy.data.actions);
     } else {
       currentPairs = [];
     }
+    // Persist under the canonical key so subsequent loads skip the legacy branch.
+    await api.settings.set('pairs', currentPairs);
+    // Mark the legacy row as migrated so we never read it again.
+    await api.settings.set('data', null);
   } else {
-    currentPairs = [];
+    const pairsResult = await api.settings.get('pairs');
+    currentPairs = (pairsResult.success && Array.isArray(pairsResult.data))
+      ? pairsResult.data
+      : [];
   }
 
   // Derive action rules from pairs
@@ -88,7 +99,7 @@ const loadSettings = async () => {
 };
 
 const saveSettings = async () => {
-  const result = await api.settings.set('data', { pairs: currentPairs });
+  const result = await api.settings.set('pairs', currentPairs);
   if (!result.success) {
     console.error('[tag-actions] Failed to save settings:', result.error);
   }
