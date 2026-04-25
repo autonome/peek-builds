@@ -25,17 +25,25 @@ let currentSettings = {
 
 /**
  * Load settings from datastore
+ *
+ * Storage uses two separate keys per the settings-schema.json:
+ *   - 'prefs' → { shortcutKeyPrefix }
+ *   - 'items' → array of peek configs
+ *
  * @returns {Promise<{prefs: object, items: array}>}
  */
 const loadSettings = async () => {
-  const result = await api.settings.get('data');
-  if (result.success && result.data) {
-    return {
-      prefs: result.data.prefs || defaults.prefs,
-      items: result.data.items || defaults.items
-    };
-  }
-  return { prefs: defaults.prefs, items: defaults.items };
+  const prefsResult = await api.settings.get('prefs');
+  const itemsResult = await api.settings.get('items');
+
+  const prefs = (prefsResult.success && prefsResult.data)
+    ? prefsResult.data
+    : defaults.prefs;
+  const items = (itemsResult.success && itemsResult.data)
+    ? itemsResult.data
+    : defaults.items;
+
+  return { prefs, items };
 };
 
 /**
@@ -43,9 +51,13 @@ const loadSettings = async () => {
  * @param {object} settings - Settings object with prefs and items
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set('data', settings);
-  if (!result.success) {
-    console.error('[ext:peeks] Failed to save settings:', result.error);
+  const prefsResult = await api.settings.set('prefs', settings.prefs);
+  if (!prefsResult.success) {
+    console.error('[ext:peeks] Failed to save prefs:', prefsResult.error);
+  }
+  const itemsResult = await api.settings.set('items', settings.items);
+  if (!itemsResult.success) {
+    console.error('[ext:peeks] Failed to save items:', itemsResult.error);
   }
 };
 

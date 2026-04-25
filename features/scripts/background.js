@@ -61,22 +61,23 @@ let currentSettings = { scripts: [] };
 
 /**
  * Load scripts from datastore
+ *
+ * Storage uses the top-level 'scripts' key per settings-schema.json,
+ * holding the scripts array directly.
  */
 const loadSettings = async () => {
-  const result = await api.settings.get('data');
-  if (result.success && result.data) {
-    return {
-      scripts: result.data.scripts || defaults.scripts
-    };
+  const result = await api.settings.get('scripts');
+  if (result.success && Array.isArray(result.data)) {
+    return { scripts: result.data };
   }
-  return defaults;
+  return { scripts: defaults.scripts };
 };
 
 /**
  * Save scripts to datastore
  */
 const saveSettings = async (settings) => {
-  const result = await api.settings.set('data', settings);
+  const result = await api.settings.set('scripts', settings.scripts);
   if (!result.success) {
     console.error('[ext:scripts] Failed to save settings:', result.error);
   }
