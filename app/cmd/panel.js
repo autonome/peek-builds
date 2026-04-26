@@ -2620,10 +2620,16 @@ async function render() {
         machine.getState() === States.CHAIN_MODE
       );
 
+      // All tokens are `#name` (no inner whitespace, no `#`-only): treat as
+      // a tag-search shortcut. Routes to the `search` view filtered by tags.
+      const tokens = trimmedText.split(/\s+/).filter(Boolean);
+      const allHashtags = tokens.length > 0 && tokens.every(t => /^#[^\s#]+$/.test(t));
+
       machine.dispatch(Events.ENTER, {
         value: commandInput.value,
         isURL: urlResult.valid,
         url: urlResult.url,
+        allHashtags,
         committed,
         commandName: name,
         typed: commandInput.value,

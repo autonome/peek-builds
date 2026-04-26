@@ -404,6 +404,13 @@ const init = async () => {
 
   render();
 
+  // Proactive broadcast: consumers' first :get-all request may arrive before our
+  // subscribe; pubsub doesn't buffer, so the cache would stay empty forever.
+  api.pubsub.publish('tag-actions:get-all:response', {
+    success: true,
+    data: currentActions
+  });
+
   debug && console.log('[tag-actions] initialized with', currentPairs.length, 'pairs');
 };
 

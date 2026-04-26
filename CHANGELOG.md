@@ -15,6 +15,13 @@ Newly done items go here, grouped under level-2 headings by week (date = Monday 
 
 ## 2026-04-20
 
+Desktop - tag-action toggles + cmd panel hashtag shortcut
+- [x] Fix tag-action toggles never rendering on item cards in tags / groups / search / pagestream — add `tag-actions:*` (5 topics) to each consumer's `pubsub.topics` allowlist so the strict tile gate stops dropping the `tag-actions:get-all` round-trip
+- [x] Fix cold-start race in `features/tag-actions/home.js`: subscribe-before-publish was reachable when consumer tiles published their first `tag-actions:get-all` before the resident tag-actions tile had finished its `loadSettings()` await; tag-actions now broadcasts `tag-actions:get-all:response` once at end of init so any pre-existing subscriber catches up without a re-request
+- [x] New `tests/desktop/tag-actions-toggles.spec.ts` — full pipeline (toggle renders + click swaps `todo` → `done`) on tags/home, gate round-trip on groups/pagestream, manifest assertion for search
+- [x] Fix cmd panel `#tagA #tagB` + Enter regression — TYPING + ENTER had only `isURL` and `userCommittedToCommand` transitions, so all-hashtag input was a silent no-op; add `isAllHashtags` guard + transition that runs the existing `openSearch` action (opens `peek://search/home.html?q=...`)
+- [x] New `tests/desktop/cmd-hashtag-search.spec.ts` regression coverage
+
 Desktop - v1 removal complete
 - [x] Phase 3.7f — migrate darkMode, theme directory mgmt, sync, profiles, adblocker namespaces from legacy `ipcMain.handle` to strict `tile:*` handlers (trustedBuiltin-gated, token-validated)
 - [x] Phase 3.7g — migrate `window-devtools`, `get-focused-visible-window-id`, `pubsub-stats` to strict `tile:*` handlers; delete legacy un-gated channels

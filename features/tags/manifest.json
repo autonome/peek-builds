@@ -34,7 +34,12 @@
         "entities:extracted",
         "ext:ready",
         "ext:tags:shutdown",
-        "app:shutdown"
+        "app:shutdown",
+        "tag-actions:get-all",
+        "tag-actions:get-all:response",
+        "tag-actions:create:response",
+        "tag-actions:update:response",
+        "tag-actions:delete:response"
       ]
     },
     "datastore": {

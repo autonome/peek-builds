@@ -4,7 +4,7 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Sun, 26 Apr 2026 11:07:00 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 26 Apr 2026 11:07:34 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
@@ -12,7 +12,14 @@
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-20</link>
       <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-04-20</guid>
       <pubDate>Mon, 20 Apr 2026 12:00:00 GMT</pubDate>
-      <description>Desktop - v1 removal complete
+      <description>Desktop - tag-action toggles + cmd panel hashtag shortcut
+- Fix tag-action toggles never rendering on item cards in tags / groups / search / pagestream — add tag-actions:* (5 topics) to each consumer&apos;s pubsub.topics allowlist so the strict tile gate stops dropping the tag-actions:get-all round-trip
+- Fix cold-start race in features/tag-actions/home.js: subscribe-before-publish was reachable when consumer tiles published their first tag-actions:get-all before the resident tag-actions tile had finished its loadSettings() await; tag-actions now broadcasts tag-actions:get-all:response once at end of init so any pre-existing subscriber catches up without a re-request
+- New tests/desktop/tag-actions-toggles.spec.ts — full pipeline (toggle renders + click swaps todo → done) on tags/home, gate round-trip on groups/pagestream, manifest assertion for search
+- Fix cmd panel #tagA #tagB + Enter regression — TYPING + ENTER had only isURL and userCommittedToCommand transitions, so all-hashtag input was a silent no-op; add isAllHashtags guard + transition that runs the existing openSearch action (opens peek://search/home.html?q=...)
+- New tests/desktop/cmd-hashtag-search.spec.ts regression coverage
+
+Desktop - v1 removal complete
 - Phase 3.7f — migrate darkMode, theme directory mgmt, sync, profiles, adblocker namespaces from legacy ipcMain.handle to strict tile:* handlers (trustedBuiltin-gated, token-validated)
 - Phase 3.7g — migrate window-devtools, get-focused-visible-window-id, pubsub-stats to strict tile:* handlers; delete legacy un-gated channels
 - Phase 3.7h — collapse all 13 api.window. capability-fallback branches in tile-preload.cts; delete the 13 legacy window- ipcMain.handle registrations (window-open, window-close, window-hide, window-show, window-focus, window-exists, window-list, window-center, window-center-all, window-maximize, window-fullscreen, window-set-ignore-mouse-events, window-set-overlay-focus-target)

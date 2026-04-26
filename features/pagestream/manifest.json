@@ -37,7 +37,12 @@
         "item:deleted",
         "tag:item-added",
         "tag:item-removed",
-        "sync:pull-completed"
+        "sync:pull-completed",
+        "tag-actions:get-all",
+        "tag-actions:get-all:response",
+        "tag-actions:create:response",
+        "tag-actions:update:response",
+        "tag-actions:delete:response"
       ]
     },
     "datastore": {

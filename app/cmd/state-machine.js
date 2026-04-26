@@ -148,6 +148,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     isURL: (payload) => {
       return payload?.isURL === true;
     },
+    isAllHashtags: (payload) => {
+      return payload?.allHashtags === true;
+    },
     userCommittedToCommand: (payload) => {
       return payload?.committed === true;
     },
@@ -307,14 +310,24 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           actions: ['openURL', 'recordFrecency', 'clearInput', 'shutdown'],
         },
         {
+          // All-hashtag input ("#todo #today") opens the search view filtered
+          // by those tags. The narrow shape (every token is `#name`) is an
+          // explicit user intent to query items by tag, distinct from the
+          // generic "type random text → web search" fallback that was
+          // intentionally removed.
+          guard: 'isAllHashtags',
+          target: States.CLOSING,
+          actions: ['openSearch', 'clearInput', 'shutdown'],
+        },
+        {
           guard: 'userCommittedToCommand',
           target: States.EXECUTING,
           actions: ['recordFrecency', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'],
         },
-        // No URL, no committed command → no-op (do NOT fall back to search;
-        // typing random text and pressing Enter should not silently route to
-        // a web search — the user invokes search explicitly via the `search`
-        // command if they want one).
+        // No URL, no all-hashtag query, no committed command → no-op
+        // (do NOT fall back to web search; typing random text and pressing
+        // Enter should not silently route to a web search — the user invokes
+        // `search` explicitly if they want one).
       ],
       [Events.ESCAPE]: [
         { guard: 'textNonEmpty', target: States.IDLE, actions: ['clearInput', 'clearMatches', 'updateGhostText', 'updateResults'] },
