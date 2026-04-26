@@ -15,6 +15,37 @@ Newly done items go here, grouped under level-2 headings by week (date = Monday 
 
 ## 2026-04-20
 
+Desktop - v1 removal complete
+- [x] Phase 3.7f — migrate darkMode, theme directory mgmt, sync, profiles, adblocker namespaces from legacy `ipcMain.handle` to strict `tile:*` handlers (trustedBuiltin-gated, token-validated)
+- [x] Phase 3.7g — migrate `window-devtools`, `get-focused-visible-window-id`, `pubsub-stats` to strict `tile:*` handlers; delete legacy un-gated channels
+- [x] Phase 3.7h — collapse all 13 `api.window.*` capability-fallback branches in `tile-preload.cts`; delete the 13 legacy `window-*` `ipcMain.handle` registrations (`window-open`, `window-close`, `window-hide`, `window-show`, `window-focus`, `window-exists`, `window-list`, `window-center`, `window-center-all`, `window-maximize`, `window-fullscreen`, `window-set-ignore-mouse-events`, `window-set-overlay-focus-target`)
+- [x] Phase 4 — manifest schema cleanup: drop `TileEntry.type` and `TileEntry.windowHints` compat fields, bump `manifestVersion` to 3, lockstep-migrate 29 feature manifests + 2 scaffolds; validator now rejects v2 outright with explicit migration messages
+- [x] Delete dead v1 declarative-command machinery (`registerDeclarativeCommands` + helpers, ~165 LOC); fold `type: 'publish'` short-circuit into `tile-lazy.ts` so sync + dropzone keep working without the parallel mechanism
+- [x] Delete dead lazy-extension machinery (`CONSOLIDATED_EXTENSION_IDS`, `loadLazyExtension`, `lazyExtensionLoaded`, `handleLazyExtensionReady`, `registerLazyCommand`, `registerLazyExtensionCommands`, `registerLazyEventInterceptors`); v2 tile-lazy already covers load-on-dispatch + lazyEvents
+- [x] Delete `extension-host.html` defensive guards (URL no longer produced; 3 dead-behavior tests deleted)
+- [x] Delete dead `convertV1ToV2` function + tests; sweep stale `preload.js` archaeology comments across 12 files
+
+Desktop - vocabulary purge (extension → tile / feature)
+- [x] Merge vestigial `tile:extensions:*` admin surface into `tile:features:*` (~12 channels were duplicates of existing `tile:features:*` mirrors); delete `api.extensions.*` from tile-preload; migrate `app/settings/settings.js` + `app/index.js` consumers to `api.features.*`; delete `tile:extensions:*` registrations + handlers (~283 LOC)
+- [x] Rename `protocol.ts::extensionPaths` → `tilePaths`, `getRegisteredExtensionIds` → `getRegisteredTileIds` etc.
+- [x] Rename `main.ts::loadExtensions` → `loadFeatures`, `discoverBuiltinExtensions` → `discoverBuiltinFeatures`, `getRunningExtensions` → `getRunningFeatures`, `reloadExtension` → `reloadTile`, `EAGER_EXTENSION_IDS` → `EAGER_TILE_IDS`, `devExtensions` map → `devTiles`
+- [x] Rename `ext:startup:phase` → `feature:startup:phase` and `ext:all-loaded` → `feature:all-loaded` pubsub topics (coordinated atomic change across publishers + subscribers + 1 Playwright test); Tauri side queued as deferred follow-up
+- [x] Drop the `extensions` SQLite table (created on every boot but never written to; only `protocol.ts::getTilePath` read from it as a fallback that silently fell through on fresh DBs); simplify `getTilePath` to a `tilePaths.get` lookup
+- [x] Drop the `extensions` table entry from the Settings → Datastore Browser
+- [x] Rename `app/index.js::builtinExtensions` → `builtinFeatureTiles`, `registerExtensionCommands` → `registerCoreCommands`
+- [x] Rename Settings Features pane: route id `'extensions'` → `'features'`, DOM id `section-extensions` → `section-features`, function names (`renderExtensionsSettings` → `renderFeaturesSettings`, `refreshExtensionsList` → `refreshFeaturesList`, `window._refreshExtensionsList` → `window._refreshFeaturesList`), local variables (`allExtensions` → `allFeatures`, `isCmdExtension` → `isCmdFeature`, iteration `ext` → `feat`), CSS class `extension-error` → `feature-error`; the separate Extensions tab (bundled chrome browser extensions) keeps its distinct `'privacy'` route
+- [x] Sweep stale Phase tag comments from source files (~35 fixed across 12 files); historical record stays in `docs/v1-removal-plan.md`
+- [x] Mark `docs/v1-removal-plan.md` Status section DONE
+
+Desktop - architecture docs refresh
+- [x] Refresh README + DEVELOPMENT.md for the post-v1 reality (tile model, three FSMs, capability-gated `tile-preload.cts` + manifest grants + per-tile BrowserWindow)
+- [x] Add `docs/architecture.md` with three sections: tile model, state machines (pubsub / cmd panel / tile lifecycle), and a comparison between Peek's tiles and the [DASL Tiles spec](https://dasl.ing/tiles.html) — covering lifecycle / capabilities / IPC / persistence / manifest schema / origin sandbox / composition
+
+Desktop - test infra (v1 removal fallout)
+- [x] Migrate `peeks.spec.ts`, `slides.spec.ts`, `websearch-cmd.spec.ts` off `api.extensions.list()` to `api.features.list('builtin')` (response shape `{entries}` not `{success,data}`); `tests/helpers/window-utils.ts::waitForExtensionsReady` now gates on `groups`, not `cmd`
+- [x] Delete `tests/desktop/extension-lifecycle.spec.ts` — tested v1 admin install-from-folder lifecycle that has no v3 equivalent
+- [x] Stop asserting `cmd` is a feature in the registry across `startup-events.spec.ts` and `hybrid-extension.spec.ts` — cmd is a core renderer (`app/cmd/`), not a feature tile
+
 Desktop - Core consolidation
 - [x] Merge cmd + page + hud resident renderers into the core background renderer — `app/index.js` now awaits `initCmd()`, `initPage()`, `initHud()`; `cmd-glue.ts`, `page-glue.ts`, `hud-glue.ts` and the three resident shim HTMLs deleted
 - [x] Fix `ext:all-loaded` subscribe-after-publish race that was silently dropping 26 core commands (quit/restart/back/forward/reload/settings/theme-* etc) on cold start — registry now grows 72→96
