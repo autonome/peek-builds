@@ -1766,6 +1766,19 @@ function buildAPI(): Record<string, unknown> {
     disallowSite: (hostname: string) => ipcRenderer.invoke('tile:adblocker:disallowSite', { token: tileToken, hostname }),
   };
 
+  // ── Web permissions (settings UI) ─────────────────────────────────
+  //
+  // Read/clear stored per-origin permission decisions persisted by the
+  // backend permission handler. trustedBuiltin only — the settings page
+  // is the canonical caller. Tile renderers can't snoop or tamper with
+  // another tile's stored decisions via this surface.
+  api.permissions = {
+    list: () => ipcRenderer.invoke('tile:permissions:list', { token: tileToken }),
+    forget: (origin: string, permission: string) =>
+      ipcRenderer.invoke('tile:permissions:forget', { token: tileToken, origin, permission }),
+    forgetAll: () => ipcRenderer.invoke('tile:permissions:forgetAll', { token: tileToken }),
+  };
+
   // ── Dark mode ─────────────────────────────────────────────────────
   //
   // Thin wrappers over `darkMode:*` ipcMain handlers.

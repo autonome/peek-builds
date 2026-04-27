@@ -1062,6 +1062,163 @@ const renderPrivacySettings = async () => {
   return container;
 };
 
+// ─── Permissions ────────────────────────────────────────────────────
+//
+// Lists per-origin web permission decisions persisted by the page-host
+// permission handler (geolocation, camera/mic, midi, display-capture, etc.)
+// and lets the user revoke them. Backed by `tile:permissions:list/forget/
+// forgetAll` IPC; trustedBuiltin gated so only this page can read/clear.
+//
+// Exposes `window._refreshPermissionsList` so re-entry into the section
+// (and external mutations like a fresh prompt landing while the page is
+// open) re-fetches the live state — initial render alone is insufficient.
+const renderPermissionsSettings = async () => {
+  const container = document.createElement('div');
+
+  const desc = document.createElement('p');
+  desc.className = 'help-text';
+  desc.style.marginBottom = '16px';
+  desc.textContent = 'Sites you have allowed or denied for sensors, media, screen capture, MIDI, etc. Revoking a decision means the next request from that site will prompt again.';
+  container.appendChild(desc);
+
+  const list = document.createElement('div');
+  list.className = 'permissions-list';
+  container.appendChild(list);
+
+  const emptyMsg = document.createElement('p');
+  emptyMsg.className = 'help-text';
+  emptyMsg.style.fontStyle = 'italic';
+  emptyMsg.textContent = 'No saved permission decisions.';
+  emptyMsg.style.display = 'none';
+  container.appendChild(emptyMsg);
+
+  // Friendly labels — keep in sync with backend/electron/permission-policy.ts
+  // PERMISSION_LABELS. Falls back to the raw permission name if missing.
+  const PERMISSION_LABELS = {
+    geolocation: 'Location',
+    media: 'Camera & microphone',
+    midi: 'MIDI devices',
+    midiSysex: 'MIDI System Exclusive',
+    'display-capture': 'Screen capture',
+    notifications: 'Notifications',
+    'clipboard-read': 'Clipboard read',
+    'clipboard-sanitized-write': 'Clipboard write',
+    pointerLock: 'Pointer lock',
+    fullscreen: 'Fullscreen',
+    openExternal: 'Open external apps',
+  };
+
+  const renderRow = (decision) => {
+    const row = document.createElement('div');
+    row.className = 'item-card no-collapse';
+    row.style.marginBottom = '8px';
+
+    const header = document.createElement('div');
+    header.className = 'item-card-header';
+    header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 12px;';
+
+    const left = document.createElement('div');
+    left.style.cssText = 'display: flex; flex-direction: column; gap: 2px; min-width: 0;';
+
+    const originEl = document.createElement('div');
+    originEl.style.cssText = 'font-family: var(--font-mono, monospace); font-size: 13px; word-break: break-all;';
+    originEl.textContent = decision.origin;
+    left.appendChild(originEl);
+
+    const meta = document.createElement('div');
+    meta.className = 'help-text';
+    meta.style.fontSize = '12px';
+    const label = PERMISSION_LABELS[decision.permission] || decision.permission;
+    const verdict = decision.allowed ? 'Allowed' : 'Denied';
+    const when = decision.timestamp ? new Date(decision.timestamp).toLocaleString() : '';
+    meta.textContent = `${label} · ${verdict}${when ? ' · ' + when : ''}`;
+    left.appendChild(meta);
+
+    const revokeBtn = document.createElement('button');
+    revokeBtn.className = 'btn btn-secondary';
+    revokeBtn.textContent = 'Revoke';
+    revokeBtn.style.flexShrink = '0';
+    revokeBtn.addEventListener('click', async () => {
+      revokeBtn.disabled = true;
+      try {
+        const res = await api.permissions.forget(decision.origin, decision.permission);
+        if (res?.success) {
+          row.remove();
+          if (list.children.length === 0) {
+            emptyMsg.style.display = '';
+            clearAllBtn.style.display = 'none';
+          }
+        } else {
+          revokeBtn.disabled = false;
+          console.error('[settings] permissions.forget failed:', res?.error);
+        }
+      } catch (err) {
+        revokeBtn.disabled = false;
+        console.error('[settings] permissions.forget threw:', err);
+      }
+    });
+
+    header.appendChild(left);
+    header.appendChild(revokeBtn);
+    row.appendChild(header);
+    return row;
+  };
+
+  const clearAllWrap = document.createElement('div');
+  clearAllWrap.style.cssText = 'margin-top: 16px; display: flex; justify-content: flex-end;';
+  const clearAllBtn = document.createElement('button');
+  clearAllBtn.className = 'btn btn-secondary';
+  clearAllBtn.textContent = 'Clear all';
+  clearAllBtn.addEventListener('click', async () => {
+    if (!confirm('Clear all saved permission decisions? Sites will be prompted again next time they request a permission.')) return;
+    clearAllBtn.disabled = true;
+    try {
+      const res = await api.permissions.forgetAll();
+      if (res?.success) {
+        list.replaceChildren();
+        emptyMsg.style.display = '';
+        clearAllBtn.style.display = 'none';
+      } else {
+        clearAllBtn.disabled = false;
+        console.error('[settings] permissions.forgetAll failed:', res?.error);
+      }
+    } catch (err) {
+      clearAllBtn.disabled = false;
+      console.error('[settings] permissions.forgetAll threw:', err);
+    }
+  });
+  clearAllWrap.appendChild(clearAllBtn);
+  container.appendChild(clearAllWrap);
+
+  // Reusable refresh — called both on initial load and on every visit
+  // to the section (so external mutations show up).
+  const refresh = async () => {
+    try {
+      const res = await api.permissions.list();
+      list.replaceChildren();
+      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+        for (const decision of res.data) list.appendChild(renderRow(decision));
+        emptyMsg.style.display = 'none';
+        clearAllBtn.style.display = '';
+      } else {
+        emptyMsg.style.display = '';
+        clearAllBtn.style.display = 'none';
+      }
+    } catch (err) {
+      console.error('[settings] permissions.list threw:', err);
+      list.replaceChildren();
+      emptyMsg.textContent = 'Failed to load permissions.';
+      emptyMsg.style.display = '';
+      clearAllBtn.style.display = 'none';
+    }
+  };
+
+  window._refreshPermissionsList = refresh;
+  await refresh();
+
+  return container;
+};
+
 // Render dark mode settings for web pages
 const renderDarkModeSettings = async () => {
   const container = document.createElement('div');
@@ -3188,6 +3345,38 @@ const init = async () => {
   });
 
   contentArea.appendChild(privacySection);
+
+  // Add Permissions section (between Extensions and Dark Mode).
+  // Lists per-origin web permission decisions persisted by the page-host
+  // permission handler (geolocation, camera/mic, etc.) and lets the user
+  // revoke them. See backend/electron/permission-handler.ts +
+  // permission-store.ts.
+  const permissionsNav = document.createElement('a');
+  permissionsNav.className = 'nav-item';
+  permissionsNav.textContent = 'Permissions';
+  permissionsNav.dataset.section = 'permissions';
+  permissionsNav.addEventListener('click', () => {
+    showSection('permissions');
+    if (window._refreshPermissionsList) {
+      window._refreshPermissionsList();
+    }
+  });
+  sidebarNav.appendChild(permissionsNav);
+
+  const permissionsSection = document.createElement('div');
+  permissionsSection.className = 'section';
+  permissionsSection.id = 'section-permissions';
+
+  const permissionsTitle = document.createElement('h2');
+  permissionsTitle.className = 'section-title';
+  permissionsTitle.textContent = 'Permissions';
+  permissionsSection.appendChild(permissionsTitle);
+
+  renderPermissionsSettings().then(content => {
+    permissionsSection.appendChild(content);
+  });
+
+  contentArea.appendChild(permissionsSection);
 
   // Add Dark Mode section (between Privacy and Sync)
   const darkModeNav = document.createElement('a');

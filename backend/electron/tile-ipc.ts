@@ -4840,6 +4840,81 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── Web Permissions (settings UI) ──
+  //
+  // Read/clear stored per-origin permission decisions persisted by the web
+  // permission handler (see backend/electron/permission-handler.ts +
+  // permission-store.ts). All handlers gate on `trustedBuiltin` so only
+  // peek-core renderers (settings page) can list/revoke; tile renderers
+  // can't snoop or tamper with another tile's stored decisions.
+
+  registerTileIpc('tile:permissions:list', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'permissions', 'tile:permissions:list', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:permissions:list' };
+    }
+    try {
+      const { getDb } = await import('./datastore.js');
+      const db = getDb();
+      if (!db) return { success: true, data: [] };
+      const { listDecisions } = await import('./permission-store.js');
+      return { success: true, data: listDecisions(db as unknown as Parameters<typeof listDecisions>[0]) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:permissions:forget', { mode: 'handle' }, async (event, args: {
+    token: string;
+    origin: string;
+    permission: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'permissions', 'tile:permissions:forget', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:permissions:forget' };
+    }
+    if (!args.origin || !args.permission) {
+      return { success: false, error: 'origin and permission required' };
+    }
+    try {
+      const { getDb } = await import('./datastore.js');
+      const db = getDb();
+      if (!db) return { success: false, error: 'datastore not ready' };
+      const { forgetDecision } = await import('./permission-store.js');
+      forgetDecision(db as unknown as Parameters<typeof forgetDecision>[0], args.origin, args.permission);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:permissions:forgetAll', { mode: 'handle' }, async (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'permissions', 'tile:permissions:forgetAll', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:permissions:forgetAll' };
+    }
+    try {
+      const { getDb } = await import('./datastore.js');
+      const db = getDb();
+      if (!db) return { success: false, error: 'datastore not ready' };
+      const { forgetAllDecisions } = await import('./permission-store.js');
+      forgetAllDecisions(db as unknown as Parameters<typeof forgetAllDecisions>[0]);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   // ── Datastore ──
   //
   // Scoped per-table access. Every handler:

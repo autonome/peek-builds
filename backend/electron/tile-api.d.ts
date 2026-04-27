@@ -607,6 +607,27 @@ interface TileDarkMode {
   set(mode: string): Promise<{ success: boolean } | { error: string }>;
 }
 
+// ─── Web permissions (settings UI) ──────────────────────────────────
+
+interface TilePermissionDecision {
+  permission: string;
+  origin: string;
+  allowed: boolean;
+  timestamp: number;
+}
+
+interface TilePermissionsResult {
+  success: boolean;
+  data?: TilePermissionDecision[];
+  error?: string;
+}
+
+interface TilePermissions {
+  list(): Promise<TilePermissionsResult>;
+  forget(origin: string, permission: string): Promise<{ success: boolean; error?: string }>;
+  forgetAll(): Promise<{ success: boolean; error?: string }>;
+}
+
 // ─── Full window.app API ─────────────────────────────────────────────
 
 interface TileAPI {
@@ -649,6 +670,7 @@ interface TileAPI {
   profiles: TileProfiles;
   adblocker: TileAdblocker;
   darkMode: TileDarkMode;
+  permissions: TilePermissions;
 
   // ── Removed v1 shims — these throw if called ──────────────────────
 
