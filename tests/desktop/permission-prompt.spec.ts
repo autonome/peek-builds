@@ -141,4 +141,42 @@ test.describe('Permission Prompt @desktop', () => {
     const result = await pageWindow.evaluate(() => (window as any).__geoPromise);
     expect(result).not.toBe('denied:1');
   });
+
+  test('Remember-this-decision: clicking Deny + checkbox persists, second request skips prompt', async () => {
+    // First page-host: deny + remember.
+    const first = await openPageHost('perm-remember-1');
+    const webview1 = await first.evaluateHandle(() => document.getElementById('content'));
+    await first.evaluate((wv: any) => {
+      (window as any).__geoPromise = wv.executeJavaScript('window.__requestGeo()');
+    }, webview1);
+
+    const prompt1 = first.locator('.permission-prompt').first();
+    await expect(prompt1).toBeVisible({ timeout: 5000 });
+
+    // Tick the remember checkbox, then deny.
+    await prompt1.locator('.permission-prompt-remember input[type="checkbox"]').check();
+    await prompt1.locator('.permission-prompt-deny').click();
+    await expect(prompt1).toHaveCount(0);
+
+    const r1 = await first.evaluate(() => (window as any).__geoPromise);
+    expect(r1).toBe('denied:1');
+
+    // Second page-host on the SAME origin (note: same hostname:port via
+    // different path, so origin matches). The stored decision should be
+    // applied without rendering a prompt.
+    const second = await openPageHost('perm-remember-2');
+    const webview2 = await second.evaluateHandle(() => document.getElementById('content'));
+    await second.evaluate((wv: any) => {
+      (window as any).__geoPromise = wv.executeJavaScript('window.__requestGeo()');
+    }, webview2);
+
+    // The geolocation promise should resolve quickly with PERMISSION_DENIED
+    // (code 1) — the stored decision short-circuits the prompt.
+    const r2 = await second.evaluate(() => (window as any).__geoPromise);
+    expect(r2).toBe('denied:1');
+
+    // No prompt should have appeared in the second window.
+    const promptCount = await second.locator('.permission-prompt').count();
+    expect(promptCount).toBe(0);
+  });
 });

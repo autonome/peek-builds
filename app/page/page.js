@@ -2330,6 +2330,20 @@ function renderPermissionPrompt(req) {
   message.appendChild(originSpan);
   message.appendChild(document.createTextNode(` wants to ${req.label || req.permission}.`));
 
+  // "Remember this decision" checkbox — when checked, the response includes
+  // remember:true and permission-handler.ts persists the {origin, permission,
+  // allowed} tuple to feature_settings. Future requests with the same pair
+  // skip the prompt entirely.
+  const rememberLabel = document.createElement('label');
+  rememberLabel.className = 'permission-prompt-remember';
+  const rememberCheckbox = document.createElement('input');
+  rememberCheckbox.type = 'checkbox';
+  rememberCheckbox.checked = false;
+  const rememberText = document.createElement('span');
+  rememberText.textContent = 'Remember this decision';
+  rememberLabel.appendChild(rememberCheckbox);
+  rememberLabel.appendChild(rememberText);
+
   const actions = document.createElement('div');
   actions.className = 'permission-prompt-actions';
 
@@ -2348,6 +2362,7 @@ function renderPermissionPrompt(req) {
     api.publish('page:permission-response', {
       requestId: req.requestId,
       allowed,
+      remember: rememberCheckbox.checked,
     });
     wrap.remove();
   }
@@ -2357,6 +2372,7 @@ function renderPermissionPrompt(req) {
   actions.appendChild(denyBtn);
   actions.appendChild(allowBtn);
   wrap.appendChild(message);
+  wrap.appendChild(rememberLabel);
   wrap.appendChild(actions);
 
   // Stack subsequent prompts beneath any existing ones.

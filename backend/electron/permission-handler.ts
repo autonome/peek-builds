@@ -36,6 +36,8 @@ import {
   labelFor,
   type PermissionName,
 } from './permission-policy.js';
+import { getDb } from './datastore.js';
+import { getDecision, setDecision } from './permission-store.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -83,6 +85,22 @@ export function installPermissionHandler(ses: Session): void {
       webContents?.getURL?.() ||
       '';
     const decision = resolveDecision(requestingUrl, permission as PermissionName);
+
+    // Stored per-origin decision (Phase 3) overrides 'prompt' — but never
+    // overrides 'deny' or 'allow' from the policy. A site that's hard-allowed
+    // (chrome-extension://, peek://) never gets a stale stored deny applied;
+    // a site that's hard-denied (e.g. unknown permission) never gets a stale
+    // stored allow.
+    if (decision === 'prompt') {
+      const stored = lookupStoredDecision(originFromUrl(requestingUrl), permission as PermissionName);
+      if (stored !== null) {
+        console.log(
+          `[permission] ${permission} requested by ${requestingUrl || '(unknown)'} → ${stored ? 'allow' : 'deny'} (stored)`,
+        );
+        callback(stored);
+        return;
+      }
+    }
 
     console.log(
       `[permission] ${permission} requested by ${requestingUrl || '(unknown)'} → ${decision}`,
@@ -142,9 +160,10 @@ export function installPermissionHandler(ses: Session): void {
   // Subscribe to renderer responses. The page-host renderer publishes this
   // topic when the user clicks Allow / Deny in the prompt overlay.
   subscribe('permission-handler', 'page:permission-response', (msg) => {
-    const m = msg as { requestId?: unknown; allowed?: unknown };
+    const m = msg as { requestId?: unknown; allowed?: unknown; remember?: unknown };
     const requestId = typeof m?.requestId === 'string' ? m.requestId : null;
     const allowed = m?.allowed === true;
+    const remember = m?.remember === true;
     if (!requestId) {
       console.warn('[permission] page:permission-response missing requestId:', msg);
       return;
@@ -157,12 +176,57 @@ export function installPermissionHandler(ses: Session): void {
     }
     pendingRequests.delete(requestId);
     console.log(
-      `[permission] ${pending.permission} for ${pending.origin} → ${allowed ? 'allowed' : 'denied'} by user`,
+      `[permission] ${pending.permission} for ${pending.origin} → ${allowed ? 'allowed' : 'denied'} by user${remember ? ' (remembered)' : ''}`,
     );
+    if (remember && pending.origin && pending.origin !== '(unknown)') {
+      // Don't persist decisions for synthetic origins — there's no useful
+      // identity to key off, and a stored entry would never match a real
+      // future request anyway.
+      persistStoredDecision(pending.origin, pending.permission, allowed);
+    }
     pending.callback(allowed);
   });
 
   DEBUG && console.log('[permission] Handler installed on profile session');
+}
+
+/**
+ * Look up a previously-remembered decision for `(origin, permission)`.
+ * Returns boolean (allowed) or null if no decision is stored.
+ *
+ * Wrapped in a try/catch because permission requests can fire before the
+ * datastore is fully initialized (e.g. an extension's background page
+ * requesting geolocation during early app boot). A datastore miss falls
+ * through to the prompt UI rather than crashing the request handler.
+ */
+function lookupStoredDecision(origin: string, permission: PermissionName): boolean | null {
+  if (!origin || origin === '(unknown)') return null;
+  try {
+    const db = getDb();
+    if (!db) return null;
+    const decision = getDecision(db as unknown as Parameters<typeof getDecision>[0], origin, permission);
+    return decision ? decision.allowed : null;
+  } catch (err) {
+    DEBUG && console.log('[permission] stored-decision lookup failed:', err);
+    return null;
+  }
+}
+
+/**
+ * Persist a per-origin permission decision. Called when the user clicks
+ * Allow/Deny with the "Remember this decision" checkbox set.
+ */
+function persistStoredDecision(origin: string, permission: PermissionName, allowed: boolean): void {
+  try {
+    const db = getDb();
+    if (!db) {
+      console.warn('[permission] cannot persist decision — datastore not ready');
+      return;
+    }
+    setDecision(db as unknown as Parameters<typeof setDecision>[0], origin, permission, allowed);
+  } catch (err) {
+    console.error('[permission] persist failed:', err);
+  }
 }
 
 /**
