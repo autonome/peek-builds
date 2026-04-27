@@ -20,6 +20,7 @@ import { app, session, Session, BrowserWindow, Notification, shell } from 'elect
 import fs from 'node:fs';
 import path from 'node:path';
 import { registerProtocolOnSession } from './protocol.js';
+import { installPermissionHandler } from './permission-handler.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -56,6 +57,11 @@ export function getProfileSession(): Session {
 
     // Handle file downloads — without this, download URLs leave windows stuck in loading state
     registerDownloadHandler(profileSession);
+
+    // Install the web permission request handler. Replaces the blanket-allow
+    // formerly installed by chrome-extensions.ts so we can apply per-permission
+    // policy and (in a future phase) surface a Peek-native prompt to the user.
+    installPermissionHandler(profileSession);
   }
 
   return profileSession;

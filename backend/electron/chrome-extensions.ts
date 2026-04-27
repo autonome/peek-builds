@@ -334,11 +334,11 @@ export async function loadEnabledChromeExtensions(): Promise<void> {
   if (!polyfillHandle) {
     polyfillHandle = registerAll(profileSession, { ipcMain, app });
 
-    // Grant all permissions to extensions (belt-and-suspenders for web permissions)
-    profileSession.setPermissionCheckHandler(() => true);
-    profileSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-      callback(true);
-    });
+    // Web permission handling now lives in permission-handler.ts (installed
+    // by session-partition.ts when the profile session is created). The
+    // canonical handler grants all permissions to chrome-extension:// origins
+    // — same effect as the blanket-allow that used to live here, but without
+    // also auto-allowing every webview guest's permission requests.
 
     // Inject polyfill preload scripts into extension webContents
     app.on('web-contents-created', (_event, webContents) => {
