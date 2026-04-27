@@ -387,6 +387,16 @@ export interface TileEntry {
    * Only meaningful when `lazy: true`.
    */
   lazyEvents?: string[];
+  /**
+   * If true, the BrowserWindow's `close` event is intercepted and the window
+   * is hidden instead of destroyed. State (DOM, JS heap, registered commands,
+   * pubsub subscriptions) is preserved so the next show is instant. Pairs
+   * naturally with `resident: true` for tiles whose UI gets opened/closed
+   * repeatedly (e.g. lists, websearch). Without this, closing a resident
+   * tile via cmd+W destroys it, and any later `showSelf()` from a command
+   * handler fails silently.
+   */
+  keepLive?: boolean;
 }
 
 /**

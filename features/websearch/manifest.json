@@ -16,7 +16,8 @@
       "title": "Web Search",
       "role": "workspace",
       "key": "websearch-home",
-      "resident": true
+      "resident": true,
+      "keepLive": true
     }
   ],
   "capabilities": {

@@ -8,18 +8,15 @@
   "builtin": false,
   "tiles": [
     {
-      "id": "background",
-      "url": "background.html",
-      "lazy": true
-    },
-    {
       "id": "home",
       "url": "home.html",
       "role": "workspace",
       "key": "lists-home",
       "width": 700,
       "height": 768,
-      "title": "Lists"
+      "title": "Lists",
+      "resident": true,
+      "keepLive": true
     }
   ],
   "capabilities": {

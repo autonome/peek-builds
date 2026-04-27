@@ -1,19 +1,62 @@
 /**
  * Lists - Unified search across items, history, tags, and groups
  *
- * Searches across:
- * - Items (URLs, notes, tagsets)
- * - Tags
- * - Addresses/history
- *
- * Results are grouped by type with relevance-based ordering.
+ * Single-tile (resident: true) combining feature lifecycle and UI:
+ * - Settings load/save + hot-reload
+ * - Command 'lists' registration
+ * - Custom shortcut registration (default Option+F is declared in manifest;
+ *   this only kicks in if the user has customized the key)
+ * - Search UI across items, tags, history
  */
 
 import { getItemDisplayInfo, extractTitle } from 'peek://app/lib/card-helpers.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+import { id, defaults } from './config.js';
 
 const api = window.app;
 const debug = api.debug;
+
+// ===== Feature state (engine portion — runs before DOM) =====
+
+let currentSettings = { prefs: defaults.prefs };
+let registeredShortcut = null;
+
+const loadSettings = async () => {
+  const result = await api.settings.get('prefs');
+  if (result.success && result.data) return { prefs: result.data };
+  return { prefs: defaults.prefs };
+};
+
+const saveSettings = async (settings) => {
+  const result = await api.settings.set('prefs', settings.prefs);
+  if (!result.success) {
+    console.error('[ext:lists] Failed to save settings:', result.error);
+  }
+};
+
+const initShortcut = (shortcut) => {
+  // Manifest declares Option+f as default — only register imperatively
+  // if the user has customized the shortcut key.
+  if (shortcut && shortcut !== 'Option+f') {
+    api.shortcuts.register(shortcut, () => { api.window.showSelf(); }, { global: true });
+    registeredShortcut = shortcut;
+  }
+};
+
+const uninitShortcut = () => {
+  if (registeredShortcut) {
+    api.shortcuts.unregister(registeredShortcut, { global: true });
+    registeredShortcut = null;
+  }
+};
+
+const initCommands = () => {
+  api.commands.register({
+    name: 'lists',
+    description: 'Search local items, tags, and history',
+    execute: async () => { await api.window.showSelf(); },
+  });
+};
 
 // ===== Utilities =====
 
@@ -555,5 +598,54 @@ api.pubsub.subscribe('tag:item-removed', (msg) => {
   debouncedRefresh();
 });
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', init);
+// ===== Top-level init (runs as module in home.html) =====
+
+(async () => {
+  console.log(`[ext:${id}] home.js loaded`);
+  await api.initialize();
+
+  currentSettings = await loadSettings();
+  initCommands();
+  initShortcut(currentSettings.prefs.shortcutKey);
+
+  // Settings hot-reload (cross-process scope kept for compatibility with
+  // settings UI publishing to global pubsub).
+  api.pubsub.subscribe('lists:settings-changed', async () => {
+    debug && console.log('[ext:lists] settings changed, reinitializing');
+    uninitShortcut();
+    currentSettings = await loadSettings();
+    initShortcut(currentSettings.prefs.shortcutKey);
+  });
+
+  api.pubsub.subscribe('lists:settings-update', async (msg) => {
+    debug && console.log('[ext:lists] settings-update received:', msg);
+    try {
+      if (msg.data) {
+        currentSettings = { prefs: msg.data.prefs || currentSettings.prefs };
+      } else if (msg.key === 'prefs' && msg.path) {
+        const field = msg.path.split('.')[1];
+        if (field) {
+          currentSettings.prefs = { ...currentSettings.prefs, [field]: msg.value };
+        }
+      }
+      await saveSettings(currentSettings);
+      uninitShortcut();
+      initShortcut(currentSettings.prefs.shortcutKey);
+      api.pubsub.publish('lists:settings-changed', currentSettings);
+    } catch (err) {
+      console.error('[ext:lists] settings-update error:', err);
+    }
+  });
+
+  api.onShutdown(() => {
+    console.log(`[ext:${id}] received shutdown`);
+    uninitShortcut();
+  });
+
+  // Initialize UI once DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();

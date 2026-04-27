@@ -20,6 +20,23 @@ import path from 'node:path';
 // the launcher) won't trigger the require.
 const requireElectron = createRequire(import.meta.url);
 let _BrowserWindow: typeof import('electron').BrowserWindow | null = null;
+
+// Set to true once the Electron app starts quitting. The keepLive close
+// interceptor must let the BrowserWindow actually close in this case —
+// otherwise the app hangs forever waiting for the resident tile to die.
+let _isAppQuitting = false;
+function _wireQuittingFlag(): void {
+  try {
+    const electron = requireElectron('electron') as typeof import('electron');
+    if (electron.app && typeof electron.app.on === 'function') {
+      electron.app.on('before-quit', () => { _isAppQuitting = true; });
+    }
+  } catch {
+    // Running under ELECTRON_RUN_AS_NODE=1 — `app` may be unavailable.
+    // Tests that don't trigger close events are unaffected.
+  }
+}
+_wireQuittingFlag();
 function getBrowserWindowCtor(): typeof import('electron').BrowserWindow {
   if (_BrowserWindow) return _BrowserWindow;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -247,7 +264,13 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     height: hints?.height || 600,
     minWidth: hints?.minWidth,
     minHeight: hints?.minHeight,
-    frame: hints?.frame !== false,
+    // Tiles default to FRAMELESS. Mirror the legacy `api.window.open` path
+    // (ipc.ts:594), which always defaulted to `frame: false`. The previous
+    // launcher default of `frame: true` was a silent regression that
+    // surfaced as a titlebar on resident tiles (e.g. lists, websearch).
+    // Tiles that genuinely need an OS titlebar must opt in with
+    // `frame: true` in the manifest.
+    frame: hints?.frame === true,
     transparent: transparentResolved,
     alwaysOnTop: hints?.alwaysOnTop === true,
     focusable: hints?.focusable !== false,
@@ -335,6 +358,22 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
       }
     }
   });
+
+  // keepLive: hide instead of destroy on close. Preserves the BrowserWindow,
+  // its DOM, JS heap, registered commands, and pubsub subscriptions so a
+  // later showSelf() reveals it instantly. Without this, closing a resident
+  // tile via cmd+W destroys it and the next `tile:window:show-self` IPC
+  // returns "Tile window not found". Skip the intercept once the app is
+  // quitting — otherwise the resident tile never dies and shutdown hangs.
+  if (entry?.keepLive === true) {
+    win.on('close', (e) => {
+      if (_isAppQuitting) return;
+      if (!win.isDestroyed()) {
+        e.preventDefault();
+        win.hide();
+      }
+    });
+  }
 
   // Normal close: same cleanup as crash, minus the crash broadcast.
   //

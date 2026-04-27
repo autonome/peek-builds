@@ -69,9 +69,13 @@ peek-card[selected] {
   max-height: calc(100vh - 80px);
 }
 
-/* Result group (URLs, Notes, Tags, etc.) */
+/* Result group (URLs, Notes, Tags, etc.) — vertical stack with breathing room
+   between cards. peek-card sets its own visual style; we just space them. */
 .result-group {
-  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
 }
 
 .result-group-header {
