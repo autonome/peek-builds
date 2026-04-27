@@ -151,6 +151,155 @@ describe('page-fsm: illegal transitions', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────
+// Phase 2: drag/resize states
+// ────────────────────────────────────────────────────────────────────
+
+describe('page-fsm: NORMAL → DRAGGING', () => {
+  it('drag.start from NORMAL transitions to DRAGGING and shows the overlay', () => {
+    const { state, effects } = transition(STATES.NORMAL, { type: EVENTS.DRAG_START });
+    assert.equal(state, STATES.DRAGGING);
+    assert.deepEqual(effectTypes(effects), [EFFECTS.SHOW_DRAG_OVERLAY]);
+  });
+});
+
+describe('page-fsm: DRAGGING self-loops + exit', () => {
+  it('drag.move in DRAGGING is a self-loop with no effects', () => {
+    const { state, effects } = transition(STATES.DRAGGING, { type: EVENTS.DRAG_MOVE });
+    assert.equal(state, STATES.DRAGGING);
+    assert.deepEqual(effects, []);
+  });
+
+  it('drag.end from DRAGGING returns to NORMAL and hides the overlay', () => {
+    const { state, effects } = transition(STATES.DRAGGING, { type: EVENTS.DRAG_END });
+    assert.equal(state, STATES.NORMAL);
+    assert.deepEqual(effectTypes(effects), [EFFECTS.HIDE_DRAG_OVERLAY]);
+  });
+
+  it('duplicate drag.start in DRAGGING is a tolerated no-op (input race)', () => {
+    const { state, effects, warning } = transition(STATES.DRAGGING, { type: EVENTS.DRAG_START });
+    assert.equal(state, STATES.DRAGGING);
+    assert.deepEqual(effects, []);
+    assert.equal(warning, undefined);
+  });
+});
+
+describe('page-fsm: MAXIMIZED → DRAGGING_OUT_OF_MAXIMIZED', () => {
+  it('drag.start from MAXIMIZED exits maximized + transitions to DRAGGING_OUT_OF_MAXIMIZED', () => {
+    const { state, effects } = transition(STATES.MAXIMIZED, { type: EVENTS.DRAG_START });
+    assert.equal(state, STATES.DRAGGING_OUT_OF_MAXIMIZED);
+    // Order matters: exit maximized layout first (to set bounds + sync DOM),
+    // then show drag overlay so the user sees the exit.
+    assert.deepEqual(effectTypes(effects), [
+      EFFECTS.EXIT_MAXIMIZED_FOR_DRAG,
+      EFFECTS.SET_BODY_MAXIMIZED,
+      EFFECTS.SET_HANDLES_VISIBLE,
+      EFFECTS.SET_URL_MAXIMIZED,
+      EFFECTS.SHOW_DRAG_OVERLAY,
+    ]);
+    const setBody = effects.find(e => e.type === EFFECTS.SET_BODY_MAXIMIZED);
+    assert.equal(setBody.value, false);
+  });
+
+  it('drag.end from DRAGGING_OUT_OF_MAXIMIZED lands in NORMAL (never re-enters MAXIMIZED)', () => {
+    const { state, effects } = transition(STATES.DRAGGING_OUT_OF_MAXIMIZED, { type: EVENTS.DRAG_END });
+    assert.equal(state, STATES.NORMAL);
+    assert.deepEqual(effectTypes(effects), [EFFECTS.HIDE_DRAG_OVERLAY]);
+  });
+
+  it('drag.move in DRAGGING_OUT_OF_MAXIMIZED is a self-loop', () => {
+    const { state, effects } = transition(STATES.DRAGGING_OUT_OF_MAXIMIZED, { type: EVENTS.DRAG_MOVE });
+    assert.equal(state, STATES.DRAGGING_OUT_OF_MAXIMIZED);
+    assert.deepEqual(effects, []);
+  });
+});
+
+describe('page-fsm: NORMAL ↔ RESIZING', () => {
+  it('resize.start from NORMAL transitions to RESIZING with no effects (handle visibility unchanged)', () => {
+    const { state, effects } = transition(STATES.NORMAL, { type: EVENTS.RESIZE_START });
+    assert.equal(state, STATES.RESIZING);
+    assert.deepEqual(effects, []);
+  });
+
+  it('resize.move in RESIZING is a self-loop', () => {
+    const { state, effects } = transition(STATES.RESIZING, { type: EVENTS.RESIZE_MOVE });
+    assert.equal(state, STATES.RESIZING);
+    assert.deepEqual(effects, []);
+  });
+
+  it('resize.end from RESIZING returns to NORMAL', () => {
+    const { state, effects } = transition(STATES.RESIZING, { type: EVENTS.RESIZE_END });
+    assert.equal(state, STATES.NORMAL);
+    assert.deepEqual(effects, []);
+  });
+});
+
+describe('page-fsm: drag/resize illegal transitions', () => {
+  it('drag.start in MAXIMIZED is the drag-out-of-max path, not illegal', () => {
+    const { state, warning } = transition(STATES.MAXIMIZED, { type: EVENTS.DRAG_START });
+    assert.equal(state, STATES.DRAGGING_OUT_OF_MAXIMIZED);
+    assert.equal(warning, undefined);
+  });
+
+  it('toggle_maximize in DRAGGING is rejected (must end drag first)', () => {
+    const { state, warning } = transition(STATES.DRAGGING, { type: EVENTS.TOGGLE_MAXIMIZE });
+    assert.equal(state, STATES.DRAGGING);
+    assert.match(warning, /Illegal event/);
+  });
+
+  it('resize.start in DRAGGING is rejected', () => {
+    const { state, warning } = transition(STATES.DRAGGING, { type: EVENTS.RESIZE_START });
+    assert.equal(state, STATES.DRAGGING);
+    assert.match(warning, /Illegal event/);
+  });
+
+  it('drag.start in RESIZING is rejected', () => {
+    const { state, warning } = transition(STATES.RESIZING, { type: EVENTS.DRAG_START });
+    assert.equal(state, STATES.RESIZING);
+    assert.match(warning, /Illegal event/);
+  });
+
+  it('drag.start in INITIALIZING is rejected', () => {
+    const { state, warning } = transition(STATES.INITIALIZING, { type: EVENTS.DRAG_START });
+    assert.equal(state, STATES.INITIALIZING);
+    assert.match(warning, /Illegal event/);
+  });
+});
+
+describe('page-fsm: drag/resize end-to-end runs', () => {
+  it('init→drag.start→drag.move→drag.end lands in NORMAL', () => {
+    const { state } = run([
+      { type: EVENTS.INIT_COMPLETE, maximized: false },
+      { type: EVENTS.DRAG_START },
+      { type: EVENTS.DRAG_MOVE },
+      { type: EVENTS.DRAG_MOVE },
+      { type: EVENTS.DRAG_END },
+    ]);
+    assert.equal(state, STATES.NORMAL);
+  });
+
+  it('init→toggle_maximize→drag.start→drag.end lands in NORMAL (drag-out-of-max never re-enters MAXIMIZED)', () => {
+    const { state } = run([
+      { type: EVENTS.INIT_COMPLETE, maximized: false },
+      { type: EVENTS.TOGGLE_MAXIMIZE },
+      { type: EVENTS.DRAG_START },
+      { type: EVENTS.DRAG_MOVE },
+      { type: EVENTS.DRAG_END },
+    ]);
+    assert.equal(state, STATES.NORMAL);
+  });
+
+  it('init→resize.start→resize.move→resize.end lands in NORMAL', () => {
+    const { state } = run([
+      { type: EVENTS.INIT_COMPLETE, maximized: false },
+      { type: EVENTS.RESIZE_START },
+      { type: EVENTS.RESIZE_MOVE },
+      { type: EVENTS.RESIZE_END },
+    ]);
+    assert.equal(state, STATES.NORMAL);
+  });
+});
+
 describe('page-fsm: end-to-end run() — round-trip via maximize toggle', () => {
   it('init→maximize→unmaximize lands back in NORMAL with no leftover effects', () => {
     const { state } = run([

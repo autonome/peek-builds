@@ -184,8 +184,21 @@ function applyFsmEffect(effect) {
     case FSM_EFFECTS.CAPTURE_PRE_MAXIMIZE:
     case FSM_EFFECTS.RESTORE_PRE_MAXIMIZE:
     case FSM_EFFECTS.ENTER_MAXIMIZED_LAYOUT:
-      // toggleMaximize handles these directly today; the FSM emits them
-      // for future migration. Ignore for now.
+    case FSM_EFFECTS.EXIT_MAXIMIZED_FOR_DRAG:
+      // toggleMaximize / startDrag handle these directly today; the
+      // FSM emits them for future migration. Ignore for now.
+      return;
+    case FSM_EFFECTS.SHOW_DRAG_OVERLAY:
+      // Some drag entry paths (navbar mousedown) add 'active' before
+      // startDrag runs; this is idempotent.
+      if (typeof dragOverlay !== 'undefined' && dragOverlay) {
+        dragOverlay.classList.add('active');
+      }
+      return;
+    case FSM_EFFECTS.HIDE_DRAG_OVERLAY:
+      if (typeof dragOverlay !== 'undefined' && dragOverlay) {
+        dragOverlay.classList.remove('active');
+      }
       return;
     default:
       console.warn('[page-fsm] Unknown effect:', effect);
@@ -199,6 +212,9 @@ function dispatchFsm(event) {
   }
   fsmState = next.state;
   for (const eff of next.effects) applyFsmEffect(eff);
+  // Expose for Playwright introspection / debugging only — production
+  // code should never read this; use the FSM's transition() API.
+  window.__pageFsmState = fsmState;
 }
 
 // NOTE: The window always includes navbar space (NAVBAR_HEIGHT) to avoid
@@ -571,6 +587,7 @@ async function toggleMaximize() {
       dragOverlay.classList.remove('active');
       document.body.style.cursor = '';
       navbar.style.cursor = 'grab';
+      dispatchFsm({ type: FSM_EVENTS.DRAG_END });
     }
     cancelHoldDrag();
     cancelWebviewHold();
@@ -700,6 +717,10 @@ function setWindowPadding(width) {
 
 // Initial positioning
 updatePositions();
+
+// Expose initial fsmState even before the first dispatch (so tests can
+// observe INITIALIZING vs first-event transitions).
+window.__pageFsmState = fsmState;
 
 // FSM init. Dispatch AFTER updatePositions so the runtime adapter's
 // effects (which themselves call updatePositions/updateUrlParams) run
@@ -964,6 +985,11 @@ let holdDragStartScreenY = 0;
 })();
 
 function startDrag(screenX, screenY) {
+  // FSM: NORMAL → DRAGGING or MAXIMIZED → DRAGGING_OUT_OF_MAXIMIZED.
+  // Effects (overlay, body class, URL param) are idempotent against
+  // the inline mutations below.
+  dispatchFsm({ type: FSM_EVENTS.DRAG_START });
+
   // Drag-out-of-maximize: restore original size, center on cursor
   if (isMaximized && preMaximizeBounds) {
     const restoreW = preMaximizeBounds.width;
@@ -1179,6 +1205,7 @@ webview.addEventListener('console-message', (e) => {
       document.body.style.cursor = '';
       navbar.style.cursor = 'grab';
       updateUrlParams();
+      dispatchFsm({ type: FSM_EVENTS.DRAG_END });
     }
     return;
   }
@@ -1317,6 +1344,7 @@ function initResizeHandle(handle) {
     activeResizeHandle = handle;
     document.body.style.cursor = `${resizeDir}-resize`;
     handle.setPointerCapture(e.pointerId);
+    dispatchFsm({ type: FSM_EVENTS.RESIZE_START });
     e.preventDefault();
     e.stopPropagation();
   });
@@ -1382,6 +1410,7 @@ function cancelResize() {
   document.body.style.cursor = '';
   if (wasResizing) {
     updateUrlParams();
+    dispatchFsm({ type: FSM_EVENTS.RESIZE_END });
   }
 }
 
@@ -1395,6 +1424,7 @@ document.addEventListener('mousemove', (e) => {
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
     updateUrlParams();
+    dispatchFsm({ type: FSM_EVENTS.DRAG_END });
     return;
   }
 
@@ -1423,6 +1453,7 @@ document.addEventListener('mouseup', () => {
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
     updateUrlParams();
+    dispatchFsm({ type: FSM_EVENTS.DRAG_END });
   }
   // Clear the drag-out-of-maximize override once the drag ends.
   dragOutOfMaximizeWindowSize = null;
