@@ -1,0 +1,86 @@
+/**
+ * Webview Guest → Host Window Registry
+ *
+ * Maps guest <webview> WebContents IDs to their host BrowserWindow IDs.
+ * Populated on `did-attach-webview` (registered alongside the ESC handler in
+ * windows.ts) and cleared on guest destroy.
+ *
+ * Why this exists: when an Electron API gives us a guest WebContents (e.g.
+ * `setPermissionRequestHandler`'s `webContents` arg) we need to know which
+ * page-host BrowserWindow to surface UI in. `BrowserWindow.fromWebContents`
+ * returns null for guest contents; `webContents.hostWebContents` is
+ * deprecated; URL-substring matching (the old download-handler approach) is
+ * fragile. This registry makes the lookup O(1) and reliable.
+ */
+
+import { BrowserWindow, type WebContents } from 'electron';
+
+const guestToHost = new Map<number, number>();
+
+/**
+ * Register a guest WebContents as belonging to a host BrowserWindow.
+ * Idempotent — a second call for the same guestId overwrites.
+ *
+ * Wires a `destroyed` listener so the entry self-cleans when the guest goes
+ * away. Caller should still call `unregisterGuest` if the host window
+ * closes before the guest emits destroyed.
+ */
+export function registerGuest(guest: WebContents, hostWindowId: number): void {
+  const guestId = guest.id;
+  guestToHost.set(guestId, hostWindowId);
+  guest.once('destroyed', () => {
+    guestToHost.delete(guestId);
+  });
+}
+
+/**
+ * Look up the host BrowserWindow ID for a given guest WebContents.
+ *
+ * Tries the registry first. If the lookup misses (e.g. for a top-level
+ * BrowserWindow's own WebContents, where there's no guest relationship),
+ * falls back to `BrowserWindow.fromWebContents` so the same call works for
+ * both top-level and guest contexts.
+ *
+ * Returns null if no owning window can be found.
+ */
+export function findHostWindowId(wc: WebContents): number | null {
+  const hostId = guestToHost.get(wc.id);
+  if (hostId != null) {
+    const bw = BrowserWindow.fromId(hostId);
+    if (bw && !bw.isDestroyed()) return hostId;
+    // Stale entry — fall through to live scan
+    guestToHost.delete(wc.id);
+  }
+
+  // Top-level case: the WebContents IS a BrowserWindow's own contents
+  const direct = BrowserWindow.fromWebContents(wc);
+  if (direct && !direct.isDestroyed()) return direct.id;
+
+  return null;
+}
+
+/**
+ * Manually drop a guest entry. Normally not needed (the `destroyed` listener
+ * handles it) but useful when batch-cleaning a closed window.
+ */
+export function unregisterGuest(guestWebContentsId: number): void {
+  guestToHost.delete(guestWebContentsId);
+}
+
+/**
+ * Return all guest WebContents IDs registered to a given host window.
+ * Used by callers that want to clean up per-window state when the window
+ * closes (e.g. denying pending permission requests).
+ */
+export function getGuestsForWindow(hostWindowId: number): number[] {
+  const out: number[] = [];
+  for (const [guestId, hostId] of guestToHost) {
+    if (hostId === hostWindowId) out.push(guestId);
+  }
+  return out;
+}
+
+/** Test-only: clear all registry state. */
+export function _resetForTests(): void {
+  guestToHost.clear();
+}

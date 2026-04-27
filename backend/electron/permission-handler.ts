@@ -2,91 +2,61 @@
  * Web Permission Request Handler
  *
  * Centralizes Chromium permission request handling for the profile session.
- * Replaces the previous blanket-allow installed by chrome-extensions.ts so we
- * can apply per-permission policy and (in a future phase) surface a Peek-native
- * approve/reject prompt to the user.
+ * Replaces the previous blanket-allow installed by chrome-extensions.ts.
  *
- * Today's policy (Phase 1 — visibility only):
- *   - chrome-extension:// origins → allow (preserves prior behavior; extensions
- *     declare their permissions in manifest.json and Electron honors them).
- *   - All other origins → consult DEFAULT_POLICY map per permission name.
- *     Currently every permission defaults to allow so no real-world site
- *     regresses on this rollout. Each request is logged to stderr with origin
- *     + permission so we can see the live traffic before adding the prompt UI.
+ * Policy by origin class is defined in `permission-policy.ts` (no Electron
+ * imports — pure module, unit-testable under plain node):
+ *   chrome-extension://  → allow (extensions declare permissions in
+ *                          manifest.json; Electron honors them)
+ *   peek://              → allow (we control these pages)
+ *   everything else      → consult DEFAULT_POLICY map per permission name.
  *
- * Phase 2 will: (a) flip risky permissions (geolocation, media, midi,
- * screen-share) to "prompt" — store the callback in `pendingRequests`, publish
- * `page:permission-request` to the page-host renderer, and resolve when the
- * user responds via IPC; (b) persist per-origin decisions in feature_settings.
+ * Risky permissions (geolocation, media/camera/mic, midi, display-capture)
+ * resolve to `'prompt'` — the handler stores the callback in
+ * `pendingRequests`, finds the host page-host BrowserWindow via the
+ * webview-guest-registry, publishes `page:permission-request` to that
+ * window's renderer, and resolves the callback when the user responds via
+ * `page:permission-response`.
+ *
+ * Phase 3 will persist per-origin decisions in `feature_settings` so the
+ * user isn't re-prompted on every page load. Today every prompt fires
+ * fresh — the requestId tracks the in-flight grant only.
  *
  * See docs/tasks.md "Web permission requests" for the full plan.
  */
 
+import { BrowserWindow } from 'electron';
 import type { Session } from 'electron';
+
+import { publish, subscribe } from './pubsub.js';
+import { findHostWindowId } from './webview-guest-registry.js';
+import {
+  resolveDecision,
+  originFromUrl,
+  labelFor,
+  type PermissionName,
+} from './permission-policy.js';
 
 const DEBUG = !!process.env.DEBUG;
 
-/** Permissions that Electron may request via setPermissionRequestHandler. */
-type PermissionName =
-  | 'media'
-  | 'geolocation'
-  | 'notifications'
-  | 'midi'
-  | 'midiSysex'
-  | 'pointerLock'
-  | 'fullscreen'
-  | 'openExternal'
-  | 'window-management'
-  | 'unknown'
-  | 'clipboard-read'
-  | 'clipboard-sanitized-write'
-  | 'display-capture'
-  | 'hid'
-  | 'usb'
-  | 'serial'
-  | 'storage-access'
-  | 'top-level-storage-access'
-  | 'idle-detection'
-  | 'window-placement'
-  | 'speaker-selection'
-  | 'background-fetch'
-  | 'background-sync'
-  | 'periodic-background-sync'
-  | 'screen-wake-lock';
+interface PendingRequest {
+  callback: (granted: boolean) => void;
+  windowId: number | null;
+  permission: PermissionName;
+  origin: string;
+}
 
-type Decision = 'allow' | 'deny' | 'prompt';
-
-/**
- * Per-permission default policy applied to non-extension origins.
- *
- * 'prompt' is a placeholder for Phase 2 — today every entry resolves to
- * 'allow' via the resolveDecision() shim so we don't regress live sites
- * before the UI is shipped. Flipping a row to 'prompt' (once the UI lands)
- * is a one-line change.
- */
-const DEFAULT_POLICY: Partial<Record<PermissionName, Decision>> = {
-  geolocation: 'allow',
-  media: 'allow',
-  notifications: 'allow',
-  midi: 'allow',
-  midiSysex: 'allow',
-  'clipboard-read': 'allow',
-  'clipboard-sanitized-write': 'allow',
-  'display-capture': 'allow',
-  pointerLock: 'allow',
-  fullscreen: 'allow',
-  openExternal: 'allow',
-};
-
-/**
- * Pending request map — populated when a request is deferred to the UI.
- * Phase 2 will use this; today it stays empty (no policy entry resolves to
- * 'prompt'). Kept here so the Phase 2 IPC handler has somewhere to live
- * without churning the module shape.
- */
-const pendingRequests = new Map<string, (granted: boolean) => void>();
+const pendingRequests = new Map<string, PendingRequest>();
 
 let permissionHandlerInstalled = false;
+let nextRequestSeq = 0;
+
+function makeRequestId(): string {
+  // Time + counter avoids collision without crypto overhead. Resets if the
+  // process restarts (pendingRequests is cleared anyway).
+  nextRequestSeq++;
+  return `pr-${Date.now().toString(36)}-${nextRequestSeq.toString(36)}`;
+}
 
 export function installPermissionHandler(ses: Session): void {
   if (permissionHandlerInstalled) {
@@ -97,7 +67,11 @@ export function installPermissionHandler(ses: Session): void {
 
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
     // Synchronous check: invoked when a page calls e.g. navigator.permissions.query().
-    // Mirror the request handler's policy so the answer is consistent.
+    // Mirror the request handler's policy so the answer is consistent. For
+    // 'prompt' decisions, return false here — `permissions.query()` will
+    // report 'denied' (Chromium has no concept of "ask later" from this API).
+    // The actual prompt fires when the page calls the API itself
+    // (e.g. navigator.geolocation.getCurrentPosition()).
     const url = webContents?.getURL?.() ?? requestingOrigin ?? '';
     const decision = resolveDecision(url, permission as PermissionName);
     return decision === 'allow';
@@ -122,28 +96,73 @@ export function installPermissionHandler(ses: Session): void {
       callback(false);
       return;
     }
-    // 'prompt' — Phase 2 stores the callback and surfaces the UI. For now
-    // (no policy entry returns 'prompt'), this branch is unreachable; if a
-    // future policy entry lands without the UI being wired, fall back to
-    // deny so we never leave the page silently waiting forever.
-    console.warn(
-      `[permission] ${permission} resolved to 'prompt' but no UI installed — denying`,
+
+    // 'prompt' — defer the callback and surface the UI.
+    const windowId = webContents ? findHostWindowId(webContents) : null;
+    if (windowId == null) {
+      console.warn(
+        `[permission] ${permission} from ${requestingUrl}: no host window found, denying`,
+      );
+      callback(false);
+      return;
+    }
+
+    const requestId = makeRequestId();
+    const origin = originFromUrl(requestingUrl);
+    pendingRequests.set(requestId, {
+      callback,
+      windowId,
+      permission: permission as PermissionName,
+      origin,
+    });
+
+    // Clean up if the host window closes before the user responds.
+    const bw = BrowserWindow.fromId(windowId);
+    if (bw) {
+      const onClosed = () => {
+        const pending = pendingRequests.get(requestId);
+        if (pending) {
+          DEBUG && console.log(`[permission] window ${windowId} closed, denying ${requestId}`);
+          pending.callback(false);
+          pendingRequests.delete(requestId);
+        }
+      };
+      bw.once('closed', onClosed);
+    }
+
+    publish('permission-handler', 'page:permission-request', {
+      requestId,
+      windowId,
+      permission,
+      origin,
+      label: labelFor(permission as PermissionName),
+    });
+  });
+
+  // Subscribe to renderer responses. The page-host renderer publishes this
+  // topic when the user clicks Allow / Deny in the prompt overlay.
+  subscribe('permission-handler', 'page:permission-response', (msg) => {
+    const m = msg as { requestId?: unknown; allowed?: unknown };
+    const requestId = typeof m?.requestId === 'string' ? m.requestId : null;
+    const allowed = m?.allowed === true;
+    if (!requestId) {
+      console.warn('[permission] page:permission-response missing requestId:', msg);
+      return;
+    }
+    const pending = pendingRequests.get(requestId);
+    if (!pending) {
+      // Late response after window close cleanup, or duplicate — safe to ignore.
+      DEBUG && console.log(`[permission] no pending request for ${requestId} (already resolved?)`);
+      return;
+    }
+    pendingRequests.delete(requestId);
+    console.log(
+      `[permission] ${pending.permission} for ${pending.origin} → ${allowed ? 'allowed' : 'denied'} by user`,
     );
-    callback(false);
+    pending.callback(allowed);
   });
 
   DEBUG && console.log('[permission] Handler installed on profile session');
-}
-
-function resolveDecision(url: string, permission: PermissionName): Decision {
-  // Chrome extension URLs are always allowed — extensions declare their
-  // permissions in manifest.json and Electron honors them.
-  if (url.startsWith('chrome-extension://')) return 'allow';
-
-  // peek:// internal pages — allow (we control them).
-  if (url.startsWith('peek://')) return 'allow';
-
-  return DEFAULT_POLICY[permission] ?? 'deny';
 }
 
 /**
@@ -152,12 +171,12 @@ function resolveDecision(url: string, permission: PermissionName): Decision {
 export function _resetForTests(): void {
   permissionHandlerInstalled = false;
   pendingRequests.clear();
+  nextRequestSeq = 0;
 }
 
 /**
- * Test-only: expose the policy resolver so unit tests can verify decisions
- * without needing a real Electron Session.
+ * Test-only: expose the pending-request map size for assertions.
  */
-export function _resolveDecisionForTests(url: string, permission: string): Decision {
-  return resolveDecision(url, permission as PermissionName);
+export function _pendingRequestCountForTests(): number {
+  return pendingRequests.size;
 }

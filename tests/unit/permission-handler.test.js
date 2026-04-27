@@ -11,8 +11,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  _resolveDecisionForTests as resolve,
-} from '../../dist/backend/electron/permission-handler.js';
+  resolveDecision as resolve,
+} from '../../dist/backend/electron/permission-policy.js';
 
 describe('permission-handler: chrome-extension origins', () => {
   it('always allows geolocation for chrome-extension URLs', () => {
@@ -40,19 +40,39 @@ describe('permission-handler: peek:// internal pages', () => {
 });
 
 describe('permission-handler: web origins (default policy)', () => {
-  it('allows geolocation by default (Phase 1 — visibility-only rollout)', () => {
+  it('prompts for geolocation — risky permission, user must approve', () => {
     assert.equal(
       resolve('https://example.com/map', 'geolocation'),
-      'allow',
+      'prompt',
     );
   });
 
-  it('allows media (camera/mic) by default', () => {
-    assert.equal(resolve('https://meet.example.com/', 'media'), 'allow');
+  it('prompts for media (camera/mic) — risky permission', () => {
+    assert.equal(resolve('https://meet.example.com/', 'media'), 'prompt');
   });
 
-  it('allows notifications by default', () => {
+  it('prompts for midi and midiSysex', () => {
+    assert.equal(resolve('https://piano.example.com/', 'midi'), 'prompt');
+    assert.equal(resolve('https://piano.example.com/', 'midiSysex'), 'prompt');
+  });
+
+  it('prompts for display-capture (screen sharing)', () => {
+    assert.equal(resolve('https://meet.example.com/', 'display-capture'), 'prompt');
+  });
+
+  it('allows notifications by default — common pattern, low risk', () => {
     assert.equal(resolve('https://news.example.com/', 'notifications'), 'allow');
+  });
+
+  it('allows clipboard read/write by default', () => {
+    assert.equal(resolve('https://example.com/', 'clipboard-read'), 'allow');
+    assert.equal(resolve('https://example.com/', 'clipboard-sanitized-write'), 'allow');
+  });
+
+  it('allows fullscreen, pointerLock, openExternal — common low-risk APIs', () => {
+    assert.equal(resolve('https://example.com/', 'fullscreen'), 'allow');
+    assert.equal(resolve('https://example.com/', 'pointerLock'), 'allow');
+    assert.equal(resolve('https://example.com/', 'openExternal'), 'allow');
   });
 
   it('denies an unknown permission by default — fail-closed for new permission types', () => {
@@ -62,21 +82,18 @@ describe('permission-handler: web origins (default policy)', () => {
     );
   });
 
-  it('denies hid by default — risky permission with no policy entry', () => {
+  it('denies hid, serial, usb by default — risky device APIs with no policy entry', () => {
     assert.equal(resolve('https://example.com/', 'hid'), 'deny');
-  });
-
-  it('denies serial by default — risky permission with no policy entry', () => {
     assert.equal(resolve('https://example.com/', 'serial'), 'deny');
+    assert.equal(resolve('https://example.com/', 'usb'), 'deny');
   });
 });
 
 describe('permission-handler: about:blank / empty origins', () => {
-  it('denies geolocation when the requesting URL is empty (no origin to attribute to)', () => {
+  it('prompts for geolocation when the requesting URL is empty — same policy as web origins', () => {
     // Empty URL doesn't match chrome-extension:// or peek:// — falls through
-    // to DEFAULT_POLICY. geolocation defaults to allow today, so this case
-    // documents that fact rather than asserting deny — when Phase 2 flips
-    // geolocation to 'prompt' the assertion changes too.
-    assert.equal(resolve('', 'geolocation'), 'allow');
+    // to DEFAULT_POLICY. With no origin to attribute to, the prompt UI will
+    // render '(unknown origin)' — the user can still choose to deny.
+    assert.equal(resolve('', 'geolocation'), 'prompt');
   });
 });

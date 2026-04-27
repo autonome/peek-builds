@@ -2280,6 +2280,76 @@ api.subscribe('page:maximize', (msg) => {
   toggleMaximize();
 });
 
+// --- Web permission prompt ---
+// Backend's permission-handler.ts publishes `page:permission-request` when a
+// guest webview requests a risky permission (geolocation, camera/mic, etc.).
+// We render an approve/reject overlay near the top of the page; on click the
+// user's decision is published back as `page:permission-response` and the
+// backend resolves the deferred Chromium callback.
+//
+// Multiple concurrent prompts stack vertically — each is a separate DOM node
+// with its own requestId. No queueing logic; whichever the user clicks first
+// resolves first. See backend/electron/permission-handler.ts for the wire
+// protocol (requestId / windowId / permission / origin / label).
+
+function renderPermissionPrompt(req) {
+  const wrap = document.createElement('div');
+  wrap.className = 'permission-prompt';
+  wrap.dataset.requestId = req.requestId;
+
+  const message = document.createElement('div');
+  message.className = 'permission-prompt-message';
+  const originSpan = document.createElement('span');
+  originSpan.className = 'permission-prompt-origin';
+  originSpan.textContent = req.origin || '(unknown origin)';
+  message.appendChild(originSpan);
+  message.appendChild(document.createTextNode(` wants to ${req.label || req.permission}.`));
+
+  const actions = document.createElement('div');
+  actions.className = 'permission-prompt-actions';
+
+  const denyBtn = document.createElement('button');
+  denyBtn.className = 'permission-prompt-deny';
+  denyBtn.textContent = 'Deny';
+
+  const allowBtn = document.createElement('button');
+  allowBtn.className = 'permission-prompt-allow';
+  allowBtn.textContent = 'Allow';
+
+  let resolved = false;
+  function respond(allowed) {
+    if (resolved) return;
+    resolved = true;
+    api.publish('page:permission-response', {
+      requestId: req.requestId,
+      allowed,
+    });
+    wrap.remove();
+  }
+  denyBtn.addEventListener('click', () => respond(false));
+  allowBtn.addEventListener('click', () => respond(true));
+
+  actions.appendChild(denyBtn);
+  actions.appendChild(allowBtn);
+  wrap.appendChild(message);
+  wrap.appendChild(actions);
+
+  // Stack subsequent prompts beneath any existing ones.
+  const existing = document.querySelectorAll('.permission-prompt');
+  if (existing.length > 0) {
+    const lastBottom = existing[existing.length - 1].getBoundingClientRect().bottom;
+    wrap.style.top = `${lastBottom + 8}px`;
+  }
+
+  document.body.appendChild(wrap);
+}
+
+api.subscribe('page:permission-request', (msg) => {
+  if (msg.windowId != null && msg.windowId !== myWindowId) return;
+  if (!msg.requestId) return;
+  renderPermissionPrompt(msg);
+});
+
 // Navbar double-click to toggle maximize
 navbar.addEventListener('dblclick', (e) => {
   // Only on the navbar background (not on buttons/inputs inside shadow DOM)

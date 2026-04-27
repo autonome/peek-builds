@@ -22,6 +22,7 @@ import {
   getWindowInfo,
   getChildWindows,
 } from './main.js';
+import { registerGuest } from './webview-guest-registry.js';
 
 import {
   getIzuiCoordinator,
@@ -252,6 +253,10 @@ export function addEscHandler(bw: BrowserWindow): void {
   bw.webContents.on('did-attach-webview', (_event, guestWebContents) => {
     DEBUG && console.log(`[esc] Webview guest attached to window ${bw.id}, adding ESC listener`);
     attachEscListener(guestWebContents, 'webview');
+    // Track the guest→host relationship so the permission handler (and any
+    // other main-process code that gets a guest WebContents from Electron)
+    // can find which page-host BrowserWindow to surface UI in.
+    registerGuest(guestWebContents, bw.id);
   });
 }
 
