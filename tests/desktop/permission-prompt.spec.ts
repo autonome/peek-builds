@@ -185,6 +185,47 @@ test.describe('Permission Prompt @desktop', () => {
     expect(promptCount).toBe(0);
   });
 
+  test('Remember-this-decision (allow path): clicking Allow + checkbox persists, second request auto-allows', async () => {
+    // Symmetric to the Deny+Remember test above. Start clean — earlier
+    // tests may have stored a 127.0.0.1 deny.
+    await bgWindow.evaluate(async () => {
+      await (window as any).app.permissions.forgetAll();
+    });
+
+    const first = await openPageHost('perm-allow-remember-1');
+    const wv1 = await first.evaluateHandle(() => document.getElementById('content'));
+    await first.evaluate((wv: any) => {
+      (window as any).__geoPromise = wv.executeJavaScript('window.__requestGeo()');
+    }, wv1);
+
+    const prompt = first.locator('.permission-prompt').first();
+    await expect(prompt).toBeVisible({ timeout: 5000 });
+
+    await prompt.locator('.permission-prompt-remember input[type="checkbox"]').check();
+    await prompt.locator('.permission-prompt-allow').click();
+    await expect(prompt).toHaveCount(0);
+
+    // Allow proceeds with the actual geolocation lookup. In headless
+    // mode it may fail with POSITION_UNAVAILABLE / TIMEOUT — but NOT
+    // PERMISSION_DENIED (code 1). That confirms allow persisted.
+    const r1 = await first.evaluate(() => (window as any).__geoPromise);
+    expect(r1).not.toBe('denied:1');
+
+    // Second page-host on same origin: stored allow should short-circuit
+    // the prompt.
+    const second = await openPageHost('perm-allow-remember-2');
+    const wv2 = await second.evaluateHandle(() => document.getElementById('content'));
+    await second.evaluate((wv: any) => {
+      (window as any).__geoPromise = wv.executeJavaScript('window.__requestGeo()');
+    }, wv2);
+
+    const r2 = await second.evaluate(() => (window as any).__geoPromise);
+    expect(r2).not.toBe('denied:1');
+
+    const promptCount = await second.locator('.permission-prompt').count();
+    expect(promptCount).toBe(0);
+  });
+
   test('Phase 5 — queueing: synthetic concurrent requests show one prompt + pending badge; resolving advances queue', async () => {
     // Earlier "Remember-this-decision" test persisted a deny for
     // 127.0.0.1 geolocation. Clear it so this test gets a fresh prompt.

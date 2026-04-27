@@ -136,6 +136,39 @@ test.describe('Permissions Settings UI @desktop', () => {
     expect(stillThere).toBe(0);
   });
 
+  test('Phase 5 — rows are grouped by origin (sorted origin then permission)', async () => {
+    // Seed in deliberately scrambled order — the renderer should still
+    // group them by origin so the user sees example.com's two decisions
+    // adjacent to each other, then meet.example.com's.
+    await seedDecision('https://meet.example.com', 'media', true);
+    await seedDecision('https://example.com', 'midi', false);
+    await seedDecision('https://meet.example.com', 'geolocation', false);
+    await seedDecision('https://example.com', 'geolocation', true);
+
+    const settings = await openSettings();
+    await settings.locator('a.nav-item[data-section="permissions"]').click();
+
+    await settings.waitForFunction(
+      () => document.querySelectorAll('#section-permissions .item-card').length === 4,
+      undefined,
+      { timeout: 5000 },
+    );
+
+    // Read the visual order — each row's origin text in DOM order.
+    const origins = await settings.locator('#section-permissions .item-card').evaluateAll(
+      (rows) => rows.map((r) => {
+        const originEl = r.querySelector('div[style*="font-family"]');
+        return originEl?.textContent || '';
+      }),
+    );
+
+    // Both example.com rows must come first (alphabetical), and consecutively.
+    expect(origins[0]).toBe('https://example.com');
+    expect(origins[1]).toBe('https://example.com');
+    expect(origins[2]).toBe('https://meet.example.com');
+    expect(origins[3]).toBe('https://meet.example.com');
+  });
+
   test('Phase 5 — favicon img renders next to each decision row', async () => {
     await seedDecision('https://example.com', 'geolocation', false);
     await seedDecision('https://meet.example.com', 'media', true);

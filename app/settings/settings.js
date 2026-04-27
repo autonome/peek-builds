@@ -1217,12 +1217,21 @@ const renderPermissionsSettings = async () => {
 
   // Reusable refresh — called both on initial load and on every visit
   // to the section (so external mutations show up).
+  //
+  // Sorts the list by origin first, then by permission within origin —
+  // grouping every saved decision for a single site together makes the
+  // common case ("revoke everything I gave example.com") two clicks
+  // away instead of scattered through the list.
   const refresh = async () => {
     try {
       const res = await api.permissions.list();
       list.replaceChildren();
       if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-        for (const decision of res.data) list.appendChild(renderRow(decision));
+        const sorted = [...res.data].sort((a, b) => {
+          if (a.origin !== b.origin) return a.origin.localeCompare(b.origin);
+          return a.permission.localeCompare(b.permission);
+        });
+        for (const decision of sorted) list.appendChild(renderRow(decision));
         emptyMsg.style.display = 'none';
         clearAllBtn.style.display = '';
       } else {
