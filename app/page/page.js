@@ -2330,6 +2330,26 @@ function originForFavicon(origin) {
   }
 }
 
+// Visual scan helper — emoji glyph by permission type, shown next to the
+// label so the user can recognize at-a-glance which sense the page is
+// asking for. Falls back to a generic lock for unknown permissions.
+const PERMISSION_GLYPHS = {
+  geolocation: '\u{1F4CD}',          // 📍
+  media: '\u{1F3A4}',                // 🎤
+  midi: '\u{1F3B9}',                 // 🎹
+  midiSysex: '\u{1F3B9}',
+  'display-capture': '\u{1F4FA}',    // 📺
+  notifications: '\u{1F514}',        // 🔔
+  'clipboard-read': '\u{1F4CB}',     // 📋
+  'clipboard-sanitized-write': '\u{1F4CB}',
+  pointerLock: '\u{1F5B1}',          // 🖱️
+  fullscreen: '\u{2922}',            // ⤢
+  openExternal: '\u{1F517}',         // 🔗
+};
+function glyphFor(permission) {
+  return PERMISSION_GLYPHS[permission] || '\u{1F512}'; // 🔒 fallback
+}
+
 function renderActivePermissionPrompt() {
   // Removes any prior DOM and renders the head of the queue (if any).
   if (activePermissionPrompt) {
@@ -2379,7 +2399,10 @@ function renderActivePermissionPrompt() {
   text.appendChild(badge);
 
   text.appendChild(document.createElement('br'));
-  text.appendChild(document.createTextNode(`wants to ${req.label || req.permission}.`));
+  // Emoji glyph for the requested permission type — visual scan helper
+  // so the user can tell "this is geolocation" vs "this is camera/mic"
+  // at a glance.
+  text.appendChild(document.createTextNode(`wants to ${glyphFor(req.permission)} ${req.label || req.permission}.`));
   message.appendChild(text);
 
   // "Remember this decision" checkbox — when checked, the response includes

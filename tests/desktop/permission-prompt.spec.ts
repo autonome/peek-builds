@@ -74,6 +74,16 @@ test.describe('Permission Prompt @desktop', () => {
     if (app) await app.close();
   });
 
+  // Reset stored decisions between tests so each is hermetic — no test
+  // should depend on whether a previous test happened to run before it.
+  // (The Remember-this-decision test persists state that would otherwise
+  // auto-resolve geolocation prompts in subsequent tests.)
+  test.beforeEach(async () => {
+    await bgWindow.evaluate(async () => {
+      await (window as any).app.permissions.forgetAll();
+    });
+  });
+
   async function openPageHost(slug: string): Promise<Page> {
     const url = `http://127.0.0.1:${serverPort}/${slug}`;
     const result = await bgWindow.evaluate(async (u: string) => {
@@ -186,12 +196,8 @@ test.describe('Permission Prompt @desktop', () => {
   });
 
   test('Remember-this-decision (allow path): clicking Allow + checkbox persists, second request auto-allows', async () => {
-    // Symmetric to the Deny+Remember test above. Start clean — earlier
-    // tests may have stored a 127.0.0.1 deny.
-    await bgWindow.evaluate(async () => {
-      await (window as any).app.permissions.forgetAll();
-    });
-
+    // Symmetric to the Deny+Remember test above. (beforeEach has already
+    // cleared any stored decisions.)
     const first = await openPageHost('perm-allow-remember-1');
     const wv1 = await first.evaluateHandle(() => document.getElementById('content'));
     await first.evaluate((wv: any) => {
@@ -227,12 +233,6 @@ test.describe('Permission Prompt @desktop', () => {
   });
 
   test('Phase 5 — queueing: synthetic concurrent requests show one prompt + pending badge; resolving advances queue', async () => {
-    // Earlier "Remember-this-decision" test persisted a deny for
-    // 127.0.0.1 geolocation. Clear it so this test gets a fresh prompt.
-    await bgWindow.evaluate(async () => {
-      await (window as any).app.permissions.forgetAll();
-    });
-
     const pageWindow = await openPageHost('perm-queue');
     const myWindowId = await pageWindow.evaluate(async () => {
       const r = await (window as any).app.window.getWindowId();
@@ -303,11 +303,6 @@ test.describe('Permission Prompt @desktop', () => {
   });
 
   test('Phase 5 — favicon img renders with origin-derived src in the prompt', async () => {
-    // Same reason as above — clear any stored decisions so the prompt fires.
-    await bgWindow.evaluate(async () => {
-      await (window as any).app.permissions.forgetAll();
-    });
-
     const pageWindow = await openPageHost('perm-favicon');
     const webview = await pageWindow.evaluateHandle(() => document.getElementById('content'));
     await pageWindow.evaluate((wv: any) => {

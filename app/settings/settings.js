@@ -1108,6 +1108,23 @@ const renderPermissionsSettings = async () => {
     openExternal: 'Open external apps',
   };
 
+  // Visual scan helper — emoji glyph by permission type. Same set as the
+  // page-host prompt overlay (app/page/page.js PERMISSION_GLYPHS) so the
+  // visual identity is consistent across both surfaces.
+  const PERMISSION_GLYPHS = {
+    geolocation: '\u{1F4CD}',          // 📍
+    media: '\u{1F3A4}',                // 🎤
+    midi: '\u{1F3B9}',                 // 🎹
+    midiSysex: '\u{1F3B9}',
+    'display-capture': '\u{1F4FA}',    // 📺
+    notifications: '\u{1F514}',        // 🔔
+    'clipboard-read': '\u{1F4CB}',     // 📋
+    'clipboard-sanitized-write': '\u{1F4CB}',
+    pointerLock: '\u{1F5B1}',          // 🖱️
+    fullscreen: '\u{2922}',            // ⤢
+    openExternal: '\u{1F517}',         // 🔗
+  };
+
   // Globe-emoji SVG fallback used when the favicon service is unreachable
   // for an origin (offline, blocked, weird URL). Same data-URI used in the
   // page-host prompt + cards.
@@ -1153,9 +1170,10 @@ const renderPermissionsSettings = async () => {
     meta.className = 'help-text';
     meta.style.fontSize = '12px';
     const label = PERMISSION_LABELS[decision.permission] || decision.permission;
+    const glyph = PERMISSION_GLYPHS[decision.permission] || '\u{1F512}';
     const verdict = decision.allowed ? 'Allowed' : 'Denied';
     const when = decision.timestamp ? new Date(decision.timestamp).toLocaleString() : '';
-    meta.textContent = `${label} · ${verdict}${when ? ' · ' + when : ''}`;
+    meta.textContent = `${glyph} ${label} · ${verdict}${when ? ' · ' + when : ''}`;
     textCol.appendChild(meta);
     left.appendChild(textCol);
 
