@@ -15,6 +15,10 @@ Newly done items go here, grouped under level-2 headings by week (date = Monday 
 
 ## 2026-04-20
 
+Desktop - thumbnail close-race fix
+- [x] Fix `TypeError: Object has been destroyed at Timeout._onTimeout` from `backend/electron/ipc.ts` thumbnail capture sites. Three `setTimeout` bodies (lines 1338, 1542, 1797) called `captureThumbnail(win.webContents,…)` 1.5s after `did-stop-loading`; if the window or its webContents was destroyed in that window (e.g. user closed a peek immediately), accessing `win.webContents` threw an unhandled exception in main. Now each setTimeout body bails out via `isDestroyed()` first.
+- [x] New `tests/desktop/window-thumbnail-close-race.spec.ts` opens a non-canvas web window and closes it inside the 1.5s thumbnail debounce.
+
 Desktop - per-feature Settings options accordion
 - [x] Fix Settings → Features Options accordion never rendering: `refreshFeaturesList` built each feature's `manifest` object without a `schemas` field (the registry's flat entry shape doesn't carry it), so the accordion gate `manifest.schemas && (manifest.schemas.prefs || manifest.schemas.item)` was always false. Now fetches each feature's settings-schema JSON in parallel via `api.features.settingsSchema(id)` and populates `manifest.{schemas,storageKeys,defaults}` from it.
 - [x] Fix per-item card expand/collapse arrows missing inside the Options accordion (Peeks/Slides item cards rendered without ▶/▼). The `.item-card.no-collapse .item-card-title::before { content: none }` rule was a descendant selector — it cascaded into nested per-item card titles. Scoped to direct-child via `.item-card.no-collapse > .item-card-header .item-card-title::before`.

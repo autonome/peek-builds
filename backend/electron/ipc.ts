@@ -1334,6 +1334,7 @@ export function registerWindowHandlers(): void {
             const guestUrl = guestWebContents.getURL();
             if (guestUrl && (guestUrl.startsWith('http://') || guestUrl.startsWith('https://'))) {
               setTimeout(() => {
+                if (guestWebContents.isDestroyed()) return;
                 captureThumbnail(guestWebContents, guestUrl).then((hash) => {
                   if (hash) {
                     try { updateItemThumbnail(guestUrl, hash); } catch (e) {
@@ -1538,6 +1539,7 @@ export function registerWindowHandlers(): void {
             const guestUrl = guestWebContents.getURL();
             if (guestUrl && (guestUrl.startsWith('http://') || guestUrl.startsWith('https://'))) {
               setTimeout(() => {
+                if (guestWebContents.isDestroyed()) return;
                 captureThumbnail(guestWebContents, guestUrl).then((hash) => {
                   if (hash) {
                     try { updateItemThumbnail(guestUrl, hash); } catch (e) {
@@ -1792,6 +1794,9 @@ export function registerWindowHandlers(): void {
           const pageUrl = win.webContents.getURL() || url;
           if (pageUrl && (pageUrl.startsWith('http://') || pageUrl.startsWith('https://'))) {
             setTimeout(() => {
+              // Window may have been closed during the 1.5s delay
+              // (e.g. user closed a peek immediately after open).
+              if (win.isDestroyed() || win.webContents.isDestroyed()) return;
               captureThumbnail(win.webContents, pageUrl).then((hash) => {
                 if (hash) {
                   try { updateItemThumbnail(pageUrl, hash); } catch (e) {
