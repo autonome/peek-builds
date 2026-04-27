@@ -14,6 +14,7 @@ const GLOBE_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
 const TYPE_ICONS = {
   url:     GLOBE_FAVICON,
   text:    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4DD}</text></svg>',
+  tag:     'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">#</text></svg>',
   tagset:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F3F7}\uFE0F</text></svg>',
   image:   'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F5BC}\uFE0F</text></svg>',
   entity:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F48E}</text></svg>',
@@ -236,6 +237,11 @@ export const getItemDisplayInfo = (item, opts = {}) => {
       title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
       subtitle = noteUrl || '';
       faviconUrl = TYPE_ICONS.text;
+    } else if (itemType === 'tag') {
+      title = item.title || item.name || 'Tag';
+      const freq = item.frequency || 0;
+      subtitle = `Tag${freq ? ` (used ${freq}×)` : ''}`;
+      faviconUrl = TYPE_ICONS.tag;
     } else if (itemType === 'tagset') {
       title = 'Tag Set';
       subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';

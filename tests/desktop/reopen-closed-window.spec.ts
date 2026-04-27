@@ -245,6 +245,81 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     }
   });
 
+  test('reopened window has same webview screenBounds as original (regression: width/height growth)', async () => {
+    // User-reported regression: closing a web-page window and using
+    // cmd+shift+T to undo-close brings it back "wayyy wider". Root cause:
+    // the close handler subtracted only the fixed canvas chrome from the
+    // OS window bounds, so any side-panel extraWidth (entities/notes/…)
+    // stayed in the saved width. On reopen that inflated value became the
+    // WEBVIEW size, then panels expanded the window again — each cycle
+    // compounded. The page-host URL params (x/y/width/height) hold the
+    // canonical webview screenBounds and must round-trip exactly.
+
+    const url = `http://127.0.0.1:${serverPort}/bounds-roundtrip`;
+    const explicitW = 720;
+    const explicitH = 540;
+
+    // Open with explicit width/height (passed through to api.window.open).
+    const openResult = await bgWindow.evaluate(async (args: { u: string; w: number; h: number }) => {
+      return await (window as any).app.window.open(args.u, { width: args.w, height: args.h });
+    }, { u: url, w: explicitW, h: explicitH });
+    expect(openResult.success).toBe(true);
+    const id = openResult.id as number;
+
+    await findWindowWithUrl('bounds-roundtrip');
+
+    // Read page-host URL params — the authoritative webview screenBounds.
+    const originalParams = (await app.evaluateMain!((() => {
+      return (globalThis as any).__peek_test.getHostUrlParamsByUrl('bounds-roundtrip');
+    }) as any)) as { x: number; y: number; width: number; height: number } | null;
+    expect(originalParams).not.toBeNull();
+    expect(originalParams!.width).toBe(explicitW);
+    expect(originalParams!.height).toBe(explicitH);
+
+    // Subscribe to window:removed BEFORE closing for a deterministic gate.
+    await bgWindow.evaluate((closingId: number) => {
+      (window as any).__roundtripRemoved = new Promise<void>((resolve) => {
+        const handler = (msg: { id?: number }) => {
+          if (msg?.id === closingId) {
+            try { (window as any).app.pubsub.unsubscribe('window:removed', handler); } catch {}
+            resolve();
+          }
+        };
+        (window as any).app.pubsub.subscribe('window:removed', handler);
+      });
+    }, id);
+
+    await closeWindowById(id);
+    await bgWindow.evaluate(() => (window as any).__roundtripRemoved);
+
+    // Reopen via the shortcut — same code path the user hits with cmd+shift+T.
+    const reopenResult = await reopenViaShortcut();
+    expect(reopenResult.success).toBe(true);
+    expect(reopenResult.url).toContain('bounds-roundtrip');
+
+    const reopened = await findWindowWithUrl('bounds-roundtrip', 8000);
+    expect(reopened).toBeTruthy();
+
+    const reopenedParams = (await app.evaluateMain!((() => {
+      return (globalThis as any).__peek_test.getHostUrlParamsByUrl('bounds-roundtrip');
+    }) as any)) as { x: number; y: number; width: number; height: number } | null;
+    expect(reopenedParams).not.toBeNull();
+
+    expect(reopenedParams!.width,
+      `width drift: original=${originalParams!.width} reopened=${reopenedParams!.width}`).toBe(originalParams!.width);
+    expect(reopenedParams!.height,
+      `height drift: original=${originalParams!.height} reopened=${reopenedParams!.height}`).toBe(originalParams!.height);
+
+    // Cleanup.
+    const reopenedId = await bgWindow.evaluate(async (u: string) => {
+      const r = await (window as any).app.window.list({ includeInternal: false });
+      if (!r.success) return null;
+      const w = r.windows.find((win: any) => win.url?.includes(u));
+      return w?.id ?? null;
+    }, 'bounds-roundtrip') as number | null;
+    if (reopenedId != null) await closeWindowById(reopenedId);
+  });
+
   test('hide-then-close keepLive tile: stack does NOT lose the most recent real close', async () => {
     // A workspace tile that is `keepLive: true` is hidden (not closed)
     // when you cmd+W it. If the most-recently-pushed entry was a real

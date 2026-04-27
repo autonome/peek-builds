@@ -125,9 +125,10 @@ function sanitizeParams(params: Record<string, unknown>): Record<string, unknown
  * MUST be synchronous — runs in the before-quit handler before closeDatabase().
  * Uses better-sqlite3 synchronous APIs via getDb().
  */
-export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { cleanShutdown?: boolean }): void {
-  // Skip save in test environments
-  if (isTestProfile()) return;
+export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { cleanShutdown?: boolean; _forceForTest?: boolean }): void {
+  // Skip save in test environments unless _forceForTest is set (used by
+  // session-restore Playwright specs that drive save+restore directly).
+  if (isTestProfile() && !opts?._forceForTest) return;
 
   DEBUG && console.log(`[session] Saving session snapshot (reason: ${reason})`);
 
@@ -158,8 +159,10 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       continue;
     }
 
-    // Skip invisible windows
-    if (!win.isVisible()) {
+    // Skip invisible windows (test override skips this check so headless
+    // page-hosts — which Electron reports as not visible — can still be
+    // saved + restored by the session-restore Playwright spec).
+    if (!win.isVisible() && !opts?._forceForTest) {
       continue;
     }
 
@@ -201,7 +204,18 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     const canvasBounds = extractCanvasBounds(url);
     const windowBounds = canvasBounds || win.getBounds();
 
-    console.log(`[session:save] Window ${id} "${win.getTitle()}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasBounds ? " [canvas]" : ""} url=${realUrl.substring(0, 80)}`);
+    // Detect the page-host's maximized state from its URL param so restore
+    // can re-enter MAXIMIZED on the page-host FSM rather than booting NORMAL
+    // and leaving body class / handle visibility / URL param out of sync
+    // (see docs/page-host-state-machine.md).
+    let canvasMaximized = false;
+    if (url.startsWith('peek://app/page')) {
+      try {
+        canvasMaximized = new URL(url).searchParams.get('maximized') === '1';
+      } catch { /* unparseable; treat as not maximized */ }
+    }
+
+    console.log(`[session:save] Window ${id} "${win.getTitle()}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasBounds ? " [canvas]" : ""}${canvasMaximized ? " [maximized]" : ""} url=${realUrl.substring(0, 80)}`);
 
     // Capture context state for this window
     let windowContext: WindowContext | undefined;
@@ -217,13 +231,18 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       // Context not available, skip
     }
 
+    const sanitized = sanitizeParams(winData.params);
+    if (canvasMaximized) {
+      sanitized.maximized = true;
+    }
+
     windowDescriptors.push({
       url: realUrl,
       key: (winData.params.key as string) || undefined,
       title: win.getTitle(),
       bounds: windowBounds,
       source: winData.source,
-      params: sanitizeParams(winData.params),
+      params: sanitized,
       zOrder: zOrderMap.get(id) ?? 0,
       focused: win.isFocused(),
       context: windowContext,
@@ -503,12 +522,14 @@ export function readSessionCrashState(): { cleanShutdown: boolean; crashCount: n
 
 export async function restoreSessionSnapshot(
   prefs: Record<string, unknown>,
-  crashState?: { cleanShutdown: boolean; crashCount: number }
+  crashState?: { cleanShutdown: boolean; crashCount: number },
+  _forceForTest?: boolean,
 ): Promise<{ restored: number; failed: number; total: number }> {
   const result = { restored: 0, failed: 0, total: 0 };
 
-  // Skip restore in test environments
-  if (isTestProfile()) {
+  // Skip restore in test environments unless _forceForTest is set (used by
+  // session-restore Playwright specs that drive save+restore directly).
+  if (isTestProfile() && !_forceForTest) {
     DEBUG && console.log('[session] Skipping session restore in test profile');
     return result;
   }

@@ -20,6 +20,7 @@ const GLOBE_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
 const TYPE_ICONS = {
   url:     GLOBE_FAVICON,
   text:    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4DD}</text></svg>',
+  tag:     'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">#</text></svg>',
   tagset:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F3F7}\uFE0F</text></svg>',
   image:   'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F5BC}\uFE0F</text></svg>',
   entity:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F48E}</text></svg>',
@@ -92,6 +93,11 @@ const getItemDisplayInfo = (item, opts = {}) => {
       title = item.title || (item.content || '').substring(0, 100) + ((item.content || '').length > 100 ? '...' : '');
       subtitle = noteUrl || '';
       faviconUrl = TYPE_ICONS.text;
+    } else if (itemType === 'tag') {
+      title = item.title || item.name || 'Tag';
+      const freq = item.frequency || 0;
+      subtitle = `Tag${freq ? ` (used ${freq}×)` : ''}`;
+      faviconUrl = TYPE_ICONS.tag;
     } else if (itemType === 'tagset') {
       title = 'Tag Set';
       subtitle = tags.length > 0 ? tags.map(t => t.name).join(', ') : 'Empty tagset';
@@ -334,6 +340,21 @@ describe('getItemDisplayInfo title extraction', () => {
     const item = { type: 'url' };
     const info = getItemDisplayInfo(item);
     assert.equal(info.title, '(untitled)');
+  });
+
+  it('tag items show their name as title and frequency in subtitle', () => {
+    const item = { type: 'tag', title: 'mytag', frequency: 5 };
+    const info = getItemDisplayInfo(item);
+    assert.equal(info.title, 'mytag');
+    assert.equal(info.subtitle, 'Tag (used 5×)');
+    assert.equal(info.faviconUrl, TYPE_ICONS.tag);
+  });
+
+  it('tag items omit frequency when zero', () => {
+    const item = { type: 'tag', title: 'newtag' };
+    const info = getItemDisplayInfo(item);
+    assert.equal(info.title, 'newtag');
+    assert.equal(info.subtitle, 'Tag');
   });
 
   it('tagset subtitle shows tag names', () => {

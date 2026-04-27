@@ -379,7 +379,10 @@ const createResultElement = (item, query, index) => {
         height: 768
       });
     },
-    onDelete: async (item) => {
+    // Tags are not deletable from a result row — the row represents a
+    // tag *definition*, not an item; deleting it has cascade implications
+    // and belongs in a dedicated tag manager UI.
+    onDelete: item.type === 'tag' ? undefined : async (item) => {
       if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
       await api.datastore.deleteItem(item.id);
       api.pubsub.publish('item:deleted', { id: item.id });

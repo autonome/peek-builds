@@ -175,4 +175,54 @@ test.describe('Page Host Load Failure @desktop', () => {
       await closeWindow(sharedBgWindow, windowId);
     }
   });
+
+  test('Re-opening a previously-failed URL still shows the overlay (session-restore parity)', async () => {
+    // User-reported regression: closing the app while a tab is on a failed
+    // URL, then restarting, leaves the restored tab stuck on a blank page
+    // with the loading glow permanently on. Session restore re-opens the
+    // page-host pointing at the same URL — same code path as the user
+    // hitting the URL again. This test simulates that by opening a new
+    // page-host on a known-failed URL after closing the previous one.
+    const badUrl = 'http://nonexistent-host-restoresim.invalid/';
+
+    // First open — confirm the overlay shows.
+    const first = await openCanvasPage(sharedBgWindow, badUrl);
+    await waitForErrorOverlay(first.pageWindow);
+
+    // Arm a `window:removed` subscription BEFORE closing — this event is
+    // published in main.ts AFTER `windowRegistry.delete`, so it's the
+    // authoritative signal that the window is fully gone (and openWindow's
+    // dedup-by-URL can no longer match the previous instance).
+    await sharedBgWindow.evaluate((id: number) => {
+      (window as any).__windowRemoved = new Promise<void>((resolve) => {
+        const handler = (msg: { id?: number }) => {
+          if (msg?.id === id) {
+            try { (window as any).app.pubsub.unsubscribe('window:removed', handler); } catch {}
+            resolve();
+          }
+        };
+        (window as any).app.pubsub.subscribe('window:removed', handler);
+      });
+    }, first.windowId);
+
+    await closeWindow(sharedBgWindow, first.windowId);
+
+    // Resolves when window:removed for first.windowId fires — no polling.
+    await sharedBgWindow.evaluate(() => (window as any).__windowRemoved);
+
+    // Second open — same URL, fresh page-host. The overlay must show again
+    // and the loading glow must NOT be stuck on.
+    const second = await openCanvasPage(sharedBgWindow, badUrl);
+    try {
+      await waitForErrorOverlay(second.pageWindow, 20000);
+      // After the overlay shows, the webview must not be in 'loading' state.
+      const stuckOnLoading = await second.pageWindow.evaluate(() => {
+        const webview = document.getElementById('content');
+        return !!(webview && webview.classList.contains('loading'));
+      });
+      expect(stuckOnLoading).toBe(false);
+    } finally {
+      await closeWindow(sharedBgWindow, second.windowId);
+    }
+  });
 });

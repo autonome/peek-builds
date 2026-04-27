@@ -426,6 +426,9 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
   if (entry.scrollX != null) options.scrollX = entry.scrollX;
   if (entry.scrollY != null) options.scrollY = entry.scrollY;
 
+  // Restore maximize state so the page-host FSM boots into MAXIMIZED.
+  if (entry.maximized) options.maximized = true;
+
   // Publish event for the background window to pick up and open
   publish(getSystemAddress(), 'window:reopen-request', {
     url: entry.url,
@@ -794,17 +797,34 @@ export function registerWindowHandlers(): void {
         winOptions.y = wa.y + Math.round((wa.height - winH) / 2);
       }
 
-      // winOptions.x/y/width/height are currently the webview screen coordinates
-      canvasWebviewBounds = {
-        x: winOptions.x as number,
-        y: winOptions.y as number,
-        width: winOptions.width as number,
-        height: winOptions.height as number,
-      };
-      winOptions.x = canvasWebviewBounds.x - CANVAS_MARGIN;
-      winOptions.y = canvasWebviewBounds.y - CANVAS_TRIGGER_ZONE - CANVAS_NAVBAR_HEIGHT;
-      winOptions.width = canvasWebviewBounds.width + CANVAS_MARGIN * 2;
-      winOptions.height = canvasWebviewBounds.height + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN + CANVAS_NAVBAR_HEIGHT;
+      // Maximize hint: the saved bounds for a maximized window are the OS
+      // window bounds (= work area), NOT the webview bounds — re-adding
+      // canvas margins would push the window past the work area edge.
+      // Snap directly to the active display's work area instead. The
+      // page-host FSM will boot into MAXIMIZED via INIT_COMPLETE
+      // (maximized=1 also propagates to pageParams below).
+      // See docs/page-host-state-machine.md.
+      if (options.maximized === true) {
+        const display = screen.getDisplayNearestPoint({ x: winOptions.x as number, y: winOptions.y as number });
+        const wa = display.workArea;
+        canvasWebviewBounds = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
+        winOptions.x = wa.x;
+        winOptions.y = wa.y;
+        winOptions.width = wa.width;
+        winOptions.height = wa.height;
+      } else {
+        // winOptions.x/y/width/height are currently the webview screen coordinates
+        canvasWebviewBounds = {
+          x: winOptions.x as number,
+          y: winOptions.y as number,
+          width: winOptions.width as number,
+          height: winOptions.height as number,
+        };
+        winOptions.x = canvasWebviewBounds.x - CANVAS_MARGIN;
+        winOptions.y = canvasWebviewBounds.y - CANVAS_TRIGGER_ZONE - CANVAS_NAVBAR_HEIGHT;
+        winOptions.width = canvasWebviewBounds.width + CANVAS_MARGIN * 2;
+        winOptions.height = canvasWebviewBounds.height + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN + CANVAS_NAVBAR_HEIGHT;
+      }
     }
 
     DEBUG && console.log('Creating window with options:', winOptions);
@@ -963,6 +983,11 @@ export function registerWindowHandlers(): void {
         // Pass scroll position for undo-close-window restoration
         if (options.scrollX != null) pageParams.set('scrollX', String(options.scrollX));
         if (options.scrollY != null) pageParams.set('scrollY', String(options.scrollY));
+        // Propagate the maximize hint so the page-host FSM can boot directly
+        // into MAXIMIZED — without this, session restore (and undo-close)
+        // would lose the body class / handles / URL param sync.
+        // See docs/page-host-state-machine.md.
+        if (options.maximized === true) pageParams.set('maximized', '1');
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
 

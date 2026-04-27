@@ -136,6 +136,31 @@ const DEBUG = !!process.env.DEBUG;
   reopenLastClosedWindow,
   getClosedWindowStack,
   getClosedWindowCount,
+  /** Force-save current session snapshot (bypasses test-profile + isVisible guards). */
+  forceSaveSession: () => saveSessionSnapshot('manual', { _forceForTest: true }),
+  /** Force-restore session snapshot (bypasses test-profile guard). */
+  forceRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true),
+  /** Returns the page-host URL-param bounds (the canonical webview screenBounds). */
+  getHostUrlParamsByUrl: (urlSubstr: string) => {
+    let last: { x: number; y: number; width: number; height: number } | null = null;
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (w.isDestroyed()) continue;
+      try {
+        const u = w.webContents.getURL();
+        if (!u.includes(urlSubstr)) continue;
+        if (!u.startsWith('peek://app/page/')) continue;
+        const parsed = new URL(u);
+        const x = parseInt(parsed.searchParams.get('x') || '');
+        const y = parseInt(parsed.searchParams.get('y') || '');
+        const width = parseInt(parsed.searchParams.get('width') || '');
+        const height = parseInt(parsed.searchParams.get('height') || '');
+        if ([x, y, width, height].every(Number.isFinite)) {
+          last = { x, y, width, height };
+        }
+      } catch { /* ignore */ }
+    }
+    return last;
+  },
 };
 (globalThis as any).__peek_electron = { globalShortcut };
 

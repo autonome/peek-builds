@@ -20,6 +20,10 @@
 import api from '../api.js';
 import { createPageWidgetHost } from './page-widgets.js';
 import { PageNotesPane } from './page-notes.js';
+import {
+  STATES as FSM_STATES, EVENTS as FSM_EVENTS, EFFECTS as FSM_EFFECTS,
+  INITIAL_STATE as FSM_INITIAL_STATE, transition as fsmTransition,
+} from './page-fsm.js';
 
 console.log('[page] Script loaded');
 
@@ -120,6 +124,11 @@ const initialWidth = parseInt(params.get('width')) || 800;
 const initialHeight = parseInt(params.get('height')) || 600;
 const restoreScrollX = parseInt(params.get('scrollX')) || 0;
 const restoreScrollY = parseInt(params.get('scrollY')) || 0;
+// Restored-from-session / undo-close hint. When true, the BrowserWindow
+// is already sized to the work area and screenBounds (= initial*) reflect
+// the maximized layout — so the page-host FSM boots straight into
+// MAXIMIZED via INIT_COMPLETE without needing to call setBounds.
+const initialMaximized = params.get('maximized') === '1';
 
 if (!targetUrl) {
   console.error('[page] No URL provided');
@@ -140,6 +149,10 @@ let screenBounds = {
 };
 
 // --- Maximize state ---
+// `isMaximized` is the legacy boolean read by drag/resize/etc. It mirrors
+// the FSM's MAXIMIZED state. New code should query `fsmState` directly.
+// See docs/page-host-state-machine.md for the rollout plan.
+let fsmState = FSM_INITIAL_STATE;
 let isMaximized = false;
 let preMaximizeBounds = null; // { x, y, width, height } screen bounds before maximize
 // Raw WINDOW bounds captured before maximize (used to restore to the exact same
@@ -147,6 +160,46 @@ let preMaximizeBounds = null; // { x, y, width, height } screen bounds before ma
 // how the window was originally sized — e.g., in headless test mode where the
 // canvas margin adjustment in ipc.ts window-open is skipped).
 let preMaximizeWindowBounds = null;
+
+// Apply FSM effects to the DOM. Today the FSM owns init transitions only;
+// toggleMaximize still mutates state directly (and dispatches to the FSM
+// to keep `fsmState` in sync). Future PRs will route every transition
+// through here.
+function applyFsmEffect(effect) {
+  switch (effect.type) {
+    case FSM_EFFECTS.SET_BODY_MAXIMIZED:
+      if (effect.value) document.body.classList.add('maximized');
+      else document.body.classList.remove('maximized');
+      isMaximized = effect.value;
+      return;
+    case FSM_EFFECTS.SET_HANDLES_VISIBLE:
+      // No DOM write — handle visibility is set by updatePositions() based
+      // on isMaximized. Run updatePositions to apply.
+      updatePositions();
+      return;
+    case FSM_EFFECTS.SET_URL_MAXIMIZED:
+      // updateUrlParams() already reflects isMaximized, so just call it.
+      updateUrlParams();
+      return;
+    case FSM_EFFECTS.CAPTURE_PRE_MAXIMIZE:
+    case FSM_EFFECTS.RESTORE_PRE_MAXIMIZE:
+    case FSM_EFFECTS.ENTER_MAXIMIZED_LAYOUT:
+      // toggleMaximize handles these directly today; the FSM emits them
+      // for future migration. Ignore for now.
+      return;
+    default:
+      console.warn('[page-fsm] Unknown effect:', effect);
+  }
+}
+
+function dispatchFsm(event) {
+  const next = fsmTransition(fsmState, event);
+  if (next.warning) {
+    console.warn('[page-fsm]', next.warning, '(state:', fsmState, ', event:', event, ')');
+  }
+  fsmState = next.state;
+  for (const eff of next.effects) applyFsmEffect(eff);
+}
 
 // NOTE: The window always includes navbar space (NAVBAR_HEIGHT) to avoid
 // visual jumps on show/hide. Navbar visibility is CSS-only — no window resize.
@@ -262,6 +315,15 @@ function updateUrlParams() {
     url.searchParams.set('y', String(Math.round(screenBounds.y)));
     url.searchParams.set('width', String(Math.round(screenBounds.width)));
     url.searchParams.set('height', String(Math.round(screenBounds.height)));
+    // Carry the maximized flag so undo-close (main.ts) can fall back to the
+    // raw OS window bounds — when maximized, screenBounds equals the work
+    // area (window == webview) and re-adding canvas margins on reopen would
+    // overshoot the display.
+    if (isMaximized) {
+      url.searchParams.set('maximized', '1');
+    } else {
+      url.searchParams.delete('maximized');
+    }
     history.replaceState(null, '', url.toString());
   } catch (e) {
     DEBUG && console.log('[page] Failed to update URL params:', e);
@@ -546,6 +608,8 @@ async function toggleMaximize() {
       }
       centerColumn.style.opacity = '1';
       updateUrlParams();
+      // Sync FSM (effects are idempotent against state we already mutated).
+      dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
       return;
     }
 
@@ -596,6 +660,8 @@ async function toggleMaximize() {
     await api.window.setBounds(computeWindowBounds(screenBounds));
     centerColumn.style.opacity = '1';
     updateUrlParams();
+    // Sync FSM (effects are idempotent against state we already mutated).
+    dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
   } catch (err) {
     console.error('[page] toggleMaximize failed:', err);
   }
@@ -634,6 +700,15 @@ function setWindowPadding(width) {
 
 // Initial positioning
 updatePositions();
+
+// FSM init. Dispatch AFTER updatePositions so the runtime adapter's
+// effects (which themselves call updatePositions/updateUrlParams) run
+// against an initialized DOM. If `maximized=1` came in via URL params
+// (session restore or undo-close), this transitions the FSM straight
+// into MAXIMIZED — body class on, handles hidden, URL param preserved
+// — without needing to call setBounds (the BrowserWindow already came
+// in sized to the work area). See docs/page-host-state-machine.md.
+dispatchFsm({ type: FSM_EVENTS.INIT_COMPLETE, maximized: initialMaximized });
 
 // --- Set up webview partition and load URL ---
 
@@ -811,6 +886,16 @@ webview.addEventListener('did-start-navigation', (e) => {
   // B fails → webview shows A again → meta refresh fires again → infinite loop.
   if (lastFailedNavUrl && e.url === lastFailedNavUrl) {
     console.log('[page] Skipping loading for previously failed URL:', e.url);
+    return;
+  }
+  // After a load failure, Chromium auto-navigates to its internal
+  // chrome-error://chromewebdata/ page. Without this guard, did-start-navigation
+  // re-arms loadingLifecycle, the chrome-error page loads silently (no
+  // matching did-finish-load that we listen for in some cold-start scenarios,
+  // notably session restore of a previously-failed URL), and the navbar
+  // glow stays on forever while the user stares at a blank page.
+  if (e.url && e.url.startsWith('chrome-error://')) {
+    console.log('[page] Skipping loading state for chrome-error navigation:', e.url);
     return;
   }
   // Clear the failed URL tracker on any new (different) navigation
@@ -1947,8 +2032,10 @@ webview.addEventListener('did-fail-load', (e) => {
     //
     // Fix: only clear loading if the aborted URL is still the latest navigation.
     // If a newer navigation has started (redirect target), let it keep loading.
-    if (latestNavigationUrl && e.url !== latestNavigationUrl) {
-      console.log('[page] Load aborted (error -3) for', e.url, '— redirect in progress to', latestNavigationUrl, ', keeping loading state');
+    // (Webview did-fail-load uses `validatedURL`; `e.url` is undefined.)
+    const abortedUrl = e.validatedURL || e.url || '';
+    if (latestNavigationUrl && abortedUrl && abortedUrl !== latestNavigationUrl) {
+      console.log('[page] Load aborted (error -3) for', abortedUrl, '— redirect in progress to', latestNavigationUrl, ', keeping loading state');
       return;
     }
     console.log('[page] Load aborted (error -3), clearing loading state');

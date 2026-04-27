@@ -99,6 +99,7 @@ export interface ClosedWindowEntry {
   role?: string;         // Window role (workspace, content, etc.) — needed to restore peek:// windows correctly
   scrollX?: number;      // Scroll position at time of close
   scrollY?: number;
+  maximized?: boolean;   // Page-host was maximized at close — restore directly into MAXIMIZED on reopen
   timestamp: number;
 }
 
@@ -382,12 +383,18 @@ export async function initialize(): Promise<void> {
   app.on('browser-window-created', (_, window) => {
     const windowId = window.id;
 
-    // Capture window bounds before the window is destroyed (for reopen-last-closed)
+    // Capture window bounds + page-host URL before the window is destroyed
+    // (for reopen-last-closed). The page-host keeps URL params in sync with
+    // its true webview screenBounds (see app/page/page.js updateUrlParams) —
+    // those are the authoritative size for the next open, since window
+    // bounds also include side-panel extraWidth (entities/notes/etc).
     let lastBounds: { x: number; y: number; width: number; height: number } | null = null;
+    let lastHostUrl: string | null = null;
     window.on('close', () => {
       try {
         if (!window.isDestroyed()) {
           lastBounds = window.getBounds();
+          lastHostUrl = window.webContents.getURL();
         }
       } catch {
         // Ignore errors during shutdown
@@ -523,10 +530,42 @@ export async function initialize(): Promise<void> {
                 // Context may be cleaned up already during shutdown
               }
 
-              // For canvas pages, convert window bounds back to webview bounds
-              // (window-open will re-add canvas margins when reopening)
+              // For canvas pages, the page-host URL params are the authoritative
+              // webview screen bounds — they exclude side-panel extraWidth (which
+              // varies with whether entities/notes/etc are open). Falling back to
+              // window-bounds-minus-fixed-margins inflated saveBounds whenever a
+              // panel was open, so reopen produced a wider window each cycle.
+              //
+              // Exception: when the page-host is in maximized mode, screenBounds
+              // equals the display work area (window == webview, no canvas chrome
+              // applied) — using URL params here would cause reopen's canvas
+              // margin add to overshoot the display. Fall back to fixed-margin
+              // subtraction in that case so the round-trip is exact.
               let saveBounds = lastBounds;
-              if (lastBounds && isWebUrl) {
+              let saveMaximized = false;
+              if (isWebUrl && lastHostUrl && lastHostUrl.startsWith('peek://app/page/')) {
+                try {
+                  const parsed = new URL(lastHostUrl);
+                  saveMaximized = parsed.searchParams.get('maximized') === '1';
+                  if (!saveMaximized) {
+                    const px = parseInt(parsed.searchParams.get('x') || '');
+                    const py = parseInt(parsed.searchParams.get('y') || '');
+                    const pw = parseInt(parsed.searchParams.get('width') || '');
+                    const ph = parseInt(parsed.searchParams.get('height') || '');
+                    if (Number.isFinite(px) && Number.isFinite(py) && Number.isFinite(pw) && Number.isFinite(ph)) {
+                      saveBounds = { x: px, y: py, width: pw, height: ph };
+                    }
+                  }
+                } catch {
+                  // URL parse failed — fall through to bounds fallback below
+                }
+              }
+              // Fallback when no URL params (non-canvas, or page-host hadn't
+              // updated params yet, or the window was maximized): subtract the
+              // fixed canvas chrome from window bounds. Note: still over-counts
+              // when panels were open in non-maximized mode, but only reached
+              // when URL params are unavailable or unreliable.
+              if (saveBounds === lastBounds && lastBounds && isWebUrl) {
                 const CANVAS_MARGIN = 8;
                 const CANVAS_TRIGGER_ZONE = 8;
                 const CANVAS_NAVBAR_HEIGHT = 36;
@@ -552,6 +591,7 @@ export async function initialize(): Promise<void> {
                 role: role || undefined,
                 scrollX: scrollX || undefined,
                 scrollY: scrollY || undefined,
+                maximized: saveMaximized || undefined,
                 timestamp: Date.now(),
               });
             }
@@ -559,10 +599,25 @@ export async function initialize(): Promise<void> {
         }
 
         windowRegistry.delete(windowId);
+        // Post-delete event — the deterministic "the window is fully gone
+        // from the registry" signal. Distinct from `window:closed`, which
+        // fires earlier (before pushClosedWindow + delete) and so isn't a
+        // safe gate for "you can now re-open the same URL without dedup
+        // matching the previous instance".
+        try {
+          publish('system', 'window:removed', { id: windowId });
+        } catch (publishErr) {
+          DEBUG && console.error('[lifecycle] window:removed publish failed:', publishErr);
+        }
       } catch (err) {
         // During shutdown, errors here must not prevent the quit sequence
         DEBUG && console.error('[lifecycle] Error in window closed handler:', err);
         windowRegistry.delete(windowId);
+        try {
+          publish('system', 'window:removed', { id: windowId });
+        } catch {
+          // already in error path; suppress
+        }
       }
     });
 
