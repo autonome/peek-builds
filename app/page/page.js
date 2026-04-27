@@ -1836,6 +1836,12 @@ webview.addEventListener('did-navigate', async (e) => {
     navbar.setUrl(e.url);
     updateState();
 
+    // Clear the load-error overlay when we successfully navigate to any
+    // real URL (not Chromium's internal chrome-error:// page).
+    if (e.url && !e.url.startsWith('chrome-error://')) {
+      clearLoadErrorOverlay();
+    }
+
     // Update OAuth state (Level 2)
     const wasOAuth = isOnOAuthPage;
     isOnOAuthPage = isOAuthUrl(e.url);
@@ -1861,6 +1867,71 @@ webview.addEventListener('did-navigate-in-page', (e) => {
   }
 });
 
+function clearLoadErrorOverlay() {
+  const existing = document.querySelector('.load-error-overlay');
+  if (existing) existing.remove();
+}
+
+function showLoadErrorOverlay(failedUrl, errorCode, errorDescription) {
+  // Chromium fires a second did-fail-load for its internal error page
+  // navigation (`chrome-error://...`) with an empty URL. Ignore those —
+  // they would wipe the real error data we already rendered.
+  if (!failedUrl || failedUrl.startsWith('chrome-error://')) return;
+  clearLoadErrorOverlay();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'load-error-overlay';
+
+  const card = document.createElement('div');
+  card.className = 'load-error-card';
+
+  const icon = document.createElement('div');
+  icon.className = 'load-error-icon';
+  icon.textContent = '⚠';
+
+  const title = document.createElement('div');
+  title.className = 'load-error-title';
+  title.textContent = 'This page didn’t load';
+
+  const reason = document.createElement('div');
+  reason.className = 'load-error-reason';
+  reason.textContent = errorDescription
+    ? `${errorDescription} (${errorCode})`
+    : `Load failed (${errorCode})`;
+
+  const url = document.createElement('div');
+  url.className = 'load-error-url';
+  url.textContent = failedUrl;
+
+  const actions = document.createElement('div');
+  actions.className = 'load-error-actions';
+
+  const retry = document.createElement('button');
+  retry.className = 'load-error-retry';
+  retry.textContent = 'Retry';
+  retry.addEventListener('click', () => {
+    clearLoadErrorOverlay();
+    try { webview.loadURL(failedUrl); } catch (_) {}
+  });
+
+  const close = document.createElement('button');
+  close.className = 'load-error-close';
+  close.textContent = 'Close window';
+  close.addEventListener('click', () => {
+    try { window.close(); } catch (_) {}
+  });
+
+  actions.appendChild(retry);
+  actions.appendChild(close);
+  card.appendChild(icon);
+  card.appendChild(title);
+  card.appendChild(reason);
+  card.appendChild(url);
+  card.appendChild(actions);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+}
+
 webview.addEventListener('did-fail-load', (e) => {
   if (!e.isMainFrame) return;
 
@@ -1884,16 +1955,21 @@ webview.addEventListener('did-fail-load', (e) => {
     loadingLifecycle.stopLoading();
     return;
   }
-  console.error('[page] Load failed:', e.errorCode, e.errorDescription, e.url);
+  // Webview did-fail-load uses `validatedURL` (per Electron docs); `e.url` is
+  // undefined on the DOM event. Fall back through both for safety.
+  const failedUrl = e.validatedURL || e.url || '';
+  console.error('[page] Load failed:', e.errorCode, e.errorDescription, failedUrl);
   // Track this URL as failed to prevent meta-refresh loops.
   // If the previous page had <meta http-equiv="refresh"> pointing to this URL,
   // the webview may re-display the previous page and re-fire the refresh.
-  lastFailedNavUrl = e.url;
+  lastFailedNavUrl = failedUrl;
   loadingLifecycle.stopLoading();
   // Stop the webview to kill any pending meta-refresh from the previous page's content.
   // Without this, a meta-refresh loop can oscillate startLoading/stopLoading indefinitely.
   try { webview.stop(); } catch (_) {}
+  showLoadErrorOverlay(failedUrl, e.errorCode, e.errorDescription);
 });
+
 
 // On dom-ready: detect page background color.
 // Background detection prevents the white flash when loading pages in dark mode.
