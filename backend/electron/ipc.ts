@@ -87,6 +87,8 @@ import {
   getSystemAddress,
 } from './pubsub.js';
 
+import { handleLocalShortcut } from './shortcuts.js';
+
 import {
   getSyncConfig,
   syncAll,
@@ -1267,7 +1269,11 @@ export function registerWindowHandlers(): void {
             console.log('[webview-popup] Failed to register download handler on guest session:', e);
           }
 
-          // Keyboard shortcuts inside the webview guest for page navigation
+          // Keyboard shortcuts inside the webview guest for page navigation.
+          // Page-specific shortcuts (cmd+L, cmd+R, etc.) are handled inline.
+          // Anything else falls through to handleLocalShortcut so global
+          // shortcuts (cmd+shift+T undo-close, cmd+N new window) work even
+          // when the user's focus is inside the webpage they're reading.
           guestWebContents.on('before-input-event', (event, input) => {
             const modifier = process.platform === 'darwin' ? input.meta : input.control;
             if (input.type !== 'keyDown' || !modifier) return;
@@ -1291,6 +1297,8 @@ export function registerWindowHandlers(): void {
               event.preventDefault();
             } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
               publish('peek://system/', 'page:go-forward', { windowId: popupWin.id });
+              event.preventDefault();
+            } else if (handleLocalShortcut(input, popupWin.id)) {
               event.preventDefault();
             }
           });
@@ -1467,7 +1475,11 @@ export function registerWindowHandlers(): void {
             console.log('[webview-popup] Failed to register download handler on guest session:', e);
           }
 
-          // Keyboard shortcuts inside the webview guest for page navigation
+          // Keyboard shortcuts inside the webview guest for page navigation.
+          // Page-specific shortcuts (cmd+L, cmd+R, etc.) are handled inline.
+          // Anything else falls through to handleLocalShortcut so global
+          // shortcuts (cmd+shift+T undo-close, cmd+N new window) work even
+          // when the user's focus is inside the webpage they're reading.
           guestWebContents.on('before-input-event', (event, input) => {
             const modifier = process.platform === 'darwin' ? input.meta : input.control;
             if (input.type !== 'keyDown' || !modifier) return;
@@ -1491,6 +1503,8 @@ export function registerWindowHandlers(): void {
               event.preventDefault();
             } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
               publish('peek://system/', 'page:go-forward', { windowId: win.id });
+              event.preventDefault();
+            } else if (handleLocalShortcut(input, win.id)) {
               event.preventDefault();
             }
           });

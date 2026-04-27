@@ -70,6 +70,8 @@ import {
   loadFeatureManifest,
   // Closed window stack persistence
   loadClosedWindowStack,
+  getClosedWindowStack,
+  getClosedWindowCount,
 } from './index.js';
 
 import { startHotReload, stopHotReload } from './hotreload.js';
@@ -128,7 +130,13 @@ const ROOT_DIR = app.getAppPath();
 const DEBUG = !!process.env.DEBUG;
 
 // Expose test utilities on global for Playwright evaluateMain access
-(globalThis as any).__peek_test = { handleLocalShortcut, handleExternalUrl };
+(globalThis as any).__peek_test = {
+  handleLocalShortcut,
+  handleExternalUrl,
+  reopenLastClosedWindow,
+  getClosedWindowStack,
+  getClosedWindowCount,
+};
 (globalThis as any).__peek_electron = { globalShortcut };
 
 // Parse --load-extension CLI arguments for dev workflow.

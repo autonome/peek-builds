@@ -175,6 +175,8 @@ export {
   validateThemeCSS,
   loadClosedWindowStack,
   saveClosedWindowStack,
+  getClosedWindowStack,
+  getClosedWindowCount,
 } from './main.js';
 
 export type { AppConfig } from './main.js';
