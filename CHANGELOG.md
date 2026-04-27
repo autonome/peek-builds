@@ -15,6 +15,11 @@ Newly done items go here, grouped under level-2 headings by week (date = Monday 
 
 ## 2026-04-20
 
+Desktop - per-feature Settings options accordion
+- [x] Fix Settings → Features Options accordion never rendering: `refreshFeaturesList` built each feature's `manifest` object without a `schemas` field (the registry's flat entry shape doesn't carry it), so the accordion gate `manifest.schemas && (manifest.schemas.prefs || manifest.schemas.item)` was always false. Now fetches each feature's settings-schema JSON in parallel via `api.features.settingsSchema(id)` and populates `manifest.{schemas,storageKeys,defaults}` from it.
+- [x] Fix per-item card expand/collapse arrows missing inside the Options accordion (Peeks/Slides item cards rendered without ▶/▼). The `.item-card.no-collapse .item-card-title::before { content: none }` rule was a descendant selector — it cascaded into nested per-item card titles. Scoped to direct-child via `.item-card.no-collapse > .item-card-header .item-card-title::before`.
+- [x] New `tests/desktop/feature-options.spec.ts` — opens Settings → Features, expands Peeks Options accordion, asserts a `.form-section` renders + the inner peek card's `::before` content is `▶` or `▼`.
+
 Desktop - tag-action toggles + cmd panel hashtag shortcut
 - [x] Fix tag-action toggles never rendering on item cards in tags / groups / search / pagestream — add `tag-actions:*` (5 topics) to each consumer's `pubsub.topics` allowlist so the strict tile gate stops dropping the `tag-actions:get-all` round-trip
 - [x] Fix cold-start race in `features/tag-actions/home.js`: subscribe-before-publish was reachable when consumer tiles published their first `tag-actions:get-all` before the resident tag-actions tile had finished its `loadSettings()` await; tag-actions now broadcasts `tag-actions:get-all:response` once at end of init so any pre-existing subscriber catches up without a re-request

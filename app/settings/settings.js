@@ -1783,7 +1783,19 @@ const renderFeaturesSettings = async () => {
         ...(builtinResult?.entries || []),
       ];
 
-      const allFeatures = allEntries.map(entry => {
+      // Fetch each feature's settings-schema JSON in parallel so the
+      // Options accordion can render. The registry's flat entry shape
+      // doesn't include `settingsSchema` — without this round-trip the
+      // accordion gate is always false and per-feature options never appear.
+      const schemaResults = await Promise.all(
+        allEntries.map(entry =>
+          api.features.settingsSchema(entry.id)
+            .then(r => r?.success ? r.data : null)
+            .catch(() => null)
+        )
+      );
+
+      const allFeatures = allEntries.map((entry, i) => {
         const isBuiltin = entry.source?.type === 'builtin';
         const feature = features.find(f => f.name.toLowerCase() === entry.id);
         // Builtins respect the local features-list "enabled" flag
@@ -1791,6 +1803,8 @@ const renderFeaturesSettings = async () => {
         const enabled = isBuiltin
           ? (feature ? feature.enabled !== false : true)
           : !entry.disabled;
+
+        const schemaJson = schemaResults[i];
 
         // The registry stores a flat entry — adapt to the manifest-shaped
         // object the renderer below expects.
@@ -1802,6 +1816,13 @@ const renderFeaturesSettings = async () => {
           version: entry.source?.version || '',
           builtin: isBuiltin,
           author: entry.source?.publisherName || entry.source?.publisher || '',
+          // Schema fields surface the per-feature Options accordion below.
+          // `schemas` / `storageKeys` / `defaults` are pulled out of the
+          // settings-schema.json that the manifest's `settingsSchema` field
+          // points at (loaded server-side via api.features.settingsSchema).
+          schemas: schemaJson ? { prefs: schemaJson.prefs, item: schemaJson.item } : null,
+          storageKeys: schemaJson?.storageKeys || { PREFS: 'prefs', ITEMS: 'items' },
+          defaults: schemaJson?.defaults || {},
         };
 
         return {

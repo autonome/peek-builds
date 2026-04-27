@@ -4,7 +4,7 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Sun, 26 Apr 2026 11:07:34 GMT</lastBuildDate>
+    <lastBuildDate>Mon, 27 Apr 2026 10:08:51 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
@@ -12,7 +12,12 @@
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-20</link>
       <guid isPermaLink="false">https://tangled.org/burrito.space/peek#2026-04-20</guid>
       <pubDate>Mon, 20 Apr 2026 12:00:00 GMT</pubDate>
-      <description>Desktop - tag-action toggles + cmd panel hashtag shortcut
+      <description>Desktop - per-feature Settings options accordion
+- Fix Settings → Features Options accordion never rendering: refreshFeaturesList built each feature&apos;s manifest object without a schemas field (the registry&apos;s flat entry shape doesn&apos;t carry it), so the accordion gate manifest.schemas &amp;&amp; (manifest.schemas.prefs || manifest.schemas.item) was always false. Now fetches each feature&apos;s settings-schema JSON in parallel via api.features.settingsSchema(id) and populates manifest.{schemas,storageKeys,defaults} from it.
+- Fix per-item card expand/collapse arrows missing inside the Options accordion (Peeks/Slides item cards rendered without ▶/▼). The .item-card.no-collapse .item-card-title::before { content: none } rule was a descendant selector — it cascaded into nested per-item card titles. Scoped to direct-child via .item-card.no-collapse &gt; .item-card-header .item-card-title::before.
+- New tests/desktop/feature-options.spec.ts — opens Settings → Features, expands Peeks Options accordion, asserts a .form-section renders + the inner peek card&apos;s ::before content is ▶ or ▼.
+
+Desktop - tag-action toggles + cmd panel hashtag shortcut
 - Fix tag-action toggles never rendering on item cards in tags / groups / search / pagestream — add tag-actions:* (5 topics) to each consumer&apos;s pubsub.topics allowlist so the strict tile gate stops dropping the tag-actions:get-all round-trip
 - Fix cold-start race in features/tag-actions/home.js: subscribe-before-publish was reachable when consumer tiles published their first tag-actions:get-all before the resident tag-actions tile had finished its loadSettings() await; tag-actions now broadcasts tag-actions:get-all:response once at end of init so any pre-existing subscriber catches up without a re-request
 - New tests/desktop/tag-actions-toggles.spec.ts — full pipeline (toggle renders + click swaps todo → done) on tags/home, gate round-trip on groups/pagestream, manifest assertion for search

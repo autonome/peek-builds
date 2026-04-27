@@ -269,11 +269,14 @@ body {
   content: '\25B6 ';
 }
 
-.item-card.no-collapse .item-card-title::before {
+/* Scope to the no-collapse card's OWN header so per-item cards rendered
+ * inside the feature's Options accordion (which live in the body, not the
+ * header) keep their expand arrows. */
+.item-card.no-collapse > .item-card-header .item-card-title::before {
   content: none;
 }
 
-.item-card.no-collapse .item-card-header {
+.item-card.no-collapse > .item-card-header {
   cursor: default;
   margin-bottom: 8px;
 }
