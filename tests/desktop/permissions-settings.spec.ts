@@ -136,6 +136,24 @@ test.describe('Permissions Settings UI @desktop', () => {
     expect(stillThere).toBe(0);
   });
 
+  test('Phase 5 — favicon img renders next to each decision row', async () => {
+    await seedDecision('https://example.com', 'geolocation', false);
+    await seedDecision('https://meet.example.com', 'media', true);
+
+    const settings = await openSettings();
+    await settings.locator('a.nav-item[data-section="permissions"]').click();
+
+    await settings.waitForSelector('#section-permissions .item-card', { timeout: 5000 });
+
+    const favicons = settings.locator('#section-permissions .permissions-row-favicon');
+    await expect(favicons).toHaveCount(2);
+
+    // Each src should be the Google s2 favicon URL with the right host.
+    const srcs = await favicons.evaluateAll(els => els.map(el => (el as HTMLImageElement).src));
+    expect(srcs.some(s => /google\.com\/s2\/favicons\?domain=example\.com/.test(s))).toBe(true);
+    expect(srcs.some(s => /google\.com\/s2\/favicons\?domain=meet\.example\.com/.test(s))).toBe(true);
+  });
+
   test('Clear all removes every decision and shows empty message', async () => {
     await seedDecision('https://a.com', 'geolocation', false);
     await seedDecision('https://b.com', 'media', true);

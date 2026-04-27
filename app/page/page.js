@@ -2308,32 +2308,83 @@ api.subscribe('page:maximize', (msg) => {
 // --- Web permission prompt ---
 // Backend's permission-handler.ts publishes `page:permission-request` when a
 // guest webview requests a risky permission (geolocation, camera/mic, etc.).
-// We render an approve/reject overlay near the top of the page; on click the
-// user's decision is published back as `page:permission-response` and the
-// backend resolves the deferred Chromium callback.
-//
-// Multiple concurrent prompts stack vertically — each is a separate DOM node
-// with its own requestId. No queueing logic; whichever the user clicks first
-// resolves first. See backend/electron/permission-handler.ts for the wire
-// protocol (requestId / windowId / permission / origin / label).
+// Phase 5 UX: only ONE prompt is shown at a time. Subsequent requests queue
+// behind it; when the user resolves the current one, the next dequeues
+// automatically. A "+N more pending" badge surfaces queue depth so the user
+// knows more requests are waiting (rather than silently stacking off-screen).
+// On click the user's decision is published back as `page:permission-response`
+// and the backend resolves the deferred Chromium callback. See
+// backend/electron/permission-handler.ts for the wire protocol.
 
-function renderPermissionPrompt(req) {
+const permissionQueue = [];
+let activePermissionPrompt = null; // { req, wrap, badgeEl, resolved }
+
+function originForFavicon(origin) {
+  // Strip scheme + path so we can hand bare hostname to the favicon service.
+  if (!origin) return null;
+  try {
+    const u = new URL(origin);
+    return u.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+function renderActivePermissionPrompt() {
+  // Removes any prior DOM and renders the head of the queue (if any).
+  if (activePermissionPrompt) {
+    activePermissionPrompt.wrap.remove();
+    activePermissionPrompt = null;
+  }
+  if (permissionQueue.length === 0) return;
+
+  const req = permissionQueue[0];
+
   const wrap = document.createElement('div');
   wrap.className = 'permission-prompt';
   wrap.dataset.requestId = req.requestId;
 
   const message = document.createElement('div');
   message.className = 'permission-prompt-message';
+
+  // Favicon — uses the same Google s2 favicon service the search-result
+  // cards use (see app/lib/card-helpers.js). onerror falls back to the
+  // globe-emoji SVG so unreachable origins don't show a broken-image icon.
+  const favicon = document.createElement('img');
+  favicon.className = 'permission-prompt-favicon';
+  favicon.alt = '';
+  const host = originForFavicon(req.origin);
+  const fallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F310}</text></svg>';
+  favicon.src = host ? `https://www.google.com/s2/favicons?domain=${host}&sz=32` : fallback;
+  favicon.onerror = () => { favicon.src = fallback; favicon.onerror = null; };
+  message.appendChild(favicon);
+
+  const text = document.createElement('div');
+  text.className = 'permission-prompt-text';
   const originSpan = document.createElement('span');
   originSpan.className = 'permission-prompt-origin';
   originSpan.textContent = req.origin || '(unknown origin)';
-  message.appendChild(originSpan);
-  message.appendChild(document.createTextNode(` wants to ${req.label || req.permission}.`));
+  text.appendChild(originSpan);
+
+  // "+N more pending" badge — visible only when more than one request is
+  // queued. Updated in place via badgeEl.textContent on enqueue/dequeue.
+  const badge = document.createElement('span');
+  badge.className = 'permission-prompt-pending-badge';
+  const queuedExtras = permissionQueue.length - 1;
+  if (queuedExtras > 0) {
+    badge.textContent = `+${queuedExtras} more pending`;
+  } else {
+    badge.style.display = 'none';
+  }
+  text.appendChild(badge);
+
+  text.appendChild(document.createElement('br'));
+  text.appendChild(document.createTextNode(`wants to ${req.label || req.permission}.`));
+  message.appendChild(text);
 
   // "Remember this decision" checkbox — when checked, the response includes
   // remember:true and permission-handler.ts persists the {origin, permission,
-  // allowed} tuple to feature_settings. Future requests with the same pair
-  // skip the prompt entirely.
+  // allowed} tuple to feature_settings.
   const rememberLabel = document.createElement('label');
   rememberLabel.className = 'permission-prompt-remember';
   const rememberCheckbox = document.createElement('input');
@@ -2355,16 +2406,16 @@ function renderPermissionPrompt(req) {
   allowBtn.className = 'permission-prompt-allow';
   allowBtn.textContent = 'Allow';
 
-  let resolved = false;
   function respond(allowed) {
-    if (resolved) return;
-    resolved = true;
+    if (!activePermissionPrompt || activePermissionPrompt.resolved) return;
+    activePermissionPrompt.resolved = true;
     api.publish('page:permission-response', {
       requestId: req.requestId,
       allowed,
       remember: rememberCheckbox.checked,
     });
-    wrap.remove();
+    permissionQueue.shift();
+    renderActivePermissionPrompt();
   }
   denyBtn.addEventListener('click', () => respond(false));
   allowBtn.addEventListener('click', () => respond(true));
@@ -2375,20 +2426,37 @@ function renderPermissionPrompt(req) {
   wrap.appendChild(rememberLabel);
   wrap.appendChild(actions);
 
-  // Stack subsequent prompts beneath any existing ones.
-  const existing = document.querySelectorAll('.permission-prompt');
-  if (existing.length > 0) {
-    const lastBottom = existing[existing.length - 1].getBoundingClientRect().bottom;
-    wrap.style.top = `${lastBottom + 8}px`;
-  }
-
   document.body.appendChild(wrap);
+  activePermissionPrompt = { req, wrap, badgeEl: badge, resolved: false };
+}
+
+function updatePendingBadge() {
+  // Refreshes the badge on the active prompt without re-rendering it.
+  if (!activePermissionPrompt) return;
+  const queuedExtras = permissionQueue.length - 1;
+  const badge = activePermissionPrompt.badgeEl;
+  if (queuedExtras > 0) {
+    badge.textContent = `+${queuedExtras} more pending`;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
 }
 
 api.subscribe('page:permission-request', (msg) => {
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
   if (!msg.requestId) return;
-  renderPermissionPrompt(msg);
+  // Dedup: if the same requestId is already queued (duplicate publish from
+  // a re-entrant transition), ignore it.
+  if (permissionQueue.some(r => r.requestId === msg.requestId)) return;
+  permissionQueue.push(msg);
+  if (permissionQueue.length === 1) {
+    // Nothing currently shown — render this one.
+    renderActivePermissionPrompt();
+  } else {
+    // Active prompt exists; just bump the pending badge.
+    updatePendingBadge();
+  }
 });
 
 // Navbar double-click to toggle maximize

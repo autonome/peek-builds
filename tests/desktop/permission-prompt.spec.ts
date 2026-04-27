@@ -52,6 +52,11 @@ test.describe('Permission Prompt @desktop', () => {
       );
     });
   };
+  window.__requestMedia = function() {
+    return navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      .then(() => 'allowed')
+      .catch(err => 'denied:' + (err && err.name ? err.name : 'unknown'));
+  };
 </script>
 </body>
 </html>`);
@@ -178,5 +183,110 @@ test.describe('Permission Prompt @desktop', () => {
     // No prompt should have appeared in the second window.
     const promptCount = await second.locator('.permission-prompt').count();
     expect(promptCount).toBe(0);
+  });
+
+  test('Phase 5 — queueing: synthetic concurrent requests show one prompt + pending badge; resolving advances queue', async () => {
+    // Earlier "Remember-this-decision" test persisted a deny for
+    // 127.0.0.1 geolocation. Clear it so this test gets a fresh prompt.
+    await bgWindow.evaluate(async () => {
+      await (window as any).app.permissions.forgetAll();
+    });
+
+    const pageWindow = await openPageHost('perm-queue');
+    const myWindowId = await pageWindow.evaluate(async () => {
+      const r = await (window as any).app.window.getWindowId();
+      return (r && typeof r === 'object' && 'id' in r) ? r.id : r;
+    });
+
+    // Drive the renderer queue directly via two synthetic
+    // `page:permission-request` publishes. The queueing UX lives entirely
+    // in page.js — independent of which Chromium permission triggered it
+    // — so this test isolates the renderer logic from the (flaky in
+    // headless) media-device path.
+    await bgWindow.evaluate(async (windowId) => {
+      const api = (window as any).app;
+      api.pubsub.publish('page:permission-request', {
+        requestId: 'q1', windowId,
+        permission: 'geolocation', origin: 'https://example.com',
+        label: 'know your location',
+      });
+      api.pubsub.publish('page:permission-request', {
+        requestId: 'q2', windowId,
+        permission: 'media', origin: 'https://meet.example.com',
+        label: 'use your camera and microphone',
+      });
+    }, myWindowId);
+
+    // Only ONE prompt visible (queue head); badge shows "+1 more pending".
+    await pageWindow.waitForFunction(() => {
+      const prompts = document.querySelectorAll('.permission-prompt');
+      const badge = document.querySelector('.permission-prompt-pending-badge') as HTMLElement | null;
+      return prompts.length === 1
+        && badge
+        && badge.style.display !== 'none'
+        && /\+1 more pending/.test(badge.textContent || '');
+    }, undefined, { timeout: 5000 });
+
+    // The visible prompt is for the FIRST request (geolocation).
+    const firstText = await pageWindow.locator('.permission-prompt').innerText();
+    expect(firstText).toContain('know your location');
+    expect(firstText).toContain('https://example.com');
+
+    // Click Deny on the first prompt — second prompt should take its place.
+    await pageWindow.locator('.permission-prompt .permission-prompt-deny').click();
+
+    await pageWindow.waitForFunction(() => {
+      const p = document.querySelector('.permission-prompt');
+      return p && /camera and microphone/i.test(p.textContent || '');
+    }, undefined, { timeout: 5000 });
+
+    // Still only ONE prompt; badge gone.
+    const after = await pageWindow.evaluate(() => {
+      const prompts = document.querySelectorAll('.permission-prompt');
+      const badge = document.querySelector('.permission-prompt-pending-badge') as HTMLElement | null;
+      return {
+        promptCount: prompts.length,
+        badgeVisible: !!(badge && badge.style.display !== 'none'),
+      };
+    });
+    expect(after.promptCount).toBe(1);
+    expect(after.badgeVisible).toBe(false);
+
+    // Resolve the second one — queue empty, no prompts left.
+    await pageWindow.locator('.permission-prompt .permission-prompt-deny').click();
+    await pageWindow.waitForFunction(
+      () => document.querySelectorAll('.permission-prompt').length === 0,
+      undefined,
+      { timeout: 5000 },
+    );
+  });
+
+  test('Phase 5 — favicon img renders with origin-derived src in the prompt', async () => {
+    // Same reason as above — clear any stored decisions so the prompt fires.
+    await bgWindow.evaluate(async () => {
+      await (window as any).app.permissions.forgetAll();
+    });
+
+    const pageWindow = await openPageHost('perm-favicon');
+    const webview = await pageWindow.evaluateHandle(() => document.getElementById('content'));
+    await pageWindow.evaluate((wv: any) => {
+      (window as any).__geoPromise = wv.executeJavaScript('window.__requestGeo()');
+    }, webview);
+
+    await pageWindow.waitForSelector('.permission-prompt-favicon', { timeout: 5000 });
+
+    const faviconSrc = await pageWindow.locator('.permission-prompt-favicon').getAttribute('src');
+    expect(faviconSrc).toBeTruthy();
+    // Either Google s2 favicons URL with the host, or the globe-emoji SVG fallback.
+    // 127.0.0.1 routes through the Google service path.
+    expect(faviconSrc).toMatch(/google\.com\/s2\/favicons\?domain=127\.0\.0\.1/);
+
+    // Cleanup — deny so the deferred Chromium callback resolves.
+    await pageWindow.locator('.permission-prompt .permission-prompt-deny').click();
+    await pageWindow.waitForFunction(
+      () => document.querySelectorAll('.permission-prompt').length === 0,
+      undefined,
+      { timeout: 5000 },
+    );
   });
 });

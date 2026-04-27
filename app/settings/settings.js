@@ -1108,6 +1108,16 @@ const renderPermissionsSettings = async () => {
     openExternal: 'Open external apps',
   };
 
+  // Globe-emoji SVG fallback used when the favicon service is unreachable
+  // for an origin (offline, blocked, weird URL). Same data-URI used in the
+  // page-host prompt + cards.
+  const FALLBACK_FAVICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F310}</text></svg>';
+
+  const hostFromOrigin = (origin) => {
+    if (!origin) return null;
+    try { return new URL(origin).hostname || null; } catch { return null; }
+  };
+
   const renderRow = (decision) => {
     const row = document.createElement('div');
     row.className = 'item-card no-collapse';
@@ -1118,12 +1128,26 @@ const renderPermissionsSettings = async () => {
     header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 12px;';
 
     const left = document.createElement('div');
-    left.style.cssText = 'display: flex; flex-direction: column; gap: 2px; min-width: 0;';
+    left.style.cssText = 'display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;';
+
+    // Favicon — Google s2 favicon service with globe-emoji fallback. Same
+    // pattern used in the page-host permission prompt + search-result cards.
+    const favicon = document.createElement('img');
+    favicon.className = 'permissions-row-favicon';
+    favicon.alt = '';
+    favicon.style.cssText = 'width: 20px; height: 20px; flex-shrink: 0; object-fit: contain;';
+    const host = hostFromOrigin(decision.origin);
+    favicon.src = host ? `https://www.google.com/s2/favicons?domain=${host}&sz=32` : FALLBACK_FAVICON;
+    favicon.onerror = () => { favicon.src = FALLBACK_FAVICON; favicon.onerror = null; };
+    left.appendChild(favicon);
+
+    const textCol = document.createElement('div');
+    textCol.style.cssText = 'display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1;';
 
     const originEl = document.createElement('div');
     originEl.style.cssText = 'font-family: var(--font-mono, monospace); font-size: 13px; word-break: break-all;';
     originEl.textContent = decision.origin;
-    left.appendChild(originEl);
+    textCol.appendChild(originEl);
 
     const meta = document.createElement('div');
     meta.className = 'help-text';
@@ -1132,7 +1156,8 @@ const renderPermissionsSettings = async () => {
     const verdict = decision.allowed ? 'Allowed' : 'Denied';
     const when = decision.timestamp ? new Date(decision.timestamp).toLocaleString() : '';
     meta.textContent = `${label} · ${verdict}${when ? ' · ' + when : ''}`;
-    left.appendChild(meta);
+    textCol.appendChild(meta);
+    left.appendChild(textCol);
 
     const revokeBtn = document.createElement('button');
     revokeBtn.className = 'btn btn-secondary';
