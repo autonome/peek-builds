@@ -1135,6 +1135,28 @@ const renderPermissionsSettings = async () => {
     try { return new URL(origin).hostname || null; } catch { return null; }
   };
 
+  // Human-readable relative timestamp. "just now" / "5 minutes ago" /
+  // "3 hours ago" / "2 days ago" — falls back to the absolute date for
+  // anything older than a week so the user can still see the exact day.
+  const relativeTime = (ms) => {
+    if (!ms) return '';
+    const diff = Date.now() - ms;
+    if (diff < 60_000) return 'just now';
+    if (diff < 3_600_000) {
+      const m = Math.floor(diff / 60_000);
+      return m === 1 ? '1 minute ago' : `${m} minutes ago`;
+    }
+    if (diff < 86_400_000) {
+      const h = Math.floor(diff / 3_600_000);
+      return h === 1 ? '1 hour ago' : `${h} hours ago`;
+    }
+    if (diff < 604_800_000) {
+      const d = Math.floor(diff / 86_400_000);
+      return d === 1 ? '1 day ago' : `${d} days ago`;
+    }
+    return new Date(ms).toLocaleDateString();
+  };
+
   const renderRow = (decision) => {
     const row = document.createElement('div');
     row.className = 'item-card no-collapse';
@@ -1172,7 +1194,7 @@ const renderPermissionsSettings = async () => {
     const label = PERMISSION_LABELS[decision.permission] || decision.permission;
     const glyph = PERMISSION_GLYPHS[decision.permission] || '\u{1F512}';
     const verdict = decision.allowed ? 'Allowed' : 'Denied';
-    const when = decision.timestamp ? new Date(decision.timestamp).toLocaleString() : '';
+    const when = relativeTime(decision.timestamp);
     meta.textContent = `${glyph} ${label} · ${verdict}${when ? ' · ' + when : ''}`;
     textCol.appendChild(meta);
     left.appendChild(textCol);
@@ -1190,6 +1212,9 @@ const renderPermissionsSettings = async () => {
           if (list.children.length === 0) {
             emptyMsg.style.display = '';
             clearAllBtn.style.display = 'none';
+          }
+          if (typeof window._setPermissionsNavCount === 'function') {
+            window._setPermissionsNavCount(list.children.length);
           }
         } else {
           revokeBtn.disabled = false;
@@ -1221,6 +1246,9 @@ const renderPermissionsSettings = async () => {
         list.replaceChildren();
         emptyMsg.style.display = '';
         clearAllBtn.style.display = 'none';
+        if (typeof window._setPermissionsNavCount === 'function') {
+          window._setPermissionsNavCount(0);
+        }
       } else {
         clearAllBtn.disabled = false;
         console.error('[settings] permissions.forgetAll failed:', res?.error);
@@ -1240,28 +1268,41 @@ const renderPermissionsSettings = async () => {
   // grouping every saved decision for a single site together makes the
   // common case ("revoke everything I gave example.com") two clicks
   // away instead of scattered through the list.
+  //
+  // Also updates the sidebar nav badge so the user sees how many
+  // saved decisions exist without having to enter the section.
+  const updateNavCount = (n) => {
+    if (typeof window._setPermissionsNavCount === 'function') {
+      window._setPermissionsNavCount(n);
+    }
+  };
   const refresh = async () => {
     try {
       const res = await api.permissions.list();
       list.replaceChildren();
-      if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-        const sorted = [...res.data].sort((a, b) => {
+      const data = (res?.success && Array.isArray(res.data)) ? res.data : [];
+      if (data.length > 0) {
+        const sorted = [...data].sort((a, b) => {
           if (a.origin !== b.origin) return a.origin.localeCompare(b.origin);
           return a.permission.localeCompare(b.permission);
         });
         for (const decision of sorted) list.appendChild(renderRow(decision));
         emptyMsg.style.display = 'none';
         clearAllBtn.style.display = '';
+        clearAllBtn.disabled = false;
       } else {
         emptyMsg.style.display = '';
         clearAllBtn.style.display = 'none';
+        clearAllBtn.disabled = false;
       }
+      updateNavCount(data.length);
     } catch (err) {
       console.error('[settings] permissions.list threw:', err);
       list.replaceChildren();
       emptyMsg.textContent = 'Failed to load permissions.';
       emptyMsg.style.display = '';
       clearAllBtn.style.display = 'none';
+      updateNavCount(0);
     }
   };
 
@@ -3405,8 +3446,19 @@ const init = async () => {
   // permission-store.ts.
   const permissionsNav = document.createElement('a');
   permissionsNav.className = 'nav-item';
-  permissionsNav.textContent = 'Permissions';
   permissionsNav.dataset.section = 'permissions';
+  // Label + live count badge — reads "Permissions (3)" when there are 3
+  // stored decisions, just "Permissions" when there are none. Updated by
+  // window._refreshPermissionsCount whenever the list changes.
+  const permissionsNavLabel = document.createElement('span');
+  permissionsNavLabel.textContent = 'Permissions';
+  permissionsNav.appendChild(permissionsNavLabel);
+  const permissionsNavCount = document.createElement('span');
+  permissionsNavCount.style.cssText = 'margin-left: 6px; opacity: 0.6;';
+  permissionsNav.appendChild(permissionsNavCount);
+  window._setPermissionsNavCount = (n) => {
+    permissionsNavCount.textContent = (typeof n === 'number' && n > 0) ? `(${n})` : '';
+  };
   permissionsNav.addEventListener('click', () => {
     showSection('permissions');
     if (window._refreshPermissionsList) {

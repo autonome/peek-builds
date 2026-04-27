@@ -169,6 +169,44 @@ test.describe('Permissions Settings UI @desktop', () => {
     expect(origins[3]).toBe('https://meet.example.com');
   });
 
+  test('Sidebar nav shows live count badge that tracks the stored decision count', async () => {
+    await seedDecision('https://a.com', 'geolocation', false);
+    await seedDecision('https://b.com', 'media', true);
+
+    const settings = await openSettings();
+
+    // Click into Permissions to trigger the initial refresh + nav update.
+    await settings.locator('a.nav-item[data-section="permissions"]').click();
+
+    // Wait for both rows to render (proxy for refresh having completed).
+    await settings.waitForFunction(
+      () => document.querySelectorAll('#section-permissions .item-card').length === 2,
+      undefined,
+      { timeout: 5000 },
+    );
+
+    // Nav label should now read "Permissions (2)".
+    const navText1 = await settings.locator('a.nav-item[data-section="permissions"]').innerText();
+    expect(navText1).toMatch(/Permissions\s*\(2\)/);
+
+    // Revoke one — badge should drop to (1).
+    await settings.locator('#section-permissions .item-card button:has-text("Revoke")').first().click();
+    await settings.waitForFunction(
+      () => /\(1\)/.test(document.querySelector('a.nav-item[data-section="permissions"]')?.textContent || ''),
+      undefined,
+      { timeout: 5000 },
+    );
+
+    // Clear all — badge should disappear (no parens).
+    settings.once('dialog', dialog => dialog.accept());
+    await settings.locator('#section-permissions button:has-text("Clear all")').click();
+    await settings.waitForFunction(
+      () => !/\(\d+\)/.test(document.querySelector('a.nav-item[data-section="permissions"]')?.textContent || ''),
+      undefined,
+      { timeout: 5000 },
+    );
+  });
+
   test('Phase 5 — favicon img renders next to each decision row', async () => {
     await seedDecision('https://example.com', 'geolocation', false);
     await seedDecision('https://meet.example.com', 'media', true);
@@ -202,7 +240,7 @@ test.describe('Permissions Settings UI @desktop', () => {
     );
 
     // Auto-accept the confirm() dialog.
-    settings.on('dialog', dialog => dialog.accept());
+    settings.once('dialog', dialog => dialog.accept());
 
     await settings.locator('#section-permissions button:has-text("Clear all")').click();
 
