@@ -30,6 +30,11 @@ test.beforeAll(async () => {
       if (req.url === '/ok') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end('<!DOCTYPE html><html><body><h1 id="title">OK</h1></body></html>');
+      } else if (req.url === '/hang') {
+        // Accept the connection but never respond — drives the page-host's
+        // loading-timeout safety net. Repro for the user-reported bug
+        // ("metikmusic.com — endless glow border, blank white page").
+        // No-op handler keeps the socket open until the test closes.
       } else {
         res.writeHead(404);
         res.end('Not found');
@@ -223,6 +228,71 @@ test.describe('Page Host Load Failure @desktop', () => {
       expect(stuckOnLoading).toBe(false);
     } finally {
       await closeWindow(sharedBgWindow, second.windowId);
+    }
+  });
+
+  test('Hung load: loading-timeout safety net surfaces the error overlay (regression: blank-white-page-forever)', async () => {
+    // User-reported: http://www.metikmusic.com/ — DNS resolves, server
+    // accepts the connection, but never responds. Before this fix, the
+    // page-host's 30s loading timeout silently flipped the spinner off
+    // and left the user staring at a blank white page with no feedback.
+    // Now the timeout surfaces the same overlay as did-fail-load.
+    const goodUrl = `http://127.0.0.1:${serverPort}/ok`;
+    const hangUrl = `http://127.0.0.1:${serverPort}/hang`;
+    const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, goodUrl);
+
+    try {
+      // Wait for the initial load to complete so we don't race the
+      // loading-timeout override with the first navigation's setTimeout.
+      await pageWindow.waitForFunction(
+        () => {
+          const webview = document.getElementById('content');
+          return webview && webview.classList.contains('loaded');
+        },
+        undefined,
+        { timeout: 15000 },
+      );
+
+      // Override the loading timeout to 1.5s so the hung-load path fires
+      // before the test wall-clock budget. Production stays at 30s.
+      await pageWindow.evaluate(() => {
+        (window as any).__loadingTimeoutMs = 1500;
+      });
+
+      // Navigate the webview to the hung endpoint. Server accepts the
+      // connection but never sends a response → loading state stays
+      // 'loading' until the safety-net timeout fires.
+      await pageWindow.evaluate((u: string) => {
+        const webview = document.getElementById('content') as any;
+        webview.loadURL(u);
+      }, hangUrl);
+
+      // Overlay must appear within ~3s (1.5s timeout + headroom).
+      await waitForErrorOverlay(pageWindow, 5000);
+
+      const overlay = await pageWindow.evaluate(() => {
+        const el = document.querySelector('.load-error-overlay');
+        if (!el) return null;
+        return {
+          urlText: el.querySelector('.load-error-url')?.textContent || '',
+          reasonText: el.querySelector('.load-error-reason')?.textContent || '',
+          hasRetry: !!el.querySelector('.load-error-retry'),
+        };
+      });
+      expect(overlay).toBeTruthy();
+      expect(overlay!.urlText).toContain('/hang');
+      expect(overlay!.reasonText.toLowerCase()).toContain('took too long');
+      expect(overlay!.hasRetry).toBe(true);
+
+      // The webview must NOT still be in 'loading' state — that was the
+      // original "endless glow border" symptom.
+      const stuckOnLoading = await pageWindow.evaluate(() => {
+        const webview = document.getElementById('content');
+        return !!(webview && webview.classList.contains('loading'));
+      });
+      expect(stuckOnLoading).toBe(false);
+    } finally {
+      await closeWindow(sharedBgWindow, windowId);
     }
   });
 });

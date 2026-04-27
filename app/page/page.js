@@ -758,7 +758,14 @@ async function initWebview() {
 // Simple state machine: 'loading' or 'loaded'.
 // Visual effect (CSS class) subscribes to state changes.
 
-const LOADING_TIMEOUT_MS = 30000; // 30 second safety net
+// Default safety-net timeout for hung loads. Overridable via
+// `window.__loadingTimeoutMs` so Playwright specs can drive the timeout
+// path in <30 seconds. Production runs always use the default.
+const DEFAULT_LOADING_TIMEOUT_MS = 30000;
+function getLoadingTimeoutMs() {
+  const override = window.__loadingTimeoutMs;
+  return typeof override === 'number' && override > 0 ? override : DEFAULT_LOADING_TIMEOUT_MS;
+}
 
 const loadingLifecycle = {
   _state: 'idle',
@@ -773,14 +780,32 @@ const loadingLifecycle = {
     this._notify();
     DEBUG && console.log('[page] Loading started');
 
-    // Safety net: auto-clear loading state after timeout to prevent permanently frozen windows
+    // Safety net: if loading hasn't completed within the timeout window,
+    // force-clear the loading state AND surface an error overlay so the
+    // user sees something actionable instead of an indefinite spinner.
+    // Repro: http://www.metikmusic.com/ (DNS resolves but server hangs).
     this._clearTimeout();
+    const timeoutMs = getLoadingTimeoutMs();
     this._timeoutId = setTimeout(() => {
       if (this._state === 'loading') {
-        console.warn('[page] Loading timeout after', LOADING_TIMEOUT_MS, 'ms — force clearing loading state');
+        console.warn('[page] Loading timeout after', timeoutMs, 'ms — surfacing error overlay');
         this.stopLoading();
+        // Render the same overlay shown for did-fail-load. Prefer the
+        // tracked navigation URL — webview.getURL() returns the previously-
+        // displayed URL during a pending navigation, which would attribute
+        // the timeout to the wrong page.
+        let url = latestNavigationUrl;
+        if (!url) {
+          try { url = webview.getURL(); } catch { /* ignore */ }
+        }
+        if (!url) url = targetUrl || '';
+        showLoadErrorOverlay(
+          url,
+          'TIMEOUT',
+          'The page took too long to load.',
+        );
       }
-    }, LOADING_TIMEOUT_MS);
+    }, timeoutMs);
   },
 
   stopLoading() {
