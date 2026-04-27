@@ -457,9 +457,11 @@ const extractSearchQuery = (ctx) => {
     }
   }
 
-  // 5. Last resort: if typed contains a space, take everything after the first space
-  // (handles case where name field might be missing)
-  if (ctx.typed) {
+  // 5. Last resort: if name is unknown AND typed contains a space, take everything
+  // after the first space. Skipped when ctx.name is set, because a multi-word
+  // command name (e.g. "web search") with no query would otherwise bleed the
+  // second word into the query.
+  if (!ctx.name && ctx.typed) {
     const spaceIdx = ctx.typed.indexOf(' ');
     if (spaceIdx > 0) {
       const rest = ctx.typed.slice(spaceIdx + 1).trim();

@@ -277,6 +277,57 @@ test.describe('Websearch Cmd Panel Execution @desktop', () => {
     }
   });
 
+  test('"web search" with no query shows search UI, not a search results URL', async () => {
+    // Regression: extractSearchQuery's last-resort fallback used to grab the
+    // word after the first space when the typed text equalled the (multi-word)
+    // command name. Result: typing "web search" with no query would search the
+    // default engine for the literal string "search" — opening e.g.
+    // kagi.com/search?q=search instead of the websearch home tile.
+    await ensureWebsearchLoaded(sharedBgWindow);
+
+    // Snapshot the URLs of windows that exist before invocation, so we can
+    // detect any *new* content window that the buggy path would open.
+    const before = await sharedBgWindow.evaluate(async () => {
+      const result = await (window as any).app.window.list({ includeInternal: true });
+      return result?.success ? (result.windows || []).map((w: any) => w.id) : [];
+    });
+
+    const { cmdWindow, windowId } = await openCmdPanel(sharedBgWindow, sharedApp);
+
+    try {
+      await cmdWindow.fill('input', 'web search');
+      await cmdWindow.keyboard.press('Enter');
+
+      const finalState = await waitForCmdNotExecuting(cmdWindow, 20000);
+      expect(finalState).not.toBe('TIMEOUT');
+      expect(finalState).not.toBe('ERROR');
+
+      // After the command settles, a websearch home tile should be visible
+      // and no new content window pointing at a search engine results page
+      // should have appeared.
+      await sleep(500);
+      const after = await sharedBgWindow.evaluate(async () => {
+        const result = await (window as any).app.window.list({ includeInternal: true });
+        return result?.success ? (result.windows || []) : [];
+      });
+
+      const newWindows = after.filter((w: any) => !before.includes(w.id));
+      const newSearchResultWindow = newWindows.find((w: any) => {
+        const url = w.url || '';
+        // Anything that looks like a search engine results URL (q=, search?)
+        return /[?&]q=|\/search\?/.test(url);
+      });
+      expect(newSearchResultWindow, `Unexpected results window opened: ${newSearchResultWindow?.url}`).toBeUndefined();
+
+      const websearchHomeVisible = after.some(
+        (w: any) => (w.url || '').includes('peek://websearch/home.html'),
+      );
+      expect(websearchHomeVisible).toBe(true);
+    } finally {
+      await closeCmdPanel(sharedBgWindow, windowId);
+    }
+  });
+
   test('direct pubsub kagi execution works (control test)', async () => {
     // This is the control — same command via direct pubsub should work.
     // If the UI test above fails but this passes, the bug is in the proxy flow.
