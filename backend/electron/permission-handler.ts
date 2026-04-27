@@ -32,6 +32,7 @@ import { publish, subscribe } from './pubsub.js';
 import { findHostWindowId } from './webview-guest-registry.js';
 import {
   resolveDecision,
+  resolveWithStored,
   originFromUrl,
   labelFor,
   type PermissionName,
@@ -84,23 +85,14 @@ export function installPermissionHandler(ses: Session): void {
       (details && (details as { requestingUrl?: string }).requestingUrl) ||
       webContents?.getURL?.() ||
       '';
-    const decision = resolveDecision(requestingUrl, permission as PermissionName);
-
-    // Stored per-origin decision (Phase 3) overrides 'prompt' — but never
-    // overrides 'deny' or 'allow' from the policy. A site that's hard-allowed
-    // (chrome-extension://, peek://) never gets a stale stored deny applied;
-    // a site that's hard-denied (e.g. unknown permission) never gets a stale
-    // stored allow.
-    if (decision === 'prompt') {
-      const stored = lookupStoredDecision(originFromUrl(requestingUrl), permission as PermissionName);
-      if (stored !== null) {
-        console.log(
-          `[permission] ${permission} requested by ${requestingUrl || '(unknown)'} → ${stored ? 'allow' : 'deny'} (stored)`,
-        );
-        callback(stored);
-        return;
-      }
-    }
+    // Combined policy + stored-decision resolution. See
+    // permission-policy.ts:resolveWithStored for the invariant — stored
+    // decisions only override 'prompt'.
+    const decision = resolveWithStored(
+      requestingUrl,
+      permission as PermissionName,
+      lookupStoredDecision,
+    );
 
     console.log(
       `[permission] ${permission} requested by ${requestingUrl || '(unknown)'} → ${decision}`,

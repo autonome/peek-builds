@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 
 import {
   resolveDecision as resolve,
+  resolveWithStored,
 } from '../../dist/backend/electron/permission-policy.js';
 
 describe('permission-handler: chrome-extension origins', () => {
@@ -95,5 +96,96 @@ describe('permission-handler: about:blank / empty origins', () => {
     // to DEFAULT_POLICY. With no origin to attribute to, the prompt UI will
     // render '(unknown origin)' — the user can still choose to deny.
     assert.equal(resolve('', 'geolocation'), 'prompt');
+  });
+});
+
+describe('permission-handler: resolveWithStored — policy + stored-decision interaction', () => {
+  // Hard policy decisions ('allow', 'deny') must NEVER be overridden by a
+  // stored decision. Otherwise a stale stored allow could keep granting
+  // permissions to a permission type we just fail-closed in code.
+  const lookupAlwaysAllow = () => true;
+  const lookupAlwaysDeny = () => false;
+  const lookupNothing = () => null;
+
+  it('chrome-extension: stored deny is ignored — policy allow wins', () => {
+    assert.equal(
+      resolveWithStored('chrome-extension://abc/popup.html', 'geolocation', lookupAlwaysDeny),
+      'allow',
+    );
+  });
+
+  it('peek://: stored deny is ignored — policy allow wins', () => {
+    assert.equal(
+      resolveWithStored('peek://app/page/index.html', 'clipboard-read', lookupAlwaysDeny),
+      'allow',
+    );
+  });
+
+  it('hard-deny permission (e.g. usb): stored allow is ignored — policy deny wins', () => {
+    assert.equal(
+      resolveWithStored('https://example.com', 'usb', lookupAlwaysAllow),
+      'deny',
+    );
+  });
+
+  it('prompt permission with stored allow: returns allow', () => {
+    assert.equal(
+      resolveWithStored('https://example.com', 'geolocation', lookupAlwaysAllow),
+      'allow',
+    );
+  });
+
+  it('prompt permission with stored deny: returns deny', () => {
+    assert.equal(
+      resolveWithStored('https://example.com', 'geolocation', lookupAlwaysDeny),
+      'deny',
+    );
+  });
+
+  it('prompt permission with no stored decision: returns prompt', () => {
+    assert.equal(
+      resolveWithStored('https://example.com', 'geolocation', lookupNothing),
+      'prompt',
+    );
+  });
+
+  it('prompt permission with empty origin: skips lookup, returns prompt', () => {
+    // No origin to attribute a stored decision to — there'd be no useful
+    // identity to key off, so we don't even consult the lookup.
+    let lookupCalled = false;
+    const tracker = () => { lookupCalled = true; return true; };
+    const decision = resolveWithStored('', 'geolocation', tracker);
+    assert.equal(decision, 'prompt');
+    assert.equal(lookupCalled, false, 'should not look up stored decision for empty origin');
+  });
+
+  it('lookup is only called for prompt decisions (not allow/deny)', () => {
+    let lookupCalls = 0;
+    const tracker = () => { lookupCalls++; return null; };
+
+    // Hard allow path — lookup should NOT fire.
+    resolveWithStored('chrome-extension://abc/popup.html', 'geolocation', tracker);
+    assert.equal(lookupCalls, 0);
+
+    // Hard deny path — lookup should NOT fire.
+    resolveWithStored('https://example.com', 'usb', tracker);
+    assert.equal(lookupCalls, 0);
+
+    // Prompt path — lookup SHOULD fire.
+    resolveWithStored('https://example.com', 'geolocation', tracker);
+    assert.equal(lookupCalls, 1);
+  });
+
+  it('lookup receives the parsed origin (not the full URL)', () => {
+    let receivedOrigin = null;
+    let receivedPermission = null;
+    const capturer = (origin, permission) => {
+      receivedOrigin = origin;
+      receivedPermission = permission;
+      return null;
+    };
+    resolveWithStored('https://example.com/some/deep/path?query=1', 'geolocation', capturer);
+    assert.equal(receivedOrigin, 'https://example.com');
+    assert.equal(receivedPermission, 'geolocation');
   });
 });

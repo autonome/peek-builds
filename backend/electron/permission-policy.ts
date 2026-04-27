@@ -87,6 +87,40 @@ export function resolveDecision(url: string, permission: PermissionName): Decisi
   return DEFAULT_POLICY[permission] ?? 'deny';
 }
 
+/**
+ * Combined policy + stored-decision resolver.
+ *
+ * Returns the FINAL decision the request handler should act on, after
+ * consulting:
+ *   1. The policy (`resolveDecision`).
+ *   2. The user's stored per-origin decision, if any.
+ *
+ * Critical invariant: stored decisions only override `'prompt'`. They never
+ * override `'allow'` (chrome-extension://, peek://) or `'deny'` (a permission
+ * the policy has explicitly fail-closed). A site that's hard-allowed by
+ * policy can never have a stale stored deny take effect; a site that's
+ * hard-denied can never have a stale stored allow take effect.
+ *
+ * The `lookupStored` callback returns `boolean | null`: true for a stored
+ * allow, false for a stored deny, null if no decision is stored. Pure
+ * function — no side effects, no side-channel state — so it's trivially
+ * unit-testable.
+ */
+export function resolveWithStored(
+  url: string,
+  permission: PermissionName,
+  lookupStored: (origin: string, permission: PermissionName) => boolean | null,
+): Decision {
+  const policy = resolveDecision(url, permission);
+  if (policy !== 'prompt') return policy;
+  const origin = originFromUrl(url);
+  if (!origin || origin === '(unknown)') return 'prompt';
+  const stored = lookupStored(origin, permission);
+  if (stored === true) return 'allow';
+  if (stored === false) return 'deny';
+  return 'prompt';
+}
+
 export function originFromUrl(url: string): string {
   try {
     return new URL(url).origin;
