@@ -10,7 +10,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 
 ## State machines
 
-- [ ] **Page-host FSM — Phase 3: replace flag reads with FSM queries.** Phases 1 + 2 shipped 2026-04-27. The FSM now tracks all 6 states (INITIALIZING / NORMAL / MAXIMIZED / DRAGGING / RESIZING / DRAGGING_OUT_OF_MAXIMIZED) and page.js dispatches transition events at every entry/exit point. But `isDragging` / `isResizing` / `isMaximized` are still the source of truth — the FSM is shadow state, kept in sync via dispatch + idempotent applyFsmEffect. Phase 3: replace the flag reads (16 sites for `isDragging`, 5 for `isResizing`, 17 for `isMaximized`) with `fsmState === STATES.X` queries; delete the flags. Pre-maximize bounds (`preMaximizeBounds`, `preMaximizeWindowBounds`, `dragOutOfMaximizeWindowSize`) move into FSM context (the design doc's "small attribute bag"). The Playwright `Page Host FSM` spec already enforces the round-trips so any drift surfaces immediately.
+- [x] **Page-host FSM — Phase 3: replace flag reads with FSM queries.** Shipped 2026-04-27. All 16 `isDragging`, 5 `isResizing`, and 17 `isMaximized` reads converted to `inDragging()` / `inResizing()` / `inMaximized()` predicate helpers (which read `fsmState` directly); flag declarations + inline writes deleted. `applyFsmEffect.SET_BODY_MAXIMIZED` no longer mirrors state to a shadow var. `toggleMaximize` and `startDrag` restructured so the FSM dispatch happens BEFORE `updatePositions`/`updateUrlParams`/`setBounds`, with pre-dispatch state captured via `wasMaximized = inMaximized()` where the post-dispatch branches need it. Pre-maximize bounds (`preMaximizeBounds`, `preMaximizeWindowBounds`, `dragOutOfMaximizeWindowSize`) remain module-scoped — moving them into FSM context is deferred (would require an attribute bag in the FSM module + larger refactor; current form is correct + tested).
+  * Test results: unit 628/628; page-host-fsm 5/5; session-restore-page-host 2/2; reopen-closed-window 5/5; page-load-failure 5/5.
 
 ---
 
@@ -21,6 +22,8 @@ Long-term replacement: once the tiles runtime ships with MCP server, this file b
 ---
 
 ## Bugs
+
+- [ ] **Web permission requests (geolocation, camera, mic, notifications, clipboard) need user-approval UI.** Today Chromium permission requests from webview guests are either silently allowed or denied with no Peek-native prompt. Wire `session.setPermissionRequestHandler` (and `setPermissionCheckHandler` for sync checks) on the page-host webview's session to capture each request, surface a Peek-branded approve/reject prompt in the page UI (origin + permission name + remember-this-decision toggle), and persist per-origin decisions. Cover at minimum: geolocation, mediaDevices (camera/mic), notifications, clipboard-read/-write, midi, screen-share. Decisions should be queryable + revocable from settings.
 
 - [ ] **Server-not-found / page-load failure shows blank white page forever.** User-reported 2026-04-27 with `http://www.metikmusic.com/` (DNS resolves but server returns nothing useful, or DNS fails). The page-host webview just sits on white with no feedback. We should handle the full lifecycle of a failed page open: DNS failure, connection refused, TLS errors, HTTP 4xx/5xx, hung loads, ERR_NAME_NOT_RESOLVED, ERR_INTERNET_DISCONNECTED. Show a Peek-branded error UI inside the canvas with: the URL that failed, the underlying error reason, an obvious Retry button, and a "Go back" / "Close" affordance. Likely hooks: `did-fail-load` and `did-fail-provisional-load` on the webview's webContents in `app/page/page.js`, plus `certificate-error` on the session. Audit other entry points too (cmd web search, external URL handler, address bar) to ensure they all funnel into the same error UI.
 

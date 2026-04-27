@@ -149,11 +149,9 @@ let screenBounds = {
 };
 
 // --- Maximize state ---
-// `isMaximized` is the legacy boolean read by drag/resize/etc. It mirrors
-// the FSM's MAXIMIZED state. New code should query `fsmState` directly.
-// See docs/page-host-state-machine.md for the rollout plan.
+// fsmState is the source of truth — read via the inMaximized()/inDragging()/
+// inResizing() predicates below. See docs/page-host-state-machine.md.
 let fsmState = FSM_INITIAL_STATE;
-let isMaximized = false;
 let preMaximizeBounds = null; // { x, y, width, height } screen bounds before maximize
 // Raw WINDOW bounds captured before maximize (used to restore to the exact same
 // window rect, bypassing computeWindowBounds margin math which may differ from
@@ -161,24 +159,22 @@ let preMaximizeBounds = null; // { x, y, width, height } screen bounds before ma
 // canvas margin adjustment in ipc.ts window-open is skipped).
 let preMaximizeWindowBounds = null;
 
-// Apply FSM effects to the DOM. Today the FSM owns init transitions only;
-// toggleMaximize still mutates state directly (and dispatches to the FSM
-// to keep `fsmState` in sync). Future PRs will route every transition
-// through here.
+// Apply FSM effects to the DOM. fsmState is already the source of truth by
+// the time effects run (dispatchFsm assigns next.state before iterating);
+// effects translate state changes into idempotent DOM/URL updates.
 function applyFsmEffect(effect) {
   switch (effect.type) {
     case FSM_EFFECTS.SET_BODY_MAXIMIZED:
       if (effect.value) document.body.classList.add('maximized');
       else document.body.classList.remove('maximized');
-      isMaximized = effect.value;
       return;
     case FSM_EFFECTS.SET_HANDLES_VISIBLE:
       // No DOM write — handle visibility is set by updatePositions() based
-      // on isMaximized. Run updatePositions to apply.
+      // on fsmState. Run updatePositions to apply.
       updatePositions();
       return;
     case FSM_EFFECTS.SET_URL_MAXIMIZED:
-      // updateUrlParams() already reflects isMaximized, so just call it.
+      // updateUrlParams() already reflects fsmState, so just call it.
       updateUrlParams();
       return;
     case FSM_EFFECTS.CAPTURE_PRE_MAXIMIZE:
@@ -216,6 +212,15 @@ function dispatchFsm(event) {
   // code should never read this; use the FSM's transition() API.
   window.__pageFsmState = fsmState;
 }
+
+// FSM state predicates — single source of truth for "what state am I in?".
+// Phase 3 deleted the standalone `isMaximized` / `isDragging` / `isResizing`
+// flags; fsmState is now the only place lifecycle state lives.
+const inMaximized = () => fsmState === FSM_STATES.MAXIMIZED;
+const inDragging = () =>
+  fsmState === FSM_STATES.DRAGGING ||
+  fsmState === FSM_STATES.DRAGGING_OUT_OF_MAXIMIZED;
+const inResizing = () => fsmState === FSM_STATES.RESIZING;
 
 // NOTE: The window always includes navbar space (NAVBAR_HEIGHT) to avoid
 // visual jumps on show/hide. Navbar visibility is CSS-only — no window resize.
@@ -303,7 +308,7 @@ navbar.addEventListener('reload', () => {
 let extraWidth = 0;
 
 function computeWindowBounds(sb) {
-  if (isMaximized && preMaximizeBounds) {
+  if (inMaximized() && preMaximizeBounds) {
     // Maximized: window fills the display work area
     return {
       x: Math.round(sb.x),
@@ -335,7 +340,7 @@ function updateUrlParams() {
     // raw OS window bounds — when maximized, screenBounds equals the work
     // area (window == webview) and re-adding canvas margins on reopen would
     // overshoot the display.
-    if (isMaximized) {
+    if (inMaximized()) {
       url.searchParams.set('maximized', '1');
     } else {
       url.searchParams.delete('maximized');
@@ -347,7 +352,7 @@ function updateUrlParams() {
 }
 
 function updatePositions() {
-  if (isMaximized) {
+  if (inMaximized()) {
     updatePositionsMaximized();
     return;
   }
@@ -582,8 +587,7 @@ async function toggleMaximize() {
   try {
     // Cancel any active drag — drag handlers running during the await would
     // overwrite screenBounds and call setBounds with stale values.
-    if (isDragging) {
-      isDragging = false;
+    if (inDragging()) {
       dragOverlay.classList.remove('active');
       document.body.style.cursor = '';
       navbar.style.cursor = 'grab';
@@ -597,15 +601,12 @@ async function toggleMaximize() {
       pendingBoundsUpdate = null;
     }
 
-    if (isMaximized) {
+    if (inMaximized()) {
       // Restore from maximize. Use the saved WINDOW bounds directly — they
       // were captured from the live window before maximize, so restoring with
       // them guarantees byte-for-byte bounds equivalence regardless of any
       // canvas margin adjustments (which may or may not be applied in
       // headless/test environments).
-      isMaximized = false;
-      document.body.classList.remove('maximized');
-
       const restoreWindowBounds = preMaximizeWindowBounds;
       if (preMaximizeBounds) {
         screenBounds.x = preMaximizeBounds.x;
@@ -616,7 +617,12 @@ async function toggleMaximize() {
       }
       preMaximizeWindowBounds = null;
 
-      updatePositions();
+      // Dispatch flips fsmState MAXIMIZED→NORMAL and fires effects:
+      //   SET_BODY_MAXIMIZED(false), SET_HANDLES_VISIBLE(true) (→updatePositions),
+      //   SET_URL_MAXIMIZED(false) (→updateUrlParams). updatePositions and
+      //   updateUrlParams now see the restored screenBounds + NORMAL state.
+      dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
+
       centerColumn.style.opacity = '0';
       if (restoreWindowBounds) {
         await api.window.setBounds(restoreWindowBounds);
@@ -624,9 +630,6 @@ async function toggleMaximize() {
         await api.window.setBounds(computeWindowBounds(screenBounds));
       }
       centerColumn.style.opacity = '1';
-      updateUrlParams();
-      // Sync FSM (effects are idempotent against state we already mutated).
-      dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
       return;
     }
 
@@ -663,22 +666,20 @@ async function toggleMaximize() {
       preMaximizeWindowBounds = null;
     }
 
-    isMaximized = true;
-    document.body.classList.add('maximized');
-
     // screenBounds now represents the full work area (window = work area in maximized mode)
     screenBounds.x = workArea.x;
     screenBounds.y = workArea.y;
     screenBounds.width = workArea.width;
     screenBounds.height = workArea.height;
 
-    updatePositions();
+    // Dispatch flips fsmState NORMAL→MAXIMIZED and fires effects:
+    //   SET_BODY_MAXIMIZED(true), SET_HANDLES_VISIBLE(false) (→updatePositions
+    //   uses maximized layout), SET_URL_MAXIMIZED(true) (→updateUrlParams).
+    dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
+
     centerColumn.style.opacity = '0';
     await api.window.setBounds(computeWindowBounds(screenBounds));
     centerColumn.style.opacity = '1';
-    updateUrlParams();
-    // Sync FSM (effects are idempotent against state we already mutated).
-    dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
   } catch (err) {
     console.error('[page] toggleMaximize failed:', err);
   }
@@ -702,7 +703,7 @@ function setWindowBounds(bounds) {
 // Expands the window symmetrically. Flexbox keeps the center column in place.
 // Returns a promise that resolves when the window bounds have been applied.
 function setWindowPadding(width) {
-  if (isMaximized) return Promise.resolve();
+  if (inMaximized()) return Promise.resolve();
   width = Math.max(0, width);
   if (width === extraWidth) return Promise.resolve();
   extraWidth = width;
@@ -950,8 +951,9 @@ webview.addEventListener('did-stop-loading', () => {
 //   1. Navbar background: instant drag (no hold delay)
 //   2. Anywhere else: hold for dragHoldDelay (default 1s) then drag
 // Drag now moves the BrowserWindow itself via setBounds() IPC.
+// Lifecycle (DRAGGING / DRAGGING_OUT_OF_MAXIMIZED) lives in the FSM —
+// see inDragging() above. Variables below are per-drag attribute state only.
 
-let isDragging = false;
 let dragStartScreenX = 0;
 let dragStartScreenY = 0;
 let dragStartBoundsX = 0;
@@ -985,18 +987,18 @@ let holdDragStartScreenY = 0;
 })();
 
 function startDrag(screenX, screenY) {
+  // Capture pre-dispatch state: DRAG_START flips MAXIMIZED → DRAGGING_OUT_OF_MAXIMIZED.
+  const wasMaximized = inMaximized();
+
   // FSM: NORMAL → DRAGGING or MAXIMIZED → DRAGGING_OUT_OF_MAXIMIZED.
-  // Effects (overlay, body class, URL param) are idempotent against
-  // the inline mutations below.
+  // Effects (overlay, body class, URL param) clean up the maximized DOM state.
   dispatchFsm({ type: FSM_EVENTS.DRAG_START });
 
   // Drag-out-of-maximize: restore original size, center on cursor
-  if (isMaximized && preMaximizeBounds) {
+  if (wasMaximized && preMaximizeBounds) {
     const restoreW = preMaximizeBounds.width;
     const restoreH = preMaximizeBounds.height;
     const savedWindowBounds = preMaximizeWindowBounds;
-    isMaximized = false;
-    document.body.classList.remove('maximized');
 
     // Center the restored window on the cursor
     screenBounds.x = screenX - restoreW / 2;
@@ -1029,7 +1031,6 @@ function startDrag(screenX, screenY) {
       dragOutOfMaximizeWindowSize = null;
     }
   }
-  isDragging = true;
   dragStartScreenX = screenX;
   dragStartScreenY = screenY;
   dragStartBoundsX = screenBounds.x;
@@ -1064,7 +1065,7 @@ navbar.addEventListener('mousedown', (e) => {
 // Any movement during hold period cancels the timer, allowing text selection.
 document.addEventListener('mousedown', (e) => {
   if (e.target.closest('.resize-handle')) return;
-  if (isDragging) return;
+  if (inDragging()) return;
   if (e.button !== 0) return;
   pageMouseButtonDown = true;
 
@@ -1096,7 +1097,7 @@ document.addEventListener('mousemove', (e) => {
   }
 
   // After hold fired (cursor is 'grab'): movement starts drag
-  if (holdDragReady && !isDragging) {
+  if (holdDragReady && !inDragging()) {
     holdDragReady = false;
     startDrag(holdDragStartScreenX, holdDragStartScreenY);
   }
@@ -1198,8 +1199,7 @@ webview.addEventListener('console-message', (e) => {
     cancelWebviewHold();
     // If drag was active, fully end it — webview mouseup won't bubble to document,
     // so we must clean up here to avoid the drag overlay staying active and blocking clicks.
-    if (isDragging) {
-      isDragging = false;
+    if (inDragging()) {
       pageMouseButtonDown = false;
       dragOverlay.classList.remove('active');
       document.body.style.cursor = '';
@@ -1218,7 +1218,7 @@ webview.addEventListener('console-message', (e) => {
     if (isNaN(screenX) || isNaN(screenY)) return;
 
     // If actively dragging, update window position from webview mouse coords.
-    if (isDragging && !isMaximized) {
+    if (inDragging() && !inMaximized()) {
       const dx = screenX - dragStartScreenX;
       const dy = screenY - dragStartScreenY;
       screenBounds.x = dragStartBoundsX + dx;
@@ -1317,8 +1317,9 @@ dragOverlay.addEventListener('mouseup', () => {
 // --- Custom resize (all corner handles) ---
 // Uses pointer capture. On each pointermove, calls setBounds() to resize the
 // BrowserWindow AND updates element positions within the window.
+// Lifecycle state lives in the FSM (RESIZING); local vars below are only
+// the per-drag attribute state (cursor, start positions, active handle).
 
-let isResizing = false;
 let resizeDir = null;
 let resizeStartX = 0;
 let resizeStartY = 0;
@@ -1333,7 +1334,6 @@ function initResizeHandle(handle) {
 
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
-    isResizing = true;
     resizeDir = handle.dataset.dir;
     resizeStartX = e.screenX;
     resizeStartY = e.screenY;
@@ -1350,7 +1350,7 @@ function initResizeHandle(handle) {
   });
 
   handle.addEventListener('pointermove', (e) => {
-    if (!isResizing || activeResizeHandle !== handle || isMaximized) return;
+    if (!inResizing() || activeResizeHandle !== handle || inMaximized()) return;
     if (e.buttons === 0) {
       cancelResize();
       return;
@@ -1387,14 +1387,14 @@ function initResizeHandle(handle) {
   });
 
   handle.addEventListener('pointerup', (e) => {
-    if (isResizing && activeResizeHandle === handle) {
+    if (inResizing() && activeResizeHandle === handle) {
       cancelResize();
       handle.releasePointerCapture(e.pointerId);
     }
   });
 
   handle.addEventListener('pointercancel', () => {
-    if (isResizing && activeResizeHandle === handle) {
+    if (inResizing() && activeResizeHandle === handle) {
       cancelResize();
     }
   });
@@ -1403,8 +1403,8 @@ function initResizeHandle(handle) {
 Object.values(resizeHandles).forEach(initResizeHandle);
 
 function cancelResize() {
-  const wasResizing = isResizing;
-  isResizing = false;
+  // Capture transition decision BEFORE dispatch (which mutates fsmState).
+  const wasResizing = inResizing();
   resizeDir = null;
   activeResizeHandle = null;
   document.body.style.cursor = '';
@@ -1418,8 +1418,7 @@ function cancelResize() {
 // Drag now moves the BrowserWindow via setBounds() IPC
 
 document.addEventListener('mousemove', (e) => {
-  if (isDragging && !pageMouseButtonDown) {
-    isDragging = false;
+  if (inDragging() && !pageMouseButtonDown) {
     dragOverlay.classList.remove('active');
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
@@ -1428,7 +1427,7 @@ document.addEventListener('mousemove', (e) => {
     return;
   }
 
-  if (isDragging && !isMaximized) {
+  if (inDragging() && !inMaximized()) {
     const dx = e.screenX - dragStartScreenX;
     const dy = e.screenY - dragStartScreenY;
     screenBounds.x = dragStartBoundsX + dx;
@@ -1447,8 +1446,7 @@ document.addEventListener('mousemove', (e) => {
 });
 
 document.addEventListener('mouseup', () => {
-  if (isDragging) {
-    isDragging = false;
+  if (inDragging()) {
     dragOverlay.classList.remove('active');
     document.body.style.cursor = '';
     navbar.style.cursor = 'grab';
@@ -1540,7 +1538,7 @@ async function show(opts) {
 }
 
 async function hide() {
-  if (isDragging || holdDragPending) return;
+  if (inDragging() || holdDragPending) return;
   // Don't hide while page is loading — navbar stays visible with spinner
   if (loadingLifecycle.state === 'loading') return;
   if (hideTimer) {
