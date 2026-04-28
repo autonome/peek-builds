@@ -13,6 +13,54 @@ Completed work, grouped by week of year.
 
 Newly done items go here, grouped under level-2 headings by week (date = Monday of that ISO week).
 
+## 2026-04-27
+
+Desktop - window-placement refactor sprint (Phases 1–6)
+- [x] Phase 1 — extract pure `backend/electron/window-placement.ts` with `computePlacement` + `Placement` discriminated union; full unit-test coverage with synthetic display layouts so the regression class becomes single-failing-test catchable
+- [x] Phase 2 — record a `placement` intent on every window at registration time (never re-derived from current screen state, so display swaps can re-resolve against the original intent)
+- [x] Phase 3 — wire `computePlacement` into URL-reuse, fresh-open fallback, and display-watcher second pass; stranded-rescue (<50% area on any display) is built into the pure module and replaces `isWindowAccessibleNow` + `repositionOnCursorDisplay`, which are deleted
+- [x] Phase 4 — slides renderer no longer computes x/y; passes `screenEdge` semantics, main process owns placement (`placement: { mode: 'edge', edge }`) and resolves coords against the current cursor display every show; renderer no longer reads `window.screen.width/height`
+- [x] Phase 5 — `tile-ipc.ts` v2 positioning consolidated through `computePlacement` (single placement decision path across reuse / fresh / v2 tiles)
+- [x] Phase 6 — close out sprint, document the new module, mark display-switch tasks resolved
+- [x] Fix: page-host window jumps to wrong position after switching primary monitor (cmd+L on a different display than where window was last opened) — `cursor-display-fallback` placement causes display-watcher to re-evaluate against current cursor display
+- [x] Fix: slides anchor to stale `window.screen` coordinates after display switch — every display change now triggers a generic `computePlacement` pass via display-watcher
+
+Desktop - web permissions feature (Phases 1–5 + polish)
+- [x] Phase 1 — per-permission policy module (`permission-policy.ts`): visibility surface + default-deny for unknown permissions; chrome-extension:// origins hard-allowed
+- [x] Phase 2 — user approval prompt UI for risky web permissions (camera/mic/geolocation/notifications/clipboard etc.)
+- [x] Phase 3 — persist per-origin decisions to SQLite (`web_permissions` table)
+- [x] Phase 4 — Settings UI for inspecting + revoking stored decisions (per-origin grouped rows)
+- [x] Phase 5 — favicon + multi-prompt queueing UX (consecutive prompts on the same origin coalesce into a single dialog with a queue indicator)
+- [x] Polish: per-permission emoji glyphs, nav count badge in Settings, relative timestamps, clearAll button reset, test-coupling cleanup
+- [x] Refactor: extract `resolveWithStored` as a pure, unit-testable function
+- [x] New `tests/desktop/permissions-*.spec.ts` — Allow+Remember coverage; settings rows grouped by origin
+
+Desktop - page-host window FSM (Phases 1–3)
+- [x] Phase 1 — maximize state + round-2 polish (state-driven maximize/restore replaces ad-hoc class toggles)
+- [x] Phase 2 — drag/resize/drag-out-of-maximized states modeled explicitly
+- [x] Phase 3 — `fsmState` is the source of truth (DOM classes derived from state, not the other way round)
+
+Desktop - page-host load failures
+- [x] Show branded error overlay when a page fails to load (`did-fail-load`) — replaces Chromium's default error chrome
+- [x] Hung-load timeout surfaces the same error overlay — no more blank-white-page-forever when DNS/TCP stalls
+- [x] Anchor the load-error overlay to `.center-column` (`position: absolute; inset: 0; z-index: 25`) so Cmd+L surfaces the navbar without window growth — pre-fix the overlay was `position: fixed` at z-index 9998 anchored to the viewport, hiding the navbar and stretching with show()'s panel-overhang window expansion
+- [x] New `tests/desktop/cmdl-on-error-page.spec.ts` pins the symptom: webview width unchanged, overlay sized to center-column (< document width), body not maximized, navbar visible, navbar z > overlay z
+
+Desktop - window-open / IZUI fixes
+- [x] Fix `window.open` URL-reuse collapsing distinct callers — when caller provides an explicit `key`, skip URL-reuse so two windows with the same URL but different keys both open; new `tests/desktop/window-url.spec.ts:120` covers it
+- [x] Restore window-level transient-on-blur auto-hide regressed by panel-type focus events — macOS NSPanels don't fire `BrowserWindow.on('blur')` on intra-app focus shifts, so a main-process `win.on('focus')` loop now hides/closes other visible windows whose role is in `TRANSIENT_ROLES` (palette / quick-view / overlay)
+
+Desktop - cmd panel + lex
+- [x] Migrate cmd panel to `api.izui` + replace `api.modes` calls; surface `open <noun>` variants in tab cycle so noun-registered features show alongside bare commands
+- [x] Lex: short-circuit on auth expiry — surface re-authentication UI and stop polling instead of looping failed token refreshes
+
+Desktop - tiles + shortcuts
+- [x] Collapse `lists` bg+home into a single tile + harden tile-launcher (`frame`, `keepLive`)
+- [x] Cmd+Shift+T (reopen closed window) now works from inside webview content — accelerator was previously swallowed by the focused webview
+
+Desktop - websearch
+- [x] Consolidate websearch to a single tile + fix multi-word command query bleed (subsequent token of a chained command was leaking back into the search query)
+
 ## 2026-04-20
 
 Desktop - thumbnail close-race fix
