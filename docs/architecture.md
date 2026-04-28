@@ -237,6 +237,29 @@ single transition entry plus a test.
 
 ---
 
+## Window placement
+
+**Owns:** where every BrowserWindow lands when it's opened, reused, or
+when display topology changes.
+**Lives in:** [`backend/electron/window-placement.ts`](../backend/electron/window-placement.ts) — a pure module with no `screen.*` or `BrowserWindow.*` calls inside; the caller passes display state in.
+**Doc:** [docs/window-placement-refactor.md](./window-placement-refactor.md) (sprint plan and rationale)
+
+A `Placement` discriminated union (`centered`, `cursor-display-fallback`,
+`edge`, `parent-centered`, `manual`) captures the *intent* for each
+window. Intent is recorded once at window-open time on
+`windowRegistry.params.placement` and never re-derived from flag soup
+(`center: true`, explicit `x/y`, `useCanvas`, etc.). All consumers — the
+URL-reuse and keepLive-reuse paths in `ipc.ts`, the fresh-open fallback,
+the display-watcher second pass, and the v2-tile open path in
+`tile-ipc.ts` — call the same `computePlacement(input)` and apply its
+`reposition` / `no-change` result. Stranded-rescue (<50% area on any
+display) is built in for every mode. Unit-tested with synthetic display
+layouts via a `fakeDisplays(...)` helper so display-switch regressions
+are catchable as single failing tests, no real multi-monitor hardware
+required.
+
+---
+
 ## Peek tiles vs webtil.es / DASL Tiles
 
 The [DASL Tiles specification](https://dasl.ing/tiles.html) (the spec
