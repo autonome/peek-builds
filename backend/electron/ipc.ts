@@ -76,6 +76,7 @@ import {
   closeOrHideWindow,
   getSystemThemeBackgroundColor,
   getPrefs,
+  TRANSIENT_ROLES,
 } from './windows.js';
 
 
@@ -2052,6 +2053,47 @@ export function registerWindowHandlers(): void {
           id: win.id,
           role: winInfo?.params?.role as string | undefined,
         });
+
+        // Auto-hide sibling transient windows when another window gains
+        // focus. IZUI policy: palette / quick-view / overlay windows are
+        // transient — they should dismiss as soon as focus moves to any
+        // other window. The per-window `blur` handler attached to modals
+        // covers Cmd+Tab and clicks into other apps, but macOS NSPanels
+        // (type:'panel' + alwaysOnTop) don't fire reliable `blur` when
+        // focus shifts to another panel-type window in the same app — so
+        // opening slide B from edge X never closes slide A on edge Y. The
+        // cmd panel restored this on the renderer side via a
+        // `window:focused` subscription (commit 6361cf19); generalize it
+        // here for all transient roles in the main process so we don't
+        // need a per-feature renderer hook for every panel-style tile.
+        //
+        // Skip when the focusing window is itself transient/utility:
+        //   - utility (chain popup) is a child of a transient and must
+        //     not dismiss its parent
+        //   - palette/quick-view/overlay focusing each other would cause
+        //     the just-opened transient to immediately close itself in
+        //     the wrong order; let the new transient stand and dismiss
+        //     the previous one(s).
+        const focusedRole = winInfo?.params?.role as string | undefined;
+        if (focusedRole !== 'utility') {
+          for (const other of BrowserWindow.getAllWindows()) {
+            if (other.id === win.id) continue;
+            if (other.isDestroyed()) continue;
+            if (!other.isVisible()) continue;
+            const otherInfo = getWindowInfo(other.id);
+            const otherRole = otherInfo?.params?.role as string | undefined;
+            if (!otherRole || !TRANSIENT_ROLES.has(otherRole)) continue;
+            // Overlays manage their own restoration flow via the IZUI
+            // coordinator — don't drive them through closeOrHideWindow.
+            if (otherRole === 'overlay') continue;
+            DEBUG && console.log('[izui] window-focused autoclose transient sibling:', other.id, 'role:', otherRole, 'focused:', win.id, 'role:', focusedRole);
+            try {
+              closeOrHideWindow(other.id);
+            } catch (err) {
+              DEBUG && console.log('[izui] autoclose transient failed:', err);
+            }
+          }
+        }
       });
       // Also track immediately if this is a content/visible window (non-modal only)
       trackContentWindowFocus(win);

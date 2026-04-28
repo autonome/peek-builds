@@ -338,8 +338,15 @@ export function closeWindow(params: { id?: number }, callback?: (success: boolea
  * These are modal/overlay windows (cmd palette, quick-view, windows switcher)
  * that open and close frequently. Counting them causes dock show/hide cycling
  * which triggers activation policy changes and spurious blur events.
+ *
+ * Also used by the focus-driven auto-hide path: when a non-transient,
+ * non-utility window gains focus, any other window with one of these roles
+ * is dismissed via closeOrHideWindow. Restores the "open another window
+ * → previous transient closes" behavior that panel-type windows lose
+ * because macOS NSPanels don't fire reliable per-window blur events when
+ * focus shifts within the app.
  */
-const TRANSIENT_ROLES = new Set(['palette', 'quick-view', 'overlay']);
+export const TRANSIENT_ROLES = new Set(['palette', 'quick-view', 'overlay']);
 
 /**
  * Get count of visible persistent windows (excluding background, modals, overlays, HUD).
