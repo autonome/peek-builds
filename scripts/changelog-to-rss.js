@@ -2,27 +2,30 @@
 /**
  * changelog-to-rss.js
  *
- * Parses CHANGELOG.md and generates an RSS 2.0 feed XML file.
+ * Parses CHANGELOG.md and emits a rolling RSS 2.0 feed of the last N days
+ * of changes (default: 7). One <item> per bullet under `### YYYY-MM-DD`
+ * sub-headings (the post-2026-04-29 format). Older `## YYYY-MM-DD` weekly
+ * sections are ignored — RSS is "what shipped recently", not the archive.
  *
- * Expected CHANGELOG.md format:
- * - HTML comment block with @marss metadata (title, link, description)
- * - Level-2 headings (##) with ISO dates (YYYY-MM-DD) as feed items
- * - Content under each heading becomes the item description
- *
- * Usage: node scripts/changelog-to-rss.js [input] [output]
- *   input  - path to CHANGELOG.md (default: CHANGELOG.md)
- *   output - path to RSS XML output (default: docs/feed.xml)
+ * Usage: node scripts/changelog-to-rss.js [input] [output] [--days N]
+ *   input  - path to CHANGELOG.md  (default: CHANGELOG.md)
+ *   output - path to RSS XML out   (default: docs/feed.xml)
+ *   --days N - rolling window in days (default: 7)
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
-const inputPath = resolve(process.argv[2] || 'CHANGELOG.md');
-const outputPath = resolve(process.argv[3] || 'docs/feed.xml');
+const positional = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const flagDaysIdx = process.argv.indexOf('--days');
+const ROLLING_DAYS = flagDaysIdx >= 0 ? parseInt(process.argv[flagDaysIdx + 1], 10) : 7;
+
+const inputPath = resolve(positional[0] || 'CHANGELOG.md');
+const outputPath = resolve(positional[1] || 'docs/feed.xml');
 
 const content = readFileSync(inputPath, 'utf-8');
 
-// Parse @marss metadata from HTML comment
 function parseMetadata(text) {
   const match = text.match(/<!--\s*\n\s*@marss\s*\n([\s\S]*?)-->/);
   if (!match) {
@@ -40,61 +43,51 @@ function parseMetadata(text) {
   return meta;
 }
 
-// Parse level-2 headings and their content as feed items
-function parseItems(text) {
+// Walk the file collecting per-bullet items under `### YYYY-MM-DD` sub-headings.
+function parseBulletItems(text) {
+  const lines = text.split('\n');
   const items = [];
-  // Split on ## headings (level 2 only, not ### or #)
-  const parts = text.split(/^## /m);
+  let currentDate = null;
 
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i];
-    const newlineIdx = part.indexOf('\n');
-    if (newlineIdx === -1) continue;
-
-    const heading = part.slice(0, newlineIdx).trim();
-    const body = part.slice(newlineIdx + 1).trim();
-
-    // Extract date from heading - expect YYYY-MM-DD
-    const dateMatch = heading.match(/(\d{4}-\d{2}-\d{2})/);
-    if (!dateMatch) continue; // Skip headings without dates
-
-    const dateStr = dateMatch[1];
-    const date = new Date(dateStr + 'T12:00:00Z');
-
-    // Title: use the heading text (may include more than just the date)
-    const title = heading;
-
-    // Convert markdown body to plain text for RSS description
-    const description = markdownToPlainText(body);
-
-    items.push({ title, date, dateStr, description });
+  for (const line of lines) {
+    const dayMatch = line.match(/^### (\d{4}-\d{2}-\d{2})\s*$/);
+    if (dayMatch) {
+      currentDate = dayMatch[1];
+      continue;
+    }
+    // Reset on a new ## heading (week boundary or older format)
+    if (/^## /.test(line)) {
+      currentDate = null;
+      continue;
+    }
+    if (!currentDate) continue;
+    const bulletMatch = line.match(/^- (.+)$/);
+    if (!bulletMatch) continue;
+    items.push({ date: currentDate, body: bulletMatch[1].trim() });
   }
 
   return items;
 }
 
-// Convert markdown to plain text for RSS descriptions
-function markdownToPlainText(md) {
-  let text = md
-    // Convert markdown links to "text (URL)" format
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
-    // Remove checkboxes
-    .replace(/^- \[x\] /gm, '- ')
-    .replace(/^- \[ \] /gm, '- ')
-    // Remove bold markers
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    // Remove italic markers
-    .replace(/\*(.+?)\*/g, '$1')
-    // Remove inline code backticks
-    .replace(/`([^`]+)`/g, '$1')
-    // Collapse multiple blank lines
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-
-  return text;
+function withinRollingWindow(items, days) {
+  if (items.length === 0) return [];
+  const newest = items
+    .map((i) => i.date)
+    .sort((a, b) => b.localeCompare(a))[0];
+  const cutoff = new Date(newest + 'T12:00:00Z');
+  cutoff.setUTCDate(cutoff.getUTCDate() - (days - 1));
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  return items.filter((i) => i.date >= cutoffStr);
 }
 
-// Escape XML special characters
+function markdownInlineToPlain(s) {
+  return s
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1');
+}
+
 function escapeXml(str) {
   return str
     .replace(/&/g, '&amp;')
@@ -104,7 +97,11 @@ function escapeXml(str) {
     .replace(/'/g, '&apos;');
 }
 
-// Generate RSS 2.0 XML
+function stableGuid(date, body) {
+  const h = createHash('sha1').update(`${date}\n${body}`).digest('hex');
+  return `urn:peek:changelog:${date}:${h.slice(0, 12)}`;
+}
+
 function generateRss(meta, items) {
   const now = new Date().toUTCString();
 
@@ -128,20 +125,26 @@ function generateRss(meta, items) {
   if (meta.copyright) {
     xml += `    <copyright>${escapeXml(meta.copyright)}</copyright>\n`;
   }
-  if (meta.imageUrl) {
-    xml += `    <image>\n      <url>${escapeXml(meta.imageUrl)}</url>\n      <title>${escapeXml(meta.title || 'Changelog')}</title>\n      <link>${escapeXml(meta.link || '')}</link>\n    </image>\n`;
-  }
 
-  for (const item of items) {
-    const pubDate = item.date.toUTCString();
-    const guid = (meta.link || 'urn:changelog') + '#' + item.dateStr;
+  // Newest first
+  const sorted = [...items].sort((a, b) =>
+    a.date === b.date ? 0 : b.date.localeCompare(a.date),
+  );
+
+  for (const item of sorted) {
+    const date = new Date(item.date + 'T12:00:00Z');
+    const pubDate = date.toUTCString();
+    const plain = markdownInlineToPlain(item.body);
+    const title = plain.length > 200 ? plain.slice(0, 197) + '...' : plain;
+    const guid = stableGuid(item.date, item.body);
+    const itemLink = (meta.link || '') + '/blob/main/CHANGELOG.md#' + item.date;
 
     xml += `    <item>
-      <title>${escapeXml(item.title)}</title>
-      <link>${escapeXml((meta.link || '') + '/blob/main/CHANGELOG.md#' + item.dateStr)}</link>
+      <title>${escapeXml(title)}</title>
+      <link>${escapeXml(itemLink)}</link>
       <guid isPermaLink="false">${escapeXml(guid)}</guid>
       <pubDate>${pubDate}</pubDate>
-      <description>${escapeXml(item.description)}</description>
+      <description>${escapeXml(plain)}</description>
     </item>
 `;
   }
@@ -149,22 +152,21 @@ function generateRss(meta, items) {
   xml += `  </channel>
 </rss>
 `;
-
   return xml;
 }
 
-// Main
 const meta = parseMetadata(content);
-const items = parseItems(content);
+const allItems = parseBulletItems(content);
+const items = withinRollingWindow(allItems, ROLLING_DAYS);
 
 if (items.length === 0) {
-  console.error('Warning: No feed items found (no ## headings with dates)');
+  console.error(
+    `Warning: No bullets found within last ${ROLLING_DAYS} days under ### YYYY-MM-DD sub-headings.`,
+  );
 }
 
 const rss = generateRss(meta, items);
-
-// Ensure output directory exists
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, rss, 'utf-8');
 
-console.log(`Generated RSS feed: ${outputPath} (${items.length} items)`);
+console.log(`Generated RSS feed: ${outputPath} (${items.length} items, ${ROLLING_DAYS}-day window)`);
