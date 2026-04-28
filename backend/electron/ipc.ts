@@ -635,7 +635,11 @@ export function registerWindowHandlers(): void {
     // This catches duplicate windows even when no key was provided.
     // Skip this check for reopen-last-closed (trackingSource: 'reopen') — the user
     // explicitly wants a new window for the URL they previously closed.
-    if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen') {
+    // Skip when the caller passed an explicit `key` — a key signals "I manage
+    // window identity by key, not by URL." Otherwise a slide (key=address:edge)
+    // whose window was just transient-closed will fall through here and get
+    // attached to whatever unrelated http window happens to share its URL.
+    if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && !options.key) {
       const existingByUrl = findWindowByUrl(url);
       if (existingByUrl) {
         DEBUG && console.log('Reusing existing window with same URL:', url);
