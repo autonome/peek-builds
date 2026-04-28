@@ -237,17 +237,14 @@ function updateModeIndicator() {
 
 const loadCommandContext = async () => {
   try {
-    const isTransient = await api.window.isTransient();
+    const isTransient = await api.izui.isTransient();
     if (isTransient) {
       log('cmd:panel', 'Transient invocation - using default mode');
       currentMode = 'default';
       currentModeMetadata = {};
       modeWasSet = true;
       updateModeIndicator();
-      const result = await api.modes.getCommandContext();
-      if (result.success) {
-        commandContext = result.data;
-      }
+      commandContext = { mode: { major: 'default' } };
       return;
     }
 
@@ -264,16 +261,12 @@ const loadCommandContext = async () => {
       }
     }
 
-    const result = await api.modes.getCommandContext();
-    if (result.success) {
-      commandContext = result.data;
-      log('cmd:panel', 'Loaded command context:', commandContext);
-      if (!modeWasSet && commandContext?.mode?.major) {
-        currentMode = commandContext.mode.major;
-        modeWasSet = true;
-        updateModeIndicator();
-      }
-    }
+    // Construct commandContext from the resolved mode. The legacy
+    // api.modes.getCommandContext() returned a richer shape, but the
+    // only field consumed downstream (isCommandAvailable) is
+    // commandContext.mode.major — derive it from currentMode.
+    commandContext = { mode: { major: currentMode || 'default' } };
+    log('cmd:panel', 'Loaded command context:', commandContext);
   } catch (err) {
     log.error('cmd:panel', 'Failed to load command context:', err);
     commandContext = null;
@@ -287,19 +280,8 @@ async function cycleMode() {
 
   log('cmd:panel', 'Cycling mode from', currentMode, 'to', nextMode);
 
-  if (api.context) {
-    const targetWindowId = await api.window.getFocusedVisibleWindowId();
-    const result = await api.context.setMode(nextMode, { windowId: targetWindowId });
-    if (result.success) {
-      currentMode = nextMode;
-      currentModeMetadata = {};
-      updateModeIndicator();
-      await loadCommandContext();
-      return;
-    }
-  }
-
-  const result = await api.modes.setMajorMode(nextMode);
+  const targetWindowId = await api.window.getFocusedVisibleWindowId();
+  const result = await api.context.setMode(nextMode, { windowId: targetWindowId });
   if (result.success) {
     currentMode = nextMode;
     currentModeMetadata = {};
@@ -347,14 +329,6 @@ async function initModeIndicator() {
       updateModeIndicator();
     });
   }
-
-  api.modes.onModeChange((modeState, windowId) => {
-    log('cmd:panel', 'Mode changed (modes API):', modeState, 'for window:', windowId);
-    if (!currentMode || currentMode === 'default') {
-      currentMode = modeState.major || 'default';
-      updateModeIndicator();
-    }
-  });
 
   log('cmd:panel', 'Mode indicator initialized with mode:', currentMode);
 }
@@ -412,6 +386,20 @@ function findMatchingCommands(text) {
     }
   }
 
+  // Token-prefix predicate: returns true if input is a prefix of any
+  // whitespace-separated token in the command name. This brings
+  // multi-word variants (e.g. "open tags") into the same rank tier as
+  // the bare noun ("tags") for input "tag" — otherwise the multi-word
+  // variant has zero frecency and falls past the end of a Tab cycle
+  // the user never reaches.
+  const tokenPrefixMatch = (name) => {
+    const tokens = name.toLowerCase().split(/\s+/);
+    for (const tok of tokens) {
+      if (tok.startsWith(lowerCommandPart)) return true;
+    }
+    return false;
+  };
+
   // Sort by combined ranking score
   matches.sort(function(a, b) {
     const aLower = a.toLowerCase();
@@ -423,6 +411,15 @@ function findMatchingCommands(text) {
       if (aExact && !bExact) return -1;
       if (bExact && !aExact) return 1;
     }
+
+    // Token-prefix tier: any command where the input is a prefix of
+    // some token outranks pure substring-only matches. This keeps
+    // bare-noun ("tags") and "open <noun>" ("open tags") adjacent in
+    // the cycle for input "tag".
+    const aTokenPrefix = tokenPrefixMatch(a);
+    const bTokenPrefix = tokenPrefixMatch(b);
+    if (aTokenPrefix && !bTokenPrefix) return -1;
+    if (bTokenPrefix && !aTokenPrefix) return 1;
 
     const aAdaptive = getAdaptiveScore(commandPart, a);
     const bAdaptive = getAdaptiveScore(commandPart, b);
