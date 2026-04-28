@@ -117,6 +117,36 @@ test.describe('Window URL Loading @desktop', () => {
     await closeWindow(sharedBgWindow, result2.id);
   });
 
+  test('opening a URL with a key does NOT reuse a keyless window with the same URL', async () => {
+    // Regression: slides set address=http://localhost/ and key=address:edge.
+    // When a page-host already has http://localhost/ open (no key), pressing
+    // Option+Up used to fall through key-reuse → URL-reuse → got attached to
+    // the page-host's window instead of opening a fresh edge-anchored slide.
+    // An explicit key signals "I manage identity by key" — URL-reuse must skip.
+    const url = 'https://example.com/keyless-vs-keyed';
+
+    // Open WITHOUT a key (the "existing page-host" stand-in)
+    const keylessResult = await openUrl(sharedBgWindow, url);
+    expect(keylessResult.success).toBe(true);
+    expect(keylessResult.reused).toBeFalsy();
+
+    // Open SAME URL but WITH a key — must NOT reuse the keyless window
+    const keyedResult = await openUrl(sharedBgWindow, url, { key: 'keyed-slot-A' });
+    expect(keyedResult.success).toBe(true);
+    expect(keyedResult.reused).toBeFalsy();
+    expect(keyedResult.id).not.toBe(keylessResult.id);
+
+    // Opening with the same key again reuses the keyed window (key-reuse)
+    const keyedAgain = await openUrl(sharedBgWindow, url, { key: 'keyed-slot-A' });
+    expect(keyedAgain.success).toBe(true);
+    expect(keyedAgain.reused).toBe(true);
+    expect(keyedAgain.id).toBe(keyedResult.id);
+
+    // Clean up
+    await closeWindow(sharedBgWindow, keylessResult.id);
+    await closeWindow(sharedBgWindow, keyedResult.id);
+  });
+
   test('key-based window reuse still works', async () => {
     const url = 'https://example.com/key-test';
     const key = 'test-key-reuse';
