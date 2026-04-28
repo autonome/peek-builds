@@ -31,6 +31,9 @@ import {
   getRecord,
   deleteRecord,
   getLatestCommit,
+  AuthExpiredError,
+  isAuthExpired,
+  clearAuthExpired,
 } from './atproto.js';
 
 const api = window.app;
@@ -49,11 +52,16 @@ let knownCollectionNsids = [];
  */
 async function discoverCollections() {
   if (!currentSession) return;
+  if (isAuthExpired()) return;
   try {
     const collections = await getCollections(currentSession, onSessionRefresh);
     knownCollectionNsids = collections || [];
     console.log(`[lex] Discovered ${knownCollectionNsids.length} collections for noun query`);
   } catch (err) {
+    if (err instanceof AuthExpiredError) {
+      handleAuthExpired();
+      return;
+    }
     console.warn('[lex] Failed to discover collections for noun query:', err);
   }
 }
@@ -235,6 +243,8 @@ async function clearSession() {
   currentSession = null;
   currentProfile = null;
   knownCollectionNsids = [];
+  clearAuthExpired();
+  removeAuthExpiredUi();
   if (api) {
     try {
       await api.settings.set(STORAGE_KEY, null);
@@ -250,6 +260,141 @@ function onSessionRefresh(refreshedSession) {
   lexiconTemplate.setSession(currentSession);
   updateFormTemplateUploader();
   saveSession();
+}
+
+// ============================================================================
+// Auth-expired UI
+// ============================================================================
+
+let authExpiredUiShown = false;
+let authExpiredReauthing = false;
+
+/**
+ * Stop polling and switch the content area to a "session expired" placeholder.
+ * Idempotent — safe to call from every catch site that detects expiry.
+ */
+function handleAuthExpired() {
+  if (authExpiredUiShown) return;
+  authExpiredUiShown = true;
+
+  console.warn('[lex] Auth session expired — stopping sync poll, prompting re-authentication');
+  stopSyncPoll();
+  renderAuthExpiredUi();
+}
+
+/**
+ * Render a centered "Session expired" message with a Re-authenticate button
+ * over the active panel. Removed once re-auth succeeds.
+ */
+function renderAuthExpiredUi() {
+  const accountViewEl = document.getElementById('account-view');
+  if (!accountViewEl) return;
+
+  // Avoid duplicate overlay
+  let overlay = document.getElementById('lex-auth-expired-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'lex-auth-expired-overlay';
+    overlay.style.cssText = [
+      'position:absolute',
+      'inset:0',
+      'display:flex',
+      'flex-direction:column',
+      'align-items:center',
+      'justify-content:center',
+      'gap:12px',
+      'background:rgba(20,20,20,0.92)',
+      'color:#eee',
+      'z-index:50',
+      'padding:24px',
+      'text-align:center',
+    ].join(';');
+    overlay.innerHTML = `
+      <div style="font-size:16px;font-weight:600">Session expired</div>
+      <div style="font-size:13px;opacity:0.8;max-width:340px">
+        Your AT Protocol session has expired. Sign in again to continue.
+      </div>
+      <button id="lex-reauth-btn" class="btn btn-primary" style="margin-top:8px">
+        Re-authenticate
+      </button>
+      <div id="lex-reauth-status" style="font-size:12px;opacity:0.7;min-height:1em"></div>
+    `;
+    // Ensure parent is positioned for absolute child
+    if (getComputedStyle(accountViewEl).position === 'static') {
+      accountViewEl.style.position = 'relative';
+    }
+    accountViewEl.appendChild(overlay);
+
+    const btn = overlay.querySelector('#lex-reauth-btn');
+    btn.addEventListener('click', triggerReauthenticate);
+  }
+}
+
+function removeAuthExpiredUi() {
+  const overlay = document.getElementById('lex-auth-expired-overlay');
+  if (overlay) overlay.remove();
+  authExpiredUiShown = false;
+}
+
+/**
+ * Re-run the OAuth login flow for the existing handle. Re-uses the
+ * existing loginWithOAuth() path; on success clears the expired flag,
+ * persists the new session, and resumes the sync poll.
+ */
+async function triggerReauthenticate() {
+  if (authExpiredReauthing) return;
+  if (!currentSession || !currentSession.handle) {
+    // No handle to retry with — fall back to full logout/login.
+    await clearSession();
+    clearAuthExpired();
+    removeAuthExpiredUi();
+    state.authenticated = false;
+    showLoginView();
+    return;
+  }
+
+  authExpiredReauthing = true;
+  const btn = document.getElementById('lex-reauth-btn');
+  const statusEl = document.getElementById('lex-reauth-status');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+  }
+  if (statusEl) statusEl.textContent = '';
+
+  try {
+    const handle = currentSession.handle;
+    const refreshed = await loginWithOAuth(handle);
+    currentSession = refreshed;
+    lexiconTemplate.setSession(currentSession);
+    updateFormTemplateUploader();
+
+    // Refresh profile in background (best-effort).
+    try {
+      const profile = await getProfile(currentSession.did);
+      if (profile) {
+        currentProfile = profile;
+        state.profile = profile;
+      }
+    } catch {}
+
+    await saveSession();
+    clearAuthExpired();
+    removeAuthExpiredUi();
+
+    // Resume polling and refresh the active panel's data.
+    startSyncPoll();
+    console.log('[lex] Re-authenticated as', currentSession.handle);
+  } catch (err) {
+    console.error('[lex] Re-authentication failed:', err);
+    if (statusEl) statusEl.textContent = err.message || 'Re-authentication failed';
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Re-authenticate';
+    }
+  } finally {
+    authExpiredReauthing = false;
+  }
 }
 
 /**
@@ -468,6 +613,10 @@ async function checkForChanges(session) {
     }
     return { changed: false, rev: currentRev };
   } catch (err) {
+    if (err instanceof AuthExpiredError || isAuthExpired()) {
+      handleAuthExpired();
+      return { changed: false, rev: null, expired: true };
+    }
     console.warn('[lex] Failed to check repo rev:', err);
     return { changed: false, rev: null };
   }
@@ -502,8 +651,14 @@ async function syncCollection(session, collection) {
  */
 async function syncPoll() {
   if (!currentSession) return;
+  if (isAuthExpired()) {
+    handleAuthExpired();
+    return;
+  }
 
-  const { changed } = await checkForChanges(currentSession);
+  const { changed, expired } = await checkForChanges(currentSession);
+  if (expired) return;
+
   lastSyncTime = Date.now();
   updateSyncIndicator();
 
@@ -1161,6 +1316,10 @@ async function fetchCollections() {
     // Update "new" commands with repo collections
     onCollectionsChanged(counts.map(c => c.nsid));
   } catch (err) {
+    if (err instanceof AuthExpiredError) {
+      handleAuthExpired();
+      return;
+    }
     collectionsListEl.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
   }
 }

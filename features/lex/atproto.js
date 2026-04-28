@@ -10,6 +10,79 @@ const hasPeekAPI = typeof window.app !== 'undefined';
 const api = hasPeekAPI ? window.app : null;
 
 // ============================================================================
+// Auth-expired signal (module-local)
+// ============================================================================
+
+/**
+ * Set once a refresh attempt determines the refresh token itself is invalid
+ * or the session JWT is permanently expired. Subsequent xrpc* calls
+ * short-circuit until clearAuthExpired() is called (after a fresh login).
+ */
+let authExpired = false;
+
+export class AuthExpiredError extends Error {
+  constructor(message = 'AT Protocol session expired — sign in again') {
+    super(message);
+    this.name = 'AuthExpiredError';
+    this.authExpired = true;
+  }
+}
+
+export function isAuthExpired() {
+  return authExpired;
+}
+
+export function clearAuthExpired() {
+  authExpired = false;
+}
+
+/**
+ * Inspect a refresh-failure error to decide whether it's a permanent
+ * "auth expired" signal (refresh token revoked / JWT exp claim failed)
+ * vs a transient failure (network blip, 5xx, DPoP nonce hiccup).
+ *
+ * Returns true for definitive expiry markers; false otherwise.
+ *
+ * @param {Error} err
+ * @returns {boolean}
+ */
+function isExpiredAuthError(err) {
+  const msg = (err && err.message) ? String(err.message) : '';
+  // JWT exp claim failure surfaces verbatim from the auth server.
+  if (msg.includes('"exp" claim') || msg.includes('exp claim')) return true;
+  // Standard OAuth error codes for revoked / invalid refresh token.
+  if (/\binvalid_grant\b/.test(msg)) return true;
+  if (/\binvalid_token\b/.test(msg)) return true;
+  if (/\bunauthorized_client\b/.test(msg)) return true;
+  // 4xx from token endpoint (caught by tokenExchange's status formatting).
+  // tokenExchange throws "Token exchange failed (NNN)" for unknown bodies.
+  const m = msg.match(/Token exchange failed \((\d+)\)/);
+  if (m) {
+    const status = parseInt(m[1], 10);
+    if (status === 400 || status === 401 || status === 403) return true;
+  }
+  return false;
+}
+
+/**
+ * Wrapper around refreshOAuthSession() that flips the authExpired flag
+ * when the failure looks like a permanent expiry. Returns the refreshed
+ * session on success; throws on failure (caller decides how to react,
+ * but should consult isAuthExpired() afterward).
+ */
+async function tryRefreshSession(session) {
+  try {
+    const refreshed = await refreshOAuthSession(session);
+    return refreshed;
+  } catch (err) {
+    if (isExpiredAuthError(err)) {
+      authExpired = true;
+    }
+    throw err;
+  }
+}
+
+// ============================================================================
 // Public API (unauthenticated)
 // ============================================================================
 
@@ -461,6 +534,9 @@ export async function loginWithOAuth(handle) {
     // 13. Export DPoP keypair for storage
     const dpopKeyPairJwk = await exportKeyPair(dpopKeyPair);
 
+    // Successful login clears any prior expired state.
+    authExpired = false;
+
     return {
       did,
       handle,
@@ -566,6 +642,8 @@ export async function refreshOAuthSession(session) {
  * @returns {Promise<Object>} Response data
  */
 export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = null) {
+  if (authExpired) throw new AuthExpiredError();
+
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null) qs.set(k, String(v));
@@ -603,7 +681,7 @@ export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = nul
   // Retry once on 401 (expired token)
   if (res.status === 401 && session.refreshToken) {
     try {
-      const refreshed = await refreshOAuthSession(session);
+      const refreshed = await tryRefreshSession(session);
       Object.assign(session, refreshed);
       if (onSessionRefresh) onSessionRefresh(refreshed);
 
@@ -631,6 +709,9 @@ export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = nul
         }
       }
     } catch (refreshErr) {
+      if (authExpired) {
+        throw new AuthExpiredError();
+      }
       console.error('[atproto] Token refresh failed:', refreshErr.message);
     }
   }
@@ -654,6 +735,8 @@ export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = nul
  * @returns {Promise<Object>} Response data
  */
 export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
+  if (authExpired) throw new AuthExpiredError();
+
   const url = `${session.pdsUrl}/xrpc/${nsid}`;
   const dpopKeyPair = await importKeyPair(session.dpopKeyPairJwk);
   const ath = await computeAth(session.accessToken);
@@ -689,7 +772,7 @@ export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
   // Retry once on 401 (expired token)
   if (res.status === 401 && session.refreshToken) {
     try {
-      const refreshed = await refreshOAuthSession(session);
+      const refreshed = await tryRefreshSession(session);
       Object.assign(session, refreshed);
       if (onSessionRefresh) onSessionRefresh(refreshed);
 
@@ -723,6 +806,9 @@ export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
         }
       }
     } catch (refreshErr) {
+      if (authExpired) {
+        throw new AuthExpiredError();
+      }
       console.error('[atproto] Token refresh failed:', refreshErr.message);
     }
   }
@@ -744,6 +830,8 @@ export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
  * @returns {Promise<Object>} - { blob: { $type: "blob", ref: { $link }, mimeType, size } }
  */
 export async function uploadBlob(session, data, mimeType, onSessionRefresh = null) {
+  if (authExpired) throw new AuthExpiredError();
+
   const url = `${session.pdsUrl}/xrpc/com.atproto.repo.uploadBlob`;
   const dpopKeyPair = await importKeyPair(session.dpopKeyPairJwk);
   const ath = await computeAth(session.accessToken);
@@ -779,7 +867,7 @@ export async function uploadBlob(session, data, mimeType, onSessionRefresh = nul
   // Token refresh retry
   if (res.status === 401 && session.refreshToken) {
     try {
-      const refreshed = await refreshOAuthSession(session);
+      const refreshed = await tryRefreshSession(session);
       Object.assign(session, refreshed);
       if (onSessionRefresh) onSessionRefresh(refreshed);
 
@@ -795,6 +883,9 @@ export async function uploadBlob(session, data, mimeType, onSessionRefresh = nul
         body: data,
       });
     } catch (refreshErr) {
+      if (authExpired) {
+        throw new AuthExpiredError();
+      }
       console.error('[atproto] Token refresh failed:', refreshErr.message);
     }
   }
