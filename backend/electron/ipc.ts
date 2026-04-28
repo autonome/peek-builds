@@ -80,6 +80,7 @@ import {
 
 
 import { trackWindow } from './display-watcher.js';
+import type { Placement } from './window-placement.js';
 
 import {
   publish,
@@ -479,6 +480,52 @@ export function openNewPageWindow(): void {
  */
 const pendingWindowKeys = new Set<string>();
 
+/**
+ * Returns true if the window's current bounds are still substantially
+ * within at least one display's workArea (>=50% area visible). Hidden
+ * windows (zero area) are considered accessible — they'll get sane
+ * bounds when shown.
+ *
+ * Used by reuse paths (URL match, keepLive key match) to detect windows
+ * stranded by a display change while they were hidden, since the
+ * display-watcher safety net skips invisible windows.
+ */
+function isWindowAccessibleNow(bounds: Electron.Rectangle): boolean {
+  const winArea = bounds.width * bounds.height;
+  if (winArea <= 0) return true;
+  for (const d of screen.getAllDisplays()) {
+    const wa = d.workArea;
+    const overlapX = Math.max(bounds.x, wa.x);
+    const overlapY = Math.max(bounds.y, wa.y);
+    const overlapRight = Math.min(bounds.x + bounds.width, wa.x + wa.width);
+    const overlapBottom = Math.min(bounds.y + bounds.height, wa.y + wa.height);
+    if (overlapRight <= overlapX || overlapBottom <= overlapY) continue;
+    const overlapArea = (overlapRight - overlapX) * (overlapBottom - overlapY);
+    if (overlapArea / winArea >= 0.5) return true;
+  }
+  return false;
+}
+
+/**
+ * Reposition a window onto the cursor's display, preserving size where
+ * possible (clamped to the new display's workArea). Used when a reused
+ * window's stored bounds no longer fit any display.
+ */
+function repositionOnCursorDisplay(win: BrowserWindow, reason: string): void {
+  const bounds = win.getBounds();
+  const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const wa = cursorDisplay.workArea;
+  const newWidth = Math.min(bounds.width, wa.width);
+  const newHeight = Math.min(bounds.height, wa.height);
+  const x = wa.x + Math.round((wa.width - newWidth) / 2);
+  const y = wa.y + Math.round((wa.height - newHeight) / 2);
+  console.log(
+    `[window-reuse] Repositioning ${win.id} (${reason}) to cursor display ${cursorDisplay.id}: ` +
+    `(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}) -> (${x},${y} ${newWidth}x${newHeight})`
+  );
+  win.setBounds({ x, y, width: newWidth, height: newHeight });
+}
+
 // Exported reference to the window-open handler so other IPC surfaces (like v2 tile
 // IPC) can delegate to it without duplicating ~1300 lines of window creation logic.
 // Populated by registerWindowHandlers() at startup.
@@ -538,6 +585,33 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
+          // Display-change safety for keepLive reuse:
+          //
+          // Windows opened with `center: true` (e.g. cmd panel) want to
+          // re-center on the active display every time they're shown —
+          // "center" means "centered on the display the user is using
+          // right now," not "centered once at creation."
+          //
+          // Other keepLive windows (page-host, slides, modals) keep
+          // their position between invocations EXCEPT when their stored
+          // bounds no longer fit any display — that happens when a
+          // display was unplugged or the layout swapped while the
+          // window was hidden, and the display-watcher safety net
+          // skipped them because invisible windows aren't rescued.
+          if (existingData.params.center === true) {
+            const bounds = existingWindow.window.getBounds();
+            const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+            const wa = cursorDisplay.workArea;
+            const x = wa.x + Math.round((wa.width - bounds.width) / 2);
+            const y = wa.y + Math.round((wa.height - bounds.height) / 2);
+            if (x !== bounds.x || y !== bounds.y) {
+              DEBUG && console.log(`[window-open] Re-centering keepLive window ${existingWindow.id} (${bounds.x},${bounds.y}) -> (${x},${y}) on display ${cursorDisplay.id}`);
+              existingWindow.window.setBounds({ x, y, width: bounds.width, height: bounds.height });
+            }
+          } else if (!isWindowAccessibleNow(existingWindow.window.getBounds())) {
+            repositionOnCursorDisplay(existingWindow.window, 'keepLive-reuse stale bounds');
+          }
+
           // Stamp show-time so the modal blur handler can suppress the
           // spurious blur that NSPanel + `alwaysOnTop:'floating'` emits
           // during the first ~200ms after show(). Without this, hitting
@@ -578,6 +652,15 @@ export function registerWindowHandlers(): void {
       if (existingByUrl) {
         DEBUG && console.log('Reusing existing window with same URL:', url);
         if (!isHeadless()) {
+          // Display-change safety: if the existing window's bounds are
+          // stranded (display unplugged or layout swap left it off-screen),
+          // move it onto the cursor's display before show(). The
+          // display-watcher safety net only runs at display-change time
+          // and skips invisible windows, so a window closed before the
+          // change and reopened after needs this catch.
+          if (!isWindowAccessibleNow(existingByUrl.window.getBounds())) {
+            repositionOnCursorDisplay(existingByUrl.window, 'url-reuse stale bounds');
+          }
           existingByUrl.window.show();
           existingByUrl.window.focus();
         }
@@ -1035,14 +1118,53 @@ export function registerWindowHandlers(): void {
 
       console.log('[izui] Window role:', role, 'for:', url);
 
+      // Phase 2: derive `Placement` intent from the legacy flag soup and
+      // record it on the registry. This is data-only; the existing
+      // positioning logic above still runs. Phase 3 will read this field
+      // (and Phase 1's `computePlacement`) to replace the ad-hoc branches.
+      //
+      // Order of precedence (intent wins over coords):
+      //   screenEdge > center > parent w/ no explicit position
+      //                       > explicit x/y > cursor-display-fallback
+      //
+      // Notes:
+      //  - "explicit x/y" is judged against the ORIGINAL `options.x/y`
+      //    fields the caller passed in — not the derived `winOptions.x/y`,
+      //    which the parent-centering branch above may have populated.
+      //  - Slides emits `screenEdge` as 'Up'|'Down'|'Left'|'Right'; the
+      //    Placement type uses 'top'|'bottom'|'left'|'right'. The lookup
+      //    table below normalises both spellings.
+      let placement: Placement;
+      const screenEdgeRaw = (options as { screenEdge?: unknown }).screenEdge;
+      const edgeMap: Record<string, 'top' | 'bottom' | 'left' | 'right'> = {
+        Up: 'top', Down: 'bottom', Left: 'left', Right: 'right',
+        top: 'top', bottom: 'bottom', left: 'left', right: 'right',
+      };
+      const mappedEdge = typeof screenEdgeRaw === 'string' ? edgeMap[screenEdgeRaw] : undefined;
+      const callerProvidedX = options.x !== undefined && !Number.isNaN(parseInt(options.x));
+      const callerProvidedY = options.y !== undefined && !Number.isNaN(parseInt(options.y));
+      const callerProvidedXY = callerProvidedX && callerProvidedY;
+      if (mappedEdge) {
+        placement = { mode: 'edge', edge: mappedEdge };
+      } else if (options.center === true) {
+        placement = { mode: 'centered' };
+      } else if (isRealParent && !callerProvidedXY && options.centerOnParent !== false) {
+        placement = { mode: 'parent-centered', parentId: openerWindow!.id };
+      } else if (callerProvidedXY) {
+        placement = { mode: 'manual' };
+      } else {
+        placement = { mode: 'cursor-display-fallback' };
+      }
+
       const windowParams = {
         ...options,
         address: url,
         transient: isTransient,
         parentWindowId,
         role,
+        placement,
       };
-      console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient);
+      console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient, 'placement:', placement);
       registerWindow(win.id, msg.source, windowParams);
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);
@@ -1235,12 +1357,21 @@ export function registerWindowHandlers(): void {
           popupWin.setBackgroundColor('#00000000');
         }
 
-        // Register in window manager with proper IZUI role
+        // Register in window manager with proper IZUI role.
+        //
+        // Phase 2: webview popups are spawned from a real parent (the opener
+        // is a content window) and lack any caller-supplied positioning,
+        // so they map to `parent-centered`. The fullscreen-canvas resize
+        // happens immediately above, but the placement intent is still
+        // "this window belongs with its parent." Phase 3 / 5 may revisit
+        // — for now, just record the intent so consumers don't see undefined.
+        const popupPlacement: Placement = { mode: 'parent-centered', parentId: openerWinId };
         const popupParams: Record<string, unknown> = {
           address: popupUrl,
           transient: isTransient,
           parentWindowId: openerWinId,
           role: 'child-content',
+          placement: popupPlacement,
         };
         if (spaceMode) {
           popupParams.spaceMode = spaceMode;

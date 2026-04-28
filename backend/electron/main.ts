@@ -32,6 +32,7 @@ import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { clearLastFocusedVisibleWindowId } from './ipc.js';
+import type { Placement } from './window-placement.js';
 
 // Configuration
 export interface AppConfig {
@@ -1262,9 +1263,15 @@ export async function createBackgroundWindow(): Promise<BrowserWindow> {
   // so any `findWindowByKey(WEB_CORE_ADDRESS, 'background-core')`
   // lookups continue to work.
   const systemAddress = getSystemAddress();
+  // Phase 2: record `placement` intent on the registry. The core background
+  // window is hidden infrastructure (never positioned by the user, never
+  // visible), but we still tag it with the catch-all so consumers reading
+  // `params.placement` never see undefined. See docs/window-placement-refactor.md.
+  const corePlacement: Placement = { mode: 'cursor-display-fallback' };
   registerWindow(win.id, systemAddress, {
     key: 'background-core',
     address: WEB_CORE_ADDRESS,
+    placement: corePlacement,
   });
 
   // Devtools for the background window (dev-profile only, not tests /

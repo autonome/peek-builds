@@ -145,6 +145,14 @@ const executeItem = (item) => {
       x,
       y,
 
+      // Phase 2: pass `screenEdge` through alongside the legacy x/y so the
+      // window-open path in main records `placement: { mode: 'edge', edge }`
+      // on the registry. The renderer math above stays in place — Phase 4
+      // deletes it once main-process `computePlacement` is wired up. When
+      // both screenEdge AND explicit x/y are present, intent wins over
+      // coords (see ipc.ts placement-derivation precedence).
+      screenEdge: item.screenEdge,
+
       // tracking
       trackingSource: 'slide',
       trackingSourceId: item.screenEdge ? `slide_${item.screenEdge}` : 'slide',
