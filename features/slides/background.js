@@ -58,36 +58,7 @@ const executeItem = (item) => {
   const height = item.height || 600;
   const width = item.width || 800;
 
-  const screen = {
-    height: window.screen.height,
-    width: window.screen.width
-  };
-
-  let x, y, center = null;
-
-  switch(item.screenEdge) {
-    case 'Up':
-      x = (screen.width - width) / 2;
-      y = 0;
-      break;
-    case 'Down':
-      x = (screen.width - item.width) / 2;
-      y = screen.height;
-      break;
-    case 'Left':
-      x = 0;
-      y = (screen.height - item.height) / 2;
-      break;
-    case 'Right':
-      x = screen.width;
-      y = (screen.height - item.height) / 2;
-      break;
-    default:
-      center = true;
-      console.log('[ext:slides] unknown screen edge');
-  }
-
-  console.log('[ext:slides] execute slide', item.screenEdge, x, y);
+  console.log('[ext:slides] execute slide', item.screenEdge);
 
   const key = `${item.address}:${item.screenEdge}`;
 
@@ -142,15 +113,13 @@ const executeItem = (item) => {
       keepLive: item.keepLive || false,
       persistState: item.persistState || false,
 
-      x,
-      y,
-
-      // Phase 2: pass `screenEdge` through alongside the legacy x/y so the
-      // window-open path in main records `placement: { mode: 'edge', edge }`
-      // on the registry. The renderer math above stays in place — Phase 4
-      // deletes it once main-process `computePlacement` is wired up. When
-      // both screenEdge AND explicit x/y are present, intent wins over
-      // coords (see ipc.ts placement-derivation precedence).
+      // Slides emit `screenEdge` ('Up'|'Down'|'Left'|'Right'); the
+      // window-open path in main maps it to `placement: { mode: 'edge', edge }`
+      // and computes bounds via `computeInitialBounds` against the cursor's
+      // display every time the slide opens (and re-anchors via
+      // `computePlacement` on reuse + display-change). The renderer no
+      // longer computes x/y — main owns placement. See backend/electron/
+      // window-placement.ts and ipc.ts edgeMap.
       screenEdge: item.screenEdge,
 
       // tracking
