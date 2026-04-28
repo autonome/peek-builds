@@ -2068,7 +2068,12 @@ function showLoadErrorOverlay(failedUrl, errorCode, errorDescription) {
   card.appendChild(url);
   card.appendChild(actions);
   overlay.appendChild(card);
-  document.body.appendChild(overlay);
+  // Append into centerColumn (not body) so the overlay is anchored to the
+  // webview's container — when show() expands the window for side-panel
+  // overhang, the centerColumn stays put and the overlay doesn't stretch
+  // with the viewport. The user's perceived "content area" stays fixed
+  // unless the user actually resizes the window.
+  centerColumn.appendChild(overlay);
 }
 
 webview.addEventListener('did-fail-load', (e) => {

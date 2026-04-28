@@ -1263,12 +1263,16 @@
     /* --- Load error overlay (server not found, DNS failure, etc.) --- */
 
     .load-error-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      z-index: 9998;
+      /* Anchored to the .center-column (its parent) — NOT to the viewport.
+         When the window expands to expose side-panel overhang, the
+         center-column width stays put, so the overlay (and the user's
+         perceived "content area") doesn't grow with the window.
+         Sits above the webview but BELOW the navbar (100), trigger zone
+         (50), and side panels (140) so Cmd+L / hover summon the address
+         bar to fix the URL. */
+      position: absolute;
+      inset: 0;
+      z-index: 25;
       display: flex;
       align-items: center;
       justify-content: center;
