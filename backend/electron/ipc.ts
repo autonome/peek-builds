@@ -80,7 +80,11 @@ import {
 
 
 import { trackWindow } from './display-watcher.js';
-import type { Placement } from './window-placement.js';
+import {
+  computePlacement,
+  computeInitialBounds,
+  type Placement,
+} from './window-placement.js';
 
 import {
   publish,
@@ -481,49 +485,45 @@ export function openNewPageWindow(): void {
 const pendingWindowKeys = new Set<string>();
 
 /**
- * Returns true if the window's current bounds are still substantially
- * within at least one display's workArea (>=50% area visible). Hidden
- * windows (zero area) are considered accessible — they'll get sane
- * bounds when shown.
+ * Apply a stored `Placement` to a reused window. Reads the placement
+ * intent from the registry, snapshots displays + cursor + (optionally)
+ * parent bounds, calls `computePlacement`, and applies the result.
  *
- * Used by reuse paths (URL match, keepLive key match) to detect windows
- * stranded by a display change while they were hidden, since the
- * display-watcher safety net skips invisible windows.
+ * Replaces the inline `isWindowAccessibleNow` + `repositionOnCursorDisplay`
+ * helpers and the per-mode branch logic that used to live in the reuse
+ * paths. Single source of truth for "where should this reused window go?"
+ * is the pure module.
  */
-function isWindowAccessibleNow(bounds: Electron.Rectangle): boolean {
-  const winArea = bounds.width * bounds.height;
-  if (winArea <= 0) return true;
-  for (const d of screen.getAllDisplays()) {
-    const wa = d.workArea;
-    const overlapX = Math.max(bounds.x, wa.x);
-    const overlapY = Math.max(bounds.y, wa.y);
-    const overlapRight = Math.min(bounds.x + bounds.width, wa.x + wa.width);
-    const overlapBottom = Math.min(bounds.y + bounds.height, wa.y + wa.height);
-    if (overlapRight <= overlapX || overlapBottom <= overlapY) continue;
-    const overlapArea = (overlapRight - overlapX) * (overlapBottom - overlapY);
-    if (overlapArea / winArea >= 0.5) return true;
+function applyPlacementOnReuse(
+  win: BrowserWindow,
+  placement: Placement | undefined,
+  reason: string,
+): void {
+  if (!placement) return;
+  const currentBounds = win.getBounds();
+  let parentBounds: Electron.Rectangle | undefined;
+  if (placement.mode === 'parent-centered') {
+    const parent = BrowserWindow.fromId(placement.parentId);
+    if (parent && !parent.isDestroyed()) {
+      parentBounds = parent.getBounds();
+    }
   }
-  return false;
-}
-
-/**
- * Reposition a window onto the cursor's display, preserving size where
- * possible (clamped to the new display's workArea). Used when a reused
- * window's stored bounds no longer fit any display.
- */
-function repositionOnCursorDisplay(win: BrowserWindow, reason: string): void {
-  const bounds = win.getBounds();
-  const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const wa = cursorDisplay.workArea;
-  const newWidth = Math.min(bounds.width, wa.width);
-  const newHeight = Math.min(bounds.height, wa.height);
-  const x = wa.x + Math.round((wa.width - newWidth) / 2);
-  const y = wa.y + Math.round((wa.height - newHeight) / 2);
-  console.log(
-    `[window-reuse] Repositioning ${win.id} (${reason}) to cursor display ${cursorDisplay.id}: ` +
-    `(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}) -> (${x},${y} ${newWidth}x${newHeight})`
-  );
-  win.setBounds({ x, y, width: newWidth, height: newHeight });
+  const result = computePlacement({
+    placement,
+    currentBounds,
+    windowSize: { width: currentBounds.width, height: currentBounds.height },
+    displays: screen.getAllDisplays(),
+    cursorPoint: screen.getCursorScreenPoint(),
+    parentBounds,
+  });
+  if (result.kind === 'reposition') {
+    DEBUG && console.log(
+      `[window-reuse] applyPlacementOnReuse (${reason}) ${win.id}: ` +
+      `(${currentBounds.x},${currentBounds.y} ${currentBounds.width}x${currentBounds.height}) -> ` +
+      `(${result.bounds.x},${result.bounds.y} ${result.bounds.width}x${result.bounds.height}) [mode:${placement.mode}]`
+    );
+    win.setBounds(result.bounds);
+  }
 }
 
 // Exported reference to the window-open handler so other IPC surfaces (like v2 tile
@@ -585,32 +585,19 @@ export function registerWindowHandlers(): void {
         DEBUG && console.log('Reused window transient from appFocused:', existingData.params.transient, 'appFocused:', coordinator.isAppFocused());
 
         if (!isHeadless()) {
-          // Display-change safety for keepLive reuse:
-          //
-          // Windows opened with `center: true` (e.g. cmd panel) want to
-          // re-center on the active display every time they're shown —
-          // "center" means "centered on the display the user is using
-          // right now," not "centered once at creation."
-          //
-          // Other keepLive windows (page-host, slides, modals) keep
-          // their position between invocations EXCEPT when their stored
-          // bounds no longer fit any display — that happens when a
-          // display was unplugged or the layout swapped while the
-          // window was hidden, and the display-watcher safety net
-          // skipped them because invisible windows aren't rescued.
-          if (existingData.params.center === true) {
-            const bounds = existingWindow.window.getBounds();
-            const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-            const wa = cursorDisplay.workArea;
-            const x = wa.x + Math.round((wa.width - bounds.width) / 2);
-            const y = wa.y + Math.round((wa.height - bounds.height) / 2);
-            if (x !== bounds.x || y !== bounds.y) {
-              DEBUG && console.log(`[window-open] Re-centering keepLive window ${existingWindow.id} (${bounds.x},${bounds.y}) -> (${x},${y}) on display ${cursorDisplay.id}`);
-              existingWindow.window.setBounds({ x, y, width: bounds.width, height: bounds.height });
-            }
-          } else if (!isWindowAccessibleNow(existingWindow.window.getBounds())) {
-            repositionOnCursorDisplay(existingWindow.window, 'keepLive-reuse stale bounds');
-          }
+          // Display-change safety for keepLive reuse: read the stored
+          // `Placement` intent and let `computePlacement` decide whether
+          // to reposition. Replaces the historical `center: true` /
+          // `isWindowAccessibleNow` branch logic — the pure module
+          // already encodes both semantics:
+          //   - `centered` mode → always re-center on cursor display
+          //   - other modes → only reposition if stranded
+          // See backend/electron/window-placement.ts.
+          applyPlacementOnReuse(
+            existingWindow.window,
+            existingData.params.placement as Placement | undefined,
+            'keepLive-reuse',
+          );
 
           // Stamp show-time so the modal blur handler can suppress the
           // spurious blur that NSPanel + `alwaysOnTop:'floating'` emits
@@ -652,15 +639,16 @@ export function registerWindowHandlers(): void {
       if (existingByUrl) {
         DEBUG && console.log('Reusing existing window with same URL:', url);
         if (!isHeadless()) {
-          // Display-change safety: if the existing window's bounds are
-          // stranded (display unplugged or layout swap left it off-screen),
-          // move it onto the cursor's display before show(). The
-          // display-watcher safety net only runs at display-change time
-          // and skips invisible windows, so a window closed before the
-          // change and reopened after needs this catch.
-          if (!isWindowAccessibleNow(existingByUrl.window.getBounds())) {
-            repositionOnCursorDisplay(existingByUrl.window, 'url-reuse stale bounds');
-          }
+          // Display-change safety: read the stored `Placement` intent and
+          // let `computePlacement` decide whether to reposition. The
+          // stranded-rescue path inside the pure module replaces the
+          // historical `isWindowAccessibleNow` check.
+          const existingData = existingByUrl.data as { params: { placement?: Placement } };
+          applyPlacementOnReuse(
+            existingByUrl.window,
+            existingData.params.placement,
+            'url-reuse',
+          );
           existingByUrl.window.show();
           existingByUrl.window.focus();
         }
@@ -817,29 +805,73 @@ export function registerWindowHandlers(): void {
       !INTERNAL_URLS.some(u => openerUrl === u) &&
       !INTERNAL_URL_PREFIXES.some(p => openerUrl.startsWith(p));
 
-    // Center window on parent if opener exists and no explicit position
-    // Priority: explicit x/y > center on parent > center on screen
-    if (options.centerOnParent !== false &&
-        isRealParent &&
-        winOptions.x === undefined && winOptions.y === undefined) {
-      const bounds = openerWindow.getBounds();
-      const winW = winOptions.width as number || APP_DEF_WIDTH;
-      const winH = winOptions.height as number || APP_DEF_HEIGHT;
-      winOptions.x = Math.round(bounds.x + (bounds.width - winW) / 2);
-      winOptions.y = Math.round(bounds.y + (bounds.height - winH) / 2);
-      DEBUG && console.log('[window-open] Centered on parent window:', openerWindow.id, 'at', winOptions.x, winOptions.y);
+    // Phase 3: derive `Placement` intent and use `computeInitialBounds`
+    // to fill in x/y when not explicitly supplied. The placement derivation
+    // mirrors what's recorded on the registry below — keep these two
+    // call sites in sync (they consult the same option flags).
+    //
+    // Order of precedence (intent wins over coords):
+    //   screenEdge > center > parent w/ no explicit position
+    //                       > explicit x/y > cursor-display-fallback
+    //
+    // Slides emits `screenEdge` as 'Up'|'Down'|'Left'|'Right'; map both
+    // spellings to 'top'|'bottom'|'left'|'right'.
+    const screenEdgeRaw = (options as { screenEdge?: unknown }).screenEdge;
+    const edgeMap: Record<string, 'top' | 'bottom' | 'left' | 'right'> = {
+      Up: 'top', Down: 'bottom', Left: 'left', Right: 'right',
+      top: 'top', bottom: 'bottom', left: 'left', right: 'right',
+    };
+    const mappedEdge = typeof screenEdgeRaw === 'string' ? edgeMap[screenEdgeRaw] : undefined;
+    const callerProvidedX = options.x !== undefined && !Number.isNaN(parseInt(options.x));
+    const callerProvidedY = options.y !== undefined && !Number.isNaN(parseInt(options.y));
+    const callerProvidedXY = callerProvidedX && callerProvidedY;
+
+    let placement: Placement;
+    if (mappedEdge) {
+      placement = { mode: 'edge', edge: mappedEdge };
+    } else if (options.center === true) {
+      placement = { mode: 'centered' };
+    } else if (isRealParent && !callerProvidedXY && options.centerOnParent !== false) {
+      placement = { mode: 'parent-centered', parentId: openerWindow!.id };
+    } else if (callerProvidedXY) {
+      placement = { mode: 'manual' };
+    } else {
+      placement = { mode: 'cursor-display-fallback' };
     }
 
-    // Center window on screen if no position specified (fallback when no opener)
-    // Use the display where the cursor is (the active display), not the primary display,
-    // so windows open on the screen the user is currently working on.
-    if (winOptions.x === undefined && winOptions.y === undefined) {
-      const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-      const wa = cursorDisplay.workArea;
+    // Fill in winOptions.x/y when not already explicitly supplied.
+    // For `edge` mode the caller may have passed stale x/y (slides used
+    // to compute them in the renderer from window.screen) — placement
+    // intent wins, so we override with `computeInitialBounds` output.
+    // Off-screen explicit x/y were already dropped earlier in the
+    // off-screen-bounds-validation block above.
+    const needsCompute =
+      mappedEdge !== undefined ||
+      winOptions.x === undefined || winOptions.y === undefined;
+    if (needsCompute) {
       const winW = winOptions.width as number || APP_DEF_WIDTH;
       const winH = winOptions.height as number || APP_DEF_HEIGHT;
-      winOptions.x = wa.x + Math.round((wa.width - winW) / 2);
-      winOptions.y = wa.y + Math.round((wa.height - winH) / 2);
+      let parentBounds: Electron.Rectangle | undefined;
+      if (placement.mode === 'parent-centered' && openerWindow && !openerWindow.isDestroyed()) {
+        parentBounds = openerWindow.getBounds();
+      }
+      const initial = computeInitialBounds(
+        placement,
+        { width: winW, height: winH },
+        screen.getAllDisplays(),
+        screen.getCursorScreenPoint(),
+        parentBounds,
+      );
+      winOptions.x = initial.x;
+      winOptions.y = initial.y;
+      // Note: width/height clamped to workArea by computeInitialBounds —
+      // honor the clamp so `new BrowserWindow` doesn't get oversize hints.
+      winOptions.width = initial.width;
+      winOptions.height = initial.height;
+      DEBUG && console.log(
+        `[window-open] computeInitialBounds (${placement.mode}) -> ` +
+        `(${initial.x},${initial.y} ${initial.width}x${initial.height})`
+      );
     }
 
     if (options.modal === true) {
@@ -867,18 +899,10 @@ export function registerWindowHandlers(): void {
       const CANVAS_TRIGGER_ZONE = 8;
       const CANVAS_NAVBAR_HEIGHT = 36; // Always reserve space for navbar (avoids resize jumps)
 
-      // When no explicit position is provided (e.g., external URLs, pubsub-triggered opens),
-      // compute a centered position first so canvas bounds adjustment has valid coordinates.
-      // Without this, undefined x/y produces NaN which breaks window positioning.
-      // Use the display where the cursor is (the active display), not the primary display.
-      if (winOptions.x === undefined || winOptions.y === undefined) {
-        const cursorDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-        const wa = cursorDisplay.workArea;
-        const winW = winOptions.width as number || APP_DEF_WIDTH;
-        const winH = winOptions.height as number || APP_DEF_HEIGHT;
-        winOptions.x = wa.x + Math.round((wa.width - winW) / 2);
-        winOptions.y = wa.y + Math.round((wa.height - winH) / 2);
-      }
+      // winOptions.x/y/width/height were filled in above by
+      // `computeInitialBounds` (or by the caller's explicit x/y). The
+      // historical "compute centered fallback when undefined" block has
+      // moved into `window-placement.ts`.
 
       // Maximize hint: the saved bounds for a maximized window are the OS
       // window bounds (= work area), NOT the webview bounds — re-adding
@@ -1118,44 +1142,9 @@ export function registerWindowHandlers(): void {
 
       console.log('[izui] Window role:', role, 'for:', url);
 
-      // Phase 2: derive `Placement` intent from the legacy flag soup and
-      // record it on the registry. This is data-only; the existing
-      // positioning logic above still runs. Phase 3 will read this field
-      // (and Phase 1's `computePlacement`) to replace the ad-hoc branches.
-      //
-      // Order of precedence (intent wins over coords):
-      //   screenEdge > center > parent w/ no explicit position
-      //                       > explicit x/y > cursor-display-fallback
-      //
-      // Notes:
-      //  - "explicit x/y" is judged against the ORIGINAL `options.x/y`
-      //    fields the caller passed in — not the derived `winOptions.x/y`,
-      //    which the parent-centering branch above may have populated.
-      //  - Slides emits `screenEdge` as 'Up'|'Down'|'Left'|'Right'; the
-      //    Placement type uses 'top'|'bottom'|'left'|'right'. The lookup
-      //    table below normalises both spellings.
-      let placement: Placement;
-      const screenEdgeRaw = (options as { screenEdge?: unknown }).screenEdge;
-      const edgeMap: Record<string, 'top' | 'bottom' | 'left' | 'right'> = {
-        Up: 'top', Down: 'bottom', Left: 'left', Right: 'right',
-        top: 'top', bottom: 'bottom', left: 'left', right: 'right',
-      };
-      const mappedEdge = typeof screenEdgeRaw === 'string' ? edgeMap[screenEdgeRaw] : undefined;
-      const callerProvidedX = options.x !== undefined && !Number.isNaN(parseInt(options.x));
-      const callerProvidedY = options.y !== undefined && !Number.isNaN(parseInt(options.y));
-      const callerProvidedXY = callerProvidedX && callerProvidedY;
-      if (mappedEdge) {
-        placement = { mode: 'edge', edge: mappedEdge };
-      } else if (options.center === true) {
-        placement = { mode: 'centered' };
-      } else if (isRealParent && !callerProvidedXY && options.centerOnParent !== false) {
-        placement = { mode: 'parent-centered', parentId: openerWindow!.id };
-      } else if (callerProvidedXY) {
-        placement = { mode: 'manual' };
-      } else {
-        placement = { mode: 'cursor-display-fallback' };
-      }
-
+      // `placement` was derived earlier (in Group B fresh-open
+      // positioning) and the same value is recorded on the registry
+      // here so reuse paths + display-watcher can consume it.
       const windowParams = {
         ...options,
         address: url,
@@ -2130,11 +2119,19 @@ export function registerWindowHandlers(): void {
 
       // Maximize window if requested (fills screen without OS fullscreen)
       // Use explicit bounds instead of win.maximize() because panel-type windows
-      // on macOS don't respond to maximize() properly
+      // on macOS don't respond to maximize() properly. Route through
+      // `computeInitialBounds` with 'centered' + an oversize hint so the
+      // workArea-clamp produces a fill-the-screen rectangle on the cursor
+      // display — keeps every position decision in `ipc.ts` flowing
+      // through the pure module.
       if (options.maximize === true && !isHeadless()) {
-        const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-        const wa = display.workArea;
-        win.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height });
+        const filled = computeInitialBounds(
+          { mode: 'centered' },
+          { width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER },
+          screen.getAllDisplays(),
+          screen.getCursorScreenPoint(),
+        );
+        win.setBounds(filled);
       }
 
       // Handle overlay mode: hide other windows after this one is ready

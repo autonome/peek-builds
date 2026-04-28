@@ -11,6 +11,7 @@ import * as assert from 'node:assert';
 
 import {
   computePlacement,
+  computeInitialBounds,
   type Placement,
   type PlacementInput,
   type PlacementResult,
@@ -580,6 +581,87 @@ describe('computePlacement: clamping & edge cases', () => {
       cursorPoint: pt(960, 540),
     }));
     expectNoChange(result);
+  });
+});
+
+describe('computeInitialBounds: fresh-window helper', () => {
+  it('cursor-display-fallback centers on cursor display', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const bounds = computeInitialBounds(
+      { mode: 'cursor-display-fallback' },
+      { width: 800, height: 600 },
+      displays,
+      pt(2880, 540), // cursor on display B
+    );
+    assert.strictEqual(bounds.x, 1920 + Math.round((1920 - 800) / 2));
+    assert.strictEqual(bounds.y, Math.round((1080 - 600) / 2));
+    assert.strictEqual(bounds.width, 800);
+    assert.strictEqual(bounds.height, 600);
+  });
+
+  it('centered mode centers on cursor display', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const bounds = computeInitialBounds(
+      { mode: 'centered' },
+      { width: 600, height: 400 },
+      displays,
+      pt(960, 540),
+    );
+    assert.strictEqual(bounds.x, Math.round((1920 - 600) / 2));
+    assert.strictEqual(bounds.y, Math.round((1080 - 400) / 2));
+  });
+
+  it('parent-centered centers on parentBounds', () => {
+    const displays = fakeDisplays([displayA]);
+    const parent = rect(100, 100, 1000, 800);
+    const bounds = computeInitialBounds(
+      { mode: 'parent-centered', parentId: 42 },
+      { width: 400, height: 300 },
+      displays,
+      pt(960, 540),
+      parent,
+    );
+    assert.strictEqual(bounds.x, 100 + Math.round((1000 - 400) / 2));
+    assert.strictEqual(bounds.y, 100 + Math.round((800 - 300) / 2));
+  });
+
+  it('parent-centered without parentBounds falls back to cursor center', () => {
+    const displays = fakeDisplays([displayA]);
+    const bounds = computeInitialBounds(
+      { mode: 'parent-centered', parentId: 42 },
+      { width: 400, height: 300 },
+      displays,
+      pt(960, 540),
+      undefined,
+    );
+    assert.strictEqual(bounds.x, Math.round((1920 - 400) / 2));
+    assert.strictEqual(bounds.y, Math.round((1080 - 300) / 2));
+  });
+
+  it('edge: top anchors to top of cursor display, X-centered', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const bounds = computeInitialBounds(
+      { mode: 'edge', edge: 'top' },
+      { width: 600, height: 200 },
+      displays,
+      pt(2880, 540), // cursor on B
+    );
+    assert.strictEqual(bounds.x, 1920 + Math.round((1920 - 600) / 2));
+    assert.strictEqual(bounds.y, 0);
+    assert.strictEqual(bounds.width, 600);
+    assert.strictEqual(bounds.height, 200);
+  });
+
+  it('clamps oversize windows to workArea', () => {
+    const displays = fakeDisplays([laptopOnly]);
+    const bounds = computeInitialBounds(
+      { mode: 'centered' },
+      { width: 9999, height: 9999 },
+      displays,
+      pt(720, 450),
+    );
+    assert.strictEqual(bounds.width, 1440);
+    assert.strictEqual(bounds.height, 900);
   });
 });
 

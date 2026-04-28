@@ -372,3 +372,77 @@ export function computePlacement(input: PlacementInput): PlacementResult {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Fresh-window helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute initial bounds for a window that doesn't yet exist (no
+ * `currentBounds` available). Used by the fresh-open path in `ipc.ts` to
+ * derive `winOptions.x/y/width/height` BEFORE `new BrowserWindow()`.
+ *
+ * Unlike `computePlacement`, this never returns `no-change` — there's no
+ * "current bounds" to compare against. It always produces a concrete
+ * `Rectangle`, computed against the cursor / parent / edge per the
+ * placement intent.
+ *
+ * Modes:
+ * - `centered` and `cursor-display-fallback` both center on the cursor
+ *   display (for fresh opens, "fallback" reduces to "cursor center" since
+ *   no caller-supplied position exists at this stage).
+ * - `edge` anchors to the requested edge of the cursor display.
+ * - `parent-centered` centers on `parentBounds`. If no `parentBounds`
+ *   provided (parent destroyed mid-flight), falls back to cursor center.
+ * - `manual` should never reach here in practice — manual placement means
+ *   the caller already supplied x/y. We treat it as cursor center as a
+ *   safety fallback rather than throwing.
+ *
+ * Returns a workArea-clamped `Rectangle`. If `displays` is empty, returns
+ * a rect at (0,0) with the requested size — caller is presumably running
+ * headless and the bounds will be ignored.
+ */
+export function computeInitialBounds(
+  placement: Placement,
+  size: { width: number; height: number },
+  displays: Electron.Display[],
+  cursorPoint: Electron.Point,
+  parentBounds?: Electron.Rectangle,
+): Electron.Rectangle {
+  if (displays.length === 0) {
+    return { x: 0, y: 0, width: size.width, height: size.height };
+  }
+
+  switch (placement.mode) {
+    case 'centered':
+    case 'cursor-display-fallback':
+    case 'manual': {
+      const target = pickCursorOrPrimaryDisplay(displays, cursorPoint)!;
+      const clamped = clampSize(size, target.workArea);
+      return centerOn(target.workArea, clamped);
+    }
+
+    case 'edge': {
+      const target = pickCursorOrPrimaryDisplay(displays, cursorPoint)!;
+      const clamped = clampSize(size, target.workArea);
+      return anchorToEdge(target.workArea, clamped, placement.edge);
+    }
+
+    case 'parent-centered': {
+      if (!parentBounds) {
+        const target = pickCursorOrPrimaryDisplay(displays, cursorPoint)!;
+        const clamped = clampSize(size, target.workArea);
+        return centerOn(target.workArea, clamped);
+      }
+      const parentCenter: Electron.Point = {
+        x: parentBounds.x + Math.round(parentBounds.width / 2),
+        y: parentBounds.y + Math.round(parentBounds.height / 2),
+      };
+      const targetDisplay =
+        findDisplayForPoint(displays, parentCenter) ??
+        pickCursorOrPrimaryDisplay(displays, cursorPoint)!;
+      const clamped = clampSize(size, targetDisplay.workArea);
+      return centerOnRect(parentBounds, clamped);
+    }
+  }
+}

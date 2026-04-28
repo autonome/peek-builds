@@ -20,6 +20,7 @@
 import { BrowserWindow, screen, Display } from 'electron';
 import { getWindowInfo } from './main.js';
 import { WEB_CORE_ADDRESS } from './config.js';
+import { computePlacement, type Placement } from './window-placement.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -216,6 +217,62 @@ function handleDisplayChange(): void {
     DEBUG && console.log("[display-watcher] All windows accessible, no rescue needed");
   } else {
     console.log(`[display-watcher] Rescued ${rescuedCount} orphaned window(s)`);
+  }
+
+  // Second pass: per-window `computePlacement` using each window's
+  // registry-stored `Placement` intent. Replaces the legacy
+  // `center: true`-only second pass with a generic pass that respects
+  // every mode:
+  //   - `centered` follows the cursor display every change.
+  //   - `edge` re-anchors to the cursor display's edge.
+  //   - `cursor-display-fallback` / `manual` only reposition if stranded
+  //     (already handled by pass 1, but the pure module's stranded
+  //     check is the same threshold so this is a safe no-op).
+  // Skip the bgWindow, invisible windows, and any window that was
+  // registered before Phase 2 (no stored placement → defense-in-depth
+  // pass 1 above already caught it if needed).
+  const liveDisplays = screen.getAllDisplays();
+  const cursorPoint = screen.getCursorScreenPoint();
+  let placedCount = 0;
+  for (const win of allWindows) {
+    if (win.isDestroyed()) continue;
+    if (!win.isVisible()) continue;
+
+    const entry = getWindowInfo(win.id);
+    if (!entry || entry.params.address === WEB_CORE_ADDRESS) continue;
+    const placement = entry.params.placement as Placement | undefined;
+    if (!placement) continue;
+
+    const bounds = win.getBounds();
+    let parentBounds: Electron.Rectangle | undefined;
+    if (placement.mode === 'parent-centered') {
+      const parent = BrowserWindow.fromId(placement.parentId);
+      if (parent && !parent.isDestroyed()) {
+        parentBounds = parent.getBounds();
+      }
+    }
+
+    const result = computePlacement({
+      placement,
+      currentBounds: bounds,
+      windowSize: { width: bounds.width, height: bounds.height },
+      displays: liveDisplays,
+      cursorPoint,
+      parentBounds,
+    });
+
+    if (result.kind === 'reposition') {
+      console.log(
+        `[display-watcher] Repositioning window ${win.id} (${placement.mode}): ` +
+        `(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}) -> ` +
+        `(${result.bounds.x},${result.bounds.y} ${result.bounds.width}x${result.bounds.height})`
+      );
+      win.setBounds(result.bounds);
+      placedCount++;
+    }
+  }
+  if (placedCount > 0) {
+    console.log(`[display-watcher] Repositioned ${placedCount} window(s) via computePlacement`);
   }
 
   // Update snapshot for next change
