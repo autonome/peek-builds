@@ -31,6 +31,7 @@ import {
 } from './tile-launcher.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
 import { parseManifestFile } from './tile-manifest.js';
+import { computePlacement } from './window-placement.js';
 import { publish, subscribe, unsubscribe, getStats as getPubSubStats } from './pubsub.js';
 import { DEBUG, TILE_STRICT, isHeadless } from './config.js';
 import { publishCapabilityViolation } from './tile-violations.js';
@@ -2881,14 +2882,27 @@ export function registerTileIpcHandlers(): void {
         return { success: false, error: 'Window not found' };
       }
       const bounds = win.getBounds();
-      const display = screen.getDisplayNearestPoint({
-        x: bounds.x + Math.round(bounds.width / 2),
-        y: bounds.y + Math.round(bounds.height / 2),
+      // Route through `computePlacement` so the "center this window" command
+      // shares the same code path as automatic re-centering on display change.
+      // Use a synthetic cursorPoint at the window's current center so the
+      // chosen display is the one the window is already on (preserving the
+      // original `screen.getDisplayNearestPoint(<window center>)` semantics).
+      // If the window is stranded (<50% on any display), `computePlacement`
+      // will rescue to the cursor display — a more useful outcome than
+      // centering on a display the user can't see.
+      const result = computePlacement({
+        placement: { mode: 'centered' },
+        currentBounds: bounds,
+        windowSize: { width: bounds.width, height: bounds.height },
+        displays: screen.getAllDisplays(),
+        cursorPoint: {
+          x: bounds.x + Math.round(bounds.width / 2),
+          y: bounds.y + Math.round(bounds.height / 2),
+        },
       });
-      const wa = display.workArea;
-      const x = wa.x + Math.round((wa.width - bounds.width) / 2);
-      const y = wa.y + Math.round((wa.height - bounds.height) / 2);
-      win.setBounds({ x, y, width: bounds.width, height: bounds.height });
+      if (result.kind === 'reposition') {
+        win.setBounds(result.bounds);
+      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2913,17 +2927,27 @@ export function registerTileIpcHandlers(): void {
     try {
       const windows = BrowserWindow.getAllWindows();
       let centered = 0;
+      // Snapshot displays once outside the loop — they don't change between
+      // iterations and `screen.getAllDisplays()` is not free.
+      const displays = screen.getAllDisplays();
       for (const win of windows) {
         if (win.isDestroyed() || !win.isVisible()) continue;
         const bounds = win.getBounds();
-        const display = screen.getDisplayNearestPoint({
-          x: bounds.x + Math.round(bounds.width / 2),
-          y: bounds.y + Math.round(bounds.height / 2),
+        // Same synthetic-cursor trick as `tile:window:center` so each window
+        // centers on its OWN current display rather than the user's cursor.
+        const result = computePlacement({
+          placement: { mode: 'centered' },
+          currentBounds: bounds,
+          windowSize: { width: bounds.width, height: bounds.height },
+          displays,
+          cursorPoint: {
+            x: bounds.x + Math.round(bounds.width / 2),
+            y: bounds.y + Math.round(bounds.height / 2),
+          },
         });
-        const wa = display.workArea;
-        const x = wa.x + Math.round((wa.width - bounds.width) / 2);
-        const y = wa.y + Math.round((wa.height - bounds.height) / 2);
-        win.setBounds({ x, y, width: bounds.width, height: bounds.height });
+        if (result.kind === 'reposition') {
+          win.setBounds(result.bounds);
+        }
         centered++;
       }
       return { success: true, centered };
