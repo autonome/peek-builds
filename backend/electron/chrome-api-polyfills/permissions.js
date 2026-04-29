@@ -51,10 +51,11 @@ export function setupMainProcess(_session, _options = {}) {
  */
 export function getPreloadScript() {
   return `
-/* chrome.permissions polyfill for Electron — completely replaces chrome.permissions.
- * Saves a reference to the real chrome object, creates a complete permissions object,
- * and installs it as non-configurable to prevent overwrites by native bindings or
- * extension code (e.g. Proton Pass Proxy replacement). No polling needed. */
+/* chrome.permissions polyfill for Electron — replaces chrome.permissions with a
+ * no-op shim that reports all permission requests as granted. configurable:true
+ * so downstream Proxy wrappers don't violate the get-trap invariant. Some
+ * extensions also need an early-install via patch-chrome-extensions.js to win
+ * the race against bundled webextension-polyfill that replaces globalThis.chrome. */
 (function() {
   if (typeof chrome === 'undefined') return;
 
@@ -116,19 +117,20 @@ export function getPreloadScript() {
   globalThis.__peekPermissions = _permsObj;
 
   /**
-   * Install our permissions object on a root object, making it non-configurable.
+   * Install our permissions object on a root object as configurable:true so
+   * downstream Proxy wraps don't trigger the get-trap value invariant.
    * Three attempts: defineProperty, delete+defineProperty, direct assignment.
    */
   function installPermissions(root, name) {
     if (!root || typeof root !== 'object') return false;
     try {
-      Object.defineProperty(root, name, { value: _permsObj, writable: false, configurable: false, enumerable: true });
-      _log('installed on', name, 'via defineProperty (non-configurable)');
+      Object.defineProperty(root, name, { value: _permsObj, writable: true, configurable: true, enumerable: true });
+      _log('installed on', name, 'via defineProperty');
       return true;
     } catch(e) { _log('defineProperty failed on', name, ':', e.message); }
     try {
       delete root[name];
-      Object.defineProperty(root, name, { value: _permsObj, writable: false, configurable: false, enumerable: true });
+      Object.defineProperty(root, name, { value: _permsObj, writable: true, configurable: true, enumerable: true });
       _log('installed on', name, 'via delete+defineProperty');
       return true;
     } catch(e) { _log('delete+defineProperty failed on', name, ':', e.message); }
@@ -141,12 +143,20 @@ export function getPreloadScript() {
   }
 
   var installed = installPermissions(_chrome, 'permissions');
-  _log('shim installed on chrome.permissions:', installed, 'chrome.permissions.request:', typeof _chrome.permissions.request);
-
-  // Also patch browser.permissions if browser object exists
-  if (typeof browser !== 'undefined' && browser) {
-    installPermissions(browser, 'permissions');
+  try {
+    var requestType = _chrome.permissions && typeof _chrome.permissions.request;
+    _log('shim installed on chrome.permissions:', installed, 'chrome.permissions.request:', requestType);
+  } catch(e) {
+    _log('shim installed on chrome.permissions:', installed, '(verify access threw — likely Proxy hides it):', e.message);
   }
+
+  // Also patch browser.permissions if browser object exists.
+  // Wrap in try/catch — browser may itself be a Proxy that hides permissions.
+  try {
+    if (typeof browser !== 'undefined' && browser) {
+      installPermissions(browser, 'permissions');
+    }
+  } catch(e) { _log('browser.permissions install threw:', e.message); }
 })();
 `;
 }

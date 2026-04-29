@@ -1,69 +1,38 @@
-feat(page): page-host FSM Phase 3 — fsmState is the source of truth
+fix(chrome-ext): unbreak Proton Pass chrome.permissions / browser.permissions in popup
 
-Phases 1 + 2 introduced the FSM and dispatched transitions at every
-entry/exit, but `isDragging` / `isResizing` / `isMaximized` were still
-the actual source of truth — the FSM was shadow state kept in sync via
-idempotent applyFsmEffect calls. Phase 3 flips that: fsmState is now the
-only place lifecycle state lives.
+The popup showed "Permission denied for site access" even after the user
+clicked grant. Two compounding causes:
 
-Reads → predicates:
-  * inMaximized()  ↔ fsmState === MAXIMIZED
-  * inDragging()   ↔ fsmState === DRAGGING || DRAGGING_OUT_OF_MAXIMIZED
-  * inResizing()   ↔ fsmState === RESIZING
+1. The renderer-side permissions polyfill ran on `dom-ready`, after Proton's
+   bundled webextension-polyfill had already replaced `globalThis.chrome` with
+   a Proxy whose `get` trap filters out 'permissions'. Defining
+   `chrome.permissions` on that Proxy's target made the property visible to
+   `getOwnPropertyDescriptor` but not to plain reads — and worse, with
+   `configurable:false` on a property the trap couldn't return triggered the
+   "non-configurable data property must return target's value" Proxy invariant
+   error during popup load.
 
-Every read of the legacy flags (16 isDragging, 5 isResizing, 17
-isMaximized sites) now goes through these helpers. The flag declarations
-and every inline `flag = true/false` write are deleted.
+2. The verification log line dereferenced `chrome.permissions.request` after
+   the install, which threw inside the IIFE and skipped the `browser.permissions`
+   install entirely.
 
-applyFsmEffect cleanup:
-  * SET_BODY_MAXIMIZED no longer writes `isMaximized = effect.value` —
-    the variable doesn't exist anymore. The effect just toggles the
-    body class; fsmState (already assigned by dispatchFsm before
-    effects run) is authoritative.
-  * Comments updated to reflect that effects translate state changes
-    into idempotent DOM/URL updates, not the other way around.
+Fix:
 
-toggleMaximize restructure:
-  * dispatchFsm(TOGGLE_MAXIMIZE) now runs BEFORE updatePositions /
-    updateUrlParams / setBounds, so those see the new fsmState +
-    updated screenBounds. Previously dispatch was at the end of each
-    branch and inline `isMaximized = …` writes kept the shadow flag
-    in sync; without those writes the dispatch must move forward so
-    that `inMaximized()` reads inside updatePositions / updateUrlParams
-    return the post-toggle value.
-  * Both branches first mutate screenBounds + clear/capture pre-max
-    bounds, then dispatch, then setBounds. The dispatch's effects
-    (SET_BODY_MAXIMIZED, SET_HANDLES_VISIBLE→updatePositions,
-    SET_URL_MAXIMIZED→updateUrlParams) now do the work the old inline
-    code used to do.
+- Switch the preload install to `configurable:true, writable:true` so
+  downstream Proxy wraps don't violate the get-trap invariant. Wrap the
+  verification log so a Proxy hiding `permissions` doesn't abort the IIFE.
+- Add an early-install path via `scripts/patch-chrome-extensions.js`: write a
+  `peek-permissions.js` file into the extension dir and inject a
+  `<script src=...>` tag at the top of each HTML entry (popup, settings,
+  onboarding, internal, notification, dropdown). MV3 CSP blocks inline
+  scripts, but `script-src 'self'` allows the external file. The shim
+  patches `chrome.permissions` and then locks `globalThis.chrome` with
+  `writable:false, configurable:false` so webextension-polyfill can't
+  swap the binding for a Proxy that hides our shim.
+- Drop the now-dead inline polyfills.js shim (chrome was undefined at that
+  script's first byte, so the prepend never reached its install code).
 
-startDrag restructure:
-  * Captures `wasMaximized = inMaximized()` BEFORE dispatchFsm
-    (DRAG_START flips MAXIMIZED → DRAGGING_OUT_OF_MAXIMIZED, so a
-    post-dispatch `inMaximized()` returns false).
-  * Inline `document.body.classList.remove('maximized')` removed —
-    the FSM's SET_BODY_MAXIMIZED(false) effect handles it.
-  * Inline `isDragging = true` removed — DRAG_START transitions the
-    FSM into DRAGGING.
-
-Drag-end paths (toggleMaximize cancel, webview mouseup, document
-mousemove orphan-cleanup, document mouseup) all now read inDragging()
-and rely on dispatchFsm(DRAG_END) for the state transition; inline
-`isDragging = false` writes deleted.
-
-Pre-maximize bounds (preMaximizeBounds, preMaximizeWindowBounds,
-dragOutOfMaximizeWindowSize) remain module-scoped — moving them into
-FSM context (the design doc's "small attribute bag") is deferred. They
-behave correctly today, and the migration would expand the FSM module
-shape (state → {state, context}) and unit-test surface beyond the scope
-of "delete the flags."
-
-Test results:
-  * unit: 628/628
-  * page-host-fsm: 5/5
-  * session-restore-page-host: 2/2
-  * reopen-closed-window: 5/5
-  * page-load-failure: 5/5
-
-Tasks doc updated; Phase 3 entry marked done with the regression-suite
-roll call.
+Adds `tests/desktop/proton-pass-permissions.spec.ts` asserting that after
+popup load, `chrome.permissions` and `browser.permissions` both === the shim,
+no page errors fire, and `request`/`contains` resolve to `true` for proton.me
+origins.
