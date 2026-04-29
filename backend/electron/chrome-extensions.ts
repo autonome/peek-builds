@@ -19,6 +19,7 @@ import { getDb } from './datastore.js';
 import { getProfileSession } from './session-partition.js';
 import { registerAll } from './chrome-api-polyfills/index.js';
 import { buildOptionsCommandName, computeUiEntries } from './chrome-extensions-helpers.js';
+import { invokeWindowOpen } from './ipc.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -556,6 +557,51 @@ export function openChromeExtensionPage(
   win.on('closed', () => {
     extensionUiWindows.delete(windowKey);
     DEBUG && console.log(`[chrome-ext] UI window closed: ${windowKey}`);
+  });
+
+  if (DEBUG) {
+    // Forward renderer console + JS errors to main stderr so popup-side
+    // failures (which would otherwise live only in the popup's DevTools)
+    // surface in the same log stream as the rest of the extension wiring.
+    // NOTE: console-message does NOT fire when DevTools is attached, so we
+    // do not auto-open DevTools here. If you need to inspect manually,
+    // right-click → Inspect inside the popup.
+    win.webContents.on('console-message', (event) => {
+      try {
+        const e = event as unknown as { level?: unknown; message?: unknown; lineNumber?: unknown; sourceId?: unknown };
+        console.log(`[ext-popup:${windowKey}:${String(e.level)}] ${String(e.message)} (${String(e.sourceId)}:${String(e.lineNumber)})`);
+      } catch {
+        /* logging must never throw */
+      }
+    });
+    win.webContents.on('render-process-gone', (_e, details) => {
+      console.error(`[ext-popup:${windowKey}] render-process-gone:`, details);
+    });
+  }
+
+  // Route window.open(url) from the popup (and from our chrome.tabs.create
+  // shim, which delegates to window.open) through Peek's normal window
+  // pipeline. Without this, Electron's default handler creates a bare
+  // BrowserWindow that bypasses Peek's tile/page system; for chrome
+  // extensions specifically, the call also returns null, breaking
+  // Proton's auth-fork chain.
+  win.webContents.setWindowOpenHandler(({ url: childUrl }) => {
+    if (childUrl.startsWith('http://') || childUrl.startsWith('https://')) {
+      DEBUG && console.log(`[chrome-ext] popup ${windowKey} → opening ${childUrl} in Peek`);
+      if (invokeWindowOpen) {
+        // ipc.ts derives the opener window via BrowserWindow.fromWebContents(ev.sender);
+        // pass our popup's webContents so placement / parent-tracking works.
+        invokeWindowOpen({ sender: win.webContents }, {
+          source: `chrome-extension:${extensionId}`,
+          url: childUrl,
+          options: {},
+        }).catch(err => {
+          console.error(`[chrome-ext] invokeWindowOpen failed for ${childUrl}:`, err);
+        });
+      }
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
   });
 
   win.loadURL(entry.url).catch(error => {

@@ -144,11 +144,18 @@ const PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatib
   }
 
   try {
+    var _wrapped = wrapWithPermissionsShim(_chrome, _shimPerms);
+    // Use getter/no-op-setter rather than writable:false. Proton's
+    // "extension API isolation" feature does globalThis.chrome = proxy
+    // inside a forEach over global names; throwing here aborts the rest of
+    // the forEach (and the BG init that follows). A silent setter lets the
+    // assignment "succeed" without changing what the binding returns.
     Object.defineProperty(globalThis, 'chrome', {
-      value: wrapWithPermissionsShim(_chrome, _shimPerms),
-      writable: false, configurable: false, enumerable: true,
+      configurable: false, enumerable: true,
+      get: function() { return _wrapped; },
+      set: function() { /* swallow — Proton's chrome rewrap is a no-op */ },
     });
-    _log('chrome wrapped with permissions Proxy (locked)');
+    _log('chrome wrapped with permissions Proxy (accessor-locked)');
     // Electron's native browser polyfill (in SW context) omits 'permissions'
     // — it only exposes APIs Electron implements natively. Proton's BG calls
     // browser.permissions.onAdded.addListener at sync init, throwing and
@@ -185,6 +192,26 @@ const PEEK_PERMISSIONS_JS = `/* Peek: chrome.permissions early-install shim. See
 (function() {
   var DEBUG_PERMISSIONS = false;
   function _log() { if (DEBUG_PERMISSIONS) console.log.apply(console, ['[peek:permissions:html]'].concat(Array.prototype.slice.call(arguments))); }
+
+  // Surface popup-side unhandled errors / rejections to main stderr
+  // via console.error. These would otherwise be swallowed by Proton's
+  // Sentry handler before any visible UI feedback.
+  try {
+    window.addEventListener('error', function(ev) {
+      try {
+        var stack = ev.error && ev.error.stack ? ev.error.stack : '(no stack)';
+        console.error('[peek:popup-error]', ev.message, '@', ev.filename + ':' + ev.lineno + ':' + ev.colno, '\\n', stack);
+      } catch(_) {}
+    }, true);
+    window.addEventListener('unhandledrejection', function(ev) {
+      try {
+        var r = ev.reason;
+        var msg = r && r.message ? r.message : String(r);
+        var stack = r && r.stack ? r.stack : '(no stack)';
+        console.error('[peek:popup-unhandledrejection]', msg, '\\n', stack);
+      } catch(_) {}
+    }, true);
+  } catch(e) {}
 
   function NoopEvent() { this._l = []; }
   NoopEvent.prototype.addListener = function(fn) { this._l.push(fn); };
@@ -233,6 +260,23 @@ const PEEK_PERMISSIONS_JS = `/* Peek: chrome.permissions early-install shim. See
   };
   globalThis.__peekPermissions = _permsObj;
 
+  // chrome.tabs.create polyfill: Electron's native chrome.tabs in extension
+  // popup BrowserWindow contexts exposes query() but not create(). Proton's
+  // login-click handler calls chrome.tabs.create({url: forkAuthUrl}) and
+  // throws TypeError if absent — its .finally then unconditionally
+  // window.close()s the popup, so the user sees a popup that disappears with
+  // no visible auth page. We delegate to window.open(url, '_blank'); the
+  // popup BrowserWindow's setWindowOpenHandler routes through invokeWindowOpen
+  // and opens the URL as a Peek page tile.
+  var _fakeTabId = 1000;
+  function _peekTabsCreate(props, callback) {
+    var url = (props && props.url) || 'about:blank';
+    try { window.open(url, '_blank'); } catch(_) {}
+    var tab = { id: ++_fakeTabId, index: 0, windowId: 0, active: true, url: url, title: '', highlighted: false, pinned: false, incognito: false, selected: false };
+    if (typeof callback === 'function') { try { callback(tab); } catch(_) {} }
+    return Promise.resolve(tab);
+  }
+
   function _patchChrome(c) {
     if (!c || typeof c !== 'object') return;
     try {
@@ -242,22 +286,44 @@ const PEEK_PERMISSIONS_JS = `/* Peek: chrome.permissions early-install shim. See
       try { c.permissions = _permsObj; _log('installed via assignment'); }
       catch(e2) { _log('install failed:', e.message, '/', e2.message); }
     }
+
+    try {
+      if (c.tabs && typeof c.tabs.create !== 'function') {
+        try { c.tabs.create = _peekTabsCreate; _log('installed chrome.tabs.create polyfill'); }
+        catch(_) {
+          try { Object.defineProperty(c.tabs, 'create', { value: _peekTabsCreate, writable: true, configurable: true, enumerable: true }); _log('installed chrome.tabs.create via defineProperty'); }
+          catch(_) {}
+        }
+      }
+    } catch(_) {}
+  }
+
+  // Install an accessor that always returns our patched chrome and
+  // silently swallows reassignments. Proton's bundled "extension API
+  // isolation" runs globalThis.chrome = proxy inside a forEach loop;
+  // a throwing lock (writable:false) aborts that forEach and breaks
+  // popup init. A no-op setter lets the assignment "succeed" without
+  // actually replacing what the binding returns.
+  function _installLock() {
+    try {
+      Object.defineProperty(globalThis, 'chrome', {
+        configurable: false, enumerable: true,
+        get: function() { return _real; },
+        set: function() { /* swallow — Proton's chrome rewrap is a no-op */ },
+      });
+      _log('chrome accessor-locked');
+    } catch(e) { _log('lock globalThis.chrome failed:', e.message); }
   }
 
   if (typeof chrome !== 'undefined' && chrome) {
     _real = chrome;
     _patchChrome(_real);
-    // Lock globalThis.chrome so downstream code (e.g. webextension-polyfill)
-    // can't replace the binding with a Proxy that hides permissions. The
-    // underlying object is the same; only the binding is frozen.
-    try {
-      Object.defineProperty(globalThis, 'chrome', { value: _real, writable: false, configurable: false, enumerable: true });
-      _log('locked globalThis.chrome');
-    } catch(e) { _log('lock globalThis.chrome failed:', e.message); }
+    _installLock();
     return;
   }
 
-  // chrome not yet defined. Install setter to capture Electron's assignment.
+  // chrome not yet defined. Install accept-once setter to capture
+  // Electron's assignment, then convert to a locked accessor.
   try {
     Object.defineProperty(globalThis, 'chrome', {
       configurable: true,
@@ -266,9 +332,11 @@ const PEEK_PERMISSIONS_JS = `/* Peek: chrome.permissions early-install shim. See
       set: function(v) {
         _real = v;
         _patchChrome(_real);
+        // Replace this accept-once accessor with the silent-swallow lock.
+        _installLock();
       },
     });
-    _log('chrome setter installed');
+    _log('chrome accept-once setter installed');
   } catch(e) { _log('chrome setter install failed:', e.message); }
 })();
 `;
@@ -477,6 +545,7 @@ const SCRIPTING_DIAG_SHIM = `// --- Peek diagnostic shim (PROTON_DIAG) ---
   } catch(e) { _push({ kind: 'executeScript_wrap_failed', err: String(e && e.message || e) }); }
 })();
 `;
+
 
 function patchProtonPass() {
   const extPath = path.join(EXT_DIR, 'proton-pass');

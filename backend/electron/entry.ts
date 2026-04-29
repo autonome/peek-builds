@@ -315,6 +315,33 @@ app.on('web-contents-created', (_event, contents) => {
         DEBUG && console.log(`[webauthn] Injected Proton Pass webauthn.js into: ${url}`);
       }
     });
+
+    // Diagnostic: forward webview-guest console + open DevTools when in DEBUG
+    // mode and the URL is a Proton property. Lets us see whether our
+    // chrome.runtime polyfill is reaching the page and what the auth-ext page
+    // is actually doing when it shows the "communication error" message.
+    if (DEBUG) {
+      contents.on('console-message', (event) => {
+        try {
+          const e = event as unknown as { level?: unknown; message?: unknown; lineNumber?: unknown; sourceId?: unknown };
+          const msg = String(e.message ?? '');
+          const url = contents.getURL();
+          // Only log Proton-related pages to avoid flood — the bridge is only relevant there.
+          if (url.includes('proton.me') || url.includes('proton.dev') || msg.includes('peek:')) {
+            console.log(`[webview:${url.slice(0, 80)}:${String(e.level)}] ${msg} (${String(e.sourceId)}:${String(e.lineNumber)})`);
+          }
+        } catch { /* logging must never throw */ }
+      });
+      contents.on('did-finish-load', () => {
+        const url = contents.getURL();
+        if (url.includes('proton.me') || url.includes('proton.dev')) {
+          if (!contents.isDevToolsOpened()) {
+            try { contents.openDevTools({ mode: 'detach', activate: false }); }
+            catch { /* devtools open is best-effort */ }
+          }
+        }
+      });
+    }
   }
 });
 
