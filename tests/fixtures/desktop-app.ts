@@ -50,9 +50,13 @@ export interface DesktopApp {
   /** Get extension background windows */
   getExtensionWindows(): Page[];
 
-  /** Evaluate code in the main (Node) process (Electron only) */
+  /**
+   * Evaluate code in the main (Node) process (Electron only).
+   * First arg of `fn` is the electron module itself — destructure to grab
+   * `BrowserWindow`, `screen`, `app`, etc.
+   */
   evaluateMain?<R, A = void>(
-    fn: (ctx: { app: Electron.App; require: NodeRequire }, arg: A) => R,
+    fn: (electron: typeof import('electron'), arg: A) => R,
     arg?: A,
   ): Promise<R>;
 
