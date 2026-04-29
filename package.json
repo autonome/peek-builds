@@ -177,7 +177,8 @@
     "restart:electron": "yarn kill:electron && sleep 1 && yarn debug:electron",
     "restart:tauri": "yarn kill:tauri && sleep 1 && yarn debug:tauri",
     "lint": "echo \"No linting configured\"",
-    "rss": "node scripts/changelog-to-rss.js"
+    "rss": "node scripts/changelog-to-rss.js",
+    "changelog:bump": "node scripts/changelog-bump.js"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.1",
