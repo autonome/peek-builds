@@ -202,6 +202,29 @@ For example:
 
 Peek inverts the traditional browser model. Instead of a large monolithic core with an extension API bolted on, Peek has a minimal core with features that *are* the functionality. A feature is a **tile** — an HTML file in its own BrowserWindow, loaded through a capability-gated preload, talking to the main process over a strict `tile:*` IPC surface. Tiles are not extending something — they are the thing. For a full walkthrough of the tile model, the three runtime state machines, and a comparison to the [webtil.es / DASL Tiles](https://dasl.ing/tiles.html) spec, see [docs/architecture.md](docs/architecture.md).
 
+### State machines
+
+Three explicit FSMs replace the ad-hoc timing code (sleeps, polling, retry hacks) that used to govern Peek's runtime. Each has its own design doc; the headlines:
+
+- **Tile lifecycle FSM** — owns *when a tile is alive*. States: `unregistered → registered → loading → ready → visible` plus `unloading` and `crashed`. Replaces the year-long bug class of "tile loaded but its commands haven't appeared yet" / "spinner hangs forever because the dispatch target was never live". Lives in [`backend/electron/tile-lifecycle.ts`](backend/electron/tile-lifecycle.ts) + [`backend/electron/tile-fsm.ts`](backend/electron/tile-fsm.ts); design in [docs/tile-lifecycle-fsm.md](docs/tile-lifecycle-fsm.md).
+- **PubSub state machine** — owns *what messages can flow between tiles in each state*. Every `tile:*` IPC frame runs through a 6-step validation pipeline (channel → sender frame → schema → token + grant → tile state → sender role) before any handler fires. Replaces "a publish was dropped somewhere in the fabric" as a debuggable bug class — if a message doesn't flow, the pipeline names which step rejected it. Lives in [`backend/electron/pubsub.ts`](backend/electron/pubsub.ts) + [`backend/electron/tile-ipc-gate.ts`](backend/electron/tile-ipc-gate.ts); design in [docs/pubsub-state-machine.md](docs/pubsub-state-machine.md).
+- **Cmd panel state machine** — owns the interactive command bar's UI states (`IDLE`, `TYPING`, `RESULTS_OPEN`, `PARAM_MODE`, `EXECUTING`, `OUTPUT_SELECTION`, `CHAIN_MODE`, `CHAIN_POPUP`, `ERROR`, `CLOSING`). Replaces the previous "every panel.js bug fix added another boolean flag" model — each prior regression cycle (param-mode escape, Tab-fills-vs-Enter-executes, output-selection cancel) collapses to one transition entry plus a test. Pure module in [`app/cmd/state-machine.js`](app/cmd/state-machine.js); design in [docs/cmd-state-machine.md](docs/cmd-state-machine.md).
+
+### Peek tiles vs webtil.es / DASL Tiles
+
+Peek's tiles share the word and the instinct of the [DASL Tiles spec](https://dasl.ing/tiles.html) but sit at a different point in the design space: DASL is a **portable distribution format** (how a tile is identified, signed, and loaded into any host); Peek's tile is an **in-process runtime contract** (how a feature lives inside the Peek desktop app). A teaser:
+
+| Axis | DASL Tiles | Peek tiles |
+|---|---|---|
+| Lifecycle | Not specified | 7-state FSM + crash recovery |
+| Capabilities | Deferred to future spec; network locked off entirely | Required manifest declaration; per-domain / per-table allowlists; per-frame IPC gating |
+| Inter-tile messaging | "Future version" — not in current spec | First-class pubsub with subscribe-before-publish guarantees |
+| Identity | Content-addressed (CID) | String `id` unique within the install |
+| Sandbox | Browser-native (sandbox flags, CSP, COOP/COEP) | Electron-native (`sandbox: true`, `contextIsolation: true`, per-tile preload) |
+| Distribution | First-class (AT Protocol records, signed, fetchable from any PDS) | Local disk (built-in or installed); not yet portable |
+
+The two models are largely complementary — see [docs/architecture.md#peek-tiles-vs-webtiles--dasl-tiles](docs/architecture.md#peek-tiles-vs-webtiles--dasl-tiles) for the full row-by-row comparison and the terminology Peek could adopt from the spec.
+
 A modular feature system for achieving "personal web workbench" requires a few things:
 - UI modularity requires OS-level window capabilities beyond what the web allows today (also a baby step towards a minimal OS user interface)
 - Data harvest/transform/process/publish requires a method of moving data between features (web apps) *locally*, cf Web Actions/Intents/Applets, MCP, pubsub, MQTT etc
@@ -289,7 +312,7 @@ The first version of the Peek application has some bits of each of these, and th
 
 Peek was a browser extension that let you quickly peek at your favorite web pages without breaking your flow - loading pages mapped to keyboard shortcuts into a modal window with no controls, closable via the `Escape` key.
 
-However, as browser extension APIs became increasingly limited, it was not possible to create a decent user experience and I abandoned it. You can access the extension in this repo [in the extension directory](/autonome/peek/extension/).
+However, as browser extension APIs became increasingly limited, it was not possible to create a decent user experience and I abandoned it. The original extension source is no longer in this repo; see git history if you want to dig.
 
 The only way to create the ideal user experience for a web user agent that *Does What I Want* is to make it a browser-ish application, and that's what Peek is now.
 

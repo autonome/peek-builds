@@ -242,10 +242,10 @@ Extensions that manage data (tags, groups, feeds, scripts, entities) should regi
 
 **Architecture:**
 ```
-Extension → registerNoun() (nouns.js)
+Tile → registerNoun() (app/cmd/nouns.js)
   → publishes noun metadata via pubsub
-  → cmd background.js receives, generates commands via noun-registry.js
-  → commands appear in palette like any other commands
+  → bgWindow's cmd registry receives, generates commands via app/cmd/noun-registry.js
+  → commands appear in the cmd palette like any other commands
   → execution routes back via noun:{capability}:{name} pubsub
 ```
 
@@ -253,7 +253,7 @@ All layers use only `window.app` pubsub — zero platform-specific code.
 
 **Usage:**
 ```javascript
-import { registerNoun, unregisterNoun } from 'peek://ext/cmd/nouns.js';
+import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 registerNoun({
   name: 'groups',             // Plural (required)
@@ -283,14 +283,14 @@ registerNoun({
 | `new group X` | create | create |
 
 **Key files:**
-- `features/cmd/noun-registry.js` — Pure command generation (no deps)
-- `features/cmd/nouns.js` — Registration API (uses `window.app` pubsub)
-- `features/cmd/background.js` — Noun registry + command broadcasting
-- `features/cmd/commands.js` — Noun-aware proxy execution
+- `app/cmd/noun-registry.js` — Pure command generation (no deps)
+- `app/cmd/nouns.js` — Registration API (uses `window.app` pubsub)
+- `app/cmd/commands.js` — Noun-aware proxy execution
+- bgWindow (`app/index.js` → `initCmd()`) — owns the noun registry and command broadcasting
 
-**Converted extensions:**
+**Converted tiles:**
 
-| Extension | Capabilities | `skipBare` | Regular commands kept |
+| Tile | Capabilities | `skipBare` | Regular commands kept |
 |-----------|-------------|------------|----------------------|
 | tags | query, browse | true | tag, tags, untag, tagset |
 | groups | query, browse, open, create | false | — |
@@ -302,9 +302,9 @@ registerNoun({
 
 **When NOT to use nouns:** Panel-local commands (note, edit, history, url) that run directly in the panel window and don't go through pubsub. Also, action verbs that aren't standard CRUD (e.g., `refresh feeds`, `extract entities`).
 
-### Editor Extension
+### Editor tile
 
-The editor extension (`features/editor/`) is the canonical surface for creating, editing, and deleting items. It complements the tags extension, which focuses on browsing and tag management.
+The editor tile (`features/editor/`) is the canonical surface for creating, editing, and deleting items. It complements the tags tile, which focuses on browsing and tag management.
 
 **Features:**
 - Inline add with smart type detection (URLs auto-detected vs text notes)
@@ -322,10 +322,10 @@ The editor extension (`features/editor/`) is the canonical surface for creating,
 
 ### Lexicon Studio (AT Protocol Identity)
 
-The Lexicon Studio extension (`features/lex/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
+The Lexicon Studio tile (`features/lex/`) connects Peek to the AT Protocol (Bluesky) network. It provides identity login, repo browsing, and record creation.
 
 **Files:**
-- `background.js` — Extension lifecycle, session management, pubsub API for the home UI
+- `background.js` — Tile lifecycle, session management, pubsub API for the home UI
 - `atproto.js` — AT Protocol helpers: OAuth (PKCE + DPoP via loopback server), XRPC requests, blob upload
 - `home.js` / `home.html` — Main UI: login, sidebar navigation, three content panels
 - `lexicon-ui.js` — Dynamic form generation from lexicon schemas with multi-layer resolution
@@ -349,7 +349,7 @@ The Lexicon Studio extension (`features/lex/`) connects Peek to the AT Protocol 
 - `lex:search-lexicons` / `lex:search-lexicons:response` — Explore lexicon directory
 - `lex:create-record` / `lex:create-record:response` — Create a record
 
-**Command:** `lexicon studio` — opens the identity panel window (`peek://ext/lex/home.html`).
+**Command:** `lexicon studio` — opens the identity panel window (`peek://lex/home.html`).
 
 ### Cmd Commands (Item Creation)
 
@@ -474,10 +474,10 @@ peek-card::part(header) {
 
 #### Migration of Existing Code
 
-Existing extensions are being migrated to peek-components. When touching existing UI code:
+Existing tiles are being migrated to peek-components. When touching existing UI code:
 
 1. **Check migration status** in `notes/migration-ui-componentry.md`
-2. **Follow established patterns** from already-migrated extensions
+2. **Follow established patterns** from already-migrated tiles
 3. **Consider migrating** the code you're working on to components
 4. **Ask first** if uncertain whether to migrate during your change
 
@@ -485,7 +485,7 @@ See `notes/migration-ui-componentry.md` for detailed migration patterns.
 
 #### Benefits
 
-- **Consistency** across all extensions
+- **Consistency** across all tiles
 - **Automatic theme support** via CSS custom properties
 - **Built-in accessibility** (ARIA patterns, keyboard navigation)
 - **Reduced code duplication** (~50% less UI code)
@@ -527,6 +527,10 @@ document.body.appendChild(grid);
 ### Protected Directories
 
 **NEVER modify files in `./app` without explicit review.** The `app/` directory is backend-agnostic - it must work unchanged with both Electron and Tauri backends. All backend-specific code belongs in `backend/{electron,tauri}/`.
+
+### Tile preload must stay `.cts`, not `.ts`
+
+[`backend/electron/tile-preload.cts`](backend/electron/tile-preload.cts) — the capability-gated preload exposed as `window.app` to every tile renderer — **must** remain a CommonJS TypeScript file (`.cts`). The backend `tsconfig.json` uses `module: NodeNext`, which emits ESM for plain `.ts` files, and Electron's sandbox preload silently rejects ESM (no API surface, no thrown error — just an empty `window.app` and every tile broken). If you rename or convert this file, the entire app loses its API surface with no obvious failure. See [docs/architecture.md](docs/architecture.md) and [docs/tile-preload-trimming-plan.md](docs/tile-preload-trimming-plan.md).
 
 ### Process Management
 
