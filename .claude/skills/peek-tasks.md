@@ -31,9 +31,30 @@ That file is a one-line pointer; do not edit it.
 Every task is a Peek item with the `peek:todo` status tag plus at
 least one domain or type tag from this controlled list:
 
-- **Status**: `peek:todo`, `peek:wip`, `peek:blocked`, `peek:deferred`, `peek:done`
+- **Status**: `peek:todo`, `peek:wip`, `peek:blocked`, `peek:done`, `peek:wontfix`
+- **Quality** (additive to `peek:todo`): `peek:ready`, `peek:triage`
 - **Domain**: `peek:desktop`, `peek:mobile`, `peek:tauri`, `peek:atproto`, `peek:extensions`
 - **Type**: `peek:bug`, `peek:feature`, `peek:test-coverage`, `peek:docs`, `peek:design`, `peek:security`, `peek:tile-arch`, `peek:meta`, `peek:tooling`, `peek:daily-use`
+
+### Quality markers
+
+Items in the active queue (`peek:todo`) carry one of two quality markers:
+
+- **`peek:ready`** — scoped, queue-ready, can be picked up. Concrete bugs (clear repro or symptom) and small features with known target behavior.
+- **`peek:triage`** — needs scoping conversation before work can start. Vague ideas, vocab musings, big features without scope, exploratory questions.
+
+Use the intersection to find actionable work:
+`list_items({ tags: ['peek:todo', 'peek:ready'] })`.
+
+### `peek:wontfix` — terminal state
+
+Closed without shipping. Use when the analysis concludes "don't do
+this" (security gap is theoretical, lazy lifecycle is doing what we
+want, etc.) or when a fix is blocked indefinitely on something we
+won't pursue. **Don't use `peek:deferred`** — it's been retired. If
+you'd reach for "deferred," the right move is either:
+- Close as `peek:wontfix` if the analysis says we're not going to do it.
+- Tag `peek:triage` if the path forward needs to be decided.
 
 The bare `#peek` tag is the legacy project membership marker — leave
 it alone on existing items, but **don't add `#peek` to new items**.
@@ -52,31 +73,41 @@ mcp__peek__create_item({
 
 - Title is what shows in lists — keep it scannable.
 - Content is markdown; first line `# {title}` matches the title.
-- Tags: always include `peek:todo` + at least one domain (`peek:desktop`/`peek:mobile`/etc.) + ideally one type (`peek:bug`/`peek:feature`/etc.).
+- Tags: always include `peek:todo` + a quality marker (`peek:ready` or `peek:triage`) + at least one domain (`peek:desktop`/`peek:mobile`/etc.) + ideally one type (`peek:bug`/`peek:feature`/etc.).
+- Quality marker: if you can write a clear "done looks like..." in the content, tag `peek:ready`. If the content is "explore X" or "build Y as example" or a one-phrase musing, tag `peek:triage`.
 - Don't write to `docs/tasks.md`. Don't echo the new task back unless asked.
 
 ## List tasks
 
 ```js
-// All open work in this project
+// Actionable queue (default — what you usually want)
+mcp__peek__list_items({ tags: ['peek:todo', 'peek:ready'] })
+
+// Items needing scoping conversation
+mcp__peek__list_items({ tags: ['peek:todo', 'peek:triage'] })
+
+// Everything still open (ready + triage)
 mcp__peek__list_items({ tags: ['peek:todo'] })
 
-// Scoped views
-mcp__peek__list_items({ tags: ['peek:todo', 'peek:desktop'] })
-mcp__peek__list_items({ tags: ['peek:todo', 'peek:mobile'] })
-mcp__peek__list_items({ tags: ['peek:todo', 'peek:bug'] })
+// Scoped to a domain
+mcp__peek__list_items({ tags: ['peek:todo', 'peek:ready', 'peek:desktop'] })
+mcp__peek__list_items({ tags: ['peek:todo', 'peek:ready', 'peek:bug'] })
 
 // In progress / blocked
 mcp__peek__list_items({ tags: ['peek:wip'] })
 mcp__peek__list_items({ tags: ['peek:blocked'] })
+
+// Closed without shipping (audit trail)
+mcp__peek__list_items({ tags: ['peek:wontfix'] })
 
 // Pagination
 mcp__peek__list_items({ tags: ['peek:todo'], limit: 50, offset: 0 })
 ```
 
 `list_items` returns ALL items matching the tag intersection. The
-queue is large (267+ `peek:todo` items as of 2026-04-29) — paginate
-or narrow by domain/type tag rather than dumping everything.
+queue is large (~258 `peek:todo` items as of 2026-04-29, of which
+~53 are `peek:ready` and ~203 are `peek:triage`) — default to the
+`peek:ready` view, paginate, or narrow by domain when broader.
 
 ## Status transitions
 
@@ -86,16 +117,19 @@ it here. Do transitions manually with `tag_item` + `untag_item` +
 
 | State change         | Tools                                                                                          |
 |----------------------|------------------------------------------------------------------------------------------------|
-| **todo → wip**       | `untag_item(peek:todo)` + `tag_item(peek:wip)` + `record_event('started')`                     |
+| **triage → ready**   | `untag_item(peek:triage)` + `tag_item(peek:ready)` + `record_event('triaged', scope)`          |
+| **todo → wip**       | `untag_item(peek:todo)` + `untag_item(peek:ready)` + `tag_item(peek:wip)` + `record_event('started')` |
 | **wip → blocked**    | `untag_item(peek:wip)` + `tag_item(peek:blocked)` + `record_event('blocked', why)`             |
 | **blocked → wip**    | `untag_item(peek:blocked)` + `tag_item(peek:wip)` + `record_event('unblocked')`                |
 | **wip → done**       | `untag_item(peek:wip)` + `tag_item(peek:done)` + `record_event('completed', notes)`            |
-| **todo → done**      | `untag_item(peek:todo)` + `tag_item(peek:done)` + `record_event('completed', notes)`           |
-| **done → todo (revive)** | `untag_item(peek:done)` + `tag_item(peek:todo)` + `record_event('reopened', why)`          |
-| **defer**            | `untag_item(peek:todo)` + `tag_item(peek:deferred)` + `record_event('deferred', why)`          |
+| **todo → done**      | `untag_item(peek:todo)` + `untag_item(peek:ready/triage)` + `tag_item(peek:done)` + `record_event('completed', notes)` |
+| **done → todo (revive)** | `untag_item(peek:done)` + `tag_item(peek:todo)` + `tag_item(peek:triage)` + `record_event('reopened', why)` |
+| **close as wontfix** | `untag_item(peek:todo)` + `untag_item(peek:ready/triage)` + `tag_item(peek:wontfix)` + `record_event('wontfix', why)` |
 
 Always do the untag and the tag in a pair — don't leave an item with
-`peek:todo` AND `peek:done` set, or `peek:wip` AND `peek:blocked`.
+`peek:todo` AND `peek:done` set, `peek:wip` AND `peek:blocked`, or
+`peek:ready` AND `peek:triage`. When transitioning out of `peek:todo`,
+also clear the `peek:ready`/`peek:triage` quality marker.
 
 ## Edit / update a task
 
@@ -149,6 +183,12 @@ cmd-panel handoff is the canonical flow.
   + manual tag/event transitions.
 - **Don't add `#todo` or `#peek`** to new items — `peek:todo` already
   encodes both project membership and queue status.
+- **Don't use `peek:deferred`** — retired 2026-04-29. If you'd reach
+  for it, the right move is `peek:wontfix` (close the item) or
+  `peek:triage` (decision needed).
+- **Don't omit the quality marker** when creating a new `peek:todo`
+  item — every active task should be `peek:ready` (scoped) or
+  `peek:triage` (needs scoping).
 - **Don't create duplicate tasks.** Before `create_item`, list with
   the relevant domain tag and check by title (substring match).
 - **Don't leave inconsistent tag state** (`peek:wip` + `peek:done`,
@@ -158,23 +198,32 @@ cmd-panel handoff is the canonical flow.
 
 ## Quick recipes
 
-**"Add a task: rename X to Y, peek desktop bug"**
-→ `create_item({ type: 'text', title: 'Rename X to Y', content: '# Rename X to Y\n\n…', tags: ['peek:todo', 'peek:desktop', 'peek:bug'] })`
+**"Add a task: rename X to Y, peek desktop bug"** (well-scoped)
+→ `create_item({ type: 'text', title: 'Rename X to Y', content: '# Rename X to Y\n\n…', tags: ['peek:todo', 'peek:ready', 'peek:desktop', 'peek:bug'] })`
 
-**"What's on my plate for desktop?"**
-→ `list_items({ tags: ['peek:todo', 'peek:desktop'] })` → render as a numbered list of titles only.
+**"Add a half-baked idea: maybe a tag-cluster widget?"** (needs scoping)
+→ `create_item({ type: 'text', title: 'Tag-cluster widget?', content: '…', tags: ['peek:todo', 'peek:triage', 'peek:desktop'] })`
+
+**"What's on my plate for desktop?"** (default to actionable)
+→ `list_items({ tags: ['peek:todo', 'peek:ready', 'peek:desktop'] })` → render as a numbered list of titles only.
+
+**"What's in the triage queue?"**
+→ `list_items({ tags: ['peek:todo', 'peek:triage'] })`.
 
 **"What's in flight?"**
 → `list_items({ tags: ['peek:wip'] })`.
 
 **"Mark #3 done"**
-→ resolve #3 from the prior list output → `untag_item(id, 'peek:todo')` + `tag_item(id, 'peek:done')` + `record_event(id, 'completed', notes)`.
+→ resolve #3 from the prior list output → `untag_item(id, 'peek:todo')` + `untag_item(id, 'peek:ready')` (or `peek:triage`) + `tag_item(id, 'peek:done')` + `record_event(id, 'completed', notes)`.
+
+**"Triage this — it's actually ready"**
+→ resolve item → `untag_item(id, 'peek:triage')` + `tag_item(id, 'peek:ready')` + `record_event(id, 'triaged', 'scoped: <one-line plan>')`.
+
+**"Close as wontfix — the security gap is theoretical"**
+→ resolve item → `untag_item(id, 'peek:todo')` + `untag_item(id, 'peek:ready')` (or `peek:triage`) + `tag_item(id, 'peek:wontfix')` + `record_event(id, 'wontfix', 'security gap theoretical, indirection cost not justified')`.
 
 **"Block the auth refactor — backend isn't ready"**
 → resolve item → `untag_item(id, 'peek:todo')` (or `peek:wip`) + `tag_item(id, 'peek:blocked')` + `record_event(id, 'blocked', 'backend not ready')`.
 
 **"Open the page-host display-switch note"**
 → resolve via `list_items({ tags: ['peek:todo'] })` → reply: "It's item `<short-title>`. Pop Peek's cmd (Option+Space) and type `edit page-host display`."
-
-**"Defer this until after the conversion"**
-→ `untag_item(id, 'peek:todo')` + `tag_item(id, 'peek:deferred')` + `record_event(id, 'deferred', why)`.
