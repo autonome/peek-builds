@@ -51,7 +51,10 @@ export interface DesktopApp {
   getExtensionWindows(): Page[];
 
   /** Evaluate code in the main (Node) process (Electron only) */
-  evaluateMain?<R>(fn: (ctx: { app: Electron.App; require: NodeRequire }) => R): Promise<R>;
+  evaluateMain?<R, A = void>(
+    fn: (ctx: { app: Electron.App; require: NodeRequire }, arg: A) => R,
+    arg?: A,
+  ): Promise<R>;
 
   /** Close the app */
   close(): Promise<void>;
@@ -270,7 +273,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
       return waitForWindowHelper(() => electronApp.windows(), 'peek://test/');
     },
 
-    evaluateMain: (fn: any) => electronApp.evaluate(fn as any),
+    evaluateMain: (fn: any, arg?: any) => electronApp.evaluate(fn as any, arg),
 
     getExtensionWindows: () => {
       return electronApp.windows().filter(w =>

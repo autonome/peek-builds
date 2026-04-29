@@ -140,6 +140,32 @@ const DEBUG = !!process.env.DEBUG;
   forceSaveSession: () => saveSessionSnapshot('manual', { _forceForTest: true }),
   /** Force-restore session snapshot (bypasses test-profile guard). */
   forceRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true),
+  /**
+   * Force a BrowserWindow to be visible. In headless mode, the window-open
+   * path passes `show: false` (because there is no display); this helper
+   * lets tests exercise visibility-dependent code paths (e.g. the
+   * focus-driven transient autoclose, which gates on `other.isVisible()`).
+   */
+  showWindow: (id: number): boolean => {
+    const win = BrowserWindow.fromId(id);
+    if (!win || win.isDestroyed()) return false;
+    win.show();
+    return true;
+  },
+  /**
+   * Synchronously dispatch the BrowserWindow 'focus' event listener chain
+   * for the given window id. Use to drive focus-handler logic deterministically
+   * in tests where headless Electron and Playwright's focus model don't
+   * produce reliable native focus events (notably for type:'panel' NSPanels
+   * on macOS — same root cause that the in-process autoclose path was
+   * written to work around).
+   */
+  fireWindowFocus: (id: number): boolean => {
+    const win = BrowserWindow.fromId(id);
+    if (!win || win.isDestroyed()) return false;
+    win.emit('focus');
+    return true;
+  },
   /** Returns the page-host URL-param bounds (the canonical webview screenBounds). */
   getHostUrlParamsByUrl: (urlSubstr: string) => {
     let last: { x: number; y: number; width: number; height: number } | null = null;
