@@ -38,24 +38,26 @@ const HTML_SHIM_MARKER = '<!--peek:permissions-->';
  * Chrome callback convention). Without this, the
  * service worker crashes at startup on permissions.onAdded.addListener().
  */
-const PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatibility.
+const PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatibility (background SW).
  * Strategy: replace globalThis.chrome with a Proxy whose target is a plain
  * empty object {}. The Proxy's get trap returns our shim for 'permissions'
- * and delegates everything else to the real native chrome.
+ * and delegates everything else to the real native chrome. After installing,
+ * LOCK globalThis.chrome with writable:false / configurable:false so
+ * Proton's bundled "extension API isolation" wrapper (a setTimeout(0) that
+ * replaces globalThis.chrome with a Proxy returning errors for every prop
+ * except 'app') CANNOT clobber us — that wrap would otherwise break
+ * webextension-polyfill's lazy browser.permissions, halting BG init at
+ * 'a8.permissions.onAdded.addListener' and so blocking autofill entirely.
  *
- * Why this shape:
+ * Why the empty-target shape:
  *   1. Electron's native chrome.permissions is a non-configurable, non-writable
  *      property on the native chrome object. We can't redefine it via
  *      defineProperty, and even mutating its methods doesn't help once a
- *      downstream consumer (e.g. Proton Pass) wraps chrome in their own Proxy
- *      that hides 'permissions' — the V8 invariant fires because the target
- *      property is non-configurable but the consumer's get trap returns
- *      undefined.
+ *      downstream consumer wraps chrome in their own Proxy that hides
+ *      'permissions' — the V8 invariant fires because the target property is
+ *      non-configurable but the consumer's get trap returns undefined.
  *   2. Replacing chrome with a Proxy whose target is {} means the target has
- *      NO own properties — no invariants apply to anything. Downstream Proxies
- *      can wrap us freely without tripping V8's checks.
- *   3. The replacement uses configurable:true / writable:true so other code
- *      (Proton's polyfill) can still wrap us in their own Proxy. */
+ *      NO own properties — no invariants apply to anything. */
 (function() {
   var DEBUG_PERMISSIONS = false;
   function _log() { if (DEBUG_PERMISSIONS) console.log.apply(console, ['[peek:permissions]'].concat(Array.prototype.slice.call(arguments))); }
@@ -144,9 +146,22 @@ const PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatib
   try {
     Object.defineProperty(globalThis, 'chrome', {
       value: wrapWithPermissionsShim(_chrome, _shimPerms),
-      writable: true, configurable: true, enumerable: true,
+      writable: false, configurable: false, enumerable: true,
     });
-    _log('chrome wrapped with permissions Proxy');
+    _log('chrome wrapped with permissions Proxy (locked)');
+    // Electron's native browser polyfill (in SW context) omits 'permissions'
+    // — it only exposes APIs Electron implements natively. Proton's BG calls
+    // browser.permissions.onAdded.addListener at sync init, throwing and
+    // aborting BG before any chrome.runtime.onMessage handler is registered.
+    // Plug in our shim on browser.permissions too.
+    try {
+      if (typeof globalThis.browser === 'object' && globalThis.browser && !globalThis.browser.permissions) {
+        Object.defineProperty(globalThis.browser, 'permissions', {
+          value: _shimPerms, writable: false, configurable: false, enumerable: true,
+        });
+        _log('browser.permissions installed');
+      }
+    } catch(e) { _log('browser.permissions install failed:', e.message); }
   } catch(e) { _log('chrome wrap failed:', e.message); }
 })();
 `;
@@ -352,6 +367,117 @@ const GET_BACKGROUND_PAGE_SHIM = `// --- chrome.runtime.getBackgroundPage shim -
 })();
 `;
 
+/**
+ * Optional diagnostic shim — only injected when env var
+ * PEEK_PROTON_DIAG=1 is set at patch time. Wraps chrome.runtime.onMessage,
+ * chrome.runtime.sendMessage, and chrome.scripting.executeScript with
+ * lightweight loggers that stash entries in chrome.storage.local under
+ * '__peekProtonDiag'. Read from any extension-context page (popup,
+ * settings, etc.) via chrome.storage.local.get(['__peekProtonDiag']).
+ */
+const SCRIPTING_DIAG_SHIM = `// --- Peek diagnostic shim (PROTON_DIAG) ---
+(function() {
+  if (typeof chrome === 'undefined') return;
+  var _log = [];
+  var _flushScheduled = false;
+  function _push(entry) {
+    entry.t = Date.now();
+    _log.push(entry);
+    globalThis._peekProtonDiag = _log;
+    if (!_flushScheduled && chrome.storage && chrome.storage.local) {
+      _flushScheduled = true;
+      Promise.resolve().then(function() {
+        _flushScheduled = false;
+        try { chrome.storage.local.set({ __peekProtonDiag: JSON.stringify(_log) }); } catch(e) {}
+      });
+    }
+  }
+  _push({ kind: 'shim_installed' });
+
+  // Capture top-level errors during BG init so we see if Proton's bundle
+  // throws before reaching chrome.runtime.onMessage.addListener.
+  try {
+    self.addEventListener('error', function(ev) {
+      _push({ kind: 'sw_error', message: ev.message || String(ev), filename: ev.filename, lineno: ev.lineno, colno: ev.colno });
+    });
+    self.addEventListener('unhandledrejection', function(ev) {
+      _push({ kind: 'sw_unhandled_rejection', reason: String(ev.reason && ev.reason.message || ev.reason) });
+    });
+    _push({ kind: 'error_handlers_installed' });
+  } catch(e) { _push({ kind: 'error_handler_install_failed', err: String(e && e.message || e) }); }
+
+  // Wrap chrome.runtime.onMessage.addListener — log every dispatch.
+  try {
+    var _origAdd = chrome.runtime.onMessage.addListener.bind(chrome.runtime.onMessage);
+    chrome.runtime.onMessage.addListener = function(fn) {
+      _push({ kind: 'addListener_called', fnName: fn && fn.name });
+      var wrapped = function(message, sender, sendResponse) {
+        var msgType = message && message.type ? String(message.type) : '(no-type)';
+        _push({ kind: 'onMessage', msgType: msgType, sender: { url: sender && sender.url, tabId: sender && sender.tab && sender.tab.id, frameId: sender && sender.frameId } });
+        try {
+          return fn(message, sender, sendResponse);
+        } catch(e) {
+          _push({ kind: 'onMessage_handler_threw', msgType: msgType, err: String(e && e.message || e) });
+          throw e;
+        }
+      };
+      return _origAdd(wrapped);
+    };
+  } catch(e) { _push({ kind: 'addListener_wrap_failed', err: String(e && e.message || e) }); }
+
+  // Probe chrome state at various tick boundaries so we can see when (if ever)
+  // Proton's allowProxy wrap fires.
+  function _probe(label) {
+    try {
+      var browserKeys = [];
+      try { if (globalThis.browser) browserKeys = Object.keys(globalThis.browser).slice(0, 30); } catch {}
+      var info = {
+        kind: 'probe', label: label,
+        typeofChrome: typeof chrome,
+        typeofRuntime: typeof chrome.runtime,
+        chromePermissions: typeof chrome.permissions,
+        chromePermsOnAdded: typeof chrome.permissions?.onAdded,
+        typeofBrowser: typeof globalThis.browser,
+        browserKeys: browserKeys,
+        browserPermissions: typeof globalThis.browser?.permissions,
+        browserPermsOnAdded: typeof globalThis.browser?.permissions?.onAdded,
+      };
+      _push(info);
+    } catch (e) {
+      _push({ kind: 'probe_threw', label: label, err: String(e && e.message || e) });
+    }
+  }
+  _probe('sync_after_install');
+  Promise.resolve().then(function() { _probe('microtask_after_install'); });
+  setTimeout(function() { _probe('timeout0_after_install'); }, 0);
+  setTimeout(function() { _probe('timeout500_after_install'); }, 500);
+
+  // Wrap chrome.scripting.executeScript — log every call + result.
+  try {
+    var _origExec = chrome.scripting && chrome.scripting.executeScript;
+    if (_origExec) {
+      chrome.scripting.executeScript = function(opts) {
+        var summary = { kind: 'executeScript', target: opts && opts.target, files: opts && opts.files, hasFunc: !!(opts && opts.func) };
+        _push(summary);
+        try {
+          var p = _origExec.call(chrome.scripting, opts);
+          if (p && typeof p.then === 'function') {
+            return p.then(function(r) { _push({ kind: 'executeScript_result', target: opts && opts.target, files: opts && opts.files, ok: true }); return r; })
+                    .catch(function(e) { _push({ kind: 'executeScript_result', target: opts && opts.target, files: opts && opts.files, ok: false, err: String(e && e.message || e) }); throw e; });
+          }
+          return p;
+        } catch(e) {
+          _push({ kind: 'executeScript_threw', err: String(e && e.message || e) });
+          throw e;
+        }
+      };
+    } else {
+      _push({ kind: 'no_chrome_scripting' });
+    }
+  } catch(e) { _push({ kind: 'executeScript_wrap_failed', err: String(e && e.message || e) }); }
+})();
+`;
+
 function patchProtonPass() {
   const extPath = path.join(EXT_DIR, 'proton-pass');
 
@@ -379,11 +505,12 @@ function patchProtonPass() {
     // Insert after permissions shim closing })();
     const marker = '})();\n';
     const idx = content.indexOf(marker);
+    const diag = process.env.PEEK_PROTON_DIAG === '1' ? SCRIPTING_DIAG_SHIM : '';
     if (idx !== -1) {
       const insertAt = idx + marker.length;
-      content = content.slice(0, insertAt) + STORAGE_SESSION_SHIM + GET_BACKGROUND_PAGE_SHIM + content.slice(insertAt);
+      content = content.slice(0, insertAt) + STORAGE_SESSION_SHIM + GET_BACKGROUND_PAGE_SHIM + diag + content.slice(insertAt);
     } else {
-      content = content + STORAGE_SESSION_SHIM + GET_BACKGROUND_PAGE_SHIM;
+      content = content + STORAGE_SESSION_SHIM + GET_BACKGROUND_PAGE_SHIM + diag;
     }
     patched = true;
   }
