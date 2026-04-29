@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 2922b5ec -->
+<!-- last-bumped: 39f87286ffea -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -16,6 +16,15 @@ Completed work. Two formats coexist on purpose:
 - **Pre-2026-04-29** — archival per-day `## YYYY-MM-DD` sections with rich `Desktop - {area}` clusters and detailed checkbox bullets. Preserved as-is; deliberately invisible to the RSS generator.
 
 See TODO.md for pending items, WIP.md for in-progress items.
+
+## Week of 2026-04-27 (W18)
+
+### 2026-04-29
+
+- tasks: migrate active task queue into Peek; tasks.md becomes a pointer
+- changelog: scaffold per-day bump script + per-bullet RSS generator (untested)
+- readme: refresh for tiles architecture; reference state machines + webtil.es comparison
+- changelog: activate per-day bumper + RSS via Option C (forward-only)
 
 ## 2026-04-27
 

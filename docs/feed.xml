@@ -4,8 +4,36 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Wed, 29 Apr 2026 10:30:52 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 29 Apr 2026 10:49:23 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>tasks: migrate active task queue into Peek; tasks.md becomes a pointer</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-29:40703d38583c</guid>
+      <pubDate>Wed, 29 Apr 2026 12:00:00 GMT</pubDate>
+      <description>tasks: migrate active task queue into Peek; tasks.md becomes a pointer</description>
+    </item>
+    <item>
+      <title>changelog: scaffold per-day bump script + per-bullet RSS generator (untested)</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-29:8954be06841f</guid>
+      <pubDate>Wed, 29 Apr 2026 12:00:00 GMT</pubDate>
+      <description>changelog: scaffold per-day bump script + per-bullet RSS generator (untested)</description>
+    </item>
+    <item>
+      <title>readme: refresh for tiles architecture; reference state machines + webtil.es comparison</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-29:0520985630c9</guid>
+      <pubDate>Wed, 29 Apr 2026 12:00:00 GMT</pubDate>
+      <description>readme: refresh for tiles architecture; reference state machines + webtil.es comparison</description>
+    </item>
+    <item>
+      <title>changelog: activate per-day bumper + RSS via Option C (forward-only)</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-29:b379eaf12b8b</guid>
+      <pubDate>Wed, 29 Apr 2026 12:00:00 GMT</pubDate>
+      <description>changelog: activate per-day bumper + RSS via Option C (forward-only)</description>
+    </item>
   </channel>
 </rss>
