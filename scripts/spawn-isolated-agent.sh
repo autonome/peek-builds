@@ -3,6 +3,12 @@
 #
 # Usage: scripts/spawn-isolated-agent.sh <agent-name>
 #
+# IF YOU'RE CONSIDERING THE Agent TOOL'S `isolation: "worktree"` PARAMETER:
+# STOP. That creates a git worktree outside jj's view; commits made there
+# are orphaned from the main jj stack and require manual recovery. Use this
+# script instead — it creates a real jj workspace that shares state with
+# the default checkout.
+#
 # Workspaces are pooled — this script REUSES existing mpeek-agent-<name>
 # if one exists, resetting its working copy to match the default workspace's @.
 # If it doesn't exist, it's created.

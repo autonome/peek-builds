@@ -30,8 +30,9 @@ backend/server/data/
 test-results/
 playwright-report/
 
-# Claude Code local settings
-.claude/
+# Claude Code local settings (per-user); skills/ is shared
+.claude/*
+!.claude/skills/
 
 # Agent task scratch files
 .agent-task.md
