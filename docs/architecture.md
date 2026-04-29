@@ -397,6 +397,163 @@ records, but the format is Peek's, not DASL's.
 
 ---
 
+## Implementation conventions
+
+A grab-bag of conventions that aren't structural but recur often enough
+to bite. The state machines and lifecycle docs cover the spine; this
+section covers the corners.
+
+### bgWindow is the orchestrator
+
+The background window (`peek://app/background.html`) is THE core
+orchestrator. The cmd, hud, and page surfaces are consolidated into it.
+Every published event must reach it; if you find a producer publishing
+to a renderer that bgWindow doesn't observe, the routing is wrong.
+
+### Declarative publish-type commands
+
+Commands of `type: 'publish'` must publish a `:result` event back so the
+cmd panel proxy resolves. Otherwise the panel hangs for 30 s before
+timing out.
+
+### HUD widgets
+
+HUD widgets live in the core renderer (not a separate tile) and are
+loaded via `initHud()` inside `app/index.js`. They are eager,
+`alwaysOnTop: true`, and `focusable: false`.
+
+- App focus drives hide/show via main-process `did-resign-active` /
+  `did-become-active`.
+- The `__hudHidden` flag plus `trackVisibleWindowFocus()` skips
+  non-focusable windows so they don't override focused-window targeting.
+
+### Cmd panel state machine
+
+`app/cmd/state-machine.js` is a pure module with no DOM/IPC deps. Ten
+states: IDLE, TYPING, RESULTS_OPEN, PARAM_MODE, EXECUTING,
+OUTPUT_SELECTION, CHAIN_MODE, CHAIN_POPUP, ERROR, CLOSING. Actions run
+BEFORE `currentState` is updated. See
+[docs/cmd-state-machine.md](./cmd-state-machine.md) for the full spec
+and test coverage notes.
+
+### peek-card component
+
+- Empty slot sections are hidden via `slotchange` + the `slot-empty`
+  class. CSS `:empty` does not work on slot elements.
+- **Card action buttons must always be visible.** Never hover-reveal
+  them.
+
+### Window open IPC
+
+- External URLs need centered coordinates computed BEFORE canvas bounds
+  adjustment (otherwise undefined `x`/`y` produce `NaN`).
+- `handleExternalUrl` is exposed on the `__peek_test` global for
+  Playwright.
+- `window._cmdState` in the cmd panel exists for deterministic test
+  waits.
+- Main-process `setTimeout` bodies that reference a window or
+  `webContents` must guard `isDestroyed()` — closing inside the
+  deferred callback throws unhandled.
+- `workspaceKey`'d tiles collapse opens — Playwright cannot get a fresh
+  window when the key matches an existing one. Static manifest
+  assertions are the fallback.
+
+### Page widget panels
+
+Page info (top-left) and entities (right-side) live in
+`app/page/page.js`. The entities panel subscribes to `entities:extracted`
+pubsub and falls back to DOM extraction after 2 s.
+
+Page-host overlays (load error, etc.) belong inside `.center-column`
+with `position: absolute; inset: 0`, NOT on `<body>` with
+`position: fixed` — fixed-positioned overlays stretch with `show()`'s
+window expansion.
+
+### Groups UI
+
+`promoteTagToGroup()` must only pass valid DB columns to `setRow()`.
+Runtime-only props like `addressCount` cause silent SQL failures.
+
+### Canvas page rewriting
+
+Web URLs are rewritten on open: `https://example.com` →
+`peek://app/page/index.html?url=...`. Group mode context is set on new
+windows BEFORE `loadURL`; `openWindow` falls back to
+`lastFocusedVisibleWindowId` when no opener is provided.
+
+CSS gotcha: `-webkit-mask-image` on a webview clips `box-shadow` —
+use `border` + `outline` instead.
+
+### Webview / visible content area
+
+The visible content area must NEVER resize except via direct user
+interaction. Window + chrome may grow (e.g. for navbar reveal), but the
+visible content stays put.
+
+### Electron ESC handling
+
+Electron's `before-input-event` intercepts ESC at the main-process level
+and calls `e.preventDefault()`. DOM `keydown` listeners for ESC never
+fire in the renderer — textarea / input keydown listeners are dead code
+for ESC.
+
+ESC is delivered via `escape-pressed` IPC → preload `_escapeCallback` →
+the tile's `onEscape` handler. To handle ESC in custom UI elements,
+check `document.activeElement` in the `onEscape` handler, blur/close as
+needed, return `{ handled: true }`.
+
+`escUnhandledPolicy()` is the second-phase handler; it opens the
+Windows switcher at the workspace root.
+
+### Editor pane architecture
+
+Four panes: outline, editor (center), preview, notes/annotations.
+Collapse icons MUST set `font-family: system-ui` on toggle elements;
+ServerMono lacks the Unicode glyphs.
+
+### PubSub event publishing
+
+- Direct `tagItem()` calls do NOT publish events — UIs won't update
+  reactively. Use `tagItemAndPublish()` in `ipc.ts` for any tagging that
+  should trigger a UI refresh.
+- Same pattern applies to any data mutation that skips the IPC handler:
+  it must manually publish.
+- Groups UI listens for: `tag:item-added`, `tag:item-removed`,
+  `tag:created`, `item:created`, `item:deleted`, `sync:pull-completed`.
+- The Tags page widget (`app/page/page.js`) also subscribes to
+  `tag:item-added` / `tag:item-removed` and resolves `currentItemId` on
+  the first tag event when null.
+
+### Noun system
+
+`features/cmd/noun-registry.js` + `features/cmd/nouns.js`. Register a
+noun via `registerNoun({ name, singular, query, create, browse, ... })`
+and the system auto-generates: bare command, `list {name}`,
+`new {singular}`, `open {singular}`. Used by groups, tags (with
+`skipBare`), and lex (singular `lex`, NSID-filtered query). Prefer
+nouns over registering many individual commands — avoids command
+registry pollution.
+
+### Sync architecture
+
+- Device IDs are raw UUIDs (no `desktop-` / `mobile-` / `extension-`
+  prefixes).
+- `_sync` metadata lives inside the item `metadata` JSON:
+  `{ _sync: { createdBy, createdAt, modifiedBy, modifiedAt } }`.
+- `syncSource` was removed from desktop Electron, server, and
+  `sync/sync.js`; it still exists in iOS `lib.rs` and Tauri `sync.rs`
+  pending refactor.
+- Push filter: `syncedAt === 0` OR `updatedAt > syncedAt`.
+- E2E sync tests use `E2E_TEST=true` to bypass auth.
+
+### "Extension" is a smell when used for tiles
+
+Real Chrome MV3 extensions live in `chrome-extensions/` and keep the
+"extension" name. Anywhere else, "extension" used as a synonym for
+tile / feature is a leftover from v1 and should be renamed.
+
+---
+
 ## See also
 
 - [docs/tiles-single-file.md](./tiles-single-file.md) — the "single-file
