@@ -18,7 +18,7 @@ import path from 'node:path';
 import { getDb } from './datastore.js';
 import { getProfileSession } from './session-partition.js';
 import { registerAll } from './chrome-api-polyfills/index.js';
-import { buildOptionsCommandName } from './chrome-extensions-helpers.js';
+import { buildOptionsCommandName, computeUiEntries } from './chrome-extensions-helpers.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -489,96 +489,15 @@ export function getChromeExtensionStatus(): {
  * Returns entries only for extensions that are currently loaded.
  */
 export function getChromeExtensionUiEntries(): ChromeExtensionUiEntry[] {
-  const entries: ChromeExtensionUiEntry[] = [];
-
-  for (const [extId, loaded] of loadedExtensions) {
-    const discovered = discoveredExtensions.get(extId);
-    if (!discovered) continue;
-
-    const manifest = discovered.manifest;
-    const baseUrl = loaded.electronExtension.url; // chrome-extension://[id]/
-
-    // Action popup (action takes priority over browser_action for MV3)
-    const popupPage = manifest.action?.default_popup || manifest.browser_action?.default_popup;
-    if (popupPage) {
-      entries.push({
-        extensionId: extId, extensionName: discovered.name, type: 'popup',
-        title: manifest.action?.default_title || manifest.browser_action?.default_title || discovered.name,
-        url: `${baseUrl}${popupPage}`, width: 400, height: 500, openable: true,
-      });
-    }
-
-    // Options page (options_ui takes priority over options_page)
-    const optionsPage = manifest.options_ui?.page || manifest.options_page;
-    if (optionsPage) {
-      entries.push({
-        extensionId: extId, extensionName: discovered.name, type: 'options',
-        title: `${discovered.name} Settings`,
-        url: `${baseUrl}${optionsPage}`, width: 1024, height: 768, openable: true,
-      });
-    }
-
-    // Background page (informational - service workers are not directly openable)
-    const bgPage = manifest.background?.page;
-    const bgWorker = manifest.background?.service_worker;
-    const bgScripts = manifest.background?.scripts;
-    if (bgPage || bgWorker || bgScripts) {
-      const bgPath = bgPage || bgWorker || (bgScripts && bgScripts[0]) || '';
-      entries.push({
-        extensionId: extId, extensionName: discovered.name, type: 'background',
-        title: `${discovered.name} Background`,
-        url: bgPath ? `${baseUrl}${bgPath}` : '',
-        width: 0, height: 0, openable: !!bgPage,
-      });
-    }
-
-    // Chrome URL overrides
-    if (manifest.chrome_url_overrides) {
-      const overrides = manifest.chrome_url_overrides;
-      if (overrides.newtab) {
-        entries.push({
-          extensionId: extId, extensionName: discovered.name, type: 'newtab',
-          title: `${discovered.name} New Tab`,
-          url: `${baseUrl}${overrides.newtab}`, width: 1024, height: 768, openable: true,
-        });
-      }
-      if (overrides.history) {
-        entries.push({
-          extensionId: extId, extensionName: discovered.name, type: 'history',
-          title: `${discovered.name} History`,
-          url: `${baseUrl}${overrides.history}`, width: 1024, height: 768, openable: true,
-        });
-      }
-      if (overrides.bookmarks) {
-        entries.push({
-          extensionId: extId, extensionName: discovered.name, type: 'bookmarks',
-          title: `${discovered.name} Bookmarks`,
-          url: `${baseUrl}${overrides.bookmarks}`, width: 1024, height: 768, openable: true,
-        });
-      }
-    }
-
-    // DevTools page
-    if (manifest.devtools_page) {
-      entries.push({
-        extensionId: extId, extensionName: discovered.name, type: 'devtools',
-        title: `${discovered.name} DevTools`,
-        url: `${baseUrl}${manifest.devtools_page}`, width: 1024, height: 768, openable: true,
-      });
-    }
-
-    // Side panel
-    const sidePanelPath = manifest.side_panel?.default_path || manifest.sidebar_action?.default_panel;
-    if (sidePanelPath) {
-      entries.push({
-        extensionId: extId, extensionName: discovered.name, type: 'sidepanel',
-        title: manifest.sidebar_action?.default_title || `${discovered.name} Side Panel`,
-        url: `${baseUrl}${sidePanelPath}`, width: 400, height: 768, openable: true,
-      });
-    }
+  // Adapt module-level Maps to the shape expected by the pure helper so the
+  // computation can be tested without an Electron session. The pure helper
+  // (computeUiEntries in chrome-extensions-helpers.ts) is the standing
+  // regression test surface for this logic.
+  const loadedAdapted = new Map<string, { extensionUrl: string }>();
+  for (const [id, loaded] of loadedExtensions) {
+    loadedAdapted.set(id, { extensionUrl: loaded.electronExtension.url });
   }
-
-  return entries;
+  return computeUiEntries(loadedAdapted, discoveredExtensions) as ChromeExtensionUiEntry[];
 }
 /**
  * Open a chrome extension's UI page in a BrowserWindow.

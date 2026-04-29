@@ -844,9 +844,16 @@ const onReady = async () => {
         });
       }
 
-      // Load enabled chrome extensions, then register their UI pages as commands
+      // Load enabled chrome extensions, register their UI pages as commands,
+      // then broadcast chrome-extensions:loaded so the Settings → Extensions
+      // pane can re-render its per-extension buttons. The broadcast is needed
+      // because renderPrivacySettings() runs once at page-open and
+      // loadEnabledChromeExtensions() is async — without the signal, a
+      // settings window opened before loading completes shows no buttons
+      // (this was the root cause of the 2026-04-29 regression).
       loadEnabledChromeExtensions().then(() => {
         registerChromeExtensionCommands();
+        publish(systemAddress, 'chrome-extensions:loaded', {});
       }).catch(err => {
         console.error('[startup] Chrome extensions init failed:', err);
       });

@@ -3439,6 +3439,23 @@ const init = async () => {
 
   contentArea.appendChild(privacySection);
 
+  // Re-render the Extensions section when chrome extensions finish loading.
+  // loadEnabledChromeExtensions() is async and fires without await at startup,
+  // so a settings window opened before it completes would see empty
+  // getChromeExtensionUiEntries() → no popup/options buttons. The
+  // chrome-extensions:loaded event (published by entry.ts after the async
+  // load completes) triggers a full re-render of the section content so
+  // the buttons always appear regardless of open-vs-load ordering.
+  api.subscribe('chrome-extensions:loaded', async () => {
+    // Clear and re-render privacy section content.
+    while (privacySection.childNodes.length > 1) {
+      // Keep the first child (the h2 title); remove everything else.
+      privacySection.removeChild(privacySection.lastChild);
+    }
+    const refreshed = await renderPrivacySettings();
+    privacySection.appendChild(refreshed);
+  });
+
   // Add Permissions section (between Extensions and Dark Mode).
   // Lists per-origin web permission decisions persisted by the page-host
   // permission handler (geolocation, camera/mic, etc.) and lets the user
