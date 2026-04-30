@@ -12,7 +12,7 @@ const api = window.app;
 const debug = api.debug;
 
 const HUD_SHEET_KEY = 'hud_sheet';
-const CURRENT_CONFIG_VERSION = 2;
+const CURRENT_CONFIG_VERSION = 3;
 
 // Default HUD sheet layout — arranges widget pages vertically.
 const WIDGET_WIDTH = 220;
@@ -24,6 +24,7 @@ const DEFAULT_HUD_WIDGETS = [
   { id: 'mode',   url: 'peek://hud/widgets/mode.html' },
   { id: 'izui',   url: 'peek://hud/widgets/izui.html' },
   { id: 'window', url: 'peek://hud/widgets/window.html' },
+  { id: 'timers', url: 'peek://hud/widgets/timers.html' },
   { id: 'stats',  url: 'peek://hud/widgets/stats.html', height: STATS_WIDGET_HEIGHT },
 ];
 

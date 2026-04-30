@@ -187,6 +187,30 @@ const formatTimerStatus = (timer) => {
 // ===== Bell Sound =====
 
 /**
+ * Play a notification sound for a timer. If the timer's notification.sound
+ * is a URL string, fetch and play it as audio; otherwise play the synth bell.
+ */
+const playNotification = (timer) => {
+  const url = timer && timer.metadata && timer.metadata.notification && timer.metadata.notification.sound;
+  if (typeof url === 'string' && url.length > 0) {
+    try {
+      const audio = new Audio(url);
+      const result = audio.play();
+      if (result && typeof result.catch === 'function') {
+        result.catch((err) => {
+          debug && console.log('[ext:timers] Custom sound playback failed, falling back to bell:', err);
+          playBell();
+        });
+      }
+      return;
+    } catch (err) {
+      debug && console.log('[ext:timers] Custom sound construction failed, falling back to bell:', err);
+    }
+  }
+  playBell();
+};
+
+/**
  * Play a bell tone using Web Audio API (no external file needed)
  */
 const playBell = () => {
@@ -324,8 +348,7 @@ const completeTimer = async (timer) => {
     debug && console.log('[ext:timers] Notification failed:', err);
   }
 
-  // Play bell sound
-  playBell();
+  playNotification(timer);
 
   // Publish completion event
   api.pubsub.publish('timer:completed', {
@@ -352,7 +375,7 @@ const fireIntervalNotification = (timer) => {
     debug && console.log('[ext:timers] Interval notification failed:', err);
   }
 
-  playBell();
+  playNotification(timer);
 
   api.pubsub.publish('timer:interval', {
     id: timer.id,
