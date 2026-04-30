@@ -40,8 +40,9 @@ import * as storageSession from './storage-session.js';
 import * as webNavigation from './web-navigation.js';
 import * as offscreen from './offscreen.js';
 import * as permissions from './permissions.js';
+import * as runtimeExternal from './runtime-external.js';
 
-export { alarms, storageSession, webNavigation, offscreen, permissions };
+export { alarms, storageSession, webNavigation, offscreen, permissions, runtimeExternal };
 
 /**
  * Register all Chrome API polyfills for a session.
@@ -92,6 +93,11 @@ export function registerAll(session, options = {}) {
   if (shouldRegister('permissions')) {
     handles.permissions = permissions.setupMainProcess(session, { ipcMain });
     cleanups.push(handles.permissions.cleanup);
+  }
+
+  if (shouldRegister('runtimeExternal')) {
+    handles.runtimeExternal = runtimeExternal.setupMainProcess(session, { ipcMain });
+    cleanups.push(handles.runtimeExternal.cleanup);
   }
 
   return {

@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getBgInjection as getRuntimeExternalBgInjection } from '../backend/electron/chrome-api-polyfills/runtime-external.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -28,6 +29,13 @@ const EXT_DIR = path.join(ROOT, 'chrome-extensions');
 
 const SHIM_MARKER = '/* Peek: chrome.permissions';
 const HTML_SHIM_MARKER = '<!--peek:permissions-->';
+const RUNTIME_EXTERNAL_BG_MARKER = '/* Peek: chrome.runtime.onMessageExternal polyfill';
+
+// Unique sentinels around the whole BG-side shim block. Strip removes
+// everything between BEGIN and END (inclusive). Bulletproof — no IIFE-close
+// heuristics that can collide with bundled extension code.
+const SHIM_BLOCK_BEGIN = '/*PEEK_BG_SHIMS_BEGIN — do not remove or edit by hand; managed by scripts/patch-chrome-extensions.js*/\n';
+const SHIM_BLOCK_END = '\n/*PEEK_BG_SHIMS_END*/\n';
 
 /**
  * The permissions shim. Electron does not implement chrome.permissions.
@@ -564,23 +572,35 @@ function patchProtonPass() {
   let content = fs.readFileSync(bgPath, 'utf-8');
   let patched = false;
 
-  // Check each shim independently so re-running after adding new shims works
-  if (!content.includes(SHIM_MARKER)) {
-    content = PERMISSIONS_SHIM + content;
+  // If the BG shim block is already present, replace it wholesale rather
+  // than try to incrementally amend. The PEEK_BG_SHIMS_BEGIN/END sentinels
+  // make this trivially safe: strip everything between them, then re-emit.
+  if (content.includes(SHIM_BLOCK_BEGIN)) {
+    const beginIdx = content.indexOf(SHIM_BLOCK_BEGIN);
+    const endIdx = content.indexOf(SHIM_BLOCK_END, beginIdx);
+    if (endIdx !== -1) {
+      content = content.slice(0, beginIdx) + content.slice(endIdx + SHIM_BLOCK_END.length);
+    } else {
+      console.warn('[patch] Proton Pass background.js: BEGIN sentinel without END — refusing to patch (manual fix required)');
+      return;
+    }
     patched = true;
   }
 
-  if (!content.includes('chrome.storage.session')) {
-    // Insert after permissions shim closing })();
-    const marker = '})();\n';
-    const idx = content.indexOf(marker);
-    const diag = process.env.PEEK_PROTON_DIAG === '1' ? SCRIPTING_DIAG_SHIM : '';
-    if (idx !== -1) {
-      const insertAt = idx + marker.length;
-      content = content.slice(0, insertAt) + STORAGE_SESSION_SHIM + GET_BACKGROUND_PAGE_SHIM + diag + content.slice(insertAt);
-    } else {
-      content = content + STORAGE_SESSION_SHIM + GET_BACKGROUND_PAGE_SHIM + diag;
-    }
+  // Build the full shim block: permissions + storage + getBackgroundPage
+  // (+ optional diag) + runtime-external. Wrap in BEGIN/END sentinels for
+  // deterministic strip on subsequent runs.
+  const diag = process.env.PEEK_PROTON_DIAG === '1' ? SCRIPTING_DIAG_SHIM : '';
+  const block =
+    SHIM_BLOCK_BEGIN +
+    PERMISSIONS_SHIM +
+    STORAGE_SESSION_SHIM +
+    GET_BACKGROUND_PAGE_SHIM +
+    diag +
+    getRuntimeExternalBgInjection() +
+    SHIM_BLOCK_END;
+  if (!content.startsWith(SHIM_BLOCK_BEGIN)) {
+    content = block + content;
     patched = true;
   }
 

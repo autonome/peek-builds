@@ -78,6 +78,11 @@ export interface ChromeManifest {
     resources: string[];
     matches: string[];
   }>;
+  externally_connectable?: {
+    matches?: string[];
+    ids?: string[];
+    accepts_tls_channel_id?: boolean;
+  };
 }
 
 /**
@@ -354,6 +359,23 @@ export async function loadEnabledChromeExtensions(): Promise<void> {
     });
 
     DEBUG && console.log('[chrome-ext] Chrome API polyfills registered');
+
+    // Forward extension service-worker console output to main stderr.
+    // Without this, BG SW console.log/error are invisible — they live in
+    // the SW's own console which isn't surfaced anywhere.
+    if (DEBUG && typeof profileSession.serviceWorkers?.on === 'function') {
+      profileSession.serviceWorkers.on('console-message', (msgDetails) => {
+        try {
+          const d = msgDetails as unknown as { message?: unknown; level?: unknown; sourceUrl?: unknown; versionId?: unknown };
+          const msg = String(d.message ?? '');
+          // Only forward our peek-tagged BG output to keep stderr readable;
+          // Proton's BG is chatty.
+          if (msg.includes('peek:') || msg.includes('peek-rt')) {
+            console.log(`[sw:vid=${String(d.versionId)}:${String(d.level)}] ${msg}`);
+          }
+        } catch { /* logging must never throw */ }
+      });
+    }
   }
 
   for (const [extId, extInfo] of discoveredExtensions) {
@@ -465,6 +487,63 @@ export function isChromeExtensionEnabled(extId: string): boolean {
  */
 export function isChromeExtensionLoaded(extId: string): boolean {
   return loadedExtensions.has(extId);
+}
+
+/**
+ * Convert a manifest match-pattern (https://*.proton.me/*) into a host-checker
+ * function. Used to test whether a webview URL falls under any loaded
+ * extension's externally_connectable.matches.
+ *
+ * Subset of the chrome match-pattern grammar — sufficient for what extensions
+ * we ship (Proton Pass etc.). Patterns: scheme://host/path. Wildcards:
+ *   - scheme: "*" matches http or https
+ *   - host: "*" matches any host; "*.example.com" matches example.com or
+ *     any subdomain
+ *   - path: literal prefix; "*" allowed only as the last segment
+ */
+function matchPatternToTester(pattern: string): ((url: URL) => boolean) | null {
+  if (pattern === '<all_urls>') return () => true;
+  const m = pattern.match(/^(\*|https?|file|ftp):\/\/([^/]+)(\/.*)$/);
+  if (!m) return null;
+  const [, scheme, host, pathGlob] = m;
+  const schemeMatcher = (s: string) => scheme === '*' ? (s === 'http:' || s === 'https:') : s === `${scheme}:`;
+  let hostMatcher: (h: string) => boolean;
+  if (host === '*') hostMatcher = () => true;
+  else if (host.startsWith('*.')) {
+    const suffix = host.slice(2);
+    hostMatcher = (h) => h === suffix || h.endsWith('.' + suffix);
+  } else {
+    hostMatcher = (h) => h === host;
+  }
+  // Path glob: convert to regex with * → .*
+  const pathRe = new RegExp('^' + pathGlob.split('*').map(escapeRe).join('.*') + '$');
+  return (url) => schemeMatcher(url.protocol) && hostMatcher(url.hostname) && pathRe.test(url.pathname + url.search);
+}
+function escapeRe(s: string): string { return s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); }
+
+/**
+ * Returns the extension ID whose externally_connectable.matches matches `url`,
+ * or null if none. Used by entry.ts will-attach-webview to decide whether to
+ * inject the runtime-external preload into a webview navigating to that URL.
+ */
+export function findExtensionByExternallyConnectableUrl(url: string): string | null {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return null; }
+  for (const [extId, info] of discoveredExtensions) {
+    const loaded = loadedExtensions.get(extId);
+    if (!loaded) continue;
+    const matches = info.manifest?.externally_connectable?.matches;
+    if (!Array.isArray(matches)) continue;
+    for (const pattern of matches) {
+      const tester = matchPatternToTester(pattern);
+      // Return the runtime Chrome extension ID hash (what `chrome.runtime.id`
+      // resolves to for callers), not the unpacked-extension directory name.
+      // Proton's bundle calls `sendMessage(chrome.runtime.id, msg)`, so the
+      // page-side polyfill must expose the same hash here.
+      if (tester && tester(parsed)) return loaded.electronExtension.id;
+    }
+  }
+  return null;
 }
 
 /**

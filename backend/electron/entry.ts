@@ -89,7 +89,12 @@ import {
   cleanupChromeExtensions,
   isChromeExtensionLoaded,
   getChromeExtensionOptionsCommands,
+  findExtensionByExternallyConnectableUrl,
 } from './chrome-extensions.js';
+import {
+  getPreloadPath as getRuntimeExternalPreloadPath,
+  getPagePolyfillSource as getRuntimeExternalPagePolyfillSource,
+} from './chrome-api-polyfills/runtime-external.js';
 import {
   initProfilesDb,
   migrateExistingProfiles,
@@ -256,6 +261,44 @@ app.on('web-contents-created', (_event, contents) => {
   }
 
   contents.on('will-attach-webview', (_wvEvent, webPreferences, params) => {
+    // For http(s) URLs that match a loaded extension's
+    // externally_connectable.matches, install the runtime-external preload
+    // which polyfills chrome.runtime.sendMessage(extId, msg) →
+    // chrome.runtime.onMessageExternal in the BG SW. Only one preload per
+    // webview is supported by Electron, and peek:// URLs already have their
+    // own (tile-preload). The runtime-external bridge is irrelevant for
+    // peek:// URLs anyway, so this check keeps both paths exclusive.
+    if (params.src && (params.src.startsWith('http://') || params.src.startsWith('https://'))) {
+      const matchedExtId = findExtensionByExternallyConnectableUrl(params.src);
+      if (matchedExtId) {
+        webPreferences.preload = getRuntimeExternalPreloadPath();
+        webPreferences.additionalArguments = [
+          ...(webPreferences.additionalArguments ?? []),
+          `--peek-runtime-external-ext-id=${matchedExtId}`,
+        ];
+        // Disable sandbox for these webviews. Electron 40's sandbox-bundle
+        // init crashes on subsequent navigations within Proton's auth flow
+        // (/authorize → /reauth → /auth-ext), with
+        // "TypeError: object null is not iterable" inside
+        // ___electron_webpack_init__. The renderer process gets stuck in a
+        // broken state and our preload's dom-ready listener never fires, so
+        // chrome.runtime.sendMessage is never polyfilled on the auth-ext
+        // page that needs it. Disabling sandbox for these specific origins
+        // (auth pages of a loaded extension's externally_connectable
+        // matches) sidesteps the bootstrap bug.
+        webPreferences.sandbox = false;
+        webPreferences.contextIsolation = true;
+        console.log(`[peek:runtime-external:webview] Injecting runtime-external preload for ${params.src} (ext=${matchedExtId}, sandbox=false)`);
+        return;
+      } else if (DEBUG && (params.src.includes('proton.me') || params.src.includes('proton.dev'))) {
+        // Diagnostic: a Proton URL that DIDN'T match any loaded extension's
+        // externally_connectable.matches. Most likely cause is that the
+        // extension hasn't finished loading yet at attach time, or the
+        // match-pattern conversion is wrong. Surface both possibilities.
+        console.log(`[peek:runtime-external:webview] No extension matched ${params.src} — extension probably not loaded yet, or pattern mismatch`);
+      }
+    }
+
     if (params.src && params.src.startsWith('peek://')) {
       const tilePreloadPath = getTilePreloadPath();
       if (!tilePreloadPath) return;
@@ -316,6 +359,50 @@ app.on('web-contents-created', (_event, contents) => {
       }
     });
 
+    // Install the chrome.runtime.sendMessage page polyfill via CDP
+    // `Page.addScriptToEvaluateOnNewDocument`. CDP guarantees main-world
+    // execution BEFORE any page script on every navigation, with no IPC
+    // round-trip.
+    //
+    // Why this matters: the previous path was `did-navigate` →
+    // `executeJavaScript`, which is async via IPC. On Proton's /auth-ext
+    // (a SPA route mount on the same React bundle as /pass), the component
+    // mounts essentially synchronously after the URL changes — fast enough
+    // that the IPC round-trip lost the race. The harness trace at
+    // tmp/harness/proton-auth-2026-04-30T13-06-32-780Z.log shows the
+    // polyfill installing 146ms post-nav, which is the same instant
+    // Proton fetches its error.svg — i.e., Proton's bundle had already read
+    // Electron's broken native chrome.runtime, decided extension delivery
+    // failed, and rendered the error UI before the polyfill landed.
+    //
+    // CDP `addScriptToEvaluateOnNewDocument` registers the script once and
+    // it runs on every subsequent document creation (full navs and history
+    // navs that produce a new document) before any page <script>. The very
+    // first document is still handled by the preload's webFrame.executeJavaScript
+    // path (runtime-external-preload.cjs), since CDP can't be registered
+    // before webContents creation. Together they cover both paths.
+    let _polyfillScriptRegistered = false;
+    const tryRegisterCDPPolyfill = async (url: string) => {
+      if (_polyfillScriptRegistered) return;
+      if (!url.startsWith('http://') && !url.startsWith('https://')) return;
+      const matchedExtId = findExtensionByExternallyConnectableUrl(url);
+      if (!matchedExtId) return;
+      try {
+        if (!contents.debugger.isAttached()) {
+          contents.debugger.attach('1.3');
+        }
+        await contents.debugger.sendCommand('Page.enable');
+        await contents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+          source: getRuntimeExternalPagePolyfillSource(matchedExtId),
+        });
+        _polyfillScriptRegistered = true;
+        DEBUG && console.log(`[peek:runtime-external] CDP addScriptToEvaluateOnNewDocument registered (ext=${matchedExtId})`);
+      } catch (err) {
+        console.error('[peek:runtime-external] CDP install failed:', (err as Error)?.message ?? err);
+      }
+    };
+    contents.on('did-navigate', (_e, url) => { void tryRegisterCDPPolyfill(url); });
+
     // Diagnostic: forward webview-guest console + open DevTools when in DEBUG
     // mode and the URL is a Proton property. Lets us see whether our
     // chrome.runtime polyfill is reaching the page and what the auth-ext page
@@ -325,10 +412,18 @@ app.on('web-contents-created', (_event, contents) => {
         try {
           const e = event as unknown as { level?: unknown; message?: unknown; lineNumber?: unknown; sourceId?: unknown };
           const msg = String(e.message ?? '');
+          const level = String(e.level ?? '');
           const url = contents.getURL();
-          // Only log Proton-related pages to avoid flood — the bridge is only relevant there.
-          if (url.includes('proton.me') || url.includes('proton.dev') || msg.includes('peek:')) {
-            console.log(`[webview:${url.slice(0, 80)}:${String(e.level)}] ${msg} (${String(e.sourceId)}:${String(e.lineNumber)})`);
+          // Forward only when there's actual signal:
+          //   - any error/warning from a Proton page (extension diagnostics)
+          //   - any message tagged with our 'peek:' / 'peek-rt' marker (intentional)
+          // Plain info/log spam from Proton's content scripts (mouse tracking,
+          // hydrate logs, etc.) is filtered out.
+          const isPeekTagged = msg.includes('peek:') || msg.includes('peek-rt');
+          const isProtonPage = url.includes('proton.me') || url.includes('proton.dev');
+          const isErrorish = level === 'error' || level === 'warning' || level === 'warn';
+          if (isPeekTagged || (isProtonPage && isErrorish)) {
+            console.log(`[webview:${url.slice(0, 80)}:${level}] ${msg} (${String(e.sourceId)}:${String(e.lineNumber)})`);
           }
         } catch { /* logging must never throw */ }
       });
@@ -998,6 +1093,18 @@ if (_darkModeSetting === 'force') {
   );
   DEBUG && console.log('[darkMode] Tier 2: WebContentsForceDark enabled via command-line switch');
 }
+
+// Disable Chromium Site Isolation so cross-origin iframes share the parent
+// frame's renderer process. Required for `webPreferences.sandbox = false` set
+// on a webview to actually take effect for child iframes — otherwise each
+// cross-origin iframe spins up its own out-of-process renderer that ignores
+// the parent's sandbox preference and re-enters Electron 40's broken
+// sandbox_bundle init ("TypeError: object null is not iterable" inside
+// ___electron_webpack_init__). Concretely this manifests on Proton's reauth
+// page: the embedded account-api.proton.me captcha iframe crashes during
+// init, the captcha never produces a token, the server rejects the unlock
+// request with HTTP 422, and the page renders "Oops, something went wrong".
+app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-process');
 
 // Configure app before ready (registers protocol scheme, sets theme)
 configure({
