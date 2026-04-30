@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 39f87286ffea -->
+<!-- last-bumped: c9f255dee06d -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -19,7 +19,21 @@ See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-04-27 (W18)
 
+### 2026-04-30
+
+- chrome-ext: keep popup-side fixes, drop runtime-bridge ext patches
+- chrome-ext: native chrome.runtime.sendMessage cross-origin polyfill
+- harness: reusable Electron CDP debugging harness for chrome-extension flows
+- timers: HUD widget, custom sound URL, list view
+- search: cmd panel opens a fresh search window per invocation
+- chrome-ext: runtime-external polyfill checkpoint + harness diagnostics
+
 ### 2026-04-29
+
+- architecture: add Implementation conventions section
+- peek-tasks: document peek:ready / peek:triage quality markers and peek:wontfix terminal state
+- settings: re-render Extensions section once chrome extensions finish loading
+- chrome-ext: unbreak Proton Pass autofill — install browser.permissions on SW + lock chrome
 
 - tasks: migrate active task queue into Peek; tasks.md becomes a pointer
 - changelog: scaffold per-day bump script + per-bullet RSS generator (untested)

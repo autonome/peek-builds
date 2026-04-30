@@ -4,9 +4,79 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Wed, 29 Apr 2026 10:49:23 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 30 Apr 2026 21:32:25 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>chrome-ext: keep popup-side fixes, drop runtime-bridge ext patches</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:eb8e6c443b05</guid>
+      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: keep popup-side fixes, drop runtime-bridge ext patches</description>
+    </item>
+    <item>
+      <title>chrome-ext: native chrome.runtime.sendMessage cross-origin polyfill</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:b9b0d8d9ea6c</guid>
+      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: native chrome.runtime.sendMessage cross-origin polyfill</description>
+    </item>
+    <item>
+      <title>harness: reusable Electron CDP debugging harness for chrome-extension flows</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:9491f51b5ecc</guid>
+      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
+      <description>harness: reusable Electron CDP debugging harness for chrome-extension flows</description>
+    </item>
+    <item>
+      <title>timers: HUD widget, custom sound URL, list view</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:10b635c78365</guid>
+      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
+      <description>timers: HUD widget, custom sound URL, list view</description>
+    </item>
+    <item>
+      <title>search: cmd panel opens a fresh search window per invocation</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:793da6a7867d</guid>
+      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
+      <description>search: cmd panel opens a fresh search window per invocation</description>
+    </item>
+    <item>
+      <title>chrome-ext: runtime-external polyfill checkpoint + harness diagnostics</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:a676d525cab9</guid>
+      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: runtime-external polyfill checkpoint + harness diagnostics</description>
+    </item>
+    <item>
+      <title>architecture: add Implementation conventions section</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-29:9c2837217d58</guid>
+      <pubDate>Wed, 29 Apr 2026 12:00:00 GMT</pubDate>
+      <description>architecture: add Implementation conventions section</description>
+    </item>
+    <item>
+      <title>peek-tasks: document peek:ready / peek:triage quality markers and peek:wontfix terminal state</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-29:37e7c5261b82</guid>
+      <pubDate>Wed, 29 Apr 2026 12:00:00 GMT</pubDate>
+      <description>peek-tasks: document peek:ready / peek:triage quality markers and peek:wontfix terminal state</description>
+    </item>
+    <item>
+      <title>settings: re-render Extensions section once chrome extensions finish loading</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-29:b7fd21e41b9f</guid>
+      <pubDate>Wed, 29 Apr 2026 12:00:00 GMT</pubDate>
+      <description>settings: re-render Extensions section once chrome extensions finish loading</description>
+    </item>
+    <item>
+      <title>chrome-ext: unbreak Proton Pass autofill — install browser.permissions on SW + lock chrome</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-29:6acdddfa8158</guid>
+      <pubDate>Wed, 29 Apr 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: unbreak Proton Pass autofill — install browser.permissions on SW + lock chrome</description>
+    </item>
     <item>
       <title>tasks: migrate active task queue into Peek; tasks.md becomes a pointer</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-29</link>
