@@ -24,7 +24,6 @@ const openSearchWindow = async (query) => {
 
     await api.window.open(url, {
       role: 'workspace',
-      key: 'search-home',
       height: 768,
       width: 700,
       trackingSource: 'cmd',

@@ -2264,9 +2264,13 @@ function actionHandlers() {
       if (!trimmedText) return;
 
       log('cmd:panel', 'Opening search for:', trimmedText);
+      // No `key` — each invocation creates a new search window so users
+      // can compare tag results side-by-side. The previous single-instance
+      // `key:'search-home'` collapsed every `#tag` invocation onto the same
+      // window and discarded the new query because the keepLive-reuse path
+      // never gave the renderer the new URL.
       api.window.open(`peek://search/home.html?q=${encodeURIComponent(trimmedText)}`, {
         role: 'workspace',
-        key: 'search-home',
         width: 700,
         height: 768,
         trackingSource: 'cmd',
