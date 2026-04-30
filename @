@@ -1,0 +1,32 @@
+feat(harness): reusable Electron CDP debugging harness for chrome-extension flows
+
+Adds tests/manual/, a Playwright-driven harness that launches Peek with an
+isolated test profile, attaches webContents.debugger to every webContents
+top-level windows AND embedded webviews, and dumps a structured trace
+JSON plus grep-friendly .log to tmp/harness/.
+
+The harness captures network, console, and chrome.runtime introspection
+across every Electron frame. Playwright's page-level listeners can't see
+the webview's separate webContents, but CDP per-webContents can. First
+consumer is tests/manual/proton-auth.harness.ts; design accepts arbitrary
+scenarios via tests/manual/<name>.harness.ts.
+
+Stop signals besides the 3min HARNESS_DURATION_MS ceiling:
+- Close the auth window in the Peek instance.
+- yarn harness:stop -- touches tmp/harness-stop sentinel.
+
+Don't Ctrl+C the terminal -- that kills before the dump.
+
+Files added:
+- tests/manual/harness/types.ts
+- tests/manual/harness/env.ts
+- tests/manual/harness/tracer.ts
+- tests/manual/harness/popup.ts
+- tests/manual/harness/instrument.ts
+- tests/manual/proton-auth.harness.ts
+- tests/manual/README.md
+- tests/desktop/harness-smoke.spec.ts -- CI guard so the harness can't rot.
+
+Files modified:
+- playwright.config.ts -- adds a 'manual' project, testMatch *.harness.ts.
+- package.json -- adds yarn harness and yarn harness:stop.

@@ -63,6 +63,17 @@ export default defineConfig({
       // Extension tests use custom fixture that launches Chrome with extension
       // Firefox not supported - use yarn extension:firefox for manual testing
     },
+    {
+      // Manual debugging harness — see tests/manual/README.md.
+      // Not included in `yarn test:electron`; run via `yarn harness`.
+      // Long timeout because runs are interactive (humans drive the UI
+      // while the tracer records). Workers must be 1 (set via CLI in the
+      // yarn script) so the human only has to deal with one window stack.
+      name: 'manual',
+      testMatch: /manual\/.*\.harness\.ts$/,
+      fullyParallel: false,
+      timeout: 600_000,
+    },
   ],
 
   // Test execution settings
