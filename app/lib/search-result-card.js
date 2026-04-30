@@ -18,6 +18,24 @@ import {
   createAffordanceElements
 } from 'peek://app/lib/tag-action-affordances.js';
 
+/**
+ * Format an item's age (ms-since-creation) as a short relative string.
+ * Examples: "today", "1d", "29d", "1mo", "11mo", "2y".
+ * Returns null when no usable timestamp is provided.
+ */
+const formatAge = (createdAtMs) => {
+  if (typeof createdAtMs !== 'number' || !isFinite(createdAtMs) || createdAtMs <= 0) return null;
+  const ms = Date.now() - createdAtMs;
+  if (ms < 0) return 'today';
+  const days = Math.floor(ms / 86400000);
+  if (days < 1) return 'today';
+  if (days < 30) return `${days}d`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo`;
+  const years = Math.floor(days / 365);
+  return `${years}y`;
+};
+
 // Open button SVG icon (external link)
 const OPEN_BUTTON_SVG =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
@@ -159,6 +177,19 @@ export const createSearchResultCard = (item, opts = {}) => {
     visitSpan.textContent = `${visitCount} ${visitCount === 1 ? 'visit' : 'visits'}`;
     visitSpan.style.flexShrink = '0';
     footerLeft.appendChild(visitSpan);
+  }
+
+  // Age indicator — bottom left, after visit count. Short relative format
+  // (today / Nd / Nmo / Ny) with absolute date in the title attribute for
+  // hover precision. Helps surface stale items without consuming row space.
+  const ageLabel = formatAge(item.createdAt);
+  if (ageLabel) {
+    const ageSpan = document.createElement('span');
+    ageSpan.className = 'card-age';
+    ageSpan.textContent = ageLabel;
+    ageSpan.title = new Date(item.createdAt).toLocaleString();
+    ageSpan.style.flexShrink = '0';
+    footerLeft.appendChild(ageSpan);
   }
 
   // For non-URL items that have a subtitle (e.g. entity type), show it on the left
