@@ -211,6 +211,20 @@ export const createSearchResultCard = (item, opts = {}) => {
       chip.className = 'card-tag';
       chip.dataset.tagId = tag.id;
       chip.textContent = tag.name;
+      // Optional usage count: if the caller decorated the tag with an
+      // `itemCount` field (number of items in the dataset that carry this
+      // tag), render it as a small subscript-style suffix. Skip when missing
+      // or zero; older callers that don't pass a count get the original
+      // chip layout. Inline so every per-feature CSS surface inherits the
+      // look without a coordinated CSS update across search/tags/lists/etc.
+      if (typeof tag.itemCount === 'number' && tag.itemCount > 0) {
+        const countEl = document.createElement('span');
+        countEl.className = 'card-tag-count';
+        countEl.textContent = String(tag.itemCount);
+        countEl.title = `${tag.itemCount} item${tag.itemCount === 1 ? '' : 's'}`;
+        countEl.style.cssText = 'margin-left:4px;font-size:9px;opacity:0.6;';
+        chip.appendChild(countEl);
+      }
       if (opts.onTagClick) {
         chip.addEventListener('click', (e) => {
           e.stopPropagation();

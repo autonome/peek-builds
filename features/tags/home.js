@@ -86,6 +86,22 @@ let state = {
 // Expose state for debugging
 window._tagsState = state;
 
+/**
+ * Build a Map<tagId, count> by counting how many items in state.itemTags
+ * carry each tag. Cheap enough to recompute per-render for typical
+ * Peek datasets; callers that batch (renderTagSidebar, renderCards) reuse
+ * a single map.
+ */
+const computeTagCounts = () => {
+  const counts = new Map();
+  state.itemTags.forEach(itemTags => {
+    for (const t of itemTags) {
+      counts.set(t.id, (counts.get(t.id) || 0) + 1);
+    }
+  });
+  return counts;
+};
+
 // Embedded editor state
 let embeddedEditor = null;  // CodeMirror EditorView instance
 let embeddedStatusLine = null;  // StatusLine instance for vim status bar
@@ -1077,17 +1093,17 @@ const renderTagSidebar = () => {
 
   tagList.innerHTML = '';
 
+  // Compute per-tag counts once for this render; previously each chip
+  // re-iterated state.itemTags, which is O(N²) in the number of tagged items.
+  const tagCounts = computeTagCounts();
+
   const selectedIds = new Set(state.activeTags.map(t => t.id));
   const selectedTags = tags.filter(t => selectedIds.has(t.id));
   const unselectedTags = tags.filter(t => !selectedIds.has(t.id));
 
   // Helper to build a tag chip
   const buildTagChip = (tag, isSelected) => {
-    // Count items with this tag
-    let count = 0;
-    state.itemTags.forEach(itemTags => {
-      if (itemTags.some(t => t.id === tag.id)) count++;
-    });
+    const count = tagCounts.get(tag.id) || 0;
 
     const chip = document.createElement('div');
     chip.className = 'tag-chip';
@@ -1168,8 +1184,11 @@ const renderCards = () => {
 
   cardsContainer.innerHTML = '';
 
+  // Compute the per-tag count map once for this render — re-using it
+  // across every card avoids recomputing on each chip.
+  const tagCounts = computeTagCounts();
   items.forEach(item => {
-    const card = createItemCard(item);
+    const card = createItemCard(item, tagCounts);
     cardsContainer.appendChild(card);
   });
 
@@ -1190,12 +1209,17 @@ const getLocalItemDisplayInfo = (item) => {
 /**
  * Create a card element for an item using the shared search-result-card builder.
  */
-const createItemCard = (item) => {
+const createItemCard = (item, tagCounts) => {
   const { tags } = getLocalItemDisplayInfo(item);
   const rules = actionRulesCache ? actionRulesCache.getRules() : [];
+  const counts = tagCounts || computeTagCounts();
+
+  // Decorate tag objects with global usage count so search-result-card
+  // can render the count next to the chip name.
+  const tagsWithCounts = tags.map(t => ({ ...t, itemCount: counts.get(t.id) || 0 }));
 
   const card = createSearchResultCard(item, {
-    tags,
+    tags: tagsWithCounts,
     showOpenButton: true,
     onOpen: (url) => openItemUrl(url),
     onDelete: async (item) => {
