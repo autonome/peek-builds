@@ -191,8 +191,14 @@ export function registerGlobalShortcut(
   });
 
   if (ret !== true) {
-    console.error('registerGlobalShortcut FAILED:', shortcut);
-    return new Error(`Failed to register shortcut: ${shortcut}`);
+    // Common on Linux Wayland: globalShortcut.register returns false silently
+    // when the compositor refuses to grab the key. Logging the platform-
+    // translated accelerator (e.g. "Alt+Space" on Linux for "Option+Space")
+    // makes it easier to correlate with WM-reserved bindings.
+    console.error(
+      `[shortcuts] globalShortcut.register FAILED: requested="${shortcut}" accelerator="${accelerator}" platform=${process.platform}`
+    );
+    return new Error(`Failed to register shortcut: ${shortcut} (accelerator: ${accelerator})`);
   }
 
   globalShortcuts.set(shortcut, source);

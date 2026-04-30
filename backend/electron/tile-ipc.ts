@@ -677,7 +677,18 @@ export function registerTileIpcHandlers(): void {
     };
 
     if (isGlobal) {
-      registerGlobalShortcut(args.shortcut, source, callback);
+      // Surface registration errors back to the caller. Previously the return
+      // value was dropped, so a failed global shortcut (common on Linux
+      // Wayland — see `registerGlobalShortcut`) looked indistinguishable
+      // from success to the renderer.
+      const err = registerGlobalShortcut(args.shortcut, source, callback);
+      if (err) {
+        console.error(
+          `[tile-ipc] tile:shortcuts:register global failed for tile=${activeGrant.tileId} shortcut="${args.shortcut}": ${err.message}`
+        );
+        replyError(err.message);
+        return;
+      }
     } else {
       const modeConditions = modeStr ? { majorMode: modeStr as import('./datastore.js').MajorModeId } : undefined;
       registerLocalShortcut(args.shortcut, source, callback, modeConditions);
