@@ -59,7 +59,7 @@ export { alarms, storageSession, webNavigation, offscreen, permissions, runtimeE
  * }}
  */
 export function registerAll(session, options = {}) {
-  const { ipcMain, app, apis } = options;
+  const { ipcMain, app, apis, findExtensionByOrigin } = options;
 
   if (!ipcMain) {
     throw new Error('chrome-api-polyfills: options.ipcMain is required');
@@ -96,7 +96,7 @@ export function registerAll(session, options = {}) {
   }
 
   if (shouldRegister('runtimeExternal')) {
-    handles.runtimeExternal = runtimeExternal.setupMainProcess(session, { ipcMain });
+    handles.runtimeExternal = runtimeExternal.setupMainProcess(session, { ipcMain, findExtensionByOrigin });
     cleanups.push(handles.runtimeExternal.cleanup);
   }
 

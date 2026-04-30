@@ -83,16 +83,35 @@ export async function startTracer(opts: TracerOpts): Promise<Tracer> {
   }
 
   // Main-process tap: attaches CDP debugger to all current + future webContents
-  // and buffers events on a globalThis array. Writing to fs here is not
-  // possible — `electronApp.evaluate(fn)` serializes `fn` to source and evals
-  // it in the main process, where neither `require` (ESM main) nor dynamic
-  // `import()` (no import callback registered for eval'd code) work. So we
-  // buffer in-process and the test side drains via a follow-up evaluateMain.
-  await opts.app.evaluateMain(async ({ app, webContents }) => {
+  // and buffers events on a globalThis array. We can't import fs here
+  // (evaluateMain has no import callback registered), so we periodically
+  // drain via evaluateMain from the test side — see startPeriodicDrain below.
+  await opts.app.evaluateMain(async ({ app, webContents, session }: any, args: any) => {
     const g: any = globalThis as any;
     if (g.__peekHarnessBuffer) return; // already attached this run
     const buf: any[] = [];
     g.__peekHarnessBuffer = buf;
+    const pushAndStream = (obj: any) => buf.push(obj);
+
+    // Tap main-process stdout/stderr — captures console.log/error from
+    // backend/electron/* including our [peek:runtime-external:main] logs,
+    // which tell us which BG-dispatch error path is being hit.
+    const _origStdoutWrite = process.stdout.write.bind(process.stdout);
+    const _origStderrWrite = process.stderr.write.bind(process.stderr);
+    (process.stdout as any).write = (chunk: any, ...rest: any[]) => {
+      try {
+        const s = typeof chunk === 'string' ? chunk : chunk?.toString?.() ?? String(chunk);
+        pushAndStream({ t: Date.now(), wcId: -1, kind: 'main-stdout', text: s });
+      } catch {}
+      return _origStdoutWrite(chunk, ...rest);
+    };
+    (process.stderr as any).write = (chunk: any, ...rest: any[]) => {
+      try {
+        const s = typeof chunk === 'string' ? chunk : chunk?.toString?.() ?? String(chunk);
+        pushAndStream({ t: Date.now(), wcId: -1, kind: 'main-stderr', text: s });
+      } catch {}
+      return _origStderrWrite(chunk, ...rest);
+    };
 
     const pendingStatuses = new Map<number, Map<string, number>>();
     function statusMap(wcId: number): Map<string, number> {
@@ -108,11 +127,11 @@ export async function startTracer(opts: TracerOpts): Promise<Tracer> {
       try {
         if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
       } catch (e: any) {
-        buf.push({ t: Date.now(), wcId: wc.id, kind: 'attach-error', error: String(e?.message || e) });
+        pushAndStream({ t: Date.now(), wcId: wc.id, kind: 'attach-error', error: String(e?.message || e) });
         return;
       }
       const info = { id: wc.id, type: wc.getType(), url: wc.getURL() };
-      buf.push({ t: Date.now(), wcId: wc.id, kind: 'attached', info });
+      pushAndStream({ t: Date.now(), wcId: wc.id, kind: 'attached', info });
 
       wc.debugger.sendCommand('Network.enable').catch(() => {});
       wc.debugger.sendCommand('Page.enable').catch(() => {});
@@ -120,7 +139,7 @@ export async function startTracer(opts: TracerOpts): Promise<Tracer> {
       wc.debugger.sendCommand('Log.enable').catch(() => {});
 
       wc.debugger.on('message', async (_event: any, method: string, params: any) => {
-        buf.push({ t: Date.now(), wcId: wc.id, kind: 'cdp', method, params });
+        pushAndStream({ t: Date.now(), wcId: wc.id, kind: 'cdp', method, params });
         if (method === 'Network.responseReceived') {
           if (params?.response?.status != null) statusMap(wc.id).set(params.requestId, params.response.status);
         }
@@ -130,23 +149,96 @@ export async function startTracer(opts: TracerOpts): Promise<Tracer> {
           if (status != null && status >= 400) {
             try {
               const body = await wc.debugger.sendCommand('Network.getResponseBody', { requestId: reqId });
-              buf.push({ t: Date.now(), wcId: wc.id, kind: 'response-body', requestId: reqId, body: body.body, base64Encoded: body.base64Encoded });
+              pushAndStream({ t: Date.now(), wcId: wc.id, kind: 'response-body', requestId: reqId, body: body.body, base64Encoded: body.base64Encoded });
             } catch (e: any) {
-              buf.push({ t: Date.now(), wcId: wc.id, kind: 'response-body-error', requestId: reqId, error: String(e?.message || e) });
+              pushAndStream({ t: Date.now(), wcId: wc.id, kind: 'response-body-error', requestId: reqId, error: String(e?.message || e) });
             }
           }
           statusMap(wc.id).delete(reqId);
         }
       });
 
-      wc.on('did-navigate', (_e: any, url: string) => buf.push({ t: Date.now(), wcId: wc.id, kind: 'did-navigate', url }));
-      wc.on('did-navigate-in-page', (_e: any, url: string) => buf.push({ t: Date.now(), wcId: wc.id, kind: 'did-navigate-in-page', url }));
-      wc.on('destroyed', () => buf.push({ t: Date.now(), wcId: wc.id, kind: 'destroyed' }));
+      wc.on('did-navigate', (_e: any, url: string) => pushAndStream({ t: Date.now(), wcId: wc.id, kind: 'did-navigate', url }));
+      wc.on('did-navigate-in-page', (_e: any, url: string) => pushAndStream({ t: Date.now(), wcId: wc.id, kind: 'did-navigate-in-page', url }));
+      wc.on('destroyed', () => pushAndStream({ t: Date.now(), wcId: wc.id, kind: 'destroyed' }));
     }
 
     webContents.getAllWebContents().forEach(attach);
     app.on('web-contents-created', (_e: any, wc: any) => attach(wc));
-  });
+
+    // Service worker console capture — SW console output doesn't go through
+    // process.stdout. Peek loads extensions into a per-profile partition
+    // session (`persist:<profile>`) — `session.defaultSession` doesn't see
+    // them. Hook the profile partition explicitly.
+    const sessionsToHook = [session.defaultSession];
+    if (args?.profile) {
+      try { sessionsToHook.push(session.fromPartition(`persist:${args.profile}`)); } catch {}
+    }
+    const seenSessions = new Set<any>();
+    function attachSwConsole(s: any, label: string) {
+      if (!s || seenSessions.has(s)) return;
+      seenSessions.add(s);
+      pushAndStream({ t: Date.now(), wcId: -2, kind: 'sw-session-attached', label });
+      try {
+        s.serviceWorkers?.on?.('console-message', (_e: any, details: any) => {
+          pushAndStream({
+            t: Date.now(), wcId: -2, kind: 'sw-console',
+            level: details?.level, message: details?.message,
+            sourceUrl: details?.sourceUrl, lineNumber: details?.lineNumber,
+            versionId: details?.versionId, sessionLabel: label,
+          });
+        });
+        s.serviceWorkers?.on?.('registration-completed', (_e: any, details: any) => {
+          pushAndStream({
+            t: Date.now(), wcId: -2, kind: 'sw-registration',
+            label, scope: details?.scope, scriptUrl: details?.scriptUrl,
+          });
+        });
+        s.serviceWorkers?.on?.('running-status-changed', (details: any) => {
+          pushAndStream({
+            t: Date.now(), wcId: -2, kind: 'sw-status',
+            label, versionId: details?.versionId, runningStatus: details?.runningStatus,
+          });
+          // When an SW comes online, attach its swMain.ipc listeners so we
+          // can capture debug heartbeats from the BG runtime-external shim.
+          if (details?.runningStatus === 'running' && details?.versionId != null) {
+            try {
+              const swMain = s.serviceWorkers?.getWorkerFromVersionID?.(details.versionId);
+              if (swMain && swMain.ipc?.on) {
+                swMain.ipc.on('peek:bg-heartbeat', (_e: any, payload: any) => {
+                  pushAndStream({
+                    t: Date.now(), wcId: -2, kind: 'sw-heartbeat',
+                    label, versionId: details.versionId, payload,
+                  });
+                });
+              }
+            } catch {}
+          }
+        });
+      } catch (e: any) {
+        pushAndStream({ t: Date.now(), wcId: -2, kind: 'sw-session-attach-error', label, error: String(e?.message || e) });
+      }
+    }
+    sessionsToHook.forEach((s, i) => attachSwConsole(s, i === 0 ? 'default' : `partition:${args?.profile}`));
+    app.on('session-created', (s: any) => attachSwConsole(s, 'session-created'));
+  }, { profile: opts.profile });
+
+  // Periodic drain: every 500ms, pull whatever's in __peekHarnessBuffer and
+  // append to the JSONL on disk. Survives app shutdown — most we lose is
+  // ~500ms of trailing events. Stopped in dump().
+  const drainTimer: NodeJS.Timeout | null = setInterval(async () => {
+    try {
+      const drained = await opts.app.evaluateMain!(() => {
+        const g: any = globalThis as any;
+        const out = (g.__peekHarnessBuffer || []).slice();
+        if (g.__peekHarnessBuffer) g.__peekHarnessBuffer.length = 0;
+        return out;
+      }) as RawCdpLine[];
+      if (drained.length === 0) return;
+      const lines = drained.map((e) => JSON.stringify(e)).join('\n') + '\n';
+      try { fs.appendFileSync(jsonlPath, lines); } catch {}
+    } catch { /* app may be shutting down — that's fine, we have what we have */ }
+  }, 500);
 
   // ---- Tracer object ----
   const tracer: Tracer = {
@@ -203,23 +295,37 @@ export async function startTracer(opts: TracerOpts): Promise<Tracer> {
       const endedAt = Date.now();
       const endedAtIso = new Date(endedAt).toISOString();
 
-      // Drain the main-process buffer and detach debuggers in one trip.
-      let mainEvents: RawCdpLine[] = [];
+      // Stop the periodic drain.
+      if (drainTimer) clearInterval(drainTimer);
+
+      // Final flush: pull any straggling events from main-process buffer.
+      // Best-effort — if the app is shutting down, we already have most of
+      // the data via the periodic drain.
       try {
-        mainEvents = await opts.app.evaluateMain!(({ webContents }) => {
+        const drained = await opts.app.evaluateMain!(({ webContents }: any) => {
           const g: any = globalThis as any;
-          const drained = (g.__peekHarnessBuffer || []).slice();
+          const out = (g.__peekHarnessBuffer || []).slice();
           if (g.__peekHarnessBuffer) g.__peekHarnessBuffer.length = 0;
           for (const wc of webContents.getAllWebContents()) {
             try { if (!wc.isDestroyed() && wc.debugger.isAttached()) wc.debugger.detach(); } catch {}
           }
-          return drained;
+          return out;
         }) as RawCdpLine[];
+        if (drained.length > 0) {
+          const lines = drained.map((e) => JSON.stringify(e)).join('\n') + '\n';
+          try { fs.appendFileSync(jsonlPath, lines); } catch {}
+        }
       } catch { /* app may already be closing */ }
 
-      // Persist the raw drain as a forensic record.
+      // Source of truth: the streamed JSONL file. Survives even if the dump's
+      // evaluateMain failed (e.g. app shutting down after auth window close).
+      let mainEvents: RawCdpLine[] = [];
       try {
-        fs.writeFileSync(jsonlPath, mainEvents.map((e) => JSON.stringify(e)).join('\n') + (mainEvents.length ? '\n' : ''));
+        const raw = fs.readFileSync(jsonlPath, 'utf-8');
+        for (const line of raw.split('\n')) {
+          if (!line.trim()) continue;
+          try { mainEvents.push(JSON.parse(line)); } catch {}
+        }
       } catch {}
 
       // Build wcId → label map from "attached" events; subsequent events use it.
@@ -283,6 +389,39 @@ function translateCdpLine(evt: RawCdpLine, t: number, source: string): TraceEven
   }
   if (evt.kind === 'response-body-error') {
     return [{ t, kind: 'note', source, data: { msg: 'response-body-error', requestId: evt.requestId, error: evt.error } }];
+  }
+  if (evt.kind === 'main-stdout' || evt.kind === 'main-stderr') {
+    const text = (evt as any).text as string;
+    const lines = text.split('\n').filter((l) => l.length > 0);
+    return lines.map((line) => ({
+      t, kind: 'console', source: evt.kind === 'main-stderr' ? 'main:stderr' : 'main:stdout',
+      data: { level: evt.kind === 'main-stderr' ? 'error' : 'log', text: line },
+    }));
+  }
+  if (evt.kind === 'sw-console') {
+    const e = evt as any;
+    return [{
+      t, kind: 'console', source: `sw:vid=${e.versionId ?? '?'}@${e.sessionLabel ?? '?'}`,
+      data: { level: e.level, text: e.message, sourceUrl: e.sourceUrl, lineNumber: e.lineNumber },
+    }];
+  }
+  if (evt.kind === 'sw-session-attached') {
+    return [{ t, kind: 'note', source: `sw:${(evt as any).label}`, data: { msg: 'sw-session-attached' } }];
+  }
+  if (evt.kind === 'sw-session-attach-error') {
+    return [{ t, kind: 'note', source: `sw:${(evt as any).label}`, data: { msg: 'sw-session-attach-error', error: (evt as any).error } }];
+  }
+  if (evt.kind === 'sw-registration') {
+    const e = evt as any;
+    return [{ t, kind: 'note', source: `sw:${e.label}`, data: { msg: 'sw-registration', scope: e.scope, scriptUrl: e.scriptUrl } }];
+  }
+  if (evt.kind === 'sw-status') {
+    const e = evt as any;
+    return [{ t, kind: 'note', source: `sw:${e.label}`, data: { msg: 'sw-status', versionId: e.versionId, runningStatus: e.runningStatus } }];
+  }
+  if (evt.kind === 'sw-heartbeat') {
+    const e = evt as any;
+    return [{ t, kind: 'note', source: `sw:vid=${e.versionId}@${e.label}`, data: { msg: 'sw-heartbeat', payload: e.payload } }];
   }
   if (evt.kind !== 'cdp' || !evt.method) return null;
 

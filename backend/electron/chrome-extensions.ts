@@ -338,7 +338,15 @@ export async function loadEnabledChromeExtensions(): Promise<void> {
   // Register Chrome API polyfills before loading extensions
   const profileSession = getProfileSession();
   if (!polyfillHandle) {
-    polyfillHandle = registerAll(profileSession, { ipcMain, app });
+    polyfillHandle = registerAll(profileSession, {
+      ipcMain,
+      app,
+      // For sendMessage(extId, msg) calls from cross-origin pages where the
+      // requested extId is a hardcoded Web Store ID (Proton's account bundle
+      // fans out to 4 platform IDs that never match our Electron-assigned
+      // runtime hash), fall back to resolving by origin.
+      findExtensionByOrigin: (origin: string) => findExtensionByExternallyConnectableUrl(origin),
+    });
 
     // Web permission handling now lives in permission-handler.ts (installed
     // by session-partition.ts when the profile session is created). The

@@ -108,27 +108,50 @@ const PAGE_POLYFILL_SRC = `(function(){
   };
 
   if (!window.chrome) window.chrome = {};
-  // Force-override even if Electron pre-exposed chrome.runtime — its native
-  // stub for externally-connectable origins doesn't actually round-trip to
-  // onMessageExternal in our setup. defineProperty defeats non-writable
-  // prior definitions.
-  try {
-    Object.defineProperty(window.chrome, 'runtime', {
-      value: _rt, writable: true, configurable: true, enumerable: true,
-    });
-    console.log('[peek:runtime-external:page] runtime replaced via defineProperty');
-  } catch (e1) {
-    try { window.chrome.runtime = _rt;
-      console.log('[peek:runtime-external:page] runtime replaced via assignment');
+
+  // Strategy: don't try to bridge cross-origin sendMessage ourselves —
+  // Electron 40's SW context has no electron.ipcRenderer, so a main-process
+  // bridge can't deliver messages back into the BG SW. Instead, force
+  // Proton's webextension-polyfill-style sender (module 57118) to fall back
+  // to its postMessage path, which routes through Proton Pass's own
+  // \`orchestrator.js\` content script — that script uses
+  // chrome.runtime.sendMessage (same-extension), which Electron handles
+  // natively. We remove sendMessage from chrome.runtime; module 57118's
+  // branch \`Rw.runtime.sendMessage !== void 0\` becomes false, taking
+  // Path B. We KEEP chrome.runtime.id, getURL, getManifest, etc. since
+  // Proton reads those at module init.
+  function _redactSendMessage(rt) {
+    if (!rt) return;
+    try { Object.defineProperty(rt, 'sendMessage', { value: undefined, configurable: true, writable: true, enumerable: true }); }
+    catch (e) {
+      try { rt.sendMessage = undefined; } catch (_) {}
     }
-    catch (e2) {
-      // Last resort: patch only sendMessage. Other props left in place.
-      try { window.chrome.runtime.sendMessage = _sendMessage;
-        console.log('[peek:runtime-external:page] only sendMessage replaced');
-      } catch(e3) {
-        console.error('[peek:runtime-external:page] install failed defineProp=', e1 && e1.message, 'assign=', e2 && e2.message, 'partial=', e3 && e3.message);
-      }
-    }
+  }
+
+  // Set extension id on native chrome.runtime so callers reading
+  // chrome.runtime.id get the correct hash; native exposes id=null otherwise.
+  function _setExtId(rt) {
+    try { Object.defineProperty(rt, 'id', { value: __PEEK_EXT_ID__, configurable: true, writable: true, enumerable: true }); }
+    catch (e) { try { rt.id = __PEEK_EXT_ID__; } catch (_) {} }
+  }
+
+  if (window.chrome.runtime) {
+    _redactSendMessage(window.chrome.runtime);
+    _setExtId(window.chrome.runtime);
+    console.log('[peek:runtime-external:page] forced Path B: chrome.runtime.sendMessage redacted, id set, native otherwise preserved');
+  }
+  // If window.chrome.runtime isn't there yet, do nothing. Replacing it with a
+  // synthetic object races Chromium's native_extension_bindings_system trying
+  // to install its own APIs and surfaces as
+  // "ERROR:extensions/renderer/native_extension_bindings_system.cc:712
+  //  Failed to create API on Chrome object." The redact branch above is the
+  //  only path we need — Chromium will create chrome.runtime natively when
+  //  the page actually qualifies.
+
+  if (window.browser && window.browser.runtime) {
+    _redactSendMessage(window.browser.runtime);
+    _setExtId(window.browser.runtime);
+    console.log('[peek:runtime-external:page] browser.runtime sendMessage also redacted');
   }
 })();`;
 

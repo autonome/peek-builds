@@ -270,7 +270,7 @@ app.on('web-contents-created', (_event, contents) => {
     // peek:// URLs anyway, so this check keeps both paths exclusive.
     if (params.src && (params.src.startsWith('http://') || params.src.startsWith('https://'))) {
       const matchedExtId = findExtensionByExternallyConnectableUrl(params.src);
-      if (matchedExtId) {
+      if (matchedExtId && process.env.PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL !== '1') {
         webPreferences.preload = getRuntimeExternalPreloadPath();
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),
@@ -384,6 +384,7 @@ app.on('web-contents-created', (_event, contents) => {
     let _polyfillScriptRegistered = false;
     const tryRegisterCDPPolyfill = async (url: string) => {
       if (_polyfillScriptRegistered) return;
+      if (process.env.PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL === '1') return;
       if (!url.startsWith('http://') && !url.startsWith('https://')) return;
       const matchedExtId = findExtensionByExternallyConnectableUrl(url);
       if (!matchedExtId) return;

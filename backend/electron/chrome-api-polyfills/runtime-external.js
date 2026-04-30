@@ -101,6 +101,7 @@ let _seq = 0;
 function _newReqId() {
   return `peek-rt-${Date.now()}-${++_seq}`;
 }
+const _attachedSwIpc = new Set();
 
 /**
  * Register main-process handlers for the runtime-external bridge.
@@ -108,19 +109,20 @@ function _newReqId() {
  * @param {import('electron').Session} session — Electron session that has the extension(s) loaded
  * @param {Object} options
  * @param {import('electron').IpcMain} options.ipcMain
+ * @param {(url: string) => string | null} [options.findExtensionByOrigin] — fallback resolver for when the requested extId doesn't match a running SW. Receives the request origin and returns an extension ID whose `externally_connectable.matches` accepts that origin (or null). Used to bridge the gap between the hardcoded Web Store IDs in pages like Proton's account bundle (which fans out to 4 platform-specific IDs) and the Electron-assigned runtime hash of our locally-unpacked extension.
  * @returns {{ cleanup: () => void }}
  */
 export function setupMainProcess(session, options = {}) {
-  const { ipcMain } = options;
+  const { ipcMain, findExtensionByOrigin } = options;
   if (!ipcMain) {
     throw new Error('chrome-api-polyfills/runtime-external: options.ipcMain is required');
   }
 
   // Receive page-side request from the webview preload.
   ipcMain.handle(IPC_SEND_FROM_PAGE, async (_event, payload) => {
-    const { extId, message, origin } = payload || {};
-    console.log('[peek:runtime-external:main] IPC received extId=', extId, 'type=', message && message.type, 'origin=', origin);
-    if (!extId || typeof extId !== 'string') {
+    const { extId: requestedExtId, message, origin } = payload || {};
+    console.log('[peek:runtime-external:main] IPC received extId=', requestedExtId, 'type=', message && message.type, 'origin=', origin);
+    if (!requestedExtId || typeof requestedExtId !== 'string') {
       return { __peekRuntimeExternalError: 'missing extId' };
     }
 
@@ -131,17 +133,38 @@ export function setupMainProcess(session, options = {}) {
     const swInfos = (session.serviceWorkers?.getAllRunning?.() ?? {});
     const swSummary = Object.entries(swInfos).map(([v, i]) => `vid=${v} scope=${i?.scope}`).join(' ; ');
     console.log('[peek:runtime-external:main] running service workers:', swSummary || '(none)');
-    let targetVersionId = null;
-    for (const [vid, info] of Object.entries(swInfos)) {
-      const scope = info?.scope ?? '';
-      if (scope.startsWith(`chrome-extension://${extId}/`)) {
-        targetVersionId = Number(vid);
-        break;
+    function findVersionIdForExtId(eid) {
+      for (const [vid, info] of Object.entries(swInfos)) {
+        const scope = info?.scope ?? '';
+        if (scope.startsWith(`chrome-extension://${eid}/`)) return Number(vid);
+      }
+      return null;
+    }
+    let targetVersionId = findVersionIdForExtId(requestedExtId);
+    let extId = requestedExtId;
+    if (targetVersionId == null && typeof findExtensionByOrigin === 'function' && origin) {
+      // The requested extId didn't match. Pages like Proton's account bundle
+      // fan out to multiple platform-specific Web Store IDs (Chrome, Edge,
+      // Firefox, Safari) — none match our Electron-assigned runtime hash.
+      // Resolve by origin instead: any extension whose
+      // externally_connectable.matches accepts this origin is a valid target.
+      try {
+        const resolvedExtId = findExtensionByOrigin(origin);
+        if (resolvedExtId) {
+          const vid = findVersionIdForExtId(resolvedExtId);
+          if (vid != null) {
+            console.log('[peek:runtime-external:main] origin-fallback: requested extId=', requestedExtId, 'resolved to extId=', resolvedExtId, 'via origin=', origin);
+            targetVersionId = vid;
+            extId = resolvedExtId;
+          }
+        }
+      } catch (e) {
+        console.error('[peek:runtime-external:main] findExtensionByOrigin threw:', e?.message);
       }
     }
     if (targetVersionId == null) {
-      console.error('[peek:runtime-external:main] no SW match for extId=', extId);
-      return { __peekRuntimeExternalError: `no running service worker for extension ${extId}` };
+      console.error('[peek:runtime-external:main] no SW match for extId=', requestedExtId, '(origin fallback also failed)');
+      return { __peekRuntimeExternalError: `no running service worker for extension ${requestedExtId}` };
     }
 
     const reqId = _newReqId();
@@ -169,54 +192,49 @@ export function setupMainProcess(session, options = {}) {
       });
 
       try {
-        session.serviceWorkers.send(targetVersionId, SW_CHANNEL_INCOMING, { reqId, message, sender });
-        console.log('[peek:runtime-external:main] serviceWorkers.send dispatched reqId=', reqId);
+        // Electron 40: use ServiceWorkerMain.send via getWorkerFromVersionID
+        // — there is no generic send() on the ServiceWorkers manager.
+        const swMain = session.serviceWorkers.getWorkerFromVersionID?.(targetVersionId)
+          ?? session.serviceWorkers.fromVersionID?.(targetVersionId);
+        if (!swMain || typeof swMain.send !== 'function') {
+          throw new Error('ServiceWorkerMain.send not available');
+        }
+        // Lazily attach the response listener on this swMain's ipc — first
+        // dispatch to a given SW wires it up; subsequent dispatches reuse.
+        if (!_attachedSwIpc.has(targetVersionId) && swMain.ipc?.on) {
+          _attachedSwIpc.add(targetVersionId);
+          swMain.ipc.on(SW_CHANNEL_RESPONSE, (_e, payload) => {
+            const { reqId: rid, response, error } = payload || {};
+            const pending = _pendingByReqId.get(rid);
+            if (pending) {
+              _pendingByReqId.delete(rid);
+              pending(error ? { __peekRuntimeExternalError: error } : response);
+            } else {
+              console.error('[peek:runtime-external:main] response for unknown reqId=', rid);
+            }
+          });
+          console.log('[peek:runtime-external:main] swMain.ipc listener attached for vid=', targetVersionId);
+        }
+        swMain.send(SW_CHANNEL_INCOMING, { reqId, message, sender });
+        console.log('[peek:runtime-external:main] swMain.send dispatched reqId=', reqId);
       } catch (err) {
         _pendingByReqId.delete(reqId);
         clearTimeout(timer);
-        console.error('[peek:runtime-external:main] serviceWorkers.send THREW reqId=', reqId, 'err=', err?.message);
-        resolve({ __peekRuntimeExternalError: `serviceWorkers.send failed: ${err?.message ?? String(err)}` });
+        console.error('[peek:runtime-external:main] swMain.send THREW reqId=', reqId, 'err=', err?.message);
+        resolve({ __peekRuntimeExternalError: `swMain.send failed: ${err?.message ?? String(err)}` });
       }
     });
   });
 
-  // SW → main reply path. The BG SW's shim posts via globalThis.postMessage
-  // which Electron emits as 'ipc-message' on session.serviceWorkers. The
-  // exact event shape is Electron-version-sensitive — the listener below
-  // tries the most common forms.
-  const onIpcMessage = (event, ...rest) => {
-    // Electron 40: (event, channel, ...args)
-    // Older / different shape: (event, payload)
-    let channel, args;
-    if (typeof rest[0] === 'string') {
-      channel = rest[0];
-      args = rest.slice(1);
-    } else if (event && typeof event.channel === 'string') {
-      channel = event.channel;
-      args = [event.payload];
-    } else {
-      console.log('[peek:runtime-external:main] ipc-message unrecognized shape; rest=', JSON.stringify(rest).slice(0, 200));
-      return;
-    }
-    console.log('[peek:runtime-external:main] ipc-message channel=', channel);
-    if (channel !== SW_CHANNEL_RESPONSE) return;
-    const [{ reqId, response, error } = {}] = args;
-    const pending = _pendingByReqId.get(reqId);
-    if (pending) {
-      _pendingByReqId.delete(reqId);
-      pending(error ? { __peekRuntimeExternalError: error } : response);
-    } else {
-      console.error('[peek:runtime-external:main] response for unknown reqId=', reqId);
-    }
-  };
-  if (typeof session.serviceWorkers?.on === 'function') {
-    session.serviceWorkers.on('ipc-message', onIpcMessage);
-  }
+  // SW → main reply path is wired up lazily via swMain.ipc.on inside the
+  // dispatch path (see _attachedSwIpc above). Electron 40 doesn't fire a
+  // generic 'ipc-message' event on the ServiceWorkers manager — IPC is
+  // per-ServiceWorkerMain via its `ipc` IpcMainServiceWorker instance.
 
   return {
     cleanup() {
       try { ipcMain.removeHandler(IPC_SEND_FROM_PAGE); } catch { /* idempotent */ }
-      try { session.serviceWorkers?.off?.('ipc-message', onIpcMessage); } catch { /* idempotent */ }
+      _attachedSwIpc.clear();
       _pendingByReqId.clear();
     },
   };
@@ -231,15 +249,11 @@ function safeOrigin(href) {
  * onMessageExternal.addListener and handles inbound IPC from main, fanning
  * messages out to registered listeners and bridging sendResponse → main.
  *
- * Receive paths tried (Electron-version-resilient):
- *   - globalThis 'message' events (Electron's serviceWorkers.send arrives
- *     as a postMessage on the SW global)
- *   - chrome.runtime.onMessage (in case Electron wraps serviceWorkers.send
- *     into a runtime message)
- *
- * Reply path:
- *   - globalThis.postMessage({ __peekIpcChannel, payload }) — Electron emits
- *     this as 'ipc-message' on session.serviceWorkers in main.
+ * Electron 40 wires SW IPC through `electron.ipcRenderer` (exposed in the
+ * extension SW context as a global `electron` object — same surface used by
+ * other chrome-api-polyfills like storage-session). swMain.send(channel,...)
+ * arrives as `ipcRenderer.on(channel, ...)`; replies go back via
+ * `ipcRenderer.send(channel, ...)` which surfaces on swMain.ipc.on(channel,...).
  *
  * @returns {string}
  */
@@ -254,15 +268,64 @@ export function getBgInjection() {
   var SW_CHANNEL_RESPONSE = '${SW_CHANNEL_RESPONSE}';
   console.log('[peek:runtime-external:bg] shim init extId=', chrome.runtime.id);
 
+  // Resolve electron.ipcRenderer. Electron 40's extension SW context may
+  // expose it through several paths depending on sandbox / contextIsolation
+  // settings. Try them all.
+  var _ipc = null;
+  var _ipcSource = 'none';
+  try {
+    if (typeof electron !== 'undefined' && electron.ipcRenderer) { _ipc = electron.ipcRenderer; _ipcSource = 'global.electron'; }
+  } catch(_) {}
+  try {
+    if (!_ipc && typeof globalThis !== 'undefined' && globalThis.electron && globalThis.electron.ipcRenderer) { _ipc = globalThis.electron.ipcRenderer; _ipcSource = 'globalThis.electron'; }
+  } catch(_) {}
+  try {
+    if (!_ipc && typeof require === 'function') {
+      var _e = require('electron');
+      if (_e && _e.ipcRenderer) { _ipc = _e.ipcRenderer; _ipcSource = "require('electron')"; }
+    }
+  } catch(_) {}
+  try {
+    if (!_ipc && typeof require === 'function') {
+      var _er = require('electron/renderer');
+      if (_er && _er.ipcRenderer) { _ipc = _er.ipcRenderer; _ipcSource = "require('electron/renderer')"; }
+    }
+  } catch(_) {}
+  console.log('[peek:runtime-external:bg] ipcRenderer source=', _ipcSource, 'available=', !!_ipc, 'electronGlobal=', typeof electron, 'globalThisElectron=', typeof (globalThis||{}).electron, 'require=', typeof require);
+  if (!_ipc) {
+    console.error('[peek:runtime-external:bg] electron.ipcRenderer unavailable on all probed paths — cross-origin sendMessage will fail');
+  }
+
   var _externalListeners = [];
   try {
     var _ome = chrome.runtime.onMessageExternal;
     var _origAdd = _ome && _ome.addListener && _ome.addListener.bind(_ome);
+    function _wrapListener(fn) {
+      return function(message, sender, sendResponse) {
+        try {
+          var typeStr = message && message.type ? String(message.type) : '(no-type)';
+          var senderUrl = sender && (sender.url || sender.origin) || '(no-sender-url)';
+          console.log('[peek:runtime-external:bg] LISTENER FIRED via NATIVE dispatch — type=', typeStr, 'sender=', senderUrl);
+        } catch(_) {}
+        var ret;
+        try { ret = fn(message, sender, sendResponse); }
+        catch(e) {
+          console.error('[peek:runtime-external:bg] listener threw on native dispatch:', e && e.message);
+          throw e;
+        }
+        if (ret && typeof ret.then === 'function') {
+          ret.then(function(v) { console.log('[peek:runtime-external:bg] listener (native) resolved'); },
+                   function(e) { console.error('[peek:runtime-external:bg] listener (native) rejected:', e && e.message); });
+        }
+        return ret;
+      };
+    }
     if (_origAdd) {
       _ome.addListener = function(fn) {
-        _externalListeners.push(fn);
+        var wrapped = _wrapListener(fn);
+        _externalListeners.push(fn); // store the original for our IPC dispatch path
         console.log('[peek:runtime-external:bg] onMessageExternal listener captured (wrap), total=', _externalListeners.length);
-        try { _origAdd(fn); } catch(_) {}
+        try { _origAdd(wrapped); } catch(_) {}
       };
     } else {
       chrome.runtime.onMessageExternal = {
@@ -278,28 +341,26 @@ export function getBgInjection() {
   } catch(e) { console.error('[peek:runtime-external:bg] addListener wrap failed:', e && e.message); }
 
   function _sendBack(payload) {
+    if (!_ipc) {
+      console.error('[peek:runtime-external:bg] no SW→main IPC path; response dropped reqId=', payload && payload.reqId);
+      return;
+    }
     try {
-      if (typeof globalThis.postMessage === 'function') {
-        globalThis.postMessage({ __peekIpcChannel: SW_CHANNEL_RESPONSE, payload: payload });
-        console.log('[peek:runtime-external:bg] _sendBack via globalThis.postMessage reqId=', payload && payload.reqId);
-        return;
-      }
-    } catch(e) { console.error('[peek:runtime-external:bg] globalThis.postMessage threw:', e && e.message); }
-    console.error('[peek:runtime-external:bg] no SW→main IPC path; response dropped reqId=', payload && payload.reqId);
+      _ipc.send(SW_CHANNEL_RESPONSE, payload);
+      console.log('[peek:runtime-external:bg] _sendBack via ipcRenderer.send reqId=', payload && payload.reqId);
+    } catch(e) { console.error('[peek:runtime-external:bg] ipcRenderer.send threw:', e && e.message); }
   }
 
-  function _dispatch(envelope, viaPath) {
-    if (!envelope || envelope.__peekIpcChannel !== SW_CHANNEL_INCOMING) return false;
-    var payload = envelope.payload || {};
-    var reqId = payload.reqId;
-    var fwdMessage = payload.message;
-    var fwdSender = payload.sender || {};
+  function _dispatch(payload) {
+    var reqId = payload && payload.reqId;
+    var fwdMessage = payload && payload.message;
+    var fwdSender = (payload && payload.sender) || {};
     fwdSender.id = chrome.runtime.id;
-    console.log('[peek:runtime-external:bg] dispatch via=', viaPath, 'reqId=', reqId, 'listeners=', _externalListeners.length, 'type=', fwdMessage && fwdMessage.type);
+    console.log('[peek:runtime-external:bg] dispatch reqId=', reqId, 'listeners=', _externalListeners.length, 'type=', fwdMessage && fwdMessage.type);
 
     if (_externalListeners.length === 0) {
       _sendBack({ reqId: reqId, error: 'no onMessageExternal listeners registered' });
-      return true;
+      return;
     }
     var responded = false;
     function respond(response) {
@@ -309,8 +370,21 @@ export function getBgInjection() {
       _sendBack({ reqId: reqId, response: response });
     }
     for (var i = 0; i < _externalListeners.length; i++) {
-      try { _externalListeners[i](fwdMessage, fwdSender, respond); }
-      catch(e) {
+      try {
+        var ret = _externalListeners[i](fwdMessage, fwdSender, respond);
+        // Chrome semantics: returning true OR a Promise keeps the channel
+        // open for async sendResponse. If it's a Promise, await it.
+        if (ret && typeof ret.then === 'function') {
+          (function() {
+            ret.then(function(r) { respond(r); }, function(e) {
+              if (!responded) {
+                responded = true;
+                _sendBack({ reqId: reqId, error: (e && e.message) || String(e) });
+              }
+            });
+          })();
+        }
+      } catch(e) {
         if (!responded) {
           responded = true;
           console.error('[peek:runtime-external:bg] listener THREW reqId=', reqId, 'err=', e && e.message);
@@ -318,24 +392,38 @@ export function getBgInjection() {
         }
       }
     }
-    return true;
   }
 
-  // Receive path 1: globalThis postMessage
-  try {
-    if (typeof globalThis.addEventListener === 'function') {
-      globalThis.addEventListener('message', function(ev) { _dispatch(ev && ev.data, 'globalThis-message'); }, false);
-      console.log('[peek:runtime-external:bg] globalThis message listener installed');
+  // Listen for incoming dispatches from main.
+  if (_ipc) {
+    _ipc.on(SW_CHANNEL_INCOMING, function(_event, payload) { _dispatch(payload); });
+    console.log('[peek:runtime-external:bg] ipcRenderer.on(' + SW_CHANNEL_INCOMING + ') installed');
+    // Startup heartbeat: announces shim is alive on a debug channel. Main
+    // listens via swMain.ipc.on('peek:bg-heartbeat') — if it fires, the
+    // shim is executing and ipcRenderer.send works. If it doesn't, either
+    // the shim never ran or electron.ipcRenderer is unavailable.
+    // Send periodically to defeat the startup race: tracer's listener is
+    // wired up only on 'running-status-changed' → 'running', which fires
+    // AFTER the SW global has begun executing. A single startup beat
+    // would always be lost.
+    var _hbCount = 0;
+    function _heartbeat() {
+      try { _ipc.send('peek:bg-heartbeat', { extId: chrome.runtime.id, hasIpcRenderer: true, t: Date.now(), n: ++_hbCount }); } catch(e) {}
     }
-  } catch(e) { console.error('[peek:runtime-external:bg] globalThis listener install failed:', e && e.message); }
-  // Receive path 2: chrome.runtime.onMessage
-  try {
-    chrome.runtime.onMessage.addListener(function(message) {
-      _dispatch(message, 'chrome.runtime.onMessage');
-      return false;
-    });
-    console.log('[peek:runtime-external:bg] chrome.runtime.onMessage listener installed');
-  } catch(e) { console.error('[peek:runtime-external:bg] chrome.runtime.onMessage install failed:', e && e.message); }
+    _heartbeat();
+    setTimeout(_heartbeat, 100);
+    setTimeout(_heartbeat, 500);
+    setTimeout(_heartbeat, 1500);
+  } else {
+    // No ipcRenderer — try chrome.storage.local as a fallback signal.
+    try {
+      if (chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({
+          __peekRuntimeExternalBgShim: { extId: chrome.runtime.id, t: Date.now(), hasIpcRenderer: false },
+        });
+      }
+    } catch(e) {}
+  }
 })();
 `;
 }

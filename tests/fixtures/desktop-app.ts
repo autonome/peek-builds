@@ -89,7 +89,14 @@ function getOrCreateTempDir(profile: string): string {
   }
 
   const tempBase = os.tmpdir();
-  const tempDir = path.join(tempBase, `peek-test-${profile}-${Date.now()}`);
+  // `test-harness-*` profiles are intended for repeat manual runs (e.g. the
+  // Proton auth harness in tests/manual/). Use a stable path so cookies,
+  // localStorage, and 2FA-trusted-device state persist across `yarn harness`
+  // invocations — otherwise the user re-logs every run.
+  const stable = profile.startsWith('test-harness-');
+  const tempDir = stable
+    ? path.join(tempBase, `peek-test-${profile}`)
+    : path.join(tempBase, `peek-test-${profile}-${Date.now()}`);
   fs.mkdirSync(tempDir, { recursive: true });
   profileTempDirs.set(profile, tempDir);
   return tempDir;
@@ -121,9 +128,13 @@ function cleanupProfile(profile: string): void {
 /**
  * Clean up all remaining temp directories
  * Called on process exit to ensure no leftovers
+ *
+ * Skips `test-harness-*` profiles — those are intentionally persistent so
+ * the user doesn't have to re-log in / re-trust the device on every run.
  */
 function cleanupAllTempDirs(): void {
   for (const [profile, tempDir] of profileTempDirs.entries()) {
+    if (profile.startsWith('test-harness-')) continue;
     removeTempDir(tempDir);
   }
   profileTempDirs.clear();
@@ -685,8 +696,15 @@ export async function closeSharedApp(): Promise<void> {
  */
 export const test = base.extend<{ desktopApp: DesktopApp }>({
   desktopApp: async ({}, use, testInfo) => {
-    // Use test title as profile base for isolation
-    const profile = `test-${testInfo.title.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}`;
+    // Manual harness specs (project=manual, e.g. tests/manual/*.harness.ts)
+    // use a stable `test-harness-<spec>` profile so cookies, localStorage,
+    // and 2FA-trusted-device state persist across runs — otherwise the user
+    // re-logs every invocation. Regular Playwright tests get a fresh
+    // Date.now()-suffixed profile per run for isolation.
+    const isHarness = testInfo.project.name === 'manual';
+    const profile = isHarness
+      ? `test-harness-${path.basename(testInfo.file).replace(/\.harness\.ts$/, '').replace(/\s+/g, '-').toLowerCase()}`
+      : `test-${testInfo.title.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}`;
     const app = await launchDesktopApp(profile);
     await use(app);
     await app.close();
