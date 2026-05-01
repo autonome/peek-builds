@@ -427,24 +427,37 @@ function updatePositions() {
   // Panel top offset — enough clearance below the top edge of the web content area
   const panelTopOffset = webviewTop + 40;
 
-  // Page Info Panel — top-left, 75% off-page / 25% overlapping
+  // Compute the centerColumn-relative range that's actually visible in the
+  // rendered BrowserWindow. The centerColumn is flex-centered with a known
+  // width; the gutters absorb whatever extra width the window has. Near a
+  // screen edge the OS may clip the window, shrinking the gutter and pushing
+  // panel anchors past the visible edge. Clamp every panel's `left` into
+  // [minLeft, maxLeft] so they stay on-screen instead of disappearing into
+  // negative coordinates or beyond the right edge.
+  const centerColumnWidth = screenBounds.width + MARGIN * 2;
+  const gutterEach = Math.max(0, (window.innerWidth - centerColumnWidth) / 2);
+  const minPanelLeft = -gutterEach;
+  const maxPanelLeft = centerColumnWidth + gutterEach - PANEL_WIDTH;
+  const clampPanelLeft = (left) => Math.max(minPanelLeft, Math.min(maxPanelLeft, left));
+
+  // Page Info Panel — top-left, 75% off-page / 25% overlapping (clamped)
   if (pageInfoPanel) {
-    pageInfoPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
+    pageInfoPanel.style.left = `${clampPanelLeft(webviewLeft - PANEL_WIDTH + PANEL_OVERLAP)}px`;
     pageInfoPanel.style.top = `${panelTopOffset}px`;
     pageInfoPanel.style.width = `${PANEL_WIDTH}px`;
   }
 
-  // Extensions Panel — left side, below page info
+  // Extensions Panel — left side, below page info (clamped)
   if (extensionsPanel) {
-    extensionsPanel.style.left = `${webviewLeft - PANEL_WIDTH + PANEL_OVERLAP}px`;
+    extensionsPanel.style.left = `${clampPanelLeft(webviewLeft - PANEL_WIDTH + PANEL_OVERLAP)}px`;
     const pageInfoHeight = (pageInfoPanel && pageInfoPanel.classList.contains('visible')) ? pageInfoPanel.offsetHeight : 0;
     const extensionsPanelTop = panelTopOffset + (pageInfoHeight > 0 ? pageInfoHeight + 12 : 0);
     extensionsPanel.style.top = `${extensionsPanelTop}px`;
     extensionsPanel.style.width = `${PANEL_WIDTH}px`;
   }
 
-  // Right-side stack: widgets first (top), then tags, notes, entities
-  const rightLeft = webviewLeft + webviewWidth - PANEL_OVERLAP;
+  // Right-side stack: widgets first (top), then tags, notes, entities (clamped)
+  const rightLeft = clampPanelLeft(webviewLeft + webviewWidth - PANEL_OVERLAP);
   let rightStackTop = panelTopOffset;
 
   // Widget container — top of right stack
@@ -718,6 +731,20 @@ function setWindowPadding(width) {
 
 // Initial positioning
 updatePositions();
+
+// Re-clamp panels and recompute screen-edge math whenever the OS resizes
+// the BrowserWindow (display-watcher rescue, OS snap, drag-by-OS-handle
+// when re-enabled). updatePositions reads window.innerWidth, so the panels
+// reflow immediately even though screenBounds (the webview's intended
+// "screen" target) is unchanged. Throttled to one rAF per resize burst.
+let pendingResizeFrame = null;
+window.addEventListener('resize', () => {
+  if (pendingResizeFrame !== null) return;
+  pendingResizeFrame = requestAnimationFrame(() => {
+    pendingResizeFrame = null;
+    updatePositions();
+  });
+});
 
 // Expose initial fsmState even before the first dispatch (so tests can
 // observe INITIALIZING vs first-event transitions).

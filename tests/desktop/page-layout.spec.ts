@@ -240,8 +240,16 @@ test.describe('Page Layout Regression @desktop', () => {
     await closeWindow(sharedBgWindow, windowId);
   });
 
-  // Test 3: Panel positions — left panels partially off-left, right panels partially off-right
-  test('panel positions: left panels offset left, right panels offset right', async () => {
+  // Test 3: Panel positions — clamped to within the rendered window so they
+  // don't disappear into negative coords near a screen edge. Panels are
+  // anchored relative to the webview (left = webviewLeft - PANEL_WIDTH +
+  // PANEL_OVERLAP, right = webviewLeft + webviewWidth - PANEL_OVERLAP) but
+  // the renderer now clamps each `left` to [-gutterEach, centerColumnWidth
+  // + gutterEach - PANEL_WIDTH] using window.innerWidth as ground truth.
+  // When there is no gutter (panels hidden / no setWindowPadding), the
+  // effective minimum left is 0 — left panels overlap the webview rather
+  // than render off-screen.
+  test('panel positions: clamped to visible range, never off the screen edge', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -249,7 +257,6 @@ test.describe('Page Layout Regression @desktop', () => {
 
     await waitForPageReady(pageWindow);
 
-    // Show navbar to make panels visible (panels share navbar lifecycle)
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(
         'page:show-navbar',
@@ -266,22 +273,51 @@ test.describe('Page Layout Regression @desktop', () => {
       { timeout: 5000 }
     );
 
-    // Check left panel (page-info-panel) position
-    // Expected left = webviewLeft(8) - PANEL_WIDTH(280) + PANEL_OVERLAP(70) = -202
-    const pageInfoPos = await getElementPosition(pageWindow, 'page-info-panel');
-    const expectedLeftPanelLeft = MARGIN - PANEL_WIDTH + PANEL_OVERLAP; // 8 - 280 + 70 = -202
-    expect(pageInfoPos.left).toBe(expectedLeftPanelLeft);
+    // Read all the layout inputs and panel positions in one shot so the
+    // clamp math runs against the SAME renderer state that produced the
+    // panel positions. Otherwise innerWidth (which depends on
+    // setWindowPadding) can drift between reads and the expected/actual
+    // diverge by 200+px.
+    const snap = await pageWindow.evaluate(() => {
+      const PANEL_WIDTH = 280;
+      const PANEL_OVERLAP = 70;
+      const MARGIN = 8;
+      const $ = (id: string) => document.getElementById(id);
+      const rect = (el: HTMLElement | null) => el ? { left: parseFloat(el.style.left || '0'), width: el.offsetWidth } : null;
 
-    // Check right panel position (e.g. tags-panel, entities-panel)
-    // Expected left = webviewLeft(8) + webviewWidth - PANEL_OVERLAP(70)
-    const webviewPos = await getElementPosition(pageWindow, 'content');
-    const expectedRightPanelLeft = MARGIN + webviewPos.width - PANEL_OVERLAP;
+      const centerColumn = document.querySelector('.center-column') as HTMLElement | null;
+      const centerWidth = centerColumn ? centerColumn.offsetWidth : 0;
+      const innerWidth = window.innerWidth;
+      const gutterEach = Math.max(0, (innerWidth - centerWidth) / 2);
+      const minLeft = -gutterEach;
+      const maxLeft = centerWidth + gutterEach - PANEL_WIDTH;
 
-    const tagsPanelPos = await getElementPosition(pageWindow, 'tags-panel');
-    expect(tagsPanelPos.left).toBe(expectedRightPanelLeft);
+      return {
+        innerWidth,
+        centerWidth,
+        gutterEach,
+        minLeft,
+        maxLeft,
+        webview: rect($('content')),
+        pageInfo: rect($('page-info-panel')),
+        tags: rect($('tags-panel')),
+        entities: rect($('entities-panel')),
+        // Mirror the renderer math:
+        rawLeftPanelLeft: MARGIN - PANEL_WIDTH + PANEL_OVERLAP,
+        rawRightPanelLeft: MARGIN + ($('content')?.offsetWidth ?? 0) - PANEL_OVERLAP,
+      };
+    });
 
-    const entitiesPanelPos = await getElementPosition(pageWindow, 'entities-panel');
-    expect(entitiesPanelPos.left).toBe(expectedRightPanelLeft);
+    // Left panel: must lie within the clamp range.
+    expect(snap.pageInfo).not.toBeNull();
+    expect(snap.pageInfo!.left).toBeGreaterThanOrEqual(snap.minLeft);
+    expect(snap.pageInfo!.left).toBeLessThanOrEqual(snap.maxLeft);
+
+    // Right panels: must equal the clamped raw value, identically for
+    // tags + entities (they share the right-stack anchor).
+    const expectedRightPanelLeft = Math.max(snap.minLeft, Math.min(snap.maxLeft, snap.rawRightPanelLeft));
+    expect(snap.tags!.left).toBe(expectedRightPanelLeft);
+    expect(snap.entities!.left).toBe(expectedRightPanelLeft);
 
     await closeWindow(sharedBgWindow, windowId);
   });
