@@ -131,9 +131,14 @@ function pickCursorOrPrimaryDisplay(
  * Return the fraction (0..1) of `bounds`' area that overlaps any display's
  * workArea. Zero-size windows are reported as 1 (fully accessible) — they
  * can't be stranded, they're hidden/minimized.
+ *
+ * Exported and typed against just the `workArea` field so both
+ * `Electron.Display[]` and `display-watcher.ts`'s `DisplaySnapshot[]`
+ * satisfy the parameter — keeps the threshold and overlap math in a
+ * single place.
  */
-function maxOverlapFraction(
-  displays: Electron.Display[],
+export function maxOverlapFraction(
+  displays: ReadonlyArray<{ workArea: Electron.Rectangle }>,
   bounds: Electron.Rectangle,
 ): number {
   const area = bounds.width * bounds.height;
@@ -156,7 +161,10 @@ function maxOverlapFraction(
 }
 
 /** Window has < STRANDED_THRESHOLD area on any display → needs rescue. */
-function isStranded(displays: Electron.Display[], bounds: Electron.Rectangle): boolean {
+export function isStranded(
+  displays: ReadonlyArray<{ workArea: Electron.Rectangle }>,
+  bounds: Electron.Rectangle,
+): boolean {
   if (displays.length === 0) return false; // can't rescue if there are no displays
   return maxOverlapFraction(displays, bounds) < STRANDED_THRESHOLD;
 }

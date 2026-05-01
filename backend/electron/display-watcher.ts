@@ -5,14 +5,17 @@
  * and rescues genuinely orphaned windows that end up off-screen.
  *
  * macOS handles window migration natively when displays are added/removed.
- * This module only intervenes when a window has less than 30% area overlap
- * with any display workArea — meaning it's truly inaccessible to the user.
+ * This module only intervenes when a window is "stranded" by the shared
+ * `maxOverlapFraction` test in `window-placement.ts` — meaning it's truly
+ * inaccessible to the user.
  *
  * Algorithm (single-pass safety net):
  * - Snapshot display layout at startup and after each change
  * - On display change: check every window's overlap with current displays
- * - If a window has <30% overlap with ANY display, it's orphaned:
- *   find the nearest display and center the window on it
+ * - If a window is stranded, find the nearest display and center the
+ *   window on it. Stranded threshold matches `STRANDED_THRESHOLD`
+ *   (50%) in window-placement.ts so both passes agree on what
+ *   "off-screen" means.
  * - Window size is NEVER changed — only position is adjusted
  * - If all windows are accessible (99% of cases), do nothing
  */
@@ -20,7 +23,7 @@
 import { BrowserWindow, screen, Display } from 'electron';
 import { getWindowInfo } from './main.js';
 import { WEB_CORE_ADDRESS } from './config.js';
-import { computePlacement, type Placement } from './window-placement.js';
+import { computePlacement, isStranded, type Placement } from './window-placement.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -78,34 +81,19 @@ function findDisplayForPoint(displays: DisplaySnapshot[], x: number, y: number):
 
 /**
  * Check if a window is still accessible on the current displays.
- * "Accessible" means the window has at least 30% area overlap with
- * any display's workArea, so the user can still interact with it.
- * Zero-size windows are always considered accessible (hidden/minimized).
+ *
+ * Delegates to the shared `isStranded` predicate in `window-placement.ts`
+ * so this pass and `computePlacement`'s stranded rescue agree on what
+ * counts as off-screen (50% overlap). Previously these used different
+ * thresholds (30% here, 50% there), letting windows in the 30-49% band
+ * fall through Pass 1's accessibility check and then trigger Pass 2's
+ * stranded rescue — extra work and inconsistent semantics.
+ *
+ * Zero-size windows are always considered accessible (`isStranded` reports
+ * full overlap for them).
  */
 function isWindowAccessible(displays: DisplaySnapshot[], bounds: Electron.Rectangle): boolean {
-  const windowArea = bounds.width * bounds.height;
-
-  // Zero-size windows are always accessible (hidden, minimized, etc.)
-  if (windowArea <= 0) return true;
-
-  for (const d of displays) {
-    const wa = d.workArea;
-
-    // Calculate overlap rectangle
-    const overlapX = Math.max(bounds.x, wa.x);
-    const overlapY = Math.max(bounds.y, wa.y);
-    const overlapRight = Math.min(bounds.x + bounds.width, wa.x + wa.width);
-    const overlapBottom = Math.min(bounds.y + bounds.height, wa.y + wa.height);
-
-    if (overlapRight > overlapX && overlapBottom > overlapY) {
-      const overlapArea = (overlapRight - overlapX) * (overlapBottom - overlapY);
-      if (overlapArea / windowArea >= 0.3) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  return !isStranded(displays, bounds);
 }
 
 /**

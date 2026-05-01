@@ -3,7 +3,9 @@
  *
  * These test the pure math functions extracted from display-watcher.ts:
  * - findDisplayForPoint: determine which display contains a point
- * - isWindowAccessible: check if a window has >=30% area overlap with any display
+ * - isWindowAccessible: check if a window has >=50% area overlap with any display
+ *   (matches `STRANDED_THRESHOLD` in window-placement.ts; production now
+ *   delegates to the shared isStranded helper)
  * - findBestNewDisplay: find the nearest display by center-point proximity
  *
  * All functions are pure (no Electron dependencies) so they can run
@@ -50,6 +52,10 @@ function findDisplayForPoint(displays: DisplaySnapshot[], x: number, y: number):
   return null;
 }
 
+// Mirrors the new shared logic: a window is accessible iff its overlap
+// with the best display's workArea is >= STRANDED_THRESHOLD (0.5).
+const STRANDED_THRESHOLD = 0.5;
+
 function isWindowAccessible(displays: DisplaySnapshot[], bounds: Rectangle): boolean {
   const windowArea = bounds.width * bounds.height;
 
@@ -66,7 +72,7 @@ function isWindowAccessible(displays: DisplaySnapshot[], bounds: Rectangle): boo
 
     if (overlapRight > overlapX && overlapBottom > overlapY) {
       const overlapArea = (overlapRight - overlapX) * (overlapBottom - overlapY);
-      if (overlapArea / windowArea >= 0.3) {
+      if (overlapArea / windowArea >= STRANDED_THRESHOLD) {
         return true;
       }
     }
@@ -202,36 +208,39 @@ describe("Display Watcher - Pure Logic", () => {
       assert.strictEqual(isWindowAccessible(displays, { x: 100, y: 100, width: 0, height: 600 }), true);
     });
 
-    it("window with exactly 30% overlap is accessible", () => {
-      // Window 1000x1000 = 1,000,000 area
-      // Need overlap of 300,000 (30%)
-      // Place window so only 300px width overlaps with display1440 workArea
-      // Window at x=-700, width=1000 -> overlaps from x=0 to x=300 (300px wide)
-      // y=100, height=1000 -> overlaps from y=100 to y=1100 (1000px tall, within workArea 25-1440)
-      // Overlap = 300 * 1000 = 300,000 = exactly 30% of 1,000,000
-      assert.strictEqual(isWindowAccessible(displays, { x: -700, y: 100, width: 1000, height: 1000 }), true);
+    it("window with exactly 50% overlap is accessible (boundary inclusive)", () => {
+      // Window 1000x1000 = 1,000,000 area, threshold 500,000 (50%)
+      // Window at x=-500, width=1000 -> overlaps from x=0 to x=500 (500px wide)
+      // y=100, height=1000 -> overlaps 1000px tall (within workArea 25-1440)
+      // Overlap = 500 * 1000 = 500,000 = exactly 50%; passes >= threshold.
+      assert.strictEqual(isWindowAccessible(displays, { x: -500, y: 100, width: 1000, height: 1000 }), true);
     });
 
-    it("window with less than 30% overlap is not accessible", () => {
-      // Window 1000x1000 = 1,000,000 area
-      // Place so only 299px width overlaps
-      // x=-701, width=1000 -> overlaps from x=0 to x=299 (299px wide)
-      // y=100, height=1000 -> overlaps 1000px tall
-      // Overlap = 299 * 1000 = 299,000 < 30% of 1,000,000
-      assert.strictEqual(isWindowAccessible(displays, { x: -701, y: 100, width: 1000, height: 1000 }), false);
+    it("window with less than 50% overlap is not accessible", () => {
+      // x=-501, width=1000 -> overlaps from x=0 to x=499 (499px wide)
+      // Overlap = 499 * 1000 = 499,000 < 50% threshold
+      assert.strictEqual(isWindowAccessible(displays, { x: -501, y: 100, width: 1000, height: 1000 }), false);
     });
 
     it("window spanning two displays counts overlap per display", () => {
-      // Window at the boundary between display1440 and display1080
-      // If 30% is on either display, it's accessible
+      // 320x600 window straddling the 2560 boundary: 160px on display1440,
+      // 160px on display1080. Each display gets 96,000 / 192,000 = 50%
+      // overlap; the per-display max is 50%, accessible.
       assert.strictEqual(isWindowAccessible(displays, { x: 2400, y: 100, width: 320, height: 600 }), true);
     });
 
-    it("large window mostly off-screen but >30% on display is accessible", () => {
-      // 800x600 window with top-left at (-400, 100)
-      // Overlaps display1440 from x=0 to x=400 (400px), y=100 to y=700 (600px)
-      // Overlap = 400*600 = 240,000; window area = 480,000; ratio = 50% > 30%
+    it("large window half off-screen with exactly 50% overlap is accessible", () => {
+      // 800x600 at (-400, 100): overlaps display1440 from 0..400 (400px) by
+      // 600px tall = 240,000 / 480,000 = exactly 50% — boundary inclusive.
       assert.strictEqual(isWindowAccessible(displays, { x: -400, y: 100, width: 800, height: 600 }), true);
+    });
+
+    it("window with only 30% overlap is no longer accessible (was true before threshold change)", () => {
+      // x=-700, 1000x1000 window: only 300/1000px overlap = 30%, below the
+      // 50% threshold. Previously isWindowAccessible used 0.3, which let
+      // these windows skip Pass 1 yet trip Pass 2's stranded rescue. Now
+      // both passes agree.
+      assert.strictEqual(isWindowAccessible(displays, { x: -700, y: 100, width: 1000, height: 1000 }), false);
     });
 
     it("window far off-screen with no overlap is not accessible", () => {
