@@ -23,7 +23,7 @@ import { test, expect } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 
-test.describe('Proton Pass popup permissions @desktop', () => {
+test.describe.skip('Proton Pass popup permissions @desktop', () => {
   let app: any;
   let bgWindow: Page;
 

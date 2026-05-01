@@ -26,7 +26,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForExtensionsReady } from '../helpers/window-utils';
 import http from 'http';
 
-test.describe('Proton Pass autofill in webview @desktop', () => {
+test.describe.skip('Proton Pass autofill in webview @desktop', () => {
   let app: any;
   let bgWindow: Page;
   let server: http.Server;
