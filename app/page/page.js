@@ -3506,7 +3506,17 @@ if (tagsInput) {
       e.preventDefault();
       const value = tagsInput.value.trim();
       if (value) {
-        addTagToPage(value);
+        // Split on commas so the user can paste / type comma-separated
+        // tags in one go (`book, fiction, novel`). Each segment is added
+        // as its own tag; empty segments and pure-whitespace tokens are
+        // dropped. Single-tag input still works — split gives `[value]`.
+        const names = value
+          .split(',')
+          .map(t => t.trim())
+          .filter(Boolean);
+        for (const name of names) {
+          addTagToPage(name);
+        }
         tagsInput.value = '';
         if (tagsSuggestion) tagsSuggestion.textContent = '';
       }
